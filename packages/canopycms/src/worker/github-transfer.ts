@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import path from 'node:path'
 import { Readable } from 'node:stream'
 
 import { GITHUB_TRACKING_REF_PREFIX } from '../git-manager'
@@ -49,17 +50,18 @@ export interface TransferContext {
 /**
  * Fetch every GitHub branch into `remote.git`'s tracking namespace (`GITHUB_TRACKING_REF_PREFIX`),
  * which then holds exactly GitHub's branches. `have` is every tip `remote.git` holds, so the
- * bundle carries only what it lacks. Returns GitHub's branches.
+ * bundle carries only what it lacks. Returns GitHub's branches, and what an operator must fix in
+ * remote.git for the namespace to keep up, if anything (see {@link moveTrackingRefs}).
  */
 export async function fetchGitHubIntoRemoteGit(
   ctx: TransferContext,
   signal?: AbortSignal,
-): Promise<ReadonlyMap<string, string>> {
+): Promise<{ refs: ReadonlyMap<string, string>; needsOperator: string | null }> {
   const gitDir = ctx.remoteGitPath
   const { refs, bundleId } = await ctx.github().fetch({ have: await haveOf(gitDir) }, signal)
   if (bundleId !== null) await unbundle(ctx, gitDir, bundleId, signal)
-  await moveTrackingRefs(ctx, gitDir, refs, signal)
-  return refs
+  const needsOperator = await moveTrackingRefs(ctx, gitDir, refs, signal)
+  return { refs, needsOperator }
 }
 
 /**
@@ -368,7 +370,8 @@ async function moveTrackingRefs(
   gitDir: string,
   refs: ReadonlyMap<string, string>,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<string | null> {
+  let needsOperator: string | null = null
   const current = new Map<string, string>()
   const listing = await sharedRepoGit(gitDir, 'bare').raw([
     'for-each-ref',
@@ -399,20 +402,50 @@ async function moveTrackingRefs(
     } catch (err) {
       if (!lostRace(err)) throw err
       const losers: string[] = []
-      for (const move of moves) {
-        await updateRefs(ctx, gitDir, [move], signal).catch((moveErr: unknown) => {
-          if (!lostRace(moveErr)) throw moveErr
-          losers.push(move.ref)
-        })
+      if (PACKED_REFS_LOCKED.test(getErrorMessage(err))) {
+        // Every deletion takes packed-refs.lock, so each would wait for it and lose the same way.
+        losers.push(...moves.map((move) => move.ref))
+        needsOperator = await stalePackedRefsLock(gitDir)
+      } else {
+        for (const move of moves) {
+          await updateRefs(ctx, gitDir, [move], signal).catch((moveErr: unknown) => {
+            if (!lostRace(moveErr)) throw moveErr
+            losers.push(move.ref)
+          })
+        }
       }
       if (losers.length > 0) {
         workerLogWarn(
-          `Could not move ${losers.length} GitHub tracking ref(s) (concurrent update?), retrying ` +
-            `next sync: ${losers.join(', ')} (${getErrorMessage(err).trim()})`,
+          `Could not move ${losers.length} GitHub tracking ref(s), retrying next sync: ` +
+            `${losers.join(', ')} (${getErrorMessage(err).trim()})`,
         )
       }
     }
   }
+  return needsOperator
+}
+
+const PACKED_REFS_LOCKED = /Unable to create '[^']*packed-refs\.lock': File exists/
+
+/** How old remote.git's packed-refs.lock must be before the worker reports it as left behind. */
+const STALE_PACKED_REFS_LOCK_MS = 10 * 60 * 1000
+
+/**
+ * What to tell an operator about remote.git's `packed-refs.lock` once it is older than
+ * {@link STALE_PACKED_REFS_LOCK_MS}, which no git holds it for: a writer killed mid-delete left
+ * it, and it blocks every branch deletion there, the Lambda's included. The worker never removes
+ * it: the Lambda shares the repository, and the worker cannot tell a lock left behind from one
+ * a live writer holds on a host whose clock or NFS attributes it does not see.
+ */
+async function stalePackedRefsLock(gitDir: string): Promise<string | null> {
+  const lock = path.join(gitDir, 'packed-refs.lock')
+  const stat = await fs.stat(lock).catch(() => null)
+  if (stat === null || Date.now() - stat.mtimeMs < STALE_PACKED_REFS_LOCK_MS) return null
+  return (
+    `${lock} has been there since ${stat.mtime.toISOString()}: a git killed while it deleted a ` +
+    `branch left it, and every branch deletion in remote.git fails until it is removed. ` +
+    `Check that no git is running in remote.git, then remove that file.`
+  )
 }
 
 /**

@@ -64,6 +64,8 @@ function gateway(overrides: Partial<LocalGitHubGatewayOptions> = {}): GitHubGate
     workspacePath: path.join(root, 'workspace'),
     timeoutMs: 30_000,
     remoteUrl: githubPath,
+    // Each operation fetches GitHub afresh, so a test sees what it changed there.
+    fetchCoalesceMs: 0,
     ...overrides,
   })
 }
@@ -231,7 +233,6 @@ describe('where the gateway runs git', () => {
       kind: 'pushed',
       moved: false,
     })
-    await github.maintain()
 
     const ran = new Set(observed.map((s) => subcommand(s.args)))
     for (const expected of [
@@ -245,7 +246,6 @@ describe('where the gateway runs git', () => {
       'ls-remote',
       'push',
       'check-ref-format',
-      'count-objects',
     ]) {
       expect(ran).toContain(expected)
     }
@@ -667,10 +667,9 @@ describe('pushing without a bundle', () => {
       github.push(request('feature', feature), await streamOf(bundle)),
       github.fetch({ have: [main] }),
       github.push(request('feature', feature)),
-      github.maintain(),
     ])
 
-    expect(settled.map((s) => s.status)).toEqual(Array(6).fill('fulfilled'))
+    expect(settled.map((s) => s.status)).toEqual(Array(5).fill('fulfilled'))
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(feature)
   })
 })

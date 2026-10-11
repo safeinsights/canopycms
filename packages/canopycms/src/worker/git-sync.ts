@@ -505,18 +505,12 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     } catch (err) {
       workerLogWarn(`remote.git maintenance failed: ${getErrorMessage(err)}`)
     }
-    try {
-      await ctx.github().maintain()
-    } catch (err) {
-      workerLogWarn(`GitHub mirror maintenance failed: ${getErrorMessage(err)}`)
-    }
-
     if (stoppedForDrain(ctx, 'the GitHub fetch')) return
 
     // Into remote.git's GITHUB_TRACKING_REF_PREFIX namespace rather than refs/heads/* -- see that
     // constant's doc comment for the destructive-fetch bug this avoids. Killed at the drain
     // deadline; a killed ref update leaves each ref as it was or fully moved.
-    await fetchGitHubIntoRemoteGit(ctx, ctx.shutdownSignal())
+    const { needsOperator } = await fetchGitHubIntoRemoteGit(ctx, ctx.shutdownSignal())
     workerLog('Fetched from GitHub')
 
     const {
@@ -557,6 +551,11 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     const report = ctx.ensureStatusReport()
     report.lastGitSyncAt = new Date().toISOString()
     delete report.lastGitSyncError
+    // Reported once the cycle has done everything it can, so System health shows it.
+    if (needsOperator !== null) {
+      workerLogError(needsOperator)
+      report.lastGitSyncError = { message: needsOperator, at: report.lastGitSyncAt }
+    }
     report.lastGitSync = {
       durationMs: Date.now() - cycleStartedAt,
       rebased: rebaseSummary.rebased,

@@ -4,11 +4,7 @@ import path from 'node:path'
 import type { Readable } from 'node:stream'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
-import {
-  gitNetworkChildEnv,
-  repackBareRemoteIfNeeded,
-  type BareRemoteRepackResult,
-} from '../git-manager'
+import { gitNetworkChildEnv } from '../git-manager'
 import { sanitizeBranchName } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import {
@@ -18,7 +14,18 @@ import {
   type BundleHeader,
 } from './bundle-header'
 import { runGit } from './git-process'
-import { workerLogWarn } from './log'
+import {
+  MaintenanceMutex,
+  findCorruption,
+  maintainMirror,
+  objectStoreKiB,
+  rebuildPaths,
+  recoverRebuild,
+  removeFetchLeftovers,
+  sweepLocksAndTemporaries,
+  type MirrorCorruption,
+} from './github-mirror-upkeep'
+import { workerLog, workerLogError, workerLogWarn } from './log'
 import {
   githubBoundGitOptions,
   mirrorGitOptions,
@@ -65,35 +72,58 @@ export class GitHubMirror {
   private ingestTail: Promise<unknown> = Promise.resolve()
   private warnedSize = false
   private ready = false
+  private swept = false
   private transferDirs: Promise<void> | null = null
   private pendingBundle: { id: string; file: string } | null = null
+  private readonly maintenance = new MaintenanceMutex()
+  private lastMaintenanceAt: number
+  private corruption: MirrorCorruption = null
+  /**
+   * Changes whenever the mirror may no longer hold what the last GitHub fetch put there: a session
+   * failed (so the next one checks it again), it was created anew, or a rebuild replaced it. A
+   * GitHub fetch is reused only within the generation it completed in.
+   */
+  generation = 0
+  private rebuildFailedAt = 0
 
+  /**
+   * `maintenanceIntervalMs` (default {@link MAINTENANCE_INTERVAL_MS}) also delays the first run:
+   * a mirror just fetched is in few packs.
+   */
   constructor(
     private readonly stateDirectory: string,
     private readonly timeoutMs: number,
+    private readonly maintenanceIntervalMs = MAINTENANCE_INTERVAL_MS,
   ) {
+    this.lastMaintenanceAt = Date.now()
     this.gitDir = path.join(stateDirectory, 'github.git')
     this.incomingDir = path.join(stateDirectory, 'incoming')
     this.outgoingDir = path.join(stateDirectory, 'outgoing')
   }
 
   /**
-   * Run `fn` with the mirror to itself, after every session started before it. Creates the
-   * mirror first if it is missing, and checks again after any session that failed. First deletes
+   * Run `fn` with the mirror to itself, after every session started before it. The first session
+   * of a gateway first clears what a killed one left ({@link sweepAtStart}). Creates the mirror if
+   * it is missing, and checks it again (for corruption too) after any session that failed. Deletes
    * any credential file a killed or failed cleanup left: no session is running, so none is in use.
    */
   exclusive<T>(fn: (session: MirrorSession) => Promise<T>): Promise<T> {
     const start = async () => {
-      if (!this.ready) {
-        await this.create()
-        this.ready = true
-      }
       try {
+        if (!this.swept) {
+          await this.sweepAtStart()
+          this.swept = true
+        }
+        if (!this.ready) {
+          await this.create()
+          this.ready = true
+        }
         await sweepCredentialConfigs(this.stateDirectory)
         await this.ensureTransferDirs()
         return await fn(new MirrorSession(this.gitDir, this.stateDirectory, this.timeoutMs))
       } catch (err) {
         this.ready = false
+        this.generation++
         throw err
       }
     }
@@ -107,18 +137,180 @@ export class GitHubMirror {
     return this.exclusive(async () => undefined)
   }
 
-  /** Create the mirror, or recreate one that is not a readable bare repository. */
+  /**
+   * Clear what a killed gateway left, before any git runs: finish or undo an interrupted rebuild,
+   * then every lock and temporary in the mirror. Nothing else writes it yet: maintenance starts
+   * only after a session.
+   */
+  private async sweepAtStart(): Promise<void> {
+    await fs.mkdir(this.stateDirectory, { recursive: true, mode: 0o700 })
+    await assertOwnDirectory(this.stateDirectory)
+    await recoverRebuild(this.gitDir)
+    const removed = await sweepLocksAndTemporaries(this.gitDir)
+    if (removed.length > 0) {
+      workerLogWarn(
+        `Removed what a stopped gateway left in the GitHub mirror: ${removed.join(', ')}`,
+      )
+    }
+  }
+
+  /**
+   * Create the mirror, or recreate one that is not a readable bare repository, and record whether
+   * an existing one is corrupt ({@link findCorruption}), which the next credentialed session
+   * repairs ({@link heal}).
+   */
   private async create(): Promise<void> {
     await fs.mkdir(this.stateDirectory, { recursive: true, mode: 0o700 })
     await assertOwnDirectory(this.stateDirectory)
     if (!(await isBareRepository(this.gitDir))) {
       await fs.rm(this.gitDir, { recursive: true, force: true })
-      await fs.mkdir(this.gitDir, { mode: 0o700 })
-      await simpleGit({ baseDir: this.gitDir, ...mirrorGitOptions() })
-        .env(mirrorEnv(this.gitDir))
-        .raw(['init', '--quiet', '--bare', '--end-of-options'])
+      await initMirror(this.gitDir)
+      this.generation++
     }
     await assertOwnDirectory(this.gitDir)
+    this.corruption = await findCorruption(this.gitDir, (args, stdin) =>
+      runInRepo(this.gitDir, this.timeoutMs, args, { stdin }),
+    )
+  }
+
+  /**
+   * Refuse a session that cannot repair the mirror while it is corrupt: one without the credential
+   * a rebuild fetches with.
+   */
+  assertUsable(): void {
+    if (this.corruption !== null) {
+      throw new GitHubTransientError(
+        'mirror-corrupt',
+        `The GitHub mirror needs rebuilding (${this.corruption}); the next fetch from GitHub does it`,
+      )
+    }
+  }
+
+  /**
+   * Inside a session, rebuild a mirror {@link create} found corrupt, as a plain call (the session
+   * is not re-entrant), waiting for maintenance to finish: the lock order is session, then the
+   * maintenance mutex. The replacement is fetched whole from GitHub into `github.git.rebuild`, and
+   * swapped in only once complete: the mirror is renamed to `.old`, `.rebuild` into its place, and
+   * `.old` deleted ({@link recoverRebuild} finishes or undoes a swap a crash interrupted). No
+   * quarantine is live while the session is held, so moving the objects it would borrow is safe.
+   * After a failed rebuild, sessions answer transient for {@link REBUILD_BACKOFF_MS} rather than
+   * fetch the whole repository again each.
+   */
+  async heal(
+    session: MirrorSession,
+    credential: GitHubCredential,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const reason = this.corruption
+    if (reason === null) return
+    if (Date.now() - this.rebuildFailedAt < REBUILD_BACKOFF_MS) this.assertUsable()
+    const { rebuild, old } = rebuildPaths(this.gitDir)
+    const release = await this.maintenance.acquire()
+    try {
+      await fs.rm(rebuild, { recursive: true, force: true })
+      await initMirror(rebuild)
+      await session.fetchFromGitHub(credential, signal, rebuild)
+      await fs.rm(old, { recursive: true, force: true })
+      await fs.rename(this.gitDir, old)
+      await fs.rename(rebuild, this.gitDir)
+      await fs.rm(old, { recursive: true, force: true })
+      this.corruption = null
+      this.generation++
+      workerLogWarn(`Rebuilt the GitHub mirror from GitHub: ${reason}`)
+    } catch (err) {
+      this.rebuildFailedAt = Date.now()
+      await fs.rm(rebuild, { recursive: true, force: true }).catch(() => undefined)
+      throw new GitHubTransientError(
+        'mirror-corrupt',
+        `The GitHub mirror needs rebuilding (${reason}), and the rebuild failed: ` +
+          redactCredentials(getErrorMessage(err)).trim(),
+      )
+    } finally {
+      release()
+    }
+  }
+
+  /**
+   * The GitHub fetch, inside a session. A failure leaves no pack of its own behind. When git found
+   * a lock of the mirror's own already there, the locks and temporaries are swept and the fetch
+   * tried once more, but only if maintenance, which holds such locks while it runs, is not running:
+   * then the lock is live, and the fetch fails transient instead. The sweep only try-acquires the
+   * mutex, so a push never waits behind a repack.
+   */
+  async fetchFromGitHub(
+    session: MirrorSession,
+    credential: GitHubCredential,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    try {
+      await session.fetchFromGitHub(credential, signal)
+      return
+    } catch (err) {
+      await removeFetchLeftovers(this.gitDir)
+      if (!isOwnLockFailure(getErrorMessage(err))) throw err
+      const release = this.maintenance.tryAcquire()
+      if (release === null) {
+        throw new GitHubTransientError(
+          'github-fetch-failed',
+          'The GitHub mirror is being maintained, and its fetch met a lock maintenance holds; ' +
+            'retrying runs after it',
+        )
+      }
+      try {
+        const removed = await sweepLocksAndTemporaries(this.gitDir)
+        workerLogWarn(`Removed stale locks from the GitHub mirror: ${removed.join(', ')}`)
+      } finally {
+        release()
+      }
+    }
+    try {
+      await session.fetchFromGitHub(credential, signal)
+    } catch (err) {
+      await removeFetchLeftovers(this.gitDir)
+      throw err
+    }
+  }
+
+  /**
+   * After a completed GitHub fetch's session: warn once if the mirror has grown past
+   * {@link MIRROR_SIZE_WARN_KIB}, and start maintenance, detached, at most once per maintenance
+   * interval, unless the mutex is held (a rebuild, or maintenance itself).
+   */
+  async afterFetch(): Promise<void> {
+    await this.warnIfLarge().catch((err: unknown) =>
+      workerLogWarn(`Could not measure the GitHub mirror: ${getErrorMessage(err)}`),
+    )
+    if (Date.now() - this.lastMaintenanceAt < this.maintenanceIntervalMs) return
+    const release = this.maintenance.tryAcquire()
+    if (release === null) return
+    this.lastMaintenanceAt = Date.now()
+    void this.runMaintenance().finally(release)
+  }
+
+  /** One maintenance run, holding the mutex; it never takes a session. */
+  private async runMaintenance(): Promise<void> {
+    const started = Date.now()
+    try {
+      const { repacked } = await maintainMirror(this.gitDir, (args, { deadlineMs }) =>
+        runInRepo(this.gitDir, deadlineMs, args, { deadlineMs }),
+      )
+      if (repacked) workerLog(`GitHub mirror repacked in ${Date.now() - started}ms`)
+    } catch (err) {
+      workerLogError(`GitHub mirror maintenance failed: ${getErrorMessage(err)}`)
+    }
+  }
+
+  private async warnIfLarge(): Promise<void> {
+    if (this.warnedSize) return
+    const kib = await objectStoreKiB((args) => runInRepo(this.gitDir, this.timeoutMs, args))
+    if (kib > MIRROR_SIZE_WARN_KIB) {
+      this.warnedSize = true
+      workerLogWarn(
+        `The worker's GitHub mirror (${this.gitDir}) holds ${Math.round(kib / 1024)} MiB of ` +
+          `objects, on the instance's root volume. See "The worker instance" in ` +
+          `docs/deploying-to-aws.md for the headroom it assumes.`,
+      )
+    }
   }
 
   /**
@@ -226,27 +418,6 @@ export class GitHubMirror {
     this.ingestTail = run.catch(() => undefined)
     return run
   }
-
-  /** Repack when it needs it, and say once if it has grown past {@link MIRROR_SIZE_WARN_KIB}. */
-  async maintain(): Promise<BareRemoteRepackResult> {
-    await this.ensure()
-    const result = await repackBareRemoteIfNeeded(
-      this.gitDir,
-      simpleGit({ baseDir: this.gitDir, ...mirrorGitOptions() }).env(mirrorEnv(this.gitDir)),
-    )
-    if (!this.warnedSize) {
-      const kib = await objectStoreKiB(this.gitDir)
-      if (kib > MIRROR_SIZE_WARN_KIB) {
-        this.warnedSize = true
-        workerLogWarn(
-          `The worker's GitHub mirror (${this.gitDir}) holds ${Math.round(kib / 1024)} MiB of ` +
-            `objects, on the instance's root volume. See "The worker instance" in ` +
-            `docs/deploying-to-aws.md for the headroom it assumes.`,
-        )
-      }
-    }
-    return result
-  }
 }
 
 /** A pushed bundle, received and its header read: {@link GitHubMirror.ingest}. */
@@ -262,6 +433,12 @@ export interface ReceivedBundle {
  * also holds the OS, Node and the log.
  */
 const MIRROR_SIZE_WARN_KIB = 2 * 1024 * 1024
+
+/** How often maintenance may run. */
+const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000
+
+/** How long sessions answer transient after a failed rebuild, rather than retry it each. */
+const REBUILD_BACKOFF_MS = 5 * 60 * 1000
 
 /** Where a quarantine holds the pushed commit while it is checked and pushed. */
 const STAGING_PREFIX = 'refs/canopy/outgoing/'
@@ -279,6 +456,7 @@ export class GitHubTransientError extends Error {
       | 'bundle-rejected'
       | 'prerequisite-gone'
       | 'bundle-gone'
+      | 'mirror-corrupt'
       | 'objects-still-needed'
       | 'ref-kept-moving',
     message: string,
@@ -478,15 +656,7 @@ export class MirrorSession {
     args: readonly string[],
     options: { stdin?: string; repo?: string; config?: string[]; signal?: AbortSignal } = {},
   ): Promise<string> {
-    const repo = options.repo ?? this.gitDir
-    return runGit(args, {
-      cwd: repo,
-      env: mirrorEnv(repo),
-      config: options.config ?? mirrorPins(),
-      stdin: options.stdin,
-      inactivityTimeoutMs: this.timeoutMs,
-      signal: options.signal,
-    })
+    return runInRepo(options.repo ?? this.gitDir, this.timeoutMs, args, options)
   }
 
   /**
@@ -519,8 +689,15 @@ export class MirrorSession {
     })
   }
 
-  /** Bring `refs/heads/*` to exactly what GitHub holds. */
-  async fetchFromGitHub(credential: GitHubCredential, signal?: AbortSignal): Promise<void> {
+  /**
+   * Bring `refs/heads/*` of `repo` (the mirror, or a rebuild's replacement) to exactly what GitHub
+   * holds. Sessions fetch through {@link GitHubMirror.fetchFromGitHub}, which cleans up after it.
+   */
+  async fetchFromGitHub(
+    credential: GitHubCredential,
+    signal?: AbortSignal,
+    repo = this.gitDir,
+  ): Promise<void> {
     await this.githubBound(
       credential,
       [
@@ -533,6 +710,7 @@ export class MirrorSession {
         '+refs/heads/*:refs/heads/*',
       ],
       signal,
+      repo,
     )
   }
 
@@ -944,14 +1122,28 @@ async function isBareRepository(gitDir: string): Promise<boolean> {
   }
 }
 
-async function objectStoreKiB(gitDir: string): Promise<number> {
-  const output = await simpleGit({ baseDir: gitDir, ...mirrorGitOptions() })
+/** Create an empty bare repository at `gitDir` under the mirror's pins. */
+async function initMirror(gitDir: string): Promise<void> {
+  await fs.mkdir(gitDir, { mode: 0o700 })
+  await simpleGit({ baseDir: gitDir, ...mirrorGitOptions() })
     .env(mirrorEnv(gitDir))
-    .raw(['count-objects', '-v', '--end-of-options'])
-  let total = 0
-  for (const line of output.split('\n')) {
-    const [name, value] = line.split(': ')
-    if (name === 'size' || name === 'size-pack') total += Number(value) || 0
-  }
-  return total
+    .raw(['init', '--quiet', '--bare', '--end-of-options'])
+}
+
+/** git in `repo`, one of the gateway's own, under `config` (the mirror's pins by default). */
+function runInRepo(
+  repo: string,
+  timeoutMs: number,
+  args: readonly string[],
+  options: { stdin?: string; config?: string[]; signal?: AbortSignal; deadlineMs?: number } = {},
+): Promise<string> {
+  return runGit(args, {
+    cwd: repo,
+    env: mirrorEnv(repo),
+    config: options.config ?? mirrorPins(),
+    stdin: options.stdin,
+    inactivityTimeoutMs: timeoutMs,
+    deadlineMs: options.deadlineMs,
+    signal: options.signal,
+  })
 }

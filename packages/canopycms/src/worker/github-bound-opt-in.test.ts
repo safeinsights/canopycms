@@ -92,12 +92,11 @@ describe('allowUnsafeConfigPaths', () => {
       { branch: 'feature', protectedBranches: ['main'], prerequisiteBranches: ['feature'] },
       async () => sha,
     )
-    await github.maintain()
 
     const optedIn = recorded.filter((call) => call.optedIn).map((call) => call.args[0])
-    // The fetch; then the push: asked without objects (its GitHub fetch), and again with the
-    // bundle (its GitHub fetch, the default-branch ls-remote, the push).
-    expect(optedIn).toEqual(['fetch', 'fetch', 'fetch', 'ls-remote', 'push'])
+    // The one GitHub fetch, which the fetch and both push calls join; then the push's
+    // default-branch ls-remote and the push itself.
+    expect(optedIn).toEqual(['fetch', 'ls-remote', 'push'])
     // Not vacuous: the gateway ran plenty of other git, all without the opt-in.
     expect(recorded.filter((call) => !call.optedIn).length).toBeGreaterThan(5)
   })

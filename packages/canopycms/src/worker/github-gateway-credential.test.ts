@@ -207,11 +207,9 @@ describe('the credential file', () => {
 
     expect(await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/feature')).toBe(ahead)
     const credentialed = observed.filter((spawn) => spawn.env.GIT_CONFIG_GLOBAL !== undefined)
-    // The fetch; then the push: asked without objects (its GitHub fetch), and again with the
-    // bundle (its GitHub fetch, the default-branch ls-remote, the push).
+    // The one GitHub fetch, which both push calls join; then the push's default-branch ls-remote
+    // and the push itself.
     expect(credentialed.map((spawn) => subcommand(spawn.args))).toEqual([
-      'fetch',
-      'fetch',
       'fetch',
       'ls-remote',
       'push',
@@ -518,19 +516,52 @@ describe('re-reading the credential', () => {
     expect(provider).toHaveBeenCalledTimes(1)
   })
 
-  it("is not armed by a lock the mirror's own git found", async () => {
+  it("is not armed by a lock the mirror's own git found, which it sweeps and fetches again past", async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const provider = vi.fn(async () => undefined)
-    const github = gateway({}, provider)
+    const github = gateway({ fetchCoalesceMs: 0 }, provider)
     await github.fetch({ have: [] })
-    await commitAndPush(githubPath, 'refs/heads/main', 'next.txt')
+    const next = await commitAndPush(githubPath, 'refs/heads/main', 'next.txt')
     await fs.writeFile(path.join(stateDirectory, 'github.git', 'refs', 'heads', 'main.lock'), '')
 
-    const caught = await github.fetch({ have: [] }).catch((err: unknown) => err)
+    const fetched = await github.fetch({ have: [] })
     await settle()
 
-    expect(String(caught)).toMatch(/Unable to create '.*main\.lock': File exists/)
+    expect(fetched.refs.get('main')).toBe(next)
+    expect(consoleSpy).toHaveWarned(
+      /Removed stale locks from the GitHub mirror: refs\/heads\/main\.lock/,
+    )
     expect(provider).not.toHaveBeenCalled()
+  })
+
+  it('is not armed by a lock the mirror holds while maintenance runs, which it leaves in place', async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const provider = vi.fn(async () => undefined)
+    const github = gateway({ fetchCoalesceMs: 0 }, provider)
+    await github.fetch({ have: [] })
+    await commitAndPush(githubPath, 'refs/heads/main', 'next.txt')
+    const lock = path.join(stateDirectory, 'github.git', 'refs', 'heads', 'main.lock')
+    await fs.writeFile(lock, '')
+    // Maintenance running, as far as the fetch can tell: it holds the mutex for the whole test, so
+    // a fetch that waited for it would never finish.
+    const internals = github as unknown as {
+      mirror: { maintenance: { tryAcquire(): (() => void) | null } }
+    }
+    const release = internals.mirror.maintenance.tryAcquire()
+    expect(release).not.toBeNull()
+
+    try {
+      const caught = await github.fetch({ have: [] }).catch((err: unknown) => err)
+      await settle()
+
+      expect(caught).toBeInstanceOf(GitHubTransientError)
+      expect(String(caught)).toMatch(/met a lock maintenance holds/)
+      await expect(fs.stat(lock)).resolves.toBeTruthy()
+      expect(consoleSpy).not.toHaveWarned(/Removed stale locks/)
+      expect(provider).not.toHaveBeenCalled()
+    } finally {
+      release?.()
+    }
   })
 
   it('is armed by a lock that GitHub reports on a remote: line', async () => {

@@ -63,6 +63,8 @@ function gateway(overrides: Partial<LocalGitHubGatewayOptions> = {}): GitHubGate
     workspacePath: path.join(root, 'workspace'),
     timeoutMs: 30_000,
     remoteUrl: githubPath,
+    // Each operation fetches GitHub afresh, so a test sees what it changed there.
+    fetchCoalesceMs: 0,
     ...overrides,
   })
 }
@@ -112,7 +114,7 @@ describe('fetch', () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const feature = await commitAndPush(githubPath, 'refs/heads/feature/x', 'feature.txt')
 
-    const refs = await fetchGitHubIntoRemoteGit(transfer(gateway()))
+    const { refs } = await fetchGitHubIntoRemoteGit(transfer(gateway()))
 
     expect(refs).toEqual(
       new Map([
