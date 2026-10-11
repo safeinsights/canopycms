@@ -330,8 +330,15 @@ describe('the gateway socket check', () => {
 
   it('refuses a descriptor it cannot find bound to a path', async () => {
     await passedSocket(0o600, () => '@abstract')
-    expect((await socketAccessIsOthers({ root, uid: uid + 1, listenFd: 3 })).ok).toBe(false)
-    expect((await socketAccessIsOthers({ root, uid: uid + 1, listenFd: 4 })).ok).toBe(false)
+
+    const abstract = await socketAccessIsOthers({ root, uid: uid + 1, listenFd: 3 })
+    const missing = await socketAccessIsOthers({ root, uid: uid + 1, listenFd: 4 })
+
+    expect(abstract).toMatchObject({
+      ok: false,
+      detail: expect.stringMatching(/not bound to a path/),
+    })
+    expect(missing).toMatchObject({ ok: false, detail: expect.stringMatching(/descriptor 4/) })
   })
 
   it('refuses a listed path that is not a socket', async () => {

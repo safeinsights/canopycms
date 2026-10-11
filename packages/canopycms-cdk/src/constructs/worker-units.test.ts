@@ -230,6 +230,25 @@ describe('the units', () => {
 
   it('cuts the split worker off from the network, and points it at the gateway', () => {
     for (const line of WORKER_SPLIT_SANDBOX) expect(splitWorker).toContain(line)
+    // Spelled out, so a change to the shared constant cannot pass by changing what it checks.
+    for (const line of [
+      'PrivateNetwork=yes',
+      'IPAddressDeny=any',
+      'RestrictAddressFamilies=AF_UNIX',
+      'PrivateIPC=yes',
+      'InaccessiblePaths=-/run/dbus',
+      'InaccessiblePaths=-/dev/shm',
+      'InaccessiblePaths=-/var/log/journal',
+      'InaccessiblePaths=-/run/log/journal',
+      'SystemCallFilter=@system-service',
+      'LimitCORE=0',
+      'ProtectProc=invisible',
+      'ProtectHome=tmpfs',
+      'NoNewPrivileges=yes',
+      'ReadWritePaths=/mnt/efs',
+    ]) {
+      expect(splitWorker).toContain(line)
+    }
     expect(splitWorker).toContain(
       `Environment=${GITHUB_GATEWAY_SOCKET_ENV}=${GITHUB_GATEWAY_SOCKET_PATH}`,
     )
