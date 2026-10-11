@@ -41,11 +41,23 @@ export const GITHUB_GATEWAY_SOCKET_ENV = 'CANOPYCMS_GITHUB_GATEWAY_SOCKET'
  */
 export const GATEWAY_SPLIT_CONTRACT = 2
 
+/** Where `canopy-github.socket` listens, and the worker unit's {@link GITHUB_GATEWAY_SOCKET_ENV}. */
+export const GITHUB_GATEWAY_SOCKET_PATH = '/run/canopy-github/gateway.sock'
+
+/**
+ * The bundle's first lines carry `<prefix><n>`, `n` being {@link WORKER_CONTRACT_VERSION}
+ * (worker/build.ts writes it). User-data reads it to choose the units it writes: a bundle without
+ * it needs at most contract 1.
+ */
+export const WORKER_CONTRACT_BANNER_PREFIX = '// canopy-worker-contract: '
+
 /**
  * What each worker contract version requires of the unit and template, in
  * order: entry `i` is version `i + 1`. The construct stamps the latest version
- * into every unit it writes, and a bundle refuses to start under a unit whose
- * version is lower.
+ * into the split units it writes, and the version before
+ * {@link GATEWAY_SPLIT_CONTRACT} into the single-process unit it writes for an
+ * older bundle (see {@link WORKER_CONTRACT_BANNER_PREFIX}). A bundle refuses to
+ * start under a unit whose version is lower.
  *
  * A unit with no stamp predates the stamp, so its version is read from what
  * it observably provides: 1 when `STATE_DIRECTORY` is set (systemd sets it
@@ -57,7 +69,10 @@ export const GATEWAY_SPLIT_CONTRACT = 2
  * not count. The bundle's "template too old" line names every entry above the
  * unit's version, so write it as the setting an operator would add.
  */
-const WORKER_CONTRACT_REQUIREMENTS = ['StateDirectory=canopy-worker'] as const
+const WORKER_CONTRACT_REQUIREMENTS = [
+  'StateDirectory=canopy-worker',
+  `canopy-github.socket and canopy-github.service, and ${GITHUB_GATEWAY_SOCKET_ENV} on the worker unit`,
+] as const
 
 /**
  * The worker contract version: stamped into the unit by the construct (and,

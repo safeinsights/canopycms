@@ -27,13 +27,30 @@ import type { WorkerCode } from './worker-bundle'
 import { attachEditorBehaviors } from './editor-routing'
 import type { CanopyCmsAttachOptions } from './editor-routing'
 import {
-  EXIT_DRAINED_FOR_TERMINATION,
+  GATEWAY_SPLIT_CONTRACT,
   WORKER_CAPACITY_ENV,
-  WORKER_CONTRACT_ENV,
-  WORKER_CONTRACT_VERSION,
+  WORKER_CONTRACT_BANNER_PREFIX,
   WORKER_DRAIN_HOOK_NAME,
   WORKER_SYNC_LOG_PHRASE,
 } from './worker-lifecycle'
+import {
+  CANOPY_INSPECT,
+  EFS_MOUNT_PATH,
+  GATEWAY_LOG,
+  GATEWAY_LOG_DIR,
+  GATEWAY_USER,
+  INSPECT_CHECKS,
+  INSPECT_RC,
+  WORKER_INSTALL_DIR,
+  WORKER_LOG,
+  WORKER_LOG_DIR,
+  canopyInspectScript,
+  gatewaySocketUnit,
+  gatewayUnit,
+  inspectChecksScript,
+  inspectRc,
+  workerUnit,
+} from './worker-units'
 
 /**
  * Synth-time mirror of `resolveDeploymentName`'s rule in the `canopycms`
@@ -62,16 +79,6 @@ const isValidDeploymentName = (name: string): boolean =>
   !name.endsWith('.lock')
 
 /**
- * Where the Lambda AND the worker mount the `WorkspaceAP` access point (rooted
- * at EFS:/workspace), and so the workspace root of both.
- *
- * One path string, not merely one directory: git records absolute paths on
- * EFS (a workspace clone's `origin` is `<root>/remote.git`), and a path written
- * by one process must resolve for the other.
- */
-const EFS_MOUNT_PATH = '/mnt/efs'
-
-/**
  * The text of the worker.log line user data writes when the boot's package
  * upgrade failed and the worker runs on the AMI's packages. The unpatched
  * alarm's metric filter counts it.
@@ -79,36 +86,13 @@ const EFS_MOUNT_PATH = '/mnt/efs'
 const WORKER_UNPATCHED_LOG_PHRASE = 'running unpatched on the AMI packages until the next boot'
 
 /**
- * The worker unit's sandbox, also in worker/canopy-worker.service. Node and git
- * need none of what these take away; `MemoryDenyWriteExecute` is left out
- * because V8's JIT writes executable memory.
- */
-const WORKER_SANDBOX_DIRECTIVES = [
-  'NoNewPrivileges=yes',
-  'ProtectSystem=strict',
-  'ProtectHome=tmpfs',
-  'PrivateTmp=yes',
-  'PrivateDevices=yes',
-  'ProtectProc=invisible',
-  'ProtectKernelTunables=yes',
-  'ProtectKernelModules=yes',
-  'ProtectKernelLogs=yes',
-  'ProtectControlGroups=yes',
-  'ProtectClock=yes',
-  'ProtectHostname=yes',
-  'RestrictNamespaces=yes',
-  'RestrictSUIDSGID=yes',
-  'RestrictRealtime=yes',
-  'LockPersonality=yes',
-  'SystemCallArchitectures=native',
-  'CapabilityBoundingSet=',
-]
-
-/**
- * The heredoc delimiter user-data uses to write the worker's `.env` (see the
- * `cat > … << 'ENVEOF'` block below).
+ * The heredoc delimiter user-data uses to write the worker's `.env` and the
+ * gateway's `gateway.env` (see the `cat > … << 'ENVEOF'` blocks below).
  */
 const ENV_HEREDOC_DELIMITER = 'ENVEOF'
+
+/** Which of the split's processes reads an environment variable (the single process reads all). */
+type EnvReader = 'worker' | 'gateway' | 'both'
 
 /**
  * Guard every value interpolated into the worker's `.env` file.
@@ -1777,35 +1761,43 @@ export class CanopyCmsService extends Construct {
     // Name/value PAIRS rather than pre-formatted lines: every value then flows
     // through `assertEnvSafe` in the single `map` below, so a value added here
     // later is guarded whether or not whoever adds it remembers to.
-    const envEntries: Array<[string, string]> = [
-      ['CANOPYCMS_WORKSPACE_ROOT', EFS_MOUNT_PATH],
-      ['CANOPYCMS_GITHUB_OWNER', props.githubOwner],
-      ['CANOPYCMS_GITHUB_REPO', props.githubRepo],
+    //
+    // Each also names the process that reads it under the split. The worker
+    // gets only what it needs to find the repository and the workspace; every
+    // secret, every name of one (ARNs, JSON fields, the App's ids), what
+    // reaches AWS, and what only the gateway enforces go to gateway.env, which
+    // the worker cannot read. The single-process unit's .env gets all of them.
+    const envEntries: Array<[string, string, EnvReader]> = [
+      ['CANOPYCMS_WORKSPACE_ROOT', EFS_MOUNT_PATH, 'worker'],
+      ['CANOPYCMS_GITHUB_OWNER', props.githubOwner, 'both'],
+      ['CANOPYCMS_GITHUB_REPO', props.githubRepo, 'both'],
       // The SAME string the Lambda's environment gets above, including an
       // `environment.CANOPYCMS_DEPLOYMENT_NAME` override - the two halves
       // resolve one settings branch (`canopycms-settings-<name>`) between them,
       // and disagreeing here is what the runtime warning detects.
-      ['CANOPYCMS_DEPLOYMENT_NAME', deploymentName],
+      ['CANOPYCMS_DEPLOYMENT_NAME', deploymentName, 'worker'],
       // The AWS SDK JS v3 cannot resolve a region from IMDS on its own - without
-      // this the worker's bare `SecretsManagerClient({})` crash-loops with
-      // "Region is missing".
-      ['AWS_REGION', Stack.of(this).region],
+      // this a bare `SecretsManagerClient({})` crash-loops with "Region is
+      // missing".
+      ['AWS_REGION', Stack.of(this).region, 'gateway'],
     ]
     if (baseBranch !== undefined) {
-      envEntries.push(['CANOPYCMS_BASE_BRANCH', baseBranch])
+      // The worker syncs it; the gateway never pushes it.
+      envEntries.push(['CANOPYCMS_BASE_BRANCH', baseBranch, 'both'])
     }
     if (props.githubTokenSecretArn) {
-      envEntries.push(['CANOPYCMS_GITHUB_TOKEN_SECRET_ARN', props.githubTokenSecretArn])
+      envEntries.push(['CANOPYCMS_GITHUB_TOKEN_SECRET_ARN', props.githubTokenSecretArn, 'gateway'])
     }
     // The JSON-field vars need NO IAM change, and that is not an oversight: a
     // field is a key inside a secret's value, not a separately grantable
     // resource. `secretsmanager:GetSecretValue` on the secret -- already granted
-    // above from the same ARN prop -- returns the whole document, and the worker
+    // above from the same ARN prop -- returns the whole document, and the gateway
     // picks the field out of it in `getSecret` (worker/secrets.ts).
     if (props.githubTokenSecretJsonField) {
       envEntries.push([
         'CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD',
         props.githubTokenSecretJsonField,
+        'gateway',
       ])
     }
     // GitHub App credentials, stamped individually even though
@@ -1813,44 +1805,61 @@ export class CanopyCmsService extends Construct {
     // future prop added to the App set then cannot be silently dropped by a
     // condition that names only its siblings.
     if (props.githubAppId) {
-      envEntries.push(['CANOPYCMS_GITHUB_APP_ID', props.githubAppId])
+      envEntries.push(['CANOPYCMS_GITHUB_APP_ID', props.githubAppId, 'gateway'])
     }
     if (props.githubAppInstallationId) {
-      envEntries.push(['CANOPYCMS_GITHUB_APP_INSTALLATION_ID', props.githubAppInstallationId])
+      envEntries.push([
+        'CANOPYCMS_GITHUB_APP_INSTALLATION_ID',
+        props.githubAppInstallationId,
+        'gateway',
+      ])
     }
     if (props.githubAppPrivateKeySecretArn) {
       envEntries.push([
         'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN',
         props.githubAppPrivateKeySecretArn,
+        'gateway',
       ])
     }
     if (props.githubAppPrivateKeySecretJsonField) {
       envEntries.push([
         'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD',
         props.githubAppPrivateKeySecretJsonField,
+        'gateway',
       ])
     }
     if (props.clerkSecretKeySecretArn) {
-      envEntries.push(['CLERK_SECRET_KEY_SECRET_ARN', props.clerkSecretKeySecretArn])
+      envEntries.push(['CLERK_SECRET_KEY_SECRET_ARN', props.clerkSecretKeySecretArn, 'gateway'])
     }
     if (props.clerkSecretKeySecretJsonField) {
-      envEntries.push(['CLERK_SECRET_KEY_SECRET_JSON_FIELD', props.clerkSecretKeySecretJsonField])
+      envEntries.push([
+        'CLERK_SECRET_KEY_SECRET_JSON_FIELD',
+        props.clerkSecretKeySecretJsonField,
+        'gateway',
+      ])
     }
     if (workerCapacity.type === 'spot') {
-      envEntries.push([WORKER_CAPACITY_ENV, 'spot'])
+      // The termination watch is the gateway's.
+      envEntries.push([WORKER_CAPACITY_ENV, 'spot', 'gateway'])
     }
     if (settingsBranch !== undefined) {
       // Only when explicitly set - an absent prop must keep today's behavior
       // (the worker falls through to the computed `canopycms-settings-<name>`),
       // so this must never stamp an empty string either way.
-      envEntries.push(['CANOPYCMS_SETTINGS_BRANCH', settingsBranch])
+      envEntries.push(['CANOPYCMS_SETTINGS_BRANCH', settingsBranch, 'worker'])
     }
     if (protectedBranches.length > 0) {
-      envEntries.push(['CANOPYCMS_PROTECTED_BRANCHES', protectedBranches.join(',')])
+      // Only the gateway enforces it, and a split worker refuses it.
+      envEntries.push(['CANOPYCMS_PROTECTED_BRANCHES', protectedBranches.join(','), 'gateway'])
     }
-    const envFileContent = envEntries
-      .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
-      .join('\n')
+    const envFile = (readers: readonly EnvReader[]) =>
+      envEntries
+        .filter(([, , reader]) => readers.includes(reader))
+        .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
+        .join('\n')
+    const singleProcessEnv = envFile(['worker', 'gateway', 'both'])
+    const workerEnv = envFile(['worker', 'both'])
+    const gatewayEnv = envFile(['gateway', 'both'])
     // After assertEnvSafe, whose leading-quote refusal is the more specific.
     if (settingsBranch !== undefined) assertGatewayBranchName('settingsBranch', settingsBranch)
 
@@ -2002,87 +2011,112 @@ export class CanopyCmsService extends Construct {
       '# runtime here still needs it.',
       `echo '{"type":"module"}' > /opt/canopy-worker/package.json`,
       '',
-      '# Write environment file for systemd service',
-      `cat > /opt/canopy-worker/.env << 'ENVEOF'`,
-      envFileContent,
-      'ENVEOF',
+      '# The units, chosen by the contract the bundle states in its first',
+      `# lines (\`${WORKER_CONTRACT_BANNER_PREFIX}<n>\`), read after the sha256 check above,`,
+      '# so it is as trusted as the bundle. A bundle at the split contract or',
+      '# later gets the split: a worker with no network and no secret, and the',
+      '# GitHub gateway holding them. An older one gets the single unit it was',
+      '# built for: the split would cut it off from GitHub. Every bundle roll',
+      '# replaces the instance, so each boot matches its own bundle.',
+      'WORKER_BUNDLE_CONTRACT=$(head -n 5 /opt/canopy-worker/index.js |',
+      `  sed -n 's|^${WORKER_CONTRACT_BANNER_PREFIX}\\([0-9]\\{1,4\\}\\)$|\\1|p' | head -n 1 || true)`,
+      `if [ "\${WORKER_BUNDLE_CONTRACT:-0}" -ge ${GATEWAY_SPLIT_CONTRACT} ]; then`,
+      '  WORKER_SPLIT=1',
       '',
-      '# Create systemd service',
-      `cat > /etc/systemd/system/canopy-worker.service << 'SVCEOF'`,
-      '[Unit]',
-      'Description=CanopyCMS Worker Daemon',
-      'After=network.target',
-      '# Never run against an unmounted /mnt/efs (see the fstab note above).',
-      `RequiresMountsFor=${EFS_MOUNT_PATH}`,
+      '  # No core dumps on this instance. A piped core_pattern hands a crashing',
+      "  # process's memory and environment to a root helper, which journals",
+      "  # the environment where the worker's groups can read it; the gateway",
+      '  # refuses to start unless this holds. systemd-sysctl has already run',
+      '  # by now, so the file is applied here as well as at every boot.',
+      '  # fb_tunnels_only_for_init_net keeps fallback tunnel devices out of',
+      "  # the worker's network namespace, which must hold only lo.",
+      "  cat > /etc/sysctl.d/99-canopy.conf << 'SYSCTLEOF'",
+      'kernel.core_pattern = core',
+      'fs.suid_dumpable = 0',
+      'net.core.fb_tunnels_only_for_init_net = 1',
+      'SYSCTLEOF',
+      '  sysctl -q -p /etc/sysctl.d/99-canopy.conf',
+      '  # PID 1 otherwise gives every service an unlimited core limit, so',
+      '  # core_pattern=core would leave core files from any crashing daemon.',
+      '  mkdir -p /etc/systemd/system.conf.d',
+      "  printf '[Manager]\\nDefaultLimitCORE=0\\n' > /etc/systemd/system.conf.d/canopy.conf",
       '',
-      '[Service]',
-      'Type=simple',
-      'User=ec2-user',
-      'WorkingDirectory=/opt/canopy-worker',
-      '# Namespaced binary, not bare `node`: AL2023 points /usr/bin/node at',
-      '# an installed version through `alternatives`, and AWS documents that',
-      '# selection as able to change at any time. node-22 always means 22.',
-      'ExecStart=/usr/bin/node-22 index.js',
-      'Restart=always',
-      'RestartSec=5',
-      'TimeoutStartSec=300',
-      '# Stopping drains: SIGTERM reaches node ONLY (mixed), so the git',
-      '# children it waits for keep running. Whatever is left when node',
-      '# exits, or at TimeoutStopSec, is SIGKILLed; 120s outlasts the 90s',
-      '# drain and its abort grace.',
-      'KillMode=mixed',
-      'TimeoutStopSec=120',
-      '# A worker that drained for an instance termination exits with this;',
-      '# restarting it would start work on an instance about to disappear.',
-      `RestartPreventExitStatus=${EXIT_DRAINED_FOR_TERMINATION}`,
-      `SuccessExitStatus=${EXIT_DRAINED_FOR_TERMINATION}`,
-      '# File output, not journal: the CloudWatch agent cannot read journald,',
-      '# so it tails this file instead (see the agent config below).',
-      '# systemd opens append: targets as root, following symlinks, before it',
-      '# applies the sandbox or drops to User=. So the worker must own neither',
-      '# the file nor its directory: one that could swap worker.log for a',
-      '# symlink would have its output appended to any file on the host as root.',
-      '# Hence no LogsDirectory=, which chowns the directory to User=; user-data',
-      '# creates both, root-owned, before the first start. The worker writes',
-      '# through the descriptor systemd hands it.',
-      'StandardOutput=append:/var/log/canopy-worker/worker.log',
-      'StandardError=append:/var/log/canopy-worker/worker.log',
-      '# The private GitHub mirror, /var/lib/canopy-worker on the root volume:',
-      '# the only git repository the GitHub credential is used in. The worker',
-      '# does not start without it.',
-      'StateDirectory=canopy-worker',
-      'EnvironmentFile=/opt/canopy-worker/.env',
-      '# What this unit provides; a bundle needing more refuses to start.',
-      `Environment=${WORKER_CONTRACT_ENV}=${WORKER_CONTRACT_VERSION}`,
-      '# Sandbox. Writable: the workspace, the state dir (StateDirectory=) and a',
-      '# private /tmp.',
-      '# ProtectHome=tmpfs, not yes: every git call reads per-user files under',
-      '# $HOME (~/.config/git/attributes, ignore), and an inaccessible /home',
-      '# makes each read warn "Permission denied"; an empty one is a silent',
-      '# ENOENT.',
-      ...WORKER_SANDBOX_DIRECTIVES,
-      `ReadWritePaths=${EFS_MOUNT_PATH}`,
+      "  # The gateway's user: a system account, so its uid is stable and",
+      "  # gateway.env can be its group's before the service first runs.",
+      `  getent passwd ${GATEWAY_USER} >/dev/null ||`,
+      `    useradd --system --no-create-home --shell /sbin/nologin ${GATEWAY_USER}`,
       '',
-      '[Install]',
-      'WantedBy=multi-user.target',
+      "  # The worker's environment: nothing secret.",
+      `  cat > ${WORKER_INSTALL_DIR}/.env << '${ENV_HEREDOC_DELIMITER}'`,
+      workerEnv,
+      ENV_HEREDOC_DELIMITER,
+      "  # The gateway's: the secrets' names. Created with its mode and group",
+      '  # before anything is written to it, so it is never world-readable.',
+      `  install -m 0640 -o root -g ${GATEWAY_USER} /dev/null ${WORKER_INSTALL_DIR}/gateway.env`,
+      `  cat > ${WORKER_INSTALL_DIR}/gateway.env << '${ENV_HEREDOC_DELIMITER}'`,
+      gatewayEnv,
+      ENV_HEREDOC_DELIMITER,
+      '',
+      "  cat > /etc/systemd/system/canopy-worker.service << 'SVCEOF'",
+      ...workerUnit('split'),
       'SVCEOF',
+      "  cat > /etc/systemd/system/canopy-github.service << 'SVCEOF'",
+      ...gatewayUnit(),
+      'SVCEOF',
+      "  cat > /etc/systemd/system/canopy-github.socket << 'SVCEOF'",
+      ...gatewaySocketUnit(),
+      'SVCEOF',
+      '',
+      '  # The gateway log, root-owned for the reason the worker log is (see the',
+      '  # units), and readable by root alone.',
+      `  install -d -o root -g root -m 0755 ${GATEWAY_LOG_DIR}`,
+      `  install -o root -g root -m 0640 /dev/null ${GATEWAY_LOG}`,
+      '',
+      '  # canopy-inspect: the one safe way for an operator to look at EFS (run',
+      '  # it as root). It runs each command as the worker does, inside the',
+      "  # worker unit's sandbox; a root or unsandboxed shell on EFS can be made",
+      '  # to run what the CMS Lambda wrote there.',
+      `  cat > ${CANOPY_INSPECT} << 'INSPEOF'`,
+      ...canopyInspectScript(),
+      'INSPEOF',
+      `  cat > ${INSPECT_CHECKS} << 'INSPEOF'`,
+      ...inspectChecksScript(),
+      'INSPEOF',
+      `  cat > ${INSPECT_RC} << 'INSPEOF'`,
+      ...inspectRc(),
+      'INSPEOF',
+      `  chmod 0755 ${CANOPY_INSPECT} ${INSPECT_CHECKS}`,
+      'else',
+      '  WORKER_SPLIT=0',
+      `  cat > ${WORKER_INSTALL_DIR}/.env << '${ENV_HEREDOC_DELIMITER}'`,
+      singleProcessEnv,
+      ENV_HEREDOC_DELIMITER,
+      "  cat > /etc/systemd/system/canopy-worker.service << 'SVCEOF'",
+      ...workerUnit('single-process'),
+      'SVCEOF',
+      'fi',
       '',
       '# The worker log, root-owned (see the unit), and created BEFORE the first',
       '# systemctl start: without the directory the append: open fails with',
       '# 209/STDOUT and Restart=always crash-loops forever. 0644, so it stays',
       '# readable without sudo.',
-      'install -d -o root -g root -m 0755 /var/log/canopy-worker',
-      'install -o root -g root -m 0644 /dev/null /var/log/canopy-worker/worker.log',
+      `install -d -o root -g root -m 0755 ${WORKER_LOG_DIR}`,
+      `install -o root -g root -m 0644 /dev/null ${WORKER_LOG}`,
       '',
       '# In the worker log format (canopycms worker/log.ts), so the CloudWatch',
       '# agent ships it as its own event: the agent reads a file it has no saved',
       '# position for from the start (its `from_beginning` defaults to true).',
       'if [ "$WORKER_UNPATCHED" = 1 ]; then',
-      `  echo "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ) ERROR canopy-worker boot: 'dnf upgrade' failed; ${WORKER_UNPATCHED_LOG_PHRASE}" >> /var/log/canopy-worker/worker.log`,
+      `  echo "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ) ERROR canopy-worker boot: 'dnf upgrade' failed; ${WORKER_UNPATCHED_LOG_PHRASE}" >> ${WORKER_LOG}`,
       'fi',
       '',
-      '# Start worker',
+      '# Start the units; daemon-reload also reads the core-limit drop-in. The',
+      '# gateway first, so its secret reads and first GitHub fetch start before',
+      "# the worker's first call.",
       'systemctl daemon-reload',
+      'if [ "$WORKER_SPLIT" = 1 ]; then',
+      '  systemctl enable --now canopy-github.socket canopy-github.service',
+      'fi',
       'systemctl enable canopy-worker',
       'systemctl start canopy-worker',
       '',
@@ -2107,7 +2141,7 @@ export class CanopyCmsService extends Construct {
       '# Bound on-disk growth; copytruncate keeps the fd the CW agent tails valid',
       '# (tiny copy->truncate loss window is acceptable for diagnostic logs).',
       `cat > /etc/logrotate.d/canopy-worker << 'ROTEOF'`,
-      '/var/log/canopy-worker/worker.log {',
+      `${WORKER_LOG} ${GATEWAY_LOG} {`,
       '    size 10M',
       '    rotate 5',
       '    compress',
@@ -2129,26 +2163,33 @@ export class CanopyCmsService extends Construct {
       '    "logs_collected": {',
       '      "files": {',
       '        "collect_list": [',
-      '          {',
-      '            "file_path": "/var/log/canopy-worker/worker.log",',
-      `            "log_group_name": "${this.workerLogGroup.logGroupName}",`,
-      '            "log_stream_name": "{instance_id}",',
-      // The worker prefixes every line with an ISO-8601 timestamp
-      // (packages/canopycms/src/worker/log.ts). Parsing it here is what makes
-      // CloudWatch show the time the WORKER emitted a line rather than the
-      // time the agent shipped it - those diverge exactly when it matters
-      // (agent hiccup, buffered burst, post-restart backlog).
-      '            "timestamp_format": "%Y-%m-%dT%H:%M:%S.%f",',
-      // The prefix ends in `Z`, so the parsed time is UTC. Without this the
-      // agent would interpret it in the instance's local zone.
-      '            "timezone": "UTC",',
-      // "{timestamp_format}" reuses the pattern above as the multi-line start
-      // marker: a line WITHOUT the timestamp prefix continues the previous
-      // event instead of becoming its own. That is what keeps a stack trace as
-      // one CloudWatch event, and why every writer to this file must go
-      // through the worker log helpers.
-      '            "multi_line_start_pattern": "{timestamp_format}"',
-      '          }',
+      ...[
+        { file: WORKER_LOG, stream: '{instance_id}' },
+        // The gateway's own record of what reached GitHub, which the worker
+        // cannot write.
+        { file: GATEWAY_LOG, stream: '{instance_id}-gateway' },
+      ].flatMap(({ file, stream }, i, all) => [
+        '          {',
+        `            "file_path": "${file}",`,
+        `            "log_group_name": "${this.workerLogGroup.logGroupName}",`,
+        `            "log_stream_name": "${stream}",`,
+        // Both prefix every line with an ISO-8601 timestamp
+        // (packages/canopycms/src/worker/log.ts). Parsing it here is what makes
+        // CloudWatch show the time the process emitted a line rather than the
+        // time the agent shipped it - those diverge exactly when it matters
+        // (agent hiccup, buffered burst, post-restart backlog).
+        '            "timestamp_format": "%Y-%m-%dT%H:%M:%S.%f",',
+        // The prefix ends in `Z`, so the parsed time is UTC. Without this the
+        // agent would interpret it in the instance's local zone.
+        '            "timezone": "UTC",',
+        // "{timestamp_format}" reuses the pattern above as the multi-line start
+        // marker: a line WITHOUT the timestamp prefix continues the previous
+        // event instead of becoming its own. That is what keeps a stack trace as
+        // one CloudWatch event, and why every writer to these files must go
+        // through the worker log helpers.
+        '            "multi_line_start_pattern": "{timestamp_format}"',
+        i < all.length - 1 ? '          },' : '          }',
+      ]),
       '        ]',
       '      }',
       '    }',

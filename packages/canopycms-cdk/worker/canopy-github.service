@@ -1,0 +1,81 @@
+[Unit]
+Description=CanopyCMS GitHub gateway
+After=network.target canopy-github.socket
+Requires=canopy-github.socket
+# Mounted before this unit sets up its namespace, so the mount is what
+# InaccessiblePaths= hides, and a later mount cannot propagate over it.
+RequiresMountsFor=/mnt/efs
+# A boot or prepare() that fails holds its cause for the worker for 60s,
+# then exits 1. Restarting it is how a transient cause recovers, so
+# systemd never gives up on it. systemd 252 has no growing RestartSec
+# (RestartSteps= came in 254); the hold paces it to about once a minute.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=canopy-github
+Group=canopy-github
+WorkingDirectory=/opt/canopy-worker
+ExecStart=/usr/bin/node-22 index.js gateway
+# Descriptor 3, owned by the worker user, so only it and root connect.
+Sockets=canopy-github.socket
+Restart=always
+RestartSec=5
+# Stopping drains: answers new requests "stopping", lets those under way
+# finish for up to 60s, then exits. SIGTERM reaches node only (mixed);
+# a running fetch job is SIGKILLed with the cgroup when node exits.
+KillMode=mixed
+TimeoutStopSec=150
+# File output, not journal: the CloudWatch agent cannot read journald,
+# so it tails this file instead.
+# systemd opens append: targets as root, following symlinks, before it
+# applies the sandbox or drops to User=. So the service must own neither
+# the file nor its directory: one that could swap the file for a symlink
+# would have its output appended to any file on the host as root.
+# Hence no LogsDirectory=, which chowns the directory to User=. Both are
+# created root-owned before the first start (user-data does), since
+# without the directory the start fails with 209/STDOUT. The service
+# writes through the descriptor systemd hands it.
+StandardOutput=append:/var/log/canopy-github/gateway.log
+StandardError=append:/var/log/canopy-github/gateway.log
+# The private GitHub mirror and the per-command credential files. 0700:
+# the default 0755 would let the worker's user read both.
+StateDirectory=canopy-github
+StateDirectoryMode=0700
+# 0640 root:canopy-github: the secrets, unreadable to the worker.
+EnvironmentFile=/opt/canopy-worker/gateway.env
+# What this unit provides; a bundle needing more refuses to start.
+Environment=CANOPYCMS_WORKER_CONTRACT=2
+# Sandbox. Writable: the state dir and a private /tmp. No view of EFS,
+# which the gateway checks at boot, as it checks that cores are not
+# piped to a helper and that its core limit is zero.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+InaccessiblePaths=/mnt/efs
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+PrivateIPC=yes
+InaccessiblePaths=-/run/dbus
+InaccessiblePaths=-/dev/shm
+InaccessiblePaths=-/var/log/journal
+InaccessiblePaths=-/run/log/journal
+SystemCallFilter=@system-service
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

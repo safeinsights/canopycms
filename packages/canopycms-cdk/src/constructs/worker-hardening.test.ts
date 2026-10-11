@@ -563,10 +563,12 @@ describe('the worker systemd unit is sandboxed', () => {
   })
 
   it("leaves the worker's own code read-only", () => {
-    for (const unit of [lines(template), checkedIn]) {
-      const writable = unit.filter((l) => l.startsWith('ReadWritePaths='))
-      expect(writable).toEqual(['ReadWritePaths=/mnt/efs'])
-    }
+    // User data writes two worker units, the split one and the single-process one.
+    const deployed = lines(template).filter((l) => l.startsWith('ReadWritePaths='))
+    expect(deployed).toEqual(['ReadWritePaths=/mnt/efs', 'ReadWritePaths=/mnt/efs'])
+    expect(checkedIn.filter((l) => l.startsWith('ReadWritePaths='))).toEqual([
+      'ReadWritePaths=/mnt/efs',
+    ])
   })
 
   // systemd opens the append: log as root, following symlinks, before the

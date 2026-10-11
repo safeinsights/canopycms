@@ -233,7 +233,13 @@ async function standInHealth(h: Harness): Promise<GitHubGatewayHealth> {
 }
 
 describe('failedGateway: the stand-in a failed boot serves', () => {
-  const standIn = failedGateway('the cause')
+  const notice = { kind: 'auto-scaling', reason: 'scale-in' } as const
+  const instance = {
+    termination: vi.fn(async () => notice),
+    completeLifecycle: vi.fn(async () => undefined),
+  }
+  const standIn = failedGateway('the cause', instance)
+  const instanceOperations = ['termination', 'completeLifecycle']
 
   it('answers health with the cause and nothing ready', async () => {
     await expect(standIn.health()).resolves.toEqual({
@@ -246,25 +252,34 @@ describe('failedGateway: the stand-in a failed boot serves', () => {
   })
 
   // Called directly: over a socket the server's own prepare gate rejects most of these first.
-  it.each(Object.keys(standIn).filter((name) => name !== 'health'))(
-    'rejects %s with the cause, as a plain error with no status',
-    async (name) => {
-      const operation = (standIn as unknown as Record<string, () => Promise<unknown>>)[name]
+  it.each(
+    Object.keys(standIn).filter((name) => name !== 'health' && !instanceOperations.includes(name)),
+  )('rejects %s with the cause, as a plain error with no status', async (name) => {
+    const operation = (standIn as unknown as Record<string, () => Promise<unknown>>)[name]
 
-      const rejection: unknown = await operation().then(
-        () => undefined,
-        (err: unknown) => err,
-      )
+    const rejection: unknown = await operation().then(
+      () => undefined,
+      (err: unknown) => err,
+    )
 
-      expect(rejection).toBeInstanceOf(Error)
-      expect(rejection).toMatchObject({
-        message: 'the cause',
-        name: 'GitHubGatewayNotStartedError',
-      })
-      expect(rejection).not.toHaveProperty('status')
-      expect(isPermanentTaskFailure(rejection)).toBe(false)
-    },
-  )
+    expect(rejection).toBeInstanceOf(Error)
+    expect(rejection).toMatchObject({
+      message: 'the cause',
+      name: 'GitHubGatewayNotStartedError',
+    })
+    expect(rejection).not.toHaveProperty('status')
+    expect(isPermanentTaskFailure(rejection)).toBe(false)
+  })
+
+  it('answers the instance operations through the instance it is given', async () => {
+    const signal = new AbortController().signal
+
+    await expect(standIn.termination(signal)).resolves.toEqual(notice)
+    await expect(standIn.completeLifecycle(signal)).resolves.toBeUndefined()
+
+    expect(instance.termination).toHaveBeenCalledWith(signal)
+    expect(instance.completeLifecycle).toHaveBeenCalledWith(signal)
+  })
 })
 
 describe('runGateway: a healthy boot on a token', () => {
@@ -282,6 +297,8 @@ describe('runGateway: a healthy boot on a token', () => {
     await runGateway(h.deps)
 
     expect(h.order).toEqual(['self-checks', 'getSecret', 'createGateway'])
+    // Told the descriptor, whose socket's owner the gateway must not be.
+    expect(h.deps.gatewaySelfChecks).toHaveBeenCalledWith({ fd: 3 })
     expect(h.createGateway).toHaveBeenCalledTimes(1)
     const options = h.options()
     expect(options).toMatchObject({
@@ -780,7 +797,7 @@ describe('over a real socket', () => {
     await vi.waitFor(() => expect(h.exitCodes()).toEqual([0]))
   })
 
-  it('serves a stand-in for a failed boot that answers health and fails everything else as transient', async () => {
+  it('serves a stand-in for a failed boot that answers health and fails the GitHub operations as transient', async () => {
     const { env, socketPath } = socketEnv()
     const h = harness({
       env,
@@ -801,12 +818,7 @@ describe('over a real socket', () => {
     expect(health.fatalError).toContain('efs-unreadable: it can read /mnt/efs')
 
     const rejections = await Promise.all(
-      [
-        () => client.defaultBranch(),
-        () => client.termination(),
-        () => client.completeLifecycle(),
-        () => client.authSnapshot(),
-      ].map((call) =>
+      [() => client.defaultBranch(), () => client.authSnapshot()].map((call) =>
         call().then(
           () => undefined,
           (err: unknown) => err,
@@ -824,5 +836,59 @@ describe('over a real socket', () => {
     h.hold.resolve()
     await running
     expect(h.exitCodes()).toEqual([0])
+  })
+
+  describe('the stand-in, asked for the instance operations by a worker that may be hostile', () => {
+    /** A failed boot served on a path, with `watch` as the instance's termination watch. */
+    async function standInServed(watch: RunGatewayDeps['watchForTermination']) {
+      const { env, socketPath } = socketEnv()
+      const h = harness({
+        env: { ...env, [WORKER_CAPACITY_ENV]: 'spot' },
+        serve: serveGitHubGateway,
+        gatewaySelfChecks: async () => [{ check: 'core-limit', ok: false, detail: 'unlimited' }],
+        watchForTermination: vi.fn(watch),
+      })
+      const running = runGateway(h.deps)
+      await vi.waitFor(async () => {
+        await fs.stat(socketPath)
+      })
+      const stop = async () => {
+        h.signals.get('SIGTERM')?.()
+        await vi.waitFor(() => expect(h.exitCodes()).toEqual([0]))
+        h.hold.resolve()
+        await running
+      }
+      return { h, client: connectGitHubGateway(socketPath), stop }
+    }
+
+    it('answers its own watch’s notice and completes the lifecycle action once, whatever the calls', async () => {
+      const { h, client, stop } = await standInServed(async () => ({
+        kind: 'auto-scaling',
+        reason: 'scale-in',
+      }))
+
+      expect(await client.termination()).toEqual({ kind: 'auto-scaling', reason: 'scale-in' })
+      await Promise.all([client.completeLifecycle(), client.completeLifecycle()])
+      await client.completeLifecycle()
+
+      expect(h.deps.watchForTermination).toHaveBeenCalledWith({ watchSpot: true })
+      expect(h.deps.watchForTermination).toHaveBeenCalledTimes(1)
+      expect(h.deps.completeTerminationLifecycleAction).toHaveBeenCalledTimes(1)
+      await stop()
+    })
+
+    it('refuses to complete the lifecycle action on any notice but its own Auto Scaling one', async () => {
+      const { h, client, stop } = await standInServed(async () => ({
+        kind: 'spot',
+        reason: 'spot interruption',
+      }))
+
+      const refusal: unknown = await client.completeLifecycle().catch((err: unknown) => err)
+
+      expect(refusal).toBeInstanceOf(Error)
+      expect((refusal as Error).message).toMatch(/seen no Auto Scaling termination/)
+      expect(h.deps.completeTerminationLifecycleAction).not.toHaveBeenCalled()
+      await stop()
+    })
   })
 })

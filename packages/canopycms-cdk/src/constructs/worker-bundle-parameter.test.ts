@@ -235,9 +235,8 @@ describe('the bundle the npm package ships', () => {
         scripts: Record<string, string>
       }
     ).scripts['build:worker']
-    const target = '--outfile=worker/dist/index.js'
-    expect(script).toContain(target)
-    execFileSync('sh', ['-c', script.replace(target, `--outfile=${outfile}`)], {
+    expect(script).toBe('node --import tsx worker/build.ts')
+    execFileSync('sh', ['-c', `${script} ${outfile}`], {
       cwd: PACKAGE_ROOT,
       env: {
         ...process.env,

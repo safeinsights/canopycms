@@ -34,6 +34,8 @@ import {
 } from '../src/constructs/worker-lifecycle'
 import {
   GATEWAY_AWAY_KEEP_MS,
+  LIFECYCLE_ATTEMPTS,
+  LIFECYCLE_RETRY_WINDOW_MS,
   isRecentGatewayFatal,
   pollGatewayForTermination,
   readGitHubAppEnv,
@@ -253,6 +255,9 @@ function harness(overrides: Partial<RunWorkerDeps> & { env?: NodeJS.ProcessEnv }
     workerSelfChecks: selfChecks,
     writeAuthSnapshot,
     sleep: async () => {},
+    // The single-process path most of these tests drive, which only a bundle below the split
+    // contract runs; the split's tests set the socket variable, which selects the split at any.
+    bundleContract: GATEWAY_SPLIT_CONTRACT - 1,
     ...overrides,
   }
   return {
@@ -384,13 +389,21 @@ describe('runWorker: a failure before worker.start()', () => {
     expect(h.createWorker).not.toHaveBeenCalled()
   })
 
-  it('runs an unstamped unit that has StateDirectory= as contract 1', async () => {
+  it('reads an unstamped unit that has StateDirectory= as contract 1, which the split refuses', async () => {
     const h = harness({ env: envWithout(WORKER_CONTRACT_ENV) })
 
     await runWorker(h.deps)
 
-    expect(h.record).not.toHaveBeenCalled()
-    expect(h.start).toHaveBeenCalled()
+    expect(h.record).toHaveBeenCalledWith({
+      workspacePath: WORKSPACE,
+      error: expect.objectContaining({
+        message: expect.stringContaining(
+          `unit has 1 (contract 2 adds canopy-github.socket and canopy-github.service, and ` +
+            `${GITHUB_GATEWAY_SOCKET_ENV} on the worker unit)`,
+        ),
+      }),
+    })
+    expect(h.start).not.toHaveBeenCalled()
   })
 
   it('refuses a unit stamped below the bundle, whatever else it provides', async () => {
@@ -922,7 +935,7 @@ describe('runWorker: split mode', () => {
       expect(h.record).toHaveBeenCalledWith({
         workspacePath: WORKSPACE,
         error: away,
-        keepRecordedFatal: isRecentGatewayFatal,
+        keepRecordedFatal: expect.any(Function),
       })
       expect(h.exitCodes()).toEqual([1])
     })
@@ -938,7 +951,7 @@ describe('runWorker: split mode', () => {
       expect(h.record).toHaveBeenCalledWith({
         workspacePath: WORKSPACE,
         error: expect.any(GitHubGatewayUnreachableError),
-        keepRecordedFatal: isRecentGatewayFatal,
+        keepRecordedFatal: expect.any(Function),
       })
     })
 
@@ -1007,11 +1020,59 @@ describe('runWorker: split mode', () => {
         { message: 'The GitHub gateway could not start: App 401', phase: 'run', ageMs: 1_000 },
         false,
       ],
+      [
+        "the gateway's fatal error, recorded in the future",
+        { message: 'The GitHub gateway could not start: App 401', phase: 'startup', ageMs: -1_000 },
+        false,
+      ],
     ])('keeps, for an unreachable gateway, %s: %s', (_case, { message, phase, ageMs }, kept) => {
       const now = Date.parse('2026-10-11T12:00:00.000Z')
       const at = new Date(now - ageMs).toISOString()
 
       expect(isRecentGatewayFatal({ message, phase, at }, now)).toBe(kept)
+    })
+
+    it('keeps no gateway fatal error whose time cannot be read', () => {
+      const now = Date.parse('2026-10-11T12:00:00.000Z')
+
+      expect(
+        isRecentGatewayFatal(
+          { message: 'The GitHub gateway could not start: App 401', phase: 'startup', at: 'soon' },
+          now,
+        ),
+      ).toBe(false)
+    })
+
+    it('measures the window to when this worker began waiting for the gateway, not to when the wait ended', async () => {
+      const recordedAt = Date.parse('2026-10-11T12:00:00.000Z')
+      const waitStart = recordedAt + 60_000
+      vi.useFakeTimers({ toFake: ['Date'] })
+      try {
+        vi.setSystemTime(waitStart)
+        const h = harness({ env: splitEnv() })
+        // The gateway answers nothing for the client's whole wait, longer than the window.
+        h.gateway.health.mockImplementation(async () => {
+          vi.setSystemTime(waitStart + GATEWAY_AWAY_KEEP_MS + 60_000)
+          throw new GitHubGatewayUnreachableError(
+            'The GitHub gateway did not answer health in time',
+          )
+        })
+
+        await runWorker(h.deps)
+
+        const { keepRecordedFatal } = h.record.mock.calls[0][0] as {
+          keepRecordedFatal: (recorded: { message: string; phase: string; at: string }) => boolean
+        }
+        expect(
+          keepRecordedFatal({
+            message: 'The GitHub gateway could not start: App 401',
+            phase: 'startup',
+            at: new Date(recordedAt).toISOString(),
+          }),
+        ).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it('refuses a gateway that answers without being ready or failed', async () => {
@@ -1087,8 +1148,9 @@ describe('runWorker: split mode', () => {
       expect(h.exitCodes()).toEqual([EXIT_DRAINED_FOR_TERMINATION])
     })
 
-    it('exits after the drain even when the gateway cannot complete the lifecycle', async () => {
-      const h = harness({ env: splitEnv() })
+    it('exits after the drain once the gateway has refused to complete the lifecycle for the whole retry window', async () => {
+      const sleep = vi.fn(async (_ms: number) => {})
+      const h = harness({ env: splitEnv(), sleep })
       h.gateway.termination.mockResolvedValueOnce({
         kind: 'auto-scaling',
         reason: 'Auto Scaling is terminating',
@@ -1096,10 +1158,28 @@ describe('runWorker: split mode', () => {
       h.gateway.completeLifecycle.mockRejectedValue(new Error('the gateway is stopping'))
 
       await runWorker(h.deps)
-      await flush()
+      await vi.waitFor(() => expect(h.exitCodes()).toEqual([EXIT_DRAINED_FOR_TERMINATION]))
 
-      expect(h.gateway.completeLifecycle).toHaveBeenCalledTimes(1)
-      expect(h.exitCodes()).toEqual([EXIT_DRAINED_FOR_TERMINATION])
+      expect(h.gateway.completeLifecycle).toHaveBeenCalledTimes(LIFECYCLE_ATTEMPTS)
+      expect(LIFECYCLE_ATTEMPTS * 5_000).toBe(LIFECYCLE_RETRY_WINDOW_MS)
+      expect(sleep.mock.calls.filter(([ms]) => ms === 5_000)).toHaveLength(LIFECYCLE_ATTEMPTS - 1)
+    })
+
+    it('retries completing the lifecycle through a gateway that restarted, and exits once it has', async () => {
+      const h = harness({ env: splitEnv() })
+      h.gateway.termination.mockResolvedValueOnce({
+        kind: 'auto-scaling',
+        reason: 'Auto Scaling is terminating',
+      })
+      h.gateway.completeLifecycle
+        .mockRejectedValueOnce(new Error('Could not reach the GitHub gateway'))
+        .mockRejectedValueOnce(new Error('seen no Auto Scaling termination'))
+        .mockResolvedValueOnce(undefined)
+
+      await runWorker(h.deps)
+      await vi.waitFor(() => expect(h.exitCodes()).toEqual([EXIT_DRAINED_FOR_TERMINATION]))
+
+      expect(h.gateway.completeLifecycle).toHaveBeenCalledTimes(3)
     })
 
     it('drains and exits 0 on SIGTERM', async () => {
