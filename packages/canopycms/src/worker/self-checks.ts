@@ -57,8 +57,27 @@ const IMDS_CONNECT_TIMEOUT_MS = 1_000
 /** Connect failures that prove no route: no network, or no IPv4 sockets at all. */
 const NO_ROUTE_CODES = new Set(['ENETUNREACH', 'EAFNOSUPPORT'])
 
-/** The variables that hold a secret, or name one (ARNs, JSON fields), and belong to the gateway. */
+/**
+ * The variables that hold a secret, or name one (ARNs, JSON fields), and belong to the gateway:
+ * CanopyCMS's GitHub and Clerk settings.
+ */
 const SECRET_ENV_PATTERN = /^(?:CANOPYCMS_GITHUB_TOKEN|CANOPYCMS_GITHUB_APP_|CLERK_SECRET_KEY)/
+
+/**
+ * Credentials any tool the worker runs would pick up from its environment: git's and gh's GitHub
+ * tokens (`GITHUB_BOT_TOKEN` is canopycms's default `githubTokenEnvVar`) and the AWS SDK's static
+ * credentials. Exact names, so a look-alike such as `GITHUB_TOKEN_PATH` passes. `CLERK_JWT_KEY` is
+ * not here: it is a public verification key.
+ */
+const AMBIENT_CREDENTIAL_ENV_NAMES = new Set([
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GITHUB_BOT_TOKEN',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'AWS_SECURITY_TOKEN',
+])
 
 /** The worker unit's checks, in the plan's order. */
 export async function workerSelfChecks(
@@ -220,13 +239,18 @@ export async function homeIsEmpty(
 
 /**
  * No GitHub or Clerk secret, nor the ARN or JSON field naming one, is in the worker's environment:
- * they belong to the gateway's env file. Names only are reported.
+ * they belong to the gateway's env file. Nor is a credential its tools would pick up on their
+ * own (git's and gh's tokens, the AWS SDK's static credentials). Names only are reported.
  * @internal Exported for tests.
  */
 export function noSecretsInEnv(environment: SelfCheckEnvironment = {}): SelfCheckResult {
   const env = environment.env ?? process.env
   const found = Object.keys(env)
-    .filter((key) => env[key] !== undefined && SECRET_ENV_PATTERN.test(key))
+    .filter(
+      (key) =>
+        env[key] !== undefined &&
+        (SECRET_ENV_PATTERN.test(key) || AMBIENT_CREDENTIAL_ENV_NAMES.has(key)),
+    )
     .sort()
   const ok = found.length === 0
   return {
@@ -234,7 +258,7 @@ export function noSecretsInEnv(environment: SelfCheckEnvironment = {}): SelfChec
     ok,
     detail: ok
       ? 'none'
-      : `the worker unit's environment holds ${found.join(', ')}, which belong to the GitHub gateway only`,
+      : `the worker unit's environment holds ${found.join(', ')}, which the worker must not hold`,
   }
 }
 
