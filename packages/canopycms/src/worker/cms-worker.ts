@@ -70,6 +70,8 @@ export { workerLog, workerLogWarn, workerLogError, installWorkerLogger } from '.
 // see github-auth.ts) and needs the shape to inject and the key normalizer to
 // apply.
 export {
+  // The gateway process resolves its credential from its own config.
+  resolveWorkerGitHubAuth,
   normalizeGitHubAppPrivateKey,
   DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS,
   DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS,
@@ -81,6 +83,7 @@ export {
 // two processes serves the in-process gateway on a socket in one, and connects to it in the other.
 export {
   createLocalGitHubGateway,
+  type GatewayTerminationNotice,
   type GitHubGateway,
   type GitHubGatewayHealth,
   type LocalGitHubGatewayOptions,
@@ -94,6 +97,15 @@ export {
   type GitHubGatewayServerOptions,
 } from './github-gateway-http'
 export { GitHubGatewayUnreachableError } from './github-gateway-wire'
+// The gateway process's scrubbed log lines, and the exact scrubs for the secrets it holds that
+// are not GitHub tokens (the auth provider's key, the App's private key).
+export {
+  gatewayLog,
+  gatewayLogWarn,
+  gatewayLogError,
+  registerSecretText,
+  registerPrivateKey,
+} from './gateway-egress'
 // The boot self-checks the split entrypoint runs in each role (.claude/future-tasks/
 // worker-shared-repo-git-process-split.md §5).
 export {
@@ -129,6 +141,13 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
    * write to it.
    */
   stateDirectory?: string
+  /**
+   * A GitHub gateway to use instead of building the in-process one: a client of a gateway another
+   * process serves (`connectGitHubGateway`), which holds the credential, the protected set and the
+   * mirror. Exclusive with `githubToken`, `githubAppAuth`, `refreshGitHubToken` and
+   * `protectedBranches`, which configure the in-process one.
+   */
+  githubGateway?: GitHubGateway
   /** GitHub owner (e.g., 'acme') */
   githubOwner: string
   /** GitHub repo name (e.g., 'site') */
@@ -238,7 +257,11 @@ function sameRefs(a: Map<string, string>, b: Map<string, string>): boolean {
   return a.size === b.size && [...a].every(([ref, id]) => b.get(ref) === id)
 }
 
-const DEFAULT_TASK_TIMEOUT = 60_000
+/**
+ * The default `taskTimeoutMs`. Exported because a split worker's gateway client passes it as its
+ * `fetchInactivityMs` and the gateway uses it as its `timeoutMs`, as the in-process gateway does.
+ */
+export const DEFAULT_TASK_TIMEOUT = 60_000
 const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_LOCK_STALE_MS = 60_000
 /**
@@ -1460,7 +1483,24 @@ export class CmsWorker {
    * test installed.
    */
   private github(): GitHubGateway {
-    this.gateway ??= createLocalGitHubGateway(this.localGitHubGatewayOptions())
+    if (this.gateway !== undefined) return this.gateway
+    const { githubGateway } = this.config
+    if (githubGateway === undefined) {
+      this.gateway = createLocalGitHubGateway(this.localGitHubGatewayOptions())
+      return this.gateway
+    }
+    const conflicting: string[] = []
+    if (this.config.githubToken) conflicting.push('githubToken')
+    if (this.config.githubAppAuth !== undefined) conflicting.push('githubAppAuth')
+    if (this.config.refreshGitHubToken !== undefined) conflicting.push('refreshGitHubToken')
+    if ((this.config.protectedBranches?.length ?? 0) > 0) conflicting.push('protectedBranches')
+    if (conflicting.length > 0) {
+      throw new Error(
+        `CmsWorker: githubGateway is exclusive with ${conflicting.join(', ')}, which configure the ` +
+          'in-process gateway; the gateway it is given holds the credential and the protected set',
+      )
+    }
+    this.gateway = githubGateway
     return this.gateway
   }
 
