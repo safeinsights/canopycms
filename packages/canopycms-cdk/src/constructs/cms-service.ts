@@ -268,6 +268,11 @@ function assertValidProtectedBranches(entries: readonly string[]): string[] {
     if (entry.length > 255) reject('it is longer than 255 characters')
     if (!/^[\x20-\x7e]*$/.test(entry)) reject('it is not printable ASCII')
     if (/["%{}]/.test(entry)) reject('it contains ", %, { or }')
+    if (entry.includes('*') && entry.startsWith('canopycms-settings-')) {
+      reject(
+        'the worker never lets a glob match a settings branch, so this one would match nothing',
+      )
+    }
     if (/^(?:refs|heads|tags|remotes)\//i.test(entry)) {
       reject("it starts with 'refs/', 'heads/', 'tags/' or 'remotes/'")
     }

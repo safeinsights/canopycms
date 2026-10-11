@@ -2554,6 +2554,7 @@ describe('CanopyCmsService: protectedBranches', () => {
     ['a question mark', 'release-?', /\?/],
     ['a leading refs/', 'refs/heads/main', /refs\//],
     ['a leading heads/', 'heads/main', /heads\//],
+    ['a glob only settings branches could match', 'canopycms-settings-*', /match nothing/],
     ['a leading tags/', 'tags/*', /tags\//],
     ['a leading remotes/ in another case', 'Remotes/x', /remotes\//],
     ['a percent sign', 'a%2fb', /%/],

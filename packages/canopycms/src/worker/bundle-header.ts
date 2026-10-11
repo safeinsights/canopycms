@@ -187,7 +187,8 @@ export class BundleHeaderReader {
       )
     }
     if (room > 0 && this.comments === 'shorten') {
-      const kept = bytes.subarray(0, room)
+      // A copy: a view would keep the whole chunk it came from alive.
+      const kept = Buffer.from(bytes.subarray(0, room))
       comment.kept.push(kept)
       this.keptBytes += kept.length
     }

@@ -72,6 +72,7 @@ describe('protectedPatternProblem', () => {
     ['a reflog selector', 'a@{1}'],
     ['a trailing slash', 'release/'],
     ['an empty entry', ''],
+    ['a glob only settings branches could match', 'canopycms-settings-*'],
   ])('refuses %s', (_label, pattern) => {
     expect(protectedPatternProblem(pattern)).not.toBeNull()
   })

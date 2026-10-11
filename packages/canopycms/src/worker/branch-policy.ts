@@ -93,6 +93,9 @@ export function protectedPatternProblem(pattern: string): string | null {
   if (pattern.startsWith('/') || pattern.endsWith('/') || pattern.endsWith('.')) {
     return "it starts or ends with '/', or ends with '.'"
   }
+  if (pattern.includes('*') && pattern.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
+    return `a glob never matches a settings branch, so one starting ${RESERVED_SETTINGS_BRANCH_PREFIX} matches nothing`
+  }
   return null
 }
 
