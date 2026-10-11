@@ -224,7 +224,7 @@ matching: search your AI config for each reference field's name.
 ### AI content leaves out `noindex` entries — **behaviour change for `/ai` output**
 
 **What changed.** (next) AI content, built or served, leaves out entries marked `noindex`, through
-the sitemap's predicate. A body `entry:` link to any left-out entry renders as plain text.
+the sitemap's predicate. An inline `entry:` link to any left-out entry renders as plain text.
 
 **To adopt.** To keep them, set `exclude: { noindex: false }`. For nested or renamed SEO fields, set
 the AI config's `seo` to your sitemap's. A plain-URL link into a hidden section needs a

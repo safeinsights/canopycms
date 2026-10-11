@@ -80,7 +80,7 @@ export interface GenerateResult {
  *
  * A reference or body `entry:` link may only show a target that is itself exported, so every
  * entry is read and filtered first, which settles the exported set. Only then are body links
- * resolved, references to anything outside the set masked, entry transforms run, and markdown
+ * resolved for output, references to anything outside the set masked, entry transforms run, and markdown
  * rendered, in rounds that repeat while a render fails (see the loop below).
  */
 export async function generateAIContent(options: GenerateOptions): Promise<GenerateResult> {
@@ -399,7 +399,7 @@ function emitCollection(node: CollectionNode, files: Map<string, string>): AIMan
 /**
  * Refuse an `exclude.noindex` or `seo` the noindex gate would misread. A non-boolean
  * `noindex: 'false'` would leave the gate on while the adopter believes it is off, and a
- * misshapen `seo` reads no flag at all, so every noindex entry ships.
+ * misshapen `seo` reads the flag from a field no entry sets, so every noindex entry ships.
  */
 function assertValidNoindexConfig(config: AIContentConfig | undefined): void {
   const noindex: unknown = config?.exclude?.noindex

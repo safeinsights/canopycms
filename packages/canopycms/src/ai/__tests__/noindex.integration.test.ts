@@ -48,7 +48,7 @@ async function idOf(store: ContentStore, slug: string): Promise<string> {
 }
 
 /**
- * `stub` is noindex, `custom` sets only `hideFromSearch`, `broken` fails to render in one test, and `overview` links to each of them from its body and fields.
+ * `stub` is noindex, `custom` sets only `hideFromSearch`, `broken` fails to render in one test, and `overview` links to `stub`, `internal`, `broken` and `basics` from its body and to `stub` from `related`.
  */
 async function setup(root: string) {
   const store = new ContentStore(root, flat)
