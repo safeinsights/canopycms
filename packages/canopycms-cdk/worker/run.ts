@@ -427,10 +427,12 @@ async function buildSingleProcessWorker(
 /**
  * How long a split worker keeps asking the gateway to complete the lifecycle action after its
  * drain: past a gateway's restart (its 60 s hold, `RestartSec=` and its boot), so a gateway that
- * exited meanwhile still completes it. A refusal or a failed call is retried after
+ * exited meanwhile still completes it. With the drain and its abort grace it fits within the
+ * shortest lifecycle heartbeat the construct allows (`MIN_WORKER_TERMINATION_HEARTBEAT`), after
+ * which termination continues without it. A refusal or a failed call is retried after
  * {@link LIFECYCLE_RETRY_MS}, at most {@link LIFECYCLE_ATTEMPTS} times in all.
  */
-export const LIFECYCLE_RETRY_WINDOW_MS = 150_000
+export const LIFECYCLE_RETRY_WINDOW_MS = 110_000
 const LIFECYCLE_RETRY_MS = 5_000
 export const LIFECYCLE_ATTEMPTS = LIFECYCLE_RETRY_WINDOW_MS / LIFECYCLE_RETRY_MS
 

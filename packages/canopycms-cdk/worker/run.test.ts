@@ -11,6 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  DEFAULT_DRAIN_DEADLINE_MS,
   DEFAULT_TASK_TIMEOUT,
   GitHubGatewayUnreachableError,
   recordWorkerStartupFailure,
@@ -32,6 +33,9 @@ import {
   WORKER_CONTRACT_VERSION,
   unitWorkerContract,
 } from '../src/constructs/worker-lifecycle'
+import { MIN_WORKER_TERMINATION_HEARTBEAT } from '../src/constructs/cms-service'
+import { workerUnit } from '../src/constructs/worker-units'
+import { FAILED_BOOT_HOLD_MS } from './gateway-run'
 import {
   GATEWAY_AWAY_KEEP_MS,
   LIFECYCLE_ATTEMPTS,
@@ -1163,6 +1167,22 @@ describe('runWorker: split mode', () => {
       expect(h.gateway.completeLifecycle).toHaveBeenCalledTimes(LIFECYCLE_ATTEMPTS)
       expect(LIFECYCLE_ATTEMPTS * 5_000).toBe(LIFECYCLE_RETRY_WINDOW_MS)
       expect(sleep.mock.calls.filter(([ms]) => ms === 5_000)).toHaveLength(LIFECYCLE_ATTEMPTS - 1)
+    })
+
+    it('fits the drain and the retry window inside the shortest lifecycle heartbeat, and the drain inside the unit stop timeout', () => {
+      // The drain, its abort grace (core's ABORT_GRACE_MS) and the retries all run while Auto
+      // Scaling holds the instance; past the heartbeat termination continues anyway.
+      const abortGraceMs = 5_000
+      expect(DEFAULT_DRAIN_DEADLINE_MS + abortGraceMs + LIFECYCLE_RETRY_WINDOW_MS).toBeLessThan(
+        MIN_WORKER_TERMINATION_HEARTBEAT.toMilliseconds(),
+      )
+      // A gateway restart: its failed-boot hold, RestartSec=5 and a boot.
+      expect(LIFECYCLE_RETRY_WINDOW_MS).toBeGreaterThan(FAILED_BOOT_HOLD_MS + 5_000 + 30_000)
+      // A systemd stop (SIGTERM) runs the drain alone, inside the unit's TimeoutStopSec.
+      const stopSec = workerUnit('split')
+        .find((line) => line.startsWith('TimeoutStopSec='))
+        ?.slice('TimeoutStopSec='.length)
+      expect(Number(stopSec) * 1000).toBeGreaterThan(DEFAULT_DRAIN_DEADLINE_MS + abortGraceMs)
     })
 
     it('retries completing the lifecycle through a gateway that restarted, and exits once it has', async () => {
