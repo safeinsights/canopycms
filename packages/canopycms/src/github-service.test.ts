@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   GitHubService,
   createGitHubService,
+  authorizationOf,
   createCanopyOctokit,
   shouldRetryRateLimit,
   shouldRetrySecondaryRateLimit,
@@ -723,6 +724,65 @@ describe('GitHubService', () => {
       expect(createCanopyOctokit({ auth: 'test-token' }).log.warn).not.toBe(warn)
     })
 
+    it("tells an observer of each request's authorization header, and still sends the request", async () => {
+      const fetchStub = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ default_branch: 'main' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      )
+      vi.stubGlobal('fetch', fetchStub)
+      const onAuthorization = vi.fn()
+      try {
+        const octokit = createCanopyOctokit({ auth: 'test-token' }, undefined, { onAuthorization })
+        const { data } = await octokit.repos.get({ owner: 'o', repo: 'r' })
+
+        expect(data.default_branch).toBe('main')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+
+      expect(onAuthorization).toHaveBeenCalledTimes(1)
+      expect(onAuthorization).toHaveBeenCalledWith('token test-token')
+      expect(fetchStub).toHaveBeenCalledTimes(1)
+    })
+
+    it('tells an observer of a token an auth strategy sets on every request', async () => {
+      const tokens = ['ghs_first', 'ghs_second']
+      const strategy = vi.fn(() =>
+        Object.assign(async () => ({ token: tokens[0] }), {
+          hook: (
+            request: (options: Record<string, unknown>) => Promise<unknown>,
+            options: { headers: Record<string, string> },
+          ) =>
+            request({
+              ...options,
+              headers: { ...options.headers, authorization: `token ${tokens.shift()}` },
+            }),
+        }),
+      )
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }),
+        ),
+      )
+      const onAuthorization = vi.fn()
+      try {
+        const octokit = createCanopyOctokit({ authStrategy: strategy, auth: {} }, undefined, {
+          onAuthorization,
+        })
+        await octokit.repos.get({ owner: 'o', repo: 'r' })
+        await octokit.repos.get({ owner: 'o', repo: 'r' })
+      } finally {
+        vi.unstubAllGlobals()
+      }
+
+      expect(onAuthorization.mock.calls).toEqual([['token ghs_first'], ['token ghs_second']])
+    })
+
     it('authenticates with the bare token when one is given', async () => {
       const octokit = createCanopyOctokit({ auth: 'test-token' })
       await expect(octokit.auth()).resolves.toMatchObject({
@@ -771,6 +831,31 @@ describe('GitHubService', () => {
       // are unaffected by the auth shape.
       expect(octokit.pulls).toBeDefined()
     })
+  })
+})
+
+describe('authorizationOf', () => {
+  it.each([
+    ['a plain object', { authorization: 'token t0', accept: 'x' }],
+    ['a plain object with another case', { Authorization: 'token t0' }],
+    ['a Headers', new Headers({ Authorization: 'token t0' })],
+    [
+      'a list of pairs',
+      [
+        ['Accept', 'x'],
+        ['authorization', 'token t0'],
+      ],
+    ],
+  ] as [string, HeadersInit][])('reads it from %s', (_label, headers) => {
+    expect(authorizationOf(headers)).toBe('token t0')
+  })
+
+  it.each([
+    ['no headers', undefined],
+    ['none carried', { accept: 'x' }],
+    ['an empty Headers', new Headers()],
+  ])('finds none in %s', (_label, headers) => {
+    expect(authorizationOf(headers as HeadersInit | undefined)).toBeUndefined()
   })
 })
 

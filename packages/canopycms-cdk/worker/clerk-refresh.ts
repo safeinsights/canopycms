@@ -10,13 +10,18 @@
  * making `refreshAuthCache()` propagate — see
  * `.claude/future-tasks/refresh-auth-cache-error-handling.md`.
  *
+ * The same gate serves the GitHub gateway process, which holds the key and
+ * hands the snapshot to the worker (`createClerkSnapshotFetcher`); the worker
+ * writes it, so the fetch and the write are separate halves.
+ *
  * Split out of `index.ts` so it can be imported by a test at all: `index.ts`
  * ends in `main().catch(...)`, so importing it RUNS the worker. Same split, and
  * same reason, as `secrets.ts` and `github-app-auth.ts`.
  */
 
 import { workerLog, workerLogWarn, workerLogError } from 'canopycms/worker/cms-worker'
-import { refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
+import { fetchClerkSnapshot, refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
+import type { AuthCacheSnapshot } from 'canopycms/auth/cache'
 import { getErrorMessage, redactCredentials } from 'canopycms/utils/error'
 
 import type { ReactiveSecret } from './credential-refresh'
@@ -53,6 +58,70 @@ function isClerkAuthRejection(err: unknown): boolean {
   if (typeof err !== 'object' || err === null || !('status' in err)) return false
   const status = (err as { status: unknown }).status
   return status === 401 || status === 403
+}
+
+/** Where the retry gate's lines go: the worker's loggers, or the gateway's scrubbing ones. */
+export interface ClerkRefreshLog {
+  warn: (...args: unknown[]) => void
+  error: (...args: unknown[]) => void
+}
+
+const WORKER_LOG: ClerkRefreshLog = { warn: workerLogWarn, error: workerLogError }
+
+/**
+ * Run `attempt` with `key`, and on a Clerk rejection of it retry ONCE with the key re-read from
+ * `secret`. Both halves of the refresh share this, so the gate above exists once.
+ */
+async function withKeyReread<T>(
+  secret: ReactiveSecret,
+  key: string,
+  log: ClerkRefreshLog,
+  attempt: (secretKey: string) => Promise<T>,
+): Promise<T> {
+  try {
+    return await attempt(key)
+  } catch (err) {
+    if (!isClerkAuthRejection(err)) throw err
+
+    // The re-read is best-effort, and its own failure must NEVER replace the
+    // Clerk rejection being handled. Without the inner try, an IAM policy
+    // narrowed after boot turns every tick into an AccessDeniedException and
+    // the 401 that actually explains the stale cache is never logged - at the
+    // default 15-minute auth-cache interval, indefinitely, since every tick
+    // clears the reader's own 5-minute floor and re-attempts the read. Core's
+    // GitHub gateway keeps a failed GitHub re-read from replacing the failure
+    // it follows for the same reason; this is the Clerk half of it.
+    let rotated: string | undefined
+    try {
+      rotated = await secret.refresh()
+    } catch (refreshErr) {
+      // [REDACT] `getSecret`'s messages carry key NAMES, never values -- but
+      // this line is one edit away from carrying a value, and the rule in
+      // this repo is uniform rather than case-by-case. Note it is not
+      // sufficient on its own: a Clerk `sk_live_…` matches none of
+      // redactCredentials' current rules (see
+      // .claude/future-tasks/refresh-auth-cache-error-handling.md).
+      log.error(
+        'Failed to re-read the Clerk secret key after Clerk rejected it:',
+        redactCredentials(getErrorMessage(refreshErr)),
+      )
+      throw err
+    }
+
+    // `undefined` means nothing to do -- no ARN, re-read too recently, or a
+    // value identical to the one Clerk just refused. In all three the retry
+    // below cannot succeed, so rethrow the original rejection rather than
+    // paying for a second guaranteed failure.
+    if (rotated === undefined) throw err
+
+    log.warn(
+      'Clerk rejected the secret key; the key in Secrets Manager has since changed. Retrying with it.',
+    )
+    // ONCE. A second rejection is the new key's problem and belongs in the
+    // log as a plain failure -- retrying around the re-read would turn a
+    // wrong key into a loop over Clerk's entire user list.
+    return await attempt(rotated)
+  }
 }
 
 export interface ClerkRefresherOptions {
@@ -97,49 +166,37 @@ export function createClerkAuthCacheRefresher(
     const key = secret.current()
     if (!key) return
 
-    try {
-      await refreshWith(key)
-    } catch (err) {
-      if (!isClerkAuthRejection(err)) throw err
+    await withKeyReread(secret, key, WORKER_LOG, refreshWith)
+  }
+}
 
-      // The re-read is best-effort, and its own failure must NEVER replace the
-      // Clerk rejection being handled. Without the inner try, an IAM policy
-      // narrowed after boot turns every tick into an AccessDeniedException and
-      // the 401 that actually explains the stale cache is never logged - at the
-      // default 15-minute auth-cache interval, indefinitely, since every tick
-      // clears the reader's own 5-minute floor and re-attempts the read. Core's
-      // GitHub gateway keeps a failed GitHub re-read from replacing the failure
-      // it follows for the same reason; this is the Clerk half of it.
-      let rotated: string | undefined
-      try {
-        rotated = await secret.refresh()
-      } catch (refreshErr) {
-        // [REDACT] `getSecret`'s messages carry key NAMES, never values -- but
-        // this line is one edit away from carrying a value, and the rule in
-        // this repo is uniform rather than case-by-case. Note it is not
-        // sufficient on its own: a Clerk `sk_live_…` matches none of
-        // redactCredentials' current rules (see
-        // .claude/future-tasks/refresh-auth-cache-error-handling.md).
-        workerLogError(
-          'Failed to re-read the Clerk secret key after Clerk rejected it:',
-          redactCredentials(getErrorMessage(refreshErr)),
-        )
-        throw err
-      }
+export interface ClerkSnapshotFetcherOptions {
+  /** The Clerk secret key, re-readable when Clerk rejects it. */
+  secret: ReactiveSecret
+  /** Default: the worker's loggers. The gateway passes its own, which scrub. */
+  log?: ClerkRefreshLog
+}
 
-      // `undefined` means nothing to do -- no ARN, re-read too recently, or a
-      // value identical to the one Clerk just refused. In all three the retry
-      // below cannot succeed, so rethrow the original rejection rather than
-      // paying for a second guaranteed failure.
-      if (rotated === undefined) throw err
+/**
+ * Build the gateway's `authSnapshot` provider, or `undefined` when no Clerk key is configured
+ * (the gateway then reports `clerkConfigured: false` and the worker schedules no auth-cache
+ * loop). The same gate as {@link createClerkAuthCacheRefresher}, around the fetch alone: the
+ * worker writes what it returns.
+ */
+export function createClerkSnapshotFetcher(
+  options: ClerkSnapshotFetcherOptions,
+): (() => Promise<AuthCacheSnapshot>) | undefined {
+  const { secret } = options
+  const log = options.log ?? WORKER_LOG
+  if (!secret.current()) return undefined
 
-      workerLogWarn(
-        'Clerk rejected the secret key; the key in Secrets Manager has since changed. Retrying with it.',
-      )
-      // ONCE. A second rejection is the new key's problem and belongs in the
-      // log as a plain failure -- retrying around the re-read would turn a
-      // wrong key into a loop over Clerk's entire user list.
-      await refreshWith(rotated)
-    }
+  const fetchWith = (secretKey: string): Promise<AuthCacheSnapshot> =>
+    fetchClerkSnapshot({ secretKey, useOrganizationsAsGroups: true, warn: log.warn })
+
+  return async () => {
+    // Per call, like the refresher's: the key may have rotated since the last one.
+    const key = secret.current()
+    if (!key) throw new Error('No Clerk secret key is configured')
+    return withKeyReread(secret, key, log, fetchWith)
   }
 }

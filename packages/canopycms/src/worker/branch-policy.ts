@@ -93,8 +93,10 @@ export function protectedPatternProblem(pattern: string): string | null {
   if (pattern.startsWith('/') || pattern.endsWith('/') || pattern.endsWith('.')) {
     return "it starts or ends with '/', or ends with '.'"
   }
-  if (pattern.includes('*') && pattern.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
-    return `a glob never matches a settings branch, so one starting ${RESERVED_SETTINGS_BRANCH_PREFIX} matches nothing`
+  if (pattern.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
+    return pattern.includes('*')
+      ? `a glob never matches a settings branch, so one starting ${RESERVED_SETTINGS_BRANCH_PREFIX} matches nothing`
+      : "a settings branch is pushed plainly every sync, so protecting it would stop this deployment's settings reaching GitHub"
   }
   return null
 }
@@ -119,6 +121,12 @@ export function matchesBranchPattern(pattern: string, name: string): boolean {
   }
   return true
 }
+
+/**
+ * The most `protectedBranches` entries a policy takes. The wire answer lists them plus the base
+ * branch (`describe()`), so its bound is one above this.
+ */
+export const MAX_PROTECTED_BRANCHES = 1024
 
 export interface BranchPolicyOptions {
   /** The configured base branch (`CANOPYCMS_BASE_BRANCH`); never one read from the workspace. */
@@ -158,6 +166,11 @@ export class BranchPolicy {
   constructor(options: BranchPolicyOptions = {}) {
     this.now = options.now ?? (() => Date.now())
     const entries = [...(options.protectedBranches ?? [])]
+    if (entries.length > MAX_PROTECTED_BRANCHES) {
+      throw new Error(
+        `protectedBranches has ${entries.length} entries; the most it takes is ${MAX_PROTECTED_BRANCHES}`,
+      )
+    }
     for (const entry of entries) {
       const problem = protectedPatternProblem(entry)
       if (problem !== null) {

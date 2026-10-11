@@ -1192,9 +1192,78 @@ the drain mapping, deadlines, and the self-check helpers.
   unless `net.core.fb_tunnels_only_for_init_net` is set, which would refuse a correctly cut worker.
   Check `/proc/self/net/dev` under the real unit on AL2023; set the sysctl in user-data, or let the
   check pass those devices, if it shows them.
-- Open, for the manager: the secret check matches the plan's three prefixes; `GH_TOKEN`,
-  `GITHUB_TOKEN` and AWS credentials in a hand unit's environment pass it. `health`'s
-  `protectedBranches.configured` crosses only up to 1024 entries.
+- Ruled by the coordinator for PR 5 (2026-10-11):
+  - the fb tunnels go to PR 6 (above);
+  - the worker's secret check also refuses `GH_TOKEN`, `GITHUB_TOKEN`, `GITHUB_BOT_TOKEN` and the
+    AWS SDK's static credentials;
+  - a failed `prepare()` serves its fatal error through `health` for 60 s, which the worker records
+    as `lastFatalError`, then exits 1, as a failed boot does, so systemd's restart reads the secrets
+    afresh; `prepare` fails only on lasting causes (this replaces an earlier "stays up");
+  - SIGTERM drains with a finite grace, then exits;
+  - synth and the gateway's boot refuse more than 1024 `protectedBranches` entries.
+
+**Carried from 5** (entry roles):
+- Settled in 5:
+  - `canopycms-cdk/worker/index.ts` runs the worker with no argument and the gateway
+    (`gateway-run.ts`) with `gateway`. The worker runs split when `CANOPYCMS_GITHUB_GATEWAY_SOCKET`
+    is set, and refuses its absence from `GATEWAY_SPLIT_CONTRACT` (2) on; below it, absent is
+    today's single process.
+  - Self-checks are fatal in both roles, and run after the unit's contract check and before the
+    repository settings; the gateway's run before any secret is read.
+  - The gateway listens on fd 3 when `LISTEN_FDS` is set, which must be 1 with `LISTEN_PID` naming
+    it, or it exits 1 at once; without it, on the socket variable's path (development).
+  - `prepare`'s fatal set: an App preflight failure that does not look transient, a state directory
+    inside the workspace (checked only in-process: the gateway process has no workspace), and one
+    the gateway cannot create or does not own outright. Creating the mirror only warns, since every
+    session retries it.
+  - A boot that fails before the real gateway is served (self-checks, configuration, a secret read,
+    building the gateway: an unusable App key, a refused protected set) serves a stand-in that
+    answers `health` with the scrubbed cause and fails every other operation as a status-less
+    (transient) error. It and a failed `prepare()` take one path: answer the cause for 60 s, drain,
+    exit 1. A worker that finds the gateway away meanwhile (unreachable, or no `health` answer
+    within 300 s) exits 1, leaving in place the gateway's own fatal error if it recorded one in
+    the last 5 minutes, and recording the unreachable gateway otherwise. That window cannot cover
+    the 300 s timeout path ([worker-gateway-away-keep-window.md](worker-gateway-away-keep-window.md)).
+  - The gateway's SIGTERM: `drain(60 s)`, then exit 0. A running fetch job is not waited for; the
+    cgroup kill takes it.
+  - Three gateway operations: `authSnapshot` (D7: the gateway fetches with the Clerk key behind
+    today's 401/403 gate, the worker writes with core's `writeAuthSnapshot`), `termination` (a poll
+    of the gateway's own IMDS watch, ≤ 25 s) and `completeLifecycle`. The last two skip the prepare
+    gate, take no identifier, and never arm the GitHub re-read; `completeLifecycle` is refused
+    unless the gateway's own watch sees an Auto Scaling notice (a restarted gateway watches first,
+    for up to 10 s), and runs once. `authSnapshot` is one fetch for concurrent callers, answered
+    again for 60 s after a success, so a worker asking in a loop runs one fetch at a time.
+  - A token minted or rotated is registered for the exact scrub as Octokit sends it (its
+    `request.fetch`) and after a token-path re-read. The App key is scrubbed line by line, as read
+    and normalized, and the Clerk key as each value is handed out.
+  - `clerkConfigured` is whether the gateway has a Clerk key. The worker's client waits for fetch
+    progress for its task timeout.
+  - `CmsWorkerConfig.githubGateway` takes the client; it refuses a credential or `protectedBranches`
+    beside it, and a split worker unit refuses `CANOPYCMS_PROTECTED_BRANCHES`, which only the
+    gateway enforces.
+- Deviations: `refreshClerkCache` keeps its shape, and the write half is core's `writeAuthSnapshot`
+  in `canopycms/auth/cache` rather than a Clerk `writeClerkSnapshot`.
+- PR 6:
+  - the gateway unit's `StartLimitIntervalSec`/`StartLimitBurst` and `RestartSec` must let the
+    60 s hold, exit 1 and restart (of a failed boot or a failed `prepare()`) repeat indefinitely,
+    perhaps with a growing `RestartSec`, without systemd giving up for good on a transient cause;
+  - `TimeoutStopSec` stays above the 60 s drain plus exit, and `KillMode` stays `mixed`;
+  - `ExecStart=… index.js gateway`; `gateway.env` carries the owner, repo, base branch,
+    `CANOPYCMS_PROTECTED_BRANCHES`, `CANOPYCMS_WORKER_CAPACITY`, the contract stamp and the secrets;
+    the worker unit carries `CANOPYCMS_GITHUB_GATEWAY_SOCKET` and none of them;
+  - the failed-boot stand-in refuses `termination` and `completeLifecycle`, so a terminating instance
+    whose gateway is crash-looping (a narrowed IAM policy) waits out the lifecycle heartbeat; decide
+    whether the stand-in may serve the instance operations (they need only the instance role);
+  - a gateway whose `prepare()` fails exits after its hold even while a running worker drains
+    through it, so the worker's one `completeLifecycle` can miss; bind the worker unit to the
+    gateway's (`BindsTo=`), or retry `completeLifecycle` within the heartbeat;
+  - nothing checks that the gateway runs as a user other than the worker's: a hand unit missing
+    `User=canopy-github` passes every self-check while the worker can read its environment. A
+    gateway self-check refusing to run as the socket node's owner (`fstat` of fd 3) closes it.
+- Open: the auth snapshot's missing backoff after a failure, and its 64 MiB answer bound
+  ([gateway-auth-snapshot-limits.md](gateway-auth-snapshot-limits.md)).
+- Open: dev still leaves a running fetch job behind on Ctrl-C
+  ([worker-mirror-detached-work-drain.md](worker-mirror-detached-work-drain.md), item 1).
 
 ## 9. Residual risks, and the Security Model afterwards
 

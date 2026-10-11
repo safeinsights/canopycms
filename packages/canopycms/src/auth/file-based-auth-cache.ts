@@ -236,6 +236,28 @@ export async function writeAuthCacheSnapshot(
   return snapshotDir
 }
 
+/** One auth provider's users, groups and memberships: what an auth-cache refresh writes. */
+export interface AuthCacheSnapshot {
+  users: UserSearchResult[]
+  groups: GroupMetadata[]
+  memberships: Record<CanopyUserId, CanopyGroupId[]>
+}
+
+/** Write `snapshot` as the three files FileBasedAuthCache reads (users.json, orgs.json, memberships.json). */
+export async function writeAuthSnapshot(
+  cachePath: string,
+  snapshot: AuthCacheSnapshot,
+): Promise<string> {
+  const users: CachedUsers = { users: snapshot.users }
+  const groups: CachedGroups = { groups: snapshot.groups }
+  const memberships: CachedMemberships = { memberships: snapshot.memberships }
+  return writeAuthCacheSnapshot(cachePath, {
+    'users.json': users,
+    'orgs.json': groups,
+    'memberships.json': memberships,
+  })
+}
+
 async function cleanupOldSnapshots(cachePath: string, keepCount: number): Promise<void> {
   let entries: string[]
   try {

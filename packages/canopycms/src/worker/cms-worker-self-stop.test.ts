@@ -335,6 +335,60 @@ describe('recordWorkerStartupFailure', () => {
     await expect(fs.access(path.join(taskDir, '.worker-lock'))).rejects.toThrow()
   })
 
+  it('keeps a recorded fatal error the caller accepts, and records one where there is none', async () => {
+    await recordWorkerStartupFailure({
+      workspacePath: tmpDir,
+      error: new Error('The GitHub gateway could not start: App authentication failed'),
+      lockStaleMs: LOCK_STALE_MS,
+    })
+    await recordWorkerStartupFailure({
+      workspacePath: tmpDir,
+      error: new Error('Could not reach the GitHub gateway'),
+      lockStaleMs: LOCK_STALE_MS,
+      keepRecordedFatal: (recorded) => recorded.message.includes('could not start'),
+    })
+
+    const status: WorkerStatusReport = JSON.parse(
+      await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8'),
+    )
+    expect(status.lastFatalError?.message).toContain('App authentication failed')
+
+    const fresh = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-startup-failure-'))
+    try {
+      await recordWorkerStartupFailure({
+        workspacePath: fresh,
+        error: new Error('Could not reach the GitHub gateway'),
+        lockStaleMs: LOCK_STALE_MS,
+        keepRecordedFatal: () => true,
+      })
+      const first: WorkerStatusReport = JSON.parse(
+        await fs.readFile(path.join(fresh, '.tasks', WORKER_STATUS_FILE), 'utf-8'),
+      )
+      expect(first.lastFatalError?.message).toContain('Could not reach the GitHub gateway')
+    } finally {
+      await fs.rm(fresh, { recursive: true, force: true })
+    }
+  })
+
+  it('replaces a recorded fatal error the caller does not accept', async () => {
+    await recordWorkerStartupFailure({
+      workspacePath: tmpDir,
+      error: new Error('CANOPYCMS_PROTECTED_BRANCHES is set on the worker unit'),
+      lockStaleMs: LOCK_STALE_MS,
+    })
+    await recordWorkerStartupFailure({
+      workspacePath: tmpDir,
+      error: new Error('Could not reach the GitHub gateway'),
+      lockStaleMs: LOCK_STALE_MS,
+      keepRecordedFatal: (recorded) => recorded.message.includes('could not start'),
+    })
+
+    const status: WorkerStatusReport = JSON.parse(
+      await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8'),
+    )
+    expect(status.lastFatalError?.message).toContain('Could not reach the GitHub gateway')
+  })
+
   it("leaves a lock alone that looks only just stale, since a live holder's can", async () => {
     await fs.mkdir(taskDir, { recursive: true })
     const lockPath = path.join(taskDir, '.worker-lock')

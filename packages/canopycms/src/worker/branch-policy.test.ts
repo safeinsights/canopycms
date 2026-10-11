@@ -5,6 +5,7 @@ import {
   DEFAULT_BRANCH_TTL_MS,
   GatewayRefusalError,
   MAX_BRANCH_NAME_LENGTH,
+  MAX_PROTECTED_BRANCHES,
   MAX_PULL_REQUEST_BODY_LENGTH,
   MAX_PULL_REQUEST_TITLE_LENGTH,
   branchNameProblem,
@@ -75,6 +76,37 @@ describe('protectedPatternProblem', () => {
     ['a glob only settings branches could match', 'canopycms-settings-*'],
   ])('refuses %s', (_label, pattern) => {
     expect(protectedPatternProblem(pattern)).not.toBeNull()
+  })
+
+  it.each(['canopycms-settings-prod', 'canopycms-settings-'])(
+    'refuses the exact settings entry %s: its plain push every sync would stop',
+    (entry) => {
+      expect(protectedPatternProblem(entry)).toMatch(/settings reaching GitHub/)
+      expect(() => new BranchPolicy({ protectedBranches: [entry] })).toThrow(
+        /Invalid protectedBranches entry .*settings reaching GitHub/,
+      )
+    },
+  )
+
+  it('takes up to MAX_PROTECTED_BRANCHES entries and refuses one more, naming the count', () => {
+    const entries = (count: number) => Array.from({ length: count }, (_, i) => `release/${i}`)
+
+    expect(
+      () =>
+        new BranchPolicy({
+          baseBranch: 'main',
+          protectedBranches: entries(MAX_PROTECTED_BRANCHES),
+        }),
+    ).not.toThrow()
+    expect(
+      new BranchPolicy({
+        baseBranch: 'main',
+        protectedBranches: entries(MAX_PROTECTED_BRANCHES),
+      }).describe().configured,
+    ).toHaveLength(MAX_PROTECTED_BRANCHES + 1)
+    expect(
+      () => new BranchPolicy({ protectedBranches: entries(MAX_PROTECTED_BRANCHES + 1) }),
+    ).toThrow(`${MAX_PROTECTED_BRANCHES + 1} entries`)
   })
 
   it('refuses an invalid entry when the policy is built', () => {

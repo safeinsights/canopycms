@@ -294,12 +294,13 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `lambda/asset-transform/handler.ts` — the transform Lambda behind `/assets/t/*` S3 misses, via `storeTransform`
 - `lambda/asset-transform/build.mjs` — builds that Lambda's code asset without Docker; see [DEVELOPING.md](DEVELOPING.md#building-the-transform-lambda-no-docker)
 - `src/constructs/worker-lifecycle.ts` — names the construct and bundle share, incl. `WORKER_CONTRACT_VERSION`
-- `worker/index.ts` — EC2 worker entrypoint; boots through `worker/run.ts`'s injectable `runWorker`
+- `worker/index.ts` — EC2 entrypoint: the worker (`worker/run.ts`'s `runWorker`), or `gateway`
+- `worker/gateway-run.ts` — `runGateway`, the GitHub gateway process
 - `worker/termination-watch.ts` — instance-termination watch
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction
 - `worker/credential-refresh.ts` — `createReactiveSecret`, re-reads a secret on failure behind a five-minute floor
 - `worker/github-app-auth.ts` — `buildGitHubAppAuth`, the App credential from a key read once at boot
-- `worker/clerk-refresh.ts` — `createClerkAuthCacheRefresher`, re-reads the key and retries once on a Clerk 401/403
+- `worker/clerk-refresh.ts` — `createClerkAuthCacheRefresher`, `createClerkSnapshotFetcher`: one retry on a re-read key after a Clerk 401/403
 - `canary/bin/canary.ts` — sandbox proving ground for `AssetSupport`; see [DEVELOPING.md](DEVELOPING.md#cdk-asset-verification-the-canary-stack)
 - `test-support/test-synth.ts` — `newTestApp`, test-owned synth output; see [DEVELOPING.md](DEVELOPING.md#test-owned-cdk-synth-output-newtestapp)
 - `test-support/synth-leak-guard.ts` — fails a suite that leaves `cdk.out` directories behind in the temp dir

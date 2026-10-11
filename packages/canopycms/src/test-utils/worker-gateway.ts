@@ -197,6 +197,15 @@ class ServedGateway implements GitHubGateway {
   async deleteBranch(...args: Parameters<GitHubGateway['deleteBranch']>) {
     return (await this.client).deleteBranch(...args)
   }
+  async authSnapshot(...args: Parameters<GitHubGateway['authSnapshot']>) {
+    return (await this.client).authSnapshot(...args)
+  }
+  async termination(...args: Parameters<GitHubGateway['termination']>) {
+    return (await this.client).termination(...args)
+  }
+  async completeLifecycle(...args: Parameters<GitHubGateway['completeLifecycle']>) {
+    return (await this.client).completeLifecycle(...args)
+  }
 }
 
 interface WorkerGatewayInternals {
