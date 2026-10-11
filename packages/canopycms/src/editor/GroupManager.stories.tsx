@@ -7,6 +7,7 @@ import type { UserSearchResult } from '../auth/types'
 const meta: Meta<typeof GroupManager> = {
   title: 'Editor/GroupManager',
   component: GroupManager,
+  args: { opened: true, onClose: () => {} },
 }
 
 export default meta

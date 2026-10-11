@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { PathPermission } from '../../config'
 import type { PermissionGroupOption } from '../../auth/types'
@@ -83,13 +83,14 @@ export function usePermissionManager(
   // an unreadable groups.json rendered as a silently empty picker with no
   // warning, which is the same failure class listGroupsHandler's deliberate
   // 500 exists to prevent.
-  const handleListGroups = async () => {
+  // Stable identity: useGroupsAndUsers reloads groups whenever this function changes.
+  const handleListGroups = useCallback(async () => {
     const result = await apiClient.permissions.listGroups()
     if (!result.ok) {
       throw new Error(result.error || 'Failed to load groups')
     }
     return result.data?.groups ?? []
-  }
+  }, [apiClient])
 
   useEffect(() => {
     if (options.isOpen) {

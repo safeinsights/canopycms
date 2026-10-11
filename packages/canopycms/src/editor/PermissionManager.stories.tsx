@@ -9,6 +9,7 @@ import { unsafeAsLogicalPath } from '../paths/test-utils'
 const meta: Meta<typeof PermissionManager> = {
   title: 'Editor/PermissionManager',
   component: PermissionManager,
+  args: { opened: true, onClose: () => {} },
 }
 
 export default meta
