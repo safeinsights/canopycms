@@ -36,3 +36,5 @@ agrees" and both announce, the watcher has a real repeat bug that load exposes.
 Make the resolving writes atomic from the watcher's view, or assert on the
 transition count after the watcher is quiescent rather than after a fixed
 settle.
+
+A second failure mode, on CI 2026-10-10 (PR #504, unit shard 1/3): `expect(syncedCalls(warn).length).toBe(1)` saw 0 within the test's 2000 ms `vi.waitFor`, so the retraction was not announced in time at all. The file was untouched by that PR, the test passed 3 of 3 locally, and a rerun of the failed job was requested.
