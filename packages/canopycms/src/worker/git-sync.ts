@@ -349,7 +349,7 @@ async function reconcileTrackedBranches(
   } catch {
     ownSettingsBranch = undefined
   }
-  let editorWork: EditorWorkSnapshot | undefined
+  let editorWork: Promise<EditorWorkSnapshot> | undefined
   const settle = async (
     name: string,
     from: string,
@@ -357,13 +357,12 @@ async function reconcileTrackedBranches(
   ): Promise<MirrorSettlement> => {
     if (ownSettingsBranch === undefined) return { kind: 'kept', state: 'unresolved-settings' }
     try {
-      editorWork ??= await readEditorWork(ctx)
       return await settleStaleMirror(
         ctx,
         git,
         { name, from, to },
         ownSettingsBranch,
-        editorWork,
+        () => (editorWork ??= readEditorWork(ctx)),
         githubTips.get(ctx.baseBranch) ?? '',
       )
     } catch (err) {

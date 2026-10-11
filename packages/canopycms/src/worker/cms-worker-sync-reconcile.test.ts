@@ -661,6 +661,8 @@ describe('CmsWorker.syncGit() stale branch copies', () => {
     // The repository's packed-refs.lock stops every deletion, so the loop stops at the first.
     await openBareRepo(githubPath).raw(['update-ref', '-d', 'refs/heads/feature-c'])
     await fs.writeFile(path.join(remoteGitPath, 'packed-refs.lock'), '')
+    // Git takes a ref's own lock first, so reaching feature-c would warn that it moved.
+    await fs.writeFile(path.join(remoteGitPath, 'refs', 'heads', 'feature-c.lock'), '')
     const lockedSpy = mockConsole()
     await makeWorker().syncGit()
     await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-a-packed-refs')).resolves.toBe(

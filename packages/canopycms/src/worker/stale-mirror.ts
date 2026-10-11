@@ -110,20 +110,22 @@ export async function settleStaleMirror(
   git: SimpleGit,
   head: { name: string; from: string; to: string | null },
   ownSettingsBranch: string,
-  editorWork: EditorWorkSnapshot,
+  /** This cycle's snapshot, read on first need, so a head kept by name or history never needs it. */
+  editorWork: () => Promise<EditorWorkSnapshot>,
   /** GitHub's base tip, against which a head GitHub no longer has must share history. */
   baseTip: string,
 ): Promise<MirrorSettlement> {
   const { name, from, to } = head
   if (name === ctx.baseBranch) return { kind: 'kept', state: 'base' }
   if (isSettingsBranchName(name, ownSettingsBranch)) return { kind: 'kept', state: 'settings' }
-
-  const dirName = sanitizeBranchName(name)
-  if (editorWork.workspaces.has(dirName)) return { kind: 'kept', state: 'workspace' }
-  if (editorWork.queuedPushes.has(dirName)) return { kind: 'kept', state: 'queued-push' }
   if (to === null && !(await sharesHistory(git, from, baseTip))) {
     return { kind: 'kept', state: 'unrelated-history' }
   }
+
+  const dirName = sanitizeBranchName(name)
+  const { workspaces, queuedPushes } = await editorWork()
+  if (workspaces.has(dirName)) return { kind: 'kept', state: 'workspace' }
+  if (queuedPushes.has(dirName)) return { kind: 'kept', state: 'queued-push' }
   let release: () => Promise<void>
   try {
     release = await tryAcquireProvisioningLock(
