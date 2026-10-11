@@ -2,7 +2,7 @@
 priority: P1
 adopters: BOTH
 summary: >-
-  RESOLVED (2026-10-11) by the worker process split: #490 and #491 (prerequisites), then #497, #501, #505, #506, #507, #508, #509, #513, #520, and the docs PR (docs/worker-gateway-split). The worker unit has no network, no secret and no route to IMDS; the GitHub gateway unit holds every secret and the private mirror, cannot see EFS, and answers the worker over a typed socket API. A command won by racing the worker's git now reaches neither a secret nor the network. What stays open is in the Security Model's "What the separation leaves open" (docs/deploying-to-aws.md) and the follow-up task files listed in §13.
+  RESOLVED (2026-10-11) by the worker process split: #490 and #491 (prerequisites), then #497, #501, #505, #506, #507, #508, #509, #513, #520, and the docs PR #523. The worker unit has no network, no secret and no route to IMDS; the GitHub gateway unit holds every secret and the private mirror, cannot see EFS, and answers the worker over a typed socket API. A command won by racing the worker's git now reaches neither a secret nor the network. What stays open is in the Security Model's "What the separation leaves open" (docs/deploying-to-aws.md) and the follow-up task files listed in §13.
 ---
 
 # [P1] Run the worker's shared-repository git without the credential
@@ -11,7 +11,7 @@ summary: >-
 [worker-git-config-from-shared-efs.md](worker-git-config-from-shared-efs.md).
 **Status:** RESOLVED 2026-10-11. Prerequisites #490 (the worker never pushes the base or default
 branch) and #491 (root-owned worker log); then PRs 1–7 (§8) into `int-202610-b`: #497, #501,
-#505, #506, #507, #508, #509, #513, #520 and the docs PR. Follow-ups: §13.
+#505, #506, #507, #508, #509, #513, #520 and the docs PR #523. Follow-ups: §13.
 
 ## What stays exploitable until this lands
 

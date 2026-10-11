@@ -1208,7 +1208,8 @@ still drive the gateway at any other branch: see the [Security Model](#security-
 When a sync's mirroring of a GitHub branch deletion meets it 10 minutes or more after it was
 left, the worker reports it as its `lastGitSyncError` (System health) and keeps syncing; it never removes the lock, since the Lambda shares that repository and the worker cannot tell
 a lock left behind from one a live git holds. Check that no git is running in `remote.git`:
-stop `canopy-worker` (it drains first), and a Lambda request ends within its timeout. Then remove
+stop `canopy-worker` (it drains first); a Lambda request ends within its timeout
+(60 s by default). Then remove
 the lock, and start the worker again:
 `sudo /opt/canopy-worker/canopy-inspect rm /mnt/efs/remote.git/packed-refs.lock`.
 
@@ -1393,16 +1394,18 @@ Each item assumes an attacker who controls the CMS Lambda and has won the race t
 the worker. What it means for you, and what you can do:
 
 - **The gateway's own reach.** Beyond what the task queue can ask for, such a command can
-  fetch your Clerk user directory through the gateway at will, which spends Clerk API quota (the
+  fetch your Clerk user directory through the gateway as often as once a minute, which spends Clerk API quota (the
   directory itself is already on EFS, as the auth cache), and cut the
   instance's drain short once a termination has begun, which can cut off a push in flight; the
   next worker requeues the task. It can also push an object the gateway's mirror still
   holds but GitHub no longer references, by its object ID: a secret you force-pushed out of
   history can come back on a branch. The mirror keeps such objects until the instance is
-  replaced, so after removing a secret from history, rotate it, and replace the worker instance.
+  replaced, and `remote.git` on EFS keeps them indefinitely, so rotate any secret that ever
+  reached the repository; removing it from history is not enough.
 - **A worker run as one process** (an entrypoint of your own that constructs `CmsWorker` with a
   credential, or a bundle older than the split) holds its credential itself, so a command won by
-  the race reaches it. Use `CanopyCmsService` with a current bundle.
+  the race reaches it. Run the split units (`CanopyCmsService`, or the hand install above) with a
+  current bundle.
 - **Local escalation** from the worker's user, `ec2-user`, through a kernel bug, would reach
   root and every secret. Its `sudo` is blocked by `NoNewPrivileges`. Deploy now and then, so the
   instance gets a newer AMI's kernel.
@@ -1423,9 +1426,10 @@ the worker. What it means for you, and what you can do:
   Install nothing on the instance that listens on one.
 - **A root process opening a path the worker can write** could be steered into overwriting any
   file. None of the instance's does; anything you add that runs as root (a backup agent, a cron
-  job) must not touch `/mnt/efs` or `/var/lib/canopy-worker` either.
+  job) must not touch `/mnt/efs`, `/var/lib/canopy-worker`, or the worker's private `/tmp` and
+  `/var/tmp` (`/tmp/systemd-private-*-canopy-worker.service-*`) either.
 - **An operator on EFS as root**, or as any user outside the worker's sandbox, runs hostile git
-  config as that user, and from there reaches root. Inspect EFS only with
+  config as that user, and from a user with `sudo` (`ec2-user`, `ssm-user`) reaches root. Inspect EFS only with
   [`canopy-inspect`](#inspecting-efs-canopy-inspect).
 
 ### CloudFront OAC and request body signing
@@ -1551,8 +1555,8 @@ Recovery:
    `git log origin/<base>..<base>` for stranded local commits.
 3. In the editor, create a rescue branch (it forks from the origin base). Copy the
    stranded `content/` changes from the base clone into the rescue branch's clone
-   directory (or, from the base clone, `git checkout -b rescue`, commit them, and
-   `git push -u origin rescue`, deleting the local ref afterwards).
+   directory. (A branch pushed from the base clone into `remote.git` instead is never seen by
+   the editor, and the next sync deletes it.)
 4. Only after confirming the rescue branch holds the edits, reset the base clone:
    `git checkout <base> && git reset --hard origin/<base>`, plus `git clean -fd`
    for untracked strays. The worker's base refresh resumes fast-forwarding
