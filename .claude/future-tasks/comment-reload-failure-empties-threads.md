@@ -12,6 +12,9 @@ summary: >-
 - `fetchComments` catches both a non-ok result and a thrown error, logs `Failed to load comments:` and returns `{ threads: [] }`.
 - `loadComments` passes that result to `globalMutate(commentsKey(branch), fresh, { revalidate: false })`, replacing the cached threads.
 - `handleAddComment` and `handleResolveThread` call `loadComments` after a successful write, so a transient list failure right after posting hides all comments, though the post landed.
+- The add has landed by then, so the fix must not surface the reload failure as
+  `COMMENT_NOT_ADDED` from `handleAddComment`: the composer would keep the text and invite a
+  duplicate post. Report it as a load error instead.
 
 ## Done when
 

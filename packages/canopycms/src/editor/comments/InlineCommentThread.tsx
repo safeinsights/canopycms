@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Alert, Badge, Button, Group, Paper, Stack, Text, Textarea } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
@@ -28,6 +28,18 @@ export interface InlineCommentThreadProps {
   onReplyTextChange?: (text: string) => void
 }
 
+/** Refocuses `box` when a submit settles: the busy button disabled itself and dropped focus. */
+export const useRefocusAfterSubmit = (
+  submitting: boolean,
+  box: React.RefObject<HTMLTextAreaElement | null>,
+): void => {
+  const wasSubmitting = useRef(false)
+  useEffect(() => {
+    if (wasSubmitting.current && !submitting) box.current?.focus()
+    wasSubmitting.current = submitting
+  }, [submitting, box])
+}
+
 /**
  * Individual comment thread display within the carousel.
  * Always shows full thread view with per-thread scrolling.
@@ -46,6 +58,8 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
   const replyText = controlledReply ?? ownReply
   const setReplyText = onReplyTextChange ?? setOwnReply
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const replyRef = useRef<HTMLTextAreaElement>(null)
+  useRefocusAfterSubmit(isSubmitting, replyRef)
   const [error, setError] = useState<string | null>(null)
 
   const handleReply = async () => {
@@ -164,6 +178,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
         {!thread.resolved && (
           <Stack gap="xs">
             <Textarea
+              ref={replyRef}
               placeholder="Write a reply…"
               aria-label="Reply to this thread"
               value={replyText}

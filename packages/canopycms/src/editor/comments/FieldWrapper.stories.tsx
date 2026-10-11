@@ -11,6 +11,7 @@ const meta: Meta<typeof FieldWrapper> = {
     canopyPath: 'title',
     entryPath: 'posts/hello',
     fieldLabel: 'Title',
+    resetKey: 'main\nposts/hello',
     currentUserId: 'alice',
     canResolve: true,
     children: (

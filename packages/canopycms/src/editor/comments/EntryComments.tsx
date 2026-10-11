@@ -29,6 +29,8 @@ export interface EntryCommentsProps {
   highlightThreadId?: string
   /** Resolves author ids to names; without it authors show as ids. */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** Changes with the entry or branch, which resets the popover, so a draft never posts elsewhere. */
+  resetKey: string
 }
 
 /** The "Comment on this entry" action at the top of the form, with the entry's threads. */
@@ -41,6 +43,7 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
   onResolveThread,
   highlightThreadId,
   onGetUserMetadata,
+  resetKey,
 }) => {
   const entryThreads = useMemo(
     () => comments.filter((t) => t.type === 'entry' && t.entryPath === entryPath),
@@ -50,6 +53,7 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
   return (
     <Group justify="flex-end">
       <CommentThreadsPopover
+        key={resetKey}
         threads={entryThreads}
         subject="this entry"
         variant="entry"

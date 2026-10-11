@@ -483,3 +483,79 @@ describe('field comment popover, keyboard and drafts', () => {
     )
   })
 })
+
+describe('field comment popover, across entries and slow posts', () => {
+  const props = (entryPath: string, onAddComment: FormRendererProps['onAddComment']) => ({
+    fields: [{ name: 'title', type: 'string', label: 'Title' }] as FieldConfig[],
+    value: { title: 'Hello' },
+    onChange: () => {},
+    currentEntryPath: entryPath,
+    currentUserId: 'alice',
+    onAddComment,
+    onResolveThread: vi.fn(async () => {}),
+  })
+
+  it('drops a draft when the entry changes, so it never posts on another entry', async () => {
+    const user = userEvent.setup()
+    const onAddComment = vi.fn(async () => {})
+    const { rerender } = render(
+      <CanopyCMSProvider>
+        <FormRenderer {...props('content/a', onAddComment)} />
+      </CanopyCMSProvider>,
+    )
+    await user.click(control('title'))
+    await user.type(await screen.findByTestId('new-thread-textarea'), 'Draft for A')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+
+    rerender(
+      <CanopyCMSProvider>
+        <FormRenderer {...props('content/b', onAddComment)} />
+      </CanopyCMSProvider>,
+    )
+    await user.click(control('title'))
+    expect(((await screen.findByTestId('new-thread-textarea')) as HTMLTextAreaElement).value).toBe(
+      '',
+    )
+  })
+
+  it('stays open while a post is in flight, so the same text cannot be sent twice, and refocuses the box after', async () => {
+    const user = userEvent.setup()
+    let fail: () => void = () => {}
+    const onAddComment = vi.fn(
+      () =>
+        new Promise<void>((_, reject) => {
+          fail = () => reject(new Error("Couldn't add the comment. Try again."))
+        }),
+    )
+    render(
+      <CanopyCMSProvider>
+        <FormRenderer {...props('content/a', onAddComment)} />
+      </CanopyCMSProvider>,
+    )
+    await user.click(control('title'))
+    await user.type(await screen.findByTestId('new-thread-textarea'), 'Slow')
+    await user.click(screen.getByTestId('create-thread-button'))
+    // Each way of closing is refused; checked past the popover's close transition.
+    const stillOpen = async () => {
+      await act(() => new Promise((resolve) => setTimeout(resolve, 300)))
+      expect(screen.getByTestId('field-comment-title-popover')).toBeTruthy()
+    }
+    await user.keyboard('{Escape}')
+    await stillOpen()
+    await user.click(document.body)
+    await stillOpen()
+    await user.click(control('title'))
+    await stillOpen()
+    expect(onAddComment).toHaveBeenCalledTimes(1)
+
+    // A failure leaves focus in the box, so Escape still reaches the popover.
+    await act(async () => fail())
+    expect(await screen.findByText("Couldn't add the comment. Try again.")).toBeTruthy()
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByTestId('new-thread-textarea')),
+    )
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+  })
+})

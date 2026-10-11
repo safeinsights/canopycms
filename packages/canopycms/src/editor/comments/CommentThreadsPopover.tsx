@@ -17,7 +17,7 @@ import { IconMessage, IconMessagePlus, IconPlus } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { getErrorMessage } from '../../utils/error'
-import { InlineCommentThread } from './InlineCommentThread'
+import { InlineCommentThread, useRefocusAfterSubmit } from './InlineCommentThread'
 
 export interface CommentThreadsPopoverProps {
   /** The threads on this field or entry. */
@@ -112,9 +112,27 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
     }
   }, [flashThreadId])
 
+  // While a post or Resolve is in flight the popover stays open, so its busy state and any error
+  // stay in view and a reopened composer can't send the same text twice.
+  const [inFlight, setInFlight] = useState(0)
+  const track =
+    <A extends unknown[]>(write: (...args: A) => Promise<void>) =>
+    async (...args: A): Promise<void> => {
+      setInFlight((n) => n + 1)
+      try {
+        await write(...args)
+      } finally {
+        setInFlight((n) => n - 1)
+      }
+    }
+  const addComment = track(onAddComment)
+  const resolveThread = track(onResolveThread)
+
   const close = () => {
+    if (inFlight > 0) return
     setOpened(false)
     setComposing(false)
+    focusNewThreadRef.current = false
   }
 
   const controlLabel =
@@ -242,15 +260,14 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
                         flashThreadId === thread.id
                           ? '2px solid var(--mantine-color-blue-5)'
                           : undefined,
-                      // Inset, so the scroll area's edge never clips it.
                       outlineOffset: -2,
                     }}
                   >
                     <InlineCommentThread
                       thread={thread}
-                      onAddReply={(text) => onAddComment(text, thread.id)}
+                      onAddReply={(text) => addComment(text, thread.id)}
                       onResolve={async () => {
-                        await onResolveThread(thread.id)
+                        await resolveThread(thread.id)
                         // Resolve and the reply box go with the open state, so focus stays inside.
                         headingRef.current?.focus()
                       }}
@@ -275,7 +292,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
                 // Set first: the first thread's arrival mounts the button before this resolves.
                 focusNewThreadRef.current = true
                 try {
-                  await onAddComment(text)
+                  await addComment(text)
                 } catch (err) {
                   focusNewThreadRef.current = false
                   throw err
@@ -319,11 +336,11 @@ const NewThreadComposer: React.FC<{
   const [error, setError] = useState<string | null>(null)
   const boxRef = useRef<HTMLTextAreaElement>(null)
 
-  // Shown on request ("New thread"), so it takes focus; on opening, the focus trap's
-  // `data-autofocus` does the same.
+  // Shown on request ("New thread"), so it takes focus.
   useEffect(() => {
     boxRef.current?.focus()
   }, [])
+  useRefocusAfterSubmit(submitting, boxRef)
 
   const submit = async () => {
     if (!text.trim()) return

@@ -44,6 +44,8 @@ export interface FieldWrapperProps {
    * their own.
    */
   controlPlacement?: 'label' | 'corner'
+  /** Changes with the entry or branch, which resets the popover, so a draft never posts elsewhere. */
+  resetKey: string
 }
 
 const FIELD_SCOPE_ATTR = 'data-field-comments'
@@ -67,6 +69,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   highlightThreadId,
   onGetUserMetadata,
   controlPlacement = 'label',
+  resetKey,
 }) => {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [pointerOn, setPointerOn] = useState(false)
@@ -90,6 +93,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
 
   const control = (
     <CommentThreadsPopover
+      key={resetKey}
       threads={threads}
       subject={fieldLabel}
       variant="field"

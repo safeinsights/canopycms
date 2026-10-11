@@ -316,6 +316,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             highlightThreadId={highlightThreadId}
             onGetUserMetadata={onGetUserMetadata}
             fieldLabel={commentSubject}
+            resetKey={boundaryResetKey}
             controlPlacement="corner"
           >
             {renderedField}
@@ -343,6 +344,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             highlightThreadId={highlightThreadId}
             onGetUserMetadata={onGetUserMetadata}
             fieldLabel={commentSubject}
+            resetKey={boundaryResetKey}
           >
             {renderedField}
           </FieldWrapper>
@@ -667,6 +669,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           onResolveThread={onResolveThread}
           highlightThreadId={highlightThreadId}
           onGetUserMetadata={onGetUserMetadata}
+          resetKey={boundaryResetKey}
         />
       )}
 

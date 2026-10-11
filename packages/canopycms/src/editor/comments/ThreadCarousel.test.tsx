@@ -102,6 +102,24 @@ describe('ThreadCarousel', () => {
     },
   ]
 
+  it("shows a failed reply's error once, in its thread", async () => {
+    const user = userEvent.setup()
+    render(
+      <ThreadCarousel
+        threads={[mockThreads[0]]}
+        contextType="branch"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn().mockRejectedValue(new Error("Couldn't add the comment. Try again."))}
+        onResolveThread={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    )
+    await user.type(screen.getByPlaceholderText('Write a reply…'), 'A reply')
+    await user.click(screen.getByRole('button', { name: 'Reply' }))
+    expect(await screen.findAllByText("Couldn't add the comment. Try again.")).toHaveLength(1)
+  })
+
   it('renders with no threads', () => {
     const { container } = render(
       <ThreadCarousel
