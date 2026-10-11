@@ -238,7 +238,7 @@ export interface AIContentConfig {
   exclude?: ExcludeConfig
   /**
    * Where entries keep their SEO fields, when not the flat defaults. Drives the `noindex` read,
-   * so set it to the `seo` your sitemap uses, or the two can disagree about an entry.
+   * so pass the same object as `createNextCanopyContext({ seo })`, or the two can disagree.
    */
   seo?: SeoFieldLocation
   /** Custom bundles — filtered content subsets */

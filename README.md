@@ -1714,6 +1714,10 @@ await generateAIContentFiles({
 ```typescript
 import { defineAIContentConfig } from 'canopycms/ai'
 
+// Where the noindex flag lives, if not flat. Pass this one object to
+// createNextCanopyContext({ seo }) too, so the sitemap and AI content agree.
+const seo = { group: 'seo' }
+
 const aiConfig = defineAIContentConfig({
   // Where these files are served, site-relative (default '/ai'); a reference links its
   // target's markdown copy beneath it
@@ -1727,8 +1731,7 @@ const aiConfig = defineAIContentConfig({
     noindex: false, // export noindex entries, left out by default
   },
 
-  // Where the noindex flag lives, if not flat: your sitemap's `seo`
-  seo: { group: 'seo' },
+  seo,
 
   // Custom bundles: filtered subsets as single files
   bundles: [{ name: 'research-guides', filter: { collections: ['docs'], entryTypes: ['guide'] } }],

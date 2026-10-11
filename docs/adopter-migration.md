@@ -226,8 +226,8 @@ matching: search your AI config for each reference field's name.
 **What changed.** (next) AI content, built or served, leaves out entries marked `noindex`, through
 the sitemap's predicate. An inline `entry:` link to any left-out entry renders as plain text.
 
-**To adopt.** To keep them, set `exclude: { noindex: false }`. For nested or renamed SEO fields, set
-the AI config's `seo` to your sitemap's. A plain-URL link into a hidden section needs a
+**To adopt.** To keep them, set `exclude: { noindex: false }`. For nested or renamed SEO fields, pass
+the AI config `createNextCanopyContext`'s `seo` object. A plain-URL link into a hidden section needs a
 [field transform](../README.md#ai-content-configuration).
 
 **Now deletable.** An `exclude.where` that re-read `noindex`.
