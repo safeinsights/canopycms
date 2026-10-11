@@ -1941,9 +1941,9 @@ CLERK_JWT_KEY=...           # Public JWKS PEM. Optional locally; load-bearing on
 CLERK_AUTHORIZED_PARTIES=... # Optional: comma-separated domains
 ```
 
-`CLERK_SECRET_KEY` is resolved lazily, the first time the plugin calls Clerk's backend API — not at build or startup — so a zero-editor static build (`deployedAs: 'static'`, no auth plugin exercised) never needs it. It is needed only where that API is called: the worker daemon's auth-cache refresh, and in dev mode the dev server's lazy refresh. A deployed CMS server verifies tokens with `CLERK_JWT_KEY` alone, unless it also runs `clerkMiddleware`, which needs the secret wherever it runs (see [Security Model](docs/deploying-to-aws.md#security-model)).
+`CLERK_SECRET_KEY` is resolved lazily, the first time the plugin calls Clerk's backend API — not at build or startup — so a zero-editor static build (`deployedAs: 'static'`, no auth plugin exercised) never needs it. It is needed only where that API is called: the worker's or GitHub gateway's auth-cache refresh, and in dev mode the dev server's lazy refresh. A deployed CMS server verifies tokens with `CLERK_JWT_KEY` alone, unless it also runs `clerkMiddleware`, which needs the secret wherever it runs (see [Security Model](docs/deploying-to-aws.md#security-model)).
 
-For GitHub integration in production mode, the worker authenticates with either a personal access token (the default) or a GitHub App:
+For GitHub integration in production mode, the worker (on AWS, its GitHub gateway) authenticates with either a personal access token (the default) or a GitHub App:
 
 ```env
 GITHUB_BOT_TOKEN=ghp_...    # Bot token for PR creation

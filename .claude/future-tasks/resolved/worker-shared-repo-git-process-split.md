@@ -2,16 +2,16 @@
 priority: P1
 adopters: BOTH
 summary: >-
-  IN PROGRESS. A compromised CMS Lambda that races the worker can still run a command as it, and from there obtain the GitHub credential (planted filter or merge drivers, edited rebase state). Fix, decided 2026-10-10: a credential-free, network-less worker unit plus a no-EFS GitHub gateway unit holding every secret, behind a typed socket API. Reviewed in 11 adversarial rounds; shipping as PRs 1–7 into int-202610-b
+  RESOLVED (2026-10-11) by the worker process split: #490 and #491 (prerequisites), then #497, #501, #505, #506, #507, #508, #509, #513, #520, and the docs PR (docs/worker-gateway-split). The worker unit has no network, no secret and no route to IMDS; the GitHub gateway unit holds every secret and the private mirror, cannot see EFS, and answers the worker over a typed socket API. A command won by racing the worker's git now reaches neither a secret nor the network. What stays open is in the Security Model's "What the separation leaves open" (docs/deploying-to-aws.md) and the follow-up task files listed in §13.
 ---
 
 # [P1] Run the worker's shared-repository git without the credential
 
 **Priority:** P1 [BOTH]. **Found:** 2026-10-09, while resolving
-[worker-git-config-from-shared-efs.md](resolved/worker-git-config-from-shared-efs.md).
-**Status:** design decided 2026-10-10 (§11). Two prerequisites already shipped: #490 (the worker
-never pushes the base or default branch) and #491 (root-owned worker log). PRs 1–7 (§8) go into
-`int-202610-b` one at a time.
+[worker-git-config-from-shared-efs.md](worker-git-config-from-shared-efs.md).
+**Status:** RESOLVED 2026-10-11. Prerequisites #490 (the worker never pushes the base or default
+branch) and #491 (root-owned worker log); then PRs 1–7 (§8) into `int-202610-b`: #497, #501,
+#505, #506, #507, #508, #509, #513, #520 and the docs PR. Follow-ups: §13.
 
 ## What stays exploitable until this lands
 
@@ -1149,7 +1149,7 @@ the drain mapping, deadlines, and the self-check helpers.
     0), so SIGTERM's drain must be bounded in time, not only by `idle()`.
 - 4b: everything in "PR 4 ships as two PRs" above, plus carried items 1 (the worker's clock
   while a reader holds back), 4 (the gateway's own logger in `github-service.ts`) and 6
-  ([worker-mirror-detached-work-drain.md](worker-mirror-detached-work-drain.md)).
+  ([worker-mirror-detached-work-drain.md](../worker-mirror-detached-work-drain.md)).
 
 **Carried from 4b** (lifecycle and bounds):
 - Settled in 4b:
@@ -1180,7 +1180,7 @@ the drain mapping, deadlines, and the self-check helpers.
 - PR 5:
   - wire the self-checks (`workerSelfChecks`, `gatewaySelfChecks`, `assertSelfChecks`) and call
     `drain()` on SIGTERM; killing a running fetch job is the gateway's own
-    ([worker-mirror-detached-work-drain.md](worker-mirror-detached-work-drain.md), item 1);
+    ([worker-mirror-detached-work-drain.md](../worker-mirror-detached-work-drain.md), item 1);
   - pass `fetchInactivityMs` and `clerkConfigured`, and record `health`'s fatal error as
     `lastFatalError`;
   - decide whether `runGateway` exits on a failed `prepare()`: memoized, it stays the gateway's
@@ -1223,7 +1223,7 @@ the drain mapping, deadlines, and the self-check helpers.
     exit 1. A worker that finds the gateway away meanwhile (unreachable, or no `health` answer
     within 300 s) exits 1, leaving in place the gateway's own fatal error if it recorded one in
     the last 5 minutes, and recording the unreachable gateway otherwise. That window cannot cover
-    the 300 s timeout path ([worker-gateway-away-keep-window.md](resolved/worker-gateway-away-keep-window.md)).
+    the 300 s timeout path ([worker-gateway-away-keep-window.md](worker-gateway-away-keep-window.md)).
   - The gateway's SIGTERM: `drain(60 s)`, then exit 0. A running fetch job is not waited for; the
     cgroup kill takes it.
   - Three gateway operations: `authSnapshot` (D7: the gateway fetches with the Clerk key behind
@@ -1261,9 +1261,9 @@ the drain mapping, deadlines, and the self-check helpers.
     `User=canopy-github` passes every self-check while the worker can read its environment. A
     gateway self-check refusing to run as the socket node's owner (`fstat` of fd 3) closes it.
 - Open: the auth snapshot's missing backoff after a failure, and its 64 MiB answer bound
-  ([gateway-auth-snapshot-limits.md](gateway-auth-snapshot-limits.md)).
+  ([gateway-auth-snapshot-limits.md](../gateway-auth-snapshot-limits.md)).
 - Open: dev still leaves a running fetch job behind on Ctrl-C
-  ([worker-mirror-detached-work-drain.md](worker-mirror-detached-work-drain.md), item 1).
+  ([worker-mirror-detached-work-drain.md](../worker-mirror-detached-work-drain.md), item 1).
 
 **Carried from 6** (template):
 - Settled in 6:
@@ -1308,7 +1308,7 @@ the drain mapping, deadlines, and the self-check helpers.
     after `useradd`; the single-process unit reads both files. This supersedes §4's
     `install -g canopy-github`, round 2's F5 response, and §7's "nothing else".
   - `GATEWAY_AWAY_KEEP_MS` is measured to when the worker began waiting, and core keeps only a failed
-    start's own record ([resolved](resolved/worker-gateway-away-keep-window.md)).
+    start's own record ([resolved](worker-gateway-away-keep-window.md)).
 - PR 7:
   - the hand-install steps for the three units, `gateway.env.example` and `canopy-inspect`;
   - "The worker instance" and the Security Model in full (PR 6 changed only the lines that became
@@ -1322,7 +1322,7 @@ the drain mapping, deadlines, and the self-check helpers.
   - the CloudWatch agent ships `gateway.log` (mode 0640 root) as the `{instance_id}-gateway` stream;
   - EFS read/write from the worker unit, the App preflight, IMDS unreachable from the worker.
 - Open: the single-process path of the CDK entrypoint is unreachable from this bundle
-  ([worker-entrypoint-single-process-path.md](worker-entrypoint-single-process-path.md)).
+  ([worker-entrypoint-single-process-path.md](../worker-entrypoint-single-process-path.md)).
 
 ## 9. Residual risks, and the Security Model afterwards
 
@@ -1551,15 +1551,15 @@ The table becomes three columns: CMS Lambda, Worker, GitHub gateway.
 - **D7:** the Clerk secret key moves to the gateway too.
 - **D8:** a static `canopy-github` system user.
 - **D9 CMS branch namespace:** P2,
-  [gateway-cms-branch-namespace.md](gateway-cms-branch-namespace.md).
+  [gateway-cms-branch-namespace.md](../gateway-cms-branch-namespace.md).
 - **D10 Gateway-side `.github` refusal:** P2,
-  [gateway-github-config-refusal.md](gateway-github-config-refusal.md); the best design reached
+  [gateway-github-config-refusal.md](../gateway-github-config-refusal.md); the best design reached
   is recorded there.
 - **D11 Root-owned worker log:** shipped ahead of the split as #491. PR 6 builds on it.
 
-Also filed: [worker-dedicated-user.md](worker-dedicated-user.md) (R2) and
-[worker-single-process-race-gap.md](worker-single-process-race-gap.md) (R6), plus a note in
-[worker-github-mirror-limits.md](worker-github-mirror-limits.md).
+Also filed: [worker-dedicated-user.md](../worker-dedicated-user.md) (R2) and
+[worker-single-process-race-gap.md](../worker-single-process-race-gap.md) (R6), plus a note in
+[worker-github-mirror-limits.md](../worker-github-mirror-limits.md).
 
 ## 12. Review rounds
 
@@ -1883,3 +1883,30 @@ verification gap, each now folded in, and none is a path to an asset. On 2026-10
 none. **The manager decides** whether to accept the stop or to ask for a round 12. My
 recommendation is to accept it: the remaining review is the `/review-rounds` on each
 implementation PR.
+
+## 13. Follow-ups, as filed at close (2026-10-11)
+
+The adopter-facing statement of what stays open is `docs/deploying-to-aws.md`, "What the
+separation leaves open". Each open item has its own file:
+
+- R1, the gateway's authority: [gateway-cms-branch-namespace.md](../gateway-cms-branch-namespace.md)
+  (D9, now also PRs by number and an unprefixed settings name),
+  [gateway-github-config-refusal.md](../gateway-github-config-refusal.md) (D10); the mirror's
+  unexpired orphans in [worker-github-mirror-limits.md](../worker-github-mirror-limits.md).
+- R2: [worker-dedicated-user.md](../worker-dedicated-user.md).
+- R3–R5: [worker-split-residual-risks.md](../worker-split-residual-risks.md).
+- R6: [worker-single-process-race-gap.md](../worker-single-process-race-gap.md).
+- R7 and every "First deploy" check of §8:
+  [worker-split-first-deploy-checks.md](../worker-split-first-deploy-checks.md).
+- R9's pty: [canopy-inspect-interactive-shared-pty.md](../canopy-inspect-interactive-shared-pty.md);
+  the stale-lock message: [gateway-stale-lock-message-canopy-inspect.md](../gateway-stale-lock-message-canopy-inspect.md).
+- Carried from 2b, 4b and 5: [worker-mirror-detached-work-drain.md](../worker-mirror-detached-work-drain.md),
+  [gateway-auth-snapshot-limits.md](../gateway-auth-snapshot-limits.md).
+- Carried from 6: [worker-entrypoint-single-process-path.md](../worker-entrypoint-single-process-path.md),
+  [worker-instance-files-bucket-retention.md](../worker-instance-files-bucket-retention.md).
+- Test margins: [worker-tests-flake-under-load.md](../worker-tests-flake-under-load.md),
+  [branch-provisioning-kill-test-afterall-timeout.md](../branch-provisioning-kill-test-afterall-timeout.md).
+
+R8 is closed by design: root-owned log and socket directories, and state directories systemd
+chowns without following symlinks (§3.1; worker-units.ts), and R4's
+`IPAddressDeny` concern by `PrivateNetwork` and the boot self-checks.

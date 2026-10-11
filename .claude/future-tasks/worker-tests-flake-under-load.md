@@ -18,8 +18,8 @@ other heavy jobs. Each case passed when re-run alone, and the sequential gates a
    - Where: `packages/canopycms/src/worker/cms-worker-credential-refresh.test.ts`, "bounds a
      re-read that never settles…", which asserts `performance.now() - started < 1_000`.
    - Seen: 1148 ms in the `worker-http` project under CI-like git configuration.
-   - Why the margin is thin: in split mode the served gateway prepares on its first call, and its
-     boot fetch against the revoked-token HTTPS server also arms a re-read.
+   - Why the margin is thin: in split mode a served gateway prepares as soon as it holds its
+     socket, and that boot fetch against the revoked-token HTTPS server also arms a re-read.
 2. **10 s `afterEach` hook timeouts**, all in cleanup: `fs.rm`, plus `closeServedGateways` in the
    bundle suite.
    - `github-gateway-bundle.test.ts` (`worker-http`), in "reports an abort that lands before the
@@ -62,5 +62,5 @@ other heavy jobs. Each case passed when re-run alone, and the sequential gates a
 
 - [branch-provisioning-kill-test-afterall-timeout.md](branch-provisioning-kill-test-afterall-timeout.md):
   the same class, an `afterAll` `fs.rm` under load.
-- [worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md): the series
+- [worker-shared-repo-git-process-split.md](resolved/worker-shared-repo-git-process-split.md): the series
   that surfaced these.

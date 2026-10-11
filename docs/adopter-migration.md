@@ -588,7 +588,9 @@ stops applying and no keychain credential is tried.
 `remote.git` as git bundles. A new instance's first sync fetches the whole repository from GitHub,
 and operations may reuse GitHub fetches under 30 seconds old.
 
-**To adopt.** Nothing. Seeding `remote.git` stages a copy of the repository in the state directory.
+**To adopt.** Nothing. Seeding `remote.git` stages a copy of the repository beside the gateway's
+mirror, so the root volume needs room for two
+([details](deploying-to-aws.md#the-worker-instance)).
 
 ### The worker follows a rebased or deleted GitHub branch
 
@@ -626,7 +628,9 @@ units from the bundle's contract: 2 gets the split, an older bundle the single u
 **To adopt.** Default `workerCode`: one `cdk deploy` does both. Parameter mode: `cdk deploy` the
 template, then roll the bundle; on an older template it stops with `template too old for this
 bundle`. Inspect EFS only through `sudo /opt/canopy-worker/canopy-inspect <command>`, never from a root shell. A hand install
-takes `worker/`'s three units and `gateway.env.example`.
+takes `worker/`'s three units and `gateway.env.example`
+([steps](deploying-to-aws.md#installing-the-units-by-hand)). After the first deploy, run the
+[checklist](deploying-to-aws.md#first-deploy-checklist).
 
 ### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS**
 
