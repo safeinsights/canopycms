@@ -538,7 +538,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       })
       expandedBeforeFilterRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on filter changes only; `tree` is a fresh object each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the filter or the filtered tree changes; `tree` is a fresh object each render
   }, [filtering, filteredTree])
 
   useEffect(() => {

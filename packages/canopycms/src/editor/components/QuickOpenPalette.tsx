@@ -10,13 +10,13 @@ import { IconSearch } from '@tabler/icons-react'
 import { filterEntries, groupEntriesByCollection } from '../entry-search'
 import { modKeyLabel } from '../platform'
 
-/** Marks an overlay the palette may replace; Editor closes it as the palette opens. */
+/** Marks an overlay Mod+P may open over: the navigator drawer, and the palette's own closing dialog. */
 export const QUICK_OPEN_REPLACES_ATTR = 'data-quick-open-replaces'
 
 /**
- * True while a modal or drawer (never a popover) other than one marked with `QUICK_OPEN_REPLACES_ATTR` is open.
- * Overlays share one z-index and stack in DOM order, and the palette mounts first, so it would
- * open hidden underneath and take the keyboard from the dialog the user is working in.
+ * True while a modal or drawer (not a popover) is open that `QUICK_OPEN_REPLACES_ATTR` doesn't mark.
+ * Overlays stack in DOM order and the palette's portal precedes the editor's other dialogs, so it
+ * would open hidden under them and take the keyboard from the one in use.
  */
 const otherOverlayOpen = () =>
   Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).some(

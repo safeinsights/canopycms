@@ -388,8 +388,8 @@ const EditorContent: React.FC<EditorProps> = ({
     [createModalCollection],
   )
 
-  // The route a slug's page is served at, shown under the slug field: the preview's route
-  // without its preview prefix, deployment base path or `?branch=`. Undefined when it has no page.
+  // The route a slug's page is served at, shown under the slug: `buildPreviewSrc`'s route before
+  // its prefix, base path, trailing slash and `?branch=`. Undefined when the entry has no page.
   const previewPathFor = (entry: {
     collectionPath: string
     collectionName?: string
@@ -1496,10 +1496,10 @@ const EditorContent: React.FC<EditorProps> = ({
           <Drawer.Root
             opened={navigatorOpen}
             onClose={() => setNavigatorOpen(false)}
-            // Mantine closes every open overlay on one Escape, so the drawer leaves it to a dialog
-            // opened from its rows.
             // Its focus return would otherwise run after the palette took focus, on a timer.
             returnFocus={!quickOpenOpen}
+            // Mantine closes every open overlay on one Escape, so the drawer leaves it to a dialog
+            // opened from it.
             closeOnEscape={
               !createModalOpen &&
               !renameModalOpen &&

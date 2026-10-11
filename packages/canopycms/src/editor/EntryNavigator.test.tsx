@@ -933,7 +933,7 @@ describe('EntryNavigator', () => {
       const escapes = (spy: ReturnType<typeof vi.fn>) =>
         spy.mock.calls.filter(([event]) => (event as KeyboardEvent).key === 'Escape')
 
-      it('clears the filter on Escape without letting the key reach the surrounding drawer', async () => {
+      it('clears the filter on Escape without the key bubbling past the input', async () => {
         const user = userEvent.setup()
         const onParentKeyDown = renderInsideKeyWatcher()
 

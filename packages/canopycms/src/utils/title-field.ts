@@ -43,7 +43,8 @@ function findTitleValue(
 /**
  * The data path `resolveEntryTitle` reads the title from for these fields: the `isTitle` field
  * (found by the walk `extractTitleFromSchema` uses, so inline groups are transparent and
- * non-list objects are entered), else a top-level plain-string field named `title`, then `name`.
+ * non-list objects are entered), else a top-level plain-string field named `title`, then `name`
+ * (fields of an inline group count as top level, as they do in the data).
  * Undefined when the schema has no such field, so a create form has nothing to ask a title for.
  */
 export function titleFieldPath(fields: readonly FieldConfig[]): readonly string[] | undefined {
