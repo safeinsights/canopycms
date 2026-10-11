@@ -74,7 +74,11 @@ export type CanopyOctokitAuthOptions = { auth: string } | OctokitAuthStrategyOpt
  * for the safety net this doesn't cover: exhausted plugin retries and
  * errors the plugin never sees, like non-403 network failures).
  */
-export function createCanopyOctokit(options: CanopyOctokitAuthOptions): Octokit {
+export function createCanopyOctokit(
+  options: CanopyOctokitAuthOptions,
+  /** Where the throttle's warnings go: the GitHub gateway passes its own, which scrubs and escapes. */
+  warn: (...args: unknown[]) => void = canopyLogWarn,
+): Octokit {
   // Pick the two auth fields out EXPLICITLY, never spread: `baseUrl`,
   // `request`, `log` and `userAgent` are all live `OctokitOptions`, and a
   // non-literal argument slips past TypeScript's excess-property check. The
@@ -88,14 +92,14 @@ export function createCanopyOctokit(options: CanopyOctokitAuthOptions): Octokit 
     ...auth,
     throttle: {
       onRateLimit: (retryAfter, requestOptions, _octokit, retryCount) => {
-        canopyLogWarn(
+        warn(
           `CanopyCMS: GitHub primary rate limit hit for ${requestOptions.method} ${requestOptions.url} ` +
             `(retryAfter=${retryAfter}s, retryCount=${retryCount})`,
         )
         return shouldRetryRateLimit(retryAfter, retryCount)
       },
       onSecondaryRateLimit: (retryAfter, requestOptions, _octokit, retryCount) => {
-        canopyLogWarn(
+        warn(
           `CanopyCMS: GitHub secondary rate limit hit for ${requestOptions.method} ${requestOptions.url} ` +
             `(retryAfter=${retryAfter}s, retryCount=${retryCount})`,
         )
@@ -145,6 +149,8 @@ export interface CreateOrUpdatePullRequestParams {
   mergeSectionIntoBody?: boolean
   /** Forwarded to all GitHub requests (worker task-timeout abort). */
   signal?: AbortSignal
+  /** Where its warnings go (default `canopyLogWarn`): the GitHub gateway passes its own. */
+  warn?: (...args: unknown[]) => void
 }
 
 /**
@@ -162,6 +168,7 @@ export async function createOrUpdatePullRequest(
   params: CreateOrUpdatePullRequestParams,
 ): Promise<{ number: number; url: string; created: boolean }> {
   const { octokit, owner, repo, head, base, title, body, markReadyIfDraft, signal } = params
+  const warn = params.warn ?? canopyLogWarn
   const mergeSection = params.mergeSectionIntoBody === true
   // CONDITIONAL spread: with no signal, the request objects below carry no
   // `request` key at all (github-service.test.ts asserts on their exact shape).
@@ -185,7 +192,7 @@ export async function createOrUpdatePullRequest(
       existing = [...existingPRs.data].sort(
         (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
       )[0]
-      canopyLogWarn(
+      warn(
         `CanopyCMS: Found ${existingPRs.data.length} open PRs for ${head} -> ${base}; updating the most recently updated (#${existing.number})`,
       )
     }
@@ -229,7 +236,7 @@ export async function createOrUpdatePullRequest(
           },
         )
       } catch (err) {
-        canopyLogWarn(
+        warn(
           `CanopyCMS: Failed to convert PR #${existing.number} to ready for review (the PR update itself succeeded; continuing):`,
           getErrorMessage(err),
         )

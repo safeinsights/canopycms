@@ -306,7 +306,7 @@ class LocalGitHubGateway implements GitHubGateway {
 
   constructor(private readonly options: LocalGitHubGatewayOptions) {
     this.mirror = new GitHubMirror(options.stateDirectory, options.timeoutMs)
-    this.octokit = options.octokit ?? createCanopyOctokit(options.auth.octokitAuth)
+    this.octokit = options.octokit ?? createCanopyOctokit(options.auth.octokitAuth, gatewayLogWarn)
     this.policy = new BranchPolicy({
       baseBranch: options.baseBranch,
       protectedBranches: options.protectedBranches,
@@ -928,7 +928,13 @@ class LocalGitHubGateway implements GitHubGateway {
     return this.credentialed(signal, async (reach) => {
       await this.assertPullRequestAllowed(reach, request, signal)
       return this.api(reach, () =>
-        createOrUpdatePullRequest({ octokit: this.octokit, ...this.repo, ...request, signal }),
+        createOrUpdatePullRequest({
+          octokit: this.octokit,
+          ...this.repo,
+          ...request,
+          signal,
+          warn: gatewayLogWarn,
+        }),
       )
     })
   }
