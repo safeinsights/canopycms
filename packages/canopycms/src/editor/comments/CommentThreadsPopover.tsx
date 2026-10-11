@@ -18,7 +18,8 @@ import { IconMessage, IconMessagePlus, IconPlus } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { getErrorMessage } from '../../utils/error'
-import { InlineCommentThread, useRefocusAfterSubmit } from './InlineCommentThread'
+import { InlineCommentThread } from './InlineCommentThread'
+import { useRefocusAfterSubmit } from './ThreadReplyControls'
 
 export interface CommentThreadsPopoverProps {
   /** The threads on this field or entry. */

@@ -46,7 +46,8 @@ import { GroupManager } from './GroupManager'
 import { PermissionManager } from './PermissionManager'
 import { SystemHealthPanel } from './admin/SystemHealthPanel'
 // Import directly from helpers to avoid server-only code in authorization barrel
-import { isAdmin, isPrivileged } from '../authorization/helpers'
+import { isAdmin, isPrivileged, isReviewer } from '../authorization/helpers'
+import { fieldBreadcrumb } from './field-breadcrumb'
 import type { CommentThread } from '../comment-store'
 import {
   buildPreviewRoute,
@@ -280,6 +281,10 @@ const EditorContent: React.FC<EditorProps> = ({
   // Name lookups take the `privileged` guard (admins and reviewers); no lookup is sent that would
   // only be refused. Comment surfaces name their people for everyone (getCommentUserMetadata).
   const canResolveUserNames = isPrivileged(userContext?.groups)
+  // Reviewers and admins resolve any thread; everyone else only the threads they started.
+  const canResolveAnyComment = canResolveComments && isReviewer(userContext?.groups)
+  // The signed-in user, so "started by me" matches the thread authors the server records.
+  const commentUserId = userContext?.userId ?? currentUser
 
   const {
     layout,
@@ -475,8 +480,8 @@ const EditorContent: React.FC<EditorProps> = ({
     branchName: branchNameState,
     selectedPath,
     currentEntry,
-    currentUser,
-    canResolveComments,
+    currentUser: commentUserId,
+    canResolveComments: canResolveAnyComment,
     setSelectedPath,
     setBranchManagerOpen,
     onCommentsChange: setCommentsForBranchSummaries,
@@ -490,7 +495,8 @@ const EditorContent: React.FC<EditorProps> = ({
     handleGetUserMetadata,
     handleSearchExternalGroups,
   } = useGroupManager({ isOpen: groupManagerOpen })
-  // The comments response names its people, without email; a privileged lookup adds the email.
+  // The comments and branches responses name their people, without email; a privileged lookup
+  // adds the email.
   const getCommentUserMetadata = canResolveUserNames ? handleGetUserMetadata : getCommentUser
 
   const { permissionsData, permissionsLoading, handleSavePermissions, handleListGroups } =
@@ -614,6 +620,17 @@ const EditorContent: React.FC<EditorProps> = ({
     [activeCollections],
   )
   const schema = currentEntry?.schema ?? EMPTY_SCHEMA
+
+  const commentEntryLabel = (entryPath: string) =>
+    entriesState.find((e) => e.path === entryPath)?.label
+  // Only the open entry's value is at hand; for another entry the breadcrumb falls back to its
+  // schema's field labels.
+  const commentFieldLabel = (entryPath: string, canopyPath: string) => {
+    const entry = entriesState.find((e) => e.path === entryPath)
+    if (!entry) return undefined
+    const value = entry.path === currentEntry?.path ? displayValue : undefined
+    return fieldBreadcrumb(entry.schema, value, canopyPath).join(' › ')
+  }
 
   // Gated on `loadedValues[contentId]` (not `drafts[contentId]`) so a
   // restored-from-localStorage draft never skips the load: skipping left
@@ -1416,8 +1433,8 @@ const EditorContent: React.FC<EditorProps> = ({
                             branch={branchNameState}
                             comments={comments}
                             currentEntryPath={selectedPath}
-                            currentUserId={currentUser}
-                            canResolve={canResolveComments}
+                            currentUserId={commentUserId}
+                            canResolve={canResolveAnyComment}
                             focusedFieldPath={focusedFieldPath}
                             highlightThreadId={highlightThreadId}
                             onAddComment={handleAddComment}
@@ -1643,6 +1660,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branches={branchSummaries}
               mode={operatingMode}
               user={userContext}
+              currentBranchName={branchNameState}
               onSelect={async (name) => {
                 try {
                   await handleBranchChange(name)
@@ -1668,12 +1686,13 @@ const EditorContent: React.FC<EditorProps> = ({
               }}
               onClose={() => setBranchManagerOpen(false)}
               comments={comments}
-              currentUserId={currentUser}
-              canResolve={canResolveComments}
+              currentUserId={commentUserId}
+              canResolve={canResolveAnyComment}
               onAddComment={handleAddComment}
               onResolveThread={handleResolveThread}
               highlightThreadId={highlightThreadId}
               onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
+              onGetOwnerMetadata={getCommentUserMetadata}
               onGetCommentUserMetadata={getCommentUserMetadata}
             />
           </BranchesDrawer>
@@ -1681,7 +1700,10 @@ const EditorContent: React.FC<EditorProps> = ({
             <CommentsPanel
               branchName={branchNameState}
               comments={comments}
-              canResolve={true}
+              canResolve={canResolveAnyComment}
+              currentUserId={commentUserId}
+              entryLabel={commentEntryLabel}
+              fieldLabel={commentFieldLabel}
               onAddComment={handleAddComment}
               onResolveThread={handleResolveThread}
               onClose={() => setCommentsPanelOpen(false)}

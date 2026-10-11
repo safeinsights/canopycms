@@ -10,9 +10,6 @@
     }
   },
   "packages/canopycms/src/editor/comments/ThreadCarousel.tsx": {
-    "jsx-a11y/control-has-associated-label": {
-      "count": 2
-    },
     "jsx-a11y/no-autofocus": {
       "count": 1
     },

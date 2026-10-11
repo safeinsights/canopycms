@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
 import { Text } from '@mantine/core'
 import { openConfirm } from '../utils/confirm-modal'
+import { EDITOR_ACTIONS } from '../copy'
 import { notifications } from '@mantine/notifications'
 import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
@@ -57,14 +58,14 @@ const showSubmitConfirmation = (
   onDismiss: () => void,
 ) => {
   openConfirm({
-    title: 'Submit Branch for Review',
+    title: EDITOR_ACTIONS.submitForReview,
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Are you sure you want to submit "${branchName}" for review?\n\nThis will:\n• Create a pull request for review\n• Change the branch status to "submitted"\n• Notify reviewers of pending changes`}
+        {`Submit "${branchName}" for review?\n\nThis will:\n• Create a pull request for review\n• Change the branch status to "submitted"\n• Notify reviewers of pending changes`}
       </Text>
     ),
-    labels: { confirm: 'Submit Branch', cancel: 'Cancel' },
-    confirmProps: { color: 'brand' },
+    labels: { confirm: EDITOR_ACTIONS.submitForReview, cancel: 'Cancel' },
+    confirmProps: { color: 'brand', 'data-testid': 'confirm-submit-branch' },
     ...confirmModalHandlers(onConfirm, onDismiss),
   })
 }
@@ -101,14 +102,14 @@ const showWithdrawConfirmation = (
     'Remove from review queue',
   ].filter((b): b is string => b !== undefined)
   openConfirm({
-    title: 'Withdraw Branch from Review',
+    title: EDITOR_ACTIONS.withdrawFromReview,
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Are you sure you want to withdraw "${branchName}" from review?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}`}
+        {`Withdraw "${branchName}" from review?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}`}
       </Text>
     ),
-    labels: { confirm: 'Withdraw Branch', cancel: 'Cancel' },
-    confirmProps: { color: 'orange' },
+    labels: { confirm: EDITOR_ACTIONS.withdrawFromReview, cancel: 'Cancel' },
+    confirmProps: { color: 'orange', 'data-testid': 'confirm-withdraw-branch' },
     ...confirmModalHandlers(onConfirm, onDismiss),
   })
 }
@@ -119,13 +120,13 @@ const showRequestChangesConfirmation = (
   onDismiss: () => void,
 ) => {
   openConfirm({
-    title: 'Request changes',
+    title: EDITOR_ACTIONS.requestChanges,
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
         {`Send "${branchName}" back to its editor?\n\nThis will:\n• Change the branch status back to "editing"\n• Let its editor change it and submit again`}
       </Text>
     ),
-    labels: { confirm: 'Request changes', cancel: 'Cancel' },
+    labels: { confirm: EDITOR_ACTIONS.requestChanges, cancel: 'Cancel' },
     confirmProps: { color: 'red', 'data-testid': 'confirm-request-changes' },
     ...confirmModalHandlers(onConfirm, onDismiss),
   })
@@ -134,8 +135,8 @@ const showRequestChangesConfirmation = (
 /**
  * Delete is the one irreversible branch action: it unlinks branch.json and removes the clone,
  * the local mirror's head and, for a branch with a PR, the GitHub branch. BranchManager.tsx's
- * delete button calls `onDelete` directly, so this dialog is the only confirmation; `color:
- * 'red'` matches that button.
+ * delete menu item calls `onDelete` directly, so this dialog is the only confirmation; `color:
+ * 'red'` matches that item.
  */
 const showDeleteConfirmation = (
   branchName: string,
@@ -153,13 +154,13 @@ const showDeleteConfirmation = (
     'Discard any unsaved or unmerged changes',
   ].filter((b): b is string => b !== undefined)
   openConfirm({
-    title: 'Delete Branch',
+    title: 'Delete branch',
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Are you sure you want to delete "${branchName}"?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}\n\nThis cannot be undone.`}
+        {`Delete "${branchName}"?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}\n\nThis cannot be undone.`}
       </Text>
     ),
-    labels: { confirm: 'Delete Branch', cancel: 'Cancel' },
+    labels: { confirm: 'Delete branch', cancel: 'Cancel' },
     // data-testid is load-bearing, not decoration: the e2e helper
     // (apps/test-app/e2e/fixtures/branch-page.ts's deleteBranch) already
     // anticipated a delete confirmation and clicks
@@ -452,7 +453,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const reloadBranches = async (): Promise<BranchesData | undefined> => {
     options.setBusy(true)
     try {
-      const fresh = await fetchBranches(apiClient)
+      const fresh = await fetchBranches(apiClient, globalMutate)
       await globalMutate(BRANCHES_KEY, fresh, { revalidate: false })
       return fresh
     } catch (err) {

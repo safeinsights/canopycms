@@ -263,7 +263,7 @@ describe('Editor integration', () => {
     })
 
     // Verify save button is disabled when there are no unsaved changes
-    let saveButton = await screen.findByRole('button', { name: /save file/i })
+    let saveButton = await screen.findByRole('button', { name: /^save$/i })
     expect(saveButton.hasAttribute('disabled')).toBe(true)
 
     // Make a change to the form
@@ -271,7 +271,7 @@ describe('Editor integration', () => {
 
     // Verify save button becomes enabled after making a change
     await waitFor(() => {
-      saveButton = screen.getByRole('button', { name: /save file/i })
+      saveButton = screen.getByRole('button', { name: /^save$/i })
       expect(saveButton.hasAttribute('disabled')).toBe(false)
     })
 
@@ -443,7 +443,7 @@ describe('Editor integration', () => {
     })
 
     // ...and the editor agrees there is nothing modified.
-    const saveButton = await screen.findByRole('button', { name: /save file/i })
+    const saveButton = await screen.findByRole('button', { name: /^save$/i })
     expect(saveButton.hasAttribute('disabled')).toBe(true)
   })
 
@@ -780,7 +780,7 @@ describe('Editor integration', () => {
     // edit there would 409 instead of being blindly overwritten.
     fireEvent.change(input, { target: { value: 'Edited on feature' } })
     const saveButton = await waitFor(() => {
-      const btn = screen.getByRole('button', { name: /save file/i })
+      const btn = screen.getByRole('button', { name: /^save$/i })
       expect(btn.hasAttribute('disabled')).toBe(false)
       return btn
     })
@@ -1167,7 +1167,7 @@ describe('Editor integration', () => {
       // server value, so dirty-tracking is truthful rather than a permanent
       // false positive.
       await waitFor(() => {
-        const saveButton = screen.getByRole('button', { name: /save file/i })
+        const saveButton = screen.getByRole('button', { name: /^save$/i })
         expect(saveButton.hasAttribute('disabled')).toBe(false)
       })
     } finally {
@@ -1327,7 +1327,7 @@ describe('Editor integration', () => {
       await waitFor(() => {
         const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
         expect(el?.value).toBe('Draft title from localStorage')
-        saveButton = screen.getByRole('button', { name: /save file/i })
+        saveButton = screen.getByRole('button', { name: /^save$/i })
         expect(saveButton.hasAttribute('disabled')).toBe(false)
       })
 

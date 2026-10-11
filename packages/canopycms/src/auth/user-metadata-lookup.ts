@@ -1,9 +1,11 @@
 import { LRUCache } from 'lru-cache'
 import type { AuthPlugin } from './plugin'
-import type { UserSearchResult } from './types'
+import type { UserProfile, UserSearchResult } from './types'
 import type { CanopyUserId } from '../types'
 import { CachingAuthPlugin } from './caching-auth-plugin'
 import { MAX_USER_METADATA_BATCH } from '../api/users-constants'
+import { isSystemUserId } from '../system-users'
+import { ANONYMOUS_USER } from '../user'
 
 /**
  * How long a looked-up user, or the fact that an id is unknown, is served without asking again.
@@ -91,4 +93,43 @@ async function fetchFromPlugin(
   }
   await Promise.all(Array.from({ length: Math.min(SINGLE_LOOKUP_CONCURRENCY, ids.length) }, worker))
   return result
+}
+
+/** Matches the id bound `/users/batch` accepts; ids read from stored JSON are unvalidated. */
+const MAX_USER_ID_LENGTH = 256
+
+/**
+ * The name and avatar of each id a response may show to any reader, never the email. Callers pass
+ * only ids the requester can already see. Non-string, empty, oversized, bot and anonymous ids are
+ * skipped: the editor labels bots and the anonymous user without a lookup. Unknown ids are absent.
+ */
+export async function lookupUserProfiles(
+  plugin: AuthPlugin,
+  ids: Iterable<unknown>,
+): Promise<UserProfile[]> {
+  const wanted = new Set<CanopyUserId>()
+  for (const id of ids) {
+    if (
+      typeof id === 'string' &&
+      id.length > 0 &&
+      id.length <= MAX_USER_ID_LENGTH &&
+      id !== ANONYMOUS_USER.userId &&
+      !isSystemUserId(id)
+    ) {
+      wanted.add(id)
+    }
+  }
+  if (wanted.size === 0) return []
+  const found = await lookupUsersMetadata(plugin, [...wanted])
+  const profiles: UserProfile[] = []
+  // Built field by field: a provider's user record carries an email, which a profile never does.
+  for (const user of found.values()) {
+    if (user === null) continue
+    profiles.push(
+      user.avatarUrl === undefined
+        ? { id: user.id, name: user.name }
+        : { id: user.id, name: user.name, avatarUrl: user.avatarUrl },
+    )
+  }
+  return profiles
 }

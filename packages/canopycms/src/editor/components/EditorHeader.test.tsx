@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
@@ -66,7 +66,7 @@ describe('EditorHeader - review lock', () => {
     expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
     expect(screen.getByTestId('status-locked-banner')).toBeTruthy()
     expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
-    expect(screen.getByTestId('withdraw-button').textContent).toBe('Withdraw Branch...')
+    expect(screen.getByTestId('withdraw-button').textContent).toBe('Withdraw from review')
   })
 
   it('enables Save and shows no lock banner when editing with unsaved changes', () => {
@@ -328,5 +328,51 @@ describe('EditorHeader - modified-file menus only select', () => {
 
     expect(onEntrySelect).toHaveBeenCalledWith('posts/draft')
     expect(onNavigatorOpen).not.toHaveBeenCalled()
+  })
+})
+
+describe('EditorHeader - vocabulary', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('labels Save, and Submit for review with no ellipsis, with the shared verbs', () => {
+    renderHeader({ userContext: { userId: 'u1' }, branchCreatedBy: 'u1' })
+
+    expect(screen.getByTestId('save-button').textContent).toBe('Save')
+    expect(screen.getByTestId('submit-button').textContent).toBe('Submit for review')
+  })
+
+  it('names the branch menu items with the shared vocabulary', async () => {
+    renderHeader({ onBranchManagerOpen: vi.fn() })
+    await userEvent.click(screen.getByTestId('branch-dropdown-button'))
+
+    const menu = await screen.findByTestId('branch-menu')
+    expect(menu.textContent).toContain('Reload all entries')
+    expect(menu.textContent).toContain('Discard all changes')
+    expect(screen.getByTestId('manage-branches-menu-item').textContent).toBe('Switch branch…')
+    expect(menu.textContent).not.toContain('Manage Branches')
+  })
+
+  it('points the review-lock banner at Withdraw from review and the Branches drawer', async () => {
+    const onBranchManagerOpen = vi.fn()
+    renderHeader({
+      branchStatus: 'submitted',
+      branchWriteBlocked: true,
+      onBranchManagerOpen,
+    })
+
+    const banner = screen.getByTestId('status-locked-banner')
+    expect(banner.textContent).toContain('Withdraw it from review to make changes.')
+    await userEvent.click(within(banner).getByRole('button', { name: 'Branches' }))
+    expect(onBranchManagerOpen).toHaveBeenCalled()
+  })
+
+  it('points the unavailable-data banner at Branches to retry', () => {
+    renderHeader({ branchStatus: undefined, branchWriteBlocked: true })
+
+    expect(screen.getByTestId('status-locked-banner').textContent).toContain(
+      'Open Branches to retry.',
+    )
   })
 })

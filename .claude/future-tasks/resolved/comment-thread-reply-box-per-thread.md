@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  In the field comment popover (`editor/comments/CommentThreadsPopover.tsx`), every open thread renders `InlineCommentThread`'s reply textarea and a disabled Reply button, so N open threads stack N reply boxes (two fill a 390px screen). Collapse each behind a "Reply" button that expands in place. Natural fit for WS6-lite's inline-reply work, which owns `comments/` after WS4a. Also: `ThreadCarousel.handleAddReply` sets its own error and rethrows to `InlineCommentThread`, which shows it again, so a failed branch reply now shows the message twice.
+  RESOLVED (2026-10-11) — in WS6-lite. An open thread in the comment popover, ThreadCarousel and the Comments panel shows a "Reply" button that expands its own reply box in place, keeping any draft; Resolve tracks loading per thread. The duplicated branch-reply error was already gone: `ThreadCarousel.handleAddReply` passes failures straight to `InlineCommentThread`, which shows them once.
 ---
 
 # One reply box per open thread in the comment popover

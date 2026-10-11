@@ -11,9 +11,9 @@ automatic on-mount/on-branch-change fetch:
   sole `useSWR` call for these keys, because its cache slots hold TAGGED values
   (`{ fetched, seq, branch }`) for its out-of-order commit guard (see that file)
 - `useCommentsData` (`useCommentsData.ts`) -- GET /:branch/comments, key
-  `canopy:comments:${branch}`; seeds the user keys below from its `users`
+  `canopy:comments:${branch}`
 - `useUserMetadata` (`useUserMetadata.ts`) -- key `canopy:user:${userId}`, one per
-  badge; `user-metadata-batcher.ts` sends a render's ids as POST /users/batch, 100 per request
+  badge, seeded from both lists' `users`; `user-metadata-batcher.ts` sends a render's ids as POST /users/batch, 100 per request
 
 Each manager hook (`useBranchManager`, `useEntryManager`,
 `useCommentSystem`) consumes its data hook's reactive `data`/`error`/

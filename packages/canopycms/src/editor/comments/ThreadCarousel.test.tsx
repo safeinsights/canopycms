@@ -115,9 +115,27 @@ describe('ThreadCarousel', () => {
       />,
       { wrapper: Wrapper },
     )
+    await user.click(screen.getByTestId('reply-thread-button'))
     await user.type(screen.getByPlaceholderText('Write a reply…'), 'A reply')
-    await user.click(screen.getByRole('button', { name: 'Reply' }))
+    await user.click(screen.getByTestId('submit-reply-button'))
     expect(await screen.findAllByText("Couldn't add the comment. Try again.")).toHaveLength(1)
+  })
+
+  it('labels the previous and next thread buttons', () => {
+    render(
+      <ThreadCarousel
+        threads={mockThreads}
+        contextType="field"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    )
+
+    expect(screen.getByRole('button', { name: 'Previous thread' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Next thread' })).toBeTruthy()
   })
 
   it('renders with no threads', () => {

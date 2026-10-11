@@ -3,9 +3,11 @@
 import React, { useRef, useState } from 'react'
 
 import {
+  ActionIcon,
   Badge,
   Button,
   Group,
+  Menu,
   Paper,
   ScrollArea,
   Stack,
@@ -15,6 +17,7 @@ import {
   Collapse,
   Tooltip,
 } from '@mantine/core'
+import { IconDots, IconExternalLink } from '@tabler/icons-react'
 import type { OperatingMode } from '../operating-mode'
 import type { ConflictStatus, PullRequestState, SyncStatus } from '../types'
 import type { CommentThread } from '../comment-store'
@@ -25,8 +28,9 @@ import { userIdLabel } from './user-display'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
-import { formatRelativeTime } from './relative-time'
-import { PROTECTED_BRANCH_PRESENTATION, branchStatusPresentation } from './branch-status'
+import { RelativeTime } from './components/RelativeTime'
+import { branchStatusPresentation } from './branch-status'
+import { EDITOR_ACTIONS } from './copy'
 import { SYSTEM_USER_ID } from '../system-users'
 
 /** @internal Exported for tests. */
@@ -82,6 +86,8 @@ export const getBranchPermissions = (
   branch: BranchSummary,
   user: UserContext | undefined,
 ): {
+  /** Creator, someone given access, a system branch, a reviewer or an admin: who may submit or withdraw. */
+  hasWorkflowAccess: boolean
   canSubmit: boolean
   canWithdraw: boolean
   canDelete: boolean
@@ -89,6 +95,7 @@ export const getBranchPermissions = (
 } => {
   if (!user) {
     return {
+      hasWorkflowAccess: false,
       canSubmit: false,
       canWithdraw: false,
       canDelete: false,
@@ -152,7 +159,13 @@ export const getBranchPermissions = (
     branch.status === 'submitted' &&
     branch.pullRequestState !== 'closed'
 
-  return { canSubmit, canWithdraw, canDelete, canRequestChanges }
+  return {
+    hasWorkflowAccess: canPerformWorkflowActions,
+    canSubmit,
+    canWithdraw,
+    canDelete,
+    canRequestChanges,
+  }
 }
 
 export interface BranchManagerProps {
@@ -160,6 +173,8 @@ export interface BranchManagerProps {
   mode: OperatingMode
   /** Current user context for permission checks */
   user?: UserContext
+  /** The branch the editor has open: listed first, marked, and offered its workflow action rather than Open. */
+  currentBranchName?: string
   onSelect?: (name: string) => void
   /** Awaited before the spinner starts, so a confirmation it shows never reads as a hung create. `false` abandons the create. */
   onBeforeCreate?: () => Promise<boolean>
@@ -179,6 +194,7 @@ export interface BranchManagerProps {
   onClose?: () => void
   comments?: CommentThread[]
   currentUserId?: string
+  /** Whether the user may resolve any comment thread; a thread's author always may resolve it. */
   canResolve?: boolean
   onAddComment?: (
     text: string,
@@ -189,16 +205,379 @@ export interface BranchManagerProps {
   ) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
   highlightThreadId?: string
-  /** Names branch owners and access users; without it they show as ids */
+  /** Names access users, and owners when `onGetOwnerMetadata` is absent; without it they show as ids */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** Names branch owners; the branch listing seeds them for every editor */
+  onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Names the people in branch comments; without it they show as ids */
   onGetCommentUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+}
+
+const noAccessReason = (verb: 'submit' | 'withdraw') =>
+  `You don't have access to ${verb} this branch. Its creator, people given access to it, reviewers and admins can.`
+
+interface BranchWorkflowAction {
+  label: string
+  color: string
+  testId: string
+  run: () => void
+  /** Why it cannot act now; undefined when it can. */
+  blockedReason?: string
+}
+
+/**
+ * The workflow action a branch's status calls for, or undefined when none applies: Submit for
+ * an unprotected branch in editing, Withdraw once it is in review. 'approved' withdraws too, as
+ * its only non-destructive exit.
+ */
+const workflowAction = (
+  b: BranchSummary,
+  perms: ReturnType<typeof getBranchPermissions>,
+  onSubmit: ((name: string) => void) | undefined,
+  onWithdraw: ((name: string) => void) | undefined,
+): BranchWorkflowAction | undefined => {
+  if (b.status === 'submitted' || b.status === 'approved') {
+    return {
+      label: EDITOR_ACTIONS.withdrawFromReview,
+      color: 'orange',
+      testId: `withdraw-branch-button-${b.name}`,
+      run: () => onWithdraw?.(b.name),
+      blockedReason: perms.canWithdraw ? undefined : noAccessReason('withdraw'),
+    }
+  }
+  if (b.status === 'editing' && !b.isProtected) {
+    return {
+      label: EDITOR_ACTIONS.submitForReview,
+      color: 'brand',
+      testId: `submit-branch-button-${b.name}`,
+      run: () => onSubmit?.(b.name),
+      blockedReason: perms.canSubmit
+        ? undefined
+        : perms.hasWorkflowAccess
+          ? "This branch can't be submitted right now."
+          : noAccessReason('submit'),
+    }
+  }
+  return undefined
+}
+
+/** A menu item that stays visible when it cannot act, with its reason beneath the label. */
+const BranchMenuItem: React.FC<{
+  label: string
+  testId: string
+  color?: string
+  blockedReason?: string
+  onClick: () => void
+}> = ({ label, testId, color, blockedReason, onClick }) => (
+  <Menu.Item color={color} disabled={!!blockedReason} onClick={onClick} data-testid={testId}>
+    {label}
+    {blockedReason && (
+      <Text size="xs" c="dimmed" component="span" display="block" style={{ whiteSpace: 'normal' }}>
+        {blockedReason}
+      </Text>
+    )}
+  </Menu.Item>
+)
+
+interface BranchCardProps {
+  branch: BranchSummary
+  isCurrent: boolean
+  user?: UserContext
+  onSelect?: (name: string) => void
+  onSubmit?: (name: string) => void
+  onWithdraw?: (name: string) => void
+  onRequestChanges?: (name: string) => void
+  onDelete?: (name: string) => void
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
+}
+
+/**
+ * One branch: its state, and one primary action, with the rest in a "…" menu. The current branch
+ * shows its workflow action, the others Open, which the current one never needs.
+ */
+const BranchCard: React.FC<BranchCardProps> = ({
+  branch: b,
+  isCurrent,
+  user,
+  onSelect,
+  onSubmit,
+  onWithdraw,
+  onRequestChanges,
+  onDelete,
+  onGetUserMetadata,
+  onGetOwnerMetadata = onGetUserMetadata,
+}) => {
+  const statusBadge = branchStatusPresentation(b.status, b.isProtected)
+  const perms = getBranchPermissions(b, user)
+  const workflow = workflowAction(b, perms, onSubmit, onWithdraw)
+  const userIsAdmin = isAdmin(user?.groups)
+
+  const showWorkflowInMenu = !isCurrent && !!workflow
+  const showRequestChanges = isReviewer(user?.groups) && b.status === 'submitted'
+  const showViewPullRequest = !!b.pullRequestUrl
+  const showDelete = !b.isProtected && (userIsAdmin || (!!user && b.createdBy === user.userId))
+  const hasMenu = showWorkflowInMenu || showRequestChanges || showViewPullRequest || showDelete
+  const menuLabel = `More actions for ${b.name}`
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  return (
+    <Paper
+      withBorder
+      p="md"
+      shadow="xs"
+      aria-current={isCurrent ? 'true' : undefined}
+      data-current={isCurrent || undefined}
+      data-testid={`branch-list-item-${b.name}`}
+    >
+      <Group justify="space-between" align="flex-start" wrap="nowrap">
+        <Stack gap={4}>
+          <Group gap="xs">
+            <Text fw={600}>{b.name}</Text>
+            {isCurrent && (
+              <Badge color="brand" variant="filled" data-testid={`branch-current-badge-${b.name}`}>
+                Current
+              </Badge>
+            )}
+            {statusBadge && (
+              <Badge
+                color={statusBadge.color}
+                variant={statusBadge.variant}
+                data-testid={`branch-status-badge-${b.name}`}
+                data-status={b.status}
+                data-protected={b.isProtected || undefined}
+              >
+                {statusBadge.label}
+              </Badge>
+            )}
+            {b.status === 'archived' && b.mergedAt && (
+              <Badge color="teal" variant="light" data-testid={`branch-merged-badge-${b.name}`}>
+                Merged
+              </Badge>
+            )}
+            {b.pullRequestNumber && (
+              <Badge
+                color={
+                  b.pullRequestState === 'closed'
+                    ? 'red'
+                    : b.pullRequestState === 'merged'
+                      ? 'violet'
+                      : 'blue'
+                }
+                variant="light"
+              >
+                PR #{b.pullRequestNumber}
+                {b.pullRequestState === 'closed' ? ' (closed)' : ''}
+              </Badge>
+            )}
+            {b.commentCount !== undefined && b.commentCount > 0 && (
+              <Badge color="grape" variant="light">
+                {b.commentCount} {b.commentCount === 1 ? 'comment' : 'comments'}
+              </Badge>
+            )}
+            {b.syncStatus === 'sync-failed' && (
+              <Tooltip
+                label="GitHub sync failed — an admin can retry it from System health."
+                disabled={Boolean(b.syncFailureReason)}
+                multiline
+                maw={320}
+              >
+                <Badge color="red" variant="light" data-testid={`sync-failed-badge-${b.name}`}>
+                  Sync failed
+                </Badge>
+              </Tooltip>
+            )}
+            {b.syncStatus === 'pending-sync' && (
+              <Tooltip label="Changes are on their way to GitHub.">
+                <Badge color="gray" variant="light" data-testid={`pending-sync-badge-${b.name}`}>
+                  Syncing…
+                </Badge>
+              </Tooltip>
+            )}
+            {b.conflictStatus === 'conflicts-detected' && (
+              <Tooltip label="This branch's version was kept for conflicting entries during a rebase — review the flagged entries.">
+                <Badge color="orange" variant="light" data-testid={`conflicts-badge-${b.name}`}>
+                  Conflicts
+                  {b.conflictFiles?.length ? ` (${b.conflictFiles.length})` : ''}
+                </Badge>
+              </Tooltip>
+            )}
+          </Group>
+          {b.syncStatus === 'sync-failed' && b.syncFailureReason && (
+            <Text size="xs" c="red" maw={480} data-testid={`sync-failed-reason-${b.name}`}>
+              {b.syncFailureReason}
+              {b.status === 'submitted' && ' Withdraw it from review to make changes.'}
+            </Text>
+          )}
+          <Group gap="xs" align="center">
+            {b.updatedAt && (
+              <RelativeTime iso={b.updatedAt} prefix="Updated " size="xs" c="dimmed" />
+            )}
+            {b.createdBy && (
+              <>
+                <Text size="xs" c="dimmed">
+                  •
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Owner:
+                </Text>
+                {onGetOwnerMetadata ? (
+                  <UserBadge
+                    userId={b.createdBy}
+                    getUserMetadata={onGetOwnerMetadata}
+                    variant="avatar-name"
+                    size="xs"
+                    showEmailTooltip={true}
+                    showBadge={true}
+                    badgeVariant="light"
+                    color="gray"
+                  />
+                ) : (
+                  <Text size="xs" c="dimmed">
+                    {userIdLabel(b.createdBy)}
+                  </Text>
+                )}
+              </>
+            )}
+          </Group>
+          {b.access && (
+            <Group gap={6}>
+              {b.access.users?.map((u) =>
+                onGetUserMetadata ? (
+                  <UserBadge
+                    key={u}
+                    userId={u}
+                    getUserMetadata={onGetUserMetadata}
+                    variant="avatar-only"
+                    size="xs"
+                    showEmailTooltip={true}
+                  />
+                ) : (
+                  <Badge key={u} variant="outline" color="neutral">
+                    {u}
+                  </Badge>
+                ),
+              )}
+              {b.access.groups?.map((g) => (
+                <Badge key={g} variant="outline" color="neutral">
+                  {g}
+                </Badge>
+              ))}
+            </Group>
+          )}
+        </Stack>
+        <Group gap={8} wrap="nowrap">
+          {!isCurrent && (
+            <Button
+              variant="light"
+              onClick={() => onSelect?.(b.name)}
+              data-testid={`switch-to-branch-button-${b.name}`}
+            >
+              Open
+            </Button>
+          )}
+          {isCurrent && workflow && (
+            <Tooltip
+              label={workflow.blockedReason}
+              disabled={!workflow.blockedReason}
+              multiline
+              maw={280}
+            >
+              <Button
+                variant="light"
+                color={workflow.color}
+                onClick={() => {
+                  if (!workflow.blockedReason) workflow.run()
+                }}
+                data-disabled={workflow.blockedReason ? true : undefined}
+                aria-disabled={workflow.blockedReason ? true : undefined}
+                data-testid={workflow.testId}
+              >
+                {workflow.label}
+              </Button>
+            </Tooltip>
+          )}
+          {hasMenu && (
+            <Menu withinPortal shadow="sm" position="bottom-end" width={280} onChange={setMenuOpen}>
+              <Tooltip label={menuLabel} disabled={menuOpen}>
+                <Menu.Target>
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    aria-label={menuLabel}
+                    data-testid={`branch-actions-menu-${b.name}`}
+                  >
+                    <IconDots size={16} aria-hidden />
+                  </ActionIcon>
+                </Menu.Target>
+              </Tooltip>
+              <Menu.Dropdown>
+                {showWorkflowInMenu && workflow && (
+                  <BranchMenuItem
+                    label={workflow.label}
+                    testId={workflow.testId}
+                    blockedReason={workflow.blockedReason}
+                    onClick={workflow.run}
+                  />
+                )}
+                {showRequestChanges && (
+                  <BranchMenuItem
+                    label={EDITOR_ACTIONS.requestChanges}
+                    testId={`request-changes-branch-button-${b.name}`}
+                    blockedReason={
+                      b.pullRequestState === 'closed'
+                        ? 'The pull request was closed on GitHub without merging.'
+                        : undefined
+                    }
+                    onClick={() => onRequestChanges?.(b.name)}
+                  />
+                )}
+                {showViewPullRequest && (
+                  <Menu.Item
+                    component="a"
+                    href={b.pullRequestUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    leftSection={<IconExternalLink size={14} aria-hidden />}
+                    data-testid={`view-pull-request-${b.name}`}
+                  >
+                    {b.pullRequestNumber
+                      ? `View pull request #${b.pullRequestNumber}`
+                      : 'View pull request'}
+                  </Menu.Item>
+                )}
+                {showDelete && (
+                  <>
+                    {(showWorkflowInMenu || showRequestChanges || showViewPullRequest) && (
+                      <Menu.Divider />
+                    )}
+                    <BranchMenuItem
+                      label="Delete branch"
+                      color="red"
+                      testId={`delete-branch-button-${b.name}`}
+                      blockedReason={
+                        b.status === 'submitted' || b.status === 'approved'
+                          ? 'This branch is in review. Withdraw it from review before deleting it.'
+                          : undefined
+                      }
+                      onClick={() => onDelete?.(b.name)}
+                    />
+                  </>
+                )}
+              </Menu.Dropdown>
+            </Menu>
+          )}
+        </Group>
+      </Group>
+    </Paper>
+  )
 }
 
 export const BranchManager: React.FC<BranchManagerProps> = ({
   branches,
   mode,
   user,
+  currentBranchName,
   onSelect,
   onBeforeCreate,
   onCreate,
@@ -214,6 +593,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   onResolveThread,
   highlightThreadId,
   onGetUserMetadata,
+  onGetOwnerMetadata,
   onGetCommentUserMetadata,
 }) => {
   const supportsBranching = clientOperatingStrategy(mode).supportsBranching()
@@ -248,6 +628,13 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
     }
   }
 
+  const orderedBranches = currentBranchName
+    ? [
+        ...branches.filter((b) => b.name === currentBranchName),
+        ...branches.filter((b) => b.name !== currentBranchName),
+      ]
+    : branches
+
   return (
     <Stack
       h="100%"
@@ -279,14 +666,14 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
             disabled={creating}
             data-testid="create-branch-button"
           >
-            {showCreateForm ? 'Cancel' : 'Create New Branch'}
+            {showCreateForm ? 'Cancel' : `${EDITOR_ACTIONS.newBranch}…`}
           </Button>
 
           <Collapse in={showCreateForm}>
             <Paper withBorder p="md">
               <Stack gap="sm">
                 <TextInput
-                  label="Branch Name"
+                  label="Branch name"
                   placeholder="feature/my-branch"
                   value={newBranchName}
                   onChange={(e) => setNewBranchName(e.target.value)}
@@ -295,7 +682,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   data-testid="branch-name-input"
                 />
                 <TextInput
-                  label="Title (optional)"
+                  label="Title"
                   placeholder="Brief description"
                   value={newBranchTitle}
                   onChange={(e) => setNewBranchTitle(e.target.value)}
@@ -303,7 +690,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   data-testid="branch-title-input"
                 />
                 <Textarea
-                  label="Description (optional)"
+                  label="Description"
                   placeholder="Detailed description of the changes"
                   value={newBranchDescription}
                   onChange={(e) => setNewBranchDescription(e.target.value)}
@@ -319,7 +706,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   fullWidth
                   data-testid="create-branch-submit"
                 >
-                  Create Branch
+                  Create branch
                 </Button>
               </Stack>
             </Paper>
@@ -334,302 +721,21 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
           </Text>
         ) : (
           <Stack gap="sm">
-            {branches.map((b) => {
-              const statusBadge = branchStatusPresentation(b.status)
-              const perms = getBranchPermissions(b, user)
-              return (
-                <Paper
-                  key={b.name}
-                  withBorder
-                  p="md"
-                  shadow="xs"
-                  data-testid={`branch-list-item-${b.name}`}
-                >
-                  <Group justify="space-between" align="flex-start">
-                    <Stack gap={4}>
-                      <Group gap="xs">
-                        <Text fw={600}>{b.name}</Text>
-                        {statusBadge && (
-                          <Badge
-                            color={statusBadge.color}
-                            variant={statusBadge.variant}
-                            data-testid={`branch-status-badge-${b.name}`}
-                            data-status={b.status}
-                          >
-                            {statusBadge.label}
-                          </Badge>
-                        )}
-                        {b.status === 'archived' && b.mergedAt && (
-                          <Badge
-                            color="teal"
-                            variant="light"
-                            data-testid={`branch-merged-badge-${b.name}`}
-                          >
-                            Merged
-                          </Badge>
-                        )}
-                        {b.isProtected && (
-                          <Badge
-                            color={PROTECTED_BRANCH_PRESENTATION.color}
-                            variant={PROTECTED_BRANCH_PRESENTATION.variant}
-                            data-testid={`branch-protected-badge-${b.name}`}
-                          >
-                            {PROTECTED_BRANCH_PRESENTATION.label}
-                          </Badge>
-                        )}
-                        {b.pullRequestNumber && (
-                          <Badge
-                            color={
-                              b.pullRequestState === 'closed'
-                                ? 'red'
-                                : b.pullRequestState === 'merged'
-                                  ? 'violet'
-                                  : 'blue'
-                            }
-                            variant="light"
-                          >
-                            PR #{b.pullRequestNumber}
-                            {b.pullRequestState === 'closed' ? ' (closed)' : ''}
-                          </Badge>
-                        )}
-                        {b.commentCount !== undefined && b.commentCount > 0 && (
-                          <Badge color="grape" variant="light">
-                            {b.commentCount} {b.commentCount === 1 ? 'comment' : 'comments'}
-                          </Badge>
-                        )}
-                        {b.syncStatus === 'sync-failed' && (
-                          <Tooltip
-                            label="GitHub sync failed — an admin can retry it from System health."
-                            disabled={Boolean(b.syncFailureReason)}
-                            multiline
-                            maw={320}
-                          >
-                            <Badge
-                              color="red"
-                              variant="light"
-                              data-testid={`sync-failed-badge-${b.name}`}
-                            >
-                              Sync failed
-                            </Badge>
-                          </Tooltip>
-                        )}
-                        {b.syncStatus === 'pending-sync' && (
-                          <Tooltip label="Changes are on their way to GitHub.">
-                            <Badge
-                              color="gray"
-                              variant="light"
-                              data-testid={`pending-sync-badge-${b.name}`}
-                            >
-                              Syncing…
-                            </Badge>
-                          </Tooltip>
-                        )}
-                        {b.conflictStatus === 'conflicts-detected' && (
-                          <Tooltip label="This branch's version was kept for conflicting entries during a rebase — review the flagged entries.">
-                            <Badge
-                              color="orange"
-                              variant="light"
-                              data-testid={`conflicts-badge-${b.name}`}
-                            >
-                              Conflicts
-                              {b.conflictFiles?.length ? ` (${b.conflictFiles.length})` : ''}
-                            </Badge>
-                          </Tooltip>
-                        )}
-                      </Group>
-                      {b.syncStatus === 'sync-failed' && b.syncFailureReason && (
-                        <Text
-                          size="xs"
-                          c="red"
-                          maw={480}
-                          data-testid={`sync-failed-reason-${b.name}`}
-                        >
-                          {b.syncFailureReason}
-                          {b.status === 'submitted' &&
-                            ' Withdraw this branch to unlock it for editing.'}
-                        </Text>
-                      )}
-                      <Group gap="xs" align="center">
-                        {b.updatedAt && (
-                          <Tooltip label={new Date(b.updatedAt).toLocaleString()}>
-                            <Text size="xs" c="dimmed">
-                              Updated {formatRelativeTime(b.updatedAt)}
-                            </Text>
-                          </Tooltip>
-                        )}
-                        {b.createdBy && (
-                          <>
-                            <Text size="xs" c="dimmed">
-                              •
-                            </Text>
-                            <Text size="xs" c="dimmed">
-                              Owner:
-                            </Text>
-                            {onGetUserMetadata ? (
-                              <UserBadge
-                                userId={b.createdBy}
-                                getUserMetadata={onGetUserMetadata}
-                                variant="avatar-name"
-                                size="xs"
-                                showEmailTooltip={true}
-                                showBadge={true}
-                                badgeVariant="light"
-                                color="gray"
-                              />
-                            ) : (
-                              <Text size="xs" c="dimmed">
-                                {userIdLabel(b.createdBy)}
-                              </Text>
-                            )}
-                          </>
-                        )}
-                        {b.pullRequestUrl && (
-                          <>
-                            <Text size="xs" c="dimmed">
-                              •
-                            </Text>
-                            <Text
-                              size="xs"
-                              c="blue"
-                              component="a"
-                              href={b.pullRequestUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{
-                                textDecoration: 'underline',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              View PR
-                            </Text>
-                          </>
-                        )}
-                      </Group>
-                      {b.access && (
-                        <Group gap={6}>
-                          {b.access.users?.map((u) =>
-                            onGetUserMetadata ? (
-                              <UserBadge
-                                key={u}
-                                userId={u}
-                                getUserMetadata={onGetUserMetadata}
-                                variant="avatar-only"
-                                size="xs"
-                                showEmailTooltip={true}
-                              />
-                            ) : (
-                              <Badge key={u} variant="outline" color="neutral">
-                                {u}
-                              </Badge>
-                            ),
-                          )}
-                          {b.access.groups?.map((g) => (
-                            <Badge key={g} variant="outline" color="neutral">
-                              {g}
-                            </Badge>
-                          ))}
-                        </Group>
-                      )}
-                    </Stack>
-                    <Group gap={8}>
-                      <Button
-                        variant="light"
-                        onClick={() => onSelect?.(b.name)}
-                        data-testid={`switch-to-branch-button-${b.name}`}
-                      >
-                        Open
-                      </Button>
-                      {/* Mirrors EditorHeader's `isWithdrawable` rather than
-                          testing 'submitted' alone. */}
-                      {b.status === 'submitted' || b.status === 'approved' ? (
-                        <Tooltip
-                          label="Only the branch creator can withdraw"
-                          disabled={perms.canWithdraw}
-                        >
-                          <Button
-                            variant="light"
-                            color="orange"
-                            onClick={() => onWithdraw?.(b.name)}
-                            disabled={!perms.canWithdraw}
-                            data-testid={`withdraw-branch-button-${b.name}`}
-                          >
-                            Withdraw
-                          </Button>
-                        </Tooltip>
-                      ) : (
-                        <Tooltip
-                          label={
-                            b.isProtected
-                              ? 'The base branch cannot be submitted'
-                              : // A status arm: canSubmit folds in the server's status rule as
-                                // well as the base-branch one, so an archived (or any
-                                // non-editing) branch reads its own reason instead of the
-                                // generic "Only the branch creator can submit".
-                                b.status !== 'editing'
-                                ? `A branch with status "${b.status}" cannot be submitted`
-                                : 'Only the branch creator can submit'
-                          }
-                          disabled={perms.canSubmit}
-                        >
-                          <Button
-                            variant="light"
-                            color="green"
-                            onClick={() => onSubmit?.(b.name)}
-                            disabled={!perms.canSubmit}
-                            data-testid={`submit-branch-button-${b.name}`}
-                          >
-                            Submit
-                          </Button>
-                        </Tooltip>
-                      )}
-                      <Tooltip
-                        label={
-                          b.pullRequestState === 'closed'
-                            ? 'PR was closed on GitHub without merging'
-                            : 'Only Reviewers or Admins can request changes'
-                        }
-                        disabled={perms.canRequestChanges}
-                      >
-                        <Button
-                          variant="outline"
-                          color="neutral"
-                          onClick={() => onRequestChanges?.(b.name)}
-                          disabled={!perms.canRequestChanges}
-                          data-testid={`request-changes-branch-button-${b.name}`}
-                        >
-                          Request changes
-                        </Button>
-                      </Tooltip>
-                      <Tooltip
-                        label={
-                          b.isProtected
-                            ? 'The base branch cannot be deleted'
-                            : // A status arm, mirroring the Submit tooltip above: without it,
-                              // a branch blocked by its own status reads the generic "Only
-                              // Admin or branch creator can delete" instead of naming the open
-                              // PR. 'approved' is included alongside 'submitted' since both
-                              // mean an open PR is blocking deletion.
-                              b.status === 'submitted' || b.status === 'approved'
-                              ? `Cannot delete branch with open PR (status "${b.status}")`
-                              : 'Only Admin or branch creator can delete'
-                        }
-                        disabled={perms.canDelete}
-                      >
-                        <Button
-                          variant="outline"
-                          color="red"
-                          onClick={() => onDelete?.(b.name)}
-                          disabled={!perms.canDelete}
-                          data-testid={`delete-branch-button-${b.name}`}
-                        >
-                          Delete
-                        </Button>
-                      </Tooltip>
-                    </Group>
-                  </Group>
-                </Paper>
-              )
-            })}
+            {orderedBranches.map((b) => (
+              <BranchCard
+                key={b.name}
+                branch={b}
+                isCurrent={b.name === currentBranchName}
+                user={user}
+                onSelect={onSelect}
+                onSubmit={onSubmit}
+                onWithdraw={onWithdraw}
+                onRequestChanges={onRequestChanges}
+                onDelete={onDelete}
+                onGetUserMetadata={onGetUserMetadata}
+                onGetOwnerMetadata={onGetOwnerMetadata}
+              />
+            ))}
           </Stack>
         )}
       </ScrollArea>

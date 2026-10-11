@@ -1,14 +1,13 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
-import { Alert, Badge, Button, Group, Paper, Stack, Text, Textarea } from '@mantine/core'
-import { IconAlertCircle } from '@tabler/icons-react'
+import React from 'react'
+import { Badge, Group, Paper, Stack, Text } from '@mantine/core'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { UserBadge } from '../components/UserBadge'
 import { userIdLabel } from '../user-display'
-import { formatRelativeTime } from '../relative-time'
-import { getErrorMessage } from '../../utils/error'
+import { RelativeTime } from '../components/RelativeTime'
+import { ThreadReplyControls } from './ThreadReplyControls'
 
 export interface InlineCommentThreadProps {
   /** The thread to display */
@@ -19,25 +18,13 @@ export interface InlineCommentThreadProps {
   onResolve: () => Promise<void>
   /** Current user ID for permission checking */
   currentUserId: string
-  /** Whether user can resolve threads */
+  /** Whether the user may resolve any thread; a thread's own author always may resolve it. */
   canResolve: boolean
   /** Optional function to fetch user metadata for displaying user badges */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** The reply draft, when the caller keeps it, so it outlives this component; with `onReplyTextChange`. */
   replyText?: string
   onReplyTextChange?: (text: string) => void
-}
-
-/** Refocuses `box` when a submit settles: the busy button disabled itself and dropped focus. */
-export const useRefocusAfterSubmit = (
-  submitting: boolean,
-  box: React.RefObject<HTMLTextAreaElement | null>,
-): void => {
-  const wasSubmitting = useRef(false)
-  useEffect(() => {
-    if (wasSubmitting.current && !submitting) box.current?.focus()
-    wasSubmitting.current = submitting
-  }, [submitting, box])
 }
 
 /**
@@ -51,49 +38,9 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
   currentUserId,
   canResolve,
   onGetUserMetadata,
-  replyText: controlledReply,
+  replyText,
   onReplyTextChange,
 }) => {
-  const [ownReply, setOwnReply] = useState('')
-  const replyText = controlledReply ?? ownReply
-  const setReplyText = onReplyTextChange ?? setOwnReply
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const replyRef = useRef<HTMLTextAreaElement>(null)
-  useRefocusAfterSubmit(isSubmitting, replyRef)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleReply = async () => {
-    if (!replyText.trim()) return
-
-    setIsSubmitting(true)
-    setError(null)
-    try {
-      await onAddReply(replyText)
-      setReplyText('')
-    } catch (err) {
-      setError(getErrorMessage(err))
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleResolve = async () => {
-    setIsSubmitting(true)
-    setError(null)
-    try {
-      await onResolve()
-    } catch (err) {
-      setError(getErrorMessage(err))
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const canUserResolve = () => {
-    if (!canResolve) return false
-    return thread.authorId === currentUserId || canResolve
-  }
-
   return (
     <Paper
       withBorder
@@ -151,9 +98,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
                       {userIdLabel(comment.userId)}
                     </Text>
                   )}
-                  <Text size="xs" c="dimmed">
-                    {formatRelativeTime(comment.timestamp)}
-                  </Text>
+                  <RelativeTime iso={comment.timestamp} size="xs" c="dimmed" />
                 </Group>
                 <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                   {comment.text}
@@ -163,46 +108,16 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
           ))}
         </Stack>
 
-        {error && (
-          <Alert
-            icon={<IconAlertCircle size={16} />}
-            color="red"
-            variant="light"
-            onClose={() => setError(null)}
-            withCloseButton
-          >
-            {error}
-          </Alert>
-        )}
-
         {!thread.resolved && (
-          <Stack gap="xs">
-            <Textarea
-              ref={replyRef}
-              placeholder="Write a reply…"
-              aria-label="Reply to this thread"
-              value={replyText}
-              onChange={(e) => setReplyText(e.target.value)}
-              minRows={2}
-              disabled={isSubmitting}
-            />
-            <Group gap="xs">
-              <Button onClick={handleReply} loading={isSubmitting} disabled={!replyText.trim()}>
-                Reply
-              </Button>
-              {canUserResolve() && (
-                <Button
-                  variant="light"
-                  color="green"
-                  onClick={handleResolve}
-                  loading={isSubmitting}
-                  data-testid="resolve-thread-button"
-                >
-                  Resolve
-                </Button>
-              )}
-            </Group>
-          </Stack>
+          <ThreadReplyControls
+            thread={thread}
+            onAddReply={onAddReply}
+            onResolve={onResolve}
+            currentUserId={currentUserId}
+            canResolve={canResolve}
+            replyText={replyText}
+            onReplyTextChange={onReplyTextChange}
+          />
         )}
 
         {thread.resolved && thread.resolvedBy && (
@@ -227,9 +142,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
               </Text>
             )}
             {thread.resolvedAt && (
-              <Text size="xs" c="dimmed" fs="italic">
-                {formatRelativeTime(thread.resolvedAt)}
-              </Text>
+              <RelativeTime iso={thread.resolvedAt} size="xs" c="dimmed" fs="italic" />
             )}
           </Group>
         )}

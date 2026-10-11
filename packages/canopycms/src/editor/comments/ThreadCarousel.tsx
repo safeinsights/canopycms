@@ -1,7 +1,17 @@
 'use client'
 
 import React, { useState, useMemo, useEffect, useRef } from 'react'
-import { ActionIcon, Alert, Button, Group, Paper, Stack, Text, Textarea } from '@mantine/core'
+import {
+  ActionIcon,
+  Alert,
+  Button,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  Textarea,
+  Tooltip,
+} from '@mantine/core'
 import { IconChevronLeft, IconChevronRight, IconAlertCircle } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
@@ -40,7 +50,7 @@ export interface ThreadCarouselProps {
   contextType: 'field' | 'entry' | 'branch'
   /** Current user ID */
   currentUserId: string
-  /** Whether user can resolve threads */
+  /** Whether the user may resolve any thread; a thread's own author always may resolve it. */
   canResolve: boolean
   /** Handler to add a new comment (creates new thread or adds to existing) */
   onAddComment: (text: string, threadId?: string) => Promise<void>
@@ -232,19 +242,29 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
           <Group gap="xs">
             {sortedThreads.length > 1 && (
               <>
-                <ActionIcon variant="subtle" onClick={handlePrevious} disabled={currentIndex === 0}>
-                  <IconChevronLeft size={16} />
-                </ActionIcon>
+                <Tooltip label="Previous thread">
+                  <ActionIcon
+                    variant="subtle"
+                    onClick={handlePrevious}
+                    disabled={currentIndex === 0}
+                    aria-label="Previous thread"
+                  >
+                    <IconChevronLeft size={16} aria-hidden />
+                  </ActionIcon>
+                </Tooltip>
                 <Text size="xs" fw={500}>
                   {currentIndex + 1}/{sortedThreads.length}
                 </Text>
-                <ActionIcon
-                  variant="subtle"
-                  onClick={handleNext}
-                  disabled={currentIndex === sortedThreads.length - 1}
-                >
-                  <IconChevronRight size={16} />
-                </ActionIcon>
+                <Tooltip label="Next thread">
+                  <ActionIcon
+                    variant="subtle"
+                    onClick={handleNext}
+                    disabled={currentIndex === sortedThreads.length - 1}
+                    aria-label="Next thread"
+                  >
+                    <IconChevronRight size={16} aria-hidden />
+                  </ActionIcon>
+                </Tooltip>
                 <div
                   style={{
                     width: 1,

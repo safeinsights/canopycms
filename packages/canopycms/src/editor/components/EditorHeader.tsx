@@ -22,6 +22,7 @@ import type { LogicalPath } from '../../paths/types'
 import { clientOperatingStrategy } from '../../operating-mode/client'
 import { isAdmin, isReviewer } from '../../authorization/helpers'
 import { branchStatusPresentation } from '../branch-status'
+import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
 
 export interface EditorHeaderProps {
@@ -357,18 +358,18 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 </Menu.Target>
                 <Menu.Dropdown data-testid="branch-menu">
                   <Menu.Item onClick={onBranchReloadData} disabled={!branchName}>
-                    Reload All Files
+                    Reload all entries
                   </Menu.Item>
                   <Menu.Item
                     data-testid="discard-all-drafts-menu-item"
                     onClick={onBranchDiscardDrafts}
                     disabled={!branchName}
                   >
-                    Discard All File Drafts
+                    Discard all changes
                   </Menu.Item>
                   <Menu.Divider />
                   <Menu.Item onClick={onBranchManagerOpen} data-testid="manage-branches-menu-item">
-                    Change / Manage Branches
+                    {`${EDITOR_ACTIONS.switchBranch}…`}
                   </Menu.Item>
                   <Menu.Divider />
                   <Menu.Label>{`${modifiedCount} file${modifiedCount === 1 ? '' : 's'} modified`}</Menu.Label>
@@ -461,7 +462,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     ? 'Branch details are still loading — saving is disabled until they arrive'
                     : statusLocked
                       ? branchStatus === 'submitted'
-                        ? 'This branch is submitted for review — withdraw it to make changes'
+                        ? 'This branch is submitted for review — withdraw it from review to make changes'
                         : `This branch is ${branchStatus} — content is read-only`
                       : !hasUnsavedChanges && currentEntry
                         ? 'No changes to save'
@@ -483,7 +484,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   statusLocked
                 }
               >
-                Save File
+                {EDITOR_ACTIONS.save}
               </Button>
             </Tooltip>
             {(() => {
@@ -535,11 +536,11 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     // today only as a side effect of `branchIsProtected`'s `?? true`
                     // default -- not a guarantee this arm stays unreachable.
                     branchStatus === undefined
-                      ? 'Branch data could not be loaded, so no submit or withdraw action is available'
+                      ? 'Branch data could not be loaded, so you cannot submit it for review or withdraw it from review'
                       : !statusHasAction
-                        ? `This branch is ${branchStatus} and has no submit or withdraw action available`
+                        ? `This branch is ${branchStatus}, so it cannot be submitted for review or withdrawn from review`
                         : !userHasPermission
-                          ? 'You do not have permission to submit or withdraw this branch'
+                          ? 'You do not have permission to submit this branch for review or withdraw it from review'
                           : ''
                   }
                   disabled={canPerformAction}
@@ -551,7 +552,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     disabled={!branchName || busy || !canPerformAction}
                     data-testid={isWithdrawable ? 'withdraw-button' : 'submit-button'}
                   >
-                    {isWithdrawable ? 'Withdraw Branch...' : 'Submit Branch...'}
+                    {isWithdrawable
+                      ? EDITOR_ACTIONS.withdrawFromReview
+                      : EDITOR_ACTIONS.submitForReview}
                   </Button>
                 </Tooltip>
               )
@@ -587,13 +590,13 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
             <Group justify="space-between" align="center" gap="sm" wrap="wrap">
               <Text size="sm">
                 {branchDataUnavailable
-                  ? `Branch details for "${branchName}" could not be loaded, so content is locked until they arrive. Use Manage Branches to retry.`
+                  ? `Branch details for "${branchName}" could not be loaded, so content is locked until they arrive. Open Branches to retry.`
                   : branchStatus === 'submitted'
-                    ? `Branch "${branchName}" is submitted for review and locked for edits. Use Withdraw Branch above to resume editing.`
+                    ? `Branch "${branchName}" is submitted for review and locked for edits. Withdraw it from review to make changes.`
                     : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
               </Text>
               <Button variant="default" onClick={onBranchManagerOpen}>
-                Manage Branches
+                Branches
               </Button>
             </Group>
           </Alert>

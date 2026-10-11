@@ -154,7 +154,7 @@ the dependency-free modules above.
 **Location**: `packages/canopycms/src/auth/`
 
 - `plugin.ts` — `AuthPlugin` interface (optional `getUsersMetadata`), `verifiesCredentials` marker, `assertAuthPluginAllowedForMode`
-- `user-metadata-lookup.ts` — `lookupUsersMetadata`: the `/users` lookups' per-process cache and batching
+- `user-metadata-lookup.ts` — `lookupUsersMetadata`: per-process cached, batched `/users` lookups; `lookupUserProfiles`, emailless
 - `types.ts` — `CanopyUser`, `AuthPluginConfig`, `AuthenticationResult`, `GroupMetadata`, `PermissionGroupOption`
 - `context-helpers.ts` — auth context helpers, `extractHeaders` and `isCanopyRequest`
 - `caching-auth-plugin.ts` — `CachingAuthPlugin`, `AuthCacheProvider`, `TokenVerifier`: local token verify plus cached metadata
@@ -500,7 +500,7 @@ Top-level components and helpers:
 - `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
 - `preview-marks.ts` — `findInexactMarks`, for `hooks/usePreviewMarks.ts`
 - `client-reference-resolver.ts` — resolves preview references at any depth, batched
-- `relative-time.ts` — `formatRelativeTime`
+- `relative-time.ts` — `formatRelativeTime`; `components/RelativeTime.tsx` adds a tooltip
 - `theme.tsx` — theme, default control sizes
 - `branch-status.ts` — shared status label/colour map
 - `copy.ts` — fixed action verbs
@@ -527,7 +527,7 @@ Manager hooks, in `editor/hooks/` — see
 
 - `useBranchManager.tsx` — branch state; adopts the server's `defaultBranch` when unpinned; overlays just-created branches
 - `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm; adopts server-sanitized names
-- `create-branch-request.ts` — `requestBranchCreate`: create under a 90 s deadline, settling by the branch list
+- `create-branch-request.ts` — `requestBranchCreate`: a 90 s create deadline, settled by the branch list
 - `useEntryManager.ts` — entry loading/saving, `readEntryValue`, `listAllEntries` cursors
 - `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; verifies restored drafts
 - `useSchemaManager.ts` — schema mutations, returning result objects
@@ -535,7 +535,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
 - `user-metadata-batcher.ts` — `createUserMetadataBatcher`: a render's badge lookups as one `POST /users/batch`
 - `useEditorLayout.ts` — persisted layout prefs
-- `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and SWR-backed user metadata, seeded by `seedUserProfiles`
+- `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`); SWR user metadata, `seedUserProfiles`
 - `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
 - `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` — the three SWR hooks; keys in the README
@@ -553,7 +553,7 @@ Field components, in `editor/fields/`:
 - `CodeField.tsx` — code and Mermaid field
 - `ObjectField.tsx` — nested object; Clear when optional and filled
 - `ObjectListField.tsx` / `list-item-title.ts` — `list: true` objects; item titles
-- `InlineGroupField.tsx` — renders `type: 'group'` as a bordered container, transparent to the data path
+- `InlineGroupField.tsx` — `type: 'group'` as a bordered container, transparent to the data path
 - `BlockField.tsx` — blocks
 - `list-item-keys.ts` — `useListItemKeys`, identity keys for object lists and `BlockField`
 - `ReferenceField.tsx` — reference picker
@@ -585,7 +585,7 @@ Comments UI, in `editor/comments/`:
 - `CommentThreadsPopover.tsx` — field or entry comment control and threads popover
 - `field-comment-context.ts` — `useFieldCommentControl`: a `FieldLabel`'s own control
 - `FieldWrapper.tsx` — provides that context, tracks hover and focus
-- `InlineCommentThread.tsx` — thread rendering
+- `InlineCommentThread.tsx` / `ThreadReplyControls.tsx` — a thread, and its Reply and Resolve
 
 Media UI, in `editor/media/`:
 

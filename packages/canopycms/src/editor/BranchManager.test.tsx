@@ -1,10 +1,11 @@
 import React from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { BranchManager, getBranchPermissions } from './BranchManager'
 import type { BranchSummary } from './BranchManager'
 import { CanopyCMSProvider } from './theme'
+import { BranchesDrawer } from './components/BranchesDrawer'
 import { RESERVED_GROUPS } from '../authorization'
 
 const originalMatchMedia = window.matchMedia
@@ -62,10 +63,32 @@ describe('getBranchPermissions', () => {
       createdBy: 'user1',
     }
     const perms = getBranchPermissions(branch, undefined)
+    expect(perms.hasWorkflowAccess).toBe(false)
     expect(perms.canSubmit).toBe(false)
     expect(perms.canWithdraw).toBe(false)
     expect(perms.canDelete).toBe(false)
     expect(perms.canRequestChanges).toBe(false)
+  })
+
+  it('grants workflow access to the creator, people given access, reviewers and admins only', () => {
+    const branch: BranchSummary = {
+      name: 'work',
+      status: 'editing',
+      createdBy: 'maker',
+      access: { users: ['invited'], groups: ['team'] },
+      submitBlocked: true,
+    }
+    const access = (userId: string, groups: string[] = []) =>
+      getBranchPermissions(branch, { userId, groups }).hasWorkflowAccess
+
+    expect(access('maker')).toBe(true)
+    expect(access('invited')).toBe(true)
+    expect(access('member', ['team'])).toBe(true)
+    expect(access('rita', [RESERVED_GROUPS.REVIEWERS])).toBe(true)
+    expect(access('root', [RESERVED_GROUPS.ADMINS])).toBe(true)
+    expect(access('stranger')).toBe(false)
+    // Access is separate from whether submitting is blocked right now.
+    expect(getBranchPermissions(branch, { userId: 'maker', groups: [] }).canSubmit).toBe(false)
   })
 
   it('allows creator to submit editing branch', () => {
@@ -379,20 +402,23 @@ describe('BranchManager', () => {
     },
   ]
 
+  const openMenu = async (name: string) => {
+    await userEvent.click(screen.getByTestId(`branch-actions-menu-${name}`))
+    await screen.findByRole('menu')
+  }
+  // Mantine marks a disabled menu item with data-disabled.
+  const menuItemBlocked = (testId: string) =>
+    screen.getByTestId(testId).hasAttribute('data-disabled')
+
   it('renders branch list', () => {
     renderBranchManager({ branches: baseBranches, mode: 'prod' })
     expect(screen.getByText('main')).toBeDefined()
     expect(screen.getByText('feature/test')).toBeDefined()
   })
 
-  it('shows PR status and link when present', () => {
+  it('shows the pull request badge', () => {
     renderBranchManager({ branches: baseBranches, mode: 'prod' })
-    const prBadge = screen.getByText(/PR #1/)
-    expect(prBadge).toBeDefined()
-
-    const prLink = screen.getByText('View PR')
-    expect(prLink).toBeDefined()
-    expect(prLink.getAttribute('href')).toBe('https://github.com/owner/repo/pull/1')
+    expect(screen.getByText(/PR #1/)).toBeDefined()
   })
 
   it('shows comment count badge when present', () => {
@@ -502,7 +528,7 @@ describe('BranchManager', () => {
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
 
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
-      'Push rejected. Withdraw this branch to unlock it for editing.',
+      'Push rejected. Withdraw it from review to make changes.',
     )
   })
 
@@ -571,76 +597,53 @@ describe('BranchManager', () => {
     expect(screen.queryByTestId('conflicts-badge-main')).toBeNull()
   })
 
-  it('keeps Withdraw enabled when the submitted branch PR was closed without merging', () => {
-    const branches: BranchSummary[] = [
-      {
-        ...baseBranches[1],
-        pullRequestState: 'closed',
-      },
-    ]
+  it('keeps Withdraw enabled when the submitted branch PR was closed without merging', async () => {
+    const branches: BranchSummary[] = [{ ...baseBranches[1], pullRequestState: 'closed' }]
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
-    const withdrawButton = screen.getByRole('button', { name: /withdraw/i })
-    expect(withdrawButton.hasAttribute('disabled')).toBe(false)
+    await openMenu('feature/test')
+    expect(menuItemBlocked('withdraw-branch-button-feature/test')).toBe(false)
   })
 
-  it('disables Request changes when the submitted branch PR was closed without merging', () => {
-    const branches: BranchSummary[] = [
-      {
-        ...baseBranches[1],
-        pullRequestState: 'closed',
-      },
-    ]
+  it('disables Request changes, saying why, when the submitted branch PR was closed without merging', async () => {
+    const branches: BranchSummary[] = [{ ...baseBranches[1], pullRequestState: 'closed' }]
     renderBranchManager({ branches, user: adminUser, mode: 'prod' })
-    const requestChangesButton = screen.getByRole('button', { name: /request changes/i })
-    expect(requestChangesButton.hasAttribute('disabled')).toBe(true)
+    await openMenu('feature/test')
+    const item = screen.getByTestId('request-changes-branch-button-feature/test')
+    expect(menuItemBlocked('request-changes-branch-button-feature/test')).toBe(true)
+    expect(
+      within(item).getByText('The pull request was closed on GitHub without merging.'),
+    ).toBeTruthy()
   })
 
-  it('keeps Withdraw enabled when pullRequestState is undefined', () => {
+  it('keeps Withdraw enabled when pullRequestState is undefined', async () => {
     renderBranchManager({ branches: baseBranches, user: creatorUser, mode: 'prod' })
-    const withdrawButton = screen.getByRole('button', { name: /withdraw/i })
-    expect(withdrawButton.hasAttribute('disabled')).toBe(false)
+    await openMenu('feature/test')
+    expect(menuItemBlocked('withdraw-branch-button-feature/test')).toBe(false)
   })
 
-  it('keeps Request changes enabled when pullRequestState is open', () => {
-    const branches: BranchSummary[] = [
-      {
-        ...baseBranches[1],
-        pullRequestState: 'open',
-      },
-    ]
+  it('keeps Request changes enabled when pullRequestState is open', async () => {
+    const branches: BranchSummary[] = [{ ...baseBranches[1], pullRequestState: 'open' }]
     renderBranchManager({ branches, user: adminUser, mode: 'prod' })
-    const requestChangesButton = screen.getByRole('button', { name: /request changes/i })
-    expect(requestChangesButton.hasAttribute('disabled')).toBe(false)
+    await openMenu('feature/test')
+    expect(menuItemBlocked('request-changes-branch-button-feature/test')).toBe(false)
   })
 
-  it('calls onSubmit when Submit button clicked', async () => {
+  it('calls onSubmit when Submit for review is chosen from the menu of another branch', async () => {
     const onSubmit = vi.fn()
-    // Use creator user so they can submit their own branch
-    renderBranchManager({
-      branches: baseBranches,
-      onSubmit,
-      user: creatorUser,
-      mode: 'prod',
-    })
+    renderBranchManager({ branches: baseBranches, onSubmit, user: creatorUser, mode: 'prod' })
 
-    const submitButton = screen.getByRole('button', { name: /submit/i })
-    await userEvent.click(submitButton)
+    await openMenu('main')
+    await userEvent.click(screen.getByTestId('submit-branch-button-main'))
 
     expect(onSubmit).toHaveBeenCalledWith('main')
   })
 
-  it('calls onWithdraw when Withdraw button clicked', async () => {
+  it('calls onWithdraw when Withdraw from review is chosen from the menu of another branch', async () => {
     const onWithdraw = vi.fn()
-    // Use creator user so they can withdraw their own branch
-    renderBranchManager({
-      branches: baseBranches,
-      onWithdraw,
-      user: creatorUser,
-      mode: 'prod',
-    })
+    renderBranchManager({ branches: baseBranches, onWithdraw, user: creatorUser, mode: 'prod' })
 
-    const withdrawButton = screen.getByRole('button', { name: /withdraw/i })
-    await userEvent.click(withdrawButton)
+    await openMenu('feature/test')
+    await userEvent.click(screen.getByTestId('withdraw-branch-button-feature/test'))
 
     expect(onWithdraw).toHaveBeenCalledWith('feature/test')
   })
@@ -648,9 +651,7 @@ describe('BranchManager', () => {
   it('shows create branch form when Create button clicked', async () => {
     renderBranchManager({ branches: baseBranches, mode: 'prod' })
 
-    const createButton = screen.getByRole('button', {
-      name: /create new branch/i,
-    })
+    const createButton = screen.getByRole('button', { name: 'New branch…' })
     await userEvent.click(createButton)
 
     await waitFor(() => {
@@ -663,9 +664,7 @@ describe('BranchManager', () => {
     renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
 
     // Open form
-    const createButton = screen.getByRole('button', {
-      name: /create new branch/i,
-    })
+    const createButton = screen.getByRole('button', { name: 'New branch…' })
     await userEvent.click(createButton)
 
     // Fill form
@@ -692,7 +691,7 @@ describe('BranchManager', () => {
 
   describe('create form while the create is in flight', () => {
     const openAndFill = async (name: string) => {
-      await userEvent.click(screen.getByRole('button', { name: /create new branch/i }))
+      await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
       await userEvent.type(await screen.findByLabelText(/branch name/i), name)
       await userEvent.type(await screen.findByLabelText(/title/i), 'A title')
       await userEvent.type(await screen.findByLabelText(/description/i), 'A description')
@@ -770,7 +769,7 @@ describe('BranchManager', () => {
       })
 
       await waitFor(() => {
-        expect(screen.getByTestId('create-branch-button').textContent).toBe('Create New Branch')
+        expect(screen.getByTestId('create-branch-button').textContent).toBe('New branch…')
       })
       expect((screen.getByTestId('branch-name-input') as HTMLInputElement).value).toBe('')
       expect((screen.getByTestId('branch-title-input') as HTMLInputElement).value).toBe('')
@@ -882,7 +881,7 @@ describe('BranchManager', () => {
       await userEvent.click(screen.getByTestId('create-branch-submit'))
 
       await waitFor(() => {
-        expect(screen.getByTestId('create-branch-button').textContent).toBe('Create New Branch')
+        expect(screen.getByTestId('create-branch-button').textContent).toBe('New branch…')
       })
       expect((screen.getByTestId('branch-name-input') as HTMLInputElement).value).toBe('')
     })
@@ -896,9 +895,7 @@ describe('BranchManager', () => {
     })
 
     // Open form
-    const createButton = screen.getByRole('button', {
-      name: /create new branch/i,
-    })
+    const createButton = screen.getByRole('button', { name: 'New branch…' })
     await userEvent.click(createButton)
 
     // Submit button should be disabled with no name
@@ -920,15 +917,12 @@ describe('BranchManager', () => {
   it('shows create form in dev mode (dev supports branching)', () => {
     renderBranchManager({ branches: baseBranches, mode: 'dev' })
 
-    const createButton = screen.queryByRole('button', {
-      name: /create new branch/i,
-    })
+    const createButton = screen.queryByRole('button', { name: 'New branch…' })
     expect(createButton).not.toBeNull()
   })
 
-  it('calls onRequestChanges when button clicked', async () => {
+  it('calls onRequestChanges when Request changes is chosen from the menu', async () => {
     const onRequestChanges = vi.fn()
-    // Use admin user who can request changes on submitted branches
     renderBranchManager({
       branches: baseBranches,
       onRequestChanges,
@@ -936,19 +930,21 @@ describe('BranchManager', () => {
       mode: 'prod',
     })
 
-    const requestChangesButtons = screen.getAllByRole('button', {
-      name: /request changes/i,
-    })
-    // The second branch (feature/test) is submitted, so its button should be at index 1
-    await userEvent.click(requestChangesButtons[1])
+    await openMenu('feature/test')
+    await userEvent.click(screen.getByTestId('request-changes-branch-button-feature/test'))
 
     expect(onRequestChanges).toHaveBeenCalledWith('feature/test')
   })
 
-  it('shows a Protected badge for the protected base branch', () => {
+  it('reads "Protected" in the status badge of the protected base branch', () => {
     const branches: BranchSummary[] = [{ ...baseBranches[0], isProtected: true }]
     renderBranchManager({ branches, mode: 'prod' })
-    expect(screen.getByTestId('branch-protected-badge-main')).toBeDefined()
+    const badge = screen.getByTestId('branch-status-badge-main')
+    expect(badge.textContent).toBe('Protected')
+    expect(badge.hasAttribute('data-protected')).toBe(true)
+    expect(badge.getAttribute('data-status')).toBe('editing')
+    expect(screen.queryByText('Editing')).toBeNull()
+    expect(screen.queryByTestId('branch-protected-badge-main')).toBeNull()
   })
 
   it('labels the status badge by presentation and exposes the raw status as data-status', () => {
@@ -959,67 +955,11 @@ describe('BranchManager', () => {
     expect(badge.getAttribute('data-status')).toBe('submitted')
   })
 
-  it('does not show a Protected badge for a non-protected branch', () => {
+  it('reads the workflow status, with no protected marker, for a non-protected branch', () => {
     renderBranchManager({ branches: baseBranches, mode: 'prod' })
-    expect(screen.queryByTestId('branch-protected-badge-main')).toBeNull()
-  })
-
-  it('renders Withdraw, not Submit, for an approved branch', () => {
-    // getBranchPermissions has granted canWithdraw for 'approved' since #205
-    // (withdraw is that status's only non-destructive exit), but the render
-    // gate tested only for 'submitted', so an approved branch went down the
-    // Submit arm and the Withdraw button never mounted -- the permission was
-    // computed and thrown away. EditorHeader offered the exit; this surface
-    // did not. The existing tests all used 'submitted', which is why it passed.
-    const branches: BranchSummary[] = [
-      { ...baseBranches[0], status: 'approved', submitBlocked: true },
-    ]
-    renderBranchManager({
-      branches,
-      mode: 'prod',
-      user: { userId: 'user1', groups: [] },
-      onWithdraw: vi.fn(),
-    })
-
-    expect(screen.getByTestId('withdraw-branch-button-main')).toBeTruthy()
-    expect(screen.queryByTestId('submit-branch-button-main')).toBeNull()
-  })
-
-  it('explains a non-editing status on the disabled Submit tooltip instead of blaming permissions', async () => {
-    // canSubmit now folds in the server's status rule, so a non-editing branch
-    // shows Submit disabled. The tooltip used to say "Only the branch creator
-    // can submit" -- to the creator -- which is exactly the
-    // permission-vs-no-available-transition confusion #205 removed from
-    // EditorHeader, reintroduced one component over by that folding.
-    const branches: BranchSummary[] = [
-      { ...baseBranches[0], status: 'archived', submitBlocked: true },
-    ]
-    renderBranchManager({
-      branches,
-      mode: 'prod',
-      user: { userId: 'user1', groups: [] },
-      onSubmit: vi.fn(),
-    })
-
-    const submit = screen.getByTestId('submit-branch-button-main')
-    expect(submit.hasAttribute('disabled')).toBe(true)
-
-    // Hover to actually render the label. Asserting only that the WRONG copy is
-    // absent would pass even if no tooltip rendered at all -- the exact vacuity
-    // shape this epic exists to remove -- so assert the RIGHT copy is present
-    // first, then that the misleading one is gone.
-    await userEvent.hover(submit)
-    expect(await screen.findByText(/status "archived" cannot be submitted/i)).toBeTruthy()
-    expect(screen.queryByText(/Only the branch creator can submit/)).toBeNull()
-  })
-
-  it('disables Submit with a tooltip on the protected branch, even for the creator', () => {
-    const branches: BranchSummary[] = [
-      { ...baseBranches[0], isProtected: true, submitBlocked: true },
-    ]
-    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
-    const submitButton = screen.getByTestId('submit-branch-button-main')
-    expect(submitButton.hasAttribute('disabled')).toBe(true)
+    const badge = screen.getByTestId('branch-status-badge-main')
+    expect(badge.textContent).toBe('Editing')
+    expect(badge.hasAttribute('data-protected')).toBe(false)
   })
 
   it('leaves Open enabled on the protected branch', () => {
@@ -1029,38 +969,350 @@ describe('BranchManager', () => {
     expect(openButton.hasAttribute('disabled')).toBe(false)
   })
 
-  it('calls onDelete when delete button clicked', async () => {
+  it('calls onDelete when Delete branch is chosen from the menu', async () => {
     const onDelete = vi.fn()
-    // Use creator user so they can delete their own branch (main is editing, not submitted)
-    renderBranchManager({
-      branches: baseBranches,
-      onDelete,
-      user: creatorUser,
-      mode: 'prod',
-    })
+    renderBranchManager({ branches: baseBranches, onDelete, user: creatorUser, mode: 'prod' })
 
-    const deleteButtons = screen.getAllByRole('button', { name: /delete/i })
-    await userEvent.click(deleteButtons[0])
+    await openMenu('main')
+    await userEvent.click(screen.getByTestId('delete-branch-button-main'))
 
     expect(onDelete).toHaveBeenCalledWith('main')
   })
 
-  it('disables Delete for an approved branch, explaining the open-PR status instead of blaming permissions', async () => {
-    // Before this fix, an approved branch's Delete button fell through to
-    // the generic "Only Admin or branch creator can delete" copy -- to the
-    // very creator being blamed for a permission they do have. The real
-    // reason is the branch's status (an already-reviewed, open PR), not a
-    // permission gap -- this is the "make the disabled state honest" half
-    // of CF1/D2.
+  it('disables Delete for a branch in review, saying to withdraw it first', async () => {
     const branches: BranchSummary[] = [{ ...baseBranches[0], status: 'approved' }]
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
 
-    const deleteButton = screen.getByTestId('delete-branch-button-main')
-    expect(deleteButton.hasAttribute('disabled')).toBe(true)
+    await openMenu('main')
+    const item = screen.getByTestId('delete-branch-button-main')
+    expect(menuItemBlocked('delete-branch-button-main')).toBe(true)
+    expect(
+      within(item).getByText(
+        'This branch is in review. Withdraw it from review before deleting it.',
+      ),
+    ).toBeTruthy()
+  })
 
-    await userEvent.hover(deleteButton)
-    expect(await screen.findByText(/open PR.*"approved"/i)).toBeTruthy()
-    expect(screen.queryByText(/Only Admin or branch creator can delete/)).toBeNull()
+  describe('current branch', () => {
+    const cardNames = () =>
+      screen
+        .getAllByTestId(/^branch-list-item-/)
+        .map((card) => card.getAttribute('data-testid')?.replace('branch-list-item-', ''))
+
+    it('lists the current branch first, marked, and without Open', () => {
+      renderBranchManager({
+        branches: baseBranches,
+        currentBranchName: 'feature/test',
+        user: creatorUser,
+        mode: 'prod',
+      })
+
+      expect(cardNames()).toEqual(['feature/test', 'main'])
+      const card = screen.getByTestId('branch-list-item-feature/test')
+      expect(card.getAttribute('aria-current')).toBe('true')
+      expect(card.hasAttribute('data-current')).toBe(true)
+      expect(screen.getByTestId('branch-current-badge-feature/test').textContent).toBe('Current')
+      expect(screen.queryByTestId('switch-to-branch-button-feature/test')).toBeNull()
+
+      const other = screen.getByTestId('branch-list-item-main')
+      expect(other.hasAttribute('aria-current')).toBe(false)
+      expect(screen.queryByTestId('branch-current-badge-main')).toBeNull()
+      expect(screen.getByTestId('switch-to-branch-button-main').textContent).toBe('Open')
+    })
+
+    it('keeps the given order when no branch is current', () => {
+      renderBranchManager({ branches: baseBranches, mode: 'prod' })
+
+      expect(cardNames()).toEqual(['main', 'feature/test'])
+      expect(screen.queryByTestId('branch-current-badge-main')).toBeNull()
+      expect(screen.getByTestId('switch-to-branch-button-main')).toBeTruthy()
+    })
+
+    it('calls onSelect from Open on another branch', async () => {
+      const onSelect = vi.fn()
+      renderBranchManager({
+        branches: baseBranches,
+        currentBranchName: 'main',
+        onSelect,
+        mode: 'prod',
+      })
+
+      await userEvent.click(screen.getByTestId('switch-to-branch-button-feature/test'))
+
+      expect(onSelect).toHaveBeenCalledWith('feature/test')
+    })
+
+    it('offers the current editing branch Submit for review as its primary action', async () => {
+      const onSubmit = vi.fn()
+      renderBranchManager({
+        branches: baseBranches,
+        currentBranchName: 'main',
+        user: creatorUser,
+        onSubmit,
+        mode: 'prod',
+      })
+
+      const submit = screen.getByTestId('submit-branch-button-main')
+      expect(submit.textContent).toBe('Submit for review')
+      expect(submit.getAttribute('aria-disabled')).toBeNull()
+      await userEvent.click(submit)
+      expect(onSubmit).toHaveBeenCalledWith('main')
+
+      // It lives on the card, not also in the menu.
+      await openMenu('main')
+      expect(screen.getAllByTestId('submit-branch-button-main')).toHaveLength(1)
+    })
+
+    it('offers the current branch in review Withdraw from review as its primary action', async () => {
+      const onWithdraw = vi.fn()
+      renderBranchManager({
+        branches: baseBranches,
+        currentBranchName: 'feature/test',
+        user: creatorUser,
+        onWithdraw,
+        mode: 'prod',
+      })
+
+      const withdraw = screen.getByTestId('withdraw-branch-button-feature/test')
+      expect(withdraw.textContent).toBe('Withdraw from review')
+      expect(screen.queryByTestId('submit-branch-button-feature/test')).toBeNull()
+      await userEvent.click(withdraw)
+      expect(onWithdraw).toHaveBeenCalledWith('feature/test')
+    })
+
+    it('offers Withdraw, not Submit, on an approved current branch', () => {
+      const branches: BranchSummary[] = [
+        { ...baseBranches[0], status: 'approved', submitBlocked: true },
+      ]
+      renderBranchManager({
+        branches,
+        currentBranchName: 'main',
+        user: creatorUser,
+        mode: 'prod',
+      })
+
+      expect(screen.getByTestId('withdraw-branch-button-main')).toBeTruthy()
+      expect(screen.queryByTestId('submit-branch-button-main')).toBeNull()
+    })
+
+    it('shows the primary action disabled, with the reason on hover, for a user without access', async () => {
+      renderBranchManager({
+        branches: baseBranches,
+        currentBranchName: 'main',
+        user: { userId: 'stranger', groups: [] },
+        mode: 'prod',
+      })
+
+      const submit = screen.getByTestId('submit-branch-button-main')
+      expect(submit.getAttribute('aria-disabled')).toBe('true')
+      expect(submit.hasAttribute('data-disabled')).toBe(true)
+
+      await userEvent.hover(submit)
+      expect(
+        await screen.findByText(
+          "You don't have access to submit this branch. Its creator, people given access to it, reviewers and admins can.",
+        ),
+      ).toBeTruthy()
+    })
+
+    it('does not act on a click while the primary action is disabled', async () => {
+      const onSubmit = vi.fn()
+      renderBranchManager({
+        branches: baseBranches,
+        currentBranchName: 'main',
+        user: { userId: 'stranger', groups: [] },
+        onSubmit,
+        mode: 'prod',
+      })
+
+      await userEvent.click(screen.getByTestId('submit-branch-button-main'))
+
+      expect(onSubmit).not.toHaveBeenCalled()
+    })
+
+    it('words the withdraw reason for a user without access', async () => {
+      renderBranchManager({
+        branches: baseBranches,
+        currentBranchName: 'feature/test',
+        user: { userId: 'stranger', groups: [] },
+        mode: 'prod',
+      })
+
+      await userEvent.hover(screen.getByTestId('withdraw-branch-button-feature/test'))
+      expect(
+        await screen.findByText(
+          "You don't have access to withdraw this branch. Its creator, people given access to it, reviewers and admins can.",
+        ),
+      ).toBeTruthy()
+    })
+
+    it('says the branch cannot be submitted right now when the server blocks a permitted user', async () => {
+      const branches: BranchSummary[] = [{ ...baseBranches[0], submitBlocked: true }]
+      renderBranchManager({
+        branches,
+        currentBranchName: 'main',
+        user: creatorUser,
+        mode: 'prod',
+      })
+
+      const submit = screen.getByTestId('submit-branch-button-main')
+      expect(submit.getAttribute('aria-disabled')).toBe('true')
+      await userEvent.hover(submit)
+      expect(await screen.findByText("This branch can't be submitted right now.")).toBeTruthy()
+    })
+
+    it('offers no primary action on an archived or a protected editing current branch', () => {
+      const archived: BranchSummary[] = [{ ...baseBranches[0], status: 'archived' }]
+      const { unmount } = renderBranchManager({
+        branches: archived,
+        currentBranchName: 'main',
+        user: creatorUser,
+        mode: 'prod',
+      })
+      expect(screen.getByTestId('branch-current-badge-main')).toBeTruthy()
+      expect(screen.queryByTestId('submit-branch-button-main')).toBeNull()
+      expect(screen.queryByTestId('withdraw-branch-button-main')).toBeNull()
+      unmount()
+
+      const protectedEditing: BranchSummary[] = [
+        { ...baseBranches[0], isProtected: true, submitBlocked: true },
+      ]
+      renderBranchManager({
+        branches: protectedEditing,
+        currentBranchName: 'main',
+        user: creatorUser,
+        mode: 'prod',
+      })
+      expect(screen.getByTestId('branch-current-badge-main')).toBeTruthy()
+      expect(screen.queryByTestId('submit-branch-button-main')).toBeNull()
+      expect(screen.queryByTestId('withdraw-branch-button-main')).toBeNull()
+    })
+  })
+
+  describe('actions menu', () => {
+    it('labels its trigger with the branch it acts on', () => {
+      renderBranchManager({ branches: baseBranches, user: creatorUser, mode: 'prod' })
+
+      expect(screen.getByRole('button', { name: 'More actions for main' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'More actions for feature/test' })).toBeTruthy()
+    })
+
+    it('shows the workflow action of another branch with the reason it cannot act', async () => {
+      renderBranchManager({
+        branches: baseBranches,
+        user: { userId: 'stranger', groups: [] },
+        mode: 'prod',
+      })
+
+      await openMenu('main')
+      const item = screen.getByTestId('submit-branch-button-main')
+      expect(item.textContent).toContain('Submit for review')
+      expect(menuItemBlocked('submit-branch-button-main')).toBe(true)
+      expect(within(item).getByText(/You don't have access to submit this branch/)).toBeTruthy()
+    })
+
+    it('hides Request changes from someone who is not a reviewer or admin', async () => {
+      renderBranchManager({ branches: baseBranches, user: creatorUser, mode: 'prod' })
+
+      await openMenu('feature/test')
+      // Withdraw is there, so the menu is open on this branch's items.
+      expect(screen.getByTestId('withdraw-branch-button-feature/test')).toBeTruthy()
+      expect(screen.queryByTestId('request-changes-branch-button-feature/test')).toBeNull()
+    })
+
+    it('shows Request changes to a reviewer on a branch in review', async () => {
+      renderBranchManager({
+        branches: baseBranches,
+        user: { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] },
+        mode: 'prod',
+      })
+
+      await openMenu('feature/test')
+      expect(menuItemBlocked('request-changes-branch-button-feature/test')).toBe(false)
+    })
+
+    it('hides Request changes on a branch that is not in review', async () => {
+      renderBranchManager({ branches: baseBranches, user: adminUser, mode: 'prod' })
+
+      await openMenu('main')
+      // Delete is there, so the menu is open on this branch's items.
+      expect(screen.getByTestId('delete-branch-button-main')).toBeTruthy()
+      expect(screen.queryByTestId('request-changes-branch-button-main')).toBeNull()
+    })
+
+    it('links to the pull request in a new tab', async () => {
+      renderBranchManager({ branches: baseBranches, user: creatorUser, mode: 'prod' })
+
+      await openMenu('feature/test')
+      const link = screen.getByTestId('view-pull-request-feature/test')
+      expect(link.tagName).toBe('A')
+      expect(link.textContent).toBe('View pull request #1')
+      expect(link.getAttribute('href')).toBe('https://github.com/owner/repo/pull/1')
+      expect(link.getAttribute('target')).toBe('_blank')
+      expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+      expect(screen.queryByText('View PR')).toBeNull()
+    })
+
+    it('hides Delete branch from an editor who did not create the branch', async () => {
+      renderBranchManager({
+        branches: baseBranches,
+        user: { userId: 'other', groups: [] },
+        mode: 'prod',
+      })
+
+      await openMenu('main')
+      // The submit item is there, so the menu is open on this branch's items.
+      expect(screen.getByTestId('submit-branch-button-main')).toBeTruthy()
+      expect(screen.queryByTestId('delete-branch-button-main')).toBeNull()
+    })
+
+    it('hides Delete branch on the protected branch, even from an admin', async () => {
+      const branches: BranchSummary[] = [
+        {
+          ...baseBranches[0],
+          isProtected: true,
+          pullRequestUrl: 'https://github.com/owner/repo/pull/9',
+          pullRequestNumber: 9,
+        },
+      ]
+      renderBranchManager({ branches, user: adminUser, mode: 'prod' })
+
+      await openMenu('main')
+      expect(screen.getByTestId('view-pull-request-main')).toBeTruthy()
+      expect(screen.queryByTestId('delete-branch-button-main')).toBeNull()
+    })
+
+    it('renders no trigger when nothing in the menu applies', () => {
+      const branches: BranchSummary[] = [{ ...baseBranches[0], isProtected: true }]
+      renderBranchManager({ branches, user: adminUser, mode: 'prod' })
+
+      expect(screen.getByTestId('branch-list-item-main')).toBeTruthy()
+      expect(screen.queryByTestId('branch-actions-menu-main')).toBeNull()
+    })
+
+    it('closes only the menu on Escape, leaving the drawer open', async () => {
+      const onClose = vi.fn()
+      render(
+        <CanopyCMSProvider>
+          <BranchesDrawer opened onClose={onClose} confirmOpen={false}>
+            <BranchManager branches={baseBranches} user={creatorUser} mode="prod" />
+          </BranchesDrawer>
+        </CanopyCMSProvider>,
+      )
+
+      await openMenu('main')
+      expect(screen.getByTestId('delete-branch-button-main')).toBeTruthy()
+
+      await userEvent.keyboard('{Escape}')
+
+      await waitFor(() => expect(screen.queryByTestId('delete-branch-button-main')).toBeNull())
+      expect(onClose).not.toHaveBeenCalled()
+      expect(screen.getByTestId('branch-manager')).toBeTruthy()
+
+      // With no menu open, the same key reaches the drawer.
+      await userEvent.keyboard('{Escape}')
+      await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    })
   })
 
   describe('naming people', () => {
@@ -1121,6 +1373,31 @@ describe('BranchManager', () => {
 
       expect((await screen.findAllByText('Olive Owner')).length).toBeGreaterThan(0)
       expect(onGetUserMetadata).not.toHaveBeenCalledWith('commenter')
+    })
+
+    it('names owners through the owner resolver, and leaves access users to the privileged one', async () => {
+      const onGetOwnerMetadata = vi.fn(async (id: string) => ({
+        id,
+        name: `Named ${id}`,
+        email: '',
+      }))
+      renderBranchManager({
+        branches: [
+          {
+            name: 'feature/shared',
+            status: 'editing',
+            createdBy: 'owner1',
+            access: { users: ['acl-user'] },
+          },
+        ],
+        mode: 'prod',
+        user: creatorUser,
+        onGetOwnerMetadata,
+      })
+
+      expect(await screen.findByText('Named owner1')).toBeDefined()
+      expect(onGetOwnerMetadata).not.toHaveBeenCalledWith('acl-user')
+      expect(screen.getByText('acl-user')).toBeDefined()
     })
   })
 })
