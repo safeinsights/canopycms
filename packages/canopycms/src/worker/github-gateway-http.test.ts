@@ -26,6 +26,7 @@ import {
 import {
   GatewayRequestRefusedError,
   GitHubGatewayProtocolError,
+  GitHubGatewayStoppingError,
   GitHubGatewayUnreachableError,
   GitHubRequestError,
   PUSH_REQUEST_HEADER,
@@ -530,6 +531,12 @@ describe('the wire format at the client', () => {
       200,
       'application/json',
       '{"error":{"kind":"error","name":"E","message":"m"}}',
+    ],
+    [
+      'a stopping answer with a field it does not have',
+      503,
+      'application/json',
+      '{"error":{"kind":"stopping","message":"m","extra":1}}',
     ],
   ])('refuses an answer that is %s, loudly', async (_, status, type, body) => {
     await answering(status, type, body)
@@ -1368,7 +1375,7 @@ describe('bundles across the socket', () => {
 })
 
 describe('a drain', () => {
-  it('lets a request under way finish, refusing new ones as transient, then closes', async () => {
+  it('lets a request under way finish, answering new ones stopping, then closes', async () => {
     const gateway = fakeGateway()
     let finish: () => void = () => undefined
     gateway.defaultBranch.mockImplementation(
@@ -1382,15 +1389,22 @@ describe('a drain', () => {
     const started = Date.now()
     const draining = server.drain(10_000)
     const refused = await client.isProtectedBranch('main').catch((err: unknown) => err)
+    // Still served: under socket activation systemd holds the socket too.
+    const answered = await json('/v1/is-protected-branch', { branch: 'main' })
     finish()
 
     expect(await underWay).toBe('main')
     await draining
     // Once nothing is under way, not at the grace's end.
     expect(Date.now() - started).toBeLessThan(5_000)
-    // Unreachable, which a draining worker releases with no retry spent.
+    // Stopping, which the task runner releases with no retry spent.
+    expect(answered.status).toBe(503)
+    expect(JSON.parse(answered.body)).toMatchObject({ error: { kind: 'stopping' } })
+    expect(refused).toBeInstanceOf(GitHubGatewayStoppingError)
     expect(refused).toBeInstanceOf(GitHubGatewayUnreachableError)
+    expect(String(refused)).toMatch(/stopping/)
     expect(isPermanentTaskFailure(refused)).toBe(false)
+    expect(consoleSpy).toHaveWarned('Answering requests as stopping')
     expect(gateway.isProtectedBranch).not.toHaveBeenCalled()
   })
 
@@ -1437,11 +1451,11 @@ describe('the socket', () => {
 
   it('is not left listening when it cannot be made 0600, and its gateway never prepares', async () => {
     const gateway = fakeGateway()
-    vi.spyOn(fs, 'chmod').mockRejectedValueOnce(new Error('chmod failed'))
+    const chmod = vi.spyOn(fs, 'chmod').mockRejectedValueOnce(new Error('chmod failed'))
 
     await expect(serveGitHubGateway(gateway, { path: socketPath })).rejects.toThrow('chmod failed')
 
-    vi.restoreAllMocks()
+    chmod.mockRestore()
     await expect(connectGitHubGateway(socketPath).defaultBranch()).rejects.toBeInstanceOf(
       GitHubGatewayUnreachableError,
     )

@@ -302,6 +302,7 @@ class GatewayRequestHandler {
   private startPreparing: () => void = () => undefined
   private readonly jobs = new Map<string, FetchJob>()
   private closed = false
+  private loggedStopping = false
   private inFlight = 0
   private idleWaiters: (() => void)[] = []
   private readonly runners: JsonRunners
@@ -402,7 +403,11 @@ class GatewayRequestHandler {
     })
     try {
       if (this.closed) {
-        // As good as unreachable to the worker, which releases a task it hits while draining.
+        // As good as unreachable to the worker, which releases a task it hits with no retry spent.
+        if (!this.loggedStopping) {
+          this.loggedStopping = true
+          gatewayLogWarn('Answering requests as stopping while the gateway drains')
+        }
         sendJson(req, res, 503, {
           error: {
             kind: 'stopping',

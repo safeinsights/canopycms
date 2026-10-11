@@ -298,6 +298,18 @@ export class GitHubGatewayUnreachableError extends Error {
   }
 }
 
+/**
+ * The gateway answered that it is draining for a stop. Unreachable for every purpose, and more:
+ * the task runner releases a task it hits with no retry spent, since the stop, not the task, is
+ * why it failed, and a restart's grace could otherwise outlast the task's retries.
+ */
+export class GitHubGatewayStoppingError extends GitHubGatewayUnreachableError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'GitHubGatewayStoppingError'
+  }
+}
+
 /** The gateway refused a request before any operation ran, or answered outside the wire format. */
 export class GitHubGatewayProtocolError extends Error {
   constructor(message: string) {
@@ -460,9 +472,7 @@ export function decodeError(value: unknown): Error {
     case 'unknown-job':
       return new UnknownFetchJobError(envelope.message)
     case 'stopping':
-      return new GitHubGatewayUnreachableError(
-        `The GitHub gateway is stopping: ${envelope.message}`,
-      )
+      return new GitHubGatewayStoppingError(`The GitHub gateway is stopping: ${envelope.message}`)
   }
 }
 

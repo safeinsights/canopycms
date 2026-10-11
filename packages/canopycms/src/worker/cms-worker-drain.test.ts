@@ -14,7 +14,7 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
 import { CmsWorker, recordWorkerStartupFailure } from './cms-worker'
-import { GitHubGatewayUnreachableError } from './github-gateway-wire'
+import { GitHubGatewayStoppingError, GitHubGatewayUnreachableError } from './github-gateway-wire'
 import { enqueueTask } from '../task-queue/cms-task-queue'
 import {
   readCarriedOverStatus,
@@ -165,9 +165,15 @@ describe('CmsWorker.stop() drains the task queue', () => {
   })
 
   it.each([
-    ['while it drains, releases the task to pending with no retry spent', true],
-    ['otherwise, retries the task as any transient failure', false],
-  ])('when the GitHub gateway cannot be reached %s', async (_, draining) => {
+    ['cannot be reached while the worker drains, releases the task', true, false, true],
+    ['cannot be reached otherwise, retries the task as any transient failure', false, false, false],
+    [
+      'answers it is stopping, releases the task, whether or not the worker drains',
+      false,
+      true,
+      true,
+    ],
+  ])('when the GitHub gateway %s', async (_, draining, gatewayStopping, released) => {
     const worker = makeWorker(5_000)
     const w = internals(worker)
     await w.acquireLock()
@@ -179,20 +185,26 @@ describe('CmsWorker.stop() drains the task queue', () => {
     const processing = w.trackOperation('task queue', worker.processTaskQueue())
     expect(await waitFor(() => fail !== null)).toBe(true)
     const stopping = draining ? worker.stop({ reason: 'test shutdown' }) : null
-    fail!(new GitHubGatewayUnreachableError('Could not reach the GitHub gateway: ECONNREFUSED'))
+    fail!(
+      gatewayStopping
+        ? new GitHubGatewayStoppingError(
+            'The GitHub gateway is stopping: it no longer takes requests',
+          )
+        : new GitHubGatewayUnreachableError('Could not reach the GitHub gateway: ECONNREFUSED'),
+    )
     await processing
     await stopping
 
     const pending = await readTaskFile(taskDir, 'pending', id)
     expect(pending?.status).toBe('pending')
-    if (draining) {
+    if (released) {
       expect(pending?.retryCount ?? 0).toBe(0)
-      expect(consoleSpy).toHaveWarned('released to pending for the next worker')
+      expect(consoleSpy).toHaveWarned(/The GitHub gateway is stopping; released task/)
     } else {
       expect(pending?.retryCount).toBe(1)
       expect(consoleSpy).toHaveErrored(/Could not reach the GitHub gateway/)
-      await worker.stop({ reason: 'test' })
     }
+    if (!draining) await worker.stop({ reason: 'test' })
   })
 
   it('aborts at once, with no drain, when the worker lock is compromised', async () => {
