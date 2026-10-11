@@ -173,6 +173,8 @@ export const ImageField: React.FC<ImageFieldProps> = ({
       data-canopy-field={dataCanopyField}
       data-testid={`image-field-${dataCanopyField}`}
       {...groupDescriptionProps(inputId, description)}
+      role="group"
+      aria-label={label}
       data-removal-focus
       tabIndex={-1}
     >

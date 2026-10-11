@@ -124,4 +124,22 @@ describe('FormRenderer removals', () => {
     )
     expect(onRemoved.mock.calls[0][0].label).toBe('item 1 from Sizes')
   })
+
+  it('shortens a long title in the label to 60 characters', () => {
+    const long = 'x'.repeat(200)
+    const { onRemoved } = renderForm(
+      [
+        {
+          name: 'links',
+          type: 'object',
+          label: 'Links',
+          list: true,
+          fields: [{ name: 'href', type: 'string' }],
+        },
+      ],
+      { links: [{ href: long }] },
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(onRemoved.mock.calls[0][0].label).toBe(`"${'x'.repeat(59)}…" from Links`)
+  })
 })

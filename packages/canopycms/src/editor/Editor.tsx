@@ -570,6 +570,7 @@ const EditorContent: React.FC<EditorProps> = ({
           label={removal.label}
           onUndo={undo}
           onHold={() => notifications.update({ ...toast, autoClose: false })}
+          onRelease={() => notifications.update(toast)}
         />
       ),
       autoClose: getNotificationDuration(8000),

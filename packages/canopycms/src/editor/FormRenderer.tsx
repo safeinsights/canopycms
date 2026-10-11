@@ -98,7 +98,8 @@ const removedItemLabel = (
       .map((f) => item?.[f.name])
       .find((v): v is string => typeof v === 'string' && v.trim() !== '')
       ?.trim()
-  return text ? `"${text}" from ${listLabel}` : `item ${index + 1} from ${listLabel}`
+  if (!text) return `item ${index + 1} from ${listLabel}`
+  return `"${text.length > 60 ? `${text.slice(0, 59)}…` : text}" from ${listLabel}`
 }
 
 const normalizeOptions = (
@@ -602,6 +603,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               p="md"
               shadow="xs"
               {...groupDescriptionProps(fieldId, field.description)}
+              role="group"
+              aria-label={label}
               data-removal-focus
               tabIndex={-1}
             >

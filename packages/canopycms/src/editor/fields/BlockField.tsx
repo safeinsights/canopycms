@@ -184,6 +184,8 @@ export const BlockField: React.FC<BlockFieldProps> = ({
       p="md"
       bg="gray.0"
       data-canopy-field={dataCanopyField ?? formatCanopyPath(path)}
+      role="group"
+      aria-label={label ?? 'Blocks'}
       data-removal-focus
       tabIndex={-1}
       shadow="xs"

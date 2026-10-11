@@ -267,12 +267,12 @@ describe('Undo after Remove', () => {
     expect(notifications.hide).toHaveBeenCalledWith(toast.id)
   })
 
-  it('keeps focus on the list after Remove, and holds the toast open while it has focus', async () => {
+  it('keeps focus on the named list after Remove, and holds the toast open only while it has focus', async () => {
     stubApi([])
     renderEditor()
     await loaded()
 
-    const list = screen.getByRole('group', { name: 'Links #2' }).closest('[data-removal-focus]')
+    const list = screen.getByRole('group', { name: 'Links' })
     fireEvent.click(
       within(screen.getByRole('group', { name: 'Links #2' })).getByRole('button', {
         name: 'Remove',
@@ -283,8 +283,13 @@ describe('Undo after Remove', () => {
     const toast = undoToast()
     const message = render(<MantineProvider>{toast.message}</MantineProvider>)
     act(() => message.getByRole('button', { name: 'Undo removing "/b" from Links' }).focus())
-    expect(notifications.update).toHaveBeenCalledWith(
+    expect(notifications.update).toHaveBeenLastCalledWith(
       expect.objectContaining({ id: toast.id, autoClose: false }),
+    )
+    // Focus leaving the toast lets its timer run again.
+    act(() => (document.activeElement as HTMLElement).blur())
+    expect(notifications.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: toast.id, autoClose: toast.autoClose }),
     )
   })
 
