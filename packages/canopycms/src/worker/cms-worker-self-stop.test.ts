@@ -335,7 +335,7 @@ describe('recordWorkerStartupFailure', () => {
     await expect(fs.access(path.join(taskDir, '.worker-lock'))).rejects.toThrow()
   })
 
-  it('keeps a recorded fatal error when asked to, and records one where there is none', async () => {
+  it('keeps a recorded fatal error the caller accepts, and records one where there is none', async () => {
     await recordWorkerStartupFailure({
       workspacePath: tmpDir,
       error: new Error('The GitHub gateway could not start: App authentication failed'),
@@ -345,7 +345,7 @@ describe('recordWorkerStartupFailure', () => {
       workspacePath: tmpDir,
       error: new Error('Could not reach the GitHub gateway'),
       lockStaleMs: LOCK_STALE_MS,
-      keepRecordedFatal: true,
+      keepRecordedFatal: (recorded) => recorded.message.includes('could not start'),
     })
 
     const status: WorkerStatusReport = JSON.parse(
@@ -359,7 +359,7 @@ describe('recordWorkerStartupFailure', () => {
         workspacePath: fresh,
         error: new Error('Could not reach the GitHub gateway'),
         lockStaleMs: LOCK_STALE_MS,
-        keepRecordedFatal: true,
+        keepRecordedFatal: () => true,
       })
       const first: WorkerStatusReport = JSON.parse(
         await fs.readFile(path.join(fresh, '.tasks', WORKER_STATUS_FILE), 'utf-8'),
@@ -368,6 +368,25 @@ describe('recordWorkerStartupFailure', () => {
     } finally {
       await fs.rm(fresh, { recursive: true, force: true })
     }
+  })
+
+  it('replaces a recorded fatal error the caller does not accept', async () => {
+    await recordWorkerStartupFailure({
+      workspacePath: tmpDir,
+      error: new Error('CANOPYCMS_PROTECTED_BRANCHES is set on the worker unit'),
+      lockStaleMs: LOCK_STALE_MS,
+    })
+    await recordWorkerStartupFailure({
+      workspacePath: tmpDir,
+      error: new Error('Could not reach the GitHub gateway'),
+      lockStaleMs: LOCK_STALE_MS,
+      keepRecordedFatal: (recorded) => recorded.message.includes('could not start'),
+    })
+
+    const status: WorkerStatusReport = JSON.parse(
+      await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8'),
+    )
+    expect(status.lastFatalError?.message).toContain('Could not reach the GitHub gateway')
   })
 
   it("leaves a lock alone that looks only just stale, since a live holder's can", async () => {

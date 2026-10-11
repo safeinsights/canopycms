@@ -64,7 +64,7 @@ export interface RunWorkerDeps {
   recordWorkerStartupFailure: (options: {
     workspacePath: string
     error: unknown
-    keepRecordedFatal?: boolean
+    keepRecordedFatal?: (recorded: RecordedFatal) => boolean
   }) => Promise<void>
   /** Split mode: the client of the gateway serving `socketPath`. */
   connectGateway: (socketPath: string, options: GitHubGatewayClientOptions) => GitHubGateway
@@ -115,6 +115,37 @@ export function readGitHubAppEnv(env: NodeJS.ProcessEnv): GitHubAppEnv | undefin
   return appId && installationId && privateKeySecretArn
     ? { appId, installationId, privateKeySecretArn }
     : undefined
+}
+
+/** How the worker records the fatal error the gateway serves through `health`. */
+const GATEWAY_FATAL_PREFIX = 'The GitHub gateway could not start: '
+
+/** The part of a recorded `lastFatalError` {@link isRecentGatewayFatal} reads. */
+export interface RecordedFatal {
+  message: string
+  phase: string
+  at: string
+}
+
+/**
+ * How long the gateway's own recorded fatal error stays the cause of it being away: its 60 s
+ * hold, its restart and its next boot's secret reads, with room. A gateway away for longer (its
+ * unit gave up, a wrong socket path) is the news.
+ */
+export const GATEWAY_AWAY_KEEP_MS = 5 * 60_000
+
+/**
+ * Whether `recorded` is the gateway's fatal error, recorded at startup within
+ * {@link GATEWAY_AWAY_KEEP_MS}: the record an unreachable gateway leaves in place.
+ */
+export function isRecentGatewayFatal(recorded: RecordedFatal, now = Date.now()): boolean {
+  const age = now - Date.parse(recorded.at)
+  return (
+    recorded.phase === 'startup' &&
+    recorded.message.startsWith(GATEWAY_FATAL_PREFIX) &&
+    age >= 0 &&
+    age < GATEWAY_AWAY_KEEP_MS
+  )
 }
 
 /** The environment variable whose entries `parseProtectedBranches` reads. */
@@ -432,7 +463,7 @@ async function buildSplitWorker(
     throw err
   }
   if (health.fatalError !== null) {
-    throw new Error(`The GitHub gateway could not start: ${health.fatalError}`)
+    throw new Error(`${GATEWAY_FATAL_PREFIX}${health.fatalError}`)
   }
   if (!health.ready) throw new Error('The GitHub gateway is not ready')
 
@@ -560,12 +591,14 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
   } catch (err) {
     workerLogError('Fatal error:', getErrorMessage(err))
     if (!startCalled && workspacePath) {
-      // A gateway that is away (restarting after its own fatal error, which it serves for a while
-      // and then exits on) says nothing new: it must not replace the cause recorded before it.
+      // A gateway away while it restarts after its own fatal error must not replace that error,
+      // which is still the cause; any other record, or a gateway away for longer, is replaced.
       await deps.recordWorkerStartupFailure({
         workspacePath,
         error: err,
-        ...(err instanceof GitHubGatewayUnreachableError ? { keepRecordedFatal: true } : {}),
+        ...(err instanceof GitHubGatewayUnreachableError
+          ? { keepRecordedFatal: isRecentGatewayFatal }
+          : {}),
       })
     }
     if (terminating) {

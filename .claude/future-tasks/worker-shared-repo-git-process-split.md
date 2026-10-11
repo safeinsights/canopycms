@@ -1219,7 +1219,8 @@ the drain mapping, deadlines, and the self-check helpers.
     serves a stand-in that answers `health` with the scrubbed cause and fails every other operation
     as a status-less (transient) error. It and a failed `prepare()` take one path: answer the cause
     for 60 s, drain, exit 1. A worker that finds the gateway away meanwhile (unreachable, or no
-    `health` answer within 300 s) exits 1 without replacing a `lastFatalError` already recorded.
+    `health` answer within 300 s) exits 1, leaving in place the gateway's own fatal error if it
+    recorded one in the last 5 minutes, and recording the unreachable gateway otherwise.
   - The gateway's SIGTERM: `drain(60 s)`, then exit 0. A running fetch job is not waited for; the
     cgroup kill takes it.
   - Three gateway operations: `authSnapshot` (D7: the gateway fetches with the Clerk key behind
@@ -1247,6 +1248,9 @@ the drain mapping, deadlines, and the self-check helpers.
   - `ExecStart=… index.js gateway`; `gateway.env` carries the owner, repo, base branch,
     `CANOPYCMS_PROTECTED_BRANCHES`, `CANOPYCMS_WORKER_CAPACITY`, the contract stamp and the secrets;
     the worker unit carries `CANOPYCMS_GITHUB_GATEWAY_SOCKET` and none of them;
+  - a gateway whose `prepare()` fails exits after its hold even while a running worker drains
+    through it, so the worker's one `completeLifecycle` can miss; bind the worker unit to the
+    gateway's (`BindsTo=`), or retry `completeLifecycle` within the heartbeat;
   - nothing checks that the gateway runs as a user other than the worker's: a hand unit missing
     `User=canopy-github` passes every self-check while the worker can read its environment. A
     gateway self-check refusing to run as the socket node's owner (`fstat` of fd 3) closes it.

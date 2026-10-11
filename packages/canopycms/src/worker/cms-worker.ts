@@ -368,11 +368,11 @@ export async function recordWorkerStartupFailure(options: {
   error: unknown
   lockStaleMs?: number
   /**
-   * Write nothing when the file already holds a `lastFatalError`: for a failure that only says
-   * the cause is still in the way (the GitHub gateway unreachable while it restarts), which must
-   * not replace the cause recorded before it.
+   * Write nothing when the file already holds a `lastFatalError` this accepts: for a failure that
+   * only says the recorded cause is still in the way (the GitHub gateway unreachable while it
+   * restarts after its own fatal error), which must not replace that cause.
    */
-  keepRecordedFatal?: boolean
+  keepRecordedFatal?: (recorded: NonNullable<WorkerStatusReport['lastFatalError']>) => boolean
 }): Promise<void> {
   const taskDir = path.join(options.workspacePath, '.tasks')
   let release: (() => Promise<void>) | undefined
@@ -386,7 +386,7 @@ export async function recordWorkerStartupFailure(options: {
     })
     const now = new Date().toISOString()
     const { lastFatalError, lastShutdown, baseHold } = await readCarriedFields(taskDir)
-    if (options.keepRecordedFatal && lastFatalError) return
+    if (lastFatalError && options.keepRecordedFatal?.(lastFatalError)) return
     await writeWorkerStatus(taskDir, {
       version: 1,
       workerVersion: CANOPYCMS_VERSION,

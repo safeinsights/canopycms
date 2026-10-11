@@ -33,6 +33,8 @@ import {
   unitWorkerContract,
 } from '../src/constructs/worker-lifecycle'
 import {
+  GATEWAY_AWAY_KEEP_MS,
+  isRecentGatewayFatal,
   pollGatewayForTermination,
   readGitHubAppEnv,
   runWorker,
@@ -919,7 +921,7 @@ describe('runWorker: split mode', () => {
       expect(h.record).toHaveBeenCalledWith({
         workspacePath: WORKSPACE,
         error: away,
-        keepRecordedFatal: true,
+        keepRecordedFatal: isRecentGatewayFatal,
       })
       expect(h.exitCodes()).toEqual([1])
     })
@@ -935,7 +937,7 @@ describe('runWorker: split mode', () => {
       expect(h.record).toHaveBeenCalledWith({
         workspacePath: WORKSPACE,
         error: expect.any(GitHubGatewayUnreachableError),
-        keepRecordedFatal: true,
+        keepRecordedFatal: isRecentGatewayFatal,
       })
     })
 
@@ -973,6 +975,42 @@ describe('runWorker: split mode', () => {
       } finally {
         await fs.rm(workspace, { recursive: true, force: true })
       }
+    })
+
+    it.each<[string, { message: string; phase: string; ageMs: number }, boolean]>([
+      [
+        "the gateway's fatal error, just recorded",
+        { message: 'The GitHub gateway could not start: App 401', phase: 'startup', ageMs: 1_000 },
+        true,
+      ],
+      [
+        "the gateway's fatal error, older than the keep window",
+        {
+          message: 'The GitHub gateway could not start: App 401',
+          phase: 'startup',
+          ageMs: GATEWAY_AWAY_KEEP_MS + 1_000,
+        },
+        false,
+      ],
+      [
+        'a worker-side cause',
+        {
+          message: 'CANOPYCMS_PROTECTED_BRANCHES is set on the worker unit',
+          phase: 'startup',
+          ageMs: 1_000,
+        },
+        false,
+      ],
+      [
+        'a running worker’s fatal error',
+        { message: 'The GitHub gateway could not start: App 401', phase: 'run', ageMs: 1_000 },
+        false,
+      ],
+    ])('keeps, for an unreachable gateway, %s: %s', (_case, { message, phase, ageMs }, kept) => {
+      const now = Date.parse('2026-10-11T12:00:00.000Z')
+      const at = new Date(now - ageMs).toISOString()
+
+      expect(isRecentGatewayFatal({ message, phase, at }, now)).toBe(kept)
     })
 
     it('refuses a gateway that answers without being ready or failed', async () => {
