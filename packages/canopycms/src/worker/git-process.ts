@@ -41,6 +41,8 @@ export interface GitProcessOptions {
    */
   deadlineMs?: number
   signal?: AbortSignal
+  /** Told of each sign of life the inactivity bound counts: output written, input consumed. */
+  onActivity?: () => void
 }
 
 /**
@@ -113,6 +115,7 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
     stop(`git ${command} wrote nothing for ${options.inactivityTimeoutMs}ms`)
   }
   const touch = () => {
+    options.onActivity?.()
     clearTimeout(inactivity)
     // Once git has exited 0, output still unread is the reader's to take, however slowly.
     if (exitedCleanly) return

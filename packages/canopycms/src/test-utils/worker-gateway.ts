@@ -164,8 +164,8 @@ class ServedGateway implements GitHubGateway {
   async isProtectedBranch(branch: string, signal?: AbortSignal) {
     return (await this.client).isProtectedBranch(branch, signal)
   }
-  async fetch(request: { have: readonly string[] }, signal?: AbortSignal) {
-    return (await this.client).fetch(request, signal)
+  async fetch(request: { have: readonly string[] }, signal?: AbortSignal, onProgress?: () => void) {
+    return (await this.client).fetch(request, signal, onProgress)
   }
   async openBundle(bundleId: string) {
     return (await this.client).openBundle(bundleId)

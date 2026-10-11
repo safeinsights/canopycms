@@ -841,7 +841,11 @@ describe('fetch jobs', () => {
     )
     expect(result.bundleId).toBe('c'.repeat(32))
     // Deduplicated before it is sent, as the gateway would itself.
-    expect(gateway.fetch).toHaveBeenCalledWith({ have: [SHA, OTHER] })
+    expect(gateway.fetch).toHaveBeenCalledWith(
+      { have: [SHA, OTHER] },
+      undefined,
+      expect.any(Function),
+    )
   })
 
   it('keeps a job running when the worker abandons its wait, and answers its next poll', async () => {
@@ -856,11 +860,52 @@ describe('fetch jobs', () => {
     controller.abort(new Error('the sync loop is stopping'))
     await expect(abandoned).rejects.toThrow('the sync loop is stopping')
 
-    // The gateway's fetch took no signal, so nothing could abort it.
-    expect(gateway.fetch).toHaveBeenCalledWith({ have: [] })
+    // The gateway's fetch took no signal, so nothing could abort it: only a progress listener.
+    expect(gateway.fetch).toHaveBeenCalledWith({ have: [] }, undefined, expect.any(Function))
     finish({ refs: new Map([['main', SHA]]), bundleId: null })
     await server.idle()
     expect(gateway.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops waiting, transient, for a job that shows no progress, and leaves it running', async () => {
+    const gateway = fakeGateway()
+    gateway.fetch.mockImplementation(() => new Promise(() => undefined))
+    await serve(gateway)
+    const started = Date.now()
+
+    const caught = await connectGitHubGateway(socketPath, { fetchInactivityMs: 300 })
+      .fetch({ have: [] })
+      .catch((err: unknown) => err)
+
+    expect(caught).toBeInstanceOf(GitHubTransientError)
+    expect(caught).toMatchObject({ code: 'github-fetch-failed' })
+    expect(String(caught)).toMatch(/no progress for 300ms/)
+    expect(Date.now() - started).toBeLessThan(3_000)
+    expect(gateway.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits out a job past the inactivity bound while its progress moves, and passes it on', async () => {
+    const gateway = fakeGateway()
+    gateway.fetch.mockImplementation(
+      async (_request: unknown, _signal?: AbortSignal, onProgress?: () => void) => {
+        for (let i = 0; i < 10; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          onProgress?.()
+        }
+        return { refs: new Map([['main', SHA]]), bundleId: null }
+      },
+    )
+    await serve(gateway)
+    const onProgress = vi.fn()
+
+    const result = await connectGitHubGateway(socketPath, { fetchInactivityMs: 300 }).fetch(
+      { have: [] },
+      undefined,
+      onProgress,
+    )
+
+    expect(result.refs.get('main')).toBe(SHA)
+    expect(onProgress).toHaveBeenCalled()
   })
 
   it('polls a job past the server’s wait until it finishes', async () => {

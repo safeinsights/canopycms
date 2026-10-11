@@ -86,6 +86,7 @@ export class GitHubMirror {
   private rebuildFailedAt = 0
   /** A sweep the maintenance mutex prevented, done at the next session start that can take it. */
   private sweepOwed = false
+  private readonly activityListeners = new Set<() => void>()
 
   /**
    * `maintenanceIntervalMs` (default {@link MAINTENANCE_INTERVAL_MS}) also delays the first run:
@@ -123,7 +124,9 @@ export class GitHubMirror {
         }
         await sweepCredentialConfigs(this.stateDirectory)
         await this.ensureTransferDirs()
-        return await fn(new MirrorSession(this.gitDir, this.stateDirectory, this.timeoutMs))
+        return await fn(
+          new MirrorSession(this.gitDir, this.stateDirectory, this.timeoutMs, this.activity),
+        )
       } catch (err) {
         this.ready = false
         throw err
@@ -132,6 +135,20 @@ export class GitHubMirror {
     const run = this.tail.then(start, start)
     this.tail = run.catch(() => undefined)
     return run
+  }
+
+  /**
+   * Call `listener` at each sign of life from a session's git (output, input taken) until the
+   * returned function is called: what a caller waiting on the mirror sees of progress, whoever's
+   * session it is.
+   */
+  watchActivity(listener: () => void): () => void {
+    this.activityListeners.add(listener)
+    return () => this.activityListeners.delete(listener)
+  }
+
+  private readonly activity = (): void => {
+    for (const listener of this.activityListeners) listener()
   }
 
   /** Create the mirror now rather than at its first use. */
@@ -704,6 +721,7 @@ export class MirrorSession {
     private readonly gitDir: string,
     private readonly stateDirectory: string,
     private readonly timeoutMs: number,
+    private readonly onActivity?: () => void,
   ) {}
 
   /** simple-git in `repo`: the mirror, or a quarantine of this session's. */
@@ -721,7 +739,10 @@ export class MirrorSession {
     args: readonly string[],
     options: { stdin?: string; repo?: string; config?: string[]; signal?: AbortSignal } = {},
   ): Promise<string> {
-    return runInRepo(options.repo ?? this.gitDir, this.timeoutMs, args, options)
+    return runInRepo(options.repo ?? this.gitDir, this.timeoutMs, args, {
+      ...options,
+      onActivity: this.onActivity,
+    })
   }
 
   /**
@@ -755,6 +776,7 @@ export class MirrorSession {
           inactivityTimeoutMs: this.timeoutMs,
           signal,
           stdoutInFailure: true,
+          onActivity: this.onActivity,
         })
       } catch (err) {
         if (!isOwnLockFailure(getErrorMessage(err))) credential.onFailure()
@@ -1207,7 +1229,13 @@ function runInRepo(
   repo: string,
   timeoutMs: number,
   args: readonly string[],
-  options: { stdin?: string; config?: string[]; signal?: AbortSignal; deadlineMs?: number } = {},
+  options: {
+    stdin?: string
+    config?: string[]
+    signal?: AbortSignal
+    deadlineMs?: number
+    onActivity?: () => void
+  } = {},
 ): Promise<string> {
   return runGit(args, {
     cwd: repo,
@@ -1217,5 +1245,6 @@ function runInRepo(
     inactivityTimeoutMs: timeoutMs,
     deadlineMs: options.deadlineMs,
     signal: options.signal,
+    onActivity: options.onActivity,
   })
 }

@@ -17,6 +17,7 @@ import type {
   GitHubPushAnswer,
   GitHubPushRequest,
 } from './github-gateway'
+import { GitHubTransientError } from './github-mirror'
 import {
   BUNDLE_CONTENT_TYPE,
   BUNDLE_ROUTE,
@@ -222,6 +223,7 @@ class RefusedRequest extends Error {
 /** A fetch job: one `fetch` request's answer, computed detached from every client. */
 interface FetchJob {
   readonly settled: Promise<void>
+  progress: number
   answer:
     | { ok: true; value: z.input<typeof fetchPoll> }
     | { ok: false; error: ErrorEnvelope }
@@ -444,15 +446,23 @@ class GatewayRequestHandler {
     const job: FetchJob = {
       answer: null,
       settledAt: null,
+      progress: 0,
       // No signal: the job outlives the request that started it (see the module doc).
-      settled: this.gateway.fetch({ have }).then(
-        ({ refs, bundleId }) => {
-          job.answer = { ok: true, value: { state: 'done', refs: [...refs], bundleId } }
-        },
-        (err: unknown) => {
-          job.answer = { ok: false, error: encodeError(err) }
-        },
-      ),
+      settled: this.gateway
+        .fetch({ have }, undefined, () => {
+          job.progress++
+        })
+        .then(
+          ({ refs, bundleId }) => {
+            job.answer = {
+            ok: true,
+            value: { state: 'done', progress: job.progress, refs: [...refs], bundleId },
+          }
+          },
+          (err: unknown) => {
+            job.answer = { ok: false, error: encodeError(err) }
+          },
+        ),
     }
     void job.settled.then(() => {
       job.settledAt = Date.now()
@@ -498,8 +508,9 @@ class GatewayRequestHandler {
       res.off('close', onClose)
     }
     const answer = job.answer
-    if (answer === null) sendJson(req, res, 200, { value: { state: 'running' } })
-    else if (answer.ok)
+    if (answer === null) {
+      sendJson(req, res, 200, { value: { state: 'running', progress: job.progress } })
+    } else if (answer.ok)
       sendJson(req, res, 200, { value: parseAnswer(fetchPoll, answer.value, 'fetch') })
     else sendJson(req, res, 500, { error: answer.error })
   }
@@ -662,12 +673,34 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
  * `decodeError`), so the task runner classifies it as it would in-process. A
  * gateway it cannot reach throws {@link GitHubGatewayUnreachableError}.
  */
-export function connectGitHubGateway(socketPath: string): GitHubGateway {
-  return new GitHubGatewayClient(socketPath)
+export function connectGitHubGateway(
+  socketPath: string,
+  options: GitHubGatewayClientOptions = {},
+): GitHubGateway {
+  return new GitHubGatewayClient(socketPath, options)
 }
 
+export interface GitHubGatewayClientOptions {
+  /**
+   * How long a fetch job may go without a sign of life from the gateway's git before the worker
+   * stops waiting for it (transient); the job itself runs on. Default
+   * {@link DEFAULT_FETCH_INACTIVITY_MS}; the worker's task timeout is the natural value.
+   */
+  fetchInactivityMs?: number
+}
+
+/** The default {@link GitHubGatewayClientOptions.fetchInactivityMs}: two minutes. */
+const DEFAULT_FETCH_INACTIVITY_MS = 120_000
+
 class GitHubGatewayClient implements GitHubGateway {
-  constructor(private readonly socketPath: string) {}
+  private readonly fetchInactivityMs: number
+
+  constructor(
+    private readonly socketPath: string,
+    options: GitHubGatewayClientOptions,
+  ) {
+    this.fetchInactivityMs = options.fetchInactivityMs ?? DEFAULT_FETCH_INACTIVITY_MS
+  }
 
   async prepare(): Promise<void> {
     await this.call('prepare', {})
@@ -694,6 +727,7 @@ class GitHubGatewayClient implements GitHubGateway {
   async fetch(
     request: { have: readonly string[] },
     signal?: AbortSignal,
+    onProgress?: () => void,
   ): Promise<GitHubFetchResult> {
     const have = [...new Set(request.have)]
     for (let attempt = 1; ; attempt++) {
@@ -705,7 +739,7 @@ class GitHubGatewayClient implements GitHubGateway {
       })
       const { job } = await readAnswer(started, fetchStarted, signal)
       try {
-        return await this.pollFetch(job, signal)
+        return await this.pollFetch(job, signal, onProgress)
       } catch (err) {
         if (err instanceof UnknownFetchJobError && attempt === 1) continue
         throw err
@@ -714,17 +748,26 @@ class GitHubGatewayClient implements GitHubGateway {
   }
 
   /**
-   * Poll job `job` until it finishes. A poll the connection breaks off (the gateway restarting) is
-   * tried again, up to {@link POLL_RETRIES} times in a row, {@link POLL_RETRY_MS} apart: a
-   * restarted gateway then answers that it no longer holds the job.
+   * Poll job `job` until it finishes, giving up (transient) once its progress has not moved for
+   * {@link GitHubGatewayClientOptions.fetchInactivityMs}. A poll the connection breaks off (the
+   * gateway restarting) is tried again, up to {@link POLL_RETRIES} times in a row,
+   * {@link POLL_RETRY_MS} apart: a restarted gateway then answers that it no longer holds the job.
    */
-  private async pollFetch(job: string, signal?: AbortSignal): Promise<GitHubFetchResult> {
+  private async pollFetch(
+    job: string,
+    signal?: AbortSignal,
+    onProgress?: () => void,
+  ): Promise<GitHubFetchResult> {
+    // Each poll answers well inside the bound, so a stalled job is seen in time.
+    const wait = Math.max(1, Math.min(POLL_WAIT_MS, Math.floor(this.fetchInactivityMs / 2)))
+    let progress = 0
+    let movedAt = Date.now()
     for (let broken = 0; ; ) {
       let poll: z.infer<typeof fetchPoll>
       try {
         const res = await this.send({
           method: 'GET',
-          path: `${FETCH_ROUTE}/${job}?wait=${POLL_WAIT_MS}`,
+          path: `${FETCH_ROUTE}/${job}?wait=${wait}`,
           signal,
         })
         poll = await readAnswer(res, fetchPoll, signal)
@@ -734,7 +777,19 @@ class GitHubGatewayClient implements GitHubGateway {
         continue
       }
       broken = 0
+      if (poll.progress > progress) {
+        onProgress?.()
+        progress = poll.progress
+        movedAt = Date.now()
+      }
       if (poll.state === 'done') return { refs: new Map(poll.refs), bundleId: poll.bundleId }
+      if (Date.now() - movedAt >= this.fetchInactivityMs) {
+        throw new GitHubTransientError(
+          'github-fetch-failed',
+          `The GitHub gateway's fetch showed no progress for ${this.fetchInactivityMs}ms; it runs on, ` +
+            'and the next fetch joins it',
+        )
+      }
     }
   }
 

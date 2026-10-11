@@ -152,10 +152,12 @@ export const fetchStarted = z.object({ job: jobId }).strict()
 
 /** A fetch job's state as a poll reads it; a failed one answers its error instead. */
 export const fetchPoll = z.discriminatedUnion('state', [
-  z.object({ state: z.literal('running') }).strict(),
+  /** `progress` counts the signs of life from the gateway's git while the job waits. */
+  z.object({ state: z.literal('running'), progress: z.number().int().nonnegative() }).strict(),
   z
     .object({
       state: z.literal('done'),
+      progress: z.number().int().nonnegative(),
       /** Every GitHub branch and its tip, as pairs: a `Map` has no JSON form of its own. */
       refs: z.array(z.tuple([name, objectId])).max(1_000_000),
       bundleId: jobId.nullable(),

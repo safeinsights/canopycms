@@ -174,8 +174,13 @@ export interface GitHubGateway {
    * Fetch every GitHub branch, and answer with all of them and a bundle of the commits `have`
    * lacks. `have` is the caller's own tips, at most {@link MAX_FETCH_HAVE} object IDs; any the
    * gateway does not hold as a commit is ignored. A new fetch replaces a bundle not yet opened.
+   * `onProgress` is told of each sign of life from the gateway's git while the caller waits.
    */
-  fetch(request: { have: readonly string[] }, signal?: AbortSignal): Promise<GitHubFetchResult>
+  fetch(
+    request: { have: readonly string[] },
+    signal?: AbortSignal,
+    onProgress?: () => void,
+  ): Promise<GitHubFetchResult>
   /**
    * The bundle a fetch answered with, readable once. Throws {@link GitHubTransientError}
    * (`bundle-gone`) when a later fetch replaced it or it was already opened.
@@ -674,7 +679,23 @@ class LocalGitHubGateway implements GitHubGateway {
     await this.policy.assertPullRequestAllowed(request, () => this.readDefaultBranch(reach, signal))
   }
 
-  fetch(request: { have: readonly string[] }, signal?: AbortSignal): Promise<GitHubFetchResult> {
+  async fetch(
+    request: { have: readonly string[] },
+    signal?: AbortSignal,
+    onProgress?: () => void,
+  ): Promise<GitHubFetchResult> {
+    const stopWatching = onProgress === undefined ? null : this.mirror.watchActivity(onProgress)
+    try {
+      return await this.fetchOnce(request, signal)
+    } finally {
+      stopWatching?.()
+    }
+  }
+
+  private fetchOnce(
+    request: { have: readonly string[] },
+    signal?: AbortSignal,
+  ): Promise<GitHubFetchResult> {
     const have = [...new Set(request.have)]
     if (have.length > MAX_FETCH_HAVE) {
       throw new Error(`A fetch takes at most ${MAX_FETCH_HAVE} have IDs, not ${have.length}`)

@@ -171,6 +171,17 @@ describe('fetch', () => {
   })
 })
 
+describe('fetch progress', () => {
+  it("tells the caller of the gateway's git working while it waits", async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const onProgress = vi.fn()
+
+    await gateway().fetch({ have: [] }, undefined, onProgress)
+
+    expect(onProgress).toHaveBeenCalled()
+  })
+})
+
 describe('seedFromGitHub', () => {
   const target = () => path.join(root, 'workspace', 'remote.git.cloning')
 
