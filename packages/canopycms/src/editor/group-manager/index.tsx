@@ -56,7 +56,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     setIsModalOpen(true)
   }, [])
 
-  // The delete is staged until Save Groups, but a reviewer reading the staged list can miss it.
+  // Save Groups writes every staged change at once, so this is the last look at a delete.
   const confirmDeleteGroup = useCallback(
     (groupId: CanopyGroupId) => {
       // A group created since the last save exists nowhere yet, so removing it destroys nothing.
