@@ -1,6 +1,8 @@
 /**
  * What leaves the GitHub gateway: every error it throws, every answer it returns and every line it
- * logs goes through here. Each is scrubbed of every live token the gateway has resolved, in every
+ * logs goes through here, except the lines `github-service.ts` logs for it (`createOrUpdatePullRequest`,
+ * Octokit's throttle callbacks; the plan's "Carried from 3") and `openBundle`'s errors, which hold
+ * no secret. Each is scrubbed of every live token the gateway has resolved, in every
  * form git's extraheader gives it, as exact strings. Errors and log lines are then scrubbed by
  * `redactCredentials`'s patterns too; answers are not, because they are data the worker acts on,
  * and a pattern would rewrite a GitHub branch named `chore/github_pat_rotation`. The

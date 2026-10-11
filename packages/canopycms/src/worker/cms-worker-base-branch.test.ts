@@ -133,7 +133,9 @@ describe('CmsWorker base branch', () => {
 
   describe('the warning for a base branch the gateway does not protect', () => {
     const warnings = () =>
-      consoleSpy.all().warn.filter((line) => line.includes('nothing stops a task pushing'))
+      consoleSpy
+        .all()
+        .warn.filter((line) => line.includes("the GitHub gateway's policy does not protect it"))
 
     it("warns when the detected base is neither configured nor GitHub's default", async () => {
       await simpleGit().raw(['clone', '-q', '--bare', githubFixture, remoteGitPath])

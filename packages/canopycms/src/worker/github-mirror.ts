@@ -654,8 +654,8 @@ export class RefusedPushError extends GatewayRefusalError {
 
 /**
  * Throw {@link RefusedPushError} (or, for another `operation`, {@link GatewayRefusalError}) unless
- * `branch` is a plain branch name: one `branchNameProblem` passes and
- * `git check-ref-format --branch` accepts unchanged. That rules out a `:` (git would read what
+ * `branch` is a plain branch name: one `branchNameProblem` passes (with `shape` false, only its
+ * length cap and no leading `-`) and `git check-ref-format --branch` accepts unchanged. That rules out a `:` (git would read what
  * follows it in a refspec as another destination), `..`, `^`, `~`, `@{`, spaces and a leading
  * `-`, so `refs/heads/<branch>` is exactly the ref a push names. `check-ref-format --branch` takes
  * exactly one argument and refuses `--end-of-options`, which is why it alone goes without one.

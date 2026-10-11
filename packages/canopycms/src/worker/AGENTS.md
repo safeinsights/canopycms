@@ -56,7 +56,7 @@ lint and still break the layering above. Keep the direction by review.
 - Every worker-status.json write holds the worker lock, a pre-`start()` failure's and a lock
   loss's included; `selfStopped` settles only for a stop the worker chose: `cms-worker.ts`.
 - `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`.
-- No push, deletion or pull request against a protected branch: `branch-policy.ts`; a push's
+- No push to, deletion of or pull request from a protected branch: `branch-policy.ts`; a push's
   check is in `MirrorSession.pushToGitHub`.
 - The credential only in mirror sessions' per-command files (`github-mirror.ts`, `withCredentialConfig`); other
   shared-repository git only via `sharedRepoGit`, after `assertSharedRepoConfig`:

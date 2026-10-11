@@ -136,8 +136,9 @@ export type DefaultBranchReader = () => Promise<string | null>
  * The protected set and the settings rules.
  *
  * A branch is protected when it is the configured base branch, GitHub's default branch or a
- * `protectedBranches` entry, compared case-sensitively as GitHub compares refs (an exact entry
- * also matches a name that sanitizes to the same workspace directory). GitHub's default is re-read once
+ * `protectedBranches` entry, compared case-sensitively as GitHub compares refs. An exact entry
+ * also matches a name that sanitizes to the same workspace directory; a glob never matches a
+ * settings branch, whose plain push the worker needs. GitHub's default is re-read once
  * {@link DEFAULT_BRANCH_TTL_MS} has passed since the read that set it, so a change of default
  * takes up to that long to reach the set. A failed read is never cached: the operation fails.
  * Reads are not shared between concurrent callers, because a push reads inside a mirror session

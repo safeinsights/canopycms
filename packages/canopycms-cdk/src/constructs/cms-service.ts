@@ -202,9 +202,10 @@ function assertEnvSafe(name: string, value: string): string {
  * would refuse `cdk synth` for an adopter whose default branch is `release/v2`,
  * and the worker handles such names fine - it keeps the raw name for git refs
  * and runs it through `sanitizeBranchName` only for workspace DIRECTORY names.
- * This implements git's `check-ref-format` rules for a branch name instead.
- * The worker uses these two names as given, so there is no runtime counterpart
- * to drift from and no shared fixture list like `deploymentName`'s.
+ * This implements git's `check-ref-format` rules for a branch name instead,
+ * plus the GitHub gateway's 255-character cap: the gateway refuses a longer
+ * pull request base. A settings branch is pushed through the gateway, so it
+ * takes the gateway's narrower name rules too (`assertGatewayBranchName`).
  */
 function assertValidGitBranchName(propName: string, value: string): string {
   const reject = (why: string): never => {
@@ -219,6 +220,7 @@ function assertValidGitBranchName(propName: string, value: string): string {
   }
 
   if (value.length === 0) reject('it is empty')
+  if (value.length > 255) reject('it is longer than 255 characters')
   if (value === '@') reject("a lone '@' is reserved by git")
   // `git check-ref-format --branch` rejects HEAD: it names the symbolic ref,
   // not a branch. Accepting it produces the exact crash loop this guard
@@ -251,11 +253,28 @@ function assertValidGitBranchName(propName: string, value: string): string {
 }
 
 /**
- * Refuse a `protectedBranches` entry the worker would refuse at boot, which would crash-loop it:
- * a branch name in which `*` is a wildcard, held to the worker's own rules too
- * (`protectedPatternProblem`, packages/canopycms/src/worker/branch-policy.ts): printable ASCII,
- * no `"`, `%`, `{` or `}`, no leading `refs/`, at most 255 characters. A comma separates entries
- * in the worker's `.env`, so none may hold one.
+ * Refuse a name the GitHub gateway would refuse to push (`branchNameProblem`,
+ * packages/canopycms/src/worker/branch-policy.ts), on top of git's rules: printable ASCII, no
+ * `"`, `%`, `{` or `}`, no leading `refs/`, `heads/`, `tags/` or `remotes/`.
+ */
+function assertGatewayBranchName(propName: string, value: string): string {
+  const reject = (why: string): never => {
+    throw new Error(`CanopyCmsService: invalid ${propName} ${JSON.stringify(value)} -- ${why}.`)
+  }
+  if (!/^[\x20-\x7e]*$/.test(value)) reject('it is not printable ASCII')
+  if (/["%{}]/.test(value)) reject('it contains ", %, { or }')
+  if (/^(?:refs|heads|tags|remotes)\//i.test(value)) {
+    reject("it starts with 'refs/', 'heads/', 'tags/' or 'remotes/'")
+  }
+  return value
+}
+
+/**
+ * Refuse a `protectedBranches` entry the worker would refuse at boot, which would crash-loop it
+ * (`protectedPatternProblem`, packages/canopycms/src/worker/branch-policy.ts): a branch name in
+ * which `*` is a wildcard, held to git's rules and the gateway's (`assertGatewayBranchName`), and
+ * no glob under the reserved settings prefix, which would match nothing. A comma separates
+ * entries in the worker's `.env`, so none may hold one.
  */
 function assertValidProtectedBranches(entries: readonly string[]): string[] {
   return entries.map((entry) => {
@@ -265,16 +284,11 @@ function assertValidProtectedBranches(entries: readonly string[]): string[] {
       )
     }
     if (entry.includes(',')) reject('it contains a comma, which separates entries')
-    if (entry.length > 255) reject('it is longer than 255 characters')
-    if (!/^[\x20-\x7e]*$/.test(entry)) reject('it is not printable ASCII')
-    if (/["%{}]/.test(entry)) reject('it contains ", %, { or }')
+    assertGatewayBranchName('protectedBranches entry', entry)
     if (entry.includes('*') && entry.startsWith('canopycms-settings-')) {
       reject(
         'the worker never lets a glob match a settings branch, so this one would match nothing',
       )
-    }
-    if (/^(?:refs|heads|tags|remotes)\//i.test(entry)) {
-      reject("it starts with 'refs/', 'heads/', 'tags/' or 'remotes/'")
     }
     const asName = entry.replace(/\*/g, 'x')
     try {
@@ -926,7 +940,8 @@ export interface CanopyCmsServiceProps {
    * Branches the worker never pushes, deletes or opens a pull request from, beside `baseBranch`
    * and GitHub's default branch, which it always protects (default: none). Each entry is a branch
    * name or a glob in which `*` matches any run of characters, `/` included (`release/*`),
-   * matched case-sensitively, as GitHub names refs. Stamped into the worker's `CANOPYCMS_PROTECTED_BRANCHES`,
+   * matched case-sensitively, as GitHub names refs. A glob never matches a settings branch, so
+   * one under `canopycms-settings-` is refused. Stamped into the worker's `CANOPYCMS_PROTECTED_BRANCHES`,
    * comma-separated, and validated at synth.
    */
   protectedBranches?: string[]
@@ -1819,6 +1834,8 @@ export class CanopyCmsService extends Construct {
     const envFileContent = envEntries
       .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
       .join('\n')
+    // After assertEnvSafe, whose leading-quote refusal is the more specific.
+    if (settingsBranch !== undefined) assertGatewayBranchName('settingsBranch', settingsBranch)
 
     const efsMountOptions = `tls,iam,accesspoint=${accessPoint.accessPointId}`
     const userData = ec2.UserData.forLinux()

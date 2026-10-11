@@ -118,7 +118,7 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   /**
    * Branches the worker never pushes, deletes or opens a pull request from, beside the configured
    * base branch and GitHub's default branch: exact names, or globs in which `*` matches any run of
-   * characters (`release/*`). See worker/branch-policy.ts.
+   * characters (`release/*`), which never match a settings branch. See worker/branch-policy.ts.
    */
   protectedBranches?: readonly string[]
   /**
@@ -984,9 +984,10 @@ export class CmsWorker {
   }
 
   /**
-   * Warn when the base branch is outside the gateway's protected set, which happens only when it
-   * was detected from remote.git rather than configured: the gateway would then push it. A warning,
-   * not a refusal, so a change of GitHub's default branch cannot stop the worker booting.
+   * Warn when the base branch is outside the gateway's protected set: it was detected from
+   * remote.git rather than configured, and is not GitHub's default branch at boot. Only the
+   * worker's own check (`pushBranchToGitHub`) then stops a push to it. A warning, not a refusal, so
+   * a change of GitHub's default branch cannot stop the worker booting.
    */
   private async warnIfBaseUnprotected(): Promise<void> {
     try {
@@ -995,8 +996,9 @@ export class CmsWorker {
       }
       workerLogWarn(
         `The base branch '${this.baseBranch}' is neither CANOPYCMS_BASE_BRANCH nor GitHub's ` +
-          `default branch, nor in CANOPYCMS_PROTECTED_BRANCHES, so nothing stops a task pushing ` +
-          `to it. Set CANOPYCMS_BASE_BRANCH (the CDK construct's \`baseBranch\` prop).`,
+          `default branch, nor in CANOPYCMS_PROTECTED_BRANCHES, so the GitHub gateway's policy ` +
+          `does not protect it; only the worker's own check stops a push to it. Set ` +
+          `CANOPYCMS_BASE_BRANCH (the CDK construct's \`baseBranch\` prop).`,
       )
     } catch (err) {
       workerLogWarn(

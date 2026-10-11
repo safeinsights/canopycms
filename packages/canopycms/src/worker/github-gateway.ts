@@ -140,10 +140,11 @@ type GitHubCreateOrUpdatePullRequest = Omit<
 /**
  * Everything the worker does with GitHub, and the only place the credential and Octokit are used.
  * Octokit errors propagate with their status, headers and response data, so the task runner's
- * classifiers read them as they would Octokit's own; every error, answer and log line is first
- * scrubbed of the credential (worker/gateway-egress.ts). What it refuses to do, whatever it is
- * asked, is worker/branch-policy.ts's, and throws `GatewayRefusalError`. The gateway re-reads its own credential after
- * a failure (`LocalGitHubGateway.credentialed`); the worker never asks it to.
+ * classifiers read them as they would Octokit's own; what it returns, throws and logs is first
+ * scrubbed of the credential (worker/gateway-egress.ts, which names its exceptions). What it
+ * refuses to do, whatever it is asked, is worker/branch-policy.ts's, and throws
+ * `GatewayRefusalError`. The gateway re-reads its own credential after a failure
+ * (`LocalGitHubGateway.credentialed`); the worker never asks it to.
  */
 export interface GitHubGateway {
   /**
@@ -153,7 +154,7 @@ export interface GitHubGateway {
   prepare(): Promise<void>
   /** GitHub's default branch. */
   defaultBranch(signal?: AbortSignal): Promise<string>
-  /** Whether the gateway refuses to push, delete or open a pull request from `branch`. */
+  /** Whether `branch` is in the gateway's protected set (worker/branch-policy.ts). */
   isProtectedBranch(branch: string, signal?: AbortSignal): Promise<boolean>
   /**
    * Fetch every GitHub branch, and answer with all of them and a bundle of the commits `have`
@@ -546,7 +547,7 @@ class LocalGitHubGateway implements GitHubGateway {
     })
   }
 
-  /** Reads GitHub's default branch with git, in a mirror session, so it never costs an API call. */
+  /** Reads GitHub's default branch with git, in a mirror session, never through Octokit. */
   isProtectedBranch(branch: string, signal?: AbortSignal): Promise<boolean> {
     return this.credentialed(signal, (reach) =>
       this.policy.isProtected(branch, async () => {
@@ -580,7 +581,8 @@ class LocalGitHubGateway implements GitHubGateway {
     const git = await this.mirror.checkGit()
     await assertPlainBranchName(request.head, git, 'pull-request')
     // The base is GitHub's to validate and the policy's to leave alone (BranchPolicy), and may be
-    // a configured name outside branchNameProblem's narrower set: git's rules only.
+    // a configured name outside branchNameProblem's narrower set: git's rules, the length cap and
+    // no leading `-` only.
     await assertPlainBranchName(request.base, git, 'pull-request', false)
     await this.policy.assertPullRequestAllowed(request, () => this.readDefaultBranch(reach, signal))
   }

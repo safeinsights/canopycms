@@ -18,8 +18,9 @@
  * ({@link PREREQUISITE_COMMENT_MAX_BYTES}) and the worker shortens it rather than send a bundle
  * the gateway would refuse: a boundary commit's subject can be any length. Shortening cuts bytes,
  * never characters, and only after the line's `-<oid> `; it removes bytes and adds none, so it
- * never adds an LF. A bundle has as many prerequisites as it has boundary commits, so the whole
- * header, comments included, has a fixed bound too ({@link BUNDLE_HEADER_TOTAL_MAX_BYTES}).
+ * never adds an LF. A bundle has as many prerequisites as it has boundary commits, so the header
+ * as the gateway reads it, and as the worker sends it, comments included, has a fixed bound too
+ * ({@link BUNDLE_HEADER_TOTAL_MAX_BYTES}).
  */
 
 /**
@@ -36,8 +37,8 @@ export const BUNDLE_HEADER_MAX_BYTES = 64 * 1024
 export const PREREQUISITE_COMMENT_MAX_BYTES = 1024
 
 /**
- * The header must end within this many bytes counting comments too: the most a reader takes,
- * and holds, of a header.
+ * The header must end within this many bytes counting comments too: the bytes read, when
+ * refusing; the bytes kept and sent, when shortening. The most a reader holds of a header.
  * @internal Exported for tests.
  */
 export const BUNDLE_HEADER_TOTAL_MAX_BYTES = 256 * 1024

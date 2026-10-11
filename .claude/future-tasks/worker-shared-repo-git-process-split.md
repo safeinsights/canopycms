@@ -1070,8 +1070,9 @@ PR 2, their first user.
     characters, printable ASCII. A content branch's ref is its sanitized name, so no editor
     branch is refused.
   - The bundle header bound (64 KiB) excludes prerequisite comments. Each comment is capped at
-    1 KiB: the gateway refuses a longer one, and the worker truncates its own as it streams. A
-    test with real git covers a 70 KiB subject.
+    1 KiB: the gateway refuses a longer one, and the worker truncates its own as it streams. The
+    header, comments included, is bounded at 256 KiB as the gateway reads it and as the worker
+    sends it. A test with real git covers a 100 KiB subject.
   - Exact token forms (raw, base64 pair, URL-encoded pair) are scrubbed before
     `redactCredentials`'s patterns. A pattern stopping at a `%` left a tail that the canary
     caught. `redactCredentials` now matches the URL-encoded pair too.
@@ -1085,11 +1086,12 @@ PR 2, their first user.
 - From 3's review, deferred:
   - PR 4 or 5: `createOrUpdatePullRequest` and Octokit's throttle callbacks (`github-service.ts`)
     log through `canopyLogWarn`, which is `workerLogWarn` in the worker, so those lines miss the
-    gateway's scrub and escaping. Their content is validated names, a PR number and GitHub's
-    GraphQL error text; give the gateway its own logger there.
+    gateway's scrub and escaping. Their content is validated names, a PR number, GitHub's
+    GraphQL error text, and a throttled request's method and URL; give the gateway its own
+    logger there.
   - PR 5: a token rotated in by `refreshCredential`, or minted by `@octokit/auth-app` on an
     Octokit request, is registered for the exact scrub only at the next `credential()`. Octokit
-    redacts `authorization`, and `redactCredentials` catches every GitHub token shape meanwhile.
+    redacts `authorization`, and `redactCredentials` catches every prefixed GitHub token meanwhile.
     Register on read when the gateway owns its secrets.
   - A configured settings branch without the reserved prefix gets no settings rules, matching
     the task runner's `isSettingsBranch`. Protecting the deployment's own configured name

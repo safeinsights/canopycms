@@ -2450,10 +2450,10 @@ describe('CanopyCmsService: deploymentName validation', () => {
  * here refused `cdk synth` for an adopter whose default branch is
  * `release/v2`. The first entry below is the regression test for that.
  *
- * These live here rather than in a cross-package fixture because there is no
- * runtime counterpart to drift from: the worker uses these two names as given.
- * (`protectedBranches` does have one, `protectedPatternProblem`; see its own
- * tests below.)
+ * These are git's rules, which have no runtime counterpart in the worker. The
+ * GitHub gateway's narrower name rules (`branchNameProblem`, which a settings
+ * branch and every `protectedBranches` entry also take) have their own tests
+ * below.
  */
 const VALID_BRANCH_NAMES = [
   'release/v2',
@@ -2530,6 +2530,21 @@ describe('CanopyCmsService: baseBranch validation', () => {
     const all = workerUserDataBlobs(synth(false))
     expect(all).toContain('CANOPYCMS_GITHUB_REPO=')
     expect(all).not.toContain('CANOPYCMS_BASE_BRANCH')
+  })
+})
+
+describe('CanopyCmsService: names the GitHub gateway refuses', () => {
+  it.each([
+    ['a leading heads/', 'heads/settings'],
+    ['non-ASCII', 'r\u00e9glages'],
+    ['a percent sign', 'settings%x'],
+  ])('refuses a settingsBranch with %s, which the gateway would never push', (_label, value) => {
+    expect(() => synth(false, { settingsBranch: value })).toThrow(/invalid settingsBranch/)
+  })
+
+  it('refuses a baseBranch longer than 255 characters, which the gateway refuses as a PR base', () => {
+    expect(() => synth(false, { baseBranch: 'b'.repeat(256) })).toThrow(/invalid baseBranch/)
+    expect(() => synth(false, { baseBranch: 'b'.repeat(255) })).not.toThrow()
   })
 })
 
