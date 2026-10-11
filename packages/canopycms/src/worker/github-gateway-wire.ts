@@ -14,7 +14,9 @@ import { redactEgress } from './gateway-egress'
  * The schemas bound shape and size. Where the gateway refuses a value itself (a branch name, a pull
  * request's text, a protected branch: worker/branch-policy.ts), the bound here sits well above its
  * cap, so its refusal crosses as itself and classifies as it does in-process. Object IDs and the
- * `have` and prerequisite counts are held here to the gateway's own rules.
+ * `have` and prerequisite counts are held here to the gateway's own rules. Requests are strict, an
+ * unknown field refused: the worker and the gateway ship in one bundle and roll together, so they
+ * never differ in version, and tolerating fields would only widen what a hostile worker can send.
  */
 
 /** Every route's prefix, so a later incompatible format can sit beside this one. */
