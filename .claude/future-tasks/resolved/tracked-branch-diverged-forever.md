@@ -37,5 +37,7 @@ health did not show `tracked.diverged`, and no operator could resolve it without
 - **Warn once** per (branch, local tip, GitHub tip), held on the worker instance, with the
   editor state that kept the head, and every name escaped.
 - **System health** lists `tracked.diverged` with plain-language copy: what diverged means, and
-  that purging the branch's directory (not deleting the branch, which can delete it on GitHub
-  too) lets the worker take GitHub's version.
+  the remedies the editor has today. Delete Branch also deletes a published branch on GitHub, so
+  GitHub's version is pushed to a new name first. Purge refuses a live branch, and nothing copies
+  a branch's work, so the one-click fix is filed as
+  [worker-take-githubs-version-admin-action.md](../worker-take-githubs-version-admin-action.md).

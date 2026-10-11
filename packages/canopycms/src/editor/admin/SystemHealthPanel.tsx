@@ -187,11 +187,12 @@ function DivergedBranchesAlert({ names }: { names: readonly string[] }) {
           Neither copy has been changed, and publishing the branch fails until they agree.
         </Text>
         <Text size="sm">
-          To keep GitHub&apos;s version, purge the branch&apos;s directory in the Branches tab: its
-          editor work stays in the trash for 30 days, and the worker takes GitHub&apos;s version on
-          its next sync. Don&apos;t delete the branch in the editor, which can delete it on GitHub
-          too. To keep the editor work as well, have the editor copy it into a new branch first. For
-          the base branch or a settings branch, ask a developer to check what changed on GitHub.
+          A developer decides which version to keep. To keep GitHub&apos;s, first push it to a new
+          branch name on GitHub, because Delete Branch in the editor also deletes a published branch
+          on GitHub; then delete this branch in the editor (Withdraw Branch first if it is in
+          review). The editor&apos;s changes cannot be copied to another branch: to keep them, leave
+          this branch as it is, or re-enter them by hand in a new branch. For the base branch or a
+          settings branch, ask a developer to check what changed on GitHub.
         </Text>
         <Group gap={4}>
           {names.map((name) => (

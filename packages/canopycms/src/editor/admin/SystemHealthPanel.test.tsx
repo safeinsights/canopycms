@@ -649,7 +649,8 @@ describe('SystemHealthPanel', () => {
       expect(alert.textContent).toContain(
         'holds editor work that conflicts with the branch on GitHub',
       )
-      expect(alert.textContent).toContain('purge the branch')
+      expect(alert.textContent).toContain('first push it to a new branch name on GitHub')
+      expect(alert.textContent).not.toContain('purge')
       expect(alert.textContent).toContain('feature-a')
       expect(alert.textContent).toContain('feature-b')
     })
