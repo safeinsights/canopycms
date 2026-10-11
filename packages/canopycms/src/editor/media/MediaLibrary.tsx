@@ -56,6 +56,12 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ opened, onClose, mod
       }
       padding="md"
       size={700}
+      // The body fills the drawer and the library's own ScrollArea scrolls, so the toolbar stays put
+      // and the list's IntersectionObserver sees a real clipping viewport.
+      styles={{
+        content: { display: 'flex', flexDirection: 'column' },
+        body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' },
+      }}
       overlayProps={{ blur: 2 }}
       data-testid="media-library-manage"
     >

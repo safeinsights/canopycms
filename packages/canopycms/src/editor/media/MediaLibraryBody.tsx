@@ -133,16 +133,13 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
   // The result of the last remove, for the live region; the removed card itself is gone.
   const [actionNotice, setActionNotice] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
-  // Mantine's Dropzone forwards `ref` to its inner element; the focusable root is that element's
-  // closest ancestor with a tabindex.
-  const dropzoneRef = useRef<HTMLDivElement>(null)
-  // A removed card takes its focused button with it. Focus moves once the removal has rendered,
-  // to the search field, or to the dropzone when removing the last file hid the toolbar.
+  // A removed card takes its focused button with it, so focus moves to the search field once the
+  // removal has rendered (Mantine returns focus to the trash button when the confirm closes).
   const focusAfterRemove = useRef(false)
   useEffect(() => {
     if (!focusAfterRemove.current) return
     focusAfterRemove.current = false
-    ;(searchRef.current ?? dropzoneRef.current?.closest<HTMLElement>('[tabindex]'))?.focus()
+    searchRef.current?.focus()
   })
   // Clearing hides the control that did it, so focus moves to the search field.
   const clearSearch = () => {
@@ -213,8 +210,8 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     library.prepend(asset)
     setPinned((prev) => [asset.hash32, ...prev.filter((hash) => hash !== asset.hash32)])
     // The upload must be visible: a search or kind filter that would hide it is cleared.
-    if (!matchesText(asset, needle)) setFilterText('')
-    if (!matchesKind(asset, kind)) setKind('all')
+    setFilterText((prev) => (matchesText(asset, prev.trim().toLowerCase()) ? prev : ''))
+    setKind((prev) => (matchesKind(asset, prev) ? prev : 'all'))
   }
 
   const handleReject = (rejections: FileRejection[]) => {
@@ -373,7 +370,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
   )
 
   return (
-    <Stack gap="sm" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
+    <Stack gap="sm" style={{ flex: 1, minHeight: 0 }}>
       <Dropzone
         onDrop={(files) => void handleDrop(files)}
         onReject={handleReject}
@@ -381,7 +378,6 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
         accept={imageOnly ? ACCEPTED_IMAGE_MIME_TYPES : ACCEPTED_ASSET_MIME_TYPES}
         loading={upload.uploading}
         multiple={false}
-        ref={dropzoneRef}
         data-testid="media-library-dropzone"
       >
         <Group justify="center" gap="xs" py="sm" style={{ pointerEvents: 'none' }}>
@@ -406,82 +402,77 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
         </Alert>
       )}
 
-      {/* An empty library has nothing to search, filter or sort. */}
-      {!libraryEmpty && (
-        <>
-          <TextInput
-            placeholder="Search by filename"
-            aria-label="Search by filename"
-            leftSection={<IconSearch size={16} />}
-            rightSection={
-              filterText ? (
-                <Tooltip label="Clear search">
-                  <ActionIcon
-                    variant="subtle"
-                    color="gray"
-                    size="sm"
-                    aria-label="Clear search"
-                    onClick={clearSearch}
-                  >
-                    <IconX size={14} />
-                  </ActionIcon>
-                </Tooltip>
-              ) : null
-            }
-            ref={searchRef}
-            value={filterText}
-            onChange={(event) => setFilterText(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              // Esc clears a search before it can close the drawer or modal.
-              if (event.key === 'Escape' && filterText) {
-                event.stopPropagation()
-                setFilterText('')
-              }
-            }}
-            data-testid="media-library-filter"
-          />
+      <TextInput
+        placeholder="Search by filename"
+        aria-label="Search by filename"
+        leftSection={<IconSearch size={16} />}
+        rightSection={
+          filterText ? (
+            <Tooltip label="Clear search">
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="sm"
+                aria-label="Clear search"
+                onClick={clearSearch}
+              >
+                <IconX size={14} />
+              </ActionIcon>
+            </Tooltip>
+          ) : null
+        }
+        ref={searchRef}
+        value={filterText}
+        onChange={(event) => setFilterText(event.currentTarget.value)}
+        // Esc clears a search before it can close the drawer or modal. Mantine closes them from
+        // a window capture listener that stopPropagation can't reach; it skips an event whose
+        // target carries this attribute.
+        data-mantine-stop-propagation={filterText ? 'true' : undefined}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && filterText) setFilterText('')
+        }}
+        data-testid="media-library-filter"
+      />
 
-          <Group justify="space-between" wrap="wrap" gap="xs">
-            {imageOnly ? (
-              <span />
-            ) : (
-              <SegmentedControl
-                aria-label="File type"
-                data={KIND_OPTIONS}
-                value={kind}
-                onChange={(value) =>
-                  setKind(KIND_OPTIONS.find((o) => o.value === value)?.value ?? 'all')
-                }
-                data-testid="media-library-kind"
-              />
-            )}
-            <Group gap="xs" wrap="wrap">
-              <Select
-                aria-label="Sort by"
-                data={SORT_OPTIONS}
-                value={sort}
-                onChange={(value) => {
-                  const next = SORT_OPTIONS.find((option) => option.value === value)
-                  if (next) setSort(next.value)
-                }}
-                allowDeselect={false}
-                w={150}
-                data-testid="media-library-sort"
-              />
-              <SegmentedControl
-                aria-label="Layout"
-                data={DENSITY_OPTIONS}
-                value={density}
-                onChange={(value) => {
-                  const next = DENSITY_OPTIONS.find((option) => option.value === value)
-                  if (next) setDensity(next.value)
-                }}
-                data-testid="media-library-density"
-              />
-            </Group>
-          </Group>
-        </>
-      )}
+      <Group justify="space-between" wrap="wrap" gap="xs">
+        {imageOnly ? (
+          <span />
+        ) : (
+          <SegmentedControl
+            aria-label="File type"
+            data={KIND_OPTIONS}
+            value={kind}
+            onChange={(value) =>
+              setKind(KIND_OPTIONS.find((o) => o.value === value)?.value ?? 'all')
+            }
+            data-testid="media-library-kind"
+          />
+        )}
+        <Group gap="xs" wrap="wrap">
+          <Select
+            aria-label="Sort by"
+            data={SORT_OPTIONS}
+            value={sort}
+            onChange={(value) => {
+              const next = SORT_OPTIONS.find((option) => option.value === value)
+              if (next) setSort(next.value)
+            }}
+            allowDeselect={false}
+            w={150}
+            data-testid="media-library-sort"
+          />
+          <SegmentedControl
+            aria-label="Layout"
+            data={DENSITY_OPTIONS}
+            value={density}
+            onChange={(value) => {
+              const next = DENSITY_OPTIONS.find((option) => option.value === value)
+              if (next) setDensity(next.value)
+            }}
+            data-testid="media-library-density"
+          />
+        </Group>
+      </Group>
 
       {/* The line keeps its height when empty, so the list doesn't jump when loading ends. */}
       <Text component="div" size="xs" c="dimmed" mih={18}>
@@ -492,7 +483,11 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
         )}
       </Text>
       <VisuallyHidden role="status" aria-live="polite">
-        {loadStatus?.announce ?? actionNotice ?? ''}
+        {loadStatus?.announce ?? ''}
+      </VisuallyHidden>
+      {/* Its own region, so a load or match status never masks it or announces it late. */}
+      <VisuallyHidden role="status" aria-live="polite" data-testid="media-library-action-notice">
+        {actionNotice ?? ''}
       </VisuallyHidden>
 
       {library.error && (
@@ -533,7 +528,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
           {listContent}
         </ScrollArea.Autosize>
       ) : (
-        <ScrollArea style={{ flex: 1 }} viewportRef={setViewport}>
+        <ScrollArea style={{ flex: 1, minHeight: 0 }} viewportRef={setViewport}>
           {listContent}
         </ScrollArea>
       )}
