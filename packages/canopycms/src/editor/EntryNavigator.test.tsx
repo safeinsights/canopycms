@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
@@ -976,6 +976,30 @@ describe('EntryNavigator', () => {
         expect(onSelect).toHaveBeenCalledWith('content/guides/getting-started')
       })
 
+      it('selects nothing on Enter when the filter is empty', async () => {
+        const user = userEvent.setup()
+        const onSelect = vi.fn()
+        renderEntryNavigator({ collections: filterCollections(), onSelect })
+
+        await user.click(filterInput())
+        await user.keyboard('{Enter}')
+
+        expect(onSelect).not.toHaveBeenCalled()
+      })
+
+      it('leaves Enter and Escape to an IME while it is composing', async () => {
+        const user = userEvent.setup()
+        const onSelect = vi.fn()
+        renderEntryNavigator({ collections: filterCollections(), onSelect })
+        await user.type(filterInput(), 'a')
+
+        fireEvent.keyDown(filterInput(), { key: 'Enter', isComposing: true })
+        fireEvent.keyDown(filterInput(), { key: 'Escape', isComposing: true })
+
+        expect(onSelect).not.toHaveBeenCalled()
+        expect(filterInput().value).toBe('a')
+      })
+
       it('selects nothing on Enter when nothing matches', async () => {
         const user = userEvent.setup()
         const onSelect = vi.fn()
@@ -1103,19 +1127,32 @@ describe('EntryNavigator', () => {
         expect(isShown('entry-nav-item-authentication')).toBe(false)
       })
 
-      it('does not re-expand the selected entry’s ancestors while filtering', async () => {
+      it('keeps an entry picked while filtering in view once the filter clears', async () => {
         const user = userEvent.setup()
-        renderEntryNavigator({
-          collections: filterCollections(),
-          selectedPath: 'content/reference/api/auth',
-        })
-        // The selected entry's ancestors open themselves on mount.
-        await waitFor(() => expect(isShown('entry-nav-item-authentication')).toBe(true))
-
-        await user.type(filterInput(), 'launch')
-
-        expect(isShown('entry-nav-item-launch-day')).toBe(true)
+        const onSelect = vi.fn()
+        const { rerender } = render(
+          <CanopyCMSProvider>
+            <EntryNavigator onSelect={onSelect} collections={filterCollections()} />
+          </CanopyCMSProvider>,
+        )
         expect(isShown('entry-nav-item-authentication')).toBe(false)
+
+        await user.type(filterInput(), 'auth')
+        await user.click(screen.getByTestId('entry-nav-item-authentication'))
+        rerender(
+          <CanopyCMSProvider>
+            <EntryNavigator
+              onSelect={onSelect}
+              selectedPath={onSelect.mock.calls[0][0]}
+              collections={filterCollections()}
+            />
+          </CanopyCMSProvider>,
+        )
+        await user.clear(filterInput())
+
+        expect(isShown('entry-nav-item-authentication')).toBe(true)
+        // Only the picked entry's ancestors open; the rest stay as they were.
+        expect(isShown('entry-nav-item-launch-day')).toBe(false)
       })
     })
   })

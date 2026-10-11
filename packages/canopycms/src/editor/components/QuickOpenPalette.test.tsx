@@ -3,7 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
-import { QuickOpenPalette, type QuickOpenEntry } from './QuickOpenPalette'
+import { QUICK_OPEN_REPLACES_ATTR, QuickOpenPalette, type QuickOpenEntry } from './QuickOpenPalette'
 
 beforeAll(() => {
   // Combobox scrolls the armed option into view.
@@ -136,6 +136,61 @@ describe('QuickOpenPalette hotkey', () => {
     press(document.body, { key: 'P', metaKey: true })
 
     expect(onOpen).toHaveBeenCalledTimes(1)
+  })
+
+  describe('on macOS', () => {
+    afterEach(() => vi.unstubAllGlobals())
+
+    it('opens on ⌘P but leaves Ctrl+P to the text field', () => {
+      vi.stubGlobal('navigator', { platform: 'MacIntel' })
+      const { onOpen } = renderPalette({ opened: false })
+
+      const ctrl = press(document.body, { key: 'p', ctrlKey: true })
+      expect(onOpen).not.toHaveBeenCalled()
+      expect(ctrl.defaultPrevented).toBe(false)
+
+      press(document.body, { key: 'p', metaKey: true })
+      expect(onOpen).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('with another overlay open', () => {
+    const addDialog = (attrs: Record<string, string>) => {
+      const dialog = document.createElement('section')
+      dialog.setAttribute('role', 'dialog')
+      for (const [name, value] of Object.entries(attrs)) dialog.setAttribute(name, value)
+      document.body.appendChild(dialog)
+      return dialog
+    }
+
+    it('stays shut over a modal, and still stops the browser printing', () => {
+      const { onOpen } = renderPalette({ opened: false })
+      const field = document.createElement('input')
+      addDialog({ 'aria-modal': 'true' }).appendChild(field)
+
+      const event = press(field, { key: 'p', ctrlKey: true })
+
+      expect(onOpen).not.toHaveBeenCalled()
+      expect(event.defaultPrevented).toBe(true)
+    })
+
+    it('opens over an overlay marked as one it replaces', () => {
+      const { onOpen } = renderPalette({ opened: false })
+      addDialog({ 'aria-modal': 'true', [QUICK_OPEN_REPLACES_ATTR]: 'true' })
+
+      press(document.body, { key: 'p', ctrlKey: true })
+
+      expect(onOpen).toHaveBeenCalledTimes(1)
+    })
+
+    it('opens over a popover, which is not modal', () => {
+      const { onOpen } = renderPalette({ opened: false })
+      addDialog({})
+
+      press(document.body, { key: 'p', ctrlKey: true })
+
+      expect(onOpen).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('ignores P without a modifier, and Mod+Shift+P', () => {

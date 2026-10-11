@@ -8,6 +8,20 @@ import { useHotkeys } from '@mantine/hooks'
 import { IconSearch } from '@tabler/icons-react'
 
 import { filterEntries, groupEntriesByCollection } from '../entry-search'
+import { modKeyLabel } from '../platform'
+
+/** Marks an overlay the palette may replace; Editor closes it as the palette opens. */
+export const QUICK_OPEN_REPLACES_ATTR = 'data-quick-open-replaces'
+
+/**
+ * True while a modal or drawer (never a popover) other than one marked with `QUICK_OPEN_REPLACES_ATTR` is open.
+ * Overlays share one z-index and stack in DOM order, and the palette mounts first, so it would
+ * open hidden underneath and take the keyboard from the dialog the user is working in.
+ */
+const otherOverlayOpen = () =>
+  Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).some(
+    (dialog) => !dialog.closest(`[${QUICK_OPEN_REPLACES_ATTR}]`),
+  )
 
 /** Options rendered at once; the rest are reached by typing more. */
 const MAX_OPTIONS = 50
@@ -40,8 +54,24 @@ export function QuickOpenPalette({
   onSelect,
 }: QuickOpenPaletteProps) {
   // `[]` ignores no tags and `true` fires from contenteditable, so the shortcut works from inside
-  // a text field or the MDX editor; preventDefault keeps the browser's print dialog from opening.
-  useHotkeys([['mod+P', () => onOpen(), { preventDefault: true }]], [], true)
+  // a text field or the MDX editor.
+  useHotkeys(
+    [
+      [
+        'mod+P',
+        (event) => {
+          // Mantine's `mod` is Ctrl or ⌘ everywhere; on macOS Ctrl+P moves the caret up a line.
+          if (modKeyLabel() === '⌘' && !event.metaKey) return
+          // Keeps the browser's print dialog shut, even when the palette can't open.
+          event.preventDefault()
+          if (!otherOverlayOpen()) onOpen()
+        },
+        { preventDefault: false },
+      ],
+    ],
+    [],
+    true,
+  )
 
   const [query, setQuery] = useState('')
   const [wasOpened, setWasOpened] = useState(opened)
@@ -103,9 +133,9 @@ export function QuickOpenPalette({
                 No entries match “{query}”.
               </Text>
             ) : (
-              [...groups].map(([heading, group]) => (
-                <Combobox.Group label={heading} key={heading}>
-                  {group.map((entry) => (
+              groups.map((group, index) => (
+                <Combobox.Group label={group.heading} key={index}>
+                  {group.entries.map((entry) => (
                     <Combobox.Option
                       value={entry.path}
                       key={entry.path}

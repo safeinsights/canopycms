@@ -68,7 +68,7 @@ import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
-import { QuickOpenPalette } from './components/QuickOpenPalette'
+import { QUICK_OPEN_REPLACES_ATTR, QuickOpenPalette } from './components/QuickOpenPalette'
 import { modKeyLabel } from './platform'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
@@ -1508,7 +1508,7 @@ const EditorContent: React.FC<EditorProps> = ({
             size={360}
           >
             <Drawer.Overlay blur={2} />
-            <Drawer.Content>
+            <Drawer.Content {...{ [QUICK_OPEN_REPLACES_ATTR]: true }}>
               <Drawer.Header>
                 <Drawer.Title>Content</Drawer.Title>
                 <Group gap="xs">

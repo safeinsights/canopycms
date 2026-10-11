@@ -233,6 +233,20 @@ describe('admin surfaces', () => {
   })
 })
 
+describe('quick open', () => {
+  it('opens from inside the navigator drawer and closes the drawer', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+    await openNavigator()
+
+    fireEvent.keyDown(screen.getByTestId('entry-nav-filter'), { key: 'p', ctrlKey: true })
+
+    expect(await screen.findByTestId('quick-open-input')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByTestId('entry-nav-filter')).toBeNull())
+  })
+})
+
 describe('Undo after Remove', () => {
   const undoToast = () => {
     const call = vi

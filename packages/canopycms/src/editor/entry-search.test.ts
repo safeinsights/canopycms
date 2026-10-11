@@ -45,12 +45,14 @@ describe('filterEntries', () => {
 })
 
 describe('groupEntriesByCollection', () => {
+  const headings = (groups: { heading: string }[]) => groups.map((g) => g.heading)
+
   it('prefers the labelFor heading, then collectionName, then collectionPath, then Root', () => {
     const groups = groupEntriesByCollection(entries, (path) =>
       path === 'content/guides' ? 'Guides' : undefined,
     )
-    expect([...groups.keys()]).toEqual(['Guides', 'pages', 'Root'])
-    expect(groups.get('Guides')?.map((e) => e.label)).toEqual(['Getting started', 'Data access'])
+    expect(headings(groups)).toEqual(['Guides', 'pages', 'Root'])
+    expect(groups[0].entries.map((e) => e.label)).toEqual(['Getting started', 'Data access'])
   })
 
   it('prefers the labelFor heading over the collection name', () => {
@@ -58,12 +60,12 @@ describe('groupEntriesByCollection', () => {
       [{ label: 'Welcome', collectionPath: 'content/pages', collectionName: 'pages' }],
       () => 'Pages',
     )
-    expect([...groups.keys()]).toEqual(['Pages'])
+    expect(headings(groups)).toEqual(['Pages'])
   })
 
   it('falls back to collectionPath when there is no label and no name', () => {
     const groups = groupEntriesByCollection(entries)
-    expect([...groups.keys()]).toEqual(['content/guides', 'pages', 'Root'])
+    expect(headings(groups)).toEqual(['content/guides', 'pages', 'Root'])
   })
 
   it('keeps first-seen group order', () => {
@@ -72,6 +74,18 @@ describe('groupEntriesByCollection', () => {
       { label: 'a', collectionPath: 'a' },
       { label: 'c', collectionPath: 'z' },
     ])
-    expect([...groups.keys()]).toEqual(['z', 'a'])
+    expect(headings(groups)).toEqual(['z', 'a'])
+    expect(groups[0].entries.map((e) => e.label)).toEqual(['b', 'c'])
+  })
+
+  it('keeps two collections that share a heading apart', () => {
+    const groups = groupEntriesByCollection(
+      [
+        { label: 'a', collectionPath: 'guides/overview' },
+        { label: 'b', collectionPath: 'news/overview' },
+      ],
+      () => 'Overview',
+    )
+    expect(groups.map((g) => g.entries.map((e) => e.label))).toEqual([['a'], ['b']])
   })
 })

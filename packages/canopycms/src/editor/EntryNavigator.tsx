@@ -518,7 +518,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       expandedBeforeFilterRef.current ??= tree.expandedState
       tree.setExpandedState(expandedStateFor(filteredTree))
     } else if (expandedBeforeFilterRef.current) {
-      tree.setExpandedState(expandedBeforeFilterRef.current)
+      // Plus the ancestors of an entry picked while filtering, so it stays in view.
+      tree.setExpandedState({
+        ...expandedBeforeFilterRef.current,
+        ...calculatePathToEntry(selectedPath, treeData),
+      })
       expandedBeforeFilterRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on filter changes only; `tree` is a fresh object each render
@@ -570,12 +574,14 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   }
 
   const handleFilterKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    // Enter and Escape during IME composition commit or cancel the composition, nothing more.
+    if (event.nativeEvent.isComposing) return
     if (event.key === 'Escape' && query) {
       // Clears the filter and nothing else: the surrounding drawer stays open.
       event.preventDefault()
       event.stopPropagation()
       setQuery('')
-    } else if (event.key === 'Enter') {
+    } else if (event.key === 'Enter' && filtering) {
       const path = firstEntryPath(filteredTree, query)
       if (path) {
         event.preventDefault()

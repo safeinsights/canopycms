@@ -27,24 +27,34 @@ export function filterEntries<T extends SearchableEntry>(
   return entries.filter((entry) => matchesEntryQuery(entry, query))
 }
 
+export interface EntryGroup<T> {
+  heading: string
+  entries: T[]
+}
+
 /**
- * Groups entries under their collection's display heading, in first-seen order. The heading is
- * `labelFor(collectionPath)`, else the collection name or path, else `Root`.
+ * Groups entries by collection, in first-seen order, each under its display heading:
+ * `labelFor(collectionPath)`, else the collection name or path, else `Root`. Two collections
+ * that share a heading stay separate groups.
  */
 export function groupEntriesByCollection<T extends SearchableEntry>(
   entries: readonly T[],
   labelFor?: (collectionPath: string) => string | undefined,
-): Map<string, T[]> {
-  const groups = new Map<string, T[]>()
+): EntryGroup<T>[] {
+  const groups = new Map<string, EntryGroup<T>>()
   for (const entry of entries) {
+    const key = entry.collectionPath ?? entry.collectionName ?? ''
+    const group = groups.get(key)
+    if (group) {
+      group.entries.push(entry)
+      continue
+    }
     const heading =
       (entry.collectionPath ? labelFor?.(entry.collectionPath) : undefined) ??
       entry.collectionName ??
       entry.collectionPath ??
       'Root'
-    const group = groups.get(heading)
-    if (group) group.push(entry)
-    else groups.set(heading, [entry])
+    groups.set(key, { heading, entries: [entry] })
   }
-  return groups
+  return [...groups.values()]
 }
