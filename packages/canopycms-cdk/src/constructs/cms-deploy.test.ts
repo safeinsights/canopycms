@@ -2595,7 +2595,8 @@ describe('CanopyCmsService: protectedBranches', () => {
   })
 
   it('takes 1024 entries and refuses 1025', () => {
-    const entries = (count: number) => Array.from({ length: count }, (_, i) => `release-${i}`)
+    // Short names: 1024 longer ones would outgrow the worker's user data first.
+    const entries = (count: number) => Array.from({ length: count }, (_, i) => `r${i}`)
     expect(() => synth(false, { protectedBranches: entries(1024) })).not.toThrow()
     expect(() => synth(false, { protectedBranches: entries(1025) })).toThrow(
       /protectedBranches has 1025 entries; the most it takes is 1024/,

@@ -191,6 +191,7 @@ export function workerUnit(layout: 'split' | 'single-process'): string[] {
         ]),
     'StateDirectory=canopy-worker',
     `EnvironmentFile=${WORKER_INSTALL_DIR}/.env`,
+    ...(split ? [] : [`EnvironmentFile=${WORKER_INSTALL_DIR}/gateway.env`]),
     '# What this unit provides; a bundle needing more refuses to start.',
     `Environment=${WORKER_CONTRACT_ENV}=${split ? WORKER_CONTRACT_VERSION : SINGLE_PROCESS_UNIT_CONTRACT}`,
     ...(split
@@ -413,7 +414,7 @@ const INSTANCE_FILE_DELIMITER = 'CANOPYFILEEOF'
  * alone would nearly fill.
  */
 export function instanceFilesScript(): string {
-  return `${Object.entries(instanceFiles())
+  return `set -eu\n${Object.entries(instanceFiles())
     .flatMap(([name, lines]) => {
       if (lines.includes(INSTANCE_FILE_DELIMITER)) {
         throw new Error(`${name} holds the line ${INSTANCE_FILE_DELIMITER}`)

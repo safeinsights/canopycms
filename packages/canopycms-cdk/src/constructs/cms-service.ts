@@ -8,6 +8,7 @@ import {
   RemovalPolicy,
   Stack,
   Token,
+  Tokenization,
   aws_cloudwatch as cloudwatch,
   aws_cloudwatch_actions as cloudwatchActions,
   aws_ec2 as ec2,
@@ -170,18 +171,70 @@ function assertEnvSafe(name: string, value: string): string {
 /**
  * `lines` without their shell comment lines, outside heredoc bodies, so the comments stay in this
  * file and out of the 16 KiB EC2 allows user data. A `#!` line is kept, and every line of a
- * heredoc (`<< 'DELIM'` to `DELIM`) is kept as written.
+ * heredoc is kept as written. Only the quoted form, a line ending `<< 'DELIM'`, may open one: any
+ * other `<<` is refused, since its body would be read as commands and comments here.
+ * @internal Exported for tests.
  */
-function withoutShellComments(...lines: string[]): string[] {
+export function withoutShellComments(...lines: string[]): string[] {
   let heredocEnd: string | undefined
   return lines.filter((line) => {
     if (heredocEnd !== undefined) {
       if (line === heredocEnd) heredocEnd = undefined
       return true
     }
-    heredocEnd = /<< '(\w+)'$/.exec(line)?.[1]
-    return !/^\s*#(?!!)/.test(line)
+    if (/^\s*#(?!!)/.test(line)) return false
+    if (line.includes('<<')) {
+      heredocEnd = /<< '(\w+)'$/.exec(line)?.[1]
+      if (heredocEnd === undefined) throw new Error(`user data: unquoted heredoc in ${line}`)
+    }
+    return true
   })
+}
+
+/** EC2's limit on user data, in bytes, before base64. */
+const USER_DATA_MAX_BYTES = 16_384
+
+/**
+ * The most bytes one deploy-time value in user data resolves to, other than the log group's name:
+ * a bucket name is at most 63, an asset key or a sha256 under 80, a file system or access point
+ * id under 25.
+ */
+const USER_DATA_TOKEN_MAX_BYTES = 128
+
+/** The most bytes a CloudWatch log group's name can be. */
+const LOG_GROUP_NAME_MAX_BYTES = 512
+
+/**
+ * Add `lines` to `userData`, refusing at synth any configuration whose user data could exceed
+ * what EC2 accepts with every deploy-time value at its longest: EC2 would refuse the launch
+ * template, or every launch, and the group would never get a worker. `logGroupName` is the log
+ * group's name as configured, a token when unknown at synth.
+ */
+function addUserData(
+  userData: ec2.UserData,
+  logGroup: { token: string; name: string },
+  ...lines: string[]
+): void {
+  userData.addCommands(...lines)
+  const logGroupToken = Tokenization.reverseString(logGroup.token).firstToken
+  const logGroupBytes = Token.isUnresolved(logGroup.name)
+    ? LOG_GROUP_NAME_MAX_BYTES
+    : Buffer.byteLength(logGroup.name)
+  const longest: unknown = Tokenization.reverseString(userData.render())
+    .mapTokens({
+      mapToken: (token) =>
+        'x'.repeat(token === logGroupToken ? logGroupBytes : USER_DATA_TOKEN_MAX_BYTES),
+    })
+    .join({ join: (left: unknown, right: unknown) => `${String(left)}${String(right)}` })
+  const bytes = Buffer.byteLength(String(longest))
+  if (bytes > USER_DATA_MAX_BYTES) {
+    throw new Error(
+      `CanopyCmsService: the worker's user data could reach ${bytes} bytes, over the ` +
+        `${USER_DATA_MAX_BYTES} EC2 accepts. Its size grows with protectedBranches and the ` +
+        `lengths of the names passed in (secret ARNs and fields, branches, the repository, the ` +
+        `worker log group): shorten them, or protect branches with fewer, wider * patterns.`,
+    )
+  }
 }
 
 /**
@@ -1873,7 +1926,6 @@ export class CanopyCmsService extends Construct {
         .filter(([, , reader]) => readers.includes(reader))
         .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
         .join('\n')
-    const singleProcessEnv = envFile(['worker', 'gateway', 'both'])
     const workerEnv = envFile(['worker', 'both'])
     const gatewayEnv = envFile(['gateway', 'both'])
     // After assertEnvSafe, whose leading-quote refusal is the more specific.
@@ -1881,7 +1933,12 @@ export class CanopyCmsService extends Construct {
 
     const efsMountOptions = `tls,iam,accesspoint=${accessPoint.accessPointId}`
     const userData = ec2.UserData.forLinux()
-    userData.addCommands(
+    addUserData(
+      userData,
+      {
+        token: this.workerLogGroup.logGroupName,
+        name: props.workerLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/worker`,
+      },
       ...withoutShellComments(
         '#!/bin/bash',
         'set -euo pipefail',
@@ -2035,6 +2092,18 @@ export class CanopyCmsService extends Construct {
         `install -d -o root -g root -m 0700 ${INSTANCE_FILES_DIR}`,
         `(cd ${INSTANCE_FILES_DIR} && bash ${INSTANCE_FILES_DOWNLOAD_PATH})`,
         '',
+        "# The worker's environment: nothing secret.",
+        `cat > ${WORKER_INSTALL_DIR}/.env << '${ENV_HEREDOC_DELIMITER}'`,
+        workerEnv,
+        ENV_HEREDOC_DELIMITER,
+        "# The secrets' names, root's alone until the split gives the gateway's",
+        '# group read below: created with its mode before anything is written to',
+        '# it, so it is never world-readable. The single unit reads both files.',
+        `install -m 0600 -o root -g root /dev/null ${WORKER_INSTALL_DIR}/gateway.env`,
+        `cat > ${WORKER_INSTALL_DIR}/gateway.env << '${ENV_HEREDOC_DELIMITER}'`,
+        gatewayEnv,
+        ENV_HEREDOC_DELIMITER,
+        '',
         '# The units, chosen by the contract the bundle states in its first',
         `# lines (\`${WORKER_CONTRACT_BANNER_PREFIX}<n>\`), read after the sha256 check above,`,
         '# so it is as trusted as the bundle. A bundle at the split contract or',
@@ -2072,17 +2141,8 @@ export class CanopyCmsService extends Construct {
         "  # gateway.env can be its group's before the service first runs.",
         `  getent passwd ${GATEWAY_USER} >/dev/null ||`,
         `    useradd --system --no-create-home --shell /sbin/nologin ${GATEWAY_USER}`,
-        '',
-        "  # The worker's environment: nothing secret.",
-        `  cat > ${WORKER_INSTALL_DIR}/.env << '${ENV_HEREDOC_DELIMITER}'`,
-        workerEnv,
-        ENV_HEREDOC_DELIMITER,
-        "  # The gateway's: the secrets' names. Created with its mode and group",
-        '  # before anything is written to it, so it is never world-readable.',
-        `  install -m 0640 -o root -g ${GATEWAY_USER} /dev/null ${WORKER_INSTALL_DIR}/gateway.env`,
-        `  cat > ${WORKER_INSTALL_DIR}/gateway.env << '${ENV_HEREDOC_DELIMITER}'`,
-        gatewayEnv,
-        ENV_HEREDOC_DELIMITER,
+        `  chown root:${GATEWAY_USER} ${WORKER_INSTALL_DIR}/gateway.env`,
+        `  chmod 0640 ${WORKER_INSTALL_DIR}/gateway.env`,
         '',
         ...['canopy-worker.service', 'canopy-github.service', 'canopy-github.socket'].map(
           (unit) => `  install -m 0644 ${INSTANCE_FILES_DIR}/${unit} /etc/systemd/system/${unit}`,
@@ -2102,9 +2162,6 @@ export class CanopyCmsService extends Construct {
         `  install -m 0644 ${INSTANCE_FILES_DIR}/inspect.rc ${INSPECT_RC}`,
         'else',
         '  WORKER_SPLIT=0',
-        `  cat > ${WORKER_INSTALL_DIR}/.env << '${ENV_HEREDOC_DELIMITER}'`,
-        singleProcessEnv,
-        ENV_HEREDOC_DELIMITER,
         `  install -m 0644 ${INSTANCE_FILES_DIR}/canopy-worker-single-process.service /etc/systemd/system/canopy-worker.service`,
         'fi',
         '',

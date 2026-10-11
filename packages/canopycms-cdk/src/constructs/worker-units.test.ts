@@ -13,7 +13,7 @@ import { Stack } from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { aws_ecr as ecr, aws_lambda as lambda } from 'aws-cdk-lib'
 
-import { CanopyCmsService } from './cms-service'
+import { CanopyCmsService, withoutShellComments } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { newTestApp } from '../../test-support/test-synth'
 import {
@@ -137,27 +137,77 @@ const GATEWAY_ONLY =
 describe('the environment, split between the two processes', () => {
   const envFiles = (t: Template) => {
     const lines = userDataLines(t)
-    const [splitWorker, singleProcess] = heredocs(lines, '/opt/canopy-worker/.env').map(parseEnv)
-    const [gateway] = heredocs(lines, '/opt/canopy-worker/gateway.env').map(parseEnv)
-    return { splitWorker, singleProcess, gateway }
+    const [splitWorker, ...moreWorker] = heredocs(lines, '/opt/canopy-worker/.env').map(parseEnv)
+    const [gateway, ...moreGateway] = heredocs(lines, '/opt/canopy-worker/gateway.env').map(
+      parseEnv,
+    )
+    // Each written once, for both layouts.
+    expect([moreWorker, moreGateway]).toEqual([[], []])
+    return { splitWorker, gateway }
   }
+  const environmentFiles = (unit: string[]) =>
+    unit.filter((line) => line.startsWith('EnvironmentFile='))
 
   it.each([
-    ['a token', tokenDeployment],
-    ['an App', appDeployment],
-  ])('gives the split worker nothing secret, and the gateway every secret, with %s', (_c, t) => {
-    const { splitWorker, singleProcess, gateway } = envFiles(t)
-    const workerNames = [...splitWorker.keys()]
-    expect(workerNames.filter((name) => GATEWAY_ONLY.test(name))).toEqual([])
-    expect(workerNames).toContain('CANOPYCMS_WORKSPACE_ROOT')
-    // Every gateway-only name the single process holds is the gateway's under the split.
-    const secretNames = [...singleProcess.keys()].filter((name) => GATEWAY_ONLY.test(name))
-    expect(secretNames.length).toBeGreaterThan(2)
-    for (const name of secretNames) expect(gateway.get(name)).toBe(singleProcess.get(name))
-    // And nothing is lost: every single-process entry is in one of the two.
-    for (const [name, value] of singleProcess) {
-      expect(splitWorker.get(name) ?? gateway.get(name), name).toBe(value)
-    }
+    [
+      'a token',
+      tokenDeployment,
+      [
+        'CANOPYCMS_GITHUB_TOKEN_SECRET_ARN',
+        'CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD',
+        'CLERK_SECRET_KEY_SECRET_ARN',
+        'CLERK_SECRET_KEY_SECRET_JSON_FIELD',
+        'CANOPYCMS_PROTECTED_BRANCHES',
+        WORKER_CAPACITY_ENV,
+        'CANOPYCMS_SETTINGS_BRANCH',
+      ],
+    ],
+    [
+      'an App',
+      appDeployment,
+      [
+        'CANOPYCMS_GITHUB_APP_ID',
+        'CANOPYCMS_GITHUB_APP_INSTALLATION_ID',
+        'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN',
+        'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD',
+      ],
+    ],
+  ])(
+    'gives the split worker nothing secret, and the gateway every secret, with %s',
+    (_c, t, configured) => {
+      const { splitWorker, gateway } = envFiles(t)
+      const workerNames = [...splitWorker.keys()]
+      expect(workerNames.filter((name) => GATEWAY_ONLY.test(name))).toEqual([])
+      expect(workerNames).toContain('CANOPYCMS_WORKSPACE_ROOT')
+      for (const name of configured.filter((n) => GATEWAY_ONLY.test(n))) {
+        expect(gateway.has(name), name).toBe(true)
+      }
+      // Nothing is lost: every variable the props set is in one of the two files.
+      const written = new Set([...splitWorker.keys(), ...gateway.keys()])
+      for (const name of [
+        'CANOPYCMS_WORKSPACE_ROOT',
+        'CANOPYCMS_GITHUB_OWNER',
+        'CANOPYCMS_GITHUB_REPO',
+        'CANOPYCMS_DEPLOYMENT_NAME',
+        'AWS_REGION',
+        ...configured,
+      ]) {
+        expect(written, name).toContain(name)
+      }
+    },
+  )
+
+  it('has the split worker read its file alone, the gateway its own, and the single unit both', () => {
+    expect(environmentFiles(shippedInstanceFile('canopy-worker.service'))).toEqual([
+      'EnvironmentFile=/opt/canopy-worker/.env',
+    ])
+    expect(environmentFiles(shippedInstanceFile('canopy-github.service'))).toEqual([
+      'EnvironmentFile=/opt/canopy-worker/gateway.env',
+    ])
+    expect(environmentFiles(shippedInstanceFile('canopy-worker-single-process.service'))).toEqual([
+      'EnvironmentFile=/opt/canopy-worker/.env',
+      'EnvironmentFile=/opt/canopy-worker/gateway.env',
+    ])
   })
 
   it('gives both the repository and the base branch, and only the worker the workspace', () => {
@@ -174,13 +224,11 @@ describe('the environment, split between the two processes', () => {
     expect(splitWorker.get('CANOPYCMS_SETTINGS_BRANCH')).toBe('canopycms-settings-docs')
   })
 
-  it('creates gateway.env with its mode and group, after the user and before writing it', () => {
-    const user = indexOfLine(all, (l) => l.includes('useradd --system'), 'adds the user')
+  it("creates gateway.env root's alone before writing it, and gives the gateway's group read after adding the user", () => {
     const install = indexOfLine(
       all,
       (l) =>
-        l.trim() ===
-        'install -m 0640 -o root -g canopy-github /dev/null /opt/canopy-worker/gateway.env',
+        l.trim() === 'install -m 0600 -o root -g root /dev/null /opt/canopy-worker/gateway.env',
       'creates gateway.env',
     )
     const write = indexOfLine(
@@ -188,8 +236,23 @@ describe('the environment, split between the two processes', () => {
       (l) => l.includes("cat > /opt/canopy-worker/gateway.env << '"),
       'writes gateway.env',
     )
-    expect(user).toBeLessThan(install)
+    const user = indexOfLine(all, (l) => l.includes('useradd --system'), 'adds the user')
+    const chown = indexOfLine(
+      all,
+      (l) => l.trim() === 'chown root:canopy-github /opt/canopy-worker/gateway.env',
+      'gives it to the group',
+    )
+    const chmod = indexOfLine(
+      all,
+      (l) => l.trim() === 'chmod 0640 /opt/canopy-worker/gateway.env',
+      'opens it to the group',
+    )
     expect(install).toBeLessThan(write)
+    expect(write).toBeLessThan(user)
+    expect(user).toBeLessThan(chown)
+    expect(chown).toBeLessThan(chmod)
+    // Only in the split's branch.
+    expect(chmod).toBeLessThan(all.indexOf('else'))
     expect(all[user].trim()).toBe(
       'useradd --system --no-create-home --shell /sbin/nologin canopy-github',
     )
@@ -245,6 +308,8 @@ describe('the instance files', () => {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     expect(run.status).toBe(0)
+    // A write that fails stops the unpack, which fails the boot.
+    expect(readFileSync(SHIPPED_INSTANCE_FILES, 'utf-8').split('\n')[0]).toBe('set -eu')
     expect(Object.keys(instanceFiles()).sort()).toEqual(readdirSync(scratch).sort())
     for (const [name, lines] of Object.entries(instanceFiles())) {
       expect(readFileSync(path.join(scratch, name), 'utf-8'), name).toBe(`${lines.join('\n')}\n`)
@@ -298,6 +363,39 @@ describe('the instance files', () => {
         .replace(/REF_\w+/g, 'x'.repeat(100)),
     )
     expect(bytes).toBeLessThan(16_384 - 4_096)
+  })
+
+  it('are refused at synth when the props could take user data past 16 KiB', () => {
+    const many = (count: number) => Array.from({ length: count }, (_, i) => `release-${i}/*`)
+    expect(() => synth({ protectedBranches: many(200) })).not.toThrow()
+    expect(() => synth({ protectedBranches: many(700) })).toThrow(
+      /user data could reach \d+ bytes, over the 16384 EC2 accepts/,
+    )
+    expect(() => synth({ workerLogGroupName: `/canopycms/${'g'.repeat(500)}` })).not.toThrow()
+  })
+
+  it('keep every heredoc body as written, and refuse a heredoc form they cannot follow', () => {
+    expect(
+      withoutShellComments(
+        '#!/bin/bash',
+        '# a comment',
+        "  # an indented one, ending as an opener would << 'X'",
+        "cat > f << 'BODY'",
+        '# kept: part of the file',
+        'BODY',
+        'echo done # trailing text stays',
+      ),
+    ).toEqual([
+      '#!/bin/bash',
+      "cat > f << 'BODY'",
+      '# kept: part of the file',
+      'BODY',
+      'echo done # trailing text stays',
+    ])
+    expect(() => withoutShellComments('cat > f << BODY', 'x', 'BODY')).toThrow(/unquoted heredoc/)
+    expect(() => withoutShellComments("cat > f <<- 'BODY'", 'x', 'BODY')).toThrow(
+      /unquoted heredoc/,
+    )
   })
 
   it('leave no shell comment in user data outside a heredoc', () => {
