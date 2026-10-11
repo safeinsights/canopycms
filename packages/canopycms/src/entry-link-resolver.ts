@@ -40,29 +40,46 @@ export function resolveEntryUrl(
   return computeEntryUrl(location.collection ?? '', location.slug ?? '', contentRoot)
 }
 
+export interface ResolveEntryLinksOptions {
+  /**
+   * Whether a link to this content id may show its target. When set, a link to a target it
+   * refuses, or to a missing one, shows nothing of that target's URL or slug: an inline
+   * markdown link (`[text](entry:ID)`, or an image) becomes its bare text, and any other form
+   * becomes `#`.
+   */
+  isLinkable?: (id: string) => boolean
+}
+
 /**
  * Replace `entry:CONTENT_ID` tokens with resolved URL paths, skipping code blocks and
  * spans so examples mentioning the syntax survive. A missing ID becomes "#" (dead link)
  * plus a warning; an anchor fragment is preserved (`entry:ID#heading` => `/path#heading`).
+ * See {@link ResolveEntryLinksOptions.isLinkable} for links to a target the caller withholds.
  */
 export function resolveEntryLinksInText(
   text: string,
   idIndex: ContentIdIndex,
   contentRoot: string,
   customResolver?: EntryLinkUrlResolver,
+  options: ResolveEntryLinksOptions = {},
 ): string {
+  const { isLinkable } = options
   const parts = splitByCodeRegions(text)
 
   return parts
     .map((part) => {
       if (part.isCode) return part.text
-      return part.text.replace(ENTRY_LINK_PATTERN, (_match, id: string, anchor?: string) => {
-        const location = idIndex.findById(id)
+      const partText = isLinkable
+        ? unwrapInlineLinks(part.text, (id) => !isLinkable(id) || !findEntry(idIndex, id))
+        : part.text
+      return partText.replace(ENTRY_LINK_PATTERN, (_match, id: string, anchor?: string) => {
+        const location = findEntry(idIndex, id)
 
-        if (!location || location.type !== 'entry' || !location.collection || !location.slug) {
+        if (!location) {
           log.warn('resolve', `Entry link target not found: entry:${id}`)
-          return anchor ?? '#'
+          return isLinkable ? '#' : (anchor ?? '#')
         }
+        if (isLinkable && !isLinkable(id)) return '#'
 
         let url: string
         if (customResolver) {
@@ -79,6 +96,53 @@ export function resolveEntryLinksInText(
       })
     })
     .join('')
+}
+
+type EntryLocation = IdLocation & Required<Pick<IdLocation, 'collection' | 'slug'>>
+
+function findEntry(idIndex: ContentIdIndex, id: string): EntryLocation | undefined {
+  const location = idIndex.findById(id)
+  if (!location || location.type !== 'entry' || !location.collection || !location.slug) {
+    return undefined
+  }
+  return location as EntryLocation
+}
+
+/** `](entry:ID#anchor "title")`: the target half of an inline markdown link. */
+const INLINE_LINK_TARGET = new RegExp(
+  `\\]\\(entry:(${BASE58_CHAR}{12})(?:#[^\\s)>"']*)?(?:[ \\t]+"[^"\\n]*")?\\)`,
+  'g',
+)
+
+/**
+ * Replace each inline markdown link (or image) whose `entry:` target `shouldUnwrap` names with
+ * its bracketed text. A link whose opening `[` can't be found is left alone, for the caller's
+ * token pass to neutralize.
+ */
+function unwrapInlineLinks(text: string, shouldUnwrap: (id: string) => boolean): string {
+  let out = ''
+  let cursor = 0
+  for (const match of text.matchAll(INLINE_LINK_TARGET)) {
+    const close = match.index
+    if (close < cursor || !shouldUnwrap(match[1])) continue
+    const open = findOpeningBracket(text, close, cursor)
+    if (open === -1) continue
+    const start = open > cursor && text[open - 1] === '!' ? open - 1 : open
+    out += text.slice(cursor, start) + text.slice(open + 1, close)
+    cursor = close + match[0].length
+  }
+  return out + text.slice(cursor)
+}
+
+/** The `[` matching the `]` at `close`, searching back no further than `floor`; -1 if none. */
+function findOpeningBracket(text: string, close: number, floor: number): number {
+  let depth = 1
+  for (let i = close - 1; i >= floor; i--) {
+    if (i > floor && text[i - 1] === '\\') continue
+    if (text[i] === ']') depth++
+    else if (text[i] === '[' && --depth === 0) return i
+  }
+  return -1
 }
 
 /** Quick-check pattern for early bail-out (no `g` flag, safe for `.test()`). */

@@ -14,11 +14,7 @@ import { minimatch } from 'minimatch'
 import type { ContentStore, ContentDocument, MarkdownDocument } from '../content-store'
 import type { FlatSchemaItem, EntryTypeConfig } from '../config'
 import { isDataOnlyFormat } from '../utils/format'
-import {
-  extractEntryTypeFromFilename,
-  extractIdFromFilename,
-  type ContentIdIndex,
-} from '../content-id-index'
+import { extractEntryTypeFromFilename, extractIdFromFilename } from '../content-id-index'
 import { hasTraversalSequence } from '../paths'
 import { getErrorMessage, isNodeError } from '../utils/error'
 import { entryToMarkdown, frontmatterTitle, type ReferenceRendering } from './json-to-markdown'
@@ -29,7 +25,12 @@ import {
   resolveReferenceFields,
   type ReferenceTargetResolver,
 } from './references'
-import { resolveEntryLinksInText, type EntryLinkUrlResolver } from '../entry-link-resolver'
+import {
+  extractEntryLinkIds,
+  resolveEntryLinksInText,
+  type EntryLinkUrlResolver,
+} from '../entry-link-resolver'
+import { isNoindexEntry } from '../static/seo'
 import type {
   AIContentConfig,
   AIEntry,
@@ -77,13 +78,14 @@ export interface GenerateResult {
  * and produces per-entry files, per-collection all.md files,
  * bundle files, and a manifest.
  *
- * A reference may only show a target that is itself exported, so every entry is read and
- * filtered first, which settles the exported set. Only then are references to anything outside
- * it masked, entry transforms run, and markdown rendered, in rounds that repeat while a render
- * fails (see the loop below).
+ * A reference or body `entry:` link may only show a target that is itself exported, so every
+ * entry is read and filtered first, which settles the exported set. Only then are body links
+ * resolved, references to anything outside the set masked, entry transforms run, and markdown
+ * rendered, in rounds that repeat while a render fails (see the loop below).
  */
 export async function generateAIContent(options: GenerateOptions): Promise<GenerateResult> {
   const { store, flatSchema, contentRoot, config, entryLinkUrl, generatedAt, buildId } = options
+  assertValidNoindexConfig(config)
   const files = new Map<string, string>()
 
   const idIndex = await store.idIndex()
@@ -91,8 +93,6 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     store,
     contentRoot,
     config,
-    idIndex,
-    entryLinkUrl,
     resolveTarget: createReferenceTargetResolver(store),
   }
 
@@ -130,13 +130,23 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     mountPath: config?.mountPath ?? '/ai',
     files: exported,
   })
-  // An entry whose render throws is not in the export after all, so references to it are masked
-  // like any other left-out target, and the entries that changed run their transforms and render
-  // again. That can fail another entry, so this repeats until a round fails none; each round
-  // removes at least one entry, so it ends.
+  const isLinkable = (id: string) => exported.has(id)
+  // An entry whose render throws is not in the export after all, so references and body links to
+  // it are withheld like any other left-out target, and the entries that changed run their
+  // transforms and render again. That can fail another entry, so this repeats until a round fails
+  // none; each round removes at least one entry, so it ends.
   let round: PendingEntry[] = allPending
   for (;;) {
     for (const pending of round) {
+      if (pending.body !== undefined) {
+        pending.entry.body = resolveEntryLinksInText(
+          pending.body,
+          idIndex,
+          contentRoot,
+          entryLinkUrl,
+          { isLinkable },
+        )
+      }
       maskUnexportedTargets(pending.entry, exported)
       // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), on data as masked
       pending.entry.appendedSections = undefined
@@ -144,12 +154,17 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     }
     const failed = renderAll(round, config, references)
     if (failed.length === 0) break
+    const failedIds = new Set<string>()
     for (const pending of failed) {
-      if (pending.contentId !== null) exported.delete(pending.contentId)
+      if (pending.contentId === null) continue
+      exported.delete(pending.contentId)
+      failedIds.add(pending.contentId)
     }
-    round = allPending.filter(
-      (pending) => isRendered(pending) && maskUnexportedTargets(pending.entry, exported),
-    )
+    round = allPending.filter((pending) => {
+      if (!isRendered(pending)) return false
+      const masked = maskUnexportedTargets(pending.entry, exported)
+      return masked || pending.linkedIds.some((id) => failedIds.has(id))
+    })
   }
 
   const manifestCollections = collectionNodes.map((node) => emitCollection(node, files))
@@ -224,14 +239,16 @@ interface EntryReadContext {
   store: ContentStore
   contentRoot: string
   config?: AIContentConfig
-  idIndex: ContentIdIndex
-  entryLinkUrl?: EntryLinkUrlResolver
   resolveTarget: ReferenceTargetResolver
 }
 
 /** An entry that passed every exclusion; `markdown` is set once it renders. */
 interface PendingEntry {
   entry: AIEntry
+  /** The MD/MDX body as stored, before its `entry:` links are resolved against the export. */
+  body?: string
+  /** The content ids its body links to. */
+  linkedIds: string[]
   contentId: string | null
   absolutePath: string
   collectionPath: string
@@ -281,7 +298,8 @@ async function collectEntries(
   collection: FlatSchemaItem & { type: 'collection' },
   cleanPath: string,
 ): Promise<PendingEntry[]> {
-  const { store, contentRoot, config, idIndex, entryLinkUrl, resolveTarget } = read
+  const { store, config, resolveTarget } = read
+  const skipNoindex = config?.exclude?.noindex !== false
   const pending: PendingEntry[] = []
 
   const listed = await store.getCollectionEntryPaths(collection.logicalPath)
@@ -301,18 +319,18 @@ async function collectEntries(
       const doc = await store.read(listEntry.collection, listEntry.slug, {
         resolveReferences: false,
       })
+      // AI content advertises an entry, so `noindex` leaves it out here as it does the sitemap.
+      if (skipNoindex && isNoindexEntry(doc.data, config?.seo)) continue
       doc.data = await resolveReferenceFields(doc.data, entryTypeConfig.schema, resolveTarget)
 
       const aiEntry = docToAIEntry(doc, listEntry.slug, entryTypeName, entryTypeConfig, cleanPath)
-
-      if (aiEntry.body) {
-        aiEntry.body = resolveEntryLinksInText(aiEntry.body, idIndex, contentRoot, entryLinkUrl)
-      }
 
       if (config?.exclude?.where?.(aiEntry)) continue
 
       pending.push({
         entry: aiEntry,
+        body: aiEntry.body,
+        linkedIds: aiEntry.body ? extractEntryLinkIds(aiEntry.body).map((link) => link.id) : [],
         contentId: extractIdFromFilename(path.basename(listEntry.relativePath)),
         absolutePath: doc.absolutePath,
         collectionPath: collection.logicalPath,
@@ -362,6 +380,36 @@ function emitCollection(node: CollectionNode, files: Map<string, string>): AIMan
     entryCount: rendered.length,
     entries: manifestEntries,
     subcollections: manifestSubcollections.length > 0 ? manifestSubcollections : undefined,
+  }
+}
+
+/**
+ * Refuse an `exclude.noindex` or `seo` the noindex gate would misread. A non-boolean
+ * `noindex: 'false'` would leave the gate on while the adopter believes it is off, and a
+ * misshapen `seo` reads no flag at all, so every noindex entry ships.
+ */
+function assertValidNoindexConfig(config: AIContentConfig | undefined): void {
+  const noindex: unknown = config?.exclude?.noindex
+  if (noindex !== undefined && typeof noindex !== 'boolean') {
+    throw new Error(`AI content config: exclude.noindex must be a boolean, got ${typeof noindex}`)
+  }
+  const seo: unknown = config?.seo
+  if (seo === undefined) return
+  if (typeof seo !== 'object' || seo === null || Array.isArray(seo)) {
+    throw new Error('AI content config: seo must be an object of { group?, fields? }')
+  }
+  const { group, fields } = seo as Record<string, unknown>
+  if (group !== undefined && typeof group !== 'string') {
+    throw new Error('AI content config: seo.group must be a string')
+  }
+  if (fields === undefined) return
+  if (
+    typeof fields !== 'object' ||
+    fields === null ||
+    Array.isArray(fields) ||
+    Object.values(fields).some((name) => typeof name !== 'string')
+  ) {
+    throw new Error('AI content config: seo.fields must map SEO fields to field-name strings')
   }
 }
 
