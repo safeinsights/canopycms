@@ -183,6 +183,15 @@ describe('QuickOpenPalette hotkey', () => {
       expect(onOpen).toHaveBeenCalledTimes(1)
     })
 
+    it('reopens over its own dialog, which lingers while it closes', async () => {
+      const { onOpen } = renderPalette({ opened: true })
+      await screen.findByTestId('quick-open-input')
+
+      press(document.body, { key: 'p', ctrlKey: true })
+
+      expect(onOpen).toHaveBeenCalledTimes(1)
+    })
+
     it('opens over a popover, which is not modal', () => {
       const { onOpen } = renderPalette({ opened: false })
       addDialog({})

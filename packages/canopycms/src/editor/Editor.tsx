@@ -48,7 +48,12 @@ import { SystemHealthPanel } from './admin/SystemHealthPanel'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isPrivileged } from '../authorization/helpers'
 import type { CommentThread } from '../comment-store'
-import { buildPreviewSrc, buildCollectionLabels, buildBreadcrumbSegments } from './editor-utils'
+import {
+  buildPreviewRoute,
+  buildPreviewSrc,
+  buildCollectionLabels,
+  buildBreadcrumbSegments,
+} from './editor-utils'
 import {
   useEditorLayout,
   useDraftManager,
@@ -383,27 +388,14 @@ const EditorContent: React.FC<EditorProps> = ({
     [createModalCollection],
   )
 
-  // The path a slug will be served at, shown under the slug field. Built by the same rule as the
-  // preview iframe, minus its `?branch=` query; undefined when the entry has no page.
+  // The route a slug's page is served at, shown under the slug field: the preview's route
+  // without its preview prefix, deployment base path or `?branch=`. Undefined when it has no page.
   const previewPathFor = (entry: {
     collectionPath: string
     collectionName?: string
     slug: string
     entryType?: string
-  }): string | undefined => {
-    try {
-      const src = buildPreviewSrc(entry, {
-        branchName: branchNameState,
-        previewBaseByCollection,
-        previewPrefix,
-        contentRoot,
-        basePath,
-      })
-      return src === undefined ? undefined : new URL(src, window.location.origin).pathname
-    } catch {
-      return undefined
-    }
-  }
+  }): string | undefined => buildPreviewRoute(entry, { previewBaseByCollection, contentRoot })
 
   // Use collections from API (falls back to props if not loaded yet)
   const activeCollections = collectionsFromApi.length > 0 ? collectionsFromApi : collections
@@ -1504,6 +1496,15 @@ const EditorContent: React.FC<EditorProps> = ({
           <Drawer.Root
             opened={navigatorOpen}
             onClose={() => setNavigatorOpen(false)}
+            // Mantine closes every open overlay on one Escape, so the drawer leaves it to a dialog
+            // opened from its rows.
+            closeOnEscape={
+              !createModalOpen &&
+              !renameModalOpen &&
+              !deleteEntryModalOpen &&
+              !deleteCollectionModalOpen &&
+              !collectionEditorOpen
+            }
             position="left"
             size={360}
           >
@@ -1626,7 +1627,8 @@ const EditorContent: React.FC<EditorProps> = ({
             }}
             onClose={() => setQuickOpenOpen(false)}
             entries={entriesState}
-            collectionLabel={(path) => collectionLabels.get(path)}
+            // The hidden root's entries sit at the top of the tree, so they get no heading here either.
+            collectionLabel={(path) => (path === hiddenRootPath ? '' : collectionLabels.get(path))}
             onSelect={setSelectedPath}
           />
           <BranchesDrawer

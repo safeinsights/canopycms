@@ -172,7 +172,7 @@ const stubApi = (groups: string[]) => {
   return fetchMock
 }
 
-const renderEditor = () =>
+const renderEditor = (props: Partial<React.ComponentProps<typeof Editor>> = {}) =>
   render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000 }}>
       <ApiClientProvider>
@@ -183,6 +183,7 @@ const renderEditor = () =>
           branchName="main"
           operatingMode="dev"
           themeOptions={{}}
+          {...props}
         />
       </ApiClientProvider>
     </SWRConfig>,
@@ -244,6 +245,39 @@ describe('quick open', () => {
 
     expect(await screen.findByTestId('quick-open-input')).toBeTruthy()
     await waitFor(() => expect(screen.queryByTestId('entry-nav-filter')).toBeNull())
+  })
+})
+
+describe('dialogs opened from the navigator', () => {
+  const openAddEntry = async () => {
+    await openNavigator()
+    fireEvent.click(screen.getByTestId('collection-menu-posts'))
+    fireEvent.click(await screen.findByTestId('add-entry-menu-item'))
+    return screen.findByTestId('create-entry-modal')
+  }
+
+  it('shows the page route under the slug, without the preview prefix', async () => {
+    stubApi([])
+    renderEditor({ previewPrefix: '/edit/preview' })
+    await loaded()
+
+    const modal = await openAddEntry()
+
+    expect(within(modal).getByText('URL path: /posts/your-slug')).toBeTruthy()
+  })
+
+  it('closes only the dialog on Escape, leaving the drawer open', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+    const modal = await openAddEntry()
+
+    fireEvent.keyDown(within(modal).getByTestId('entry-slug-input'), { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByTestId('create-entry-modal')).toBeNull())
+    // A closing drawer stays mounted through its exit transition, so look after it would be gone.
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(screen.getByTestId('entry-nav-filter')).toBeTruthy()
   })
 })
 

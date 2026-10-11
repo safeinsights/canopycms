@@ -40,7 +40,7 @@ export interface QuickOpenPaletteProps {
   onOpen: () => void
   onClose: () => void
   entries: ReadonlyArray<QuickOpenEntry>
-  /** Display name for a collection heading; the collection's own name when absent. */
+  /** Display name for a collection heading; the collection's own name when absent, none when ''. */
   collectionLabel?: (collectionPath: string) => string | undefined
   onSelect: (path: string) => void
 }
@@ -105,7 +105,15 @@ export function QuickOpenPalette({
   }
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Open entry" size="lg" yOffset="10vh">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="Open entry"
+      size="lg"
+      yOffset="10vh"
+      // Its own dialog lingers through the close transition; Mod+P may reopen it meanwhile.
+      {...{ [QUICK_OPEN_REPLACES_ATTR]: true }}
+    >
       <Combobox store={combobox} onOptionSubmit={handleSubmit}>
         <Combobox.EventsTarget
           withExpandedAttribute
@@ -134,7 +142,7 @@ export function QuickOpenPalette({
               </Text>
             ) : (
               groups.map((group, index) => (
-                <Combobox.Group label={group.heading} key={index}>
+                <Combobox.Group label={group.heading || undefined} key={index}>
                   {group.entries.map((entry) => (
                     <Combobox.Option
                       value={entry.path}

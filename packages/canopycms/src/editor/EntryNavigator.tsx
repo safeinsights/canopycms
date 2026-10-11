@@ -229,6 +229,12 @@ const TruncatedLabel: React.FC<{ label: string; highlight: string; fw: number }>
   )
 }
 
+/**
+ * A row menu's dropdown is portaled, but React still bubbles its key events to the row, where the
+ * tree's own arrow-key navigation would take focus out of the open menu.
+ */
+const stopTreeKeys = (event: React.KeyboardEvent) => event.stopPropagation()
+
 const UnsavedDot: React.FC<{ label: string }> = ({ label }) => (
   <Tooltip label={label} withinPortal>
     <Box
@@ -768,7 +774,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                     <IconDots size={14} />
                   </ActionIcon>
                 </Menu.Target>
-                <Menu.Dropdown>
+                <Menu.Dropdown onKeyDown={stopTreeKeys}>
                   {onAdd && (
                     <Menu.Item
                       leftSection={<IconPlus size={14} />}
@@ -862,7 +868,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                     <IconDots size={14} />
                   </ActionIcon>
                 </Menu.Target>
-                <Menu.Dropdown>
+                <Menu.Dropdown onKeyDown={stopTreeKeys}>
                   {onRenameEntry && (
                     <Menu.Item
                       leftSection={<IconEdit size={14} />}
@@ -942,6 +948,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           size="sm"
           py={4}
           aria-label="Filter entries"
+          spellCheck={false}
+          data-autofocus
           placeholder="Filter by title or slug"
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}

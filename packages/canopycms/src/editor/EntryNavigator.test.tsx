@@ -1371,6 +1371,35 @@ describe('EntryNavigator', () => {
     })
   })
 
+  describe('row menus by keyboard', () => {
+    it('keeps the arrow keys inside an open row menu', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        collections: [
+          {
+            path: unsafeAsLogicalPath('posts'),
+            label: 'Posts',
+            type: 'collection',
+            entries: [
+              { path: unsafeAsLogicalPath('posts/a'), label: 'Alpha' },
+              { path: unsafeAsLogicalPath('posts/b'), label: 'Beta' },
+            ],
+          },
+        ],
+        expandedStateRef: { current: { 'collection:posts': true } },
+        onRenameEntry: vi.fn(),
+        onDeleteEntry: vi.fn(),
+      })
+
+      await user.click(screen.getByTestId('entry-menu-alpha'))
+      const menu = await screen.findByRole('menu')
+      await user.keyboard('{ArrowDown}')
+      await user.keyboard('{ArrowDown}')
+
+      expect(menu.contains(document.activeElement)).toBe(true)
+    })
+  })
+
   describe('row layout', () => {
     const lp = unsafeAsLogicalPath
     const longTitle = 'A very long entry title that cannot fit in a narrow navigator panel'
