@@ -206,6 +206,14 @@ test.describe('Branch State Badges', () => {
       await expect(editorPage.saveButton).toBeDisabled()
     })
 
+    await test.step('the form is read-only', async () => {
+      await editorPage.openContentNavigator()
+      await editorPage.selectEntry('Home Page')
+      const title = editorPage.getFieldInput('title')
+      await expect(title).not.toBeEditable()
+      await expect(title).toHaveAttribute('readonly', '')
+    })
+
     await test.step('server: a content write is refused with 403', async () => {
       // The content API takes a LOGICAL path ("home"), not the physical
       // on-disk filename with its embedded content id (HOME_ENTRY_FILE) --

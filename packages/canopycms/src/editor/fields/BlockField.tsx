@@ -51,6 +51,8 @@ export interface BlockFieldProps {
   renderField: RenderField
   path: Array<string | number>
   dataCanopyField?: string
+  /** No add, remove, reorder or drag. */
+  readOnly?: boolean
 }
 
 const findTemplate = (templates: BlockConfig[], name: string) =>
@@ -60,10 +62,12 @@ const SortableBlock: React.FC<{
   id: string
   /** The block's own path (`blocks[2]`), which preview focus lands on for the block as a whole. */
   canopyPath: string
+  readOnly: boolean
   children: React.ReactNode
-}> = ({ id, canopyPath, children }) => {
+}> = ({ id, canopyPath, readOnly, children }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
+    disabled: readOnly,
   })
 
   const style: React.CSSProperties = {
@@ -82,17 +86,19 @@ const SortableBlock: React.FC<{
       data-canopy-field={canopyPath}
     >
       <Group align="flex-start" gap="sm">
-        <ActionIcon
-          size="md"
-          key="drag-handle"
-          variant="subtle"
-          aria-label="Drag to reorder"
-          {...attributes}
-          {...listeners}
-          style={{ cursor: 'grab' }}
-        >
-          ⇅
-        </ActionIcon>
+        {!readOnly && (
+          <ActionIcon
+            size="md"
+            key="drag-handle"
+            variant="subtle"
+            aria-label="Drag to reorder"
+            {...attributes}
+            {...listeners}
+            style={{ cursor: 'grab' }}
+          >
+            ⇅
+          </ActionIcon>
+        )}
         <div key="content" style={{ flex: 1, minWidth: 0, width: '100%' }}>
           {children}
         </div>
@@ -111,6 +117,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
   renderField,
   path,
   dataCanopyField,
+  readOnly = false,
 }) => {
   const descriptionBaseId = useId()
   const [itemKeys, setItemKeys] = useState<string[]>(() =>
@@ -129,6 +136,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
     setItemKeys((prev) => prev.slice(0, value.length))
   }
 
+  // Constant: DndContext's hooks depend on the sensor count; read-only disables each item instead.
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, {
@@ -136,10 +144,15 @@ export const BlockField: React.FC<BlockFieldProps> = ({
     }),
   )
 
+  const emit = (next: BlockInstance[]) => {
+    if (!readOnly) onChange(next)
+  }
+
   const addBlock = (templateName: string) => {
     const template = findTemplate(templates, templateName)
     if (!template) return
-    onChange([...value, { template: templateName, value: {} }])
+    if (readOnly) return
+    emit([...value, { template: templateName, value: {} }])
     setItemKeys((prev) => [
       ...prev,
       `block-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -148,19 +161,21 @@ export const BlockField: React.FC<BlockFieldProps> = ({
 
   const moveBlock = (from: number, to: number) => {
     if (from === to || from < 0 || to < 0 || from >= value.length || to >= value.length) return
-    onChange(arrayMove(value, from, to))
+    if (readOnly) return
+    emit(arrayMove(value, from, to))
     setItemKeys((prev) => arrayMove(prev, from, to))
   }
 
   const removeBlock = (index: number) => {
-    onChange(value.filter((_, idx) => idx !== index))
+    if (readOnly) return
+    emit(value.filter((_, idx) => idx !== index))
     setItemKeys((prev) => prev.filter((_, idx) => idx !== index))
   }
 
   const updateBlockValue = (index: number, val: Record<string, unknown>) => {
     const next = [...value]
     next[index] = { ...next[index], value: val }
-    onChange(next)
+    emit(next)
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -194,21 +209,23 @@ export const BlockField: React.FC<BlockFieldProps> = ({
           description={description}
           descriptionBaseId={descriptionBaseId}
           actions={
-            <Select
-              aria-label="Add block"
-              placeholder="Add block..."
-              data={selectableTemplates}
-              value={pendingTemplate}
-              onChange={(next) => {
-                if (next) {
-                  addBlock(next)
-                }
-                setPendingTemplate(null)
-              }}
-              allowDeselect
-              size="xs"
-              w={180}
-            />
+            !readOnly && (
+              <Select
+                aria-label="Add block"
+                placeholder="Add block..."
+                data={selectableTemplates}
+                value={pendingTemplate}
+                onChange={(next) => {
+                  if (next) {
+                    addBlock(next)
+                  }
+                  setPendingTemplate(null)
+                }}
+                allowDeselect
+                size="xs"
+                w={180}
+              />
+            )
           }
         />
 
@@ -224,34 +241,37 @@ export const BlockField: React.FC<BlockFieldProps> = ({
                     key={itemKeys[idx]}
                     id={itemKeys[idx]}
                     canopyPath={formatCanopyPath(currentPath)}
+                    readOnly={readOnly}
                   >
                     <Stack gap="xs">
                       <FieldLabel
                         label={template?.label ?? block.template ?? 'Unknown block'}
                         actions={
-                          <>
-                            <ActionIcon
-                              size="md"
-                              variant="light"
-                              aria-label="Move block up"
-                              disabled={idx === 0}
-                              onClick={() => moveBlock(idx, idx - 1)}
-                            >
-                              ↑
-                            </ActionIcon>
-                            <ActionIcon
-                              size="md"
-                              variant="light"
-                              aria-label="Move block down"
-                              disabled={idx === value.length - 1}
-                              onClick={() => moveBlock(idx, idx + 1)}
-                            >
-                              ↓
-                            </ActionIcon>
-                            <Button variant="subtle" color="red" onClick={() => removeBlock(idx)}>
-                              {EDITOR_ACTIONS.remove}
-                            </Button>
-                          </>
+                          !readOnly && (
+                            <>
+                              <ActionIcon
+                                size="md"
+                                variant="light"
+                                aria-label="Move block up"
+                                disabled={idx === 0}
+                                onClick={() => moveBlock(idx, idx - 1)}
+                              >
+                                ↑
+                              </ActionIcon>
+                              <ActionIcon
+                                size="md"
+                                variant="light"
+                                aria-label="Move block down"
+                                disabled={idx === value.length - 1}
+                                onClick={() => moveBlock(idx, idx + 1)}
+                              >
+                                ↓
+                              </ActionIcon>
+                              <Button variant="subtle" color="red" onClick={() => removeBlock(idx)}>
+                                {EDITOR_ACTIONS.remove}
+                              </Button>
+                            </>
+                          )
                         }
                       />
 

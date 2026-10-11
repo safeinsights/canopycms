@@ -84,8 +84,7 @@ info, yellow warning, red error. An error that needs action stays until dismisse
 
 Every field's label row has the same anatomy, rendered by
 `packages/canopycms/src/editor/fields/FieldLabel.tsx`: label, required marker and comment
-control on the left, field actions on the right, and the description beneath. No hand-rolled label styles. A read-only form disables its inputs and
-lets the banner explain once; no lock icon per field. List and block rows collapse, take their
+control on the left, field actions on the right, and the description beneath. No hand-rolled label styles. A read-only form's inputs are read-only, not disabled; the banner explains once; no lock icon per field. List and block rows collapse, take their
 title from the content, and carry a drag handle and a "…" menu (Move up, Move down, Duplicate,
 Remove). Validation shows inline and in a summary of labelled breadcrumbs that focus the
 field.

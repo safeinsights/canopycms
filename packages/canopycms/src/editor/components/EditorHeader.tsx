@@ -12,6 +12,7 @@ import {
   Text,
   Title,
   Tooltip,
+  VisuallyHidden,
 } from '@mantine/core'
 import { IconFolderOpen, IconChevronDown, IconGitBranch, IconLock } from '@tabler/icons-react'
 import type { OperatingMode } from '../../operating-mode'
@@ -137,6 +138,8 @@ export interface EditorHeaderProps {
    * Whether the current entry has unsaved changes.
    */
   hasUnsavedChanges: boolean
+  /** Writing drafts to localStorage failed, so they live only in this tab. */
+  draftStorageFailed?: boolean
 
   /**
    * Current branch status (undefined if unknown).
@@ -213,6 +216,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
     onSave,
     onSubmit,
     hasUnsavedChanges,
+    draftStorageFailed = false,
     branchStatus,
     onWithdraw,
     userContext,
@@ -430,6 +434,33 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
             </Group>
           </Stack>
           <Group gap="xs" wrap="nowrap">
+            {/* Always mounted at a fixed width, so the first keystroke shifts nothing. */}
+            <Box role="status" w={112} ta="right">
+              {hasUnsavedChanges && (
+                <Tooltip
+                  label="Your browser couldn't store these changes. Save before you leave or reload, or they'll be lost."
+                  disabled={!draftStorageFailed}
+                  multiline
+                  w={260}
+                >
+                  <Text
+                    size="xs"
+                    lh={1.2}
+                    c={draftStorageFailed ? 'red.9' : 'gray.7'}
+                    data-testid="unsaved-indicator"
+                  >
+                    {draftStorageFailed
+                      ? 'Unsaved · not kept on this device'
+                      : 'Unsaved · kept on this device'}
+                    {draftStorageFailed && (
+                      <VisuallyHidden component="span">
+                        . Save before you leave or reload, or they&apos;ll be lost.
+                      </VisuallyHidden>
+                    )}
+                  </Text>
+                </Tooltip>
+              )}
+            </Box>
             <Tooltip
               label={
                 branchReadOnly

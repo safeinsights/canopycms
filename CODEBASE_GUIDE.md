@@ -479,7 +479,7 @@ Top-level components and helpers:
 - `Editor.tsx` — the composition root
 - `EditorPanes.tsx` — pane layout
 - `EntryNavigator.tsx` — collection and entry tree, with per-collection conflict badges
-- `FormRenderer.tsx` — schema-driven form dispatch, including `group` and string-list cases; a boundary per field
+- `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
 - `CommentsPanel.tsx` — comments
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group and permission modals
@@ -523,7 +523,7 @@ Manager hooks, in `editor/hooks/` — see
 - `create-branch-request.ts` — `requestBranchCreate`: create under a 90 s deadline, settling by the branch list
 - `useEntryManager.ts` — entry loading/saving, `readEntryValue`, `listAllEntries` cursors
 - `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; verifies restored drafts
-- `useSchemaManager.ts` — schema mutations, returning result objects rather than booleans
+- `useSchemaManager.ts` — schema mutations, returning result objects
 - `useCommentSystem.ts` — comment CRUD
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
 - `user-metadata-batcher.ts` — `createUserMetadataBatcher`: a render's badge lookups as one `POST /users/batch`
@@ -570,7 +570,7 @@ Comments UI, in `editor/comments/`:
 
 - `BranchComments.tsx` / `EntryComments.tsx` — branch-level and entry-level threads
 - `InlineCommentThread.tsx` / `ThreadCarousel.tsx` — thread rendering and navigation
-- `FieldWrapper.tsx` — wraps a field so it can carry comments
+- `FieldWrapper.tsx` — wraps a field to carry comments
 
 Media UI, in `editor/media/`:
 

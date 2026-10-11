@@ -1839,4 +1839,62 @@ describe('useDraftManager', () => {
       expect(result.current.isAnyDirty()).toBe(true)
     })
   })
+
+  describe('leaving the page', () => {
+    /** Whether a `beforeunload` now would ask the user to stay. */
+    const leaveIsGuarded = () => {
+      const event = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+
+    it('lets the page go with an unsaved draft, which storage keeps', () => {
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+      expect(result.current.modifiedCount).toBe(1)
+      expect(result.current.draftStorageFailed).toBe(false)
+      expect(leaveIsGuarded()).toBe(false)
+    })
+
+    it('asks the user to stay while a save is in flight', async () => {
+      let finishSave: (value: Record<string, unknown>) => void = () => {}
+      mockSaveEntry.mockReturnValue(
+        new Promise((resolve) => {
+          finishSave = resolve
+        }),
+      )
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+
+      let saving: Promise<void> = Promise.resolve()
+      act(() => {
+        saving = result.current.handleSave()
+      })
+      expect(leaveIsGuarded()).toBe(true)
+
+      await act(async () => {
+        finishSave({ title: 'Draft' })
+        await saving
+      })
+      expect(leaveIsGuarded()).toBe(false)
+    })
+
+    it('asks the user to stay when storage refuses the drafts, and reports it', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+      vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+        throw new Error('QuotaExceededError')
+      })
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+      expect(result.current.draftStorageFailed).toBe(true)
+      expect(leaveIsGuarded()).toBe(true)
+      warn.mockRestore()
+    })
+  })
 })

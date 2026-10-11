@@ -23,8 +23,8 @@ export interface FieldCrashFallbackProps {
   label: string
   fieldType: string
   value: unknown
-  /** Used only by markdown and mdx fields, whose raw text the author edits directly. */
-  onChange: (value: unknown) => void
+  /** Used only by markdown and mdx fields, whose raw text is edited directly; absent when read-only. */
+  onChange?: (value: unknown) => void
   caught: CaughtEditorError
   dataCanopyField?: string
 }
@@ -32,7 +32,7 @@ export interface FieldCrashFallbackProps {
 /**
  * What a field that threw while rendering shows: its value read-only, so Save writes back
  * exactly what is on screen, or, for a markdown or mdx field holding text, that text, still
- * editable.
+ * editable when there is an `onChange`.
  */
 export const FieldCrashFallback: React.FC<FieldCrashFallbackProps> = ({
   label,
@@ -43,7 +43,7 @@ export const FieldCrashFallback: React.FC<FieldCrashFallbackProps> = ({
   dataCanopyField,
 }) => {
   // Only text is editable as source; any other value would show as an empty box to type over.
-  const editableSource =
+  const textSource =
     (fieldType === 'markdown' || fieldType === 'mdx') &&
     (typeof value === 'string' || value === undefined || value === null)
   return (
@@ -58,11 +58,12 @@ export const FieldCrashFallback: React.FC<FieldCrashFallbackProps> = ({
         <Text size="sm" fw={500}>
           {label}
         </Text>
-        {editableSource ? (
+        {textSource ? (
           <MarkdownSourceEditor
             label={label}
             value={typeof value === 'string' ? value : ''}
-            onChange={onChange}
+            onChange={(next) => onChange?.(next)}
+            readOnly={!onChange}
             failure={sanitizeErrorMessage(getErrorMessage(caught.error))}
           />
         ) : (
@@ -70,7 +71,8 @@ export const FieldCrashFallback: React.FC<FieldCrashFallbackProps> = ({
             <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />}>
               <Text size="sm">
                 This field couldn&apos;t be shown because of an error. Its value is below and
-                won&apos;t be changed. You can keep editing the other fields and save.
+                won&apos;t be changed.
+                {onChange && ' You can keep editing the other fields and save.'}
               </Text>
             </Alert>
             <Code block data-testid="field-crash-value" style={{ whiteSpace: 'pre-wrap' }}>

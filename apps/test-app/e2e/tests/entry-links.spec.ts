@@ -36,7 +36,7 @@ test.describe('Entry Links in MDX Editor', () => {
     })
 
     await test.step('verify body MDX editor is visible', async () => {
-      const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
+      const bodyEditor = editorPage.richTextField('Body')
       await bodyEditor.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
     })
 
@@ -58,7 +58,7 @@ test.describe('Entry Links in MDX Editor', () => {
     })
 
     await test.step('focus body editor', async () => {
-      const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
+      const bodyEditor = editorPage.richTextField('Body')
       await bodyEditor.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
       await bodyEditor.click()
     })
@@ -105,7 +105,7 @@ test.describe('Entry Links in MDX Editor', () => {
     })
 
     await test.step('open entry link modal', async () => {
-      const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
+      const bodyEditor = editorPage.richTextField('Body')
       await bodyEditor.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
       await bodyEditor.click()
       await page.locator('[data-testid="insert-entry-link-button"]').click()
@@ -141,7 +141,7 @@ test.describe('Entry Links in MDX Editor', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.createPost('no-match-post', 'No Match Post')
-      const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
+      const bodyEditor = editorPage.richTextField('Body')
       await bodyEditor.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
       await bodyEditor.click()
       await page.locator('[data-testid="insert-entry-link-button"]').click()
@@ -166,7 +166,7 @@ test.describe('Entry Links in MDX Editor', () => {
     })
 
     await test.step('open entry link modal and select an entry', async () => {
-      const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
+      const bodyEditor = editorPage.richTextField('Body')
       await bodyEditor.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
       await bodyEditor.click()
 
@@ -191,7 +191,7 @@ test.describe('Entry Links in MDX Editor', () => {
     })
 
     await test.step('verify link appears in editor', async () => {
-      const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
+      const bodyEditor = editorPage.richTextField('Body')
       // The inserted link should render as a link in the WYSIWYG editor
       await expect(bodyEditor).toContainText('Home Page', { timeout: STANDARD_TIMEOUT })
     })

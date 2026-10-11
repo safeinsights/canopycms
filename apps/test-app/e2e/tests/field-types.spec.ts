@@ -71,10 +71,7 @@ test.describe('Multi-Field Content Editing', () => {
       // Title is a regular text input
       await editorPage.fillTextField('title', 'Test Body Post')
 
-      // Body is a rich text (markdown) editor — interact via ARIA role
-      const bodyEditor = page.getByRole('textbox', {
-        name: 'editable markdown',
-      })
+      const bodyEditor = editorPage.richTextField('Body')
       await bodyEditor.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
       await bodyEditor.fill('Hello world body content')
     })
@@ -88,9 +85,7 @@ test.describe('Multi-Field Content Editing', () => {
       await editorPage.waitForReady()
 
       // The post should still be selected after reload
-      const bodyEditor = page.getByRole('textbox', {
-        name: 'editable markdown',
-      })
+      const bodyEditor = editorPage.richTextField('Body')
       await expect(bodyEditor).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(bodyEditor).toContainText('Hello world body content')
     })

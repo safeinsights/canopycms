@@ -6,10 +6,13 @@ import {
   ActionIcon,
   Alert,
   Box,
+  Button,
   Drawer,
   Group,
   Menu,
   Paper,
+  Skeleton,
+  Stack,
   Text,
   Title,
   useTree,
@@ -69,6 +72,7 @@ import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { ReferencedByList, referencedDeleteMessage } from './components/ReferencedByList'
 import type { EntryReferencedBy } from '../api/entries'
 import { NoEditPermissionNotice } from './components/NoEditPermissionNotice'
+import { ReadOnlyDraftNotice } from './components/ReadOnlyDraftNotice'
 import { UnavailableEntryNotice } from './components/UnavailableEntryNotice'
 import { unavailableSchemaRefs } from './unavailable-entry-type'
 import { EditorCrashBoundary } from './components/EditorCrashScreen'
@@ -378,6 +382,7 @@ const EditorContent: React.FC<EditorProps> = ({
     setDrafts,
     loadedValues,
     setLoadedValues,
+    loadedValue,
     effectiveValue,
     modifiedCount,
     editedFiles,
@@ -388,6 +393,7 @@ const EditorContent: React.FC<EditorProps> = ({
     isSelectedDirty,
     resolveUnsaved,
     fieldErrors,
+    draftStorageFailed,
   } = useDraftManager({
     branchName: branchNameState,
     selectedPath,
@@ -474,6 +480,17 @@ const EditorContent: React.FC<EditorProps> = ({
     onSchemaChange: () => refreshEntries(branchNameState),
   })
 
+  // Read-only content shows the saved value, never a draft; a restored draft is kept, unseen,
+  // until it is discarded or the branch unlocks.
+  const contentReadOnly = branchContentLocked || currentEntry?.canEdit === false
+  const displayValue = contentReadOnly ? loadedValue : effectiveValue
+  // Read when an edit lands, which an upload or other async field work can do renders later.
+  const contentReadOnlyRef = useRef(contentReadOnly)
+  contentReadOnlyRef.current = contentReadOnly
+  // Only once the branch has answered, so the fail-closed lock while it loads raises no notice.
+  const hiddenDraftNotice =
+    contentReadOnly && currentBranch !== undefined && !!currentEntry && isSelectedDirty()
+
   const collectionLabels = useMemo(
     () => buildCollectionLabels(activeCollections),
     [activeCollections],
@@ -496,6 +513,18 @@ const EditorContent: React.FC<EditorProps> = ({
   // that same id. Qualifying the key lets both loads coexist; the branch check
   // at settle time decides which one is allowed to write.
   const loadingEntryIdsRef = useRef<Set<string>>(new Set())
+  // The entry (keyed like `loadingEntryIdsRef`) whose last read failed, and Retry's bump that
+  // runs the load effect below again.
+  const [loadFailedKey, setLoadFailedKey] = useState<string | null>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  // Reset during render, not in an effect, so returning to a failed entry never paints its Alert
+  // for the frame before its load starts again.
+  const selectionKey = `${branchNameState}:${currentEntry?.contentId ?? ''}`
+  const [loadFailedSelection, setLoadFailedSelection] = useState(selectionKey)
+  if (loadFailedSelection !== selectionKey) {
+    setLoadFailedSelection(selectionKey)
+    setLoadFailedKey(null)
+  }
   // Entries (keyed like `loadingEntryIdsRef`) whose read the API refused as SCHEMA_UNAVAILABLE.
   // The ref stops the load effect retrying them; the state re-renders the notice.
   const schemaUnavailableRef = useRef<Set<string>>(new Set())
@@ -554,6 +583,7 @@ const EditorContent: React.FC<EditorProps> = ({
       if (loadingEntryIdsRef.current.has(inFlightKey)) return
       loadingEntryIdsRef.current.add(inFlightKey)
       setEntriesLoading(true)
+      setLoadFailedKey((failed) => (failed === inFlightKey ? null : failed))
       try {
         const loaded = await loadEntry(currentEntry)
         // A branch switch during the await makes this response another
@@ -600,10 +630,11 @@ const EditorContent: React.FC<EditorProps> = ({
       // different branch).
       if (currentBranchRef.current === requestBranch && currentContentIdRef.current === contentId) {
         notifications.show({ message: 'Failed to load entry', color: 'red' })
+        setLoadFailedKey(inFlightKey)
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path/branch/loadedValues change
-  }, [currentEntry, loadedValues, selectedPath, branchNameState])
+  }, [currentEntry, loadedValues, selectedPath, branchNameState, loadAttempt])
 
   const handleOpenCollectionEditor = async (
     collection: EditorCollection | null,
@@ -980,7 +1011,7 @@ const EditorContent: React.FC<EditorProps> = ({
   // the preview never receives a bare reference id: a reference is its target or `null`.
   const { resolvedValue: previewValue, loadingState: previewLoadingState } = useReferenceResolution(
     {
-      value: effectiveValue ?? EMPTY_VALUE,
+      value: displayValue ?? EMPTY_VALUE,
       fields: schema,
       branch: branchNameState,
       entryKey: currentEntry?.contentId,
@@ -988,8 +1019,8 @@ const EditorContent: React.FC<EditorProps> = ({
   )
 
   const previewFrameData = useMemo(
-    () => (effectiveValue ? resolveEntryLinks(previewValue) : effectiveValue),
-    [previewValue, effectiveValue, resolveEntryLinks],
+    () => (displayValue ? resolveEntryLinks(previewValue) : displayValue),
+    [previewValue, displayValue, resolveEntryLinks],
   )
 
   // Entry link context for the InsertEntryLink toolbar button
@@ -1032,7 +1063,7 @@ const EditorContent: React.FC<EditorProps> = ({
     src: currentEntry?.previewSrc,
     highlightEnabled,
     fields: schema,
-    data: effectiveValue,
+    data: displayValue,
   })
 
   // An unavailable entry previews nothing: the site cannot read it, and a stored draft would
@@ -1122,7 +1153,8 @@ const EditorContent: React.FC<EditorProps> = ({
             unresolvedCommentCount={comments.filter((t) => !t.resolved).length}
             comments={comments}
             // A draft kept for an unavailable entry stays in storage but cannot be saved.
-            hasUnsavedChanges={!currentEntryUnavailable && isSelectedDirty()}
+            hasUnsavedChanges={!currentEntryUnavailable && !contentReadOnly && isSelectedDirty()}
+            draftStorageFailed={draftStorageFailed}
             userContext={userContext}
             branchCreatedBy={currentBranch?.createdBy}
             branchAccess={currentBranch?.access}
@@ -1186,7 +1218,7 @@ const EditorContent: React.FC<EditorProps> = ({
                   onSplitPercentChange={setSplitPercent}
                   preview={
                     renderPreview && currentEntry && !currentEntryUnavailable
-                      ? renderPreview(currentEntry, effectiveValue)
+                      ? renderPreview(currentEntry, displayValue)
                       : defaultPreview
                   }
                   form={
@@ -1206,15 +1238,27 @@ const EditorContent: React.FC<EditorProps> = ({
                       />
                     ) : currentEntry.canEdit === false ? (
                       <NoEditPermissionNotice entryPath={currentEntry.path} />
-                    ) : schema.length > 0 && effectiveValue ? (
+                    ) : schema.length > 0 && displayValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <SiteMdxAllowContext.Provider value={mdxAllow}>
+                          {hiddenDraftNotice && (
+                            <ReadOnlyDraftNotice
+                              permanentlyReadOnly={
+                                (currentBranch?.isProtected ?? true) ||
+                                currentBranch?.status === 'archived'
+                              }
+                              onDiscard={handleDiscardFileDraft}
+                            />
+                          )}
                           <FormRenderer
                             fields={schema}
-                            value={effectiveValue}
+                            value={displayValue}
+                            readOnly={contentReadOnly}
+                            // The one writer of drafts. Read-only content gets none, whatever a
+                            // field emits (MDXEditor's mount-time normalisation included).
                             onChange={(next) => {
                               const contentId = currentEntry?.contentId
-                              if (contentId) {
+                              if (contentId && !contentReadOnlyRef.current) {
                                 setDrafts((prev) => ({ ...prev, [contentId]: next }))
                               }
                             }}
@@ -1239,8 +1283,35 @@ const EditorContent: React.FC<EditorProps> = ({
                           />
                         </SiteMdxAllowContext.Provider>
                       </EntryLinkContext.Provider>
-                    ) : (
+                    ) : schema.length === 0 ? (
                       <CenteredMessage>No fields to edit.</CenteredMessage>
+                    ) : loadFailedKey !== `${branchNameState}:${currentEntry.contentId}` ? (
+                      <Stack gap="lg" p="md" data-testid="entry-loading-skeleton">
+                        {[0, 1, 2].map((row) => (
+                          <Stack key={row} gap={6}>
+                            <Skeleton h={12} w={120} />
+                            <Skeleton h={36} />
+                          </Stack>
+                        ))}
+                      </Stack>
+                    ) : (
+                      <Alert
+                        color="red"
+                        variant="light"
+                        m="md"
+                        title="This entry couldn't be loaded."
+                        data-testid="entry-load-failed"
+                      >
+                        <Button
+                          variant="default"
+                          onClick={() => {
+                            setLoadFailedKey(null)
+                            setLoadAttempt((attempt) => attempt + 1)
+                          }}
+                        >
+                          Retry
+                        </Button>
+                      </Alert>
                     )
                   }
                 />
