@@ -19,7 +19,7 @@
     "lint:tasks": "node scripts/check-future-tasks.mjs",
     "tasks:index": "node scripts/check-future-tasks.mjs --index",
     "lint:account-ids": "node scripts/check-account-ids.mjs --self-test && node scripts/check-account-ids.mjs",
-    "lint:docs": "node scripts/check-docs.mjs",
+    "lint:docs": "node scripts/check-docs.mjs --self-test && node scripts/check-docs.mjs",
     "lint:comments": "node scripts/check-comment-budget.mjs",
     "lint:ux-copy": "node scripts/check-ux-copy.mjs --self-test && node scripts/check-ux-copy.mjs",
     "lint:a11y": "eslint -c eslint.a11y.config.mjs --suppressions-location scripts/a11y-suppressions.json 'packages/canopycms/src/editor/**/*.tsx'",

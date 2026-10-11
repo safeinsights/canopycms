@@ -2,13 +2,16 @@
 // Factual guard for the agent-facing documentation layer: backticked repo
 // paths must exist, relative markdown links must resolve, and our own
 // package import specifiers must resolve against the real `exports` map.
-// Also enforces a per-file word budget and a history-marker cap (see
-// docs-budgets.json and HISTORY_MARKER_RE below). SCOPE is narrower than
+// Also enforces a per-file word budget and a history-marker cap, or for a
+// changelog a per-entry cap (see docs-budgets.json, HISTORY_MARKER_RE and
+// isChangelogBudget below). SCOPE is narrower than
 // "every markdown file" -- only where a path functions as an INSTRUCTION;
 // see EXCLUDED below. Dependency-free apart from git itself.
 //
 // Usage: node scripts/check-docs.mjs [file...]
 //        node scripts/check-docs.mjs --write-baseline [--margin=N] [--allow-raise]
+//        node scripts/check-docs.mjs --write-baseline --only <file> [--only <file>...] --allow-raise
+//        node scripts/check-docs.mjs --self-test
 //        node scripts/check-docs.mjs --report | --sections | --list-long-items
 
 import { readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
@@ -298,45 +301,198 @@ function loadBudgets() {
   return parsed.files ?? {}
 }
 
-const BASELINE_COMMENT =
-  'Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: words and maxSectionWords are written as actual plus the margin, historyMarkers as the actual count, and a write that would raise any existing number is refused without --allow-raise. historyMarkers: null means that file is a dated changelog whose markers are not checked; the null is kept across rewrites.'
+/**
+ * A changelog entry (`historyMarkers: null` plus `maxEntryWords`) caps each `###`
+ * entry under `## Unreleased` instead of the whole file and its sections: a
+ * changelog grows with every change until a release consolidates it, so only
+ * the size of one entry is something its author controls.
+ */
+function isChangelogBudget(budget) {
+  return budget.historyMarkers === null
+}
+
+/** Why a budget entry has the wrong shape, or null; a missing key would silently skip its check. */
+function budgetShapeError(budget) {
+  if (typeof budget !== 'object' || budget === null || Array.isArray(budget)) {
+    return 'must be an object'
+  }
+  const isCount = (v) => Number.isInteger(v) && v >= 0
+  const keys = Object.keys(budget).sort().join(',')
+  if (isChangelogBudget(budget)) {
+    if (keys === 'historyMarkers,maxEntryWords' && isCount(budget.maxEntryWords)) return null
+    return 'a changelog entry (historyMarkers: null) takes exactly historyMarkers and maxEntryWords, a whole number'
+  }
+  if (
+    keys === 'historyMarkers,maxSectionWords,words' &&
+    isCount(budget.historyMarkers) &&
+    isCount(budget.maxSectionWords) &&
+    isCount(budget.words)
+  ) {
+    return null
+  }
+  return 'takes exactly historyMarkers, maxSectionWords and words, each a whole number'
+}
 
 /**
- * Writes scripts/docs-budgets.json from the current actuals of every in-scope
- * file. Refuses to raise a number that is already in the file unless
- * `allowRaise` is set, so a branch cannot go green by rewriting its own budget.
+ * Every `###` entry under a changelog's `## Unreleased` section whose words,
+ * heading line included, exceed `cap`. An entry runs to the next `###` or `##`
+ * heading; fenced code and HTML comments (the entry template) are not read.
+ * Entries under `## Released` are exempt: release consolidation is where the
+ * file shrinks.
  */
-function writeBaseline(margin, allowRaise) {
-  const existing = loadBudgets()
-  const withMargin = (n) => Math.ceil(n * (1 + margin / 100))
-  const out = { $comment: BASELINE_COMMENT, files: {} }
-  const raises = []
-  for (const f of findDocsBudgetFiles()) {
-    const m = computeMetrics(f)
-    const prior = existing[f]
-    const entry = {
-      historyMarkers: prior?.historyMarkers === null ? null : m.historyMarkers,
-      maxSectionWords: withMargin(m.maxSectionWords),
-      words: withMargin(m.words),
+function findEntriesOverCap(content, cap) {
+  const entries = []
+  let inUnreleased = false
+  let inComment = false
+  let current = null
+  for (const r of extractText(content)) {
+    if (inComment) {
+      if (r.raw.includes('-->')) inComment = false
+      continue
     }
+    if (r.raw.trimStart().startsWith('<!--')) {
+      inComment = !r.raw.includes('-->')
+      continue
+    }
+    if (r.raw.startsWith('## ')) {
+      inUnreleased = r.raw.slice(3).trim() === 'Unreleased'
+      current = null
+      continue
+    }
+    if (!inUnreleased) continue
+    if (r.raw.startsWith('### ')) {
+      current = { heading: r.raw.slice(4).trim(), lineNo: r.lineNo, words: 0 }
+      entries.push(current)
+    }
+    if (current) current.words += r.words
+  }
+  return entries.filter((e) => e.words > cap)
+}
+
+/**
+ * Headroom an `--only` raise adds over the measured count: 2%, at least 10 and
+ * at most 40 words, so a large doc's raise never hands it hundreds of free words.
+ */
+const ONLY_RAISE_MARGIN_PCT = 2
+const ONLY_RAISE_MIN_WORDS = 10
+const ONLY_RAISE_MAX_WORDS = 40
+
+function withRaiseMargin(n) {
+  const pct = Math.ceil((n * ONLY_RAISE_MARGIN_PCT) / 100)
+  return n + Math.max(ONLY_RAISE_MIN_WORDS, Math.min(pct, ONLY_RAISE_MAX_WORDS))
+}
+
+/**
+ * The budget file a `--write-baseline` run would write, and the raises it makes.
+ * `measure(file)` returns that file's metrics.
+ *
+ * Without `only`, every in-scope file is rewritten from actuals plus `margin`
+ * percent. With `only`, every other entry is copied unchanged, and the named
+ * files change only the numbers they have outgrown, each raised to the
+ * measured count plus `withRaiseMargin`'s headroom (history markers to the
+ * exact count), so the next small edit is not refused at zero slack. A
+ * changelog entry is kept as it is in both modes: its `maxEntryWords` is
+ * edited by hand. A raise is any number written above the one already there,
+ * and `refused` is set when there is one without `allowRaise`.
+ */
+function planBaseline({ existing, files, measure, margin, only, allowRaise }) {
+  const withMargin = (n) => Math.ceil(n * (1 + margin / 100))
+  const raises = []
+  const errors = []
+  const noteRaises = (f, prior, entry) => {
     for (const key of Object.keys(entry)) {
       if (prior && typeof prior[key] === 'number' && entry[key] > prior[key]) {
         raises.push(`${f}: ${key} ${prior[key]} -> ${entry[key]}`)
       }
     }
-    out.files[f] = entry
   }
-  if (raises.length > 0 && !allowRaise) {
-    console.error(
-      `❌ refusing to raise ${raises.length} budget number(s); pass --allow-raise to do it on purpose:`,
+
+  if (only) {
+    const out = { ...existing }
+    for (const f of only) {
+      const prior = existing[f]
+      if (!files.includes(f)) {
+        errors.push(`${f}: not in the budget scope`)
+        continue
+      }
+      if (prior && isChangelogBudget(prior)) {
+        errors.push(`${f}: a changelog's maxEntryWords is edited by hand in docs-budgets.json`)
+        continue
+      }
+      const m = measure(f)
+      const raiseTo = (key, actual, pad) =>
+        !prior || typeof prior[key] !== 'number' || actual > prior[key] ? pad(actual) : prior[key]
+      const entry = {
+        historyMarkers: raiseTo('historyMarkers', m.historyMarkers, (n) => n),
+        maxSectionWords: raiseTo('maxSectionWords', m.maxSectionWords, withRaiseMargin),
+        words: raiseTo('words', m.words, withRaiseMargin),
+      }
+      noteRaises(f, prior, entry)
+      out[f] = entry
+    }
+    const sorted = Object.fromEntries(
+      Object.keys(out)
+        .sort()
+        .map((f) => [f, out[f]]),
     )
-    for (const r of raises) console.error(`    ${r}`)
+    return { files: sorted, raises, errors, refused: raises.length > 0 && !allowRaise }
+  }
+
+  const out = {}
+  for (const f of files) {
+    const prior = existing[f]
+    if (prior && isChangelogBudget(prior)) {
+      out[f] = prior
+      continue
+    }
+    const m = measure(f)
+    const entry = {
+      historyMarkers: m.historyMarkers,
+      maxSectionWords: withMargin(m.maxSectionWords),
+      words: withMargin(m.words),
+    }
+    noteRaises(f, prior, entry)
+    out[f] = entry
+  }
+  return { files: out, raises, errors, refused: raises.length > 0 && !allowRaise }
+}
+
+const BASELINE_COMMENT =
+  'Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: words and maxSectionWords are written as actual plus the margin, historyMarkers as the actual count, and a write that would raise any existing number is refused without --allow-raise. Raise one file with `--write-baseline --only <file> --allow-raise`: it leaves every other entry alone and raises only the numbers that file has outgrown, to the count plus 2% (at least 10 and at most 40 words). historyMarkers: null with maxEntryWords marks a dated changelog: its markers, total and sections are not checked, each ### entry under ## Unreleased is capped at maxEntryWords, and the entry is kept as written across rewrites.'
+
+/**
+ * Writes scripts/docs-budgets.json from `planBaseline`. Refuses to raise a
+ * number that is already in the file unless `allowRaise` is set, so a branch
+ * cannot go green by rewriting its own budget.
+ */
+function writeBaseline(margin, allowRaise, only) {
+  const plan = planBaseline({
+    existing: loadBudgets(),
+    files: findDocsBudgetFiles(),
+    measure: computeMetrics,
+    margin,
+    only,
+    allowRaise,
+  })
+  if (plan.errors.length > 0) {
+    for (const e of plan.errors) console.error(`❌ ${e}`)
     process.exit(1)
   }
-  writeFileSync(budgetsPath, JSON.stringify(out, null, 2) + '\n')
-  const files = Object.keys(out.files)
+  if (plan.refused) {
+    console.error(
+      `❌ refusing to raise ${plan.raises.length} budget number(s); pass --allow-raise to do it on purpose:`,
+    )
+    for (const r of plan.raises) console.error(`    ${r}`)
+    process.exit(1)
+  }
+  writeFileSync(
+    budgetsPath,
+    JSON.stringify({ $comment: BASELINE_COMMENT, files: plan.files }, null, 2) + '\n',
+  )
+  const scope = only ? only.join(', ') : `${Object.keys(plan.files).length} file(s)`
+  const how = only ? 'raise margin 2%, 10 to 40 words' : `margin ${margin}%`
   console.log(
-    `✅ wrote word budgets for ${files.length} file(s) to ${rel(budgetsPath)} (margin ${margin}%${raises.length > 0 ? `, ${raises.length} raised` : ''})`,
+    `✅ wrote word budgets for ${scope} to ${rel(budgetsPath)} (${how}${plan.raises.length > 0 ? `, ${plan.raises.length} raised` : ''})`,
   )
 }
 
@@ -451,9 +607,171 @@ function findLongTableCells(records, filePath) {
   return out
 }
 
-// CLI flags: --write-baseline, --report and --sections short-circuit the checks.
+/**
+ * Checks the changelog entry cap and `planBaseline` against in-memory inputs,
+ * run as the first step of `pnpm lint:docs` so it executes in CI.
+ */
+function selfTest() {
+  const failures = []
+  const expect = (label, ok) => {
+    if (!ok) failures.push(`  ${label}`)
+  }
+
+  const words = (n) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ')
+  const changelog = [
+    '# Guide',
+    '## Unreleased',
+    words(50),
+    '### Short entry',
+    words(10),
+    '### Long entry',
+    words(20),
+    '```',
+    words(100),
+    '```',
+    '<!--',
+    '### Template entry',
+    words(100),
+    '-->',
+    '## Released',
+    '### 0.0.1',
+    '#### Old long entry',
+    words(100),
+  ].join('\n')
+  const over = findEntriesOverCap(changelog, 15)
+  expect(
+    `entry cap: only "Long entry" (22 words, heading included) is over, got ${JSON.stringify(over)}`,
+    over.length === 1 &&
+      over[0].heading === 'Long entry' &&
+      over[0].words === 22 &&
+      over[0].lineNo === 6,
+  )
+  expect(
+    'entry cap: an entry exactly at the cap passes',
+    findEntriesOverCap(changelog, 22).length === 0,
+  )
+
+  expect(
+    'shape: a changelog entry is valid',
+    budgetShapeError({ historyMarkers: null, maxEntryWords: 5 }) === null,
+  )
+  expect(
+    'shape: a changelog entry keeping words is refused',
+    budgetShapeError({ historyMarkers: null, maxEntryWords: 5, words: 9 }) !== null,
+  )
+  expect('shape: a null entry is refused', budgetShapeError(null) !== null)
+  expect(
+    'shape: a ratchet entry missing words is refused',
+    budgetShapeError({ historyMarkers: 0, maxSectionWords: 9 }) !== null,
+  )
+
+  const existing = {
+    'a.md': { historyMarkers: 0, maxSectionWords: 400, words: 1000 },
+    'b.md': { historyMarkers: 0, maxSectionWords: 50, words: 90 },
+    'log.md': { historyMarkers: null, maxEntryWords: 200 },
+  }
+  const metrics = {
+    'a.md': { historyMarkers: 1, maxSectionWords: 300, words: 1500 },
+    'b.md': { historyMarkers: 0, maxSectionWords: 10, words: 20 },
+    'log.md': { historyMarkers: 7, maxSectionWords: 9000, words: 9000 },
+  }
+  const base = { existing, files: Object.keys(metrics), measure: (f) => metrics[f], margin: 0 }
+
+  const onlyA = planBaseline({ ...base, only: ['a.md'] })
+  expect('--only: other entries are copied unchanged', onlyA.files['b.md'] === existing['b.md'])
+  expect(
+    '--only: a changelog entry is copied unchanged',
+    onlyA.files['log.md'] === existing['log.md'],
+  )
+  expect(
+    `--only: a raise adds 2% (1500 -> 1530), got ${onlyA.files['a.md'].words}`,
+    onlyA.files['a.md'].words === 1530,
+  )
+  expect(
+    `--only: a number not outgrown stays put, got ${onlyA.files['a.md'].maxSectionWords}`,
+    onlyA.files['a.md'].maxSectionWords === 400,
+  )
+  expect(
+    '--only: history markers rise to the exact count',
+    onlyA.files['a.md'].historyMarkers === 1,
+  )
+  expect(
+    `--only: both raises are reported, got ${JSON.stringify(onlyA.raises)}`,
+    onlyA.raises.length === 2,
+  )
+  expect('--only: a raise without --allow-raise is refused', onlyA.refused)
+  expect(
+    '--only: a raise with --allow-raise is not refused',
+    !planBaseline({ ...base, only: ['a.md'], allowRaise: true }).refused,
+  )
+
+  const smallMetrics = {
+    ...metrics,
+    'b.md': { historyMarkers: 0, maxSectionWords: 60, words: 100 },
+  }
+  const onlyB = planBaseline({ ...base, measure: (f) => smallMetrics[f], only: ['b.md'] })
+  expect(
+    `--only: the margin is at least 10 words (100 -> 110), got ${onlyB.files['b.md'].words}`,
+    onlyB.files['b.md'].words === 110 && onlyB.files['b.md'].maxSectionWords === 70,
+  )
+
+  const bigMetrics = {
+    ...metrics,
+    'b.md': { historyMarkers: 0, maxSectionWords: 10, words: 13034 },
+  }
+  const onlyBig = planBaseline({ ...base, measure: (f) => bigMetrics[f], only: ['b.md'] })
+  expect(
+    `--only: the margin is at most 40 words (13034 -> 13074), got ${onlyBig.files['b.md'].words}`,
+    onlyBig.files['b.md'].words === 13074,
+  )
+
+  expect(
+    '--only: naming a changelog is an error',
+    planBaseline({ ...base, only: ['log.md'] }).errors.length === 1,
+  )
+  expect(
+    '--only: naming an out-of-scope file is an error',
+    planBaseline({ ...base, only: ['nope.md'] }).errors.length === 1,
+  )
+
+  const full = planBaseline(base)
+  expect(
+    'full write: a changelog entry is kept as written',
+    full.files['log.md'] === existing['log.md'],
+  )
+  expect(
+    'full write: an outgrown number is a raise',
+    full.raises.some((r) => r.startsWith('a.md: words')),
+  )
+  expect('full write: a shrunk file is lowered to its actuals', full.files['b.md'].words === 20)
+
+  if (failures.length > 0) {
+    console.error('check-docs self-test FAILED:')
+    console.error(failures.join('\n'))
+    process.exit(1)
+  }
+  console.log('check-docs self-test passed.')
+}
+
+// CLI flags: --self-test, --write-baseline, --report and --sections short-circuit the checks.
 
 const argv = process.argv.slice(2)
+const onlyFiles = []
+const namedFiles = []
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === '--only') {
+    const value = argv[i + 1]
+    if (value === undefined || value.startsWith('--')) {
+      console.error('❌ --only takes a file path, e.g. --only docs/concurrency.md')
+      process.exit(1)
+    }
+    onlyFiles.push(value)
+    i++
+  } else if (!argv[i].startsWith('--')) {
+    namedFiles.push(argv[i])
+  }
+}
+const flagSelfTest = argv.includes('--self-test')
 const flagWriteBaseline = argv.includes('--write-baseline')
 const flagReport = argv.includes('--report')
 const flagSections = argv.includes('--sections')
@@ -461,10 +779,17 @@ const flagListLongItems = argv.includes('--list-long-items')
 const flagAllowRaise = argv.includes('--allow-raise')
 const marginArg = argv.find((a) => a.startsWith('--margin='))
 const margin = marginArg ? Number(marginArg.slice('--margin='.length)) : 0
-const namedFiles = argv.filter((a) => !a.startsWith('--'))
 
+if (flagSelfTest) {
+  selfTest()
+  process.exit(0)
+}
 if (flagWriteBaseline && (flagReport || flagSections)) {
   console.error('❌ --write-baseline cannot be combined with --report or --sections')
+  process.exit(1)
+}
+if (onlyFiles.length > 0 && (!flagWriteBaseline || marginArg)) {
+  console.error('❌ --only goes with --write-baseline, and sets its own margin instead of --margin')
   process.exit(1)
 }
 if (!Number.isFinite(margin) || margin < 0) {
@@ -473,7 +798,7 @@ if (!Number.isFinite(margin) || margin < 0) {
 }
 
 if (flagWriteBaseline) {
-  writeBaseline(margin, flagAllowRaise)
+  writeBaseline(margin, flagAllowRaise, onlyFiles.length > 0 ? onlyFiles : null)
   process.exit(0)
 }
 
@@ -577,10 +902,29 @@ for (const f of Object.keys(budgets)) {
   }
 }
 
-// Checks 5-7: word, section-word and history-marker ceilings.
+// Checks 5-7: word, section-word and history-marker ceilings, or a changelog's entry cap.
 for (const f of inScopeFiles) {
+  if (!(f in budgets)) continue // already reported by check 4 above
   const budget = budgets[f]
-  if (!budget) continue // already reported by check 4 above
+
+  const shapeError = budgetShapeError(budget)
+  if (shapeError) {
+    problems.push({ kind: 'malformed doc budget', file: f, line: null, message: shapeError })
+    continue
+  }
+
+  if (isChangelogBudget(budget)) {
+    const content = readFileSync(join(repoRoot, f), 'utf8')
+    for (const entry of findEntriesOverCap(content, budget.maxEntryWords)) {
+      problems.push({
+        kind: 'changelog entry over word cap',
+        file: f,
+        line: entry.lineNo,
+        message: `"${entry.heading}" has ${entry.words} words, cap ${budget.maxEntryWords}`,
+      })
+    }
+    continue
+  }
 
   const metrics = computeMetrics(f)
 
@@ -594,16 +938,6 @@ for (const f of inScopeFiles) {
   }
 
   for (const [name, count] of metrics.sectionWords) {
-    // A changelog's `## Released` section is append-only: every release that has
-    // ever shipped lives under it, so its word count only ever rises and a ceiling
-    // on it measures nothing an author can act on -- it would fail the build on the
-    // routine promotion of entries out of `## Unreleased`, which is the one thing
-    // this document most needs people to keep doing. The ceiling still applies to
-    // every other section of the file, `## Unreleased` included, which is where
-    // unbounded growth is a real signal. `historyMarkers: null` is the existing
-    // marker for "this file is a dated changelog"; this reuses it rather than
-    // introducing a second opt-out.
-    if (budget.historyMarkers === null && name === 'Released') continue
     if (count > budget.maxSectionWords) {
       problems.push({
         kind: 'doc section over ceiling',
@@ -614,7 +948,7 @@ for (const f of inScopeFiles) {
     }
   }
 
-  if (budget.historyMarkers !== null && metrics.historyMarkers > budget.historyMarkers) {
+  if (metrics.historyMarkers > budget.historyMarkers) {
     problems.push({
       kind: 'doc history markers over budget',
       file: f,
