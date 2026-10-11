@@ -10,6 +10,11 @@ on:
   # *calling* workflow for `workflow_call` — so every publish must enter
   # through this file. See publish-prerelease.yml for the full explanation.
   workflow_dispatch:
+    inputs:
+      allow_stale_base:
+        description: Publish even though this branch lacks the latest stable release (an older line)
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
@@ -124,6 +129,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.app-token.outputs.token }}
+
+      # This job does not consume .changeset/ yet: it would release a patch and
+      # leave every pending entry to ship again as unreleased. It stops here
+      # until the changesets release path replaces it.
+      - name: Refuse to release over pending changesets
+        run: |
+          pending=$(find .changeset -maxdepth 1 -name '*.md' ! -iname 'readme.md' ! -name 'AGENTS.md' \
+            ! -name 'CLAUDE.md' ! -name 'GEMINI.md' ! -name '.*' 2>/dev/null | grep -c . || true)
+          if [ "$pending" -gt 0 ]; then
+            echo "::error::$pending pending changeset(s), and this job cannot release them yet."
+            exit 1
+          fi
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
@@ -259,6 +276,40 @@ jobs:
     name: Prerelease
     if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/publish-prerelease.yml
+    with:
+      allow_stale_base: ${{ inputs.allow_stale_base }}
     permissions:
       contents: read
       id-token: write
+
+  # Tags each int at the commit it was built from (`v0.0.68-int.114`), which is
+  # how the shipped changelog labels entries and how adopters browse a build's
+  # docs. The only writer on the prerelease path, so it checks out nothing and
+  # runs no repository code: one API call with validated inputs. The
+  # `release-tags-immutable` ruleset stops this token moving or deleting any
+  # `v*` tag, and `stable-tags-release-bot-only` stops it creating a stable one.
+  tag-prerelease:
+    name: Tag prerelease
+    needs: prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Tag the published commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prerelease.outputs.version }}
+          SHA: ${{ needs.prerelease.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-int\.[0-9]+$ ]] || { echo "::error::not an int version: '$VERSION'"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::not a commit: '$SHA'"; exit 1; }
+          # A re-run finds its own tag; anything else at that name is an error.
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" --jq .object.sha 2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            [ "$existing" = "$SHA" ] && { echo "v$VERSION already tags $SHA"; exit 0; }
+            echo "::error::v$VERSION already tags $existing, not $SHA"
+            exit 1
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$SHA" >/dev/null
+          echo "Tagged $SHA as v$VERSION"

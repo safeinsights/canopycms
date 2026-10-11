@@ -361,14 +361,66 @@ jobs:
       - name: Run tests
         run: pnpm -r --no-bail --filter '!canopycms' run test
 
-  # One check that stands for the five jobs above, under the name the single
+  # A PR that changes what the five packages ship carries a changeset, and
+  # every changeset is a well-formed changelog entry (.changeset/README.md).
+  # The job runs on every event and gates per step: `validate` fails on a
+  # skipped need, and publish.yml publishes only after `validate` succeeds.
+  changesets:
+    name: Changesets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The gate diffs from the merge-base, and the lint reads int tags to
+          # label entries and refuse a reused file name.
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup
+
+      - name: Lint changesets
+        run: pnpm lint:changesets
+
+      # PRs opened before the base branch gained .changeset/config.json are
+      # exempt; the first-parent commit that brought it in marks the cutover
+      # on every branch, so no date is hard-coded here.
+      #
+      # `changeset status` sees only package directories. The lockfile, the
+      # workspace's security overrides and the shared post-build script change
+      # shipped bytes too (cdk's worker is an esbuild bundle), so they count.
+      - name: Require a changeset
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          CREATED_AT: ${{ github.event.pull_request.created_at }}
+        run: |
+          set -euo pipefail
+          cutover=$(git log --first-parent --format=%cI "origin/$BASE_REF" -- .changeset/config.json | tail -n 1)
+          if [ -z "$cutover" ] || [ "$(date -d "$CREATED_AT" +%s)" -lt "$(date -d "$cutover" +%s)" ]; then
+            echo "Opened before $BASE_REF required changesets; not checked."
+            exit 0
+          fi
+          pnpm exec changeset status --since="origin/$BASE_REF"
+          base=$(git merge-base "origin/$BASE_REF" HEAD)
+          # Captured, not piped into `grep -q`: under pipefail an early-exiting
+          # grep can SIGPIPE git and turn a match into a silent pass.
+          changed=$(git diff --name-only "$base" HEAD)
+          if grep -qxE 'pnpm-lock\.yaml|pnpm-workspace\.yaml|scripts/add-js-extensions\.mjs' <<<"$changed"; then
+            added=$(git diff --name-only --diff-filter=d "$base" HEAD -- '.changeset/*.md')
+            real=$(printf '%s\n' "$added" | grep -viE '^\.changeset/(readme|agents|claude|gemini)\.md$' | grep -c . || true)
+            if [ "$real" -eq 0 ]; then
+              echo "::error::This PR changes what the packages ship (lockfile, workspace overrides or add-js-extensions) but adds no changeset. Add one, or 'pnpm exec changeset add --empty' if adopters see no difference."
+              exit 1
+            fi
+          fi
+
+  # One check that stands for the six jobs above, under the name the single
   # job had. `always()` makes it run, and fail, when a needed job failed, was
   # cancelled or was skipped; a gate that was itself skipped would read as
   # passing to anything that requires it.
   validate:
     name: Validate, Typecheck & Test
     if: always()
-    needs: [lint, typecheck, build, unit-canopycms, unit-packages]
+    needs: [lint, typecheck, build, unit-canopycms, unit-packages, changesets]
     runs-on: ubuntu-latest
     steps:
       - name: Require every validate job to have succeeded
