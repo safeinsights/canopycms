@@ -1503,9 +1503,9 @@ export class CmsWorker {
 
   private async pushSettingsBranches(
     git: ReturnType<typeof simpleGit>,
-    trackedNames: ReadonlySet<string>,
+    trackedTips: ReadonlyMap<string, string>,
   ): Promise<void> {
-    return pushSettingsBranches(this.ctx(), git, trackedNames)
+    return pushSettingsBranches(this.ctx(), git, trackedTips)
   }
 
   private async refreshBaseBranchWorkspace(): Promise<BaseRefreshReport> {

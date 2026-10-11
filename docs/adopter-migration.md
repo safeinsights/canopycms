@@ -84,6 +84,7 @@ replaces each `next` with its number.
 | 112  | Worker   | [Nano worker boots reliably](#canopycms-cdk-a-t4gnano-worker-boots-reliably--behaviour-change-a-deploy-replaces-the-worker)                                                                 | Deploy                       |
 | 112  | Worker   | [Worker never pushes base or default branch](#the-worker-never-pushes-the-base-or-default-branch--security-fix)                                                                             | Protect base on GitHub       |
 | 112  | Worker   | [Worker log is root-owned](#canopycms-cdk-the-workers-log-is-root-owned--security-fix)                                                                                                      | Deploy; hand-installed units |
+| next | Worker   | [Push logs say whether GitHub moved](#the-workers-push-logs-say-whether-github-moved)                                                                                                       | None                         |
 | next | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
@@ -540,6 +541,13 @@ your base branch on GitHub with a branch protection rule or ruleset that CanopyC
 cannot bypass. A classic token belonging to a repository admin often can, so check its bypass
 list. Set `CANOPYCMS_BASE_BRANCH` (the construct's `baseBranch`) explicitly: without it, the
 worker protects only GitHub's current default branch and whatever it read as base at startup.
+
+### The worker's push logs say whether GitHub moved
+
+**What changed.** (next) `Pushed … to GitHub` is logged only when the branch moved, saying
+where from; an unmoved branch logs at debug level. An unchanged settings branch is not pushed.
+
+**To adopt.** Nothing.
 
 ### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
 

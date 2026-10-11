@@ -24,7 +24,7 @@ import {
   type GitHubReachability,
   type LocalGitHubGatewayOptions,
 } from './github-gateway'
-import { RefusedPushError } from './github-mirror'
+import { RefusedPushError, parsePushStatus } from './github-mirror'
 
 const execFileAsync = promisify(execFile)
 
@@ -201,9 +201,9 @@ describe('push', () => {
     return { base, ahead }
   }
 
-  it("pushes exactly the commit asked for to GitHub's branch", async () => {
+  it("pushes exactly the commit asked for to GitHub's branch, and says where it moved from", async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const { ahead } = await aheadOnRemoteGit('feature')
+    const { base, ahead } = await aheadOnRemoteGit('feature')
 
     const outcome = await gateway().push({
       branch: 'feature',
@@ -211,8 +211,57 @@ describe('push', () => {
       protectedBranches: ['main'],
     })
 
-    expect(outcome).toBe('pushed')
+    expect(outcome).toEqual({
+      moved: true,
+      from: expect.stringMatching(/^[0-9a-f]{7,}$/),
+      to: ahead,
+      pastStaleLease: false,
+    })
+    expect(outcome.moved && base.startsWith(outcome.from ?? '-')).toBe(true)
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(ahead)
+  })
+
+  it('reports a push of the commit GitHub already holds as not moved', async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const { ahead } = await aheadOnRemoteGit('feature')
+    const request = { branch: 'feature', sha: ahead, protectedBranches: ['main'] }
+    await gateway().push(request)
+
+    expect(await gateway().push(request)).toEqual({ moved: false, pastStaleLease: false })
+    expect(await gateway().push({ ...request, lease: '0'.repeat(40) })).toEqual({
+      moved: false,
+      pastStaleLease: false,
+    })
+  })
+
+  it('reports a new branch with no previous tip', async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const sha = await commitAndPush(remoteGitPath, 'refs/heads/fresh', 'fresh.txt')
+
+    expect(await gateway().push({ branch: 'fresh', sha, protectedBranches: ['main'] })).toEqual({
+      moved: true,
+      from: null,
+      to: sha,
+      pastStaleLease: false,
+    })
+  })
+
+  it('reports a forced update under a held lease as moved from the leased commit', async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const { base } = await aheadOnRemoteGit('feature')
+    await seed.raw(['checkout', '-q', '--orphan', 'rewritten'])
+    const rewritten = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'rewritten.txt')
+
+    const outcome = await gateway().push({
+      branch: 'feature',
+      sha: rewritten,
+      lease: base,
+      protectedBranches: ['main'],
+    })
+
+    expect(outcome).toMatchObject({ moved: true, to: rewritten, pastStaleLease: false })
+    expect(outcome.moved && base.startsWith(outcome.from ?? '-')).toBe(true)
+    expect(await tip(githubPath, 'refs/heads/feature')).toBe(rewritten)
   })
 
   it('retries a refused stale lease plain, and says so when that fast-forwards', async () => {
@@ -226,7 +275,7 @@ describe('push', () => {
       protectedBranches: ['main'],
     })
 
-    expect(outcome).toBe('pushed-past-stale-lease')
+    expect(outcome).toMatchObject({ moved: true, to: ahead, pastStaleLease: true })
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(ahead)
   })
 
@@ -291,6 +340,29 @@ describe('push', () => {
     })
 
     expect(remoteUrl).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('parsePushStatus', () => {
+  const sha = 'b'.repeat(40)
+
+  it.each([
+    ['=\tx:refs/heads/topic\t[up to date]', { moved: false }],
+    [' \tx:refs/heads/topic\taaaaaaa..bbbbbbb', { moved: true, from: 'aaaaaaa', to: sha }],
+    [
+      '+\tx:refs/heads/topic\taaaaaaa...bbbbbbb (forced update)',
+      { moved: true, from: 'aaaaaaa', to: sha },
+    ],
+    ['*\tx:refs/heads/topic\t[new branch]', { moved: true, from: null, to: sha }],
+  ])('reads %j', (line, expected) => {
+    expect(parsePushStatus(`To example\n${line}\nDone\n`, 'topic', sha)).toEqual(expected)
+  })
+
+  it("throws rather than guess when no line is the branch's own", () => {
+    expect(() =>
+      parsePushStatus('To example\n=\tx:refs/heads/team/topic\t[up to date]\nDone\n', 'topic', sha),
+    ).toThrow('no readable status for refs/heads/topic')
+    expect(() => parsePushStatus('To example\nDone\n', 'topic', sha)).toThrow()
   })
 })
 
