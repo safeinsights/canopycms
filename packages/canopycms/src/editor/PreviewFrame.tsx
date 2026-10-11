@@ -26,7 +26,7 @@ export interface PreviewMarks {
 
 /**
  * How long after the iframe's `load` the preview has to send its ready message before the frame
- * says live updates are off. Ready usually arrives before `load`, which waits for images too.
+ * says live updates are off. Ready can also arrive before `load`, which waits for images too.
  */
 const READY_TIMEOUT_MS = 5000
 
@@ -110,12 +110,12 @@ export const PreviewFrame = ({
   // and inbound messages must come from it. An iframe that navigates cross-origin
   // silently stops participating in the bridge.
   const previewOrigin = resolveMessageOrigin(src)
-  // Only the ready message clears the progress bar: `onLoad` posts the draft before the preview's
-  // listener exists, so the preview shows the draft only after ready triggers the re-post.
+  // Only the ready message clears the progress bar: `onLoad` can post the draft before the
+  // preview's listener exists, so only the re-post that ready triggers is sure to land.
   const [handshake, setHandshake] = useState<Handshake>('waiting')
   const [loaded, setLoaded] = useState(false)
-  // Retry and a new src each mount a fresh iframe rather than navigating the old one: its
-  // contentWindow is new, so the source check drops a late ready or load from the page it replaces.
+  // Retry and a new src each mount a fresh iframe rather than navigating the old one, so a late
+  // ready from the page it replaces fails the source check, and a late load has no handler.
   const [retries, setRetries] = useState(0)
 
   // A new src is a new page, with a handshake of its own.
