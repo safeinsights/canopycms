@@ -27,7 +27,7 @@ import {
   type GitHubPushRequest,
   type LocalGitHubGatewayOptions,
 } from './github-gateway'
-import { GitHubTransientError, RefusedPushError } from './github-mirror'
+import { GitHubMirror, GitHubTransientError, RefusedPushError } from './github-mirror'
 import { fetchGitHubIntoRemoteGit, pushToGitHub, type TransferContext } from './github-transfer'
 
 const execFileAsync = promisify(execFile)
@@ -1113,6 +1113,44 @@ describe('GitHub fetches, coalesced at the production window', () => {
     await github.deleteBranch('gone')
 
     expect(during?.has('gone')).toBe(true)
+    expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(false)
+  })
+
+  it('fails no fetch whose two sessions span a branch deletion', async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/gone', 'refs/heads/main')
+    let answer!: () => void
+    const answered = new Promise<void>((resolve) => (answer = resolve))
+    const deleteRef = vi.fn(async ({ ref }: { ref: string }) => {
+      await answered
+      await git('--git-dir', githubPath, 'update-ref', '-d', `refs/${ref}`)
+    })
+    const github = gateway({
+      fetchCoalesceMs: undefined,
+      octokit: { git: { deleteRef } } as unknown as Octokit,
+    })
+    // The deletion starts during the fetch's own session, and GitHub answers during the session
+    // of the fetch the caller then joins.
+    const mirror = (github as unknown as { mirror: GitHubMirror }).mirror
+    const exclusive = mirror.exclusive.bind(mirror)
+    let sessions = 0
+    let deletion: Promise<void> | undefined
+    vi.spyOn(mirror, 'exclusive').mockImplementation((fn) =>
+      exclusive((session) => {
+        sessions++
+        if (sessions === 1) deletion = github.deleteBranch('gone')
+        if (sessions === 3) setImmediate(answer)
+        return fn(session)
+      }),
+    )
+
+    const fetched = await github.fetch({ have: [] })
+    answer()
+    await deletion
+
+    // The fetch's own session and the caller's: no miss, so no second fetch.
+    expect(sessions).toBe(2)
+    expect(fetched.refs.has('main')).toBe(true)
     expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(false)
   })
 })

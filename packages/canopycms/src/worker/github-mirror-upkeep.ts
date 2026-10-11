@@ -133,8 +133,9 @@ export type MirrorCorruption = string | null
  * `extensions.partialClone`, a `remote.*.promisor` / `remote.*.partialclonefilter` key in the
  * mirror's own config (read with `--get-regexp`, never `config --list`, which would print a
  * credential's value), or git dying on the repository (exit 128: a truncated `packed-refs` fails
- * every git there). Each is repaired by a rebuild. Any other failure of git, such as one that
- * could not start, is thrown: the next session checks again. A loose ref that disappears while
+ * every git there), unless git says the machine ran out of memory or processes. Each is repaired
+ * by a rebuild. Any other failure of git, such as one that could not start, is thrown: the next
+ * session checks again. A loose ref that disappears while
  * it is read was packed by maintenance's `pack-refs`. `git(args, stdin?)` runs git in the mirror
  * under its pins.
  */
@@ -163,10 +164,20 @@ export async function findCorruption(
   try {
     return await checkWithGit(git)
   } catch (err) {
-    if (!(err instanceof GitProcessError) || err.exitCode !== 128) throw err
+    if (
+      !(err instanceof GitProcessError) ||
+      err.exitCode !== 128 ||
+      RESOURCE_FAILURE.test(err.stderr)
+    ) {
+      throw err
+    }
     return `git cannot read it (${getErrorMessage(err).trim().split('\n')[0].slice(0, 200)})`
   }
 }
+
+/** git's own exit 128 for a machine out of resources, which says nothing about the repository. */
+const RESOURCE_FAILURE =
+  /out of memory|cannot allocate memory|unable to fork|resource temporarily unavailable|mmap failed/i
 
 async function checkWithGit(
   git: (args: string[], stdin?: string) => Promise<string>,

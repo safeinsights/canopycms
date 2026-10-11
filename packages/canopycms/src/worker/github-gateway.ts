@@ -426,7 +426,7 @@ class LocalGitHubGateway implements GitHubGateway {
     return job
   }
 
-  /** Before a push or branch deletion at GitHub: every later read must come from a fetch after it. */
+  /** A push or branch deletion at GitHub: every later read must come from a fetch after it. */
   private invalidateGitHubFetch(): void {
     this.pushes++
     this.githubFetch = null
@@ -761,8 +761,8 @@ class LocalGitHubGateway implements GitHubGateway {
 
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void> {
     return this.credentialed(signal, async (reach) => {
-      // Before and after: a fetch whose session starts during the call may see the branch.
-      this.invalidateGitHubFetch()
+      // Once the call has settled, when GitHub may have acted: any fetch before then, a fetch whose
+      // session ran during the call included, may still show the branch.
       try {
         await this.api(reach, () =>
           this.octokit.git.deleteRef({ ...this.repo, ref: `heads/${branch}`, request: { signal } }),

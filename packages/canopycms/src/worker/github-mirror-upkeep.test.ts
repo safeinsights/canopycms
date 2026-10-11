@@ -541,6 +541,18 @@ describe('checking a mirror while maintenance runs beside it', () => {
     ).rejects.toBe(couldNotRun)
   })
 
+  it('throws, rather than call it corrupt, when git died for want of memory', async () => {
+    await gateway().fetch({ have: [] })
+    const message = 'fatal: Out of memory, malloc failed (tried to allocate 1048576 bytes)'
+    const outOfMemory = new GitProcessError(message, 128, message)
+
+    await expect(
+      findCorruption(mirrorDir, async () => {
+        throw outOfMemory
+      }),
+    ).rejects.toBe(outOfMemory)
+  })
+
   it('fails a sweep that could not read a directory, so no sweep passes for done', async () => {
     await gateway().fetch({ have: [] })
     const readdir = fs.readdir.bind(fs)
