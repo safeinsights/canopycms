@@ -867,6 +867,25 @@ describe('the tracking namespace', () => {
     expect(consoleSpy).not.toHaveWarned(/Could not move/)
   })
 
+  it('still moves the updates when a stale packed-refs lock holds back the deletions', async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    await commitAndPush(githubPath, 'refs/heads/gone', 'gone.txt')
+    const github = gateway()
+    await fetchGitHubIntoRemoteGit(transfer(github))
+    await git('--git-dir', githubPath, 'update-ref', '-d', 'refs/heads/gone')
+    const next = await commitAndPush(githubPath, 'refs/heads/main', 'next.txt')
+    // As a writer killed mid-delete leaves it.
+    await fs.writeFile(path.join(remoteGitPath, 'packed-refs.lock'), '')
+
+    await fetchGitHubIntoRemoteGit(transfer(github))
+
+    expect(await tip(remoteGitPath, 'refs/remotes/github/main')).toBe(next)
+    expect(await tip(remoteGitPath, 'refs/remotes/github/gone')).not.toBeNull()
+    expect(consoleSpy).toHaveWarned(
+      /Could not move 1 GitHub tracking ref.*refs\/remotes\/github\/gone/,
+    )
+  })
+
   it('moves the refs that can move when one lost a race, and names the one that did not', async () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const other = await commitAndPush(githubPath, 'refs/heads/other', 'other.txt')

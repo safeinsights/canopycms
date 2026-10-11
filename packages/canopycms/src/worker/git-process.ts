@@ -74,6 +74,9 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
     // An app's own ProcessEnv augmentation (Next.js requires NODE_ENV) says nothing about git's.
     env: options.env as NodeJS.ProcessEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
+    // Its own process group, so a stop reaches what git spawned too (bundle create's
+    // pack-objects), which would otherwise outlive it holding the pipes open.
+    detached: process.platform !== 'win32',
   })
   const { stdout } = child
   if (stdout === null) throw new Error('git was spawned without a stdout pipe')
@@ -83,9 +86,12 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
   let stderrBytes = 0
   let killedFor: string | null = null
   let closed = false
+  let exitedCleanly = false
   let inactivity: NodeJS.Timeout | undefined
   const touch = () => {
     clearTimeout(inactivity)
+    // Once git has exited 0, output still unread is the reader's to take, however slowly.
+    if (exitedCleanly) return
     inactivity = setTimeout(
       () => stop(`git ${command} wrote nothing for ${options.inactivityTimeoutMs}ms`),
       options.inactivityTimeoutMs,
@@ -95,10 +101,20 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
   // unread, and that output holds 'close' back until the stream is destroyed.
   const stop = (reason: string) => {
     if (closed || killedFor !== null) return
-    killedFor = reason
-    if (child.exitCode === null && child.signalCode === null) terminate(child)
+    // git's own failure, when it came first, stays the reason.
+    if (child.exitCode === null && child.signalCode === null) {
+      killedFor = reason
+      terminate(child)
+    } else if (child.exitCode === 0) {
+      killedFor = reason
+    }
     stdout.destroy()
   }
+  child.on('exit', (code) => {
+    if (code !== 0) return
+    exitedCleanly = true
+    clearTimeout(inactivity)
+  })
 
   child.stderr?.on('data', (chunk: Buffer) => {
     touch()
@@ -190,14 +206,30 @@ export async function runGit(
   return Buffer.concat(chunks).toString('utf8')
 }
 
-/** Ask git to stop, then kill it if it has not within {@link KILL_GRACE_MS}. */
+/**
+ * Ask git and everything it spawned to stop, then kill them if git has not exited within
+ * {@link KILL_GRACE_MS}.
+ */
 function terminate(child: ChildProcess): void {
-  child.kill('SIGTERM')
+  signalGroup(child, 'SIGTERM')
   const timer = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    if (child.exitCode === null && child.signalCode === null) signalGroup(child, 'SIGKILL')
   }, KILL_GRACE_MS)
   timer.unref()
   child.once('close', () => clearTimeout(timer))
+}
+
+/** Signal git's process group, or git alone where it has none of its own (Windows). */
+function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid !== undefined && process.platform !== 'win32') {
+    try {
+      process.kill(-child.pid, signal)
+      return
+    } catch {
+      // The group is gone already.
+    }
+  }
+  child.kill(signal)
 }
 
 /**

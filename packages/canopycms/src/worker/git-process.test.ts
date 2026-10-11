@@ -167,6 +167,45 @@ describe('spawnGit', () => {
     expect(settled).toBe('no longer wanted')
   })
 
+  it('lets a slow reader take what git wrote before it exited 0, past the inactivity bound', async () => {
+    const proc = spawnGit(['small'], alias('small', 'yes y | head -c 100000', 300))
+    const chunks = proc.stdout[Symbol.asyncIterator]()
+    let bytes = ((await chunks.next()).value as Buffer).length
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+    for (;;) {
+      const next = await chunks.next()
+      if (next.done) break
+      bytes += (next.value as Buffer).length
+    }
+    await proc.exited
+    expect(bytes).toBe(100_000)
+  })
+
+  it("reports git's own failure, not a stop that came after it", async () => {
+    const proc = spawnGit(
+      ['fail'],
+      alias('fail', 'yes y | head -c 100000; echo it-broke >&2; exit 3'),
+    )
+    const chunks = proc.stdout[Symbol.asyncIterator]()
+    await chunks.next()
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    proc.kill('no longer wanted')
+    const err = await failure(proc.exited)
+    expect(err.exitCode).toBe(3)
+    expect(err.message).toBe('it-broke')
+  })
+
+  it('stops what git spawned too, so nothing it left holds the pipes open', async () => {
+    // The shell backgrounds a process git knows nothing of, which keeps stderr open.
+    const proc = spawnGit(['nap'], alias('nap', 'sleep 6 & sleep 6'))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const started = Date.now()
+    proc.kill('no longer wanted')
+    const err = await failure(proc.exited)
+    expect(err.message).toBe('no longer wanted')
+    expect(Date.now() - started).toBeLessThan(3_000)
+  })
+
   it('rejects `exited` after the caller kills it', async () => {
     const proc = spawnGit(['nap'], alias('nap', 'sleep 5'))
     proc.kill('not needed')

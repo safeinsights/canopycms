@@ -246,24 +246,21 @@ async function startBundle(
         return 'moved'
       }
       const head = start
-      return {
-        process: proc,
-        stream: Readable.from(
-          (async function* () {
-            try {
-              yield head
-              for (;;) {
-                const rest = await chunks.next()
-                if (rest.done) return
-                yield rest.value as Buffer
-              }
-            } finally {
-              // A reader that stops early releases git's stdout with it.
-              await chunks.return?.()
-            }
-          })(),
-        ),
-      }
+      const stream = Readable.from(
+        (async function* () {
+          yield head
+          for (;;) {
+            const rest = await chunks.next()
+            if (rest.done) return
+            yield rest.value as Buffer
+          }
+        })(),
+      )
+      // A reader that stops early, or before its first read, releases git's stdout with it.
+      stream.once('close', () => {
+        if (!proc.stdout.readableEnded) proc.stdout.destroy()
+      })
+      return { process: proc, stream }
     }
   } catch (err) {
     throw await causeOf(proc, err, 'its header could not be read')
@@ -419,12 +416,15 @@ async function moveTrackingRefs(
 }
 
 /**
- * Whether `update-ref` failed because a ref was not at the value a move stated, or a lock was
- * held: git's "cannot lock ref" for each. Anything else (an abort, a missing object) is not a race
- * a per-ref retry can win.
+ * Whether `update-ref` failed because a ref was not at the value a move stated, a lock was held
+ * (a ref's own, or `packed-refs.lock`, which every deletion takes), or a directory/file conflict
+ * stood in the way: a race a per-ref retry can win or lose on its own. Anything else (an abort, a
+ * missing object) is not.
  */
 function lostRace(err: unknown): boolean {
-  return /cannot lock ref/.test(getErrorMessage(err))
+  return /cannot lock ref|Unable to create '[^']*\.lock': File exists|exists; cannot create/.test(
+    getErrorMessage(err),
+  )
 }
 
 /** Apply `moves` as one `update-ref` transaction, NUL-separated, so no refname can split a line. */
