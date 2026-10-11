@@ -24,6 +24,7 @@ import type { BlockConfig, FieldConfig } from '../../config'
 import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
 import { EDITOR_ACTIONS } from '../copy'
+import { useFieldCommentControl } from '../comments/field-comment-context'
 import { groupDescriptionProps } from './FieldDescription'
 import { FieldLabel } from './FieldLabel'
 import { useListItemKeys } from './list-item-keys'
@@ -122,6 +123,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
   onRemoved,
 }) => {
   const descriptionBaseId = useId()
+  const commentControl = useFieldCommentControl(dataCanopyField ?? formatCanopyPath(path))
   const keysFor = useListItemKeys()
   const itemKeys = keysFor(value, 'blocks')
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null)
@@ -197,6 +199,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
           required={required}
           description={description}
           descriptionBaseId={descriptionBaseId}
+          commentControl={commentControl}
           actions={
             !readOnly && (
               <Select

@@ -8,7 +8,9 @@ import { IconAlertCircle } from '@tabler/icons-react'
 import { createApiClient } from '../../api/client'
 import { useOptionalApiClient } from '../context'
 import { getErrorMessage } from '../../utils/error'
+import { useFieldCommentControl } from '../comments/field-comment-context'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { FieldLabel } from './FieldLabel'
 
 /** @internal Exported for tests. */
 export interface ReferenceOption {
@@ -96,6 +98,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   const data = unlisted.size > 0 ? [...options, ...unlisted.values()] : options
   const generatedId = useId()
   const inputId = id ?? generatedId
+  const commentControl = useFieldCommentControl(dataCanopyField)
 
   // Track deps to detect changes and reset loading during render
   const [prevFetchKey, setPrevFetchKey] = useState('')
@@ -171,9 +174,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
         data-testid={`reference-field-${dataCanopyField}`}
         {...groupDescriptionProps(inputId, description)}
       >
-        <Text size="sm" fw={500}>
-          {label}
-        </Text>
+        <FieldLabel label={label} commentControl={commentControl} />
         <FieldDescription baseId={inputId} description={description} />
         <Loader size="sm" data-testid={`reference-loading-${dataCanopyField}`} />
       </Stack>
@@ -188,9 +189,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
         data-testid={`reference-field-${dataCanopyField}`}
         {...groupDescriptionProps(inputId, description)}
       >
-        <Text size="sm" fw={500}>
-          {label}
-        </Text>
+        <FieldLabel label={label} commentControl={commentControl} />
         <FieldDescription baseId={inputId} description={description} />
         <Alert
           icon={<IconAlertCircle size={16} />}
@@ -219,10 +218,10 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
       data-canopy-field={dataCanopyField}
       data-testid={`reference-field-${dataCanopyField}`}
     >
+      <FieldLabel label={label} htmlFor={inputId} commentControl={commentControl} />
       {multiple ? (
         <MultiSelect
           id={inputId}
-          label={label}
           description={description}
           data={data}
           value={normalizedValue as string[]}
@@ -238,7 +237,6 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
       ) : (
         <Select
           id={inputId}
-          label={label}
           description={description}
           data={data}
           value={normalizedValue as string}

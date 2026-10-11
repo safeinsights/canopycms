@@ -8,6 +8,7 @@ import type { UserSearchResult } from '../../auth/types'
 import { UserBadge } from '../components/UserBadge'
 import { userIdLabel } from '../user-display'
 import { formatRelativeTime } from '../relative-time'
+import { getErrorMessage } from '../../utils/error'
 
 export interface InlineCommentThreadProps {
   /** The thread to display */
@@ -49,7 +50,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
       await onAddReply(replyText)
       setReplyText('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add reply')
+      setError(getErrorMessage(err))
     } finally {
       setIsSubmitting(false)
     }
@@ -61,7 +62,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
     try {
       await onResolve()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resolve thread')
+      setError(getErrorMessage(err))
     } finally {
       setIsSubmitting(false)
     }
@@ -156,7 +157,8 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
         {!thread.resolved && (
           <Stack gap="xs">
             <Textarea
-              placeholder="Write a reply..."
+              placeholder="Write a reply…"
+              aria-label="Reply to this thread"
               value={replyText}
               onChange={(e) => setReplyText(e.target.value)}
               minRows={2}

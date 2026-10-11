@@ -2,6 +2,9 @@ import React, { useId } from 'react'
 
 import { MultiSelect, Select, Stack, Text } from '@mantine/core'
 
+import { useFieldCommentControl } from '../comments/field-comment-context'
+import { FieldLabel } from './FieldLabel'
+
 interface SelectOption {
   label: string
   value: string
@@ -42,13 +45,14 @@ export const SelectField: React.FC<SelectFieldProps> = ({
       : ''
   const generatedId = useId()
   const inputId = id ?? generatedId
+  const commentControl = useFieldCommentControl(dataCanopyField)
 
   return (
     <Stack gap={4} data-canopy-field={dataCanopyField}>
+      <FieldLabel label={label} htmlFor={inputId} commentControl={commentControl} />
       {multiple ? (
         <MultiSelect
           id={inputId}
-          label={label}
           description={description}
           data={options}
           value={normalizedValue as string[]}
@@ -64,7 +68,6 @@ export const SelectField: React.FC<SelectFieldProps> = ({
       ) : (
         <Select
           id={inputId}
-          label={label}
           description={description}
           data={options}
           value={normalizedValue as string}

@@ -3,7 +3,7 @@ import { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import type { CommentThread } from '../../comment-store'
 import type { EditorEntry } from '../Editor'
-import { formatCanopyPath, parseCanopyPath } from '../canopy-path'
+import { findFieldTarget } from '../field-target'
 import { useApiClient } from '../context'
 import { resolveMessageOrigin } from '../preview-bridge'
 import { isSamePreviewPath } from '../preview-path'
@@ -58,28 +58,6 @@ export interface UseCommentSystemReturn {
   handleJumpToField: (entryPath: string, canopyPath: string, threadId: string) => void
   handleJumpToEntry: (entryPath: string, threadId: string) => void
   handleJumpToBranch: (threadId: string) => void
-}
-
-/**
- * The form element for a path, as given or as `canopy-path.ts` spells it (`blocks.2.title` is
- * `blocks[2].title`), else for its nearest ancestor that has one: a list item (`tags[1]`) has no
- * field of its own. Compares values, not a selector: the path is untrusted.
- */
-const findFieldTarget = (path: string): { element: HTMLElement; path: string } | undefined => {
-  const byField = new Map<string, HTMLElement>()
-  for (const element of document.querySelectorAll<HTMLElement>('[data-canopy-field]')) {
-    const field = element.getAttribute('data-canopy-field')
-    if (field && !byField.has(field)) byField.set(field, element)
-  }
-  const exact = byField.get(path)
-  if (exact) return { element: exact, path }
-  const segments = parseCanopyPath(path)
-  for (let length = segments.length; length > 0; length--) {
-    const candidate = formatCanopyPath(segments.slice(0, length))
-    const element = byField.get(candidate)
-    if (element) return { element, path: candidate }
-  }
-  return undefined
 }
 
 /**

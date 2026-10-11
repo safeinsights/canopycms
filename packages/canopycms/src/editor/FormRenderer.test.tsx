@@ -161,12 +161,15 @@ describe('FormRenderer', () => {
       },
     ]
 
-    it('shows the list label once, with numbered card headings and no nested legend', () => {
+    it('shows the list label once, with "Item N" headings for items without text, and no inner card', () => {
       render(<StatefulForm fields={listFields()} initialValue={{ features: [{}, {}] }} />)
 
       expect(screen.getAllByText('Features')).toHaveLength(1)
-      expect(screen.getByText('Features #1')).toBeTruthy()
-      expect(screen.getByText('Features #2')).toBeTruthy()
+      // Each item's fields sit directly in its card: one card per item, no nested one.
+      const card = screen.getByRole('group', { name: 'Item 1' })
+      expect(card.querySelectorAll('.mantine-Paper-root')).toHaveLength(0)
+      expect(screen.getByText('Item 1')).toBeTruthy()
+      expect(screen.getByText('Item 2')).toBeTruthy()
     })
 
     it('titles each card with its itemTitleField value, coercing numbers', () => {
@@ -179,11 +182,11 @@ describe('FormRenderer', () => {
 
       expect(screen.getByText('Fast builds')).toBeTruthy()
       expect(screen.getByText('7')).toBeTruthy()
-      expect(screen.queryByText('Features #1')).toBeNull()
+      expect(screen.queryByText('Item 1')).toBeNull()
       expect(screen.getAllByText('Features')).toHaveLength(1)
     })
 
-    it('falls back to the numbered heading when the title value is empty or not a primitive', () => {
+    it('falls back to "Item N" when the title value is empty or not a primitive, and no other text is set', () => {
       render(
         <StatefulForm
           fields={listFields('title')}
@@ -192,12 +195,12 @@ describe('FormRenderer', () => {
       )
 
       for (const n of [1, 2, 3, 4]) {
-        expect(screen.getByText(`Features #${n}`)).toBeTruthy()
+        expect(screen.getByText(`Item ${n}`)).toBeTruthy()
       }
     })
 
     // YAML's `.nan` and `.inf` parse to non-finite numbers, which must not title a card.
-    it('falls back to the numbered heading for a non-finite number', () => {
+    it('falls back past a non-finite number', () => {
       render(
         <StatefulForm
           fields={listFields('rank')}
@@ -205,8 +208,8 @@ describe('FormRenderer', () => {
         />,
       )
 
-      expect(screen.getByText('Features #1')).toBeTruthy()
-      expect(screen.getByText('Features #2')).toBeTruthy()
+      expect(screen.getByText('Item 1')).toBeTruthy()
+      expect(screen.getByText('Item 2')).toBeTruthy()
       expect(screen.getByText('3')).toBeTruthy()
     })
 
@@ -214,11 +217,11 @@ describe('FormRenderer', () => {
       const user = userEvent.setup()
       render(<StatefulForm fields={listFields('title')} initialValue={{ features: [{}] }} />)
 
-      expect(screen.getByText('Features #1')).toBeTruthy()
+      expect(screen.getByText('Item 1')).toBeTruthy()
       await user.type(screen.getByLabelText('Heading'), 'Typed')
 
       expect(screen.getByText('Typed')).toBeTruthy()
-      expect(screen.queryByText('Features #1')).toBeNull()
+      expect(screen.queryByText('Item 1')).toBeNull()
     })
 
     it('gives each card an accessible name matching its heading', () => {
@@ -230,7 +233,41 @@ describe('FormRenderer', () => {
       )
 
       expect(screen.getByRole('group', { name: 'Fast builds' })).toBeTruthy()
-      expect(screen.getByRole('group', { name: 'Features #2' })).toBeTruthy()
+      expect(screen.getByRole('group', { name: 'Item 2' })).toBeTruthy()
+    })
+
+    it('falls back to the first non-blank text field when there is no itemTitleField', () => {
+      render(
+        <StatefulForm
+          fields={listFields()}
+          initialValue={{ features: [{ title: 'Fast builds', rank: 2 }, { rank: 3 }] }}
+        />,
+      )
+
+      expect(screen.getByRole('group', { name: 'Fast builds' })).toBeTruthy()
+      expect(screen.getByRole('group', { name: 'Item 2' })).toBeTruthy()
+    })
+
+    it('falls back to the first non-blank text field when the itemTitleField is blank', () => {
+      render(
+        <StatefulForm
+          fields={listFields('rank')}
+          initialValue={{ features: [{ title: 'Fast builds', rank: Number.NaN }] }}
+        />,
+      )
+
+      expect(screen.getByRole('group', { name: 'Fast builds' })).toBeTruthy()
+    })
+
+    it('shortens a long title to 60 characters', () => {
+      render(
+        <StatefulForm
+          fields={listFields()}
+          initialValue={{ features: [{ title: 'x'.repeat(80) }] }}
+        />,
+      )
+
+      expect(screen.getByRole('group', { name: `${'x'.repeat(59)}…` })).toBeTruthy()
     })
   })
 
@@ -354,6 +391,46 @@ describe('FormRenderer', () => {
       expect(screen.getByTestId('field-error-blocks[0].headline').textContent).toBe(
         'This field is required',
       )
+    })
+
+    it('lists each error under its labelled breadcrumb, not its raw path', () => {
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={fields}
+            value={{ title: '', blocks: [{ template: 'hero', value: { headline: '' } }] }}
+            onChange={() => {}}
+            fieldErrors={{
+              title: 'This field is required',
+              'blocks[0].headline': 'Expected text',
+            }}
+          />
+        </CanopyCMSProvider>,
+      )
+      const items = screen.getAllByRole('listitem').map((li) => li.textContent)
+      expect(items).toEqual([
+        'Title: This field is required',
+        'Blocks › Hero › headline: Expected text',
+      ])
+      expect(screen.getByTestId('validation-alert').textContent).not.toContain('blocks[0]')
+    })
+
+    it('focuses the field when its breadcrumb is clicked', async () => {
+      const user = userEvent.setup()
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={fields}
+            value={{ title: '', blocks: [{ template: 'hero', value: { headline: '' } }] }}
+            onChange={() => {}}
+            fieldErrors={{ title: 'Required', 'blocks[0].headline': 'Expected text' }}
+          />
+        </CanopyCMSProvider>,
+      )
+      await user.click(screen.getByRole('button', { name: 'Blocks › Hero › headline' }))
+      expect(document.activeElement).toBe(screen.getByLabelText('headline'))
+      await user.click(screen.getByRole('button', { name: 'Title' }))
+      expect(document.activeElement).toBe(screen.getByLabelText('Title'))
     })
 
     it('renders no validation UI when there are no errors', () => {
@@ -811,8 +888,8 @@ describe('FormRenderer', () => {
           />
         </CanopyCMSProvider>,
       )
-      expect(screen.getByTestId('field-new-comment-meta')).toBeTruthy()
-      expect(screen.getByTestId('field-new-comment-meta.label')).toBeTruthy()
+      expect(screen.getAllByTestId('field-comment-meta')).toHaveLength(1)
+      expect(screen.getAllByTestId('field-comment-meta.label')).toHaveLength(1)
     })
   })
 

@@ -1,10 +1,10 @@
 'use client'
 
-import React, { useMemo, useState } from 'react'
-import { Box, Button } from '@mantine/core'
+import React, { useMemo } from 'react'
+import { Group } from '@mantine/core'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
-import { ThreadCarousel } from './ThreadCarousel'
+import { CommentThreadsPopover } from './CommentThreadsPopover'
 
 export interface EntryCommentsProps {
   /** All comments (will be filtered for entry-level) */
@@ -25,18 +25,13 @@ export interface EntryCommentsProps {
   ) => Promise<void>
   /** Handler to resolve a thread */
   onResolveThread: (threadId: string) => Promise<void>
-  /** Auto-focus and expand */
-  autoFocus?: boolean
   /** Thread ID to highlight and scroll to */
   highlightThreadId?: string
   /** Resolves author ids to names; without it authors show as ids. */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
-/**
- * Entry-level comments section displayed at the top of the form.
- * Uses ThreadCarousel for navigation.
- */
+/** The "Comment on this entry" action at the top of the form, with the entry's threads. */
 export const EntryComments: React.FC<EntryCommentsProps> = ({
   comments,
   entryPath,
@@ -44,51 +39,30 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
   canResolve,
   onAddComment,
   onResolveThread,
-  autoFocus,
   highlightThreadId,
   onGetUserMetadata,
 }) => {
-  const [showCarousel, setShowCarousel] = useState(false)
-
   const entryThreads = useMemo(
     () => comments.filter((t) => t.type === 'entry' && t.entryPath === entryPath),
     [comments, entryPath],
   )
 
-  const shouldShowCarousel = entryThreads.length > 0 || showCarousel || autoFocus
-
-  const handleAddComment = async (text: string, threadId?: string) => {
-    await onAddComment(text, 'entry', entryPath, undefined, threadId)
-  }
-
-  if (!shouldShowCarousel) {
-    return (
-      <Box>
-        <Button
-          variant="subtle"
-          color="gray"
-          onClick={() => setShowCarousel(true)}
-          style={{ fontSize: '0.75rem', height: '1.5rem' }}
-        >
-          New file comment
-        </Button>
-      </Box>
-    )
-  }
-
   return (
-    <ThreadCarousel
-      threads={entryThreads}
-      label="Entry Comments"
-      contextType="entry"
-      currentUserId={currentUserId}
-      canResolve={canResolve}
-      onAddComment={handleAddComment}
-      onResolveThread={onResolveThread}
-      autoFocus={autoFocus}
-      autoOpenNewThread={showCarousel && entryThreads.length === 0}
-      highlightThreadId={highlightThreadId}
-      onGetUserMetadata={onGetUserMetadata}
-    />
+    <Group justify="flex-end">
+      <CommentThreadsPopover
+        threads={entryThreads}
+        subject="this entry"
+        variant="entry"
+        currentUserId={currentUserId}
+        canResolve={canResolve}
+        onAddComment={(text, threadId) =>
+          onAddComment(text, 'entry', entryPath, undefined, threadId)
+        }
+        onResolveThread={onResolveThread}
+        onGetUserMetadata={onGetUserMetadata}
+        highlightThreadId={highlightThreadId}
+        testId="entry-comment-button"
+      />
+    </Group>
   )
 }

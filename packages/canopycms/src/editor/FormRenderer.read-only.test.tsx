@@ -405,8 +405,37 @@ describe('FormRenderer readOnly', () => {
         onResolveThread: vi.fn(async () => {}),
       },
     )
-    const newComment = screen.getByTestId('field-new-comment-title')
-    expect(newComment.matches(':disabled')).toBe(false)
+    const control = screen.getByTestId('field-comment-title')
+    expect(control.matches(':disabled')).toBe(false)
+    expect(screen.getByTestId('entry-comment-button').matches(':disabled')).toBe(false)
+  })
+
+  it('takes a new field comment on a read-only form', async () => {
+    const onAddComment = vi.fn(async () => {})
+    renderReadOnly(
+      [{ name: 'title', type: 'string', label: 'Title' }],
+      { title: 'Hello' },
+      {
+        currentEntryPath: 'content/posts/hello',
+        currentUserId: 'user-1',
+        onAddComment,
+        onResolveThread: vi.fn(async () => {}),
+      },
+    )
+    fireEvent.click(screen.getByTestId('field-comment-title'))
+    const box = await screen.findByTestId('new-thread-textarea')
+    expect(box.matches(':disabled')).toBe(false)
+    fireEvent.change(box, { target: { value: 'Please reword' } })
+    fireEvent.click(screen.getByTestId('create-thread-button'))
+    await waitFor(() =>
+      expect(onAddComment).toHaveBeenCalledWith(
+        'Please reword',
+        'field',
+        'content/posts/hello',
+        'title',
+        undefined,
+      ),
+    )
   })
 })
 

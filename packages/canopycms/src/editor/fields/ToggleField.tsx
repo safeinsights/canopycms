@@ -2,6 +2,7 @@ import React, { useId } from 'react'
 
 import { Group, Stack, Switch, Text } from '@mantine/core'
 
+import { useFieldCommentControl } from '../comments/field-comment-context'
 import { FieldDescription, fieldDescriptionId } from './FieldDescription'
 
 export interface ToggleFieldProps {
@@ -28,6 +29,7 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
+  const commentControl = useFieldCommentControl(dataCanopyField)
   // A Switch's `description` sits inside its <label> and so joins the accessible name;
   // rendering it as a sibling keeps the name to the label alone.
   return (
@@ -46,6 +48,7 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
           data-canopy-field={dataCanopyField}
           wrapperProps={testId ? { 'data-testid': testId } : undefined}
         />
+        {commentControl}
         {/* A disabled switch's position is too faint to read, so read-only states it in words. */}
         {readOnly && (
           <Text size="sm" c="gray.7" data-testid={testId ? `${testId}-value` : undefined}>

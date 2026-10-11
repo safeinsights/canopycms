@@ -127,8 +127,8 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
             )}
             {!replyTo && (
               <Text size="xs" c="dimmed">
-                Posts a branch-level comment on &quot;{branchName}&quot;. Use a field&apos;s
-                &quot;New comment&quot; link for field-specific threads.
+                Posts a branch-level comment on &quot;{branchName}&quot;. To comment on a field, use
+                the comment icon by its label.
               </Text>
             )}
             <Textarea
