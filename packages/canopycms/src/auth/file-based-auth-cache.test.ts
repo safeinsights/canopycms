@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { FileBasedAuthCache, writeAuthCacheSnapshot } from './file-based-auth-cache'
+import {
+  FileBasedAuthCache,
+  writeAuthCacheSnapshot,
+  writeAuthSnapshot,
+} from './file-based-auth-cache'
 
 describe('FileBasedAuthCache', () => {
   let tmpDir: string
@@ -285,6 +289,22 @@ describe('FileBasedAuthCache', () => {
       const entries = await fs.readdir(tmpDir)
       const snapshots = entries.filter((e) => e.startsWith('snapshot-'))
       expect(snapshots).toHaveLength(2)
+    })
+  })
+
+  describe('writeAuthSnapshot', () => {
+    it('writes a snapshot FileBasedAuthCache reads back', async () => {
+      await writeAuthSnapshot(tmpDir, {
+        users: testUsers.users,
+        groups: testGroups.groups,
+        memberships: testMemberships.memberships,
+      })
+
+      const snapshotCache = new FileBasedAuthCache(tmpDir)
+      expect(await snapshotCache.getAllUsers()).toEqual(testUsers.users)
+      expect(await snapshotCache.getAllGroups()).toEqual(testGroups.groups)
+      expect(await snapshotCache.getUserExternalGroups('user_1')).toEqual(['org_1', 'org_2'])
+      expect(await snapshotCache.getUserExternalGroups('nobody')).toEqual([])
     })
   })
 })
