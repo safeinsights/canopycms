@@ -2,10 +2,12 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-11, from the last review round of the worker process split's PR 5. `isRecentGatewayFatal` (canopycms-cdk/worker/run.ts) decides which recorded `lastFatalError` an unreachable GitHub gateway leaves in place, and has three small gaps. Its 5-minute window can never cover the 300 s health-timeout path. It keeps a record a later worker's `start()` carried forward after the gateway was healthy again. And its future-`at` guard has no test.
+  RESOLVED (2026-10-11) in the worker process split's PR 6. The window is measured to when the worker began waiting for the gateway (`isRecentGatewayFatal`'s `now`, canopycms-cdk worker/run.ts), so a health wait that times out keeps the gateway's own cause. Core's `recordWorkerStartupFailure` keeps a record only when it is the file's own failed start, never one a later worker carried forward. The future and malformed `at` rows are in run.test.ts.
 ---
 
 # [P3] Tighten which recorded cause an unreachable gateway keeps
+
+**Status:** RESOLVED 2026-10-11, in the process split's PR 6 (all three items).
 
 Found in the review of the commit that added `isRecentGatewayFatal`
 (`packages/canopycms-cdk/worker/run.ts`), which a split worker passes to core's

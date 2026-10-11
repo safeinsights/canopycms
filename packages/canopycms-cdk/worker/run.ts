@@ -76,6 +76,8 @@ export interface RunWorkerDeps {
   sleep?: (ms: number) => Promise<void>
   /** The contract this bundle runs at (default {@link WORKER_CONTRACT_VERSION}); a test seam. */
   bundleContract?: number
+  /** Test seam: the lifecycle retry window (default {@link LIFECYCLE_RETRY_WINDOW_MS}). */
+  lifecycleRetryWindowMs?: number
 }
 
 export interface GitHubAppEnv {
@@ -128,15 +130,19 @@ export interface RecordedFatal {
 }
 
 /**
- * How long the gateway's own recorded fatal error stays the cause of it being away: its 60 s
- * hold, its restart and its next boot's secret reads, with room. A gateway away for longer (its
- * unit gave up, a wrong socket path) is the news.
+ * How long the gateway's own recorded fatal error stays the cause of it being away, measured to
+ * when the next worker began waiting for the gateway: the gateway's 60 s hold, its unit's
+ * `RestartSec=` and the next worker's restart, with room. A record older than that when the wait
+ * began (the gateway's unit gave up, a wrong socket path) leaves the gateway being away as the
+ * news.
  */
 export const GATEWAY_AWAY_KEEP_MS = 5 * 60_000
 
 /**
  * Whether `recorded` is the gateway's fatal error, recorded at startup within
- * {@link GATEWAY_AWAY_KEEP_MS}: the record an unreachable gateway leaves in place.
+ * {@link GATEWAY_AWAY_KEEP_MS} of `now`, when this worker began waiting for the gateway: the
+ * record an unreachable gateway leaves in place. Measured from the wait's start, not its end,
+ * since a gateway that does not answer is waited for longer than the window.
  */
 export function isRecentGatewayFatal(recorded: RecordedFatal, now = Date.now()): boolean {
   const age = now - Date.parse(recorded.at)
@@ -164,8 +170,8 @@ export function parseProtectedBranches(env: NodeJS.ProcessEnv): string[] {
 
 /** The worker unit's missing-`StateDirectory=` message. */
 const WORKER_STATE_DIRECTORY_MISSING =
-  'StateDirectory=canopy-worker is not set on the worker unit. The worker keeps its private ' +
-  'GitHub mirror there, so it does not start without it. Add it to the [Service] section ' +
+  'StateDirectory=canopy-worker is not set on the worker unit, and every worker contract ' +
+  'requires it, so the worker does not start without it. Add it to the [Service] section ' +
   'of canopy-worker.service (see "The worker instance" in docs/deploying-to-aws.md).'
 
 /** What the worker and the gateway both read from their environment before any secret. */
@@ -420,11 +426,25 @@ async function buildSingleProcessWorker(
   }
 }
 
+/**
+ * How long a split worker keeps asking the gateway to complete the lifecycle action after its
+ * drain: past a gateway's restart (its 60 s hold, `RestartSec=` and its boot), so a gateway that
+ * exited meanwhile still completes it. The drain (90 s), its abort grace (5 s) and this window
+ * total 195 s, 15 s under the shortest lifecycle heartbeat the construct allows
+ * (`MIN_WORKER_TERMINATION_HEARTBEAT`), which starts before the gateway's 5 s metadata poll sees
+ * the termination; past it, termination continues without the completion. A refusal or a failed
+ * call is retried after {@link LIFECYCLE_RETRY_MS}, at most {@link LIFECYCLE_ATTEMPTS} times in all.
+ */
+export const LIFECYCLE_RETRY_WINDOW_MS = 100_000
+const LIFECYCLE_RETRY_MS = 5_000
+export const LIFECYCLE_ATTEMPTS = LIFECYCLE_RETRY_WINDOW_MS / LIFECYCLE_RETRY_MS
+
 /** The worker that holds no secret and reaches GitHub through the gateway at `socketPath`. */
 async function buildSplitWorker(
   deps: RunWorkerDeps,
   workspacePath: string,
   socketPath: string,
+  onGatewayWait: (startedAt: number) => void,
 ): Promise<BuiltWorker> {
   const { env } = deps
 
@@ -453,6 +473,7 @@ async function buildSplitWorker(
   // the connection meanwhile), and its prepare. Its fatal error becomes this worker's, so
   // `lastFatalError` names the cause.
   let health: Awaited<ReturnType<GitHubGateway['health']>>
+  onGatewayWait(Date.now())
   try {
     health = await gateway.health()
   } catch (err) {
@@ -492,16 +513,44 @@ async function buildSplitWorker(
   return {
     worker,
     watchForTermination: () => pollGatewayForTermination(gateway, { sleep: deps.sleep }),
-    completeLifecycle: async () => {
-      try {
-        await gateway.completeLifecycle()
-      } catch (err) {
+    completeLifecycle: () =>
+      completeLifecycleThroughGateway(
+        gateway,
+        deps.lifecycleRetryWindowMs ?? LIFECYCLE_RETRY_WINDOW_MS,
+        deps.sleep,
+      ),
+  }
+}
+
+/**
+ * Ask the gateway to complete the lifecycle action until it does, for at most `windowMs`
+ * ({@link LIFECYCLE_RETRY_WINDOW_MS}), the call in flight included; never rejects. The gateway refuses until its own watch has seen
+ * the Auto Scaling notice, which a restarted gateway reads again first.
+ */
+async function completeLifecycleThroughGateway(
+  gateway: Pick<GitHubGateway, 'completeLifecycle'>,
+  windowMs: number,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<void> {
+  const deadline = Date.now() + windowMs
+  for (let attempt = 1; ; attempt++) {
+    try {
+      // A call the gateway holds (a restart, its wait for its own notice) ends with the window.
+      await gateway.completeLifecycle(AbortSignal.timeout(Math.max(1, deadline - Date.now())))
+      return
+    } catch (err) {
+      if (attempt >= LIFECYCLE_ATTEMPTS || Date.now() + LIFECYCLE_RETRY_MS >= deadline) {
         workerLogError(
           `Could not complete the lifecycle action through the GitHub gateway (${getErrorMessage(err)}); ` +
-            'termination continues once the gateway completes it or the heartbeat times out',
+            'termination continues once the heartbeat times out',
         )
+        return
       }
-    },
+      workerLogWarn(
+        `Could not complete the lifecycle action through the GitHub gateway yet (${getErrorMessage(err)}); retrying`,
+      )
+      await sleep(LIFECYCLE_RETRY_MS)
+    }
   }
 }
 
@@ -524,6 +573,9 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
   // ("another worker is running") must stay unrecorded.
   let startCalled = false
   let workspacePath: string | undefined
+  // When this worker began waiting for the gateway: the end of the window in which a recorded
+  // gateway fatal error is still the cause of the gateway being away.
+  let gatewayWaitStartedAt: number | undefined
 
   try {
     workerLog('CMS Worker starting...')
@@ -547,7 +599,9 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
     }
 
     const { worker, watchForTermination, completeLifecycle } = socketPath
-      ? await buildSplitWorker(deps, workspacePath, socketPath)
+      ? await buildSplitWorker(deps, workspacePath, socketPath, (at) => {
+          gatewayWaitStartedAt = at
+        })
       : await buildSingleProcessWorker(deps, workspacePath)
 
     // stop() drains (see CmsWorker.stop); the unit's KillMode=mixed keeps
@@ -599,7 +653,10 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
         workspacePath,
         error: err,
         ...(err instanceof GitHubGatewayUnreachableError
-          ? { keepRecordedFatal: isRecentGatewayFatal }
+          ? {
+              keepRecordedFatal: (recorded: RecordedFatal) =>
+                isRecentGatewayFatal(recorded, gatewayWaitStartedAt),
+            }
           : {}),
       })
     }

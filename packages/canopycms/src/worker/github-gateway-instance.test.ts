@@ -421,7 +421,8 @@ describe('termination polls, in-process', () => {
       watchTermination: neverNotified,
       terminationPollWaitMs: 1,
     })
-    const waiters = (github as unknown as { terminationWaiters: Set<unknown> }).terminationWaiters
+    const waiters = (github as unknown as { instance: { terminationWaiters: Set<unknown> } })
+      .instance.terminationWaiters
 
     for (let i = 0; i < 200; i++) {
       const controller = new AbortController()

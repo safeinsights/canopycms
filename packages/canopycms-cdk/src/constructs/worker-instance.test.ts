@@ -13,6 +13,7 @@ import { aws_ec2 as ec2, aws_ecr as ecr, aws_lambda as lambda } from 'aws-cdk-li
 
 import { CanopyCmsService } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
+import { shippedInstanceFile, shippedWorkerUnits } from '../../test-support/instance-files'
 import { newTestApp } from '../../test-support/test-synth'
 import {
   EXIT_DRAINED_FOR_TERMINATION,
@@ -211,8 +212,8 @@ describe('the worker systemd unit drains on stop', () => {
     `SuccessExitStatus=${EXIT_DRAINED_FOR_TERMINATION}`,
   ]
 
-  it.each(drainLines)('the deployed unit carries %s', (line) => {
-    expect(userData(onDemand)).toContain(line)
+  it.each(drainLines)('both deployed worker units carry %s', (line) => {
+    for (const [, unit] of shippedWorkerUnits()) expect(unit).toContain(line)
   })
 
   it.each(drainLines)('the checked-in copy of the unit carries %s', (line) => {
@@ -222,8 +223,8 @@ describe('the worker systemd unit drains on stop', () => {
   // A worker that stopped itself exits EXIT_WORKER_SELF_STOPPED and must be
   // restarted: it is in neither exit-status list, and the unit restarts always.
   const units: Array<[string, () => string[]]> = [
-    // `userData` is JSON, so the script's newlines are the two characters `\n`.
-    ['deployed', () => userData(onDemand).split('\\n')],
+    ['deployed split', () => shippedInstanceFile('canopy-worker.service')],
+    ['deployed single-process', () => shippedInstanceFile('canopy-worker-single-process.service')],
     ['checked-in', checkedInUnit],
   ]
 

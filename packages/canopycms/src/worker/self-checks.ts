@@ -30,6 +30,7 @@ export type SelfCheckName =
   | 'efs-unreadable'
   | 'core-pattern'
   | 'core-limit'
+  | 'socket-access'
 
 /**
  * How a TCP connect ended: it connected, it failed with an errno code, or it timed out.
@@ -46,6 +47,12 @@ export interface SelfCheckEnvironment {
   uid?: number
   /** Test seam: the TCP connect the IMDS check makes. */
   connect?: (host: string, port: number, timeoutMs: number) => Promise<ConnectOutcome>
+  /**
+   * The gateway's listening descriptor when systemd passed it (socket activation), which the
+   * `socket-access` check reads. Unset, that check is skipped: a gateway that binds its own path
+   * owns the socket by construction (development).
+   */
+  listenFd?: number
 }
 
 /** The instance metadata service's IPv4 address; the launch template sets no IPv6 endpoint. */
@@ -101,6 +108,7 @@ export async function gatewaySelfChecks(
     await efsUnreadable(environment),
     await corePatternNotPiped(environment),
     await coreLimitZero(environment),
+    ...(environment.listenFd === undefined ? [] : [await socketAccessIsOthers(environment)]),
   ]
 }
 
@@ -347,6 +355,60 @@ export async function coreLimitZero(
       ? 'zero'
       : `the core file size limit is ${soft ?? '?'} (soft) and ${hard ?? '?'} (hard), not zero`,
   }
+}
+
+/**
+ * The socket systemd passed is one only another user (and root) can connect to: its node is not
+ * this process's uid, and grants no group or other access. Whoever owns it is the worker, so a
+ * gateway running as that user (a unit without `User=canopy-github`) would hand the worker its
+ * own environment and memory. A socket's own descriptor reports the creating process (systemd,
+ * root), not the node's owner, so the node is found by the socket's inode in
+ * `/proc/self/net/unix`.
+ * @internal Exported for tests.
+ */
+export async function socketAccessIsOthers(
+  environment: SelfCheckEnvironment = {},
+): Promise<SelfCheckResult> {
+  const fail = (detail: string): SelfCheckResult => ({ check: 'socket-access', ok: false, detail })
+  const uid = environment.uid ?? process.getuid?.()
+  if (uid === undefined) return fail('this platform has no process uid to compare')
+  const fd = environment.listenFd ?? 3
+  const proc = path.join(rootOf(environment), 'proc', 'self')
+  let socketPath: string | undefined
+  try {
+    const inode = (await fs.stat(path.join(proc, 'fd', String(fd)))).ino
+    const table = await fs.readFile(path.join(proc, 'net', 'unix'), 'utf8')
+    // Num RefCount Protocol Flags Type St Inode Path; the path is absent for an unbound socket.
+    for (const line of table.split('\n').slice(1)) {
+      const fields = line.trim().split(/\s+/)
+      if (fields[6] === String(inode) && fields.length > 7) socketPath = fields.slice(7).join(' ')
+    }
+  } catch (err) {
+    return fail(`cannot find the socket on descriptor ${fd}: ${getErrorMessage(err)}`)
+  }
+  if (socketPath === undefined || !path.isAbsolute(socketPath)) {
+    return fail(`the socket on descriptor ${fd} is not bound to a path`)
+  }
+  let node: Awaited<ReturnType<typeof fs.lstat>>
+  try {
+    node = await fs.lstat(socketPath)
+  } catch (err) {
+    return fail(`cannot read ${socketPath}: ${getErrorMessage(err)}`)
+  }
+  if (!node.isSocket()) return fail(`${socketPath} is not a socket`)
+  if (node.uid === uid) {
+    return fail(
+      `the GitHub gateway runs as uid ${uid}, which owns its socket ${socketPath} and so is the ` +
+        "worker's user: give the gateway unit User=canopy-github",
+    )
+  }
+  if ((node.mode & 0o077) !== 0) {
+    return fail(
+      `${socketPath} has mode ${(node.mode & 0o777).toString(8)}, so users besides its owner can ` +
+        'reach the gateway: give the socket unit SocketMode=0600',
+    )
+  }
+  return { check: 'socket-access', ok: true, detail: `${socketPath} is uid ${node.uid}'s alone` }
 }
 
 function rootOf(environment: SelfCheckEnvironment): string {

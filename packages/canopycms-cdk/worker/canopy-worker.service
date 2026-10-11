@@ -1,59 +1,66 @@
 [Unit]
 Description=CanopyCMS Worker Daemon
 After=network.target
-# Never run against an unmounted workspace filesystem (matches the deployed
-# copy of this unit, which cms-service.ts user-data writes with an fstab
-# entry for /mnt/efs).
+# Stopped before the gateway, so its drain runs while the gateway is up.
+After=canopy-github.socket canopy-github.service
+Requires=canopy-github.socket
+Wants=canopy-github.service
+# Never run against an unmounted /mnt/efs (user-data adds the fstab entry).
 RequiresMountsFor=/mnt/efs
 
 [Service]
 Type=simple
 User=ec2-user
 WorkingDirectory=/opt/canopy-worker
+# Namespaced binary, not bare `node`: AL2023 points /usr/bin/node at
+# an installed version through `alternatives`, and AWS documents that
+# selection as able to change at any time. node-22 always means 22.
 ExecStart=/usr/bin/node-22 index.js
 Restart=always
 RestartSec=5
 TimeoutStartSec=300
-# Stopping drains: SIGTERM reaches node ONLY (mixed), so the git children it
-# waits for keep running. Whatever is left when node exits, or at
-# TimeoutStopSec, is SIGKILLed; 120s outlasts the 90s drain and its abort grace.
+# Stopping drains: SIGTERM reaches node ONLY (mixed), so the git
+# children it waits for keep running. Whatever is left when node
+# exits, or at TimeoutStopSec, is SIGKILLed; 120s outlasts the 90s
+# drain and its abort grace.
 KillMode=mixed
 TimeoutStopSec=120
-# A worker that drained for an instance termination exits with 75; restarting
-# it would start work on an instance about to disappear.
+# A worker that drained for an instance termination exits with this;
+# restarting it would start work on an instance about to disappear.
 RestartPreventExitStatus=75
 SuccessExitStatus=75
 # File output, not journal: the CloudWatch agent cannot read journald,
-# so it tails this file instead (agent config lives in the cms-service.ts
-# user-data, which writes the deployed copy of this unit).
+# so it tails this file instead.
 # systemd opens append: targets as root, following symlinks, before it
-# applies the sandbox or drops to User=. So the worker must own neither the
-# file nor its directory: one that could swap worker.log for a symlink would
-# have its output appended to any file on the host as root. Hence no
-# LogsDirectory=, which chowns the directory to User=. Create both, root-owned,
-# BEFORE the first start (without the directory the exec fails with 209/STDOUT
-# and Restart=always crash-loops):
-#   install -d -o root -g root -m 0755 /var/log/canopy-worker
-#   install -o root -g root -m 0644 /dev/null /var/log/canopy-worker/worker.log
+# applies the sandbox or drops to User=. So the service must own neither
+# the file nor its directory: one that could swap the file for a symlink
+# would have its output appended to any file on the host as root.
+# Hence no LogsDirectory=, which chowns the directory to User=. Both are
+# created root-owned before the first start (user-data does), since
+# without the directory the start fails with 209/STDOUT. The service
+# writes through the descriptor systemd hands it.
 StandardOutput=append:/var/log/canopy-worker/worker.log
 StandardError=append:/var/log/canopy-worker/worker.log
-
-# The private GitHub mirror, /var/lib/canopy-worker on the root volume: the
-# only git repository the GitHub credential is used in. The worker does not
-# start without it.
+# The worker requires it; it holds nothing secret.
 StateDirectory=canopy-worker
-
-# Environment
 EnvironmentFile=/opt/canopy-worker/.env
-# The worker contract this unit provides (WORKER_CONTRACT_VERSION in
-# src/constructs/worker-lifecycle.ts); a bundle needing more refuses to start.
-Environment=CANOPYCMS_WORKER_CONTRACT=1
-
+# What this unit provides; a bundle needing more refuses to start.
+Environment=CANOPYCMS_WORKER_CONTRACT=2
+# The GitHub gateway, its only way to GitHub, the Clerk API and the
+# instance role.
+Environment=CANOPYCMS_GITHUB_GATEWAY_SOCKET=/run/canopy-github/gateway.sock
 # Sandbox. Writable: the workspace, the state dir (StateDirectory=) and a
 # private /tmp.
-# ProtectHome=tmpfs, not yes: every git call reads per-user files under $HOME
-# (~/.config/git/attributes, ignore), and an inaccessible /home makes each read
-# warn "Permission denied"; an empty one is a silent ENOENT.
+# ProtectHome=tmpfs, not yes: every git call reads per-user files under
+# $HOME (~/.config/git/attributes, ignore), and an inaccessible /home
+# makes each read warn "Permission denied"; an empty one is a silent
+# ENOENT. It also hides /run/user, so the worker cannot reach a user
+# manager of an operator logged in as its user.
+# Then the cut: no network but lo, no route to the instance metadata
+# service, only unix sockets, the journal and /dev/shm hidden, and no
+# core dumps. The worker checks at boot that the network cut took
+# effect (only lo, no route to the metadata service), and ProtectProc
+# and ProtectHome.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=tmpfs
@@ -73,6 +80,16 @@ LockPersonality=yes
 SystemCallArchitectures=native
 CapabilityBoundingSet=
 ReadWritePaths=/mnt/efs
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+PrivateIPC=yes
+InaccessiblePaths=-/run/dbus
+InaccessiblePaths=-/dev/shm
+InaccessiblePaths=-/var/log/journal
+InaccessiblePaths=-/run/log/journal
+SystemCallFilter=@system-service
+LimitCORE=0
 
 [Install]
 WantedBy=multi-user.target

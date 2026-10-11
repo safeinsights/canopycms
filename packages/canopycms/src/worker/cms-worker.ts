@@ -96,6 +96,8 @@ export {
   type GitHubGatewayServerOptions,
 } from './github-gateway-http'
 export { GitHubGatewayUnreachableError } from './github-gateway-wire'
+// A gateway that failed to boot still serves the instance operations.
+export { GatewayInstance, type GatewayInstanceOptions } from './gateway-instance'
 // The gateway process's scrubbed log lines, and the exact scrubs for the secrets it holds that
 // are not GitHub tokens (the auth provider's key, the App's private key). `redactEgress` scrubs
 // the cause a failed boot hands the worker.
@@ -368,9 +370,11 @@ export async function recordWorkerStartupFailure(options: {
   error: unknown
   lockStaleMs?: number
   /**
-   * Write nothing when the file already holds a `lastFatalError` this accepts: for a failure that
-   * only says the recorded cause is still in the way (the GitHub gateway unreachable while it
-   * restarts after its own fatal error), which must not replace that cause.
+   * Write nothing when the file is a failed start's own record (its `lastFatalError` was written
+   * by the worker that wrote the file) and this accepts that record: for a failure that only says
+   * the recorded cause is still in the way (the GitHub gateway unreachable while it restarts after
+   * its own fatal error), which must not replace that cause. A record a later worker carried
+   * forward is never kept: that worker got past it.
    */
   keepRecordedFatal?: (recorded: NonNullable<WorkerStatusReport['lastFatalError']>) => boolean
 }): Promise<void> {
@@ -386,7 +390,14 @@ export async function recordWorkerStartupFailure(options: {
     })
     const now = new Date().toISOString()
     const { lastFatalError, lastShutdown, baseHold } = await readCarriedFields(taskDir)
-    if (lastFatalError && options.keepRecordedFatal?.(lastFatalError)) return
+    if (
+      lastFatalError &&
+      options.keepRecordedFatal &&
+      lastFatalError.workerStartedAt === (await readWorkerStatusStartedAt(taskDir)) &&
+      options.keepRecordedFatal(lastFatalError)
+    ) {
+      return
+    }
     await writeWorkerStatus(taskDir, {
       version: 1,
       workerVersion: CANOPYCMS_VERSION,

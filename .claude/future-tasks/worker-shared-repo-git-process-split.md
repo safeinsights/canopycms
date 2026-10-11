@@ -1223,7 +1223,7 @@ the drain mapping, deadlines, and the self-check helpers.
     exit 1. A worker that finds the gateway away meanwhile (unreachable, or no `health` answer
     within 300 s) exits 1, leaving in place the gateway's own fatal error if it recorded one in
     the last 5 minutes, and recording the unreachable gateway otherwise. That window cannot cover
-    the 300 s timeout path ([worker-gateway-away-keep-window.md](worker-gateway-away-keep-window.md)).
+    the 300 s timeout path ([worker-gateway-away-keep-window.md](resolved/worker-gateway-away-keep-window.md)).
   - The gateway's SIGTERM: `drain(60 s)`, then exit 0. A running fetch job is not waited for; the
     cgroup kill takes it.
   - Three gateway operations: `authSnapshot` (D7: the gateway fetches with the Clerk key behind
@@ -1264,6 +1264,65 @@ the drain mapping, deadlines, and the self-check helpers.
   ([gateway-auth-snapshot-limits.md](gateway-auth-snapshot-limits.md)).
 - Open: dev still leaves a running fetch job behind on Ctrl-C
   ([worker-mirror-detached-work-drain.md](worker-mirror-detached-work-drain.md), item 1).
+
+**Carried from 6** (template):
+- Settled in 6:
+  - Contract 2 is `WORKER_CONTRACT_REQUIREMENTS`'s second entry. user-data reads the bundle's
+    `// canopy-worker-contract: N` (1–4 digits, within its first 5 lines, written by
+    `worker/build.ts` on the esbuild API) after the sha256 check: N ≥ 2 gets the split, anything
+    else the single unit stamped 1 (`SINGLE_PROCESS_UNIT_CONTRACT`). The units' text lives in
+    `src/constructs/worker-units.ts`; the checked-in copies equal it byte for byte (a test).
+  - The worker and the gateway both carry the owner, the repository and the base branch: the worker
+    reads them (`readRepoEnv`, the sync), and its contract stamp is its own `Environment=` line, as
+    the gateway's is. `gateway.env` alone holds the secrets' names, `AWS_REGION`,
+    `CANOPYCMS_PROTECTED_BRANCHES` and `CANOPYCMS_WORKER_CAPACITY`.
+  - No `BindsTo=`. On systemd 252 (container), a bound unit is stopped at its gateway's first exit
+    and stays stopped despite `Restart=always`; with `Requires=` it is restarted at every gateway
+    restart. The worker has `Requires=` on the socket only and `Wants=` on the service. Instead the
+    split worker retries `completeLifecycle` every 5 s for 100 s (`LIFECYCLE_RETRY_WINDOW_MS`;
+    with the drain and its grace, 195 s of the 210 s minimum heartbeat, which also absorbs
+    detecting the termination), each call bounded by what is left of the window, and the
+    failed-boot stand-in serves `termination` and `completeLifecycle` through a `GatewayInstance`
+    (core, extracted from the local gateway) under the same guards.
+  - The gateway's restart: `Restart=always`, `RestartSec=5`, `StartLimitIntervalSec=0` (in
+    `[Unit]`). systemd 252 has no `RestartSteps=` (the container's `verify` reports it unknown), so
+    the hold paces it to one attempt every 72 s (7 s of secret retries, the 60 s hold,
+    `RestartSec=5`); the container ran it for several cycles.
+    `TimeoutStopSec=150`, `KillMode=mixed`.
+  - The gateway's `socket-access` self-check, only under socket activation: `fstat` of descriptor 3
+    reports the sockfs inode (uid 0, mode 777 in the container), so the node is found by that inode
+    in `/proc/self/net/unix`; it refuses a node the gateway's uid owns, or with group or other bits.
+  - `sysctl -e -p` on `99-canopy.conf`: a missing key must not fail the boot; the boot checks prove
+    what the split rests on. `net.core.fb_tunnels_only_for_init_net` exists only in the initial
+    namespace, so a container cannot read it.
+  - `inspect-checks` asserts `/run/user` is an empty tmpfs mounted there, not a read-only one:
+    systemd 252 mounts `ProtectHome=tmpfs`'s `/run/user` writable (container).
+  - User data downloads the units and `canopy-inspect` as one asset,
+    `worker/dist/instance-files.sh` (`build:worker` writes it from `worker-units.ts`), checks its
+    sha256, unpacks it into the root-only `/run/canopy-instance-files` and installs what the
+    layout needs: the files alone (14 KB) would nearly fill EC2's 16,384-byte user-data cap.
+    Shell comments outside heredocs stay in the TypeScript, and synth refuses props whose user
+    data could exceed the cap (`addUserData`). Typical user data is about 7 KB.
+  - `.env` and `gateway.env` are each written once, for both layouts. `gateway.env` is created
+    `0600 root:root` before it is written; the split's branch makes it `0640 root:canopy-github`
+    after `useradd`; the single-process unit reads both files. This supersedes §4's
+    `install -g canopy-github`, round 2's F5 response, and §7's "nothing else".
+  - `GATEWAY_AWAY_KEEP_MS` is measured to when the worker began waiting, and core keeps only a failed
+    start's own record ([resolved](resolved/worker-gateway-away-keep-window.md)).
+- PR 7:
+  - the hand-install steps for the three units, `gateway.env.example` and `canopy-inspect`;
+  - "The worker instance" and the Security Model in full (PR 6 changed only the lines that became
+    wrong);
+  - `deploying-to-aws.md`'s `canopy-inspect` section, with the docs line on `nsenter`.
+- First deploy:
+  - `/proc/self/net/dev` under the real worker unit (fallback tunnels), and that
+    `fb_tunnels_only_for_init_net` reads 1;
+  - `core_pattern` is `core` and `suid_dumpable` 0 after boot (host-global; the gateway's check
+    proves only that `core_pattern` is not piped);
+  - the CloudWatch agent ships `gateway.log` (mode 0640 root) as the `{instance_id}-gateway` stream;
+  - EFS read/write from the worker unit, the App preflight, IMDS unreachable from the worker.
+- Open: the single-process path of the CDK entrypoint is unreachable from this bundle
+  ([worker-entrypoint-single-process-path.md](worker-entrypoint-single-process-path.md)).
 
 ## 9. Residual risks, and the Security Model afterwards
 
@@ -1373,7 +1432,9 @@ the drain mapping, deadlines, and the self-check helpers.
       - `/home` is empty;
       - `/proc/self/status` shows `NoNewPrivs: 1` and `Seccomp: 2`;
       - `id -u` is 1000;
-      - `/run/user` is an empty read-only tmpfs (`ProtectHome=tmpfs`, load-bearing per §5);
+      - `/run/user` is an empty tmpfs of the sandbox's own, read from `/proc/self/mountinfo`
+        (`ProtectHome=tmpfs`, load-bearing per §5; systemd 252 mounts it writable, PR 6's
+        container run);
       - `/dev/shm`, `/var/log/journal` and `/run/log/journal` are inaccessible;
       - `sudo -n true` fails.
     - **Never `nsenter` or `machinectl`.** Entering namespaces does not inherit seccomp,
@@ -1472,6 +1533,7 @@ The table becomes three columns: CMS Lambda, Worker, GitHub gateway.
 | `systemd-coredump` journals `COREDUMP_ENVIRON` even when `LimitCORE=0` refuses storage | Reviewer 10a: v252 `coredump.c` L368–376, L796, L915, L1280; kernel v6.1 `fs/coredump.c` L582, L645 (AL2023's `core_pattern` and `ec2-user`'s groups unverified) |
 | `cat-file --batch-check` prints `<oid> missing`; several `--contains` mean "any"; an orphan survives `repack --cruft` | Reviewer 10a on 2.50.1 |
 | **Needs a real deploy:** EFS I/O from a `PrivateNetwork` unit through efs-utils' proxy; IMDS on EC2 | §5 |
+| **PR 6 container run** (AL2023, systemd 252.23, git 2.50.1, node 22; the units and user data synthesized by the construct): every §5 and §9 R9 check, the planted-log-symlink restart (refused; the pre-#491 layout reproduces the root write), SEGV with canaries (no core, nothing journaled; the control under `LimitCORE=infinity` writes the token into its core), the `BindsTo=`/`Requires=` restart behaviour, `systemd-analyze security` 3.3 → 0.6 (worker) and 1.6 (gateway) | Run 2026-10-11; results in PR 6's body |
 
 ## 11. Decisions (made 2026-10-10, by the manager; D5 by JP)
 

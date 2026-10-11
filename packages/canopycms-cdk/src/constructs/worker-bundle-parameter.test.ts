@@ -16,6 +16,7 @@ import { aws_ecr as ecr, aws_lambda as lambda } from 'aws-cdk-lib'
 import { CanopyCmsService } from './cms-service'
 import { WORKER_CONTRACT_ENV, WORKER_CONTRACT_VERSION } from './worker-lifecycle'
 import type { CanopyCmsServiceProps } from './cms-service'
+import { shippedInstanceFile, shippedInstanceFilesSha256 } from '../../test-support/instance-files'
 import { newTestApp } from '../../test-support/test-synth'
 
 const PACKAGE_ROOT = path.join(__dirname, '../..')
@@ -235,9 +236,8 @@ describe('the bundle the npm package ships', () => {
         scripts: Record<string, string>
       }
     ).scripts['build:worker']
-    const target = '--outfile=worker/dist/index.js'
-    expect(script).toContain(target)
-    execFileSync('sh', ['-c', script.replace(target, `--outfile=${outfile}`)], {
+    expect(script).toBe('node --import tsx worker/build.ts')
+    execFileSync('sh', ['-c', `${script} ${outfile}`], {
       cwd: PACKAGE_ROOT,
       env: {
         ...process.env,
@@ -281,11 +281,16 @@ describe('the worker contract', () => {
   it.each([
     ['asset', assetMode],
     ['parameter', parameterMode],
-  ])('is stamped into the unit %s mode writes', (_mode, t) => {
+  ])('is stamped into the unit %s mode installs', (_mode, t) => {
     const conditions = Object.fromEntries(
       Object.keys(t.toJSON().Conditions ?? {}).map((id) => [id, true]),
     )
-    expect(userData(t, conditions)).toContain(stamp)
+    // The units come from the template's instance-files asset in both modes.
+    expect(userData(t, conditions)).toContain(
+      `echo '${shippedInstanceFilesSha256()}  /tmp/canopy-instance-files.sh' | sha256sum -c -`,
+    )
+    expect(shippedInstanceFile('canopy-worker.service')).toContain(stamp)
+    expect(shippedInstanceFile('canopy-github.service')).toContain(stamp)
   })
 
   it('is stamped into the checked-in unit', () => {
