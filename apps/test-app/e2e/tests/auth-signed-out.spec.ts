@@ -53,8 +53,7 @@ test.describe('Signed-out users (dev auth)', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
 
-    await page.getByRole('button', { name: 'Switch user' }).click()
-    await page.getByRole('button', { name: 'Sign out' }).click()
+    await editorPage.signOut()
 
     await expect(page.getByTestId('canopy-sign-in-screen')).toBeVisible()
   })
@@ -67,7 +66,7 @@ test.describe('Signed-out users (dev auth)', () => {
     const editorPage = new EditorPage(page)
     await editorPage.goto()
     await editorPage.waitForReady()
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
 
     const unsaved = `Lapsed-${Date.now()}`

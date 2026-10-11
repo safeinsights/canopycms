@@ -122,7 +122,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
       if (badgeVariant === 'filled') {
         // Filled badges: white background with dark text for maximum contrast
         avatarStyles = {
-          backgroundColor: 'white',
+          backgroundColor: 'var(--mantine-color-white)',
           color: 'var(--mantine-color-dark-6)',
         }
       } else if (badgeVariant === 'light') {
@@ -196,7 +196,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
               variant="transparent"
               onClick={() => onRemove(userId)}
               aria-label="Remove user"
-              style={{ color: 'white' }}
+              style={{ color: 'var(--mantine-color-white)' }}
             >
               <IconX size={12} stroke={2.5} />
             </ActionIcon>

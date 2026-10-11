@@ -54,9 +54,9 @@ test.describe('Admin System Health Panel', () => {
     })
 
     await test.step('System health menu item is absent from the DOM entirely', async () => {
-      const adminPage = new AdminPage(page)
-      await adminPage.openSettingsMenu()
-      await expect(adminPage.systemHealthMenuItem()).toHaveCount(0)
+      const editorPage = new EditorPage(page)
+      await editorPage.openSettingsMenu()
+      await expect(editorPage.settingsMenuItem('System health')).toHaveCount(0)
     })
 
     await test.step('the admin status endpoint 403s for an editor', async () => {

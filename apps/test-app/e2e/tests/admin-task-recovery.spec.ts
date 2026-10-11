@@ -54,9 +54,7 @@ test.describe('Admin Task Recovery', () => {
     // would be silently eaten and never actually run. This is the single
     // most important invariant in the recovery surface: getting it wrong
     // means "Retry" silently does nothing.
-    const notification = page.locator('.mantine-Notification-root', {
-      hasText: 'Task requeued as',
-    })
+    const notification = new EditorPage(page).notification('Task requeued as')
     await expect(notification).toBeVisible()
 
     await expect.poll(() => taskFileExists('failed', originalId)).toBe(false)

@@ -16,9 +16,7 @@ import {
  * "Manage Groups" / "Manage Permissions"): admin gating (D3), group CRUD
  * round trip (D1), and path-permission assignment round trip (D2).
  *
- * Selector strategy is documented in `../fixtures/settings-managers-page.ts`
- * — neither module carries `data-testid`s, so every locator here is
- * role/text based and was confirmed against the component source.
+ * Selector strategy is documented in `../fixtures/settings-managers-page.ts`.
  */
 test.describe('Permissions and Groups', () => {
   let editorPage: EditorPage
@@ -34,30 +32,29 @@ test.describe('Permissions and Groups', () => {
   test('D3: Settings menu items open their drawers for an admin; the underlying APIs 403 for a non-admin', async ({
     page,
   }) => {
+    const groupManager = new GroupManagerPage(page)
+    const permissionManager = new PermissionManagerPage(page)
+
     await test.step('open editor as admin', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
     })
 
     await test.step('as admin: both menu items are present and open their drawers', async () => {
-      await page.getByRole('button', { name: 'Settings' }).click()
-      await expect(page.getByRole('menuitem', { name: 'Manage Permissions' })).toBeVisible()
-      await expect(page.getByRole('menuitem', { name: 'Manage Groups' })).toBeVisible()
+      await editorPage.openSettingsMenu()
+      await expect(editorPage.settingsMenuItem('Permissions')).toBeVisible()
+      await expect(editorPage.settingsMenuItem('Groups')).toBeVisible()
 
-      await page.getByRole('menuitem', { name: 'Manage Permissions' }).click()
-      const permissionsDrawer = page.getByRole('dialog', { name: 'Permissions' })
+      await editorPage.settingsMenuItem('Permissions').click()
+      const permissionsDrawer = permissionManager.drawer
       await expect(permissionsDrawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(permissionsDrawer.getByRole('button', { name: 'Expand All' })).toBeVisible()
-      await page.keyboard.press('Escape')
-      await expect(permissionsDrawer).toBeHidden({ timeout: SHORT_TIMEOUT })
+      await permissionManager.close()
 
-      await page.getByRole('button', { name: 'Settings' }).click()
-      await page.getByRole('menuitem', { name: 'Manage Groups' }).click()
-      const groupsDrawer = page.getByRole('dialog', { name: 'Groups' })
-      await expect(groupsDrawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await groupManager.open()
+      const groupsDrawer = groupManager.drawer
       await expect(groupsDrawer.getByRole('tab', { name: 'Internal Groups' })).toBeVisible()
-      await page.keyboard.press('Escape')
-      await expect(groupsDrawer).toBeHidden({ timeout: SHORT_TIMEOUT })
+      await groupManager.close()
     })
 
     // NOTE (checked against source, not assumed): unlike "System health" —
@@ -75,20 +72,20 @@ test.describe('Permissions and Groups', () => {
       await page.reload()
       await editorPage.waitForReady()
 
-      await page.getByRole('button', { name: 'Settings' }).click()
-      await expect(page.getByRole('menuitem', { name: 'Manage Permissions' })).toBeVisible()
-      await expect(page.getByRole('menuitem', { name: 'Manage Groups' })).toBeVisible()
+      await editorPage.openSettingsMenu()
+      await expect(editorPage.settingsMenuItem('Permissions')).toBeVisible()
+      await expect(editorPage.settingsMenuItem('Groups')).toBeVisible()
 
-      await page.getByRole('menuitem', { name: 'Manage Permissions' }).click()
-      const permissionsDrawer = page.getByRole('dialog', { name: 'Permissions' })
+      await editorPage.settingsMenuItem('Permissions').click()
+      const permissionsDrawer = permissionManager.drawer
       await expect(permissionsDrawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
       // The drawer opens, but the load silently fails behind the scenes —
       // this is the "truthful" behavior: no access-denied messaging, just a
       // generic load failure (usePermissionManager.ts).
-      await expect(
-        page.locator('.mantine-Notification-root', { hasText: 'Failed to load permissions' }),
-      ).toBeVisible({ timeout: STANDARD_TIMEOUT })
-      await page.keyboard.press('Escape')
+      await expect(editorPage.notification('Failed to load permissions')).toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
+      await permissionManager.close()
     })
 
     await test.step('API contract: GET /permissions and GET /groups/internal both 403 for a non-admin', async () => {

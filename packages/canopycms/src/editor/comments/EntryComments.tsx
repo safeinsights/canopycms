@@ -61,7 +61,6 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
     return (
       <Box>
         <Button
-          size="xs"
           variant="subtle"
           color="gray"
           onClick={() => setShowCarousel(true)}

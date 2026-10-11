@@ -1,11 +1,12 @@
 import React, { useId } from 'react'
 
-import { Paper, Stack, Text } from '@mantine/core'
+import { Paper, Stack } from '@mantine/core'
 
 import type { FieldConfig, InlineGroupFieldConfig } from '../../config'
 import { formatCanopyPath } from '../canopy-path'
 import type { RenderField } from './ObjectField'
-import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { groupDescriptionProps } from './FieldDescription'
+import { FieldLabel } from './FieldLabel'
 
 export interface InlineGroupFieldProps {
   label?: string
@@ -32,23 +33,13 @@ export const InlineGroupField: React.FC<InlineGroupFieldProps> = ({
   return (
     <Paper
       withBorder
-      radius="md"
       p="md"
       bg="gray.0"
       shadow="xs"
       {...groupDescriptionProps(descriptionBaseId, description)}
     >
       <Stack gap="sm">
-        {(label || description) && (
-          <Stack gap={2}>
-            {label && (
-              <Text size="xs" fw={700} c="dimmed">
-                {label}
-              </Text>
-            )}
-            <FieldDescription baseId={descriptionBaseId} description={description} />
-          </Stack>
-        )}
+        <FieldLabel label={label} description={description} descriptionBaseId={descriptionBaseId} />
         <Stack gap="sm">
           {fields.map((field) => {
             // Nested inline groups are also transparent — pass the same parent value/onChange

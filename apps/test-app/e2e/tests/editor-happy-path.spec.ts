@@ -30,19 +30,18 @@ test.describe('Editor Happy Path', () => {
     await expect(editorPage.previewPane).toBeVisible()
   })
 
-  test('can open entry navigator', async ({ page }) => {
+  test('can open entry navigator', async () => {
     await editorPage.goto()
     await editorPage.waitForReady()
 
-    await editorPage.openEntryNavigator()
-    await expect(editorPage.entryNavigator).toBeVisible()
+    await editorPage.openContentNavigator()
+    await expect(editorPage.contentNavigator).toBeVisible()
 
     // Should show Home Page entry in the tree (label comes from content title)
-    await expect(editorPage.entryNavigator.locator('text="Home Page"')).toBeVisible()
+    await expect(editorPage.contentNavigator.locator('text="Home Page"')).toBeVisible()
 
     // Check the data-testid matches the label
-    const homeItem = page.locator('[data-testid="entry-nav-item-home-page"]')
-    await expect(homeItem).toBeVisible()
+    await expect(editorPage.navigatorItem('Home Page')).toBeVisible()
   })
 
   test('complete edit workflow: load → select → edit → save → verify', async () => {
@@ -51,7 +50,7 @@ test.describe('Editor Happy Path', () => {
     await editorPage.waitForReady()
 
     // Step 2: Open entry navigator and select Home Page entry
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
 
     // Step 3: Wait for form to load and verify title field exists
@@ -74,7 +73,7 @@ test.describe('Editor Happy Path', () => {
     // First, make an edit
     await editorPage.goto()
     await editorPage.waitForReady()
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
 
     const testValue = `Reload-Test-${Date.now()}`

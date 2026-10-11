@@ -96,12 +96,7 @@ export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
           <Text size="sm" fw={500} c="dimmed">
             Manage your internal groups
           </Text>
-          <Button
-            size="xs"
-            variant="light"
-            leftSection={<IconPlus size={14} />}
-            onClick={onCreateGroup}
-          >
+          <Button variant="light" leftSection={<IconPlus size={14} />} onClick={onCreateGroup}>
             Create Group
           </Button>
         </Group>

@@ -9,6 +9,8 @@ export interface StringListFieldProps {
   value: string[]
   onChange: (value: string[]) => void
   dataCanopyField?: string
+  /** Shows the value without accepting edits. */
+  readOnly?: boolean
 }
 
 /**
@@ -24,6 +26,7 @@ export const StringListField: React.FC<StringListFieldProps> = ({
   value,
   onChange,
   dataCanopyField,
+  readOnly = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -35,7 +38,10 @@ export const StringListField: React.FC<StringListFieldProps> = ({
       description={description}
       value={value}
       size="sm"
-      onChange={onChange}
+      readOnly={readOnly}
+      onChange={(next) => {
+        if (!readOnly) onChange(next)
+      }}
       // Faithful generic-list semantics, not tag ergonomics: no comma-splitting
       // ("New York, NY" stays one item) and duplicates are legitimate list
       // data — TagsInput's defaults would break both, so existing file data

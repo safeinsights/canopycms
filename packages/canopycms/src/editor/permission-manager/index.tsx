@@ -203,10 +203,10 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
       )}
 
       <Group gap="xs" pb="sm">
-        <Button size="xs" variant="subtle" onClick={expandAll}>
+        <Button variant="subtle" onClick={expandAll}>
           Expand All
         </Button>
-        <Button size="xs" variant="subtle" onClick={collapseAll}>
+        <Button variant="subtle" onClick={collapseAll}>
           Collapse All
         </Button>
       </Group>
@@ -259,10 +259,16 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
           gap="sm"
           style={{ borderTop: '1px solid var(--mantine-color-gray-3)' }}
         >
-          <Button variant="subtle" color="neutral" onClick={handleDiscard} disabled={isSaving}>
+          <Button
+            size="sm"
+            variant="subtle"
+            color="neutral"
+            onClick={handleDiscard}
+            disabled={isSaving}
+          >
             Discard Changes
           </Button>
-          <Button onClick={handleSave} loading={isSaving} disabled={isSaving}>
+          <Button size="sm" onClick={handleSave} loading={isSaving} disabled={isSaving}>
             Save Permissions
           </Button>
         </Group>

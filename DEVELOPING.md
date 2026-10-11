@@ -1218,6 +1218,10 @@ Both budgets run in CI and in the pre-commit hook. Each script's header comment 
 - `--write-baseline` on either script rewrites its budget file from actuals, `--margin=<pct>` adds headroom, and a rewrite that would raise any number is refused without `--allow-raise`: a raise is a reviewed decision stated in the commit message.
 - For a comment-only change, `node scripts/diff-comments-only.mjs <git-range>` proves nothing but TypeScript comments changed by comparing parser token streams on both sides; its header lists what else must match.
 
+### Editor UX Checks
+
+`pnpm lint:ux-copy` and `pnpm lint:a11y` ratchet editor copy and accessibility; [docs/ux-guidelines.md](docs/ux-guidelines.md#enforcement) has the rules and the fix workflow.
+
 ### Account-ID Check
 
 `pnpm lint:account-ids` fails when a tracked file's text or path holds a value that could be an AWS account id, because this repository is public. It runs in CI and in the pre-commit hook. Name an account by its role, read it from the environment, or use one of the placeholders in [scripts/check-account-ids.mjs](scripts/check-account-ids.mjs), whose header states the matching rules and the two exemptions. Known gaps: [account-id-guard-gaps.md](.claude/future-tasks/account-id-guard-gaps.md).
@@ -1363,3 +1367,4 @@ pnpm --filter canopycms storybook
 - `.claude/agents/test.md` — test runner
 - `.claude/agents/typecheck.md` — type checker
 - `.claude/agents/review.md` — code review
+- `.claude/agents/ux-review.md` — editor UX review

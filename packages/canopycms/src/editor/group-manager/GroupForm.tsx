@@ -51,10 +51,12 @@ export const GroupForm: React.FC<GroupFormProps> = ({
           rows={3}
         />
         <Group justify="flex-end" gap="sm">
-          <Button variant="subtle" onClick={onClose}>
+          <Button size="sm" variant="subtle" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={onSave}>{editingGroup ? 'Save' : 'Create'}</Button>
+          <Button size="sm" onClick={onSave}>
+            {editingGroup ? 'Save' : 'Create'}
+          </Button>
         </Group>
       </Stack>
     </Modal>

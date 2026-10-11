@@ -1488,9 +1488,7 @@ describe('Editor integration', () => {
     // Submit is hidden entirely (not just disabled) on the protected branch.
     expect(screen.queryByTestId('submit-button')).toBeNull()
 
-    // Wait for the entry to load, then dirty it -- Save must stay disabled
-    // despite unsaved changes, proving branchReadOnly overrides the normal
-    // hasUnsavedChanges enable logic.
+    // The form is read-only: typing writes no draft, so Save stays disabled.
     let input: HTMLInputElement
     await waitFor(() => {
       const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
@@ -1721,8 +1719,10 @@ describe('Editor integration', () => {
     })
     fireEvent.change(input!, { target: { value: 'Modified title' } })
 
-    // Save stays disabled despite the edit -- writeBlocked's absence must
-    // fail closed, not read as "server says go ahead".
+    // writeBlocked's absence fails closed, not as "server says go ahead": the
+    // form is read-only, the edit writes no draft, and Save stays disabled.
+    expect(input!.readOnly).toBe(true)
+    expect(readPersistedDrafts('main')).not.toHaveProperty('def456ABC123')
     await waitFor(() => {
       const saveButton = screen.getByTestId('save-button')
       expect(saveButton.hasAttribute('disabled')).toBe(true)

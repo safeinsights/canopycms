@@ -479,9 +479,9 @@ Top-level components and helpers:
 - `Editor.tsx` — the composition root
 - `EditorPanes.tsx` — pane layout
 - `EntryNavigator.tsx` — collection and entry tree, with per-collection conflict badges
-- `FormRenderer.tsx` — schema-driven form dispatch, including `group` and string-list cases; a boundary per field
+- `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
-- `CommentsPanel.tsx` — comment panel
+- `CommentsPanel.tsx` — comments
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group and permission modals
 - `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; see [Preview Bridge](#preview-bridge)
 - `unavailable-entry-type.ts` — unavailable-entry-type wording
@@ -494,9 +494,12 @@ Top-level components and helpers:
 - `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
 - `preview-marks.ts` — `findInexactMarks`, for `hooks/usePreviewMarks.ts`
 - `client-reference-resolver.ts` — resolves preview references at any depth, batched
-- `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
-- `theme.tsx` — Mantine theme helpers
+- `relative-time.ts` — `formatRelativeTime`
+- `theme.tsx` — theme, default control sizes
+- `branch-status.ts` — shared status label/colour map
+- `copy.ts` — fixed action verbs
 - `utils/env.ts` — `getNotificationDuration`, longer under test
+- `utils/confirm-modal.ts` — `openConfirm`, confirm dialogs at `sm`
 - `utils/editor-errors.ts` — `reportEditorError` (one logging point), `formatErrorDetails`
 - `test-setup.ts` / `setup-test-dom.ts` — vitest DOM setup for editor suites
 
@@ -520,11 +523,11 @@ Manager hooks, in `editor/hooks/` — see
 - `create-branch-request.ts` — `requestBranchCreate`: create under a 90 s deadline, settling by the branch list
 - `useEntryManager.ts` — entry loading/saving, `readEntryValue`, `listAllEntries` cursors
 - `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; verifies restored drafts
-- `useSchemaManager.ts` — schema mutations, returning result objects rather than booleans
+- `useSchemaManager.ts` — schema mutations, returning result objects
 - `useCommentSystem.ts` — comment CRUD
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
 - `user-metadata-batcher.ts` — `createUserMetadataBatcher`: a render's badge lookups as one `POST /users/batch`
-- `useEditorLayout.ts` — panel layout
+- `useEditorLayout.ts` — persisted layout prefs
 - `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and SWR-backed user metadata
 - `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
@@ -541,12 +544,13 @@ Field components, in `editor/fields/`:
 - `mdx-jsx-support.tsx` — JSX plugins; round-trip guard
 - `markdown-fidelity-visitors.ts` — round-trip fixes
 - `CodeField.tsx` — code and Mermaid field
-- `ObjectField.tsx` — nested object field, with a Clear control when optional and filled
+- `ObjectField.tsx` — nested object; Clear when optional and filled
 - `InlineGroupField.tsx` — renders `type: 'group'` as a bordered container, transparent to the data path
-- `BlockField.tsx` — page blocks
+- `BlockField.tsx` — blocks
 - `ReferenceField.tsx` — reference picker
 - `ImageField.tsx` — structured image field, storing the raw `AssetRecord.src`
-- `MdxImageDialog.tsx` — image insert dialog for markdown
+- `MdxImageDialog.tsx` — image dialog
+- `FieldLabel.tsx` — label row with comment/action slots
 - `FieldDescription.tsx` — `description` without Mantine's native prop
 - `entry-link/EntryLinkContext.tsx` — context supplying `EntryLinkOption[]` to toolbar components
 - `entry-link/InsertEntryLink.tsx` — toolbar entry picker, inserting `[Title](entry:ID)`
@@ -566,7 +570,7 @@ Comments UI, in `editor/comments/`:
 
 - `BranchComments.tsx` / `EntryComments.tsx` — branch-level and entry-level threads
 - `InlineCommentThread.tsx` / `ThreadCarousel.tsx` — thread rendering and navigation
-- `FieldWrapper.tsx` — wraps a field so it can carry comments
+- `FieldWrapper.tsx` — wraps a field to carry comments
 
 Media UI, in `editor/media/`:
 
