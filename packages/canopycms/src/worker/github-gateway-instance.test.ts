@@ -205,14 +205,17 @@ describe.each<Reach>(['in-process', 'socket'])('the instance operations, %s', (r
       expect(watch).toHaveBeenCalledTimes(1)
     })
 
-    it('logs a failed watch, answers null, and starts the watch again on the next call', async () => {
+    it('logs a failed watch, answers null once the poll has waited, and starts the watch again on the next call', async () => {
       const watch = vi
         .fn<() => Promise<GatewayTerminationNotice>>()
         .mockRejectedValueOnce(new Error('IMDS timed out'))
         .mockResolvedValueOnce(SPOT)
-      const github = await gateway({ watchTermination: watch })
+      const github = await gateway({ watchTermination: watch, terminationPollWaitMs: 200 })
 
+      const asked = performance.now()
       expect(await github.termination()).toBeNull()
+      // Paced: a client polling in a loop must not restart a failing watch as fast as it can ask.
+      expect(performance.now() - asked).toBeGreaterThanOrEqual(150)
       expect(await github.termination()).toEqual(SPOT)
 
       expect(watch).toHaveBeenCalledTimes(2)
@@ -236,6 +239,7 @@ describe.each<Reach>(['in-process', 'socket'])('the instance operations, %s', (r
         watchTermination: async () => {
           throw Object.assign(new Error('Forbidden'), { status: 403 })
         },
+        terminationPollWaitMs: 50,
       })
 
       expect(await github.termination()).toBeNull()
@@ -337,6 +341,7 @@ describe.each<Reach>(['in-process', 'socket'])('the instance operations, %s', (r
         completeLifecycle: async () => {
           throw Object.assign(new Error('Forbidden'), { status: 403 })
         },
+        terminationPollWaitMs: 50,
       })
       await github.termination()
 

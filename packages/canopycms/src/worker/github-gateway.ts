@@ -627,7 +627,9 @@ class LocalGitHubGateway implements GitHubGateway {
         watchTermination === undefined
           ? pollEnds
           : (this.terminationWatch ??= this.startTerminationWatch(watchTermination))
-      return await untilAborted(Promise.race([watch, pollEnds]), signal)
+      // A failed watch (null) still waits out the poll, so a client polling in a loop is paced.
+      const noticed = watch.then((notice) => notice ?? pollEnds)
+      return await untilAborted(Promise.race([noticed, pollEnds]), signal)
     } finally {
       clearTimeout(timer)
     }
