@@ -15,10 +15,11 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
  * against the component source, not guessed:
  *  - Both drawers are plain Mantine `<Drawer title={...}>` (not the
  *    compound Drawer.Root API used by the entry navigator), so the
- *    dialog's accessible name is the concatenation of the bold title and
- *    the dimmed description underneath it (Editor.tsx) — `getByRole`'s
- *    default substring match on just "Groups" / "Permissions" is
- *    deliberate, not a shortcut.
+ *    dialog's accessible name is the concatenation of the bold title, the
+ *    "Unsaved changes" badge while dirty, and the dimmed description
+ *    (components/StagedChangesDrawer.tsx) — `getByRole`'s default
+ *    substring match on just "Groups" / "Permissions" is deliberate, not a
+ *    shortcut.
  *  - GroupForm's modal fields are real `<label>`-associated Mantine
  *    TextInput/Textarea ("Group Name" / "Description") — `getByLabel`.
  *  - PermissionEditor's group-search input is a raw `<input
@@ -56,12 +57,24 @@ export class GroupManagerPage {
   }
 
   get discardButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Discard Changes' })
+    return this.drawer.getByRole('button', { name: 'Discard changes' })
   }
 
   /** The (unique) group name text within the drawer's Internal Groups list. */
   groupEntry(name: string): Locator {
     return this.drawer.getByText(name, { exact: true })
+  }
+
+  /** The internal-group card whose name is `name`: the nearest Paper around it (the drawer is a Paper too). */
+  groupCard(name: string): Locator {
+    return this.groupEntry(name).locator(
+      'xpath=ancestor::*[contains(@class, "mantine-Paper-root")][1]',
+    )
+  }
+
+  /** The "Discard unsaved changes?" confirm that closing a dirty drawer opens. */
+  get discardConfirm(): Locator {
+    return this.page.getByRole('dialog', { name: 'Discard unsaved changes?' })
   }
 
   /**
@@ -75,7 +88,7 @@ export class GroupManagerPage {
     await expect(modal).toBeVisible({ timeout: SHORT_TIMEOUT })
     await modal.getByLabel('Group Name').fill(name)
     await modal.getByLabel('Description').fill(description)
-    await modal.getByRole('button', { name: 'Create', exact: true }).click()
+    await modal.getByRole('button', { name: 'Add', exact: true }).click()
     await expect(modal).toBeHidden({ timeout: SHORT_TIMEOUT })
   }
 
@@ -157,7 +170,7 @@ export class PermissionManagerPage {
   }
 
   get discardButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Discard Changes' })
+    return this.drawer.getByRole('button', { name: 'Discard changes' })
   }
 
   /**

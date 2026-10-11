@@ -10,13 +10,16 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { mockConsole, type MockConsole } from '../test-utils'
+import {
+  mockConsole,
+  serverRequestOption,
+  useLocalGitHubGateway,
+  type MockConsole,
+} from '../test-utils'
 import { readHeadBranch } from '../utils/git'
 import { CmsWorker, type CmsWorkerConfig } from './cms-worker'
 
 type WorkerInternals = {
-  buildGitHubUrl: () => Promise<string>
-  octokit: unknown
   baseBranch: string
 }
 
@@ -66,9 +69,10 @@ function makeWorker(extra: Partial<CmsWorkerConfig> = {}): CmsWorker {
     gitSyncInterval: 60_000,
     ...extra,
   })
-  const internals = worker as unknown as WorkerInternals
-  internals.buildGitHubUrl = async () => githubFixture
-  internals.octokit = { repos: { get: reposGet } }
+  useLocalGitHubGateway(worker, {
+    remoteUrl: async () => githubFixture,
+    octokit: { repos: { get: reposGet } },
+  })
   return worker
 }
 
@@ -85,7 +89,11 @@ describe('CmsWorker base branch', () => {
   it("detects GitHub's default branch on first boot and records it as remote.git HEAD", async () => {
     expect(await boot(makeWorker())).toBe('production')
 
-    expect(reposGet).toHaveBeenCalledWith({ owner: 'test-owner', repo: 'test-repo' })
+    expect(reposGet).toHaveBeenCalledWith({
+      owner: 'test-owner',
+      repo: 'test-repo',
+      ...serverRequestOption(),
+    })
     expect(await readHeadBranch(remoteGitPath)).toBe('production')
   })
 
@@ -130,6 +138,40 @@ describe('CmsWorker base branch', () => {
     } finally {
       await worker.stop()
     }
+  })
+
+  describe('the warning for a base branch the gateway does not protect', () => {
+    const warnings = () =>
+      consoleSpy
+        .all()
+        .warn.filter((line) => line.includes("the GitHub gateway's policy does not protect it"))
+
+    it("warns when the detected base is neither configured nor GitHub's default", async () => {
+      await simpleGit().raw(['clone', '-q', '--bare', githubFixture, remoteGitPath])
+      await simpleGit().raw(['--git-dir', remoteGitPath, 'symbolic-ref', 'HEAD', 'refs/heads/main'])
+
+      expect(await boot(makeWorker())).toBe('main')
+
+      expect(warnings()).toHaveLength(1)
+      expect(warnings()[0]).toContain("The base branch 'main'")
+    })
+
+    it("does not warn for a listed base, nor for one that is GitHub's default", async () => {
+      await simpleGit().raw(['clone', '-q', '--bare', githubFixture, remoteGitPath])
+      await simpleGit().raw(['--git-dir', remoteGitPath, 'symbolic-ref', 'HEAD', 'refs/heads/main'])
+
+      expect(await boot(makeWorker({ protectedBranches: ['ma*'] }))).toBe('main')
+      await simpleGit().raw([
+        '--git-dir',
+        remoteGitPath,
+        'symbolic-ref',
+        'HEAD',
+        'refs/heads/production',
+      ])
+      expect(await boot(makeWorker())).toBe('production')
+
+      expect(warnings()).toEqual([])
+    })
   })
 
   it('refuses to report a base branch before start() has resolved one', () => {

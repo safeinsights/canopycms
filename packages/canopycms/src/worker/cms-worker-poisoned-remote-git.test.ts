@@ -11,14 +11,13 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import { readHeadBranch } from '../utils/git'
 import { CmsWorker, type CmsWorkerConfig } from './cms-worker'
+import type { GitHubGateway } from './github-gateway'
 
 type Internals = {
   ensureRemoteGit(): Promise<void>
-  buildGitHubUrl(): Promise<string>
-  octokit: unknown
   baseBranch: string
 }
 
@@ -51,7 +50,7 @@ afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
 
-function makeWorker(extra: Partial<CmsWorkerConfig> = {}): CmsWorker {
+function makeWorker(extra: Partial<CmsWorkerConfig> = {}, octokit?: object): CmsWorker {
   const worker = new CmsWorker({
     workspacePath,
     githubOwner: 'test-owner',
@@ -62,7 +61,7 @@ function makeWorker(extra: Partial<CmsWorkerConfig> = {}): CmsWorker {
     gitSyncInterval: 60_000,
     ...extra,
   })
-  ;(worker as unknown as Internals).buildGitHubUrl = async () => githubFixture
+  useLocalGitHubGateway(worker, { remoteUrl: async () => githubFixture, octokit })
   return worker
 }
 
@@ -70,11 +69,10 @@ const internals = (worker: CmsWorker) => worker as unknown as Internals
 
 /** A worker with no base branch configured, whose GitHub reports `defaultBranch`. */
 function unconfigured(defaultBranch: string, extra: Partial<CmsWorkerConfig> = {}): CmsWorker {
-  const worker = makeWorker({ ...extra, baseBranch: undefined })
-  internals(worker).octokit = {
-    repos: { get: vi.fn(async () => ({ data: { default_branch: defaultBranch } })) },
-  }
-  return worker
+  return makeWorker(
+    { ...extra, baseBranch: undefined },
+    { repos: { get: vi.fn(async () => ({ data: { default_branch: defaultBranch } })) } },
+  )
 }
 
 /** Commit `file` in the seed repo on its current branch and return the commit. */
@@ -284,7 +282,7 @@ describe('a poisoned remote.git that is kept', () => {
 
   it('when GitHub cannot be fetched, and deletes nothing', async () => {
     const worker = makeWorker()
-    internals(worker).buildGitHubUrl = async () => path.join(tmpDir, 'no-such-repo.git')
+    useLocalGitHubGateway(worker, { remoteUrl: async () => path.join(tmpDir, 'no-such-repo.git') })
 
     await expect(internals(worker).ensureRemoteGit()).rejects.toThrow(
       /has no branch 'main'.*and it was not replaced/s,
@@ -320,10 +318,12 @@ describe('a poisoned remote.git that is kept', () => {
     await commit('permissions.json')
     const worker = makeWorker()
     // Resolved after the first listing, inside the seed: the Lambda pushing as it runs.
-    internals(worker).buildGitHubUrl = async () => {
-      await push(remoteGitPath, 'HEAD:refs/heads/canopycms-settings-prod')
-      return githubFixture
-    }
+    useLocalGitHubGateway(worker, {
+      remoteUrl: async () => {
+        await push(remoteGitPath, 'HEAD:refs/heads/canopycms-settings-prod')
+        return githubFixture
+      },
+    })
 
     await expect(internals(worker).ensureRemoteGit()).rejects.toThrow(
       /refs changed while the worker seeded its replacement/,
@@ -346,6 +346,66 @@ describe('a poisoned remote.git that is kept', () => {
     await expect(internals(makeWorker()).ensureRemoteGit()).rejects.toThrow(
       /planted\.key.*This needs an operator: .*config was tampered with/s,
     )
+    expect(await workspaceEntries()).toEqual(['remote.git'])
+  })
+})
+
+describe('the replacement decision follows what the seed holds', () => {
+  /**
+   * A worker whose gateway's mirror is moved by `move` the moment each fetch has answered: what
+   * another fetch, or a prune, would do to the mirror before a check that asked it.
+   */
+  function movedAfterFetch(move: (mirror: string) => Promise<void>): CmsWorker {
+    const stateDirectory = path.join(tmpDir, 'state')
+    const worker = makeWorker({ stateDirectory })
+    const github = (worker as unknown as { github(): GitHubGateway }).github()
+    const fetch = github.fetch.bind(github)
+    vi.spyOn(github, 'fetch').mockImplementation(async (request, signal) => {
+      const answered = await fetch(request, signal)
+      await move(path.join(stateDirectory, 'github.git'))
+      return answered
+    })
+    return worker
+  }
+
+  it('replaces remote.git when its ref was on GitHub as fetched, though the mirror then loses it', async () => {
+    await commit('one.md')
+    await push(githubFixture, 'main')
+    await seed.raw(['checkout', '-b', 'feature'])
+    const onGitHub = await commit('feature.md')
+    await push(githubFixture, 'HEAD:refs/heads/feature')
+    await push(remoteGitPath, 'HEAD:refs/heads/feature')
+    const worker = movedAfterFetch((mirror) =>
+      simpleGit().raw(['--git-dir', mirror, 'update-ref', '-d', 'refs/heads/feature']).then(),
+    )
+
+    await internals(worker).ensureRemoteGit()
+
+    expect(await refsIn(remoteGitPath)).toEqual(['refs/heads/feature', 'refs/heads/main'])
+    expect(
+      (
+        await simpleGit().raw(['--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/feature'])
+      ).trim(),
+    ).toBe(onGitHub)
+    expect(await workspaceEntries()).toEqual(['remote.git'])
+  })
+
+  it('keeps remote.git when its ref was not on GitHub as fetched, though the mirror then gains it', async () => {
+    await commit('one.md')
+    await push(githubFixture, 'main')
+    await seed.raw(['checkout', '-b', 'local'])
+    const onlyHere = await commit('local.md')
+    await push(remoteGitPath, 'HEAD:refs/heads/local')
+    const worker = movedAfterFetch((mirror) =>
+      simpleGit()
+        .raw(['--git-dir', mirror, 'fetch', '-q', remoteGitPath, `${onlyHere}:refs/heads/sneaked`])
+        .then(),
+    )
+
+    await expect(internals(worker).ensureRemoteGit()).rejects.toThrow(
+      /will not replace it: refs\/heads\/local\./,
+    )
+    expect(await refsIn(remoteGitPath)).toEqual(['refs/heads/local'])
     expect(await workspaceEntries()).toEqual(['remote.git'])
   })
 })

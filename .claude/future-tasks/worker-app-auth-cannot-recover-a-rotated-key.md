@@ -56,7 +56,7 @@ token early is not confirmed.
 2. **A re-read seam for the App path.** On a failure, re-read the key secret, with the same floor
    and unchanged-value guard as the PAT, and rebuild the `createAppAuth` instance when the key
    changed. Core would have to swap `octokitAuth` and `mintInstallationToken` together.
-   `worker-context.ts`'s INVARIANT and the Octokit that `ensureGitHubAuth()` memoizes both bear on
+   `worker-context.ts`'s INVARIANT and the Octokit that `createLocalGitHubGateway` builds once both bear on
    how.
 3. **Force a re-mint (`refresh: true`) on a failure, behind a floor.** This covers the
    early-revocation case but not key rotation.

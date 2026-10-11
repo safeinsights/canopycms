@@ -41,6 +41,15 @@ describe('usePermissionManager', () => {
     expect(result.current.permissionsLoading).toBe(false)
   })
 
+  it('keeps handleListGroups stable across re-renders, so the group list does not reload', () => {
+    const { result, rerender } = renderHook(() => usePermissionManager({ isOpen: false }), {
+      wrapper,
+    })
+    const first = result.current.handleListGroups
+    rerender()
+    expect(result.current.handleListGroups).toBe(first)
+  })
+
   it('loads permissions when isOpen becomes true', async () => {
     const mockPermissions = [
       {

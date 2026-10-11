@@ -2,7 +2,7 @@
  * The worker never pushes the base branch or GitHub's default branch, whatever a task asks.
  * The task queue, `remote.git` and a branch's `historyRewrittenFrom` lease marker are all on the
  * shared workspace, which the CMS Lambda can write, so the refusal cannot depend on any of them.
- * "GitHub" here is a local bare repository; `buildGitHubUrl` points at it.
+ * "GitHub" here is a local bare repository; the worker's GitHub gateway points at it.
  */
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -12,8 +12,9 @@ import { simpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
-import { initTestRepo, mockConsole } from '../test-utils'
+import { fixtureCredential, initTestRepo, mockConsole, useLocalGitHubGateway } from '../test-utils'
 import { CmsWorker } from './cms-worker'
+import { BranchPolicy } from './branch-policy'
 import { GitHubMirror, RefusedPushError } from './github-mirror'
 
 describe('the worker refuses to push protected branches', () => {
@@ -74,7 +75,7 @@ describe('the worker refuses to push protected branches', () => {
       githubToken: 'fake-token',
       baseBranch,
     })
-    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () => github
+    useLocalGitHubGateway(worker, { remoteUrl: () => github })
     ;(worker as unknown as { running: boolean }).running = true
     await worker.processTaskQueue()
   }
@@ -154,6 +155,27 @@ describe('the worker refuses to push protected branches', () => {
     expect((await failedErrors())[0]).toMatch(/Refusing to push "production" to GitHub/)
   })
 
+  it("refuses a detected base branch that is not GitHub's default, which the gateway does not protect", async () => {
+    await commitInRemoteGit('production', 'on-main')
+    const worker = new CmsWorker({
+      workspacePath,
+      githubOwner: 'o',
+      githubRepo: 'r',
+      githubToken: 'fake-token',
+    })
+    // As start() would after reading remote.git's HEAD: detected, so the gateway was given no base.
+    ;(worker as unknown as { setBaseBranch(name: string): void }).setBaseBranch('production')
+    useLocalGitHubGateway(worker, { remoteUrl: () => github })
+    ;(worker as unknown as { running: boolean }).running = true
+    await queuePush('production')
+
+    await worker.processTaskQueue()
+
+    expect(await failedErrors()).toEqual([expect.stringMatching(/Refusing to push "production"/)])
+    expect(await listTasks(taskDir, 'pending')).toHaveLength(0)
+    await expect(githubLog('production')).rejects.toThrow()
+  })
+
   it('refuses a name that is not a plain branch name before any git reads it', async () => {
     await commitInRemoteGit('main', 'on-main')
     await queuePush('x:main')
@@ -186,11 +208,14 @@ describe('the worker refuses to push protected branches', () => {
     const sha = (
       await simpleGit().raw(['--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/main'])
     ).trim()
-    const mirror = new GitHubMirror(path.join(tmp, 'state'), remoteGitPath, 30_000)
+    const mirror = new GitHubMirror(path.join(tmp, 'state'), 30_000)
 
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(github, 'main', sha, { lease: githubTip, protectedBranches: [] }),
+        m.pushToGitHub(fixtureCredential(github), 'main', sha, {
+          lease: githubTip,
+          policy: new BranchPolicy(),
+        }),
       ),
     ).rejects.toBeInstanceOf(RefusedPushError)
     expect(await githubLog('main')).toBe('A: base')

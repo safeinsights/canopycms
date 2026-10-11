@@ -2450,9 +2450,10 @@ describe('CanopyCmsService: deploymentName validation', () => {
  * here refused `cdk synth` for an adopter whose default branch is
  * `release/v2`. The first entry below is the regression test for that.
  *
- * These live here rather than in a cross-package fixture because there is no
- * runtime counterpart to drift from: nothing in `canopycms` validates a branch
- * name, the worker uses the string as given.
+ * These are git's rules, which have no runtime counterpart in the worker. The
+ * GitHub gateway's narrower name rules (`branchNameProblem`, which a settings
+ * branch and every `protectedBranches` entry also take) have their own tests
+ * below.
  */
 const VALID_BRANCH_NAMES = [
   'release/v2',
@@ -2529,6 +2530,63 @@ describe('CanopyCmsService: baseBranch validation', () => {
     const all = workerUserDataBlobs(synth(false))
     expect(all).toContain('CANOPYCMS_GITHUB_REPO=')
     expect(all).not.toContain('CANOPYCMS_BASE_BRANCH')
+  })
+})
+
+describe('CanopyCmsService: names the GitHub gateway refuses', () => {
+  it.each([
+    ['a leading heads/', 'heads/settings'],
+    ['non-ASCII', 'r\u00e9glages'],
+    ['a percent sign', 'settings%x'],
+  ])('refuses a settingsBranch with %s, which the gateway would never push', (_label, value) => {
+    expect(() => synth(false, { settingsBranch: value })).toThrow(/invalid settingsBranch/)
+  })
+
+  it('refuses a baseBranch longer than 255 characters, which the gateway refuses as a PR base', () => {
+    expect(() => synth(false, { baseBranch: 'b'.repeat(256) })).toThrow(/invalid baseBranch/)
+    expect(() => synth(false, { baseBranch: 'b'.repeat(255) })).not.toThrow()
+  })
+})
+
+describe('CanopyCmsService: protectedBranches', () => {
+  it('stamps the entries, comma-separated, into the worker .env', () => {
+    const all = workerUserDataBlobs(
+      synth(false, { protectedBranches: ['release/*', 'production', '*-stable'] }),
+    )
+    expect(all).toContain('CANOPYCMS_PROTECTED_BRANCHES=release/*,production,*-stable')
+  })
+
+  it('stamps nothing when the prop is unset or empty', () => {
+    expect(workerUserDataBlobs(synth(false))).not.toContain('CANOPYCMS_PROTECTED_BRANCHES')
+    expect(workerUserDataBlobs(synth(false, { protectedBranches: [] }))).not.toContain(
+      'CANOPYCMS_PROTECTED_BRANCHES',
+    )
+  })
+
+  it.each([
+    ['a comma', 'a,b', /comma/],
+    ['a glob character other than *', 'release-[0-9]', /\[/],
+    ['a question mark', 'release-?', /\?/],
+    ['a leading refs/', 'refs/heads/main', /refs\//],
+    ['a leading heads/', 'heads/main', /heads\//],
+    ['a glob only settings branches could match', 'canopycms-settings-*', /match nothing/],
+    ['a leading tags/', 'tags/*', /tags\//],
+    ['a leading remotes/ in another case', 'Remotes/x', /remotes\//],
+    ['a percent sign', 'a%2fb', /%/],
+    ['non-ASCII', 'caf\u00e9', /printable ASCII/],
+    ['an empty entry', '', /empty/],
+    ['dot-dot', 'release/*..x', /\.\./],
+  ])('refuses an entry with %s at synth', (_label, entry, why) => {
+    expect(() => synth(false, { protectedBranches: [entry] })).toThrow(
+      /invalid protectedBranches entry/,
+    )
+    expect(() => synth(false, { protectedBranches: [entry] })).toThrow(why)
+  })
+
+  it('names a refused glob as written, not with its wildcards replaced', () => {
+    expect(() => synth(false, { protectedBranches: ['release/*.lock'] })).toThrow(
+      '"release/*.lock"',
+    )
   })
 })
 

@@ -30,6 +30,8 @@ import {
 } from './canopy-state'
 import { hasPendingHistoryRewrite } from './history-rewrite'
 import { runRebaseCycle, type RebaseContext } from './rebase'
+import { describeMove } from './github-gateway'
+import { fetchGitHubIntoRemoteGit, pushToGitHub } from './github-transfer'
 import { cleanupOldTasks } from '../task-queue/cms-task-queue'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
@@ -68,7 +70,7 @@ import type { WorkerContext } from './worker-context'
  * `remote.git`'s `refs/heads/*` toward what the fetch above put in the tracking
  * namespace; reorder them and every branch rebases onto the PREVIOUS cycle's
  * base tip -- not corrupting, but silently a cycle behind.
- * (`pushSettingsBranches` consuming `trackedNames` is a DATA dependency its
+ * (`pushSettingsBranches` consuming `trackedTips` is a DATA dependency its
  * signature already enforces; `refreshBaseBranchWorkspace` and the two sweeps
  * are order-independent.)
  *
@@ -85,8 +87,7 @@ export type GitSyncContext = Pick<
   | 'taskDir'
   | 'taskTimeoutMs'
   | 'log'
-  | 'buildGitHubUrl'
-  | 'githubMirror'
+  | 'github'
   | 'ensureSettingsBranch'
   | 'ensureStatusReport'
   | 'isRunning'
@@ -135,8 +136,10 @@ interface TrackedBranchSummary {
 
 /**
  * Push THIS deployment's own settings branch (`ensureSettingsBranch()`) from
- * remote.git to GitHub. Non-fatal: a no-op push for an up-to-date branch just
- * succeeds quietly.
+ * remote.git to GitHub. Non-fatal. Skipped when `trackedTips`, GitHub's tips
+ * as fetched this cycle, already has the local head, so an unchanged branch
+ * costs no GitHub round trip; every push that does happen still passes the
+ * refusal checks in `MirrorSession.pushToGitHub`.
  *
  * Narrowed to that ONE branch, never every local `canopycms-settings-*`:
  * `reconcileTrackedBranches` creates local heads for branches that exist on
@@ -147,7 +150,7 @@ interface TrackedBranchSummary {
 export async function pushSettingsBranches(
   ctx: GitSyncContext,
   git: ReturnType<typeof simpleGit>,
-  trackedNames: ReadonlySet<string>,
+  trackedTips: ReadonlyMap<string, string>,
 ): Promise<void> {
   try {
     const settingsBranch = ctx.ensureSettingsBranch()
@@ -180,7 +183,7 @@ export async function pushSettingsBranches(
     // With this deployment's own branch also missing, the API and this worker
     // have resolved different deploymentNames, and every settings change the
     // API commits is stranded in remote.git forever.
-    const strandedLocal = foreign.filter((b) => !trackedNames.has(b))
+    const strandedLocal = foreign.filter((b) => !trackedTips.has(b))
     if (strandedLocal.length > 0) {
       workerLogWarn(
         ownBranchMissing
@@ -202,20 +205,33 @@ export async function pushSettingsBranches(
     }
 
     try {
-      // `git` is remote.git, read for the commit to send; the push itself runs in the
-      // worker's private mirror, which alone ever sees the credential.
-      const sha = (await git.revparse(['--verify', `refs/heads/${settingsBranch}`])).trim()
-      const githubUrl = await ctx.buildGitHubUrl()
-      await ctx.githubMirror().exclusive((mirror) =>
-        mirror.pushToGitHub(githubUrl, settingsBranch, sha, {
-          signal: ctx.shutdownSignal(),
-          protectedBranches: [ctx.baseBranch],
-        }),
-      )
-      workerLog(`Pushed settings branch ${settingsBranch} to GitHub`)
+      // `git` is remote.git, read for the commit to send; the push itself goes through the
+      // GitHub gateway, which alone ever sees the credential.
+      const readSha = async () =>
+        (await git.revparse(['--verify', `refs/heads/${settingsBranch}`])).trim()
+      const sha = await readSha()
+      const outcome =
+        trackedTips.get(settingsBranch) === sha
+          ? null
+          : (
+              await pushToGitHub(
+                ctx,
+                {
+                  branch: settingsBranch,
+                  prerequisiteBranches: [settingsBranch],
+                },
+                readSha,
+                ctx.shutdownSignal(),
+              )
+            ).outcome
+      if (outcome?.moved) {
+        workerLog(`Pushed settings branch ${settingsBranch} to GitHub (${describeMove(outcome)})`)
+      } else {
+        ctx.log.debug(`Settings branch ${settingsBranch} already up to date on GitHub`)
+      }
     } catch (err) {
-      // Non-fatal: the branch may already be up to date, and this call site has
-      // no task to throw a PermanentTaskError into (unlike pushBranchToGitHub).
+      // Non-fatal: this call site has no task to throw a PermanentTaskError
+      // into (unlike pushBranchToGitHub).
       // A non-fast-forward rejection here still gets its own wording: it means
       // another deployment's worker already pushed ITS OWN state to this
       // settings-branch name on GitHub -- an actual collision, not just the
@@ -273,7 +289,8 @@ async function reconcileTrackedBranches(
   git: ReturnType<typeof simpleGit>,
 ): Promise<{
   summary: TrackedBranchSummary
-  trackedNames: Set<string>
+  /** GitHub's tip per branch, as this cycle's fetch left it in the tracking namespace. */
+  trackedTips: ReadonlyMap<string, string>
   /**
    * The schema gate's state for the base branch, or undefined when this cycle could not classify
    * the base and the previous state stands.
@@ -430,15 +447,15 @@ async function reconcileTrackedBranches(
     )
   }
 
-  // trackedNames is returned alongside the summary rather than folded into it:
-  // it is a working set for pushSettingsBranches' stranded-branch check, and
+  // trackedTips is returned alongside the summary rather than folded into it:
+  // it is a working set for pushSettingsBranches, and
   // listing every branch on GitHub would bloat worker-status.json for no reader.
   // A base GitHub no longer has can be held for nothing.
   if (!tracked.has(ctx.baseBranch)) baseHold = { hold: undefined }
 
   return {
     summary: { created, fastForwarded, ahead, diverged, rewritten },
-    trackedNames: new Set(tracked.keys()),
+    trackedTips: tracked,
     baseHold,
   }
 }
@@ -451,7 +468,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
   workerLog('Syncing git...')
   const cycleStartedAt = Date.now()
   // remote.git's config is Lambda-writable: every git here runs pinned (worker/shared-repo-git.ts),
-  // and everything that carries the credential runs in the worker's private mirror instead.
+  // and everything that carries the credential runs in the GitHub gateway's state directory instead.
   const git = sharedRepoGit(ctx.remoteGitPath, 'bare', {
     // DEP-H1: a hung git would stall the sync loop forever (scheduleLoop only
     // reschedules after completion). Inactivity-based, so a slow-but-flowing
@@ -487,28 +504,20 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     } catch (err) {
       workerLogWarn(`remote.git maintenance failed: ${getErrorMessage(err)}`)
     }
-    try {
-      await ctx.githubMirror().maintain()
-    } catch (err) {
-      workerLogWarn(`GitHub mirror maintenance failed: ${getErrorMessage(err)}`)
-    }
-
     if (stoppedForDrain(ctx, 'the GitHub fetch')) return
 
-    // Into the mirror, then into remote.git's GITHUB_TRACKING_REF_PREFIX namespace rather than
-    // refs/heads/* -- see that constant's doc comment for the destructive-fetch bug this avoids.
-    // Both are killed at the drain deadline; a killed ref update leaves the ref as it was or
+    // Into remote.git's GITHUB_TRACKING_REF_PREFIX namespace rather than refs/heads/* -- see that
+    // constant's doc comment for the destructive-fetch bug this avoids. Aborted at the drain
+    // deadline: the wait for the gateway's GitHub fetch, which runs on detached, then the gateway's
+    // bundle, the unbundle and the ref update; a killed ref update leaves each ref as it was or
     // fully moved.
-    const githubUrl = await ctx.buildGitHubUrl()
-    await ctx.githubMirror().exclusive(async (mirror) => {
-      await mirror.fetchFromGitHub(githubUrl, ctx.shutdownSignal())
-      await mirror.publishTrackingRefs(ctx.shutdownSignal())
-    })
+    const { needsOperator } = await fetchGitHubIntoRemoteGit(ctx, ctx.shutdownSignal())
     workerLog('Fetched from GitHub')
+    if (needsOperator !== null) workerLogError(needsOperator)
 
     const {
       summary: trackedSummary,
-      trackedNames,
+      trackedTips,
       baseHold,
     } = await reconcileTrackedBranches(ctx, git)
     // Recorded at once, so a step below that throws still persists the hold through the catch.
@@ -519,11 +528,9 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     }
 
     // Push settings branches to GitHub (belt-and-suspenders for task queue).
-    // Ensures settings reach GitHub even if a task queue entry is lost.
-    // Ordering relative to the fetch/reconcile above is no longer a
-    // correctness dependency now that the fetch can't clobber refs/heads/*
-    // -- this could run before or after them just as safely.
-    await pushSettingsBranches(ctx, git, trackedNames)
+    // Ensures settings reach GitHub even if a task queue entry is lost. After
+    // the fetch, whose tips (`trackedTips`) let it skip a branch GitHub holds.
+    await pushSettingsBranches(ctx, git, trackedTips)
 
     if (stoppedForDrain(ctx, 'the base-branch refresh')) return
     const baseRefresh = await refreshBaseBranchWorkspace(ctx)
@@ -546,6 +553,10 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     const report = ctx.ensureStatusReport()
     report.lastGitSyncAt = new Date().toISOString()
     delete report.lastGitSyncError
+    // Recorded once the cycle has done everything it can, so System health shows it.
+    if (needsOperator !== null) {
+      report.lastGitSyncError = { message: needsOperator, at: report.lastGitSyncAt }
+    }
     report.lastGitSync = {
       durationMs: Date.now() - cycleStartedAt,
       rebased: rebaseSummary.rebased,
@@ -568,7 +579,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     const report = ctx.ensureStatusReport()
     // [REDACT] Persisted to worker-status.json and served to the browser
     // by the admin panel -- a fetch/push failure's message can embed the
-    // bot token via buildGitHubUrl().
+    // bot token from the gateway's git URL.
     report.lastGitSyncError = {
       message: redactCredentials(getErrorMessage(err)),
       at: new Date().toISOString(),

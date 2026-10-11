@@ -55,7 +55,7 @@ export const GroupForm: React.FC<GroupFormProps> = ({
             Cancel
           </Button>
           <Button size="sm" onClick={onSave}>
-            {editingGroup ? 'Save' : 'Create'}
+            {editingGroup ? 'Apply' : 'Add'}
           </Button>
         </Group>
       </Stack>

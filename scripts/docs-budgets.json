@@ -88,13 +88,13 @@
     },
     "docs/adopter-migration.md": {
       "historyMarkers": null,
-      "maxSectionWords": 4994,
-      "words": 9871
+      "maxSectionWords": 5267,
+      "words": 10144
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 1329,
-      "words": 5717
+      "maxSectionWords": 1357,
+      "words": 5745
     },
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,
@@ -178,8 +178,8 @@
     },
     "packages/canopycms/src/worker/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 265,
-      "words": 636
+      "maxSectionWords": 295,
+      "words": 705
     }
   }
 }

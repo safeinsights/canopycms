@@ -13,11 +13,12 @@ summary: >-
 The mirror lives on the worker's 8 GiB root volume (`StateDirectory=`), and the worker warns once
 when it passes 2 GiB. None of these matters for a docs-site repository; each matters for a big one.
 
-- **Cruft never expires.** `repackBareRemoteIfNeeded` runs `repack -a -d --cruft` with no
-  `--cruft-expiration`, so every rebased-away commit and every staged-then-refused push object
-  stays in the mirror. That is also what makes `GitHubMirror.maintain()` safe outside the session
-  lock: an expiring repack could delete an object between a staging fetch's quick check and the
-  push. Expiring cruft means moving `maintain()` back under `exclusive()`.
+- **Cruft never expires.** `maintainMirror` (worker/github-mirror-upkeep.ts) runs
+  `repack -a -d --cruft` with no `--cruft-expiration`, so every rebased-away commit and every
+  staged-then-refused push object stays in the mirror. That is also what lets maintenance run
+  beside sessions under its mutex alone: an expiring repack could delete an object a session or a
+  quarantine is using. Expiring cruft needs another way to keep those alive; maintenance must
+  never take a session, because a rebuild holds one while it waits on the mutex.
 - **fsck on an old history.** A publish fetches its commit from `remote.git` with
   `fetch.fsckObjects=true`. upload-pack sends everything not reachable from the mirror's own refs,
   so a branch forked from a commit GitHub no longer references (a deleted branch) re-sends that
@@ -27,13 +28,16 @@ when it passes 2 GiB. None of these matters for a docs-site repository; each mat
   but `git fetch` ends with a connectivity walk that prints nothing. Around 0.2 s per 20k objects
   locally; a repository of millions of objects could exceed `taskTimeoutMs` on a new instance's
   first fetch, every cycle. A longer, dedicated timeout for a mirror with no refs would remove it.
-- **Seeding size.** An empty mirror seeds from `remote.git`, which the Lambda can fill; the
-  volume is then the limit. The same Lambda can already fill EFS, so this is DoS of the same class.
+- **Bundle size.** A pushed bundle is capped (1 GiB by default, `maxBundleBytes`) and taken in
+  one at a time, and the mirror no longer reads `remote.git` at all, so the Lambda cannot fill the
+  root volume through it. An outgoing bundle (one pending at a time) is as large as what the
+  caller's `have` lacks: the whole repository for a seed.
 
 ## Added 2026-10-10: a full fetch per instance after the process split
 
 [worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md) moves the
-mirror into a gateway that cannot see EFS. The mirror is on the root volume, and every bundle
+mirror into a gateway that cannot see EFS; PR 2a already stopped it reading `remote.git`, in
+single-process mode too. The mirror is on the root volume, and every bundle
 roll replaces the instance, so a new gateway can no longer seed itself from `remote.git`: it
 fetches the whole repository from GitHub once per instance, and the first seed's bundle sits
 beside the mirror until the worker downloads it. Measure both on a large repository when the

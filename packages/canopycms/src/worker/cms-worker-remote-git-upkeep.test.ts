@@ -9,14 +9,13 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
-import { mockConsole, type MockConsole } from '../test-utils'
+import { mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import { CmsWorker } from './cms-worker'
 import { ensureRemoteGitConfig } from '../git-manager'
 
 type WorkerInternals = {
   ensureRemoteGit(): Promise<void>
   syncGit(): Promise<void>
-  buildGitHubUrl(): string
   running: boolean
 }
 
@@ -75,7 +74,7 @@ function makeWorker(): WorkerInternals {
     baseBranch: 'main',
   })
   const internals = worker as unknown as WorkerInternals
-  internals.buildGitHubUrl = () => githubPath
+  useLocalGitHubGateway(worker, { remoteUrl: () => githubPath })
   internals.running = true
   return internals
 }

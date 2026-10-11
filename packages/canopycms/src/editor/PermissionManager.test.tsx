@@ -108,10 +108,33 @@ describe('PermissionManager', () => {
     mockOnListGroups = vi.fn().mockResolvedValue(mockGroups)
   })
 
+  describe('group loading', () => {
+    it('loads groups only while open, not on re-renders while closed', async () => {
+      const first = vi.fn().mockResolvedValue(mockGroups)
+      const props = { collections: mockCollections, permissions: mockPermissions, canEdit: true }
+      const { rerender } = render(
+        <PermissionManager opened={false} onClose={vi.fn()} {...props} onListGroups={first} />,
+        { wrapper },
+      )
+      // A parent re-render hands over a fresh function each time.
+      const second = vi.fn().mockResolvedValue(mockGroups)
+      rerender(
+        <PermissionManager opened={false} onClose={vi.fn()} {...props} onListGroups={second} />,
+      )
+      expect(first).not.toHaveBeenCalled()
+      expect(second).not.toHaveBeenCalled()
+
+      rerender(<PermissionManager opened onClose={vi.fn()} {...props} onListGroups={second} />)
+      await waitFor(() => expect(second).toHaveBeenCalledTimes(1))
+    })
+  })
+
   describe('rendering', () => {
     it('renders with permissions', () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -130,6 +153,8 @@ describe('PermissionManager', () => {
     it('renders loading state', () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={[]}
           canEdit={true}
@@ -147,6 +172,8 @@ describe('PermissionManager', () => {
     it('renders read-only warning for non-admin users', () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={false}
@@ -165,6 +192,8 @@ describe('PermissionManager', () => {
     it('shows content node by default', () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -181,6 +210,8 @@ describe('PermissionManager', () => {
     it('expands and shows child nodes when content is expanded', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -202,6 +233,8 @@ describe('PermissionManager', () => {
     it('expands all nodes when Expand All clicked', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -224,6 +257,8 @@ describe('PermissionManager', () => {
     it('collapses all nodes when Collapse All clicked', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -304,6 +339,8 @@ describe('PermissionManager', () => {
 
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={nestedCollections}
           permissions={[]}
           canEdit={true}
@@ -346,6 +383,8 @@ describe('PermissionManager', () => {
     it('shows permission editor when node is clicked', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -379,6 +418,8 @@ describe('PermissionManager', () => {
     it('shows group badges on nodes with permissions', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -405,6 +446,8 @@ describe('PermissionManager', () => {
     it('shows user badges on nodes with user permissions', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -433,6 +476,8 @@ describe('PermissionManager', () => {
     it('loads groups on mount when canEdit is true', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -451,6 +496,8 @@ describe('PermissionManager', () => {
     it('does not load groups when canEdit is false', () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={false}
@@ -469,6 +516,8 @@ describe('PermissionManager', () => {
 
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -491,6 +540,8 @@ describe('PermissionManager', () => {
     it('shows group search panel when Add Groups clicked', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -539,6 +590,8 @@ describe('PermissionManager', () => {
 
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -590,6 +643,8 @@ describe('PermissionManager', () => {
     it('filters groups as user types', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -634,6 +689,8 @@ describe('PermissionManager', () => {
     it('closes search panel when Cancel clicked', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -676,6 +733,8 @@ describe('PermissionManager', () => {
     it('shows user search panel when Add User clicked', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -714,6 +773,8 @@ describe('PermissionManager', () => {
       try {
         render(
           <PermissionManager
+            opened
+            onClose={vi.fn()}
             collections={mockCollections}
             permissions={mockPermissions}
             canEdit={true}
@@ -771,6 +832,8 @@ describe('PermissionManager', () => {
 
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -817,6 +880,8 @@ describe('PermissionManager', () => {
     it('saves changes and calls onSave', async () => {
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -882,6 +947,8 @@ describe('PermissionManager', () => {
 
       render(
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
@@ -972,6 +1039,8 @@ describe('PermissionManager + usePermissionManager (group loading failures)', ()
       const { handleListGroups } = usePermissionManager({ isOpen: true })
       return (
         <PermissionManager
+          opened
+          onClose={vi.fn()}
           collections={[]}
           permissions={[]}
           canEdit={true}

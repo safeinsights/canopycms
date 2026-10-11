@@ -14,6 +14,7 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
 import { CmsWorker, recordWorkerStartupFailure } from './cms-worker'
+import { GitHubGatewayStoppingError, GitHubGatewayUnreachableError } from './github-gateway-wire'
 import { enqueueTask } from '../task-queue/cms-task-queue'
 import {
   readCarriedOverStatus,
@@ -21,7 +22,7 @@ import {
   WORKER_STATUS_FILE,
 } from '../task-queue/worker-status'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import type { Task } from '../task-queue/cms-task-queue'
 import type { WorkerStatusReport } from '../types'
 
@@ -31,7 +32,6 @@ type DrainInternals = {
   trackOperation(label: string, operation: Promise<void>): Promise<void>
   executeTask(task: Task, signal: AbortSignal): Promise<Record<string, unknown>>
   pushBranchToGitHub(branch: string, signal?: AbortSignal): Promise<void>
-  buildGitHubUrl(): Promise<string>
 }
 
 const internals = (worker: CmsWorker) => worker as unknown as DrainInternals
@@ -164,6 +164,53 @@ describe('CmsWorker.stop() drains the task queue', () => {
     await successor.stop()
   })
 
+  it.each([
+    ['cannot be reached while the worker drains, releases the task', true, false, true],
+    ['cannot be reached otherwise, retries the task as any transient failure', false, false, false],
+    [
+      'answers it is stopping, releases the task, whether or not the worker drains',
+      false,
+      true,
+      true,
+    ],
+  ])('when the GitHub gateway %s', async (_, draining, gatewayStopping, released) => {
+    const worker = makeWorker(5_000)
+    const w = internals(worker)
+    await w.acquireLock()
+    w.running = true
+    let fail: ((err: unknown) => void) | null = null
+    w.executeTask = () => new Promise((_resolve, reject) => (fail = reject))
+
+    const id = await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: 'a' } })
+    const processing = w.trackOperation('task queue', worker.processTaskQueue())
+    expect(await waitFor(() => fail !== null)).toBe(true)
+    const stopping = draining ? worker.stop({ reason: 'test shutdown' }) : null
+    fail!(
+      gatewayStopping
+        ? new GitHubGatewayStoppingError(
+            'The GitHub gateway is stopping: it no longer takes requests',
+          )
+        : new GitHubGatewayUnreachableError('Could not reach the GitHub gateway: ECONNREFUSED'),
+    )
+    await processing
+    await stopping
+
+    const pending = await readTaskFile(taskDir, 'pending', id)
+    expect(pending?.status).toBe('pending')
+    if (released) {
+      expect(pending?.retryCount ?? 0).toBe(0)
+      expect(consoleSpy).toHaveWarned(
+        gatewayStopping
+          ? /The GitHub gateway is stopping; released task/
+          : /out of reach while the worker drains; released task/,
+      )
+    } else {
+      expect(pending?.retryCount).toBe(1)
+      expect(consoleSpy).toHaveErrored(/Could not reach the GitHub gateway/)
+    }
+    if (!draining) await worker.stop({ reason: 'test' })
+  })
+
   it('aborts at once, with no drain, when the worker lock is compromised', async () => {
     const worker = new CmsWorker({
       workspacePath: tmpDir,
@@ -277,7 +324,7 @@ describe("CmsWorker.stop() kills an aborted task's git push", () => {
       drainDeadlineMs: 300,
     })
     const w = internals(worker)
-    w.buildGitHubUrl = async () => githubFixture
+    useLocalGitHubGateway(worker, { remoteUrl: async () => githubFixture })
     await w.acquireLock()
     w.running = true
     const taskDir = path.join(workspacePath, '.tasks')
@@ -312,7 +359,7 @@ describe("CmsWorker.stop() kills an aborted task's git push", () => {
       githubToken: 'fake-token',
     })
     const w = internals(worker)
-    w.buildGitHubUrl = async () => githubFixture
+    useLocalGitHubGateway(worker, { remoteUrl: async () => githubFixture })
 
     const controller = new AbortController()
     setTimeout(() => controller.abort(), 300)
@@ -399,7 +446,7 @@ describe('CmsWorker.syncGit() while draining', () => {
       githubToken: 'fake-token',
       baseBranch: 'main',
     })
-    internals(worker).buildGitHubUrl = async () => fixtureRemote
+    useLocalGitHubGateway(worker, { remoteUrl: async () => fixtureRemote })
     internals(worker).running = true
 
     await worker.syncGit()
@@ -419,10 +466,12 @@ describe('CmsWorker.syncGit() while draining', () => {
       baseBranch: 'main',
     })
     // The drain begins while the GitHub fetch is under way.
-    internals(worker).buildGitHubUrl = async () => {
-      void worker.stop({ reason: 'test' })
-      return fixtureRemote
-    }
+    useLocalGitHubGateway(worker, {
+      remoteUrl: async () => {
+        void worker.stop({ reason: 'test' })
+        return fixtureRemote
+      },
+    })
     internals(worker).running = true
 
     await worker.syncGit()
@@ -441,7 +490,7 @@ describe('CmsWorker.syncGit() while draining', () => {
       githubToken: 'fake-token',
       baseBranch: 'main',
     })
-    internals(worker).buildGitHubUrl = async () => fixtureRemote
+    useLocalGitHubGateway(worker, { remoteUrl: async () => fixtureRemote })
     internals(worker).running = true
     ;(worker as unknown as { shutdownController: AbortController }).shutdownController.abort()
 
@@ -487,7 +536,7 @@ describe('lastShutdown across a worker replacement', () => {
       taskPollInterval: 10_000,
       gitSyncInterval: 10_000,
     })
-    internals(worker).buildGitHubUrl = async () => githubFixture
+    useLocalGitHubGateway(worker, { remoteUrl: async () => githubFixture })
     return worker
   }
 
