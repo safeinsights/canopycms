@@ -88,7 +88,8 @@ replaces each `next` with its number.
 | 113  | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
 | 113  | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
 | next | Worker   | [GitHub objects cross as bundles](#the-worker-moves-objects-between-github-and-remotegit-as-bundles)                                                                                        | None                         |
-| next | Editing  | [Comments name their people for every editor](#comments-name-their-people-for-every-editor--behaviour-change-on-the-comments-api)                                                           | Direct API callers           |
+| next | Editing  | [Comments and branches name their people](#comments-and-branches-name-their-people-for-every-editor--behaviour-change-on-two-apis)                                                          | Direct API callers           |
+| next | Editing  | [Branches drawer and comment replies](#the-branches-drawer-shows-one-action-per-branch-and-comments-reply-in-place)                                                                         | Editor UI tests              |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -287,14 +288,22 @@ group dialog's buttons read "Add" and "Apply", since neither saves.
 
 **To adopt.** Nothing.
 
-### Comments name their people for every editor — **behaviour change on the comments API**
+### Comments and branches name their people for every editor — **behaviour change on two APIs**
 
 **What changed.** (next) `GET /:branch/comments` adds `users`: the id, name and avatar URL, never
-the email, of everyone who wrote or resolved a thread the requester may read. Every editor, not
-only admins and reviewers, now sees those names. Your auth plugin answers through the
-`/users/batch` cache; a failed lookup leaves the names out.
+the email, of everyone who wrote or resolved a thread the requester may read. `GET /branches` adds
+the same for each listed branch's creator, but not its access list. Every editor now sees those
+names. Your auth plugin answers through the `/users/batch`
+cache; a failed lookup leaves the names out.
 
-**To adopt.** Nothing, unless you call the comments API yourself: read `data.users`.
+**To adopt.** Nothing, unless you call either API yourself: read `data.users`.
+
+### The Branches drawer shows one action per branch, and comments reply in place
+
+**What changed.** (next) The drawer lists the open branch first, with one action per card and the
+rest in a "…" menu, in the editor's vocabulary. A thread's Reply opens a box under it.
+
+**To adopt.** Nothing, unless your browser tests click the old drawer buttons or labels.
 
 ### Field editing: descriptions, list-card titles, and `public/` images
 
