@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
+import net from 'node:net'
 import path from 'node:path'
 import { PassThrough, type Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -70,7 +71,7 @@ const MAX_FETCH_JOBS = 64
 /** The most fetch jobs running at once. */
 const MAX_RUNNING_FETCH_JOBS = 8
 
-/** How long a refused push's unread body may keep its connection, after the answer. */
+/** How long a request may go on sending a body after its answer, before it is cut off. */
 const DISCARD_BODY_MS = 10_000
 
 /** The most connections the server holds at once. */
@@ -163,7 +164,10 @@ async function assertPrivateDirectory(dir: string): Promise<void> {
   }
 }
 
-/** Remove a socket a stopped gateway of this user's left at `socketPath`; refuse anything else. */
+/**
+ * Remove a socket a stopped gateway of this user's left at `socketPath`. Refuse anything else: a
+ * file that is not a socket, someone else's, or one a running gateway still answers on.
+ */
 async function removeStaleSocket(socketPath: string): Promise<void> {
   let stat: Awaited<ReturnType<typeof fs.lstat>>
   try {
@@ -178,7 +182,24 @@ async function removeStaleSocket(socketPath: string): Promise<void> {
       `Refusing to serve the GitHub gateway at ${socketPath}: something else is there`,
     )
   }
+  if (await isServed(socketPath)) {
+    throw new Error(
+      `Refusing to serve the GitHub gateway at ${socketPath}: a gateway already serves there`,
+    )
+  }
   await fs.unlink(socketPath)
+}
+
+/** Whether something accepts a connection on the socket at `socketPath`. */
+function isServed(socketPath: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const socket = net.connect(socketPath)
+    socket.once('connect', () => {
+      socket.destroy()
+      resolve(true)
+    })
+    socket.once('error', () => resolve(false))
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +333,7 @@ class GatewayRequestHandler {
         await this.startFetch(req, res)
       } else if (route.startsWith(`${FETCH_ROUTE}/`)) {
         assertMethod(req, 'GET')
-        await this.pollFetch(route.slice(FETCH_ROUTE.length + 1), url, res)
+        await this.pollFetch(route.slice(FETCH_ROUTE.length + 1), url, req, res)
       } else if (route.startsWith(`${BUNDLE_ROUTE}/`)) {
         assertMethod(req, 'GET')
         await this.bundle(route.slice(BUNDLE_ROUTE.length + 1), res)
@@ -333,7 +354,7 @@ class GatewayRequestHandler {
     const input = parseRequest(requests[op], await readJsonBody(req), op)
     const run = this.runners[op] as (input: unknown, signal: AbortSignal) => Promise<unknown>
     const value = await run(input, signal)
-    sendJson(res, 200, { value: parseAnswer(answers[op], value, op) })
+    sendJson(req, res, 200, { value: parseAnswer(answers[op], value, op) })
   }
 
   private async push(
@@ -371,7 +392,7 @@ class GatewayRequestHandler {
     }
     try {
       const answer = await this.gateway.push(request, body, signal)
-      sendJson(res, 200, { value: parseAnswer(pushAnswer, answer, 'push') })
+      sendJson(req, res, 200, { value: parseAnswer(pushAnswer, answer, 'push') })
     } finally {
       if (body !== undefined) req.unpipe(body)
     }
@@ -402,15 +423,20 @@ class GatewayRequestHandler {
       job.settledAt = Date.now()
     })
     this.jobs.set(id, job)
-    sendJson(res, 202, { value: parseAnswer(fetchStarted, { job: id }, 'fetch') })
+    sendJson(req, res, 202, { value: parseAnswer(fetchStarted, { job: id }, 'fetch') })
   }
 
   /** Answer a poll for job `id`, waiting up to the request's `wait` (capped) for it to finish. */
-  private async pollFetch(id: string, url: URL, res: ServerResponse): Promise<void> {
+  private async pollFetch(
+    id: string,
+    url: URL,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     this.evictJobs()
     const job = this.jobs.get(id)
     if (job === undefined) {
-      sendJson(res, 404, {
+      sendJson(req, res, 404, {
         error: {
           kind: 'unknown-job',
           message: 'The GitHub gateway holds no such fetch: it restarted, or the fetch expired',
@@ -436,9 +462,10 @@ class GatewayRequestHandler {
       res.off('close', onClose)
     }
     const answer = job.answer
-    if (answer === null) sendJson(res, 200, { value: { state: 'running' } })
-    else if (answer.ok) sendJson(res, 200, { value: parseAnswer(fetchPoll, answer.value, 'fetch') })
-    else sendJson(res, 500, { error: answer.error })
+    if (answer === null) sendJson(req, res, 200, { value: { state: 'running' } })
+    else if (answer.ok)
+      sendJson(req, res, 200, { value: parseAnswer(fetchPoll, answer.value, 'fetch') })
+    else sendJson(req, res, 500, { error: answer.error })
   }
 
   /** Drop finished jobs past their retention. */
@@ -469,13 +496,10 @@ class GatewayRequestHandler {
       return
     }
     if (err instanceof RefusedRequest) {
-      // Its body, if any, is never read: close the connection after the answer.
-      res.setHeader('connection', 'close')
-      sendJson(res, err.status, { error: { kind: 'refused', message: err.message } })
+      sendJson(req, res, err.status, { error: { kind: 'refused', message: err.message } })
     } else {
-      sendJson(res, 500, { error: encodeError(err) })
+      sendJson(req, res, 500, { error: encodeError(err) })
     }
-    discardBody(req)
   }
 }
 
@@ -521,26 +545,33 @@ function parseAnswer<S extends z.ZodTypeAny>(schema: S, value: unknown, op: stri
   return parsed.data as z.infer<S>
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
+/**
+ * Answer with `body`. When the request's body has not all arrived (an answer that refuses it part
+ * way), the answer is written whole but ended only once the client stops sending, which it does on
+ * reading the answer; meanwhile the rest of the body is read and dropped. Ending it at once would
+ * close the connection under the client's next write, which can then fail before it has read the
+ * answer. A client that keeps sending is cut off after {@link DISCARD_BODY_MS}.
+ */
+function sendJson(req: IncomingMessage, res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body)
   res.writeHead(status, {
     'content-type': 'application/json',
     'content-length': Buffer.byteLength(text),
   })
-  res.end(text)
-}
-
-/**
- * After an answer, drop what is left of the request's body: the client stops sending once it has
- * the answer. One that does not is cut off.
- */
-function discardBody(req: IncomingMessage): void {
-  if (req.complete) return
-  req.resume()
+  if (req.complete) {
+    res.end(text)
+    return
+  }
+  res.write(text)
   const timer = setTimeout(() => req.socket.destroy(), DISCARD_BODY_MS)
   timer.unref()
-  req.once('end', () => clearTimeout(timer))
-  req.once('close', () => clearTimeout(timer))
+  const finish = () => {
+    clearTimeout(timer)
+    res.end()
+  }
+  req.once('end', finish)
+  req.once('close', finish)
+  req.resume()
 }
 
 // ---------------------------------------------------------------------------
@@ -549,6 +580,31 @@ function discardBody(req: IncomingMessage): void {
 
 /** How long the client asks each poll of a fetch job to wait. */
 const POLL_WAIT_MS = MAX_POLL_WAIT_MS
+
+/** How many polls in a row the connection may break off before the fetch fails. */
+const POLL_RETRIES = 3
+
+/** How long the client waits before polling again after a broken poll. */
+const POLL_RETRY_MS = 1_000
+
+/** Resolve after `ms`, or reject with `signal`'s reason when it aborts first. */
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason)
+      return
+    }
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(signal?.reason)
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
 
 /**
  * The worker's {@link GitHubGateway} for a gateway served at `socketPath`. Every answer is
@@ -601,14 +657,27 @@ class GitHubGatewayClient implements GitHubGateway {
     }
   }
 
+  /**
+   * Poll job `job` until it finishes. A poll the connection breaks off (the gateway restarting) is
+   * tried again, up to {@link POLL_RETRIES} times in a row, {@link POLL_RETRY_MS} apart: a
+   * restarted gateway then answers that it no longer holds the job.
+   */
   private async pollFetch(job: string, signal?: AbortSignal): Promise<GitHubFetchResult> {
-    for (;;) {
-      const res = await this.send({
-        method: 'GET',
-        path: `${FETCH_ROUTE}/${job}?wait=${POLL_WAIT_MS}`,
-        signal,
-      })
-      const poll = await readAnswer(res, fetchPoll, signal)
+    for (let broken = 0; ; ) {
+      let poll: z.infer<typeof fetchPoll>
+      try {
+        const res = await this.send({
+          method: 'GET',
+          path: `${FETCH_ROUTE}/${job}?wait=${POLL_WAIT_MS}`,
+          signal,
+        })
+        poll = await readAnswer(res, fetchPoll, signal)
+      } catch (err) {
+        if (!(err instanceof GitHubGatewayUnreachableError) || ++broken > POLL_RETRIES) throw err
+        await delay(POLL_RETRY_MS, signal)
+        continue
+      }
+      broken = 0
       if (poll.state === 'done') return { refs: new Map(poll.refs), bundleId: poll.bundleId }
     }
   }
