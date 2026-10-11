@@ -9,6 +9,8 @@ export interface NumberListFieldProps {
   value: number[]
   onChange: (value: number[]) => void
   dataCanopyField?: string
+  /** Shows the value without accepting edits. */
+  readOnly?: boolean
 }
 
 /**
@@ -44,6 +46,7 @@ export const NumberListField: React.FC<NumberListFieldProps> = ({
   value,
   onChange,
   dataCanopyField,
+  readOnly = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -61,7 +64,9 @@ export const NumberListField: React.FC<NumberListFieldProps> = ({
           ? `Not ${rejected.length === 1 ? 'a number' : 'numbers'}: ${rejected.join(', ')}`
           : undefined
       }
+      readOnly={readOnly}
       onChange={(next) => {
+        if (readOnly) return
         const parsed: number[] = []
         const dropped: string[] = []
         for (const tag of next) {

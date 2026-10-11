@@ -59,7 +59,6 @@ export const BranchComments: React.FC<BranchCommentsProps> = ({
     return (
       <Box>
         <Button
-          size="xs"
           variant="subtle"
           color="gray"
           onClick={() => setShowCarousel(true)}

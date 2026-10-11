@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { modals } from '@mantine/modals'
+import { openConfirm } from '../utils/confirm-modal'
 import { notifications } from '@mantine/notifications'
 import { Text } from '@mantine/core'
 import type { BranchListItem } from '../../api/branch'
@@ -73,7 +73,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
         resolve(value)
       }
       setConfirmOpen(true)
-      modals.openConfirmModal({
+      openConfirm({
         title: 'Unsaved Changes',
         // Drafts are stored per branch, so leaving does not lose them.
         children: (

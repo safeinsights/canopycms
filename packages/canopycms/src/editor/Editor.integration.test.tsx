@@ -1488,9 +1488,7 @@ describe('Editor integration', () => {
     // Submit is hidden entirely (not just disabled) on the protected branch.
     expect(screen.queryByTestId('submit-button')).toBeNull()
 
-    // Wait for the entry to load, then dirty it -- Save must stay disabled
-    // despite unsaved changes, proving branchReadOnly overrides the normal
-    // hasUnsavedChanges enable logic.
+    // The form is read-only: typing writes no draft, so Save stays disabled.
     let input: HTMLInputElement
     await waitFor(() => {
       const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
@@ -1721,8 +1719,10 @@ describe('Editor integration', () => {
     })
     fireEvent.change(input!, { target: { value: 'Modified title' } })
 
-    // Save stays disabled despite the edit -- writeBlocked's absence must
-    // fail closed, not read as "server says go ahead".
+    // writeBlocked's absence fails closed, not as "server says go ahead": the
+    // form is read-only, the edit writes no draft, and Save stays disabled.
+    expect(input!.readOnly).toBe(true)
+    expect(readPersistedDrafts('main')).not.toHaveProperty('def456ABC123')
     await waitFor(() => {
       const saveButton = screen.getByTestId('save-button')
       expect(saveButton.hasAttribute('disabled')).toBe(true)
@@ -1770,6 +1770,12 @@ describe('Editor integration', () => {
     // A branch list that leaves the branch unlocked (editing, unprotected),
     // so the reorder UI is reachable at all -- otherwise Change 1's
     // fail-closed default would hide it and these tests would prove nothing.
+    const adminWhoami = {
+      ok: true,
+      status: 200,
+      data: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+    }
+
     const unlockedBranchesResponse = {
       ok: true,
       status: 200,
@@ -1812,6 +1818,10 @@ describe('Editor integration', () => {
           typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
         if (url.endsWith('/api/canopycms/branches')) {
           return Promise.resolve(okJson(unlockedBranchesResponse))
+        }
+        // Entry order is an admin action (its API takes the `admin` guard).
+        if (url.endsWith('/whoami')) {
+          return Promise.resolve(okJson(adminWhoami))
         }
         if (url.includes('/schema') && !url.includes('/schema/')) {
           // Empty flatSchema -- collectionsFromApi (buildEditorCollections)
@@ -1886,6 +1896,10 @@ describe('Editor integration', () => {
           typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
         if (url.endsWith('/api/canopycms/branches')) {
           return Promise.resolve(okJson(unlockedBranchesResponse))
+        }
+        // Entry order is an admin action (its API takes the `admin` guard).
+        if (url.endsWith('/whoami')) {
+          return Promise.resolve(okJson(adminWhoami))
         }
         if (url.includes('/schema') && !url.includes('/schema/')) {
           return Promise.resolve(

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useReducer, useRef } from 'react'
 import { Badge, Button, Drawer, Fieldset, Group, Text, Title } from '@mantine/core'
-import { modals } from '@mantine/modals'
+import { openConfirm } from '../utils/confirm-modal'
 
 export interface StagedChangesDrawerProps {
   opened: boolean
@@ -85,7 +85,7 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
       return
     }
     confirmOpenRef.current = true
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Discard unsaved changes?',
       children: <Text size="sm">Closing now drops the changes you have not saved.</Text>,
       labels: { confirm: 'Discard', cancel: 'Keep editing' },
@@ -152,10 +152,16 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
             Changes take effect only after you save.
           </Text>
           <Group gap="sm">
-            <Button variant="subtle" color="neutral" onClick={onDiscard} disabled={isSaving}>
-              Discard Changes
+            <Button
+              size="sm"
+              variant="subtle"
+              color="neutral"
+              onClick={onDiscard}
+              disabled={isSaving}
+            >
+              Discard changes
             </Button>
-            <Button onClick={onSave} loading={isSaving} disabled={isSaving}>
+            <Button size="sm" onClick={onSave} loading={isSaving} disabled={isSaving}>
               {saveLabel}
             </Button>
           </Group>

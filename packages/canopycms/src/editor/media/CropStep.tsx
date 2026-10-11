@@ -94,7 +94,14 @@ const CropStepBody: React.FC<CropStepBodyProps> = ({
 
   return (
     <Stack gap="md">
-      <div style={{ position: 'relative', width: '100%', height: 360, background: '#000' }}>
+      <div
+        style={{
+          position: 'relative',
+          width: '100%',
+          height: 360,
+          background: 'var(--mantine-color-black)',
+        }}
+      >
         <Cropper
           image={imageSrc}
           crop={crop}
@@ -121,10 +128,15 @@ const CropStepBody: React.FC<CropStepBodyProps> = ({
         />
       </Group>
       <Group justify="flex-end">
-        <Button variant="default" onClick={onClose}>
+        <Button size="sm" variant="default" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={handleConfirm} disabled={!pendingArea} data-testid="crop-step-apply">
+        <Button
+          size="sm"
+          onClick={handleConfirm}
+          disabled={!pendingArea}
+          data-testid="crop-step-apply"
+        >
           Apply crop
         </Button>
       </Group>

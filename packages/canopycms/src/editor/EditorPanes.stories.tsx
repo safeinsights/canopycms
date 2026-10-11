@@ -154,7 +154,7 @@ const PostPreview = ({ post, authorName }: { post: PostValue; authorName?: strin
         {post.blocks.map((block, idx) => {
           if (block.template === 'hero') {
             return (
-              <Paper key={`${block.template}-${idx}`} withBorder radius="md" p="md" shadow="xs">
+              <Paper key={`${block.template}-${idx}`} withBorder p="md" shadow="xs">
                 <Text fw={600} size="sm" c="dimmed">
                   Hero block
                 </Text>
@@ -167,7 +167,7 @@ const PostPreview = ({ post, authorName }: { post: PostValue; authorName?: strin
           }
           const cta = (block as Extract<PostBlock, { template: 'cta' }>).value
           return (
-            <Paper key={`${block.template}-${idx}`} withBorder radius="md" p="md" shadow="xs">
+            <Paper key={`${block.template}-${idx}`} withBorder p="md" shadow="xs">
               <Text fw={600} size="sm" c="dimmed">
                 Call to action
               </Text>
@@ -187,7 +187,7 @@ const PostPreview = ({ post, authorName }: { post: PostValue; authorName?: strin
         </Text>
         <Stack gap={6}>
           {post.features.map((feat, idx) => (
-            <Paper key={`${feat.title}-${idx}`} withBorder radius="md" p="sm">
+            <Paper key={`${feat.title}-${idx}`} withBorder p="sm">
               <Text size="sm" fw={600}>
                 {feat.title}
               </Text>

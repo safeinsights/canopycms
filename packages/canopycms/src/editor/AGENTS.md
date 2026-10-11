@@ -1,6 +1,6 @@
 # `editor/` — React editor UI
 
-The largest subsystem in the package, by a wide margin.
+UX rules for everything here: [docs/ux-guidelines.md](../../../../docs/ux-guidelines.md).
 
 As everywhere else in this package, **the code comment at the point of a rule is
 authoritative**. This file is the map.
@@ -11,7 +11,7 @@ authoritative**. This file is the map.
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Editor.tsx`                              | The composition root. See below.                                                                                                                   |
 | `hooks/`                                  | 17 hooks — the real logic. Start here, not in the components. Has its own [README.md](hooks/README.md) covering the SWR data-loading architecture. |
-| `fields/`                                 | 17 field components, one per schema field type, plus `entry-link/`.                                                                                |
+| `fields/`                                 | Field components per schema type, plus `FieldLabel` and `entry-link/`.                                                                             |
 | `components/`                             | Presentational pieces used by `Editor.tsx` (header, sidebar, modals).                                                                              |
 | `EditorAuthGate.tsx`                      | Signed-out and mode-mismatch handling, decided from the API's answers. See below.                                                                  |
 | `context/`                                | `ApiClientContext`, `AssetContext`, `EditorStateContext`, `SWRProvider`, `EditorIdentityContext`.                                                  |

@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { type Page, type Locator, type Response, expect } from '@playwright/test'
-import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
+import { EditorPage } from './editor-page'
+import { STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 
 const FIXTURES_ASSETS_DIR = path.resolve(process.cwd(), 'apps/test-app/e2e/fixtures/assets')
 
@@ -47,15 +48,11 @@ export class MediaPage {
 
   readonly pickerModal: Locator
   readonly manageDrawer: Locator
-  readonly settingsButton: Locator
-  readonly mediaLibraryMenuItem: Locator
 
   constructor(page: Page) {
     this.page = page
     this.pickerModal = page.locator('[data-testid="media-library-picker"]')
     this.manageDrawer = page.locator('[data-testid="media-library-manage"]')
-    this.settingsButton = page.getByRole('button', { name: 'Settings' })
-    this.mediaLibraryMenuItem = page.getByRole('menuitem', { name: 'Media library' })
   }
 
   // ---- ImageField: a single structured `image` field, e.g. `heroImage` ----
@@ -162,9 +159,7 @@ export class MediaPage {
    * is unusable.
    */
   async openMediaLibraryManage(): Promise<void> {
-    await this.settingsButton.click()
-    await expect(this.mediaLibraryMenuItem).toBeVisible({ timeout: SHORT_TIMEOUT })
-    await this.mediaLibraryMenuItem.click()
+    await new EditorPage(this.page).openSettingsItem('Media library')
     await expect(this.filterInput(this.manageDrawer)).toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 

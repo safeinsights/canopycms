@@ -56,6 +56,11 @@
       "maxSectionWords": 180,
       "words": 518
     },
+    ".claude/agents/ux-review.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 92,
+      "words": 459
+    },
     "AGENTS.md": {
       "historyMarkers": 0,
       "maxSectionWords": 333,
@@ -64,7 +69,7 @@
     "ARCHITECTURE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 2901,
-      "words": 24224
+      "words": 24226
     },
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
@@ -79,12 +84,12 @@
     "README.md": {
       "historyMarkers": 0,
       "maxSectionWords": 4914,
-      "words": 16049
+      "words": 16050
     },
     "docs/adopter-migration.md": {
       "historyMarkers": null,
-      "maxSectionWords": 5342,
-      "words": 10219
+      "maxSectionWords": 5343,
+      "words": 10220
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
@@ -95,6 +100,11 @@
       "historyMarkers": 0,
       "maxSectionWords": 1766,
       "words": 10140
+    },
+    "docs/ux-guidelines.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 137,
+      "words": 1012
     },
     "packages/canopycms/src/AGENTS.md": {
       "historyMarkers": 0,

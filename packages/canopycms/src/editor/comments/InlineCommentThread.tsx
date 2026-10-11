@@ -6,6 +6,7 @@ import { IconAlertCircle } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { UserBadge } from '../components/UserBadge'
+import { userIdLabel } from '../user-display'
 import { formatRelativeTime } from '../relative-time'
 
 export interface InlineCommentThreadProps {
@@ -125,7 +126,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
                     />
                   ) : (
                     <Text size="xs" fw={600}>
-                      {comment.userId}
+                      {userIdLabel(comment.userId)}
                     </Text>
                   )}
                   <Text size="xs" c="dimmed">
@@ -162,17 +163,11 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
               disabled={isSubmitting}
             />
             <Group gap="xs">
-              <Button
-                size="xs"
-                onClick={handleReply}
-                loading={isSubmitting}
-                disabled={!replyText.trim()}
-              >
+              <Button onClick={handleReply} loading={isSubmitting} disabled={!replyText.trim()}>
                 Reply
               </Button>
               {canUserResolve() && (
                 <Button
-                  size="xs"
                   variant="light"
                   color="green"
                   onClick={handleResolve}
@@ -204,7 +199,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
               />
             ) : (
               <Text size="xs" c="dimmed" fs="italic">
-                {thread.resolvedBy}
+                {userIdLabel(thread.resolvedBy)}
               </Text>
             )}
             {thread.resolvedAt && (
