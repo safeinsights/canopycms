@@ -95,10 +95,11 @@ export const AssetListRow: React.FC<AssetListRowProps> = ({
           {asset.filename}
         </Text>
       </Tooltip>
-      <Text size="xs" c="dimmed" w={84} ta="right" style={{ flex: '0 0 auto' }}>
+      {/* Below `sm` only the date stays beside the name, so the filename keeps its width. */}
+      <Text size="xs" c="dimmed" w={84} ta="right" visibleFrom="sm" style={{ flex: '0 0 auto' }}>
         {hasDimensions ? `${asset.width} × ${asset.height}` : ''}
       </Text>
-      <Text size="xs" c="dimmed" w={52} ta="right" style={{ flex: '0 0 auto' }}>
+      <Text size="xs" c="dimmed" w={52} ta="right" visibleFrom="sm" style={{ flex: '0 0 auto' }}>
         {formatBytes(asset.size)}
       </Text>
       <Tooltip label={new Date(asset.uploadedAt).toLocaleString()}>

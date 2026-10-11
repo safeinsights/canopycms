@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { AssetRecord } from '../../api'
-import { assetCountLabel, matchesKind, matchesText, sortAssets } from './media-library-view'
+import { fileCountLabel, matchesKind, matchesText, sortAssets } from './media-library-view'
 
 const asset = (filename: string, uploadedAt: string, overrides: Partial<AssetRecord> = {}) =>
   ({
@@ -79,10 +79,10 @@ describe('matchesText', () => {
   })
 })
 
-describe('assetCountLabel', () => {
+describe('fileCountLabel', () => {
   it('agrees the noun with the count', () => {
-    expect(assetCountLabel(1)).toBe('1 asset')
-    expect(assetCountLabel(0)).toBe('0 assets')
-    expect(assetCountLabel(2)).toBe('2 assets')
+    expect(fileCountLabel(1)).toBe('1 file')
+    expect(fileCountLabel(0)).toBe('0 files')
+    expect(fileCountLabel(2)).toBe('2 files')
   })
 })

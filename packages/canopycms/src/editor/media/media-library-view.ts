@@ -41,9 +41,9 @@ export function matchesText(asset: AssetRecord, needle: string): boolean {
   return asset.filename.toLowerCase().includes(needle) || asset.slug.toLowerCase().includes(needle)
 }
 
-/** "1 asset", "2 assets". */
-export const assetCountLabel = (count: number): string =>
-  `${count} ${count === 1 ? 'asset' : 'assets'}`
+/** "1 file", "2 files". */
+export const fileCountLabel = (count: number): string =>
+  `${count} ${count === 1 ? 'file' : 'files'}`
 
 /** Grid columns per layout; the loading skeleton uses the same ones so nothing shifts. */
 export const GRID_COLUMNS = {

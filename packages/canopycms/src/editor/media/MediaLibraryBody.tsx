@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   ActionIcon,
@@ -8,7 +8,6 @@ import {
   Button,
   Center,
   Group,
-  Loader,
   Progress,
   ScrollArea,
   SegmentedControl,
@@ -43,14 +42,14 @@ import { AssetCard } from './AssetCard'
 import { AssetListRow } from './AssetListRow'
 import { MediaLibrarySkeleton } from './MediaLibrarySkeleton'
 import { useAssetLibrary } from './useAssetLibrary'
+import { useStableAssetOrder } from './useStableAssetOrder'
 import { useAssetUpload } from './useAssetUpload'
 import { useMediaLibraryPrefs } from './media-library-prefs'
 import {
   GRID_COLUMNS,
-  assetCountLabel,
+  fileCountLabel,
   matchesKind,
   matchesText,
-  sortAssets,
   type MediaDensity,
   type MediaKind,
   type MediaSort,
@@ -66,7 +65,7 @@ const RENDER_WINDOW = 40
 
 const SORT_OPTIONS: { value: MediaSort; label: string }[] = [
   { value: 'newest', label: 'Newest first' },
-  { value: 'name', label: 'Name' },
+  { value: 'name', label: 'Name (A–Z)' },
 ]
 
 const KIND_OPTIONS: { value: MediaKind; label: string }[] = [
@@ -131,11 +130,34 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
   const [kind, setKind] = useState<MediaKind>('all')
   const [filterText, setFilterText] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
+  // The result of the last remove, for the live region; the removed card itself is gone.
+  const [actionNotice, setActionNotice] = useState<string | null>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  // Mantine's Dropzone forwards `ref` to its inner element; the focusable root is that element's
+  // closest ancestor with a tabindex.
+  const dropzoneRef = useRef<HTMLDivElement>(null)
+  // A removed card takes its focused button with it. Focus moves once the removal has rendered,
+  // to the search field, or to the dropzone when removing the last file hid the toolbar.
+  const focusAfterRemove = useRef(false)
+  useEffect(() => {
+    if (!focusAfterRemove.current) return
+    focusAfterRemove.current = false
+    ;(searchRef.current ?? dropzoneRef.current?.closest<HTMLElement>('[tabindex]'))?.focus()
+  })
+  // Clearing hides the control that did it, so focus moves to the search field.
+  const clearSearch = () => {
+    setFilterText('')
+    searchRef.current?.focus()
+  }
 
-  // The render window resets whenever the list it windows changes shape; keying it on the
-  // controls avoids an effect and the stale frame an effect would leave.
+  // This opening's uploads, newest first; they lead the list whatever the sort.
+  const [pinned, setPinned] = useState<string[]>([])
+
+  // The render window resets whenever the list it windows changes shape. Adjusting it during
+  // render, not in an effect, avoids a frame with the old count.
   const windowKey = `${filterText}|${sort}|${kind}|${density}`
   const [windowState, setWindowState] = useState({ key: windowKey, count: RENDER_WINDOW })
+  if (windowState.key !== windowKey) setWindowState({ key: windowKey, count: RENDER_WINDOW })
   const visibleCount = windowState.key === windowKey ? windowState.count : RENDER_WINDOW
   const showMore = useCallback(
     () => setWindowState({ key: windowKey, count: visibleCount + RENDER_WINDOW }),
@@ -155,32 +177,44 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     () => scopedAssets.filter((asset) => matchesKind(asset, effectiveKind)),
     [scopedAssets, effectiveKind],
   )
+  const orderedAssets = useStableAssetOrder(scopedAssets, sort, library.complete, pinned)
   const matchedAssets = useMemo(
-    () => sortAssets(kindAssets, sort).filter((asset) => matchesText(asset, needle)),
-    [kindAssets, sort, needle],
+    () =>
+      orderedAssets.filter(
+        (asset) => matchesKind(asset, effectiveKind) && matchesText(asset, needle),
+      ),
+    [orderedAssets, effectiveKind, needle],
   )
   const visibleAssets = matchedAssets.slice(0, visibleCount)
   const hasMore = matchedAssets.length > visibleAssets.length
 
   const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null)
+  // The scroll viewport is the observer's root: a margin on the default root would only widen
+  // the document viewport, not the ScrollArea that clips the sentinel.
+  const [viewport, setViewport] = useState<HTMLDivElement | null>(null)
   useEffect(() => {
     if (!sentinel || !hasMore || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) showMore()
       },
-      { rootMargin: '200px' },
+      { root: viewport, rootMargin: '200px' },
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [sentinel, hasMore, showMore])
+  }, [sentinel, viewport, hasMore, showMore])
 
   const handleDrop = async (files: File[]) => {
     const file = files[0]
     if (!file) return
     setActionError(null)
     const asset = await upload.upload(file)
-    if (asset) library.prepend(asset)
+    if (!asset) return
+    library.prepend(asset)
+    setPinned((prev) => [asset.hash32, ...prev.filter((hash) => hash !== asset.hash32)])
+    // The upload must be visible: a search or kind filter that would hide it is cleared.
+    if (!matchesText(asset, needle)) setFilterText('')
+    if (!matchesKind(asset, kind)) setKind('all')
   }
 
   const handleReject = (rejections: FileRejection[]) => {
@@ -198,6 +232,8 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
         return
       }
       library.remove(asset.hash32)
+      setActionNotice(`Removed ${asset.filename} from library`)
+      focusAfterRemove.current = true
     } catch (err) {
       setActionError(`Couldn't remove ${asset.filename} from the library. ${getErrorMessage(err)}`)
     }
@@ -208,9 +244,8 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
       title: 'Remove from library',
       children: (
         <Text size="sm">
-          Remove &ldquo;{asset.filename}&rdquo; from the media library? Existing content that
-          already references this file keeps working - removing it here only hides it from the
-          library; the file itself is not deleted.
+          Remove &ldquo;{asset.filename}&rdquo; from the media library? Content that already uses
+          this file keeps working, and the file itself is not deleted.
         </Text>
       ),
       labels: { confirm: 'Remove from library', cancel: 'Cancel' },
@@ -221,35 +256,50 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     })
   }
 
-  const loadStatus = ((): React.ReactNode => {
+  // `text` is shown; `announce` is the live-region wording, which changes only between phases so
+  // a screen reader is not told every page's count.
+  const loadStatus = ((): { text: React.ReactNode; announce: string } | null => {
     if (library.error || !library.firstPageLoaded) return null
     if (!library.complete) {
-      return needle ? (
-        <Group gap={6} wrap="nowrap">
-          <Loader size={12} />
-          <span>Searching {assetCountLabel(kindAssets.length)} loaded so far…</span>
-        </Group>
-      ) : (
-        `Loaded ${assetCountLabel(scopedAssets.length)}, loading more…`
-      )
+      return needle
+        ? {
+            text: `Searching ${fileCountLabel(kindAssets.length)} loaded so far…`,
+            announce: 'Searching the files loaded so far…',
+          }
+        : {
+            text: `Loaded ${fileCountLabel(kindAssets.length)}, loading more…`,
+            announce: 'Loading more files…',
+          }
     }
-    if (needle) {
+    // With no match, the empty state below says so.
+    if (needle && matchedAssets.length > 0) {
       const total = kindAssets.length
-      return `${matchedAssets.length} of ${total} ${total === 1 ? 'asset matches' : 'assets match'}`
+      const text = `${matchedAssets.length} of ${total} ${total === 1 ? 'file matches' : 'files match'}`
+      return { text, announce: text }
     }
     return null
   })()
 
+  const kindNoun =
+    effectiveKind === 'pdfs' ? 'PDFs' : effectiveKind === 'images' ? 'images' : 'files'
+  const libraryEmpty = library.complete && scopedAssets.length === 0
   const emptyState = ((): React.ReactNode => {
-    if (!library.complete || matchedAssets.length > 0) return null
-    if (scopedAssets.length === 0) {
-      return imageOnly
-        ? 'No images yet. Drop an image above to upload one.'
-        : 'No media yet. Drop a file above to upload one.'
+    if (matchedAssets.length > 0) return null
+    // A later page failed: say what the loaded part holds; the alert explains the rest.
+    if (library.error && !library.complete) {
+      if (!library.firstPageLoaded || kindAssets.length === 0) return null
+      return needle
+        ? `No ${kindNoun} match “${filterText.trim()}” among the ${fileCountLabel(kindAssets.length)} loaded.`
+        : null
     }
-    if (needle) return `No assets match “${filterText.trim()}”.`
-    if (effectiveKind === 'pdfs') return 'No PDFs in the library.'
-    return 'No images in the library.'
+    if (!library.complete) return null
+    if (libraryEmpty) {
+      return imageOnly
+        ? 'No images yet. Drop an image above, or click there to choose one.'
+        : 'No files yet. Drop a file above, or click there to choose one.'
+    }
+    if (needle) return `No ${kindNoun} match “${filterText.trim()}”.`
+    return `No ${kindNoun} in the library.`
   })()
 
   const renderList = () => {
@@ -286,18 +336,27 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
 
   const listContent = (
     <>
-      {!library.firstPageLoaded && !library.error && <MediaLibrarySkeleton density={density} />}
-      {library.firstPageLoaded && visibleAssets.length > 0 && renderList()}
+      {!library.firstPageLoaded && !library.error && visibleAssets.length === 0 && (
+        <MediaLibrarySkeleton density={density} />
+      )}
+      {visibleAssets.length > 0 && renderList()}
       {emptyState && (
         <Stack align="center" gap="xs" py="xl" data-testid="media-library-empty">
           <Text size="sm" c="dimmed" ta="center">
             {emptyState}
           </Text>
-          {needle && (
-            <Button variant="light" size="xs" onClick={() => setFilterText('')}>
-              Clear search
-            </Button>
-          )}
+          <Group gap="xs" justify="center">
+            {needle && (
+              <Button variant="light" size="xs" onClick={clearSearch}>
+                Clear search
+              </Button>
+            )}
+            {kind !== 'all' && !libraryEmpty && (
+              <Button variant="light" size="xs" onClick={() => setKind('all')}>
+                Show all files
+              </Button>
+            )}
+          </Group>
         </Stack>
       )}
       {hasMore && (
@@ -322,6 +381,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
         accept={imageOnly ? ACCEPTED_IMAGE_MIME_TYPES : ACCEPTED_ASSET_MIME_TYPES}
         loading={upload.uploading}
         multiple={false}
+        ref={dropzoneRef}
         data-testid="media-library-dropzone"
       >
         <Group justify="center" gap="xs" py="sm" style={{ pointerEvents: 'none' }}>
@@ -346,82 +406,94 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
         </Alert>
       )}
 
-      <TextInput
-        placeholder="Search by filename"
-        aria-label="Search by filename"
-        leftSection={<IconSearch size={16} />}
-        rightSection={
-          filterText ? (
-            <Tooltip label="Clear search">
-              <ActionIcon
-                variant="subtle"
-                color="gray"
-                size="sm"
-                aria-label="Clear search"
-                onClick={() => setFilterText('')}
-              >
-                <IconX size={14} />
-              </ActionIcon>
-            </Tooltip>
-          ) : null
-        }
-        value={filterText}
-        onChange={(event) => setFilterText(event.currentTarget.value)}
-        data-testid="media-library-filter"
-      />
-
-      <Group justify="space-between" wrap="wrap" gap="xs">
-        {imageOnly ? (
-          <span />
-        ) : (
-          <SegmentedControl
-            aria-label="Kind"
-            data={KIND_OPTIONS}
-            value={kind}
-            onChange={(value) =>
-              setKind(KIND_OPTIONS.find((o) => o.value === value)?.value ?? 'all')
+      {/* An empty library has nothing to search, filter or sort. */}
+      {!libraryEmpty && (
+        <>
+          <TextInput
+            placeholder="Search by filename"
+            aria-label="Search by filename"
+            leftSection={<IconSearch size={16} />}
+            rightSection={
+              filterText ? (
+                <Tooltip label="Clear search">
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    size="sm"
+                    aria-label="Clear search"
+                    onClick={clearSearch}
+                  >
+                    <IconX size={14} />
+                  </ActionIcon>
+                </Tooltip>
+              ) : null
             }
-            data-testid="media-library-kind"
-          />
-        )}
-        <Group gap="xs" wrap="wrap">
-          <Select
-            aria-label="Sort by"
-            data={SORT_OPTIONS}
-            value={sort}
-            onChange={(value) => {
-              const next = SORT_OPTIONS.find((option) => option.value === value)
-              if (next) setSort(next.value)
+            ref={searchRef}
+            value={filterText}
+            onChange={(event) => setFilterText(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              // Esc clears a search before it can close the drawer or modal.
+              if (event.key === 'Escape' && filterText) {
+                event.stopPropagation()
+                setFilterText('')
+              }
             }}
-            allowDeselect={false}
-            w={150}
-            data-testid="media-library-sort"
+            data-testid="media-library-filter"
           />
-          <SegmentedControl
-            aria-label="Layout"
-            data={DENSITY_OPTIONS}
-            value={density}
-            onChange={(value) => {
-              const next = DENSITY_OPTIONS.find((option) => option.value === value)
-              if (next) setDensity(next.value)
-            }}
-            data-testid="media-library-density"
-          />
-        </Group>
-      </Group>
 
-      {loadStatus && (
-        <Text
-          component="div"
-          size="xs"
-          c="dimmed"
-          role="status"
-          aria-live="polite"
-          data-testid="media-library-load-status"
-        >
-          {loadStatus}
-        </Text>
+          <Group justify="space-between" wrap="wrap" gap="xs">
+            {imageOnly ? (
+              <span />
+            ) : (
+              <SegmentedControl
+                aria-label="File type"
+                data={KIND_OPTIONS}
+                value={kind}
+                onChange={(value) =>
+                  setKind(KIND_OPTIONS.find((o) => o.value === value)?.value ?? 'all')
+                }
+                data-testid="media-library-kind"
+              />
+            )}
+            <Group gap="xs" wrap="wrap">
+              <Select
+                aria-label="Sort by"
+                data={SORT_OPTIONS}
+                value={sort}
+                onChange={(value) => {
+                  const next = SORT_OPTIONS.find((option) => option.value === value)
+                  if (next) setSort(next.value)
+                }}
+                allowDeselect={false}
+                w={150}
+                data-testid="media-library-sort"
+              />
+              <SegmentedControl
+                aria-label="Layout"
+                data={DENSITY_OPTIONS}
+                value={density}
+                onChange={(value) => {
+                  const next = DENSITY_OPTIONS.find((option) => option.value === value)
+                  if (next) setDensity(next.value)
+                }}
+                data-testid="media-library-density"
+              />
+            </Group>
+          </Group>
+        </>
       )}
+
+      {/* The line keeps its height when empty, so the list doesn't jump when loading ends. */}
+      <Text component="div" size="xs" c="dimmed" mih={18}>
+        {loadStatus && (
+          <span aria-hidden="true" data-testid="media-library-load-status">
+            {loadStatus.text}
+          </span>
+        )}
+      </Text>
+      <VisuallyHidden role="status" aria-live="polite">
+        {loadStatus?.announce ?? actionNotice ?? ''}
+      </VisuallyHidden>
 
       {library.error && (
         <Alert icon={<IconAlertCircle size={16} />} color="red" data-testid="media-library-error">
@@ -429,11 +501,14 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
             <Text size="sm">
               {library.error.firstPage
                 ? "Couldn't load the media library."
-                : `Couldn't load the rest of the media library. Showing the ${assetCountLabel(library.assets.length)} loaded so far.`}
+                : `Couldn't load the rest of the media library. Showing the ${fileCountLabel(scopedAssets.length)} loaded so far.`}
             </Text>
-            <Text size="xs" c="dimmed">
-              {library.error.message}
-            </Text>
+            {/* The raw server message is a diagnostic, shown to admins only. */}
+            {isAdmin(userContext?.groups) && (
+              <Text size="xs" c="dimmed">
+                {library.error.message}
+              </Text>
+            )}
             <Button variant="light" onClick={library.retry}>
               Retry
             </Button>
@@ -454,9 +529,13 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
       )}
 
       {imageOnly ? (
-        <ScrollArea.Autosize mah="60vh">{listContent}</ScrollArea.Autosize>
+        <ScrollArea.Autosize mah="60vh" viewportRef={setViewport}>
+          {listContent}
+        </ScrollArea.Autosize>
       ) : (
-        <ScrollArea style={{ flex: 1 }}>{listContent}</ScrollArea>
+        <ScrollArea style={{ flex: 1 }} viewportRef={setViewport}>
+          {listContent}
+        </ScrollArea>
       )}
     </Stack>
   )

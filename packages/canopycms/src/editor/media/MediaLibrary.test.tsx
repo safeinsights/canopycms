@@ -164,10 +164,9 @@ describe('MediaLibraryBody', () => {
     await waitFor(() => expect(screen.getByText('cat.png')).toBeTruthy())
     expect(screen.getByText('dog.jpg')).toBeTruthy()
     expect(mockClient.assets.list).toHaveBeenCalledTimes(1)
-    expect(screen.queryByTestId('media-library-load-more')).toBeNull()
   })
 
-  it('follows nextCursor in the background and appends each page, with no Load more button', async () => {
+  it('follows nextCursor in the background and appends each page', async () => {
     mockClient.assets.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -186,7 +185,6 @@ describe('MediaLibraryBody', () => {
     expect(mockClient.assets.list).toHaveBeenCalledTimes(2)
     expect(mockClient.assets.list).toHaveBeenNthCalledWith(1, { limit: '40' })
     expect(mockClient.assets.list).toHaveBeenNthCalledWith(2, { cursor: 'cursor-1', limit: '40' })
-    expect(screen.queryByTestId('media-library-load-more')).toBeNull()
   })
 
   it('filters loaded assets client-side without an additional fetch', async () => {
@@ -416,7 +414,8 @@ describe('MediaLibraryBody', () => {
     expect(screen.queryByText('brochure.pdf')).toBeNull()
   })
 
-  it('shows a retryable error alert when listing fails', async () => {
+  it('shows a retryable error alert when listing fails, with the raw message for admins', async () => {
+    asAdmin()
     mockClient.assets.list.mockResolvedValueOnce({
       ok: false,
       status: 500,
@@ -426,7 +425,7 @@ describe('MediaLibraryBody', () => {
     renderBody()
 
     await waitFor(() => expect(screen.getByTestId('media-library-error')).toBeTruthy())
-    expect(screen.getByText('Internal error')).toBeTruthy()
+    expect(await screen.findByText('Internal error')).toBeTruthy()
     expect(screen.getByText("Couldn't load the media library.")).toBeTruthy()
   })
 
@@ -493,8 +492,10 @@ describe('MediaLibraryBody', () => {
       await userEvent.setup().type(screen.getByTestId('media-library-filter'), 'img-041')
 
       const status = screen.getByTestId('media-library-load-status')
-      expect(status.textContent).toBe('Searching 40 assets loaded so far…')
-      expect(status.getAttribute('aria-live')).toBe('polite')
+      expect(status.textContent).toBe('Searching 40 files loaded so far…')
+      // The visible text is aria-hidden; a separate live region announces the phase, not the count.
+      expect(status.getAttribute('aria-hidden')).toBe('true')
+      expect(screen.getByRole('status').textContent).toBe('Searching the files loaded so far…')
       expect(screen.queryByTestId('media-library-empty')).toBeNull()
 
       await act(async () =>
@@ -503,13 +504,14 @@ describe('MediaLibraryBody', () => {
 
       await waitFor(() =>
         expect(screen.getByTestId('media-library-load-status').textContent).toBe(
-          '1 of 45 assets match',
+          '1 of 45 files match',
         ),
       )
+      expect(screen.getByRole('status').textContent).toBe('1 of 45 files match')
       expect(screen.getByText('img-041.png')).toBeTruthy()
     })
 
-    it('reports how many assets are loaded while loading with no search, and nothing once complete', async () => {
+    it('reports how many files are loaded while loading with no search, and nothing once complete', async () => {
       const second = deferred<ReturnType<typeof page>>()
       mockClient.assets.list.mockImplementation(((params: Record<string, string>) =>
         params.cursor === 'c1' ? second.promise : Promise.resolve(page(firstPage, 'c1'))) as never)
@@ -517,12 +519,14 @@ describe('MediaLibraryBody', () => {
       renderBody()
       await screen.findByText('img-001.png')
       expect(screen.getByTestId('media-library-load-status').textContent).toBe(
-        'Loaded 40 assets, loading more…',
+        'Loaded 40 files, loading more…',
       )
+      expect(screen.getByRole('status').textContent).toBe('Loading more files…')
 
       await act(async () => second.resolve(page([makeAsset(41)])))
 
       await waitFor(() => expect(screen.queryByTestId('media-library-load-status')).toBeNull())
+      expect(screen.getByRole('status').textContent).toBe('')
     })
 
     it('agrees the noun and verb with the count', async () => {
@@ -533,7 +537,7 @@ describe('MediaLibraryBody', () => {
       await userEvent.setup().type(screen.getByTestId('media-library-filter'), 'cat')
 
       expect(screen.getByTestId('media-library-load-status').textContent).toBe(
-        '1 of 1 asset matches',
+        '1 of 1 file matches',
       )
     })
 
@@ -566,6 +570,7 @@ describe('MediaLibraryBody', () => {
     })
 
     it('keeps what loaded when a later page fails, and Retry resumes from the failed cursor', async () => {
+      asAdmin()
       mockClient.assets.list.mockResolvedValueOnce(page([catAsset], 'c1'))
       mockClient.assets.list.mockResolvedValueOnce({ ok: false, status: 500, error: 'Boom' })
       mockClient.assets.list.mockResolvedValueOnce(page([dogAsset]))
@@ -573,8 +578,8 @@ describe('MediaLibraryBody', () => {
       renderBody()
 
       const alert = await screen.findByTestId('media-library-error')
-      expect(within(alert).getByText('Boom')).toBeTruthy()
-      expect(within(alert).getByText(/Showing the 1 asset loaded so far/)).toBeTruthy()
+      expect(await within(alert).findByText('Boom')).toBeTruthy()
+      expect(within(alert).getByText(/Showing the 1 file loaded so far/)).toBeTruthy()
       expect(screen.getByText('cat.png')).toBeTruthy()
       expect(screen.queryByTestId('media-library-load-status')).toBeNull()
 
@@ -664,7 +669,9 @@ describe('MediaLibraryBody', () => {
 
       await act(async () => first.resolve(page([])))
 
-      expect(await screen.findByText('No media yet. Drop a file above to upload one.')).toBeTruthy()
+      expect(
+        await screen.findByText('No files yet. Drop a file above, or click there to choose one.'),
+      ).toBeTruthy()
       expect(screen.queryByTestId('media-library-loading')).toBeNull()
     })
 
@@ -676,7 +683,9 @@ describe('MediaLibraryBody', () => {
       renderBody({ mode: 'picker', onSelect: vi.fn() })
 
       expect(
-        await screen.findByText('No images yet. Drop an image above to upload one.'),
+        await screen.findByText(
+          'No images yet. Drop an image above, or click there to choose one.',
+        ),
       ).toBeTruthy()
     })
 
@@ -686,7 +695,9 @@ describe('MediaLibraryBody', () => {
       renderBody({ mode: 'picker', onSelect: vi.fn() })
 
       expect(
-        await screen.findByText('No images yet. Drop an image above to upload one.'),
+        await screen.findByText(
+          'No images yet. Drop an image above, or click there to choose one.',
+        ),
       ).toBeTruthy()
     })
 
@@ -704,7 +715,7 @@ describe('MediaLibraryBody', () => {
       await user.type(input, 'zzz')
 
       const empty = screen.getByTestId('media-library-empty')
-      expect(empty.textContent).toContain('No assets match \u201Czzz\u201D.')
+      expect(empty.textContent).toContain('No files match \u201Czzz\u201D.')
       expect(screen.getAllByRole('button', { name: 'Clear search' })).toHaveLength(2)
 
       await user.click(within(empty).getByRole('button', { name: 'Clear search' }))
@@ -742,7 +753,7 @@ describe('MediaLibraryBody', () => {
       await screen.findByText('a.png')
       expect(renderedHashes()).toEqual([b.hash32, a.hash32, c.hash32])
 
-      await pickOption('media-library-sort', 'Name')
+      await pickOption('media-library-sort', 'Name (A\u2013Z)')
 
       expect(renderedHashes()).toEqual([a.hash32, b.hash32, c.hash32])
     })
@@ -752,7 +763,7 @@ describe('MediaLibraryBody', () => {
 
       const first = renderBody()
       await screen.findByText('a.png')
-      await pickOption('media-library-sort', 'Name')
+      await pickOption('media-library-sort', 'Name (A\u2013Z)')
       expect(JSON.parse(window.localStorage.getItem(MEDIA_LIBRARY_PREFS_KEY)!)).toMatchObject({
         sort: 'name',
       })
@@ -788,7 +799,7 @@ describe('MediaLibraryBody', () => {
       try {
         renderBody()
         await screen.findByText('a.png')
-        await pickOption('media-library-sort', 'Name')
+        await pickOption('media-library-sort', 'Name (A\u2013Z)')
 
         expect(renderedHashes()).toEqual([a.hash32, b.hash32, c.hash32])
       } finally {
@@ -871,6 +882,21 @@ describe('MediaLibraryBody', () => {
       expect(within(pdfRow).getByText('14 KB')).toBeTruthy()
       expect(pdfRow.textContent).not.toContain('\u00D7')
       expect(screen.queryByTestId(`asset-card-${photo.hash32}`)).toBeNull()
+    })
+
+    it('hides the dimensions and size below the sm breakpoint, keeping the date', async () => {
+      mockClient.assets.list.mockResolvedValueOnce(page([photo]))
+
+      renderBody()
+      await screen.findByText('photo.png')
+      await userEvent.setup().click(screen.getByRole('radio', { name: 'List' }))
+
+      const row = screen.getByTestId(`asset-row-${photo.hash32}`)
+      const hiddenBelowSm = (text: string) =>
+        within(row).getByText(text).classList.contains('mantine-visible-from-sm')
+      expect(hiddenBelowSm('1200 \u00D7 800')).toBe(true)
+      expect(hiddenBelowSm('2.3 MB')).toBe(true)
+      expect(hiddenBelowSm(uploadedDate(photo))).toBe(false)
     })
 
     it('drops the date line in the compact grid', async () => {
@@ -1025,6 +1051,409 @@ describe('MediaLibraryBody', () => {
       expect(cardCount()).toBe(80)
       await user.click(screen.getByRole('radio', { name: 'Compact grid' }))
       expect(cardCount()).toBe(40)
+    })
+
+    it('goes back to 40 when a search is typed and then cleared, so the old window does not return', async () => {
+      mockClient.assets.list.mockResolvedValueOnce(page(many))
+
+      renderBody()
+      await screen.findByText('img-100.png')
+      const user = userEvent.setup()
+      await user.click(screen.getByTestId('media-library-show-more'))
+      expect(cardCount()).toBe(80)
+
+      const input = screen.getByTestId('media-library-filter')
+      await user.type(input, 'x')
+      expect(cardCount()).toBe(0)
+      await user.clear(input)
+
+      expect(cardCount()).toBe(40)
+    })
+
+    it.each(['manage', 'picker'] as const)(
+      'observes the sentinel against the scroll viewport in %s mode, 200px early',
+      async (mode) => {
+        vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
+        mockClient.assets.list.mockResolvedValueOnce(page(many))
+
+        renderBody(mode === 'picker' ? { mode, onSelect: vi.fn() } : { mode })
+        await screen.findByText('img-100.png')
+
+        const observer = FakeIntersectionObserver.instances.filter((o) => !o.disconnected).at(-1)!
+        const root = observer.options?.root
+        expect(root).toBeInstanceOf(HTMLElement)
+        expect((root as HTMLElement).classList.contains('mantine-ScrollArea-viewport')).toBe(true)
+        // The root is the element that clips the sentinel, not the document viewport.
+        expect((root as HTMLElement).contains(observer.targets[0]!)).toBe(true)
+        expect(observer.options?.rootMargin).toBe('200px')
+      },
+    )
+  })
+
+  describe('while pages are still loading', () => {
+    const small = [makeAsset(1), makeAsset(2), makeAsset(3)]
+
+    it('holds the order still as pages arrive, and re-sorts everything once loading completes', async () => {
+      const newer = makeAsset(50)
+      const third = deferred<ReturnType<typeof page>>()
+      mockClient.assets.list.mockImplementation(((params: Record<string, string>) => {
+        if (params.cursor === 'c2') return third.promise
+        if (params.cursor === 'c1') return Promise.resolve(page([newer], 'c2'))
+        return Promise.resolve(page(small, 'c1'))
+      }) as never)
+
+      renderBody()
+      await screen.findByText('img-050.png')
+
+      // Newest first would put img-050 on top; while loading it follows the first page.
+      expect(renderedHashes()).toEqual(
+        [small[2]!, small[1]!, small[0]!, newer].map((asset) => asset.hash32),
+      )
+
+      await act(async () => third.resolve(page([])))
+
+      await waitFor(() =>
+        expect(renderedHashes()).toEqual(
+          [newer, small[2]!, small[1]!, small[0]!].map((asset) => asset.hash32),
+        ),
+      )
+    })
+
+    it('re-sorts everything loaded so far as soon as the sort changes', async () => {
+      const early = makeAsset(60, { filename: 'a-early.png', slug: 'a-early' })
+      const never = deferred<ReturnType<typeof page>>()
+      mockClient.assets.list.mockImplementation(((params: Record<string, string>) => {
+        if (params.cursor === 'c2') return never.promise
+        if (params.cursor === 'c1') return Promise.resolve(page([early], 'c2'))
+        return Promise.resolve(page(small, 'c1'))
+      }) as never)
+
+      renderBody()
+      await screen.findByText('a-early.png')
+      expect(renderedHashes().at(-1)).toBe(early.hash32)
+
+      await pickOption('media-library-sort', 'Name (A–Z)')
+
+      expect(renderedHashes()[0]).toBe(early.hash32)
+    })
+
+    it('shows the toolbar while the first page is loading', () => {
+      mockClient.assets.list.mockReturnValue(deferred<ReturnType<typeof page>>().promise as never)
+
+      renderBody()
+
+      expect(screen.getByTestId('media-library-filter')).toBeTruthy()
+      expect(screen.getByTestId('media-library-kind')).toBeTruthy()
+      expect(screen.getByTestId('media-library-sort')).toBeTruthy()
+      expect(screen.getByTestId('media-library-density')).toBeTruthy()
+    })
+  })
+
+  describe('a walk that cannot finish', () => {
+    it('does not call a repeated cursor complete, and Retry starts over from page 1', async () => {
+      mockClient.assets.list.mockImplementation(((params: Record<string, string>) =>
+        Promise.resolve(
+          params.cursor === 'c1' ? page([dogAsset], 'c1') : page([catAsset], 'c1'),
+        )) as never)
+
+      renderBody()
+      const alert = await screen.findByTestId('media-library-error')
+      expect(alert.textContent).toContain("Couldn't load the rest")
+      expect(screen.queryByTestId('media-library-empty')).toBeNull()
+      expect(screen.queryByTestId('media-library-load-status')).toBeNull()
+      expect(mockClient.assets.list).toHaveBeenCalledTimes(2)
+
+      // A complete library would report the count of a matching search.
+      await userEvent.setup().type(screen.getByTestId('media-library-filter'), 'cat')
+      expect(screen.getByText('cat.png')).toBeTruthy()
+      expect(screen.queryByTestId('media-library-load-status')).toBeNull()
+
+      fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+
+      await waitFor(() => expect(mockClient.assets.list).toHaveBeenCalledTimes(3))
+      expect(mockClient.assets.list).toHaveBeenNthCalledWith(3, { limit: '40' })
+    })
+
+    it('says what the loaded part holds when a search matches nothing mid-walk', async () => {
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset, dogAsset, makeAsset(3)], 'c1'))
+      mockClient.assets.list.mockResolvedValueOnce({ ok: false, status: 500, error: 'Boom' })
+
+      renderBody()
+      await screen.findByTestId('media-library-error')
+      await userEvent.setup().type(screen.getByTestId('media-library-filter'), 'zzz')
+
+      expect(screen.getByTestId('media-library-empty').textContent).toContain(
+        'No files match “zzz” among the 3 files loaded.',
+      )
+      expect(screen.queryByTestId('media-library-load-status')).toBeNull()
+    })
+
+    it('hides the raw server message from anyone who is not an admin', async () => {
+      mockClient.user.whoami.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { userId: 'user-1', groups: [] },
+      })
+      mockClient.assets.list.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        error: 'ECONNRESET at 10.0.0.7',
+      })
+
+      renderBody()
+      const alert = await screen.findByTestId('media-library-error')
+      await waitFor(() => expect(mockClient.user.whoami).toHaveBeenCalled())
+      await act(async () => {})
+
+      expect(within(alert).getByText("Couldn't load the media library.")).toBeTruthy()
+      expect(alert.textContent).not.toContain('ECONNRESET')
+    })
+  })
+
+  describe('an empty or filtered-out library', () => {
+    it('hides the search, filter, sort and layout controls on an empty, complete library', async () => {
+      mockClient.assets.list.mockResolvedValueOnce(page([]))
+
+      renderBody()
+      await screen.findByText('No files yet. Drop a file above, or click there to choose one.')
+
+      expect(screen.queryByTestId('media-library-filter')).toBeNull()
+      expect(screen.queryByTestId('media-library-kind')).toBeNull()
+      expect(screen.queryByTestId('media-library-sort')).toBeNull()
+      expect(screen.queryByTestId('media-library-density')).toBeNull()
+    })
+
+    it('hides them in picker mode too when the library holds only PDFs', async () => {
+      mockClient.assets.list.mockResolvedValueOnce(
+        page([makeAsset(1, { filename: 'terms.pdf', slug: 'terms', kind: 'pdf' })]),
+      )
+
+      renderBody({ mode: 'picker', onSelect: vi.fn() })
+      await screen.findByText('No images yet. Drop an image above, or click there to choose one.')
+
+      expect(screen.queryByTestId('media-library-filter')).toBeNull()
+      expect(screen.queryByTestId('media-library-density')).toBeNull()
+    })
+
+    it('offers to show all files when the kind filter hides everything, in manage mode', async () => {
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
+
+      renderBody()
+      await screen.findByText('cat.png')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('radio', { name: 'PDFs' }))
+      const empty = screen.getByTestId('media-library-empty')
+      expect(empty.textContent).toContain('No PDFs in the library.')
+
+      await user.click(within(empty).getByRole('button', { name: 'Show all files' }))
+
+      expect(screen.getByRole('radio', { name: 'All' })).toHaveProperty('checked', true)
+      expect(screen.getByText('cat.png')).toBeTruthy()
+      expect(screen.queryByTestId('media-library-empty')).toBeNull()
+    })
+
+    it('does not offer to show all files in picker mode, which has no kind control', async () => {
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
+
+      renderBody({ mode: 'picker', onSelect: vi.fn() })
+      await screen.findByText('cat.png')
+      await userEvent.setup().type(screen.getByTestId('media-library-filter'), 'zzz')
+
+      const empty = screen.getByTestId('media-library-empty')
+      expect(within(empty).getByRole('button', { name: 'Clear search' })).toBeTruthy()
+      expect(within(empty).queryByRole('button', { name: 'Show all files' })).toBeNull()
+    })
+  })
+
+  describe('the search field', () => {
+    const typeSearch = async (text: string) => {
+      const user = userEvent.setup()
+      const input = screen.getByTestId('media-library-filter') as HTMLInputElement
+      await user.type(input, text)
+      return { user, input }
+    }
+
+    it('moves focus to the field when the x in it clears the search', async () => {
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset, dogAsset]))
+
+      renderBody()
+      await screen.findByText('cat.png')
+      const { user, input } = await typeSearch('dog')
+
+      await user.click(screen.getByRole('button', { name: 'Clear search' }))
+
+      expect(input.value).toBe('')
+      expect(document.activeElement).toBe(input)
+    })
+
+    it('moves focus to the field when the empty-state button clears the search', async () => {
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
+
+      renderBody()
+      await screen.findByText('cat.png')
+      const { user, input } = await typeSearch('zzz')
+      const empty = screen.getByTestId('media-library-empty')
+
+      await user.click(within(empty).getByRole('button', { name: 'Clear search' }))
+
+      expect(input.value).toBe('')
+      expect(document.activeElement).toBe(input)
+    })
+
+    it('moves focus to the field after a confirmed remove, and announces it', async () => {
+      asAdmin()
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset, dogAsset]))
+      mockClient.assets.delete.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { deleted: true },
+      })
+
+      renderBody()
+      const trash = await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`)
+      trash.focus()
+      fireEvent.click(trash)
+
+      await waitFor(() => expect(screen.queryByText('cat.png')).toBeNull())
+      expect(document.activeElement).toBe(screen.getByTestId('media-library-filter'))
+      expect(screen.getByRole('status').textContent).toBe('Removed cat.png from library')
+    })
+
+    it('moves focus to the dropzone when removing the last file hides the search field', async () => {
+      asAdmin()
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
+      mockClient.assets.delete.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { deleted: true },
+      })
+
+      renderBody()
+      const trash = await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`)
+      trash.focus()
+      fireEvent.click(trash)
+
+      await waitFor(() => expect(screen.queryByTestId('media-library-filter')).toBeNull())
+      await waitFor(() =>
+        expect(document.activeElement).toBe(screen.getByTestId('media-library-dropzone')),
+      )
+    })
+
+    it('clears a non-empty search on Escape without letting the key reach a drawer or modal', async () => {
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset, dogAsset]))
+      const seen = vi.fn()
+      document.addEventListener('keydown', seen)
+
+      try {
+        renderBody()
+        await screen.findByText('cat.png')
+        const { user, input } = await typeSearch('dog')
+        seen.mockClear()
+
+        await user.keyboard('{Escape}')
+
+        expect(input.value).toBe('')
+        expect(screen.getByText('cat.png')).toBeTruthy()
+        expect(seen).not.toHaveBeenCalled()
+      } finally {
+        document.removeEventListener('keydown', seen)
+      }
+    })
+
+    it('lets Escape through when the search is empty, so the drawer or modal can close', async () => {
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
+      const seen = vi.fn()
+      document.addEventListener('keydown', seen)
+
+      try {
+        renderBody()
+        await screen.findByText('cat.png')
+        const user = userEvent.setup()
+        screen.getByTestId('media-library-filter').focus()
+
+        await user.keyboard('{Escape}')
+
+        expect(seen).toHaveBeenCalledTimes(1)
+        expect(seen.mock.calls[0]![0]).toMatchObject({ key: 'Escape' })
+      } finally {
+        document.removeEventListener('keydown', seen)
+      }
+    })
+  })
+
+  describe('uploading', () => {
+    const uploadFile = async (name: string, type = 'image/png') => {
+      const input = screen
+        .getByTestId('media-library-dropzone')
+        .querySelector('input[type="file"]') as HTMLInputElement
+      await userEvent.setup().upload(input, new File(['x'], name, { type }))
+    }
+
+    it('clears a search the upload would not match, and leads with the upload whatever the sort', async () => {
+      const alpha = makeAsset(1, { filename: 'alpha.png', slug: 'alpha' })
+      const beta = makeAsset(2, { filename: 'beta.png', slug: 'beta' })
+      const zeta = makeAsset(3, { filename: 'zeta.png', slug: 'zeta' })
+      mockClient.assets.list.mockResolvedValueOnce(page([alpha, beta]))
+      vi.mocked(uploadAsset).mockResolvedValue(zeta)
+
+      renderBody()
+      await screen.findByText('alpha.png')
+      await pickOption('media-library-sort', 'Name (A–Z)')
+      const input = screen.getByTestId('media-library-filter') as HTMLInputElement
+      await userEvent.setup().type(input, 'alpha')
+      expect(renderedHashes()).toEqual([alpha.hash32])
+
+      await uploadFile('zeta.png')
+
+      await screen.findByText('zeta.png')
+      expect(input.value).toBe('')
+      expect(renderedHashes()).toEqual([zeta.hash32, alpha.hash32, beta.hash32])
+    })
+
+    it('resets the kind filter to All when the upload is of another kind', async () => {
+      const pdf = makeAsset(1, { filename: 'brochure.pdf', slug: 'brochure', kind: 'pdf' })
+      const fresh = makeAsset(500, { filename: 'fresh.png', slug: 'fresh' })
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset, pdf]))
+      vi.mocked(uploadAsset).mockResolvedValue(fresh)
+
+      renderBody()
+      await screen.findByText('brochure.pdf')
+      await userEvent.setup().click(screen.getByRole('radio', { name: 'PDFs' }))
+      expect(renderedHashes()).toEqual([pdf.hash32])
+
+      await uploadFile('fresh.png')
+
+      await screen.findByText('fresh.png')
+      expect(screen.getByRole('radio', { name: 'All' })).toHaveProperty('checked', true)
+      expect(renderedHashes()[0]).toBe(fresh.hash32)
+    })
+
+    it('shows the upload even though the first page failed to load', async () => {
+      const fresh = makeAsset(500, { filename: 'fresh.png', slug: 'fresh' })
+      mockClient.assets.list.mockResolvedValueOnce({ ok: false, status: 500, error: 'Boom' })
+      vi.mocked(uploadAsset).mockResolvedValue(fresh)
+
+      renderBody()
+      await screen.findByTestId('media-library-error')
+
+      await uploadFile('fresh.png')
+
+      expect(await screen.findByTestId(`asset-card-${fresh.hash32}`)).toBeTruthy()
+      expect(screen.queryByTestId('media-library-loading')).toBeNull()
+    })
+
+    it('shows the upload, and no skeleton, while the first page is still loading', async () => {
+      const fresh = makeAsset(500, { filename: 'fresh.png', slug: 'fresh' })
+      mockClient.assets.list.mockReturnValue(deferred<ReturnType<typeof page>>().promise as never)
+      vi.mocked(uploadAsset).mockResolvedValue(fresh)
+
+      renderBody()
+      expect(screen.getByTestId('media-library-loading')).toBeTruthy()
+
+      await uploadFile('fresh.png')
+
+      expect(await screen.findByTestId(`asset-card-${fresh.hash32}`)).toBeTruthy()
+      expect(screen.queryByTestId('media-library-loading')).toBeNull()
     })
   })
 

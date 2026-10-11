@@ -64,6 +64,10 @@ export const AssetCard: React.FC<AssetCardProps> = ({
       role={onSelect ? 'button' : undefined}
       tabIndex={onSelect ? 0 : undefined}
       onKeyDown={onSelect ? handleKeyDown : undefined}
+      // Mantine draws its focus ring only on its own controls or this class; a bare Card gets none.
+      className={onSelect ? 'mantine-focus-auto' : undefined}
+      // The name a picker card announces; the thumbnail, filename and date would repeat the name.
+      aria-label={onSelect ? `Select ${asset.filename}` : undefined}
     >
       {onDelete && (
         <Tooltip label="Remove from library">

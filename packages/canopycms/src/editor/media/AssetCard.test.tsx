@@ -129,4 +129,21 @@ describe('AssetCard', () => {
     expect(screen.getByText('cat.png')).toBeTruthy()
     expect(screen.getByRole('img').style.height).toBe('64px')
   })
+
+  it('is a named, focus-ringed button when it can select', () => {
+    render(<AssetCard asset={catAsset} onSelect={vi.fn()} />, { wrapper: Wrapper })
+
+    const card = screen.getByTestId(`asset-card-${catAsset.hash32}`)
+    expect(card.getAttribute('aria-label')).toBe('Select cat.png')
+    expect(screen.getByRole('button', { name: 'Select cat.png' })).toBe(card)
+    expect(card.classList.contains('mantine-focus-auto')).toBe(true)
+  })
+
+  it('has no button name or focus ring when it cannot select', () => {
+    render(<AssetCard asset={catAsset} />, { wrapper: Wrapper })
+
+    const card = screen.getByTestId(`asset-card-${catAsset.hash32}`)
+    expect(card.getAttribute('aria-label')).toBeNull()
+    expect(card.classList.contains('mantine-focus-auto')).toBe(false)
+  })
 })

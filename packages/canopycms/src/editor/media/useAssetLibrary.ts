@@ -21,7 +21,7 @@ export interface UseAssetLibraryResult {
   /** Every page is in. */
   complete: boolean
   error: AssetLibraryError | null
-  /** Resumes from the page that failed, or starts over when page 1 failed. */
+  /** Resumes from the page that failed; starts over when page 1 failed or the listing moved. */
   retry: () => void
   /** Puts an uploaded asset in the list; the one already loaded under its hash is replaced. */
   prepend: (asset: AssetRecord) => void
@@ -100,8 +100,16 @@ export function useAssetLibrary(opened: boolean): UseAssetLibraryResult {
         if (cursor === undefined) setFirstPageLoaded(true)
 
         const next = page.nextCursor
-        if (!next || requested.current.has(next)) {
+        if (!next) {
           setComplete(true)
+          return
+        }
+        // A cursor seen before means the listing moved under the walk (the local store restarts
+        // from page 1 when its anchor asset is deleted), so pages may be missing: never report
+        // that as complete. Retry starts over.
+        if (requested.current.has(next)) {
+          failedCursor.current = undefined
+          setError({ message: 'The library changed while it was loading.', firstPage: false })
           return
         }
         cursor = next

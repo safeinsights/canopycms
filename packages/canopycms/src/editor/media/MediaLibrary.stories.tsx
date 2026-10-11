@@ -50,15 +50,20 @@ interface FakeClientOptions {
   assets: AssetRecord[]
   /** The page (1-based) whose request never settles, so the library stays partly loaded. */
   holdPage?: number
+  /** The page (1-based) whose request fails. */
+  failPage?: number
 }
 
 /** An in-memory stand-in for the asset endpoints, paged 40 at a time like the real list. */
-function createFakeClient({ assets, holdPage }: FakeClientOptions): ApiClient {
+function createFakeClient({ assets, holdPage, failPage }: FakeClientOptions): ApiClient {
   const client = {
     assets: {
       list: async (params: Record<string, string>) => {
         const pageNumber = params.cursor ? Number(params.cursor.replace('page-', '')) : 1
         if (pageNumber === holdPage) return new Promise<never>(() => {})
+        if (pageNumber === failPage) {
+          return { ok: false, status: 503, error: 'Service unavailable' }
+        }
         const start = (pageNumber - 1) * PAGE_SIZE
         const end = start + PAGE_SIZE
         return {
@@ -86,8 +91,11 @@ function createFakeClient({ assets, holdPage }: FakeClientOptions): ApiClient {
 /** Provides the fake client and the stored layout the story wants, before the library mounts. */
 const StoryFrame: React.FC<
   FakeClientOptions & { density?: MediaDensity; children: React.ReactNode }
-> = ({ density = 'grid', children, assets, holdPage }) => {
-  const client = useMemo(() => createFakeClient({ assets, holdPage }), [assets, holdPage])
+> = ({ density = 'grid', children, assets, holdPage, failPage }) => {
+  const client = useMemo(
+    () => createFakeClient({ assets, holdPage, failPage }),
+    [assets, holdPage, failPage],
+  )
   useState(() => {
     try {
       window.localStorage.setItem(
@@ -100,7 +108,7 @@ const StoryFrame: React.FC<
   })
   return (
     <ApiClientProvider client={client}>
-      <div style={{ width: 660, height: 720 }}>{children}</div>
+      <div style={{ width: '100%', maxWidth: 660, height: 720 }}>{children}</div>
     </ApiClientProvider>
   )
 }
@@ -162,6 +170,44 @@ export const ManageDrawer: Story = {
   render: () => (
     <StoryFrame assets={ALL_ASSETS}>
       <MediaLibrary opened onClose={() => {}} mode="manage" />
+    </StoryFrame>
+  ),
+}
+
+/** Page 1 never arrives: the skeleton in the shape of the grid. */
+export const Loading: Story = {
+  render: () => (
+    <StoryFrame assets={ALL_ASSETS} holdPage={1}>
+      <MediaLibraryBody opened mode="manage" />
+    </StoryFrame>
+  ),
+}
+
+export const ErrorFirstPage: Story = {
+  render: () => (
+    <StoryFrame assets={ALL_ASSETS} failPage={1}>
+      <MediaLibraryBody opened mode="manage" />
+    </StoryFrame>
+  ),
+}
+
+/** Page 2 fails: page 1 stays, and Retry resumes from page 2. */
+export const ErrorLaterPage: Story = {
+  render: () => (
+    <StoryFrame assets={ALL_ASSETS} failPage={2}>
+      <MediaLibraryBody opened mode="manage" />
+    </StoryFrame>
+  ),
+}
+
+export const PickerList: Story = {
+  render: () => (
+    <StoryFrame assets={ALL_ASSETS} density="list">
+      <MediaLibraryBody
+        opened
+        mode="picker"
+        onSelect={(asset) => alert(`Select ${asset.filename}`)}
+      />
     </StoryFrame>
   ),
 }
