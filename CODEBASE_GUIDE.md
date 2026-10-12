@@ -25,8 +25,10 @@ Repo-level tooling, under `scripts/`:
 
 - `scripts/add-js-extensions.mjs` — rewrites a built `dist/`'s extensionless relative imports to explicit `.js`
 - `scripts/check-esm-imports.mjs` — imports every published `exports` subpath under plain Node ESM; see [DEVELOPING.md](DEVELOPING.md#published-package-esm-import-check)
-- `scripts/bump-version.mjs` — sets the version across all five publishable packages in lockstep
+- `scripts/bump-version.mjs` — writes one explicit version to all five publishable packages in lockstep
 - `scripts/prerelease-version.mjs` — computes an integration publish's `X.Y.Z-int.N` version
+- `scripts/release-stable.mjs` — `--prepare` turns pending changesets into a stable release's changes
+- `scripts/npm-attested-commit.mjs` — the commit a published version's provenance names
 - `scripts/migration-notes.mjs` — assembles `CHANGELOG.md` from `.changeset/`
 - `scripts/check-docs.mjs` — doc word budgets, list-item length, backticked-path and link resolution
 - `scripts/check-comment-budget.mjs` — source-comment volume ratchet, budgets in `scripts/comment-budget.json`
