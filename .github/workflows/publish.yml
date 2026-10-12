@@ -191,8 +191,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A -- CHANGELOG.md .changeset package.json 'packages/*/package.json' \
             packages/canopycms/src/version.ts '*.md'
-          if [ -n "$(git status --porcelain)" ]; then
-            git status --porcelain
+          # Staged is the release; anything left unstaged or untracked is not.
+          if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            git status --short
             echo "::error::the release changed files outside the version and changelog set"
             exit 1
           fi
