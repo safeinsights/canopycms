@@ -7,6 +7,7 @@ import type { ObjectFieldConfig } from '../config'
 import { focusFieldTarget, revealField, whenRevealed } from './field-target'
 import type { RenderField } from './fields/ObjectField'
 import { ObjectListField } from './fields/ObjectListField'
+import { useListItemKeys } from './fields/list-item-keys'
 
 afterEach(() => cleanup())
 
@@ -151,5 +152,61 @@ describe('whenRevealed', () => {
 
     await waitFor(() => expect(then).toHaveBeenCalledTimes(1))
     expect(expandedWhenRun).toEqual(['true'])
+  })
+})
+
+describe('whenRevealed in a browser that reports visibility', () => {
+  const proto = HTMLElement.prototype as { checkVisibility?: () => boolean }
+  const original = proto.checkVisibility
+  afterEach(() => {
+    proto.checkVisibility = original
+  })
+
+  it('asks again until a row mounted with the field opens, then runs once the field shows', async () => {
+    proto.checkVisibility = function (this: HTMLElement) {
+      return this.isConnected && !this.closest('[hidden]')
+    }
+    const shownWhenRun: boolean[] = []
+    const Asker = () => {
+      const ref = React.useRef<HTMLSpanElement>(null)
+      // A child's layout effect runs before its row's, so this first ask finds no listener.
+      React.useLayoutEffect(() => {
+        const el = ref.current
+        if (el) whenRevealed(el, () => shownWhenRun.push(el.checkVisibility()))
+      }, [])
+      return <span ref={ref} />
+    }
+    const field: ObjectFieldConfig = {
+      name: 'team',
+      type: 'object',
+      list: true,
+      label: 'Team',
+      fields: [{ name: 'name', type: 'string' }],
+    }
+    const Mounting = () => {
+      const keysFor = useListItemKeys()
+      const items = ['a', 'b', 'c', 'd', 'e'].map((name) => ({ name }))
+      return (
+        <MantineProvider>
+          <ObjectListField
+            id="team"
+            label="Team"
+            field={field}
+            items={items}
+            itemKeys={keysFor(items, 'team')}
+            onChange={() => {}}
+            renderField={(_f, _v, _c, path) =>
+              path[1] === 4 ? <Asker /> : <input aria-label={path.join('.')} />
+            }
+            path={['team']}
+            canopyPath="team"
+            readOnly={false}
+            resetKey="entry"
+          />
+        </MantineProvider>
+      )
+    }
+    render(<Mounting />)
+    await waitFor(() => expect(shownWhenRun).toEqual([true]))
   })
 })

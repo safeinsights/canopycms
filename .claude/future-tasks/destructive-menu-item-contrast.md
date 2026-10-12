@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-12. A red Mantine `Menu.Item` draws its text at red.6 (3.3:1 on white) whatever shade is passed; the navigator's Delete items fail contrast, and the UX guidelines name no rule for destructive menu text or for picker buttons' ellipsis
+  New 2026-10-12. A red Mantine `Menu.Item` draws its text at red.6 (3.3:1 on white); the navigator's Delete items fail contrast, red.8 text fails in dark mode, and the UX guidelines name no rule for destructive menu text or for picker buttons' ellipsis
 ---
 # Destructive menu items fail text contrast
 
@@ -22,6 +22,13 @@ override it. `editor/fields/ItemList.tsx` passes `c="red.8"` on its Remove item;
 
 Give every destructive menu item red.8 text in one place, such as a shared `DangerMenuItem` next
 to `components/ReasonedMenuItem.tsx`, and use it in the navigator and `ItemList`.
+
+## Dark mode
+
+`CanopyCMSProvider` takes `colorScheme="dark"`, where red.8 text drops to about 3:1 on the menu's
+dark-6 and 3.4:1 on dark-7. That covers this Remove item, "Has errors" and every `c="red.8"` error
+text. A per-scheme danger-text variable in `canopyCssVariablesResolver` (`theme.tsx`), red.8 light
+and red.4 dark, fixes them together.
 
 ## Guideline gaps to settle in `docs/ux-guidelines.md`
 

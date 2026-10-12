@@ -852,6 +852,14 @@ describe('ensureItemTitleFieldsExist', () => {
     )
   })
 
+  it('throws when itemLabel is blank or not text', () => {
+    for (const itemLabel of ['', '   ', 3]) {
+      expect(() => ensureItemTitleFieldsExist([{ ...listObject(), itemLabel }])).toThrow(
+        'which must be non-blank text',
+      )
+    }
+  })
+
   it('passes when itemTitleField names a direct child, or is absent', () => {
     expect(() => ensureItemTitleFieldsExist([listObject('title')])).not.toThrow()
     expect(() => ensureItemTitleFieldsExist([listObject()])).not.toThrow()
