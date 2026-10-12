@@ -116,10 +116,10 @@ export const forEachReferenceField = (
 
 /**
  * Check that every `itemLabel` is non-blank text and, like every `itemTitleField`, sits on a
- * `list: true` object, and that every
- * `itemTitleField` names a direct child of type `string` or `number`, the only values the card
- * heading shows as typed (a reference would show its raw id, a select its stored value). Throws an
- * error when it does not.
+ * `list: true` object, and that every `itemTitleField` names a direct child of type `string` or
+ * `number`, the only values the card heading shows as typed (a reference would show its raw id, a
+ * select its stored value). Throws an error when it does not. Entry schemas reach the editor
+ * through these checks, not the zod field schema.
  */
 export const ensureItemTitleFieldsExist = (fields: unknown): void => {
   if (!Array.isArray(fields)) return

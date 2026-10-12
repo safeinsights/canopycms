@@ -64,7 +64,7 @@ export interface ItemListProps<T> {
   hasErrors?: (index: number) => boolean
   onMove: (from: number, to: number) => void
   onDuplicate: (index: number) => void
-  /** Takes row `index` out; focus has already moved to the list. */
+  /** Takes row `index` out; focus has already moved to the enclosing `[data-removal-focus]` list. */
   onRemove: (index: number) => void
   /** Rendered before row `index`, such as a block list's insert-here control. */
   renderBetween?: (index: number) => React.ReactNode
@@ -260,7 +260,8 @@ const ItemRow: React.FC<ItemRowProps> = ({
 
   const expandedRef = useRef(expanded)
   const onExpandedChangeRef = useRef(onExpandedChange)
-  // Both from the layout phase, before any field inside runs an effect that asks to reveal it.
+  // Both from the layout phase, before any field inside runs a passive effect that asks to reveal
+  // it; `whenRevealed` asks again for one that asks earlier.
   useIsomorphicEffect(() => {
     expandedRef.current = expanded
     onExpandedChangeRef.current = onExpandedChange

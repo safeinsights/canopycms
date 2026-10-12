@@ -31,6 +31,7 @@ re-measuring on reveal via a documented hook for custom renderers.
 ## 3. The comment popover's side inside a collapsed row
 
 When a highlighted thread opens a field's popover as the field mounts inside a collapsed row,
-`CommentThreadsPopover` chooses above or below (`choosePopoverSide`) from anchors that are still
-hidden, and keeps that choice once the row opens. Position follows the anchor; only the side can
+`CommentThreadsPopover` chooses above or below (`choosePopoverSide`, once per open:
+`comments/CommentThreadsPopover.tsx:162-169`) from anchors that are still hidden, and keeps that
+choice once the row opens. Found by reading the code; not reproduced. Position follows the anchor; only the side can
 be wrong. **Fix:** re-choose the side once `anchors.above` becomes visible.

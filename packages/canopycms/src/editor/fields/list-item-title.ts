@@ -14,7 +14,7 @@ const asRecord = (item: unknown): Record<string, unknown> | undefined =>
     ? (item as Record<string, unknown>)
     : undefined
 
-/** A single-line text value worth showing: a non-blank string or a finite number. */
+/** A value worth showing on one line: a non-blank string's first line, or a finite number. */
 const shownText = (raw: unknown): string | undefined => {
   if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw)
   if (typeof raw === 'string' && raw.trim() !== '') return shorten(raw.trim().split('\n')[0])

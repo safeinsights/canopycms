@@ -13,7 +13,8 @@ export interface ItemExpansion {
 
 /**
  * Which rows of a collapsible list are open, by list-item key (`useListItemKeys`), so a row keeps
- * its state through moves, and through a Remove and its Undo. A list's first rows start open as
+ * its state through moves, and through a Remove and its Undo. A list inside a row that moves
+ * remounts and starts over. A list's first rows start open as
  * `EXPAND_ALL_UP_TO` says; a row added later (Add, Duplicate) starts open. `resetKey` names the
  * entry being edited: a new one starts over.
  */
@@ -22,7 +23,7 @@ export function useItemExpansion(itemKeys: readonly string[], resetKey: string):
     resetKey,
     open: new Map(),
   }))
-  // Decided once per key, the first time it renders, and never changed afterwards.
+  // Decided once per key, the first time it renders, and kept until `resetKey` changes.
   const defaults = useRef<{ resetKey: string; open: Map<string, boolean>; started: boolean }>({
     resetKey,
     open: new Map(),

@@ -102,8 +102,8 @@ const TemplateMenu: React.FC<{
 )
 
 /**
- * The gap before a block. Its add control shows while the gap is hovered or the control is
- * focused, and stays in the tab order, so a keyboard reaches it before each block.
+ * The gap before a block. Its add control shows while the gap is hovered, the control is focused
+ * or its menu is open, and stays in the tab order, so a keyboard reaches it before each block.
  */
 const InsertBetween: React.FC<{
   templates: BlockConfig[]

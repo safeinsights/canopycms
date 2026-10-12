@@ -209,7 +209,8 @@ export interface ObjectFieldConfig extends BaseFieldConfig {
   itemTitleField?: string
   /**
    * On a `list: true` object, what one item is called, as it reads mid-sentence ("team member"):
-   * the add button reads "Add team member". Without it, "Add item".
+   * the add button reads "Add team member" and an untitled item "Team member 3". Without it,
+   * "Add item" and "Item 3". `ensureItemTitleFieldsExist` (`validation.ts`) checks it.
    */
   itemLabel?: string
 }
