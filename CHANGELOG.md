@@ -14,7 +14,7 @@ Each entry has up to three parts:
 
 **Read the copy your build ships.** From the first `0.1.0` prerelease on, every published version carries this file as
 `node_modules/canopycms/CHANGELOG.md`, assembled for that build: its **This build** section lists
-what is new since the previous int on the same branch, and its links point at the commit the build
+what is new since the previous int on the same branch, or on a stable release links its entries, and its links point at the commit the build
 came from. The copy in the repository holds released history and the entries from before changesets;
 every entry written since is a file in [`.changeset/`](.changeset/README.md) until a stable release
 moves it here.
@@ -22,7 +22,9 @@ moves it here.
 **Find your starting point.** From a stable pin, start at the first version under **Released**
 newer than it, and below `0.0.63` read the notes for `0.0.62 and earlier` too. From an int
 prerelease such as `0.0.68-int.101`, read only the **Unreleased** entries, or labelled parts of
-entries, carrying a higher int number (the table lists later parts in parentheses).
+entries, carrying a higher int number (the table lists later parts in parentheses). Moving from
+an int prerelease to a stable release, read that release's section the same way: its entries keep
+their int labels.
 
 **Find your target.** `npm view canopycms version` reports the `latest` dist-tag, the newest
 stable release. On the int channel, the target's own `CHANGELOG.md` is the one to read.
@@ -39,9 +41,13 @@ entry replaces an earlier one's advice, the earlier one points to it.
 **Action** says who must act; **Template first** means that with `workerCode: { source: 'parameter' }`,
 you deploy the stack template before CI rolls that int's bundle.
 
-The entries below predate changesets and keep their hand-written labels. Nothing in this section is
-edited by hand any more: a new entry is a `.changeset/` file, labelled when an int first carries
-it, and a stable release moves this whole section under **Released**.
+Nothing in this section is edited by hand: each entry is a `.changeset/` file, which a build
+assembles here and labels with the first int that carries it, and a stable release moves the
+entries under **Released**.
+
+<!-- legacy:start -->
+
+The entries below predate changesets and keep their hand-written labels.
 
 | int | Area     | Change                                                                                                                                                                                      | Action                       |
 | --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
@@ -801,6 +807,8 @@ to 8192 everywhere but the lazy Lambda, whose allowlist gains 32, 48, 64, 96 and
 asset URLs.
 
 **Now deletable.** Anything that only fed `publicBaseUrl`, and rounding widths to a multiple of 160.
+
+<!-- legacy:end -->
 
 ---
 

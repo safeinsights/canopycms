@@ -22,9 +22,9 @@ permissions:
   pull-requests: read
 
 jobs:
-  # The lint, typecheck, build, unit-test and changesets jobs below run in parallel, and
-  # `validate` at the end of this group passes only when every one of them
-  # did. Each job installs through .github/actions/setup.
+  # The lint, typecheck, build, unit-test, changesets and release-dry-run jobs
+  # below run in parallel, and `validate` at the end of this group passes only
+  # when every one of them did. Each job installs through .github/actions/setup.
   lint:
     name: Lint, Format & Generated Files
     runs-on: ubuntu-latest
@@ -401,33 +401,150 @@ jobs:
             echo "Opened before $BASE_REF required changesets; not checked."
             exit 0
           fi
-          pnpm exec changeset status --since="origin/$BASE_REF"
           base=$(git merge-base "origin/$BASE_REF" HEAD)
-          # Captured, not piped into `grep -q`: under pipefail an early-exiting
-          # grep can SIGPIPE git and turn a match into a silent pass.
-          changed=$(git diff --name-only "$base" HEAD)
-          if grep -qxE 'pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|scripts/add-js-extensions\.mjs' <<<"$changed"; then
-            added=$(git diff --name-only --diff-filter=d "$base" HEAD -- '.changeset/*.md')
-            # Not changesets, by @changesets/read's rule: README in any case, the
-            # agent files by exact case, and dotfiles. .changeset/pre/, the one
-            # subdirectory it reads, is left out too: the lint refuses it.
-            real=$(printf '%s\n' "$added" | grep -E '^\.changeset/[^/.][^/]*\.md$' |
-              grep -viE '^\.changeset/readme\.md$' |
-              grep -vE '^\.changeset/(AGENTS|CLAUDE|GEMINI)\.md$' | grep -c . || true)
+          # A changed file that main changed too, and that now matches main's
+          # copy, came from main: typically a stable release's version bumps
+          # merged back into an int branch. It needs no changeset here. Without
+          # renames, so moving a file out of a package still counts as changing
+          # it. Captured, not piped into `grep -q`: under pipefail an
+          # early-exiting grep can SIGPIPE git and turn a match into a silent pass.
+          mainbase=$(git merge-base "origin/$BASE_REF" origin/main)
+          own=""
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            if git diff --quiet origin/main HEAD -- "$f" && ! git diff --quiet "$mainbase" origin/main -- "$f"; then
+              continue
+            fi
+            own+="$f"$'\n'
+          done <<<"$(git diff --no-renames --name-only "$base" HEAD)"
+          added=$(git diff --name-only --diff-filter=d "$base" HEAD -- '.changeset/*.md')
+          # Not changesets, by @changesets/read's rule: README in any case, the
+          # agent files by exact case, and dotfiles. .changeset/pre/, the one
+          # subdirectory it reads, is left out too: the lint refuses it.
+          real=$(printf '%s\n' "$added" | grep -E '^\.changeset/[^/.][^/]*\.md$' |
+            grep -viE '^\.changeset/readme\.md$' |
+            grep -vE '^\.changeset/(AGENTS|CLAUDE|GEMINI)\.md$' | grep -c . || true)
+          if ! pnpm exec changeset status --since="origin/$BASE_REF"; then
+            # The PR's own package changes, by the changedFilePatterns in
+            # .changeset/config.json: tests, fixtures and AGENTS.md need none.
+            shipped=$(grep '^packages/' <<<"$own" | grep -vE '\.test\.tsx?$|/__fixtures__/|/AGENTS\.md$' || true)
+            if [ -n "$shipped" ]; then
+              echo "::error::Add a changeset, or 'pnpm exec changeset add --empty' if adopters see no difference (a merge of main that also touched these needs one too):"
+              printf '%s\n' "$shipped"
+              exit 1
+            fi
+            echo "Every changed package file came from main; no changeset needed."
+          fi
+          # `changeset status` sees a renamed file only at its new path, so a
+          # file moved out of a package (tests, fixtures and AGENTS.md aside)
+          # needs a changeset too.
+          gone=$(git diff --no-renames --name-only --diff-filter=D "$base" HEAD -- 'packages/' |
+            grep -vE '\.test\.tsx?$|/__fixtures__/|/AGENTS\.md$' || true)
+          if [ -n "$gone" ] && grep -qxF -f <(printf '%s\n' "$gone") <<<"$own" && [ "$real" -eq 0 ]; then
+            echo "::error::This PR removes or moves files out of a published package but adds no changeset."
+            exit 1
+          fi
+          if grep -qxE 'pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|scripts/add-js-extensions\.mjs' <<<"$own"; then
             if [ "$real" -eq 0 ]; then
               echo "::error::This PR changes what the packages ship (lockfile, workspace overrides, tsconfig.base.json or add-js-extensions) but adds no changeset. Add one, or 'pnpm exec changeset add --empty' if adopters see no difference."
               exit 1
             fi
           fi
 
-  # One check that stands for the six jobs above, under the name the single
+  # Rehearses the stable release without committing, pushing or publishing:
+  # scripts/release-stable.mjs --prepare, the shipped changelog and the
+  # canopycms tarball, as publish.yml's release jobs run them, plus the release
+  # commit's staging check. Every PR into main gets it, since that merge is the
+  # release; any other PR gets it when it changes the release machinery itself,
+  # not just a changeset, so an int branch behind the latest stable release
+  # does not fail it on every PR. Such a PR on a branch that lacks the latest
+  # stable tag fails with "merge it first": merge main, as a release requires. It always runs and gates per step, so
+  # `validate` never sees it skipped.
+  release-dry-run:
+    name: Release dry run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The plan counts changesets since the latest stable tag, and the
+          # changelog labels entries from int tags.
+          fetch-depth: 0
+
+      - name: Check for release-path changes
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            relevant:
+              - '.github/workflows/publish.yml'
+              - '.github/workflows/ci.yml'
+              - 'scripts/release-stable.mjs'
+              - 'scripts/migration-notes.mjs'
+              - 'scripts/bump-version.mjs'
+              - 'scripts/npm-attested-commit.mjs'
+              - '.changeset/config.json'
+
+      - name: Decide
+        id: gate
+        env:
+          RELEVANT: ${{ github.event_name == 'pull_request' && (github.base_ref == 'main' || steps.filter.outputs.relevant == 'true') }}
+        run: echo "run=$RELEVANT" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup
+        if: steps.gate.outputs.run == 'true'
+
+      - name: Generate API clients
+        if: steps.gate.outputs.run == 'true'
+        run: pnpm run generate:client
+        working-directory: packages/canopycms
+
+      - name: Prepare the release
+        id: prepare
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          result=$(node scripts/release-stable.mjs --prepare)
+          echo "$result"
+          release=$(node -pe 'JSON.parse(process.argv[1]).release === true' "$result")
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          if [ "$release" = "true" ]; then
+            version=$(node -pe 'JSON.parse(process.argv[1]).version' "$result")
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            # release-commit's staging and refusal, without the commit.
+            git add -A -- CHANGELOG.md .changeset package.json 'packages/*/package.json' \
+              packages/canopycms/src/version.ts '*.md'
+            if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+              git status --short
+              echo "::error::the release changes files outside the version and changelog set"
+              exit 1
+            fi
+            git status --short
+            attested=$(node scripts/npm-attested-commit.mjs canopycms "$version")
+            [ -z "$attested" ] || { echo "::error::canopycms@$version is already on npm"; exit 1; }
+          fi
+
+      - name: Ship and pack canopycms
+        if: steps.prepare.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          node scripts/migration-notes.mjs --ship --version "$VERSION" --sha "$(git rev-parse HEAD)" \
+            --out packages/canopycms/CHANGELOG.md --summary "$GITHUB_STEP_SUMMARY"
+          cd packages/canopycms
+          pnpm pack
+          contents=$(tar -tzf canopycms-*.tgz)
+          grep -qx 'package/CHANGELOG.md' <<<"$contents" || { echo "::error::the tarball has no CHANGELOG.md"; exit 1; }
+          echo "Release dry run: would publish $VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+  # One check that stands for the seven jobs above, under the name the single
   # job had. `always()` makes it run, and fail, when a needed job failed, was
   # cancelled or was skipped; a gate that was itself skipped would read as
   # passing to anything that requires it.
   validate:
     name: Validate, Typecheck & Test
     if: always()
-    needs: [lint, typecheck, build, unit-canopycms, unit-packages, changesets]
+    needs: [lint, typecheck, build, unit-canopycms, unit-packages, changesets, release-dry-run]
     runs-on: ubuntu-latest
     steps:
       - name: Require every validate job to have succeeded

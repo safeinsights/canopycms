@@ -16,7 +16,7 @@ conflicts) counted these files changed on both sides:
 | `.claude/future-tasks/index.md` | 10 | Hand-ranked rows, edited when a task is filed or resolved |
 | `scripts/docs-budgets.json` | 18 | One JSON file holds every doc's word budget |
 
-[adopt-changesets.md](adopt-changesets.md) removed `CHANGELOG.md`, the worst of them. Of 46
+[adopt-changesets.md](resolved/adopt-changesets.md) removed `CHANGELOG.md`, the worst of them. Of 46
 budget-file writes since 2026-10-06, 16 changed only that file's entry; the rest still land in
 the shared JSON.
 

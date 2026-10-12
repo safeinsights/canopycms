@@ -1146,8 +1146,11 @@ Push replaces the workspace's content directory from the working tree, auto-comm
 
 Both channels publish all five packages at one version, and both enter through `publish.yml`:
 
-- **Stable** (`latest`): a push to `main` that CI passes. The release bot commits the version and
-  tags `vX.Y.Z`.
+- **Stable** (`latest`): a push to `main` that CI passes, when a changeset other than an empty
+  one is pending. `release-commit` runs `scripts/release-stable.mjs --prepare`, then commits, tags
+  `vX.Y.Z` and pushes both atomically as the release bot. The tag's push runs `publish`, which holds
+  npm's id-token and no write token, so provenance names the release commit. Nothing pending
+  publishes nothing.
 - **int**: dispatch _Publish to npm_ on any other branch. The version is `<next>-int.<run number>`,
   where `<next>` is what the branch's pending changesets would release (`changeset status`), and
   never less than main's version patch-bumped. Nothing is committed; the `tag-prerelease` job tags the
@@ -1162,17 +1165,21 @@ why.
 
 **Changesets.** A PR that changes a published package adds a `.changeset/` file
 ([.changeset/README.md](.changeset/README.md)); CI's `changesets` job enforces it.
-`scripts/migration-notes.mjs --ship` assembles them into the `CHANGELOG.md` an int build ships,
-labelling each entry with the first `v*-int.N` tag whose tree holds its file, and writes what is new
-since the previous int to the run summary; `pnpm changelog:preview` shows the same locally. **The
-stable job does not consume changesets yet**: it refuses to publish while any are pending, so an
-integration branch carrying them reaches `main` only after the changesets release path lands
-([adopt-changesets.md](.claude/future-tasks/adopt-changesets.md)).
+`scripts/migration-notes.mjs --ship` assembles them into the `CHANGELOG.md` a build ships;
+`pnpm changelog:preview` shows it locally. A
+stable release's `--promote` moves them under `## Released`, marking each
+`<!-- changeset: <slug> -->`, and `changeset version` deletes them. CI's `release-dry-run` job
+rehearses all of it on every PR into `main` and on any PR touching the release path.
 
-**Tags.** Rulesets make every `v*` tag immutable, and only the release bot creates a stable one.
+**Tags.** Rulesets make every `v*` tag immutable, and only the release bot (or an admin) creates a stable one.
 `scripts/backfill-int-tags.mjs` tags any int published without one, at its attested commit.
 
-**A wedged stable release.** `publish.yml` commits the version bump only after all five packages publish, so an interrupted run can leave npm holding a version main does not know about, and every later run re-derives that same already-published version and fails forever. `--min` floors the bump on `max(committed version, --min value)`. If a release wedges that way, `node scripts/bump-version.mjs --min <registry-version>` is how you re-derive a safe next version; normally CI passes it for you.
+**A stable release that stops part-way.** The release is committed and tagged before anything is
+published, so npm never holds a version main lacks. If `publish` fails, use "Re-run failed
+jobs", or dispatch _Publish to npm_ on the tag: it skips each package already on npm from the
+release commit and publishes the rest, under the `superseded` dist-tag if a
+newer release is already out. If the push itself is refused because `main` moved, nothing was
+published, and the next push to `main` releases.
 
 ## Dependency Overrides (`pnpm.overrides`)
 

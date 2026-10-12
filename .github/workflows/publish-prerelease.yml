@@ -87,10 +87,8 @@ jobs:
         run: pnpm run generate:client
         working-directory: packages/canopycms
 
-      # A stable release is to file the pending entries under its own version, so
-      # a branch without that release would ship them again as unreleased. Until
-      # that release path exists, the stable job refuses to run while any are
-      # pending.
+      # A stable release files the pending entries under its own version, so a
+      # branch without that release would ship them again as unreleased.
       # `allow_stale_base` is for an older line, such as a release branch cut
       # before it.
       - name: Require the latest stable release in this branch
@@ -175,12 +173,10 @@ jobs:
       #      resolves and runs -- no separate "install -g npm@11" step that
       #      re-resolves a floating major after the fact.
       #
-      # This also sidesteps Node's bundled npm entirely, which as of this
-      # writing has a broken module tree on the pinned Node version (missing
-      # promise-retry -- a known npm self-install/packaging defect, see
-      # npm/cli#9526) that would break a plain `npm publish`. It is not a
-      # provenance-support version requirement -- provenance has worked since
-      # npm 9.5, well below what Node 22 bundles.
+      # This also sidesteps Node's bundled npm, which on the pinned Node 22 is
+      # 10.x, below the OIDC floor described next, so a plain `npm publish`
+      # cannot authenticate; plain `npm view`, which needs no auth, is fine.
+      # Provenance itself has worked since npm 9.5.
       #
       # There IS a version floor, and it is a different one: OIDC trusted
       # publishing requires npm >= 11.5.0. This is worth spelling out because

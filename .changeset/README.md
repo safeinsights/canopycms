@@ -4,8 +4,7 @@ Every PR that changes a published package adds one file here: its entry in
 [CHANGELOG.md](../CHANGELOG.md), plus the version bump it needs. Nobody edits CHANGELOG.md's
 `## Unreleased` by hand. Each int build ships the files assembled into
 `node_modules/canopycms/CHANGELOG.md`, with each entry labelled by the first int that carried it,
-and a stable release is to move them under `## Released` and delete them. Until that release path
-exists, the stable publish job refuses to run while any are pending.
+and a stable release moves them under `## Released` and deletes them.
 
 CI fails a PR, opened after its base branch adopted changesets, that changes a package, the
 lockfile, `pnpm-workspace.yaml`, `tsconfig.base.json` or `scripts/add-js-extensions.mjs` without
