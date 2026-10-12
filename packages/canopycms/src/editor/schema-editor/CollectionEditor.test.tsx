@@ -90,6 +90,15 @@ const openRowMenu = async (user: ReturnType<typeof userEvent.setup>, rowName: st
   await user.click(screen.getByRole('button', { name: `Actions for ${rowName}` }))
 }
 
+/**
+ * Closes the open row menu and waits for it to leave the DOM: a menu still animating out keeps
+ * its items, which a query for the next row's menu would otherwise find first.
+ */
+const closeRowMenu = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+}
+
 const editEntryTypeLabelViaUi = async (
   user: ReturnType<typeof userEvent.setup>,
   rowName: string,
@@ -679,12 +688,12 @@ describe('CollectionEditor', () => {
       )
       await user.click(many)
       expect(screen.queryByTestId('confirm-delete-modal')).toBeNull()
-      await user.keyboard('{Escape}')
+      await closeRowMenu(user)
 
       await openRowMenu(user, 'featured')
       const one = await screen.findByRole('menuitem', { name: /^Remove/ })
       expect(one.textContent).toContain('1 entry uses this entry type. Move or delete it first.')
-      await user.keyboard('{Escape}')
+      await closeRowMenu(user)
 
       await openRowMenu(user, 'spare')
       const free = await screen.findByRole('menuitem', { name: 'Remove' })
