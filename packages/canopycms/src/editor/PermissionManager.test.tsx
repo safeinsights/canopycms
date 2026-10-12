@@ -414,6 +414,32 @@ describe('PermissionManager', () => {
     })
   })
 
+  describe('unresolved users in the permission editor (admin surface)', () => {
+    it('shows the id for an unresolved user and names whom Remove removes', async () => {
+      render(
+        <PermissionManager
+          opened
+          onClose={vi.fn()}
+          collections={mockCollections}
+          permissions={mockPermissions}
+          canEdit={true}
+          onSave={mockOnSave}
+          onSearchUsers={mockOnSearchUsers}
+          onListGroups={mockOnListGroups}
+          onGetUserMetadata={async () => null}
+        />,
+        { wrapper },
+      )
+      fireEvent.click(screen.getByText('Expand All'))
+      await waitFor(() => screen.getByText('About'))
+      fireEvent.click(screen.getByText('About'))
+
+      expect(
+        await screen.findByRole('button', { name: 'Remove Name unavailable · alice' }),
+      ).toBeTruthy()
+    })
+  })
+
   describe('permission badges in tree', () => {
     it('shows group badges on nodes with permissions', async () => {
       render(

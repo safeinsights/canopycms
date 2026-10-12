@@ -204,13 +204,16 @@ export interface BranchManagerProps {
   ) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
   highlightThreadId?: string
-  /** Names access users, and owners when `onGetOwnerMetadata` is absent; without it they show as ids */
+  /** Names owners and access users when `onGetOwnerMetadata` is absent; without either they show as unnamed */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
-  /** Names branch owners; the branch listing seeds them for every editor */
+  /** Names branch owners and the people with access; the branch listing seeds them for every editor */
   onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Names the people in branch comments; without it they show as ids */
   onGetCommentUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
+
+/** The lookup of a card given none: its people show as unnamed. */
+const noUserLookup = async (): Promise<UserSearchResult | null> => null
 
 const CLOSED_PULL_REQUEST_REASON =
   'The pull request was closed on GitHub. Withdraw the branch from review, then submit it again to open a new one.'
@@ -448,22 +451,16 @@ const BranchCard: React.FC<BranchCardProps> = ({
           </Group>
           {b.access && (
             <Group gap={6}>
-              {b.access.users?.map((u) =>
-                onGetUserMetadata ? (
-                  <UserBadge
-                    key={u}
-                    userId={u}
-                    getUserMetadata={onGetUserMetadata}
-                    variant="avatar-only"
-                    size="xs"
-                    showEmailTooltip={true}
-                  />
-                ) : (
-                  <Badge key={u} variant="outline" color="neutral">
-                    {u}
-                  </Badge>
-                ),
-              )}
+              {b.access.users?.map((u) => (
+                <UserBadge
+                  key={u}
+                  userId={u}
+                  getUserMetadata={onGetOwnerMetadata ?? noUserLookup}
+                  variant="avatar-only"
+                  size="xs"
+                  showEmailTooltip={true}
+                />
+              ))}
               {b.access.groups?.map((g) => (
                 <Badge key={g} variant="outline" color="neutral">
                   {g}

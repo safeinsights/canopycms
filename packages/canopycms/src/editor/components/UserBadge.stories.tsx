@@ -53,3 +53,15 @@ export const FallbackAvatarOnly: Story = {
     variant: 'avatar-only',
   },
 }
+
+/** On an admin-only surface the id is in the tooltip and the screen-reader text, never on screen. */
+export const NameUnavailableForAdmins: Story = {
+  args: {
+    userId: asUserId('story-unknown'),
+    getUserMetadata: async () => null,
+    revealIdOnFallback: true,
+    onRemove: () => {},
+    badgeVariant: 'filled',
+    color: 'blue',
+  },
+}

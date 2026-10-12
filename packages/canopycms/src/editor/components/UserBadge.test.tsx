@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
+import { userEvent } from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { SWRConfig } from 'swr'
 import { UserBadge } from './UserBadge'
@@ -156,6 +157,96 @@ describe('UserBadge', () => {
     )
     expect(await screen.findByText('Name unavailable')).toBeTruthy()
     expect(container.textContent).not.toContain('user-1')
+  })
+
+  it('shows an avatar-only badge with no name its fallback in a tooltip, for sighted and touch users', async () => {
+    const { container } = render(
+      <UserBadge userId="user-1" getUserMetadata={async () => null} variant="avatar-only" />,
+      { wrapper: Wrapper },
+    )
+    await screen.findByText('Name unavailable')
+    await userEvent.hover(container.querySelector('.mantine-Avatar-root') as HTMLElement)
+
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Name unavailable')
+  })
+
+  it('draws the fallback name dimmed and italic, so it does not read as a real name', async () => {
+    render(<UserBadge userId="user-1" getUserMetadata={async () => null} />, { wrapper: Wrapper })
+    const fallback = await screen.findByText('Name unavailable')
+    expect(fallback.style.color).toBe('var(--mantine-color-dimmed)')
+    expect(fallback.style.fontStyle).toBe('italic')
+  })
+
+  describe('revealIdOnFallback, for admin-only surfaces', () => {
+    it('puts the id in the tooltip and the hidden text, never in the visible text', async () => {
+      const { container } = render(
+        <UserBadge userId="user-9" getUserMetadata={async () => null} revealIdOnFallback />,
+        { wrapper: Wrapper },
+      )
+      const visible = await screen.findByText('Name unavailable')
+      expect(visible.className).not.toContain('VisuallyHidden')
+      const hidden = screen.getByText('· user-9')
+      expect(hidden.className).toContain('mantine-VisuallyHidden-root')
+
+      await userEvent.hover(container.querySelector('.mantine-Avatar-root') as HTMLElement)
+      expect((await screen.findByRole('tooltip')).textContent).toBe('Name unavailable · user-9')
+    })
+
+    it('names an avatar-only fallback with the id in its hidden text', async () => {
+      render(
+        <UserBadge
+          userId="user-9"
+          getUserMetadata={async () => null}
+          variant="avatar-only"
+          revealIdOnFallback
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(await screen.findByText('Name unavailable · user-9')).toBeTruthy()
+    })
+  })
+
+  describe('the remove button names its person', () => {
+    it('says "Remove <name>" and shows the same text in a tooltip', async () => {
+      const onRemove = vi.fn()
+      render(
+        <UserBadge
+          userId="user-1"
+          getUserMetadata={vi.fn()}
+          cachedUser={mockUser}
+          onRemove={onRemove}
+        />,
+        { wrapper: Wrapper },
+      )
+      const remove = screen.getByRole('button', { name: 'Remove Alice Johnson' })
+      await userEvent.hover(remove)
+      const tooltips = await screen.findAllByRole('tooltip')
+      expect(tooltips.map((t) => t.textContent)).toContain('Remove Alice Johnson')
+      await userEvent.click(remove)
+      expect(onRemove).toHaveBeenCalledWith('user-1')
+    })
+
+    it('names the fallback for an unresolved person, adding the id only for an admin surface', async () => {
+      const { unmount } = render(
+        <UserBadge userId="user-9" getUserMetadata={async () => null} onRemove={vi.fn()} />,
+        { wrapper: Wrapper },
+      )
+      expect(await screen.findByRole('button', { name: 'Remove Name unavailable' })).toBeTruthy()
+      unmount()
+
+      render(
+        <UserBadge
+          userId="user-9"
+          getUserMetadata={async () => null}
+          onRemove={vi.fn()}
+          revealIdOnFallback
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(
+        await screen.findByRole('button', { name: 'Remove Name unavailable · user-9' }),
+      ).toBeTruthy()
+    })
   })
 
   it('uses cached user when provided (no API call)', async () => {
@@ -357,7 +448,7 @@ describe('UserBadge', () => {
       )
       const fallback = await screen.findByText('Name unavailable')
       expect(fallback.closest('.mantine-Badge-root')).toBeTruthy()
-      expect(fallback.style.color).toBe('var(--mantine-color-text)')
+      expect(fallback.style.color).toBe('var(--mantine-color-dimmed)')
       expect(container.textContent).not.toContain('user-9')
       expect(container.textContent).not.toContain('not found')
     })

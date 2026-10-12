@@ -73,6 +73,7 @@ export const MemberList: React.FC<MemberListProps> = ({
                 color="blue"
                 onRemove={() => onRemoveMember(groupId, userId)}
                 showEmailTooltip={true}
+                revealIdOnFallback
               />
             ) : (
               <Badge
