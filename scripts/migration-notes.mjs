@@ -82,7 +82,7 @@ const PLAIN_VERSION_RE = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/
 const LEGACY_MARKER_RE = /^<!--\s*legacy:(start|end)\s*-->$/
 /** The heading `renderItem` writes for a part of an entry, in any of its label forms. */
 const GENERATED_PART_RE = /^Added(?:, not yet in an int| in \S+)$/
-const CHANGESET_MARKER_RE = /^<!--\s*changeset:\s*[a-z0-9-]+\s*-->$/
+const CHANGESET_MARKER_RE = /^<!--\s*changeset:\s*([a-z0-9-]+)\s*-->$/
 
 const problem = (file, line, message, severity = 'error') => ({ file, line, message, severity })
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
@@ -555,6 +555,27 @@ function readLegacyBlock(tops, unrel, problems) {
 }
 
 /**
+ * The changesets a release consumed, by slug, from the `<!-- changeset: … -->`
+ * markers promote writes under `## Released`. A marker right after a `####`
+ * marks an entry; after a generated "Added in" heading, a part; anywhere else
+ * (the list under `### X.Y.Z`), a changeset that rendered nothing.
+ */
+function readConsumed(tops, released, headings) {
+  const consumed = new Map()
+  for (let i = released.index + 1; i < released.nextIndex; i++) {
+    const node = tops[i]
+    const m = node.type === 'html' && CHANGESET_MARKER_RE.exec(node.value.trim())
+    if (!m) continue
+    const prev = tops[i - 1]
+    const h =
+      prev.type === 'heading' && headings.find((x) => x.offset === prev.position.start.offset)
+    const kind = h?.generated ? 'part' : h?.depth === 4 ? 'entry' : 'none'
+    consumed.set(m[1], { kind, heading: h || null })
+  }
+  return consumed
+}
+
+/**
  * The parts of CHANGELOG.md the assembly needs: its headings with their
  * as-written anchors, the Unreleased and Released ranges, the first table in
  * Unreleased (parsed as CommonMark, a GFM table is a paragraph whose second
@@ -604,6 +625,7 @@ function readBase(root, problems) {
   base.released = released ? range(released) : null
   base.releasedAt = released ? tops[released.index].position.start.offset : null
   base.legacy = readLegacyBlock(tops, unrel, problems)
+  base.consumed = released ? readConsumed(tops, released, headings) : new Map()
   base.firstH2 = tops.find((n) => n.type === 'heading' && n.depth === 2).position.start.offset
   // Every relative link becomes absolute in the shipped copy, so each must be
   // rewritable; checking here makes --check refuse what --ship would.
@@ -1122,13 +1144,24 @@ function analyze(root, { fallbackLabel, ship = null }) {
   const entries = records.filter((r) => r.kind === 'entry' && !r.broken)
   for (const e of entries) e.parts = []
   const continued = []
+  /** A part whose parent is a CHANGELOG.md heading: its own "…, continued" entry. */
+  const continueReleased = (r, parent, row) => {
+    r.parent = parent
+    r.rowArea = r.meta.area ?? row?.area
+    r.rowText = r.meta.row ?? `${row?.text ?? escapeInline(parent.text)}, continued`
+    if (r.rowArea) continued.push(r)
+    else fail(r, 'needs `area`: its parent has no row in the Unreleased table to take one from')
+  }
   for (const r of records.filter((x) => x.kind === 'part' && !x.broken)) {
     const t = r.target
     if (t.type === 'slug') {
-      const parent = bySlug.get(t.slug)
+      // A parent a stable release consumed is a released entry now, and the
+      // part continues it the way a released# part does.
+      const parent = bySlug.get(t.slug) ?? base.consumed.get(t.slug)
       if (!parent) fail(r, `extends "${t.slug}", which is not a changeset`)
       else if (parent.kind === 'part') fail(r, `extends "${t.slug}", which is itself a part`)
       else if (parent.kind !== 'entry') fail(r, `extends "${t.slug}", which renders nothing`)
+      else if (parent.heading) continueReleased(r, parent.heading, null)
       else if (!parent.broken) {
         parent.parts.push(r)
         r.parentEntry = parent
@@ -1156,12 +1189,11 @@ function analyze(root, { fallbackLabel, ship = null }) {
       fail(r, `extends ${t.type}#${t.anchor}, but ${where} has that anchor`)
       continue
     }
-    r.parent = parent
-    const row = t.type === 'legacy' ? base.table?.rows.find((x) => x.anchor === t.anchor) : null
-    r.rowArea = r.meta.area ?? row?.area
-    r.rowText = r.meta.row ?? `${row?.text ?? escapeInline(parent.text)}, continued`
-    if (r.rowArea) continued.push(r)
-    else fail(r, 'needs `area`: its parent has no row in the Unreleased table to take one from')
+    continueReleased(
+      r,
+      parent,
+      t.type === 'legacy' ? base.table?.rows.find((x) => x.anchor === t.anchor) : null,
+    )
   }
 
   const labels = computeLabels(records, git, fallbackLabel)
@@ -3022,6 +3054,70 @@ function selfTest() {
           /moves "Added in int\.7" \(CHANGELOG\.md:\d+\) from #added-in-int7 to #added-in-int7-1/.test(
             p.message,
           ),
+        ),
+      )
+    }
+    {
+      // main has foo; the int branch adds foo-more; main releases 0.1.0, which
+      // consumes foo; the int branch merges main.
+      const mrepo = join(tmp, 'm')
+      mkdirSync(mrepo)
+      g(mrepo, 'init', '-q')
+      write(mrepo, CHANGELOG, LBASE)
+      write(mrepo, '.changeset/foo.md', titled('Foo entry'))
+      write(mrepo, '.changeset/foo-part.md', part('foo'))
+      write(mrepo, '.changeset/quiet.md', fm(null))
+      g(mrepo, 'add', '-A')
+      g(mrepo, 'commit', '-qm', 'foo')
+      g(mrepo, 'checkout', '-qb', 'int')
+      const fooMore = part('foo', { meta: { area: 'Ops' } })
+      write(mrepo, '.changeset/foo-more.md', fooMore)
+      g(mrepo, 'add', '-A')
+      g(mrepo, 'commit', '-qm', 'foo-more')
+      g(mrepo, 'tag', 'v0.1.0-int.4')
+      g(mrepo, 'checkout', '-q', 'main')
+      const rel = promote(mrepo, '0.1.0')
+      g(mrepo, 'rm', '-q', '.changeset/foo.md', '.changeset/foo-part.md', '.changeset/quiet.md')
+      g(mrepo, 'add', '-A')
+      g(mrepo, 'commit', '-qm', 'release 0.1.0')
+      g(mrepo, 'checkout', '-q', 'int')
+      g(mrepo, 'merge', '-q', '--no-ff', '-m', 'merge main', 'main')
+      const r = check(mrepo)
+      const text = r.text ?? ''
+      expect(
+        `consumed: a part of an entry a release consumed continues it under Released, got ${JSON.stringify([...rel.problems, ...r.problems])}`,
+        rel.problems.length === 0 &&
+          r.problems.filter((p) => p.severity === 'error').length === 0 &&
+          text.includes('| 4 | Ops | [Foo entry, continued](#foo-entry-continued) | None |') &&
+          text.includes(
+            `### Foo entry, continued\n\n<!-- changeset: foo-more -->\n\n_First in int.4._\n\nContinues [Foo entry](#foo-entry).\n\n${WHAT}\n`,
+          ) &&
+          text.includes('\n#### Foo entry\n\n<!-- changeset: foo -->\n'),
+      )
+      const refusal = (files, pattern) => {
+        for (const [name, content] of Object.entries(files))
+          write(mrepo, `.changeset/${name}`, content)
+        const found = check(mrepo).problems.some((p) => pattern.test(`${p.file} ${p.message}`))
+        write(mrepo, '.changeset/foo-more.md', fooMore)
+        rmSync(join(mrepo, '.changeset/x-part.md'), { force: true })
+        return found
+      }
+      expect(
+        'consumed: such a part takes its area from its own metadata',
+        refusal({ 'foo-more.md': part('foo') }, /foo-more\.md needs `area`/),
+      )
+      expect(
+        'consumed: a part of a consumed part is refused',
+        refusal(
+          { 'x-part.md': part('foo-part', { meta: { area: 'Ops' } }) },
+          /x-part\.md extends "foo-part", which is itself a part/,
+        ),
+      )
+      expect(
+        'consumed: a part of a consumed changeset that rendered nothing is refused',
+        refusal(
+          { 'x-part.md': part('quiet', { meta: { area: 'Ops' } }) },
+          /x-part\.md extends "quiet", which renders nothing/,
         ),
       )
     }
