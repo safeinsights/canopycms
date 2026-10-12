@@ -9,7 +9,7 @@
 // mdast-util-from-markdown (root devDependencies).
 //
 // A stable release runs `--promote X.Y.Z` before `changeset version` consumes
-// the files: it moves the legacy block and the assembled entries into
+// the files: it moves the legacy entries and the assembled entries into
 // `### X.Y.Z` under `## Released`.
 //
 // Usage: node scripts/migration-notes.mjs --check
@@ -3107,7 +3107,7 @@ function selfTest() {
         refusal({ 'foo-more.md': part('foo') }, /foo-more\.md needs `area`/),
       )
       expect(
-        'consumed: a part of a consumed part is refused',
+        'consumed: a part of a consumed nested part is refused',
         refusal(
           { 'x-part.md': part('foo-part', { meta: { area: 'Ops' } }) },
           /x-part\.md extends "foo-part", which is itself a part/,

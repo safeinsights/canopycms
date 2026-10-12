@@ -14,7 +14,7 @@ Each entry has up to three parts:
 
 **Read the copy your build ships.** From the first `0.1.0` prerelease on, every published version carries this file as
 `node_modules/canopycms/CHANGELOG.md`, assembled for that build: its **This build** section lists
-what is new since the previous int on the same branch, and its links point at the commit the build
+what is new since the previous int on the same branch, or on a stable release links its entries, and its links point at the commit the build
 came from. The copy in the repository holds released history and the entries from before changesets;
 every entry written since is a file in [`.changeset/`](.changeset/README.md) until a stable release
 moves it here.

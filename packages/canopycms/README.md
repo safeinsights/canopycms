@@ -6,7 +6,7 @@ CanopyCMS is a schema-driven, branch-aware CMS for websites that store their con
 
 Read `CHANGELOG.md`, next to this README, first. It is assembled for this exact build: its **This
 build** section names the commit the build came from and lists what is new since the previous int
-on the same branch, and every link in it points at that commit. It is the one guide this package
+on the same branch (a stable build links its release's entries instead), and every link in it points at that commit. It is the one guide this package
 ships.
 
 The other guides, `docs/deploying-to-aws.md` and the project README, live in the repository and

@@ -4,9 +4,11 @@ adopters: BOTH
 summary: >-
   RESOLVED 2026-10-11. Changesets write CHANGELOG.md's entries (.changeset/*.md, gated in CI); int builds ship an assembled CHANGELOG.md with a "new since the previous int" handoff and are tagged v<version>; a push to main releases pending changesets as one semver version (first 0.1.0) by promote, changeset version, an atomic commit-and-tag push, and an idempotent publish run by the tag's push. PR A #524 and PR B (feat/changesets-stable-release). The first live stable release is the int-202610-b to main merge
 ---
-# Adopt changesets for release notes and de## Status
+# Adopt changesets for release notes and deliberate semver
 
-RESOLVED. Both halves are built and reviewed:
+## Status
+
+RESOLVED. Both halves are built; their review rounds are recorded in each PR:
 - **PR A, int side**
   ([safeinsights/canopycms#524](https://github.com/safeinsights/canopycms/pull/524), merged
   2026-10-11): `.changeset/`, `scripts/migration-notes.mjs`, the CI gate, `CHANGELOG.md`, int
@@ -15,8 +17,9 @@ RESOLVED. Both halves are built and reviewed:
   `--promote`, the two stable jobs, tagging through git, and `release-dry-run`.
 - **Done outside the repo**:
   - the `release-tags-immutable` and `stable-tags-release-bot-only` rulesets;
-  - the backfill of 33 int tags (int.74 to int.114; 32 of them pushed with git, because the REST
-    API refused them).
+  - the backfill of 33 int tags (int.74 to int.114). `gh api -X POST …/git/refs` created only
+    int.114 and answered 404 for every older commit, e.g. c598fe89 (int.113), even with a tag
+    already on it, on 2026-10-11; the other 32 went up with `git push origin <sha>:refs/tags/…`.
 
 **Still to watch, live:**
 - The first int published after PR A is the first live run of `tag-prerelease`.
@@ -33,26 +36,34 @@ RESOLVED. Both halves are built and reviewed:
 - **`publish` runs on the stable tag's push** (`on.push.tags`), or on a manual run on the tag,
   not as a job dependent on `release-commit`. npm provenance records `GITHUB_SHA`, which then is
   the release commit. A manual run on the tag recovers any release a re-run cannot. The release
-  commit carries no `[skip ci]`; its own run on main finds nothing pending.
+  commit carries no `[skip ci]`; its own run on main waits for CI, then finds nothing pending.
 - **The release-bot token never meets dependency code.** `release-commit` checks out without
   persisted credentials and with `HUSKY=0`, commits with hooks off, and pushes from a fresh
   repository that ignores global and system git config.
-- **`latest` never moves back.** Each package's dist-tag is decided just before its publish:
-  `superseded` when npm's `latest` or a stable tag on main is newer. A `latest` split across
-  the five fails the run.
+- **`latest` does not move back unseen.** Each package's dist-tag is decided just before its
+  publish: `superseded` when npm's `latest` or a stable tag on main is newer. Two releases
+  publishing within seconds can still interleave; a `latest` still split across the five a few
+  minutes later fails the run.
 - **The changeset gate exempts merge-backs.** A changed file that main also changed, and that now
   matches main's copy, needs no changeset. Tests, fixtures and `AGENTS.md` are ignored, as
   changesets' `changedFilePatterns` does. A file moved out of a package needs one.
-- **`release-dry-run`** runs on every PR into main. On any other PR it runs only for the release
-  machinery, not for every changeset.
+- **`release-dry-run`** runs on every PR into main, and on any other PR only when the release
+  machinery changes (`publish.yml`, `ci.yml`, the release scripts, `.changeset/config.json`).
+  After `--prepare` it runs release-commit's staging check, prints `git status --short`,
+  refuses a version already on npm, then ships into `packages/canopycms/CHANGELOG.md` and packs.
+- **`publish` checks its tag first**: a plain `vX.Y.Z` on main whose canopycms manifest holds
+  that version.
+- **Each stable tag has its own concurrency group**, shared by its push run and a manual run.
+- **`tag-prerelease` fetches the commit's full history**: a shallow push is refused when no
+  branch on the server reaches the commit.
 - **`--promote`** marks every consumed changeset, empty ones included. After a release,
   `legacy#` parts, and parts whose parent a release consumed, resolve under Released. Generated
   "Added in …" headings may renumber. Links to a nested part land on its parent entry.
 - **`bump-version.mjs`** writes only an explicit version.
 - **The stable publish packs all five before publishing any.** This resolves
   `publish-partial-failure-window.md`.
+- **This file moved to `resolved/` in PR B itself**, not after B merged.
 
-ackfill script.
 
 The design below was reviewed adversarially before any code; JP and the manager settled its six decisions (D-1 to D-6) on 2026-10-11.
 

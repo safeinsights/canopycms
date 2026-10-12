@@ -8,7 +8,8 @@
 //
 // stdout carries one JSON object and nothing else, since the workflow parses
 // it: `{"release":false,"reason":"…"}` when nothing is release-worthy, else
-// `{"release":true,"version":"X.Y.Z"}`. Every child process writes to stderr.
+// `{"release":true,"version":"X.Y.Z"}`. Children write to stderr, except the git and npm output
+// the script reads.
 // A failure exits 1 with its reason on stderr.
 //
 // RELEASE_STABLE_NPM_LATEST, when set, stands in for npm's `latest` of
@@ -143,7 +144,7 @@ function planVersion(plan, pending, since) {
   const missing = pending.filter((slug) => !counted.has(slug))
   if (missing.length > 0) {
     throw new Error(
-      `the plan since ${since} leaves out ${missing.map((s) => `.changeset/${s}.md`).join(', ')}; a changeset older than the latest stable tag is never pending`,
+      `the plan since ${since} leaves out ${missing.map((s) => `.changeset/${s}.md`).join(', ')}; changeset status counts only tracked changesets changed since that tag, so commit or stage it`,
     )
   }
   const releases = (plan.releases ?? []).filter((r) => r.type !== 'none')

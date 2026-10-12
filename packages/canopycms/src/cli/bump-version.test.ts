@@ -1,9 +1,8 @@
 /**
  * `scripts/bump-version.mjs` decides what version every release publishes, so
  * it takes exactly one explicit version and rejects everything else: this
- * script rewrites six package.json files in place, and a typo'd flag used to be
- * written verbatim as the version and exit 0, surfacing only later at
- * `npm publish`.
+ * script rewrites six package.json files in place, so a typo'd flag must fail
+ * rather than be written as the version and surface only at `npm publish`.
  *
  * Driven as a subprocess rather than by import, because the script does its
  * work at module scope against a directory tree.

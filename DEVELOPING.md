@@ -1171,11 +1171,11 @@ stable release's `--promote` moves them under `## Released`, marking each
 `<!-- changeset: <slug> -->`, and `changeset version` deletes them. CI's `release-dry-run` job
 rehearses all of it on every PR into `main` and on any PR touching the release path.
 
-**Tags.** Rulesets make every `v*` tag immutable, and only the release bot creates a stable one.
+**Tags.** Rulesets make every `v*` tag immutable, and only the release bot (or an admin) creates a stable one.
 `scripts/backfill-int-tags.mjs` tags any int published without one, at its attested commit.
 
 **A stable release that stops part-way.** The release is committed and tagged before anything is
-published, so main and npm never disagree about a version. If `publish` fails, use "Re-run failed
+published, so npm never holds a version main lacks. If `publish` fails, use "Re-run failed
 jobs", or dispatch _Publish to npm_ on the tag: it skips each package already on npm from the
 release commit and publishes the rest, under the `superseded` dist-tag if a
 newer release is already out. If the push itself is refused because `main` moved, nothing was
