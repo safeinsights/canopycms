@@ -1,3 +1,4 @@
+import type { Ref } from 'react'
 import { ActionIcon, Indicator, Menu, Paper, Stack, Tooltip } from '@mantine/core'
 import {
   IconUserCircle,
@@ -75,6 +76,9 @@ export interface EditorSidebarProps {
    */
   onSystemHealthOpen?: () => void
 
+  /** Ref to the Settings button, which takes focus back when a panel opened from its menu closes. */
+  settingsToggleRef?: Ref<HTMLButtonElement>
+
   /**
    * Custom account component to render (e.g., Clerk's UserButton).
    * If provided, replaces the default account button.
@@ -117,6 +121,7 @@ export function EditorSidebar({
   onGroupManagerOpen,
   onMediaLibraryOpen,
   onSystemHealthOpen,
+  settingsToggleRef,
   AccountComponent,
   onAccountClick,
   onLogoutClick,
@@ -201,6 +206,7 @@ export function EditorSidebar({
         <Menu shadow="md" width={200} position="left">
           <Menu.Target>
             <ActionIcon
+              ref={settingsToggleRef}
               variant="subtle"
               size="lg"
               radius="md"

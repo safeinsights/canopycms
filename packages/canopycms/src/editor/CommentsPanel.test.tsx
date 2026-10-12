@@ -419,15 +419,51 @@ describe('CommentsPanel', () => {
 
       expect(onClose).not.toHaveBeenCalled()
       expect(
-        (within(card('a')).getByRole('button', { name: 'Jump to field' }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(true)
+        within(card('a'))
+          .getByRole('button', { name: 'Jump to field' })
+          .getAttribute('aria-disabled'),
+      ).toBe('true')
 
       await act(async () => {
         finish()
       })
       await userEvent.keyboard('{Escape}')
       expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps a blocked jump focusable, says why on focus and ignores its click', async () => {
+      let finish: () => void = () => {}
+      const onAddComment = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          }),
+      )
+      const onJumpToField = vi.fn()
+      renderPanel({ comments: [fieldThread('a')], onAddComment, onJumpToField })
+
+      await userEvent.click(within(card('a')).getByTestId('reply-thread-button'))
+      await userEvent.type(screen.getByLabelText('Reply to this thread'), 'Wait for me')
+      await userEvent.click(screen.getByTestId('submit-reply-button'))
+
+      const jump = within(card('a')).getByRole('button', { name: 'Jump to field' })
+      expect((jump as HTMLButtonElement).disabled).toBe(false)
+      expect(screen.queryByText(/still saving/)).toBeNull()
+      act(() => jump.focus())
+      expect(
+        await screen.findByText('A comment is still saving. Jump once it finishes.'),
+      ).toBeTruthy()
+      expect(document.activeElement).toBe(jump)
+
+      await userEvent.click(jump)
+      expect(onJumpToField).not.toHaveBeenCalled()
+
+      await act(async () => {
+        finish()
+      })
+      await waitFor(() => expect(jump.getAttribute('aria-disabled')).toBeNull())
+      await userEvent.click(jump)
+      expect(onJumpToField).toHaveBeenCalledTimes(1)
     })
 
     it('leaves focus where the user put it while a resolve was in flight', async () => {

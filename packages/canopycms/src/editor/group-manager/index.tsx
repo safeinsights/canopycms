@@ -22,6 +22,7 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
   opened,
   onClose,
   onExited,
+  returnFocusTo,
   internalGroups: initialInternalGroups,
   loading = false,
   canEdit,
@@ -145,6 +146,7 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
       onDiscard={discard}
       childModalOpen={isModalOpen || deleteConfirmOpen}
       onExited={onExited}
+      returnFocusTo={returnFocusTo}
     >
       <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
         {!canEdit && (

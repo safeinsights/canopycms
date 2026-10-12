@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { BranchesDrawer } from './BranchesDrawer'
+import { FOCUS_RETURN_ATTR, rememberOpener, returnTarget } from '../utils/focus-return'
 import { CanopyCMSProvider } from '../theme'
 import { useBranchActions } from '../hooks/useBranchActions'
 import { createApiClientWrapper } from '../hooks/__test__/test-utils'
@@ -166,5 +167,95 @@ describe('BranchesDrawer with a confirm opened from inside it', () => {
     await userEvent.keyboard('{Escape}')
 
     await waitFor(() => expect(drawerOpened()).toBe('false'))
+  })
+})
+
+describe('BranchesDrawer with returnFocusTo', () => {
+  // `Menu` stands in for the branch menu: its item opens the drawer and unmounts with the menu.
+  const FocusHarness: React.FC = () => {
+    const [open, setOpen] = useState(false)
+    const [menuOpen, setMenuOpen] = useState(false)
+    const triggerRef = React.useRef<HTMLButtonElement>(null)
+    const openerRef = React.useRef<HTMLElement | null>(null)
+    const openFrom = () => {
+      openerRef.current = rememberOpener()
+      setOpen(true)
+    }
+    return (
+      <>
+        <button type="button" ref={triggerRef} onClick={() => setMenuOpen(true)}>
+          Branch menu
+        </button>
+        {menuOpen && (
+          <div role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                openFrom()
+                setMenuOpen(false)
+              }}
+            >
+              Switch branch
+            </button>
+          </div>
+        )}
+        <button type="button" onClick={openFrom}>
+          Persistent opener
+        </button>
+        <BranchesDrawer
+          opened={open}
+          onClose={() => setOpen(false)}
+          confirmOpen={false}
+          returnFocusTo={() => returnTarget(openerRef.current, () => triggerRef.current)}
+        >
+          <p>Drawer body</p>
+        </BranchesDrawer>
+      </>
+    )
+  }
+
+  const renderFocusHarness = () =>
+    render(
+      <CanopyCMSProvider withNotifications={false}>
+        <FocusHarness />
+      </CanopyCMSProvider>,
+    )
+
+  it('marks an element containing the focused content, so an exiting drawer counts as idle', async () => {
+    renderFocusHarness()
+    await userEvent.click(screen.getByRole('button', { name: 'Persistent opener' }))
+    await screen.findByText('Drawer body')
+
+    const marked = document.querySelector(`[${FOCUS_RETURN_ATTR}]`)
+    expect(marked?.contains(document.activeElement)).toBe(true)
+  })
+
+  it('returns focus to the menu button when a menu item opened it', async () => {
+    renderFocusHarness()
+    const trigger = screen.getByRole('button', { name: 'Branch menu' })
+    await userEvent.click(trigger)
+    const item = screen.getByRole('menuitem', { name: 'Switch branch' })
+    act(() => item.focus())
+    await userEvent.keyboard('{Enter}')
+    await screen.findByText('Drawer body')
+
+    await userEvent.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByText('Drawer body')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+  })
+
+  it('returns focus to a persistent button that opened it, not to the menu button', async () => {
+    renderFocusHarness()
+    const opener = screen.getByRole('button', { name: 'Persistent opener' })
+    act(() => opener.focus())
+    await userEvent.keyboard('{Enter}')
+    await screen.findByText('Drawer body')
+
+    await userEvent.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByText('Drawer body')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(opener))
   })
 })

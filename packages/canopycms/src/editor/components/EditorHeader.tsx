@@ -95,6 +95,9 @@ export interface EditorHeaderProps {
   /** Ref to the button whose menu opens the file navigator. */
   navigatorToggleRef?: Ref<HTMLButtonElement>
 
+  /** Ref to the button whose menu opens the branch manager and discards all drafts. */
+  branchToggleRef?: Ref<HTMLButtonElement>
+
   /**
    * Callback to reload the current file.
    */
@@ -213,6 +216,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
     comments,
     onNavigatorOpen,
     navigatorToggleRef,
+    branchToggleRef,
     onFileReload,
     onFileDiscardDraft,
     onEntrySelect,
@@ -355,7 +359,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Menu.Divider />
                   <Menu.Label>Recently modified</Menu.Label>
                   {editedFiles.slice(0, 3).length === 0 ? (
-                    <Menu.Item disabled>&lt;none&gt;</Menu.Item>
+                    <Text size="sm" c="dimmed" px="sm" py={6}>
+                      No recently modified entries
+                    </Text>
                   ) : (
                     editedFiles.slice(0, 3).map((file) => (
                       <Menu.Item key={file.path} onClick={() => onEntrySelect(file.path)}>
@@ -389,6 +395,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               <Menu withinPortal shadow="sm">
                 <Menu.Target>
                   <Button
+                    ref={branchToggleRef}
                     variant="outline"
                     color="gray"
                     leftSection={<IconGitBranch size={16} />}
@@ -420,7 +427,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Menu.Divider />
                   <Menu.Label>{`${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'} modified`}</Menu.Label>
                   {editedFiles.length === 0 ? (
-                    <Menu.Item disabled>No edited entries yet</Menu.Item>
+                    <Text size="sm" c="dimmed" px="sm" py={6}>
+                      No edited entries yet
+                    </Text>
                   ) : (
                     editedFiles.map((file) => (
                       <Menu.Item
