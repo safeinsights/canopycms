@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  RESOLVED: `openConfirm` passes `closeButtonProps: { 'aria-label': 'Close' }`, merged under the caller's own props, so every confirm modal's close button is named.
+  RESOLVED: the theme's `ModalCloseButton` default (`editor/theme.tsx`) names every confirm modal's close button "Close", and the name survives a caller's own `closeButtonProps` unless that sets `aria-label`.
 ---
 # Confirm modal close button has no accessible name
 
