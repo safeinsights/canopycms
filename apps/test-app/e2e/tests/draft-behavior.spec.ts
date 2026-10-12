@@ -18,7 +18,7 @@ test.describe('Draft Behavior', () => {
     await test.step('switch user', () => switchUser(page, 'admin'))
   })
 
-  test('discard file draft reverts field to last-saved state', async () => {
+  test('discarding changes reverts field to last-saved state', async () => {
     await test.step('open editor and select Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
@@ -36,7 +36,7 @@ test.describe('Draft Behavior', () => {
       await expect(editorPage.saveButton).toBeEnabled({ timeout: 5000 })
     })
 
-    await test.step('discard file draft via file dropdown menu', async () => {
+    await test.step('discard changes via the entry menu', async () => {
       // Discarding a dirty draft asks for confirmation — confirm through the dialog.
       const confirmDialog = await editorPage.discardEntryDraft()
       await expect(confirmDialog).toBeVisible({ timeout: 5000 })

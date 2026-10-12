@@ -2,8 +2,7 @@
   "$comment": "Per-file copy-rule counts read by scripts/check-ux-copy.mjs (pnpm lint:ux-copy). Regenerate with `node scripts/check-ux-copy.mjs --write-baseline`; a rewrite that raises a count is refused without --allow-raise.",
   "files": {
     "packages/canopycms/src/editor/admin/SystemHealthPanel.tsx": {
-      "ellipsis": 3,
-      "title-case": 2
+      "ellipsis": 3
     },
     "packages/canopycms/src/editor/BranchManager.tsx": {
       "title-case": 1
@@ -13,7 +12,7 @@
       "title-case": 1
     },
     "packages/canopycms/src/editor/components/EditorHeader.tsx": {
-      "title-case": 3
+      "title-case": 1
     },
     "packages/canopycms/src/editor/components/EditorSidebar.tsx": {
       "title-case": 2

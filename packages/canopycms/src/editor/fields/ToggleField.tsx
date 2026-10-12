@@ -51,7 +51,7 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
         {commentControl}
         {/* A disabled switch's position is too faint to read, so read-only states it in words. */}
         {readOnly && (
-          <Text size="sm" c="gray.7" data-testid={testId ? `${testId}-value` : undefined}>
+          <Text size="sm" c="dimmed" data-testid={testId ? `${testId}-value` : undefined}>
             {value ? 'On' : 'Off'}
           </Text>
         )}

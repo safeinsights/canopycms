@@ -42,6 +42,7 @@ import type {
 import type { LogicalPath } from '../../paths/types'
 import { EntryTypeEditor } from './EntryTypeEditor'
 import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal'
+import { ReasonedMenuItem } from '../components/ReasonedMenuItem'
 import { getErrorMessage } from '../../utils/error'
 import type { SchemaOpResult } from '../hooks/useSchemaManager'
 
@@ -446,14 +447,18 @@ export function CollectionEditor({
                           Edit
                         </Menu.Item>
                         <Menu.Divider />
-                        <Menu.Item
+                        <ReasonedMenuItem
                           leftSection={<IconTrash size={14} />}
                           color="red"
                           onClick={() => handleRemoveEntryType(entryType, index)}
-                          disabled={displayEntryTypes.length === 1}
+                          blockedReason={
+                            displayEntryTypes.length === 1
+                              ? 'A collection needs at least one entry type. Add another before removing this one.'
+                              : undefined
+                          }
                         >
                           Remove
-                        </Menu.Item>
+                        </ReasonedMenuItem>
                       </Menu.Dropdown>
                     </Menu>
                   </Group>

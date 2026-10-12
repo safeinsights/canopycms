@@ -24,6 +24,7 @@ import { isAdmin, isReviewer } from '../../authorization/helpers'
 import { branchStatusPresentation } from '../branch-status'
 import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
+import { ReasonedMenuItem } from './ReasonedMenuItem'
 
 export interface EditorHeaderProps {
   /**
@@ -250,6 +251,29 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   const branchDataUnavailable =
     statusLocked && (branchStatus === undefined || branchStatus === 'editing')
 
+  // Save stays focusable while blocked (`aria-disabled`, not `disabled`), so its reason opens on
+  // keyboard focus and touch as well as hover; the click does nothing.
+  const saveBlocked =
+    !branchName || !currentEntry || busy || !hasUnsavedChanges || branchReadOnly || statusLocked
+  // Why Save is blocked, with the way forward. The Tooltip hides it while a save is in flight.
+  const saveBlockedReason = branchReadOnly
+    ? 'The base branch is read-only. Create a branch to make changes.'
+    : branchDataUnavailable
+      ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
+      : statusLocked
+        ? branchStatus === 'submitted'
+          ? 'This branch is in review. Withdraw it to make changes.'
+          : branchStatus === 'approved'
+            ? 'This branch is approved. Withdraw it to make changes.'
+            : `This branch is ${branchStatus}. Its content is read-only.`
+        : !branchName
+          ? 'Open a branch first.'
+          : !currentEntry
+            ? 'Open an entry to save it.'
+            : !hasUnsavedChanges
+              ? 'No changes to save.'
+              : ''
+
   const statusPresentation = branchStatusPresentation(branchStatus, branchIsProtected)
   const unresolvedCount = comments.filter((t) => !t.resolved).length
 
@@ -301,20 +325,29 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     leftSection={<IconFolderOpen size={16} />}
                     rightSection={<IconChevronDown size={14} />}
                   >
-                    {currentEntry?.label ?? 'No file selected'}
+                    {currentEntry?.label ?? 'No entry selected'}
                   </Button>
                 </Menu.Target>
                 <Menu.Dropdown>
-                  <Menu.Item onClick={onFileReload} disabled={!branchName || !currentEntry}>
-                    Reload File
-                  </Menu.Item>
-                  <Menu.Item
+                  <ReasonedMenuItem
+                    onClick={onFileReload}
+                    blockedReason={
+                      !branchName
+                        ? 'Open a branch first.'
+                        : !currentEntry
+                          ? 'Open an entry first.'
+                          : undefined
+                    }
+                  >
+                    Reload entry
+                  </ReasonedMenuItem>
+                  <ReasonedMenuItem
                     data-testid="discard-file-draft-menu-item"
                     onClick={onFileDiscardDraft}
-                    disabled={!currentEntry}
+                    blockedReason={currentEntry ? undefined : 'Open an entry first.'}
                   >
-                    Discard File Draft
-                  </Menu.Item>
+                    Discard changes
+                  </ReasonedMenuItem>
                   <Menu.Divider />
                   <Menu.Item data-testid="all-files-menu-item" onClick={onNavigatorOpen}>
                     All Files
@@ -367,16 +400,19 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   </Button>
                 </Menu.Target>
                 <Menu.Dropdown data-testid="branch-menu">
-                  <Menu.Item onClick={onBranchReloadData} disabled={!branchName}>
+                  <ReasonedMenuItem
+                    onClick={onBranchReloadData}
+                    blockedReason={branchName ? undefined : 'Open a branch first.'}
+                  >
                     Reload all entries
-                  </Menu.Item>
-                  <Menu.Item
+                  </ReasonedMenuItem>
+                  <ReasonedMenuItem
                     data-testid="discard-all-drafts-menu-item"
                     onClick={onBranchDiscardDrafts}
-                    disabled={!branchName}
+                    blockedReason={branchName ? undefined : 'Open a branch first.'}
                   >
                     Discard all changes
-                  </Menu.Item>
+                  </ReasonedMenuItem>
                   <Menu.Divider />
                   <Menu.Item onClick={onBranchManagerOpen} data-testid="manage-branches-menu-item">
                     {`${EDITOR_ACTIONS.switchBranch}…`}
@@ -449,7 +485,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Text
                     size="xs"
                     lh={1.2}
-                    c={draftStorageFailed ? 'red.9' : 'gray.7'}
+                    c={draftStorageFailed ? 'red.9' : 'dimmed'}
                     data-testid="unsaved-indicator"
                   >
                     {draftStorageFailed
@@ -465,34 +501,21 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               )}
             </Box>
             <Tooltip
-              label={
-                branchReadOnly
-                  ? 'The base branch is read-only'
-                  : branchDataUnavailable
-                    ? 'Branch details are still loading — saving is disabled until they arrive'
-                    : statusLocked
-                      ? branchStatus === 'submitted'
-                        ? 'This branch is submitted for review — withdraw it from review to make changes'
-                        : `This branch is ${branchStatus} — content is read-only`
-                      : !hasUnsavedChanges && currentEntry
-                        ? 'No changes to save'
-                        : ''
-              }
-              disabled={!branchReadOnly && !statusLocked && (hasUnsavedChanges || !currentEntry)}
+              label={saveBlockedReason}
+              disabled={!saveBlocked || busy}
+              events={{ hover: true, focus: true, touch: true }}
+              multiline
+              maw={280}
             >
               <Button
                 data-testid="save-button"
                 variant="light"
                 size="sm"
-                onClick={onSave}
-                disabled={
-                  !branchName ||
-                  !currentEntry ||
-                  busy ||
-                  !hasUnsavedChanges ||
-                  branchReadOnly ||
-                  statusLocked
-                }
+                onClick={() => {
+                  if (!saveBlocked) onSave()
+                }}
+                data-disabled={saveBlocked ? true : undefined}
+                aria-disabled={saveBlocked ? true : undefined}
               >
                 {EDITOR_ACTIONS.save}
               </Button>
@@ -536,6 +559,8 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               // sent people to an admin to fix a non-permissions problem.
               const statusHasAction = isEditing || isWithdrawable
               const canPerformAction = userHasPermission && statusHasAction
+              // Blocked, it stays focusable (`aria-disabled`), so its reason opens on focus.
+              const actionBlocked = !branchName || busy || !canPerformAction
 
               return (
                 <Tooltip
@@ -546,20 +571,28 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     // today only as a side effect of `branchIsProtected`'s `?? true`
                     // default -- not a guarantee this arm stays unreachable.
                     branchStatus === undefined
-                      ? 'Branch data could not be loaded, so you cannot submit it for review or withdraw it from review'
+                      ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
                       : !statusHasAction
-                        ? `This branch is ${branchStatus}, so it cannot be submitted for review or withdrawn from review`
+                        ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
                         : !userHasPermission
-                          ? 'You do not have permission to submit this branch for review or withdraw it from review'
+                          ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
                           : ''
                   }
                   disabled={canPerformAction}
+                  events={{ hover: true, focus: true, touch: true }}
+                  multiline
+                  maw={320}
                 >
                   <Button
                     size="sm"
                     color={isWithdrawable ? 'orange' : 'brand'}
-                    onClick={isWithdrawable ? onWithdraw : onSubmit}
-                    disabled={!branchName || busy || !canPerformAction}
+                    onClick={() => {
+                      if (actionBlocked) return
+                      if (isWithdrawable) onWithdraw()
+                      else onSubmit()
+                    }}
+                    data-disabled={actionBlocked ? true : undefined}
+                    aria-disabled={actionBlocked ? true : undefined}
                     data-testid={isWithdrawable ? 'withdraw-button' : 'submit-button'}
                   >
                     {isWithdrawable

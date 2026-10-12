@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Text, Tooltip, type TextProps } from '@mantine/core'
+import { Text, Tooltip, VisuallyHidden, type TextProps } from '@mantine/core'
 import { formatRelativeTime } from '../relative-time'
 
 export interface RelativeTimeProps extends Pick<TextProps, 'size' | 'c' | 'fs'> {
@@ -11,7 +11,7 @@ export interface RelativeTimeProps extends Pick<TextProps, 'size' | 'c' | 'fs'> 
   prefix?: string
 }
 
-/** A timestamp as a relative label, with the absolute date and time in a tooltip. */
+/** A relative label; the absolute date is a tooltip, and visually hidden text for a screen reader. */
 export const RelativeTime: React.FC<RelativeTimeProps> = ({ iso, prefix, size, c, fs }) => {
   const absolute = new Date(iso)
   const valid = !Number.isNaN(absolute.getTime())
@@ -20,6 +20,9 @@ export const RelativeTime: React.FC<RelativeTimeProps> = ({ iso, prefix, size, c
       <Text component="time" dateTime={iso} size={size} c={c} fs={fs}>
         {prefix}
         {formatRelativeTime(iso)}
+        {valid && (
+          <VisuallyHidden component="span">{`, ${absolute.toLocaleString()}`}</VisuallyHidden>
+        )}
       </Text>
     </Tooltip>
   )

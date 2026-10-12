@@ -192,7 +192,7 @@ describe('Editor crash containment', () => {
 
     fireEvent.change(input, { target: { value: 'Modified title' } })
     const save = screen.getByRole('button', { name: /^save$/i })
-    await waitFor(() => expect(save.hasAttribute('disabled')).toBe(false))
+    await waitFor(() => expect(save.getAttribute('aria-disabled')).toBeNull())
     fireEvent.click(save)
 
     await waitFor(() =>

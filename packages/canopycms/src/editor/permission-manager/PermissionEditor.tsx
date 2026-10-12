@@ -137,6 +137,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                             color="gray"
                             showEmailTooltip={true}
                             showBadge={true}
+                            revealIdOnFallback
                           />
                         ) : (
                           <Badge
@@ -204,6 +205,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                             color={userId === 'anonymous' ? 'orange' : LEVEL_CONFIG[level].color}
                             onRemove={() => onRemoveUser(node.path, level, userId)}
                             showEmailTooltip={true}
+                            revealIdOnFallback
                           />
                         ) : (
                           <Badge

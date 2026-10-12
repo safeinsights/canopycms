@@ -82,21 +82,58 @@ function formatAgeMs(ms: number): string {
  */
 function purgeGateFor(entry: BranchHealthEntry): { disabled: boolean; tooltip?: string } {
   if (entry.isBaseBranch) {
-    return { disabled: true, tooltip: 'The base branch can never be purged' }
+    return { disabled: true, tooltip: 'The base branch can never be purged.' }
   }
   const lockFresh =
     !!entry.provisioningLock && entry.provisioningLock.ageMs < PROVISIONING_LOCK_FRESH_MS
   if (entry.kind === 'orphan') {
     const tooYoung = (entry.ageMs ?? 0) < ORPHAN_YOUTH_THRESHOLD_MS
     const disabled = lockFresh || tooYoung
-    return { disabled, tooltip: disabled ? 'May be a clone in progress' : undefined }
+    return {
+      disabled,
+      tooltip: disabled
+        ? 'This may be a clone in progress. Try again in a few minutes.'
+        : undefined,
+    }
   }
   return {
     disabled: lockFresh,
     tooltip: lockFresh
-      ? 'Provisioning, or the worker syncing this branch, may be in progress'
+      ? 'Provisioning, or the worker syncing this branch, may be in progress. Try again in a few minutes.'
       : undefined,
   }
+}
+
+/** Purge stays focusable while gated (`aria-disabled`), so its reason opens on focus and touch. */
+function PurgeButton({
+  entry,
+  gate,
+  onPurge,
+}: {
+  entry: BranchHealthEntry
+  gate: { disabled: boolean; tooltip?: string }
+  onPurge: (dirName: string) => void
+}) {
+  return (
+    <Tooltip
+      label={gate.tooltip}
+      disabled={!gate.disabled}
+      events={{ hover: true, focus: true, touch: true }}
+    >
+      <Button
+        variant="light"
+        color="red"
+        data-disabled={gate.disabled ? true : undefined}
+        aria-disabled={gate.disabled ? true : undefined}
+        data-testid={`purge-dir-${entry.dirName}`}
+        onClick={() => {
+          if (!gate.disabled) onPurge(entry.dirName)
+        }}
+      >
+        Purge
+      </Button>
+    </Tooltip>
+  )
 }
 
 function workerLivenessBadge(
@@ -993,8 +1030,8 @@ function BranchHealthRow({
             <Tooltip
               label={
                 b.syncFailureReason
-                  ? `${b.syncFailureReason} — retry from the Tasks tab`
-                  : 'GitHub sync failed — retry from the Tasks tab'
+                  ? `${b.syncFailureReason} — retry from the "Tasks" tab`
+                  : 'GitHub sync failed — retry from the "Tasks" tab'
               }
               multiline
               maw={320}
@@ -1127,19 +1164,7 @@ function BranchHealthRow({
             >
               Repair
             </Button>
-            <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
-              <span>
-                <Button
-                  variant="light"
-                  color="red"
-                  disabled={purgeGate.disabled}
-                  data-testid={`purge-dir-${entry.dirName}`}
-                  onClick={() => onPurge(entry.dirName)}
-                >
-                  Purge
-                </Button>
-              </span>
-            </Tooltip>
+            <PurgeButton entry={entry} gate={purgeGate} onPurge={onPurge} />
           </Group>
         </Table.Td>
       </Table.Tr>
@@ -1169,19 +1194,7 @@ function BranchHealthRow({
         </Text>
       </Table.Td>
       <Table.Td>
-        <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
-          <span>
-            <Button
-              variant="light"
-              color="red"
-              disabled={purgeGate.disabled}
-              data-testid={`purge-dir-${entry.dirName}`}
-              onClick={() => onPurge(entry.dirName)}
-            >
-              Purge
-            </Button>
-          </span>
-        </Tooltip>
+        <PurgeButton entry={entry} gate={purgeGate} onPurge={onPurge} />
       </Table.Td>
     </Table.Tr>
   )

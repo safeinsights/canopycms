@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Code only: the guideline gaps from WS7a-1's UX review are now rules in docs/ux-guidelines.md. Left: `openConfirm`'s modal close button has no accessible name.
+  RESOLVED: the theme's `ModalCloseButton` default (`editor/theme.tsx`) names every confirm modal's close button "Close", and the name survives a caller's own `closeButtonProps` unless that sets `aria-label`.
 ---
 # Confirm modal close button has no accessible name
 

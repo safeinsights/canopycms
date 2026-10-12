@@ -1,5 +1,5 @@
 import React from 'react'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1110,10 +1110,18 @@ describe('SystemHealthPanel', () => {
       await waitFor(() => expect(screen.getByText('orphan-young')).toBeTruthy())
 
       const youngPurgeButton = screen.getByTestId('purge-dir-orphan-young')
-      expect(youngPurgeButton).toHaveProperty('disabled', true)
+      expect(youngPurgeButton.getAttribute('aria-disabled')).toBe('true')
+      // Blocked, it stays focusable and says why on keyboard focus, and its click does nothing.
+      expect(youngPurgeButton.hasAttribute('disabled')).toBe(false)
+      act(() => youngPurgeButton.focus())
+      expect(
+        await screen.findByText('This may be a clone in progress. Try again in a few minutes.'),
+      ).toBeTruthy()
+      await userEvent.click(youngPurgeButton)
+      expect(mockClient.admin.purgeBranchDir).not.toHaveBeenCalled()
 
       const oldPurgeButton = screen.getByTestId('purge-dir-orphan-old')
-      expect(oldPurgeButton).toHaveProperty('disabled', false)
+      expect(oldPurgeButton.getAttribute('aria-disabled')).toBeNull()
 
       await userEvent.click(oldPurgeButton)
       expect(await lastConfirmText()).toContain('30 days')
@@ -1127,8 +1135,10 @@ describe('SystemHealthPanel', () => {
       await userEvent.click(screen.getByText('Branches'))
       await waitFor(() => expect(screen.getByText('broken-branch')).toBeTruthy())
 
-      expect(screen.getByTestId('purge-dir-broken-branch')).toHaveProperty('disabled', false)
-      expect(screen.getByTestId('purge-dir-broken-locked')).toHaveProperty('disabled', true)
+      expect(screen.getByTestId('purge-dir-broken-branch').getAttribute('aria-disabled')).toBeNull()
+      expect(screen.getByTestId('purge-dir-broken-locked').getAttribute('aria-disabled')).toBe(
+        'true',
+      )
     })
 
     it('disables purge for the base branch even when corrupt or orphaned (LOW-2)', async () => {
@@ -1137,10 +1147,10 @@ describe('SystemHealthPanel', () => {
       await waitFor(() => expect(screen.getByText('main')).toBeTruthy())
 
       const corruptBasePurge = screen.getByTestId('purge-dir-main')
-      expect(corruptBasePurge).toHaveProperty('disabled', true)
+      expect(corruptBasePurge.getAttribute('aria-disabled')).toBe('true')
 
       const orphanBasePurge = screen.getByTestId('purge-dir-main-orphan')
-      expect(orphanBasePurge).toHaveProperty('disabled', true)
+      expect(orphanBasePurge.getAttribute('aria-disabled')).toBe('true')
     })
   })
 })

@@ -655,7 +655,7 @@ describe('EntryNavigator', () => {
       expect(onReorderEntry).toHaveBeenCalledWith('posts', 'abc123456789', 'down')
     })
 
-    it('disables Move Up for first entry', async () => {
+    it('blocks Move up for the first entry, saying why, and does not reorder', async () => {
       const user = userEvent.setup()
       const onReorderEntry = vi.fn()
 
@@ -692,14 +692,16 @@ describe('EntryNavigator', () => {
       // Open the entry menu for the first entry
       await user.click(screen.getByTestId('entry-menu-first'))
 
-      await waitFor(() => {
-        const moveUpItem = screen.getByText('Move up').closest('button')
-        // Mantine uses data-disabled for disabled menu items
-        expect(moveUpItem?.hasAttribute('data-disabled')).toBe(true)
-      })
+      const moveUpItem = (await screen.findByText('Move up')).closest('button')
+      // `aria-disabled`, not `disabled`, so the item stays in the menu's keyboard order.
+      expect(moveUpItem?.getAttribute('aria-disabled')).toBe('true')
+      expect(moveUpItem?.hasAttribute('disabled')).toBe(false)
+      expect(within(moveUpItem as HTMLElement).getByText('Already first')).toBeTruthy()
+      await user.click(moveUpItem as HTMLElement)
+      expect(onReorderEntry).not.toHaveBeenCalled()
     })
 
-    it('disables Move Down for last entry', async () => {
+    it('blocks Move down for the last entry, saying why, and does not reorder', async () => {
       const user = userEvent.setup()
       const onReorderEntry = vi.fn()
 
@@ -736,11 +738,11 @@ describe('EntryNavigator', () => {
       // Open the entry menu for the last entry
       await user.click(screen.getByTestId('entry-menu-second'))
 
-      await waitFor(() => {
-        const moveDownItem = screen.getByText('Move down').closest('button')
-        // Mantine uses data-disabled for disabled menu items
-        expect(moveDownItem?.hasAttribute('data-disabled')).toBe(true)
-      })
+      const moveDownItem = (await screen.findByText('Move down')).closest('button')
+      expect(moveDownItem?.getAttribute('aria-disabled')).toBe('true')
+      expect(within(moveDownItem as HTMLElement).getByText('Already last')).toBeTruthy()
+      await user.click(moveDownItem as HTMLElement)
+      expect(onReorderEntry).not.toHaveBeenCalled()
     })
   })
 
@@ -890,8 +892,8 @@ describe('EntryNavigator', () => {
 
       const moveUp = (await screen.findByText('Move up')).closest('button')
       const moveDown = screen.getByText('Move down').closest('button')
-      expect(moveUp?.hasAttribute('data-disabled')).toBe(false)
-      expect(moveDown?.hasAttribute('data-disabled')).toBe(true)
+      expect(moveUp?.getAttribute('aria-disabled')).toBeNull()
+      expect(moveDown?.getAttribute('aria-disabled')).toBe('true')
     })
 
     it('works on a flat list of items', async () => {

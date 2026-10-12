@@ -144,6 +144,21 @@ const anchorsHold = (
         sameContent(anchor.siblings, now[i].siblings),
     ))
 
+/**
+ * The canopy path `restoreRemoval` puts a removal back at: a list item returns to its old index,
+ * or to the list's end when the list is now shorter than that.
+ */
+export function restoredFieldPath(
+  fields: readonly FieldConfig[],
+  value: Record<string, unknown>,
+  removal: FieldRemoval,
+): CanopyPathSegment[] {
+  if (removal.kind !== 'list-item') return removal.path
+  const resolved = resolvePath(fields, value, removal.listPath)
+  const list = resolved ? getAt(value, resolved.path) : undefined
+  return [...removal.listPath, Math.min(removal.index, Array.isArray(list) ? list.length : 0)]
+}
+
 /** The enclosing lists of a removal in `value`, taken before the removal applies; see `anchors`. */
 export function removalAnchors(
   fields: readonly FieldConfig[],
