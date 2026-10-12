@@ -1114,7 +1114,9 @@ describe('SystemHealthPanel', () => {
       // Blocked, it stays focusable and says why on keyboard focus, and its click does nothing.
       expect(youngPurgeButton.hasAttribute('disabled')).toBe(false)
       act(() => youngPurgeButton.focus())
-      expect(await screen.findByText('May be a clone in progress')).toBeTruthy()
+      expect(
+        await screen.findByText('This may be a clone in progress. Try again in a few minutes.'),
+      ).toBeTruthy()
       await userEvent.click(youngPurgeButton)
       expect(mockClient.admin.purgeBranchDir).not.toHaveBeenCalled()
 

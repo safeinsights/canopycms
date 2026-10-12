@@ -453,7 +453,7 @@ export function CollectionEditor({
                           onClick={() => handleRemoveEntryType(entryType, index)}
                           blockedReason={
                             displayEntryTypes.length === 1
-                              ? 'A collection needs an entry type'
+                              ? 'A collection needs at least one entry type. Add another before removing this one.'
                               : undefined
                           }
                         >

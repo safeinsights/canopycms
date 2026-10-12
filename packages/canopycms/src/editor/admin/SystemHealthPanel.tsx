@@ -82,19 +82,24 @@ function formatAgeMs(ms: number): string {
  */
 function purgeGateFor(entry: BranchHealthEntry): { disabled: boolean; tooltip?: string } {
   if (entry.isBaseBranch) {
-    return { disabled: true, tooltip: 'The base branch can never be purged' }
+    return { disabled: true, tooltip: 'The base branch can never be purged.' }
   }
   const lockFresh =
     !!entry.provisioningLock && entry.provisioningLock.ageMs < PROVISIONING_LOCK_FRESH_MS
   if (entry.kind === 'orphan') {
     const tooYoung = (entry.ageMs ?? 0) < ORPHAN_YOUTH_THRESHOLD_MS
     const disabled = lockFresh || tooYoung
-    return { disabled, tooltip: disabled ? 'May be a clone in progress' : undefined }
+    return {
+      disabled,
+      tooltip: disabled
+        ? 'This may be a clone in progress. Try again in a few minutes.'
+        : undefined,
+    }
   }
   return {
     disabled: lockFresh,
     tooltip: lockFresh
-      ? 'Provisioning, or the worker syncing this branch, may be in progress'
+      ? 'Provisioning, or the worker syncing this branch, may be in progress. Try again in a few minutes.'
       : undefined,
   }
 }
