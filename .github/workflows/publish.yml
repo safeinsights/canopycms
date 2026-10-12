@@ -371,8 +371,8 @@ jobs:
             node -e 'const [a, b] = process.argv.slice(1).map((v) => v.split(".").map(Number))
               process.exit((a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) > 0 ? 0 : 1)' "$1" "$2"
           }
-          git fetch -q --tags origin
           for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
+            git fetch -q --tags origin
             attested=$(node scripts/npm-attested-commit.mjs "$pkg" "$VERSION")
             if [ "$attested" = "$SHA" ]; then
               echo "$pkg@$VERSION is already published from $SHA"
@@ -392,6 +392,15 @@ jobs:
             fi
             (cd "packages/$pkg" && pnpm dlx npm@11.19.0 publish "$pkg"-*.tgz --access public --provenance --tag "$tag")
           done
+          # Two releases publishing within seconds can still interleave; a
+          # `latest` that disagrees across the five fails the run, so it shows.
+          latests=$(for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
+            npm view "$pkg" dist-tags.latest
+          done | sort -u)
+          if [ "$(grep -c . <<<"$latests")" -ne 1 ]; then
+            echo "::error::npm latest differs across the five packages: $(tr '\n' ' ' <<<"$latests")"
+            exit 1
+          fi
 
       # Until a re-run completes the set, an install mixing these versions fails
       # on the packages' exact peer pins, so the summary says which are out.

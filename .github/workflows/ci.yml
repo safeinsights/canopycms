@@ -425,7 +425,14 @@ jobs:
             grep -viE '^\.changeset/readme\.md$' |
             grep -vE '^\.changeset/(AGENTS|CLAUDE|GEMINI)\.md$' | grep -c . || true)
           if ! pnpm exec changeset status --since="origin/$BASE_REF"; then
-            if grep -q '^packages/' <<<"$own"; then exit 1; fi
+            # The PR's own package changes, by the changedFilePatterns in
+            # .changeset/config.json: tests, fixtures and AGENTS.md need none.
+            shipped=$(grep '^packages/' <<<"$own" | grep -vE '\.test\.tsx?$|/__fixtures__/|/AGENTS\.md$' || true)
+            if [ -n "$shipped" ]; then
+              echo "::error::Add a changeset, or 'pnpm exec changeset add --empty' if adopters see no difference (a merge of main that also touched these needs one too):"
+              printf '%s\n' "$shipped"
+              exit 1
+            fi
             echo "Every changed package file came from main; no changeset needed."
           fi
           # `changeset status` sees a renamed file only at its new path, so a
