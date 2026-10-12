@@ -9,9 +9,9 @@
  *   to snap back to fresh data whenever the tab regains focus; a few
  *   seconds of staleness is harmless, and refetching on every alt-tab is
  *   just extra load against the branch clone.
- * - shouldRetryOnError: false -- matches the hooks' pre-SWR behavior, which
- *   surfaced a single failure (notification + console.error) rather than
- *   silently retrying in the background.
+ * - shouldRetryOnError: false -- a failure, a timed-out request's
+ *   ApiTimeoutError included, is reported once and stays an error until the
+ *   user retries, so a stalled API never drives a retry loop.
  * - provider: () => new Map() -- gives the editor its own cache instead of
  *   SWR's module-global one, so editor keys ("canopy:entries:main", ...) can
  *   never collide with an SWR cache the host app is running for its own data.

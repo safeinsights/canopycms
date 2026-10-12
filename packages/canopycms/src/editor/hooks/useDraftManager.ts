@@ -10,6 +10,11 @@ import { validateEntryFormValue, type EntryFieldError } from '../../validation/e
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
+import { isApiTimeoutError } from '../../api/client'
+
+/** @internal Exported for tests. */
+export const SAVE_TIMED_OUT_MESSAGE =
+  "Save didn't finish in time. It may have saved anyway, so reload this entry to check before saving again."
 
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
 const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
@@ -774,6 +779,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           reloadRequiredRef.current[currentId] = options.getEntryVersion?.(currentId)
         }
         showConflictNotification(err.serverMessage || undefined)
+      } else if (isApiTimeoutError(err)) {
+        // As with WRITE_OUTCOME_UNKNOWN, the write may have landed after the editor stopped waiting.
+        reloadRequiredRef.current[currentId] = options.getEntryVersion?.(currentId)
+        showConflictNotification(SAVE_TIMED_OUT_MESSAGE)
       } else {
         const explained = isValidation || isForbidden || isUnavailable
         notifications.show({

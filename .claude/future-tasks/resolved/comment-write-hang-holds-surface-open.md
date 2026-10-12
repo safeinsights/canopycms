@@ -2,10 +2,12 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  The comments panel and the field comment popover refuse to close while a comment write is in flight, so their busy state and any error stay in view. `ApiClient.request` (`api/client.ts`) has no timeout, so a write that hangs (laptop sleep, network switch) holds the modal drawer open with no explanation, and the only way out is a reload that loses drafts. Options: a request timeout for comment writes, or the drawer's `keepMounted` with a toast for failures while hidden, plus a visible reason when a close is refused.
+  RESOLVED (2026-10-12) — a hung comment write is bounded by the API client's request deadline (see [api-client-no-request-timeout.md](api-client-no-request-timeout.md)), so the comments panel and field popover always release. A close they refuse while a write is in flight now says why: `useTrackedWrites().guardClose` sets `closeRefused`, shown as a status line in the drawer title and the popover.
 ---
 
 # A hung comment write holds the comments surface open
+
+## Status: RESOLVED 2026-10-12 — bounded by the request deadline; a refused close says why
 
 ## What is known
 

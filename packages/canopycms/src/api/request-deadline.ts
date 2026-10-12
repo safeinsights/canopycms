@@ -6,6 +6,8 @@
  */
 
 /**
+ * @internal Exported for tests.
+ *
  * How long each class of request may take. `write` is past the 60 s an API behind CloudFront
  * gets, so a server still working answers (or its proxy's 504 does) before the editor gives up.
  * `long` is for the operations that legitimately run longer: provisioning, submit, admin scans
@@ -28,7 +30,7 @@ export interface RequestOptions {
   timeoutMs?: number | null
 }
 
-/** The message an {@link ApiTimeoutError} carries, worded for the editor's UI. */
+/** @internal Exported for tests. The message an {@link ApiTimeoutError} carries. */
 export const REQUEST_TIMED_OUT_MESSAGE =
   "The server didn't answer in time. Check your connection and try again."
 

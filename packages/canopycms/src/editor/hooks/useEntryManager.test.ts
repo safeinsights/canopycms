@@ -10,6 +10,9 @@ import type { EditorEntry, EditorCollection } from '../Editor'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import type { ContentId } from '../../paths/types'
 import { notifications } from '@mantine/notifications'
+import type React from 'react'
+import { ApiTimeoutError } from '../../api/request-deadline'
+import type { RetryToastMessageProps } from '../components/RetryToastMessage'
 import {
   setupMockApiClient,
   setupMockLocation,
@@ -38,6 +41,7 @@ vi.mock('../../api', async () => {
 vi.mock('@mantine/notifications', () => ({
   notifications: {
     show: vi.fn(),
+    hide: vi.fn(),
   },
 }))
 
@@ -1521,6 +1525,42 @@ describe('useEntryManager', () => {
         expect.objectContaining({ color: 'red' }),
       )
       restore()
+    })
+
+    it('a timed-out load settles, fetches once, and its toast stays with a Retry that reloads it', async () => {
+      const { restore } = setupMockConsole(['error'])
+      try {
+        const succeeded = mockClient.schema.get.getMockImplementation()
+        mockClient.schema.get.mockRejectedValueOnce(
+          new ApiTimeoutError('GET', '/branch-a/schema', 30_000),
+        )
+
+        const { result } = renderHook((props) => useEntryManager(props), {
+          wrapper,
+          initialProps: optionsFor('branch-a'),
+        })
+
+        await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+        const toast = vi
+          .mocked(notifications.show)
+          .mock.calls.map(([n]) => n)
+          .find((n) => n.id === 'canopy-entries-load-failed')
+        expect(toast).toMatchObject({ color: 'red', autoClose: false })
+        // No retry loop behind the toast's back.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(mockClient.schema.get).toHaveBeenCalledTimes(1)
+
+        if (succeeded) mockClient.schema.get.mockImplementation(succeeded)
+        const message = toast?.message as React.ReactElement<RetryToastMessageProps>
+        await act(async () => message.props.onRetry())
+
+        await waitFor(() => expect(mockClient.schema.get).toHaveBeenCalledTimes(2))
+        await waitFor(() =>
+          expect(vi.mocked(notifications.hide)).toHaveBeenCalledWith('canopy-entries-load-failed'),
+        )
+      } finally {
+        restore()
+      }
     })
 
     it('a failed load after switching branches settles to the empty state and reports, rather than loading forever', async () => {

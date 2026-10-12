@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, useEffect, useMemo, useRef, useState } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import type { WriteContentBody } from '../../api/content'
@@ -14,6 +14,9 @@ import type { EntryFieldError } from '../../validation/entry-validator'
 import { useApiClient } from '../context'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
+import { RetryToastMessage } from '../components/RetryToastMessage'
+
+const ENTRIES_LOAD_FAILED_TOAST_ID = 'canopy-entries-load-failed'
 
 // Re-exported so existing imports of `listAllEntries` from this module keep
 // working -- the implementation lives in useEntriesData.ts alongside the
@@ -676,16 +679,27 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const notifiedErrorBranchRef = useRef<string | null>(null)
   useEffect(() => {
     if (!entriesError || !options.branchName) {
+      if (notifiedErrorBranchRef.current !== null) notifications.hide(ENTRIES_LOAD_FAILED_TOAST_ID)
       notifiedErrorBranchRef.current = null
       return
     }
     if (notifiedErrorBranchRef.current === options.branchName) return
-    notifiedErrorBranchRef.current = options.branchName
+    const branch = options.branchName
+    notifiedErrorBranchRef.current = branch
     console.error(entriesError)
     notifications.show({
+      id: ENTRIES_LOAD_FAILED_TOAST_ID,
       title: 'Could not load content',
-      message: getErrorMessage(entriesError),
+      message: createElement(RetryToastMessage, {
+        message: getErrorMessage(entriesError),
+        onRetry: () => {
+          notifications.hide(ENTRIES_LOAD_FAILED_TOAST_ID)
+          notifiedErrorBranchRef.current = null
+          void globalMutate(entriesKey(branch))
+        },
+      }),
       color: 'red',
+      autoClose: false,
     })
   }, [entriesError, options.branchName])
 

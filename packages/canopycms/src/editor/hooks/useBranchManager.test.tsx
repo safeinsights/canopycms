@@ -1,8 +1,11 @@
 import type React from 'react'
+import { ApiTimeoutError } from '../../api/request-deadline'
+import type { RetryToastMessageProps } from '../components/RetryToastMessage'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useSWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  BRANCH_ACTION_OUTCOME_UNKNOWN,
   CREATED_BRANCH_GRACE_MS,
   useBranchManager,
   UseBranchManagerOptions,
@@ -214,6 +217,34 @@ describe('useBranchManager', () => {
     restore()
   })
 
+  it('offers Retry on the sticky error toast, which reloads the branch list', async () => {
+    const { restore } = setupMockConsole(['error'])
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.branches.list
+      .mockRejectedValueOnce(new ApiTimeoutError('GET', '/branches', 30_000))
+      .mockResolvedValue({ ok: true, status: 200, data: { branches: mockBranches, users: [] } })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+
+    let toast: { message?: unknown } | undefined
+    await waitFor(() => {
+      toast = vi
+        .mocked(notifications.show)
+        .mock.calls.map(([n]) => n)
+        .find((n) => n.id === 'canopy-branches-load-failed')
+      expect(toast).toBeDefined()
+    })
+    expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
+
+    await act(async () =>
+      (toast?.message as React.ReactElement<RetryToastMessageProps>).props.onRetry(),
+    )
+
+    await waitFor(() => expect(result.current.branches).toEqual(mockBranches))
+    expect(mockClient.branches.list).toHaveBeenCalledTimes(2)
+    restore()
+  })
+
   it('handles branch load returning 404 gracefully', async () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: false,
@@ -259,7 +290,11 @@ describe('useBranchManager', () => {
     await waitFor(() => {
       expect(notifications.show).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: "Branch workspace provisioning failed for 'main': clone failed",
+          message: expect.objectContaining({
+            props: expect.objectContaining({
+              message: "Branch workspace provisioning failed for 'main': clone failed",
+            }),
+          }),
           color: 'red',
         }),
       )
@@ -997,6 +1032,36 @@ describe('useBranchManager', () => {
     })
 
     expect(mockSetBusy).toHaveBeenCalledWith(false)
+    restore()
+  })
+
+  it('ends a timed-out submit, says it may have gone through, and reloads the list to show it', async () => {
+    const { restore } = setupMockConsole(['error'])
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: editingFeature, users: [] },
+    })
+    mockClient.workflow.submit.mockRejectedValueOnce(
+      new ApiTimeoutError('POST', '/feature/submit', 180_000),
+    )
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    await waitFor(() => expect(result.current.branches).toHaveLength(2))
+    const listCalls = mockClient.branches.list.mock.calls.length
+
+    await act(async () => {
+      await result.current.handleSubmit('feature').catch(() => {})
+    })
+
+    expect(mockSetBusy).toHaveBeenLastCalledWith(false)
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ message: BRANCH_ACTION_OUTCOME_UNKNOWN, color: 'yellow' }),
+    )
+    await waitFor(() =>
+      expect(mockClient.branches.list.mock.calls.length).toBeGreaterThan(listCalls),
+    )
     restore()
   })
 

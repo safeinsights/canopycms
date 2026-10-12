@@ -1,6 +1,12 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { COMMENT_NOT_ADDED, THREAD_NOT_RESOLVED, useCommentSystem } from './useCommentSystem'
+import {
+  COMMENT_MAY_BE_ADDED,
+  COMMENT_NOT_ADDED,
+  THREAD_NOT_RESOLVED,
+  useCommentSystem,
+} from './useCommentSystem'
+import { ApiTimeoutError } from '../../api/request-deadline'
 import { useUserMetadata } from './useUserMetadata'
 import { createUserMetadataBatcher } from './user-metadata-batcher'
 import type { ApiClient } from '../context'
@@ -169,25 +175,29 @@ describe('useCommentSystem', () => {
     expect(mockClient.comments.list).toHaveBeenCalledWith({ branch: 'main' })
   })
 
-  it('handles load comments error gracefully', async () => {
+  it('keeps the threads already shown when a reload fails', async () => {
     const { error, restore } = setupMockConsole(['error'])
+    mockClient.comments.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { threads: mockComments, users: [] },
+    })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions), {
       wrapper,
     })
+    await waitFor(() => expect(result.current.comments).toEqual(mockComments))
 
-    // Override the default mock for this specific test
     mockClient.comments.list.mockResolvedValueOnce({
       ok: false,
       status: 500,
     })
-
     await act(async () => {
       await result.current.loadComments('main')
     })
 
-    expect(error).toHaveBeenCalledWith('Failed to load comments:', 500)
-    expect(result.current.comments).toEqual([])
+    expect(error).toHaveBeenCalledWith('Failed to load comments:', expect.any(Error))
+    expect(result.current.comments).toEqual(mockComments)
     restore()
   })
 
@@ -388,6 +398,26 @@ describe('useCommentSystem', () => {
         COMMENT_NOT_ADDED,
       )
     })
+  })
+
+  it('says a timed-out post may have landed, and reloads the threads to show it if it did', async () => {
+    const landed = { ...mockComments[0], id: 'landed-thread' }
+    mockClient.comments.list
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { threads: [], users: [] } })
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { threads: [landed], users: [] } })
+    mockClient.comments.add.mockRejectedValueOnce(
+      new ApiTimeoutError('POST', '/main/comments', 75_000),
+    )
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    await waitFor(() => expect(mockClient.comments.list).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      await expect(result.current.handleAddComment('Test comment', 'branch')).rejects.toThrow(
+        COMMENT_MAY_BE_ADDED,
+      )
+    })
+
+    await waitFor(() => expect(result.current.comments).toEqual([landed]))
   })
 
   it('resolves thread successfully', async () => {

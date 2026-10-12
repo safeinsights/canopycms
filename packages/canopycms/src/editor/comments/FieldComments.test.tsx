@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { CLOSE_WAITS_FOR_WRITE } from './use-tracked-writes'
 import { userEvent } from '@testing-library/user-event'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -579,8 +580,11 @@ describe('field comment popover, across entries and slow posts', () => {
       await act(() => new Promise((resolve) => setTimeout(resolve, 300)))
       expect(screen.getByTestId('field-comment-title-popover')).toBeTruthy()
     }
+    expect(screen.queryByText(CLOSE_WAITS_FOR_WRITE)).toBeNull()
     await user.keyboard('{Escape}')
     await stillOpen()
+    // A refused close says why.
+    expect(screen.getByRole('status').textContent).toBe(CLOSE_WAITS_FOR_WRITE)
     await user.click(document.body)
     await stillOpen()
     await user.click(control('title'))
@@ -590,6 +594,7 @@ describe('field comment popover, across entries and slow posts', () => {
     // A failure leaves focus in the box, so Escape still reaches the popover.
     await act(async () => fail())
     expect(await screen.findByText("Couldn't add the comment. Try again.")).toBeTruthy()
+    expect(screen.queryByText(CLOSE_WAITS_FOR_WRITE)).toBeNull()
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByTestId('new-thread-textarea')),
     )

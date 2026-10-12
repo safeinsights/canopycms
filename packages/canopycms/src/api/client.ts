@@ -8,6 +8,7 @@
 
 import { computeContentSha256Hex } from './request-body-hash'
 import { resolveTimeoutMs, runWithDeadline, type RequestOptions, type RequestTimeoutClass } from './request-deadline'
+export { isApiTimeoutError, type RequestOptions } from './request-deadline'
 import type { ApiResponse } from './types'
 import { readTrailingSlashEnv, withTrailingSlash } from '../utils/url-prefix'
 import { EDITOR_MODE_HEADER, EDITOR_MODE_MISMATCH_STATUS } from '../operating-mode/editor-mode-check'

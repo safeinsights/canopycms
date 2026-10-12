@@ -389,7 +389,7 @@ describe('CanopyApiClient', () => {
     /** A fetch that never answers on its own, recording the signal each call was given. */
     const stalledFetch = () => {
       const signals: AbortSignal[] = []
-      const fetch = vi.fn((_url: string, init?: RequestInit) => {
+      const fetch = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
         if (init?.signal) signals.push(init.signal)
         return new Promise<Response>(() => {})
       })

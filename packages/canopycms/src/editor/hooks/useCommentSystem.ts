@@ -5,6 +5,7 @@ import type { UserSearchResult } from '../../auth/types'
 import type { EditorEntry } from '../Editor'
 import { findFieldTarget } from '../field-target'
 import { useApiClient } from '../context'
+import { isApiTimeoutError } from '../../api/client'
 import { resolveMessageOrigin } from '../preview-bridge'
 import { isSamePreviewPath } from '../preview-path'
 import { commentsKey, fetchCommentsSeedingUsers, useCommentsData } from './useCommentsData'
@@ -66,6 +67,9 @@ export interface UseCommentSystemReturn {
 /** @internal Exported for tests. */
 export const COMMENT_NOT_ADDED = "Couldn't add the comment. Try again."
 /** @internal Exported for tests. */
+export const COMMENT_MAY_BE_ADDED =
+  "The server didn't answer in time, so the comment may have been added. Check the thread before sending it again."
+/** @internal Exported for tests. */
 export const THREAD_NOT_RESOLVED = "Couldn't resolve the thread. Try again."
 
 /**
@@ -104,13 +108,16 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // after mount isn't coalesced against the still-in-flight automatic load
   // -- then writes the result into the shared cache so useCommentsData's
   // bound hook (and the effect above) pick it up.
+  // A failed reload logs and keeps the threads already shown.
   const loadComments = async (branch: string) => {
     if (!branch) return
-    const fresh = await fetchCommentsSeedingUsers(
-      apiClient,
-      { cache, mutate: globalMutate },
-      branch,
-    )
+    let fresh: Awaited<ReturnType<typeof fetchCommentsSeedingUsers>>
+    try {
+      fresh = await fetchCommentsSeedingUsers(apiClient, { cache, mutate: globalMutate }, branch)
+    } catch (err) {
+      console.error('Failed to load comments:', err)
+      return
+    }
     await globalMutate(commentsKey(branch), fresh, { revalidate: false })
   }
 
@@ -123,12 +130,18 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
     canopyPath?: string,
     threadId?: string,
   ) => {
-    if (!options.branchName) return
+    const branch = options.branchName
+    if (!branch) return
     const result = await apiClient.comments
-      .add({ branch: options.branchName }, { text, threadId, type, entryPath, canopyPath })
-      .catch(() => null)
+      .add({ branch }, { text, threadId, type, entryPath, canopyPath })
+      .catch((err: unknown) => {
+        // A timed-out post may have landed: reload so the thread shows it if it did.
+        if (!isApiTimeoutError(err)) return null
+        void loadComments(branch)
+        throw new Error(COMMENT_MAY_BE_ADDED)
+      })
     if (!result?.ok) throw new Error(COMMENT_NOT_ADDED)
-    await loadComments(options.branchName)
+    await loadComments(branch)
   }
 
   const handleResolveThread = async (threadId: string) => {

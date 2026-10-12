@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useDraftManager } from './useDraftManager'
+import { SAVE_TIMED_OUT_MESSAGE, useDraftManager } from './useDraftManager'
+import { ApiTimeoutError } from '../../api/request-deadline'
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import type { EditorEntry } from '../Editor'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
@@ -637,6 +638,46 @@ describe('useDraftManager', () => {
         })
 
         expect(mockSaveEntry).toHaveBeenCalledTimes(2)
+      })
+    })
+
+    describe('a save that times out', () => {
+      const mockGetEntryVersion = vi.fn<(contentId: string) => number | undefined>()
+      const versionedOptions = { ...defaultOptions, getEntryVersion: mockGetEntryVersion }
+
+      let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+      beforeEach(() => {
+        mockGetEntryVersion.mockReset()
+        consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      })
+      afterEach(() => {
+        consoleErrorSpy.mockRestore()
+      })
+
+      it('ends the save, keeps the draft, says it may have saved, and holds a blind re-save', async () => {
+        mockGetEntryVersion.mockReturnValue(100)
+        mockSaveEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PUT', '/main/content/posts/a', 75_000),
+        )
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        act(() => {
+          result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+        })
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({ message: SAVE_TIMED_OUT_MESSAGE, color: 'yellow' }),
+        )
+        expect(mockSetBusy).toHaveBeenLastCalledWith(false)
+        expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft' })
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+        expect(mockSaveEntry).toHaveBeenCalledTimes(1)
       })
     })
 

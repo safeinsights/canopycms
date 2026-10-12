@@ -17,6 +17,14 @@ import { BRANCHES_KEY, fetchBranches, useBranchesData, type BranchesData } from 
 // which breaks adopters' production `next build` of the editor bundle.
 // paths/branch-name.ts is the dependency-free home of sanitizeBranchName.
 import { sanitizeBranchName } from '../../paths/branch-name'
+import { RetryToastMessage } from '../components/RetryToastMessage'
+import { isApiTimeoutError } from '../../api/client'
+
+const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
+
+/** @internal Exported for tests. */
+export const BRANCH_ACTION_OUTCOME_UNKNOWN =
+  "The server didn't answer in time, so this may have gone through anyway. Check the branch list before trying again."
 
 /**
  * Wire a confirm modal's exits so exactly ONE of {confirmed, dismissed} runs,
@@ -361,25 +369,38 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     }
   }, [branchesData, branchName])
 
+  // Fixed id: a retry updates the existing toast instead of stacking; sticky because the editor
+  // cannot function without the branch list.
+  const showBranchesLoadFailed = (message: string) => {
+    notifications.show({
+      id: BRANCHES_LOAD_FAILED_TOAST_ID,
+      message: (
+        <RetryToastMessage
+          message={message}
+          onRetry={() => {
+            notifications.hide(BRANCHES_LOAD_FAILED_TOAST_ID)
+            void reloadBranches()
+          }}
+        />
+      ),
+      color: 'red',
+      autoClose: false,
+    })
+  }
+
   // Surfaces/clears the sticky error toast the same way loadBranches() does.
   useEffect(() => {
     if (branchesError) {
       console.error(branchesError)
-      const message =
-        branchesError instanceof Error ? branchesError.message : 'Failed to load branches'
-      // Fixed id: retries update the existing toast instead of stacking; sticky
-      // because the editor cannot function without the branch list.
-      notifications.show({
-        id: 'canopy-branches-load-failed',
-        message,
-        color: 'red',
-        autoClose: false,
-      })
+      showBranchesLoadFailed(
+        branchesError instanceof Error ? branchesError.message : 'Failed to load branches',
+      )
     } else if (branchesData) {
       // A previous failure may have left the sticky error toast up; clear it
       // now that loading succeeded (provisioning failures are often transient).
-      notifications.hide('canopy-branches-load-failed')
+      notifications.hide(BRANCHES_LOAD_FAILED_TOAST_ID)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showBranchesLoadFailed is new every render and reads nothing that changes
   }, [branchesData, branchesError])
 
   // Mirrors the automatic load's in-flight state onto the shared busy flag,
@@ -458,13 +479,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       return fresh
     } catch (err) {
       console.error(err)
-      const message = err instanceof Error ? err.message : 'Failed to load branches'
-      notifications.show({
-        id: 'canopy-branches-load-failed',
-        message,
-        color: 'red',
-        autoClose: false,
-      })
+      showBranchesLoadFailed(err instanceof Error ? err.message : 'Failed to load branches')
       return undefined
     } finally {
       options.setBusy(false)
@@ -514,6 +529,17 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     }
   }
 
+  // A workflow action that timed out may have gone through, so the list reloads to show where
+  // the branch stands rather than inviting a blind retry.
+  const reportActionFailure = (err: unknown, fallback: string) => {
+    if (isApiTimeoutError(err)) {
+      notifications.show({ message: BRANCH_ACTION_OUTCOME_UNKNOWN, color: 'yellow' })
+      void loadBranches()
+      return
+    }
+    notifications.show({ message: err instanceof Error ? err.message : fallback, color: 'red' })
+  }
+
   const handleSubmit = (requested: string) => {
     const branchNameToSubmit = listedName(requested)
     return singleFlight(
@@ -551,8 +577,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 await loadBranches()
                 resolve()
               } catch (err) {
-                const message = err instanceof Error ? err.message : 'Failed to submit branch'
-                notifications.show({ message, color: 'red' })
+                reportActionFailure(err, 'Failed to submit branch')
                 reject(err)
               } finally {
                 options.setBusy(false)
@@ -590,8 +615,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 await loadBranches()
                 resolve()
               } catch (err) {
-                const message = err instanceof Error ? err.message : 'Failed to withdraw branch'
-                notifications.show({ message, color: 'red' })
+                reportActionFailure(err, 'Failed to withdraw branch')
                 reject(err)
               } finally {
                 options.setBusy(false)
@@ -624,8 +648,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 updateCreatedBranch(branchNameForChanges, result.data?.branch)
                 await loadBranches()
               } catch (err) {
-                const message = err instanceof Error ? err.message : 'Failed to request changes'
-                notifications.show({ message, color: 'red' })
+                reportActionFailure(err, 'Failed to request changes')
               } finally {
                 options.setBusy(false)
                 resolve()
@@ -681,8 +704,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                   )
                 }
               } catch (err) {
-                const message = err instanceof Error ? err.message : 'Failed to delete branch'
-                notifications.show({ message, color: 'red' })
+                reportActionFailure(err, 'Failed to delete branch')
               } finally {
                 options.setBusy(false)
                 // Failures surface as the toast above, never as a rejection; cancelling resolves too.

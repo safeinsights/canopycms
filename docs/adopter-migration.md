@@ -91,6 +91,7 @@ replaces each `next` with its number.
 | next | Editing  | [Comments and branches name their people](#comments-and-branches-name-their-people-for-every-editor--behaviour-change-on-two-apis)                                                          | Direct API callers           |
 | next | Editing  | [Branches drawer and comment replies](#the-branches-drawer-shows-one-action-per-branch-and-comments-reply-in-place)                                                                         | Editor UI tests              |
 | next | Editing  | [Editor contrast; blocked buttons stay focusable](#editor-contrast-and-blocked-buttons-stay-focusable)                                                                                      | Browser tests                |
+| next | Editing  | [Editor requests time out](#editor-requests-time-out-instead-of-hanging)                                                                                                                    | Slow-API browser tests       |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -318,6 +319,18 @@ Browser tests check `aria-disabled`; Playwright's `toBeDisabled` reads it. Tests
 old "Reload File" or "Discard File Draft" use the new labels.
 
 **Now deletable.** Local overrides that darkened the same text or buttons.
+
+### Editor requests time out instead of hanging
+
+**What changed.** (next) Every editor API request has a deadline: 30 s for reads, 75 s for writes,
+and 180 s for branch create, submit, admin branch scans and repairs, and the proxied upload. Past
+it the editor stops waiting and says so. A save, comment or branch action that timed out may still
+have gone through, so the editor says that rather than inviting a blind retry, and reloads what it
+can. The content and branch-list load failures offer Retry. A comments panel or popover held open
+by a write in flight says why.
+
+**To adopt.** Nothing, unless browser tests hold an API response for longer than a deadline to
+observe a busy state; keep such holds under it.
 
 ### Field editing: descriptions, list-card titles, and `public/` images
 
