@@ -20,9 +20,6 @@
     "packages/canopycms/src/editor/Editor.tsx": {
       "title-case": 4
     },
-    "packages/canopycms/src/editor/fields/BlockField.tsx": {
-      "ellipsis": 1
-    },
     "packages/canopycms/src/editor/fields/entry-link/InsertEntryLink.tsx": {
       "title-case": 1,
       "ellipsis": 1

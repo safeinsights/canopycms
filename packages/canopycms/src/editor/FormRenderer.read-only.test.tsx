@@ -229,55 +229,91 @@ describe('FormRenderer readOnly', () => {
     expect(screen.queryByTestId('image-field-remove-hero')).toBeNull()
   })
 
-  it('block: no add, remove, move or drag; nested fields are locked', () => {
-    const { onChange } = renderReadOnly(
-      [
-        {
-          name: 'blocks',
-          type: 'block',
-          label: 'Sections',
-          templates: [
-            { name: 'hero', label: 'Hero', fields: [{ name: 'heading', type: 'string' }] },
-          ],
-        },
-      ],
-      {
-        blocks: [
-          { template: 'hero', value: { heading: 'First' } },
-          { template: 'hero', value: { heading: 'Second' } },
-        ],
-      },
-    )
-    expect(screen.queryByRole('textbox', { name: 'Add block' })).toBeNull()
+  const blockFields: FieldConfig[] = [
+    {
+      name: 'blocks',
+      type: 'block',
+      label: 'Sections',
+      templates: [{ name: 'hero', label: 'Hero', fields: [{ name: 'heading', type: 'string' }] }],
+    },
+  ]
+  const blockValue = {
+    blocks: [
+      { template: 'hero', value: { heading: 'First' } },
+      { template: 'hero', value: { heading: 'Second' } },
+    ],
+  }
+
+  it('block: no add, insert, remove, move or drag; nested fields are locked', () => {
+    const { onChange } = renderReadOnly(blockFields, blockValue)
     expect(screen.queryByRole('button', { name: 'Drag to reorder' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Move block up' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Move block down' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Actions for / })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add section' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add section here' })).toBeNull()
+    expect(screen.queryByTestId('block-insert-between')).toBeNull()
     const [first] = screen.getAllByRole('textbox', { name: 'heading' })
     expectLocked(first)
     fireEvent.change(first, { target: { value: 'Edited' } })
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('object list: no add or remove; nested fields are locked', () => {
-    const { onChange } = renderReadOnly(
-      [
-        {
-          name: 'links',
-          type: 'object',
-          label: 'Links',
-          list: true,
-          fields: [{ name: 'href', type: 'string', label: 'Href' }],
-        },
-      ],
-      { links: [{ href: '/a' }] },
-    )
+  it('block: the same controls are there when the form is editable', () => {
+    renderReadOnly(blockFields, blockValue, { readOnly: false })
+    expect(screen.getAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: 'Actions for Hero' })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Add section' })).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: 'Add section here' })).toHaveLength(1)
+  })
+
+  it('block: a row still collapses and opens, and a collapse writes nothing', () => {
+    const { onChange } = renderReadOnly(blockFields, blockValue)
+    const [toggle] = screen.getAllByTestId('item-row-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(document.getElementById(toggle.getAttribute('aria-controls')!)!.hidden).toBe(true)
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  const listFields: FieldConfig[] = [
+    {
+      name: 'links',
+      type: 'object',
+      label: 'Links',
+      list: true,
+      fields: [{ name: 'href', type: 'string', label: 'Href' }],
+    },
+  ]
+
+  it('object list: no add, drag or row menu; nested fields are locked', () => {
+    const { onChange } = renderReadOnly(listFields, { links: [{ href: '/a' }] })
     expect(screen.queryByRole('button', { name: 'Add item' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
+    expect(screen.queryByTestId('object-list-add')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Drag to reorder' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Actions for / })).toBeNull()
     const input = screen.getByRole('textbox', { name: 'Href' })
     expectLocked(input)
     fireEvent.change(input, { target: { value: '/b' } })
     expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('object list: the same controls are there when the form is editable', () => {
+    renderReadOnly(listFields, { links: [{ href: '/a' }] }, { readOnly: false })
+    expect(screen.getByRole('button', { name: 'Add item' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Drag to reorder' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Actions for /a' })).toBeTruthy()
+  })
+
+  it('object list: a row still collapses and opens', () => {
+    renderReadOnly(listFields, { links: [{ href: '/a' }] })
+    const toggle = screen.getByTestId('item-row-toggle')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('textbox', { name: 'Href' })).toBeNull()
+    fireEvent.click(toggle)
+    expect(screen.getByRole('textbox', { name: 'Href' })).toBeTruthy()
   })
 
   it('object list (empty): says there are no items without inviting an add', () => {

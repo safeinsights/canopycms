@@ -4,7 +4,7 @@
  */
 import React from 'react'
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { render, cleanup, screen } from '@testing-library/react'
+import { render, cleanup, screen, fireEvent } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 
 import type { BlockConfig } from '../../config'
@@ -61,5 +61,32 @@ describe('BlockField readOnly', () => {
     expect(screen.queryAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(0)
     // DndContext's hooks depend on the sensor count, so it never changes.
     expect(new Set(sensorCounts)).toEqual(new Set([2]))
+  })
+
+  it('offers no menu, add or insert control while read-only, and all of them once it unlocks', () => {
+    const { rerender } = render(field(true))
+    expect(screen.queryAllByRole('button', { name: 'Actions for Hero' })).toHaveLength(0)
+    expect(screen.queryByRole('button', { name: 'Add section' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add section here' })).toBeNull()
+
+    rerender(field(false))
+    expect(screen.getAllByRole('button', { name: 'Actions for Hero' })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Add section' })).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: 'Add section here' })).toHaveLength(1)
+
+    rerender(field(true))
+    expect(screen.queryAllByRole('button', { name: 'Actions for Hero' })).toHaveLength(0)
+    expect(screen.queryByRole('button', { name: 'Add section' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add section here' })).toBeNull()
+  })
+
+  it('still collapses and opens a block while read-only', () => {
+    render(field(true))
+    const [toggle] = screen.getAllByTestId('item-row-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
   })
 })

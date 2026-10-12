@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import React, { useState } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -139,8 +139,8 @@ describe('FormRenderer', () => {
     let state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
     expect(state.features).toHaveLength(1)
 
-    const removeButton = screen.getByRole('button', { name: /remove/i })
-    await user.click(removeButton)
+    await user.click(screen.getByRole('button', { name: /^Actions for / }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Remove' }))
 
     state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
     expect(state.features).toHaveLength(0)
@@ -309,9 +309,8 @@ describe('FormRenderer', () => {
       />,
     )
 
-    const addSelect = screen.getByPlaceholderText('Add block...')
-    await user.click(addSelect)
-    await user.click(screen.getByRole('option', { name: 'Hero' }))
+    await user.click(screen.getByRole('button', { name: 'Add section' }))
+    await user.click(await screen.findByRole('menuitem', { name: /^Hero/ }))
 
     const headlineInput = screen.getByLabelText('Headline') as HTMLInputElement
     await user.type(headlineInput, 'Hello Blocks')
@@ -1094,6 +1093,31 @@ describe('FormRenderer', () => {
     it('block', () => {
       renderFields(described({ name: 'blocks', type: 'block', label: 'Blocks', templates: [] }))
       expectDescribed('group')
+    })
+
+    it("block template: its description is in the block's body and describes the block's row", () => {
+      renderFields(
+        [
+          {
+            name: 'blocks',
+            type: 'block',
+            label: 'Blocks',
+            templates: [
+              {
+                name: 'hero',
+                label: 'Hero',
+                description: 'The banner at the top of a page',
+                fields: [{ name: 'headline', type: 'string', label: 'Headline' }],
+              },
+            ],
+          },
+        ],
+        { blocks: [{ template: 'hero', value: { headline: 'Hi' } }] },
+      )
+      const row = screen.getByRole('group', { name: 'Hero' })
+      const text = within(row).getByText('The banner at the top of a page')
+      expect(row.getAttribute('aria-describedby')).toBe(text.id)
+      expect(describedBy(text.id)).toEqual([row])
     })
 
     it('object', () => {

@@ -91,6 +91,7 @@ replaces each `next` with its number.
 | next | Editing  | [Comments and branches name their people](#comments-and-branches-name-their-people-for-every-editor--behaviour-change-on-two-apis)                                                          | Direct API callers           |
 | next | Editing  | [Branches drawer and comment replies](#the-branches-drawer-shows-one-action-per-branch-and-comments-reply-in-place)                                                                         | Editor UI tests              |
 | next | Editing  | [Editor contrast; blocked buttons stay focusable](#editor-contrast-and-blocked-buttons-stay-focusable)                                                                                      | Browser tests                |
+| next | Editing  | [List items and blocks collapse](#list-items-and-blocks-collapse-and-reorder-from-one-menu)                                                                                                 | Editor UI tests              |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -319,6 +320,18 @@ old "Reload File" or "Discard File Draft" use the new labels.
 
 **Now deletable.** Local overrides that darkened the same text or buttons.
 
+### List items and blocks collapse, and reorder from one menu
+
+**What changed.** Object-list items and block sections are collapsible rows with a drag handle
+and a "…" menu: Move up, Move down, Duplicate, Remove. Blocks are added from "Add section" or
+the "+" between two blocks; both menus show each template's `description`, as does an open
+block. A `list: true` object takes an optional `itemLabel` ("team member") for its add button.
+
+**To adopt.** Optionally set `itemLabel`. Browser tests that clicked a row's "Remove", "Move
+block up" or the "Add block..." select use the row's "Actions for <title>" menu or "Add section".
+
+**Now deletable.** Template labels that repeated the template's description.
+
 ### Field editing: descriptions, list-card titles, and `public/` images
 
 **What changed.**
@@ -326,7 +339,8 @@ old "Reload File" or "Discard File Draft" use the new labels.
 - (int.93) An `object` field with `list: true` takes `itemTitleField`, naming a direct `string` or
   `number` child whose value titles each card, else its first `string` field, then "Item N".
 - (int.96) A field's `description` renders under its label for every type; a list field shows it
-  once, never per item. A block template's `description` still does not render.
+  once, never per item. A block template's `description` renders from `next`; see
+  [List items and blocks collapse](#list-items-and-blocks-collapse-and-reorder-from-one-menu).
 - (int.103) An `image` field whose `src` is outside `/assets/`, such as `/logos/x.svg`, previews at
   that src and has no Crop button: a crop never applies outside the asset store.
 

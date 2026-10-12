@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import React, { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -45,6 +45,18 @@ const Form: React.FC<{
       <pre data-testid="form-state">{JSON.stringify(value)}</pre>
     </CanopyCMSProvider>
   )
+}
+
+/** Chooses `item` from the "..." menu of the `nth` row (0-based) titled `rowTitle`. */
+const chooseFromRowMenu = async (
+  user: ReturnType<typeof userEvent.setup>,
+  rowTitle: string,
+  nth: number,
+  item: string,
+) => {
+  const row = screen.getAllByRole('group', { name: rowTitle })[nth]
+  await user.click(within(row).getByRole('button', { name: `Actions for ${rowTitle}` }))
+  await user.click(await screen.findByRole('menuitem', { name: item }))
 }
 
 const formState = (): FormValue => JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
@@ -149,7 +161,7 @@ describe('FormRenderer field crash containment', () => {
     expect(screen.getByTestId('field-crash-fallback')).toBeTruthy()
 
     const user = userEvent.setup()
-    await user.click(screen.getAllByRole('button', { name: 'Remove' })[0])
+    await chooseFromRowMenu(user, 'Item 1', 0, 'Remove')
     expect(screen.queryByTestId('field-crash-fallback')).toBeNull()
     await user.click(screen.getByTestId('edit-b'))
 
@@ -230,7 +242,7 @@ describe('FormRenderer field crash containment', () => {
     expect(screen.getByTestId('field-crash-fallback')).toBeTruthy()
 
     const user = userEvent.setup()
-    await user.click(screen.getAllByRole('button', { name: 'Move block up' })[1])
+    await chooseFromRowMenu(user, 'Panel', 1, 'Move up')
     await user.click(screen.getByTestId('edit-settings'))
 
     const blocks = formState().blocks as Array<{ value: { settings: string } }>
@@ -316,7 +328,7 @@ describe('FormRenderer field crash containment', () => {
       render(<List initial={{ items: [shared, { settings: 'boom' }, shared] }} crashOn="boom" />)
       expect(screen.getByTestId('field-crash-fallback')).toBeTruthy()
 
-      await userEvent.setup().click(screen.getAllByRole('button', { name: 'Remove' })[1])
+      await chooseFromRowMenu(userEvent.setup(), 'Item 2', 0, 'Remove')
 
       expect(screen.queryByTestId('field-crash-fallback')).toBeNull()
       expect(screen.getAllByTestId('edit-a')).toHaveLength(2)

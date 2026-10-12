@@ -207,6 +207,11 @@ export interface ObjectFieldConfig extends BaseFieldConfig {
    * field, then "Item N".
    */
   itemTitleField?: string
+  /**
+   * On a `list: true` object, what one item is called, as it reads mid-sentence ("team member"):
+   * the add button reads "Add team member". Without it, "Add item".
+   */
+  itemLabel?: string
 }
 
 /**
