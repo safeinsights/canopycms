@@ -228,7 +228,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   const unresolvedCount = sortedThreads.filter((t) => !t.resolved).length
 
   return (
-    <Paper p="sm" bg="gray.0" style={{ marginTop: 8 }}>
+    <Paper p="sm" bg="var(--mantine-color-default-hover)" style={{ marginTop: 8 }}>
       <Stack gap="xs">
         <Group justify="space-between" align="center">
           <Group gap="xs">
@@ -273,7 +273,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                   style={{
                     width: 1,
                     height: 16,
-                    background: 'var(--mantine-color-gray-4)',
+                    background: 'var(--mantine-color-default-border)',
                   }}
                 />
               </>
@@ -298,7 +298,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
         )}
 
         {showNewThreadBox && (
-          <Paper withBorder p="sm" bg="white">
+          <Paper withBorder p="sm" bg="var(--mantine-color-body)">
             <Stack gap="xs">
               <Textarea
                 placeholder="Start a new thread..."
@@ -407,7 +407,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                   width: 60,
                   height: '100%',
                   background:
-                    'linear-gradient(to left, var(--mantine-color-gray-0) 0%, transparent 100%)',
+                    'linear-gradient(to left, var(--mantine-color-default-hover) 0%, transparent 100%)',
                   pointerEvents: 'none',
                 }}
               />

@@ -31,6 +31,7 @@ import {
 } from '@mantine/core'
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
+import { focusReturnProps } from '../utils/focus-return'
 import {
   useSystemHealth,
   type UseSystemHealthReturn,
@@ -322,13 +323,20 @@ const PURGE_CONFIRM_TEXT =
 export interface SystemHealthPanelProps {
   opened: boolean
   onClose: () => void
+  returnFocusTo?: () => HTMLElement | null
 }
 
-export function SystemHealthPanel({ opened, onClose }: SystemHealthPanelProps) {
+export function SystemHealthPanel({ opened, onClose, returnFocusTo }: SystemHealthPanelProps) {
   const health = useSystemHealth({ isOpen: opened })
 
   return (
-    <Modal opened={opened} onClose={onClose} title="System health" size="xl">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="System health"
+      size="xl"
+      {...focusReturnProps(returnFocusTo)}
+    >
       <Tabs defaultValue="overview">
         <Tabs.List>
           <Tabs.Tab value="overview">Overview</Tabs.Tab>

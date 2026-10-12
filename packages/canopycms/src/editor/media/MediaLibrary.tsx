@@ -6,6 +6,7 @@ import { Drawer, Modal, Text, Title } from '@mantine/core'
 
 import type { AssetRecord } from '../../api'
 import { MediaLibraryBody } from './MediaLibraryBody'
+import { focusReturnProps } from '../utils/focus-return'
 
 export interface MediaLibraryProps {
   opened: boolean
@@ -18,6 +19,7 @@ export interface MediaLibraryProps {
   mode: 'manage' | 'picker'
   /** Required in picker mode - called with the chosen asset when a card is clicked. */
   onSelect?: (asset: AssetRecord) => void
+  returnFocusTo?: () => HTMLElement | null
 }
 
 /**
@@ -25,7 +27,13 @@ export interface MediaLibraryProps {
  * delete core (MediaLibraryBody) - see
  * .claude/future-tasks/resolved/assets-media-system.md "MediaManager design".
  */
-export const MediaLibrary: React.FC<MediaLibraryProps> = ({ opened, onClose, mode, onSelect }) => {
+export const MediaLibrary: React.FC<MediaLibraryProps> = ({
+  opened,
+  onClose,
+  mode,
+  onSelect,
+  returnFocusTo,
+}) => {
   if (mode === 'picker') {
     return (
       <Modal
@@ -64,6 +72,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ opened, onClose, mod
       }}
       overlayProps={{ blur: 2 }}
       data-testid="media-library-manage"
+      {...focusReturnProps(returnFocusTo)}
     >
       <MediaLibraryBody opened={opened} mode="manage" />
     </Drawer>

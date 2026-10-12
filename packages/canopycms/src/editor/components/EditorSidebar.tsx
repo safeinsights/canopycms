@@ -1,4 +1,6 @@
+import { useRef, useState, type Ref } from 'react'
 import { ActionIcon, Indicator, Menu, Paper, Stack, Tooltip } from '@mantine/core'
+import { useMergedRef } from '@mantine/hooks'
 import {
   IconUserCircle,
   IconLogout,
@@ -11,6 +13,9 @@ import {
 } from '@tabler/icons-react'
 import type { PaneLayout } from '../EditorPanes'
 import type { InexactMark } from '../preview-marks'
+import { useMenuItemFocusReturn } from '../utils/focus-return'
+
+const ICON_TOOLTIP_EVENTS = { hover: true, focus: true, touch: true } as const
 
 export interface EditorSidebarProps {
   /**
@@ -75,6 +80,9 @@ export interface EditorSidebarProps {
    */
   onSystemHealthOpen?: () => void
 
+  /** Ref to the Settings button, which takes focus back when a panel opened from its menu closes. */
+  settingsToggleRef?: Ref<HTMLButtonElement>
+
   /**
    * Custom account component to render (e.g., Clerk's UserButton).
    * If provided, replaces the default account button.
@@ -117,10 +125,16 @@ export function EditorSidebar({
   onGroupManagerOpen,
   onMediaLibraryOpen,
   onSystemHealthOpen,
+  settingsToggleRef,
   AccountComponent,
   onAccountClick,
   onLogoutClick,
 }: EditorSidebarProps) {
+  const [settingsOpened, setSettingsOpened] = useState(false)
+  const settingsToggle = useRef<HTMLButtonElement>(null)
+  const settingsMergedRef = useMergedRef(settingsToggle, settingsToggleRef)
+  const settingsMenuFocus = useMenuItemFocusReturn(settingsToggle)
+
   return (
     <Paper
       withBorder
@@ -141,15 +155,17 @@ export function EditorSidebar({
       }}
     >
       <Stack gap="sm" align="center" style={{ width: '100%', paddingTop: 6 }}>
-        <ActionIcon
-          variant="subtle"
-          size="lg"
-          radius="md"
-          aria-label="Toggle layout"
-          onClick={() => onLayoutChange(layout === 'side' ? 'stacked' : 'side')}
-        >
-          {layout === 'side' ? <IconLayoutRows size={18} /> : <IconLayoutColumns size={18} />}
-        </ActionIcon>
+        <Tooltip label="Toggle layout" position="left" events={ICON_TOOLTIP_EVENTS}>
+          <ActionIcon
+            variant="subtle"
+            size="lg"
+            radius="md"
+            aria-label="Toggle layout"
+            onClick={() => onLayoutChange(layout === 'side' ? 'stacked' : 'side')}
+          >
+            {layout === 'side' ? <IconLayoutRows size={18} /> : <IconLayoutColumns size={18} />}
+          </ActionIcon>
+        </Tooltip>
 
         <Tooltip
           label={
@@ -198,19 +214,34 @@ export function EditorSidebar({
         </Tooltip>
       </Stack>
       <Stack gap="xs" align="center">
-        <Menu shadow="md" width={200} position="left">
-          <Menu.Target>
-            <ActionIcon
-              variant="subtle"
-              size="lg"
-              radius="md"
-              aria-label="Settings"
-              data-testid="settings-button"
-            >
-              <IconSettings size={18} />
-            </ActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown data-testid="settings-menu">
+        <Menu
+          shadow="md"
+          width={200}
+          position="left"
+          opened={settingsOpened}
+          onChange={setSettingsOpened}
+          {...settingsMenuFocus.menu}
+        >
+          <Tooltip
+            label="Settings"
+            position="left"
+            events={ICON_TOOLTIP_EVENTS}
+            disabled={settingsOpened}
+          >
+            <Menu.Target>
+              <ActionIcon
+                ref={settingsMergedRef}
+                variant="subtle"
+                size="lg"
+                radius="md"
+                aria-label="Settings"
+                data-testid="settings-button"
+              >
+                <IconSettings size={18} />
+              </ActionIcon>
+            </Menu.Target>
+          </Tooltip>
+          <Menu.Dropdown data-testid="settings-menu" {...settingsMenuFocus.dropdown}>
             <Menu.Label>Settings</Menu.Label>
             {onPermissionManagerOpen && (
               <Menu.Item data-testid="settings-menu-permissions" onClick={onPermissionManagerOpen}>

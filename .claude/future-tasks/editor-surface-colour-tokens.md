@@ -15,3 +15,9 @@ summary: >-
 Before dark mode is supported, introduce surface tokens in `theme.tsx` (Mantine
 `virtualColor`, or CSS variables resolved per scheme) and move these call sites onto them.
 Out of scope for [ui-epic-202610.md](ui-epic-202610.md) unless dark mode is added.
+
+**Seen in dark mode.** The editor already takes a `colorScheme` prop, and the PR 538 UX review
+saw these surfaces break under it: in the FormRenderer "with comments" story the SEO object
+group keeps a light background with near-invisible labels, and the MDX editor body stays
+white. CommentsPanel's resolved-thread card was the same defect and is fixed there, so the
+remaining call sites above are the backlog.

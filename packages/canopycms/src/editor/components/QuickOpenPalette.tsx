@@ -9,6 +9,7 @@ import { IconSearch } from '@tabler/icons-react'
 
 import { filterEntries, groupEntriesByCollection } from '../entry-search'
 import { modKeyLabel } from '../platform'
+import { FOCUS_RETURN_ATTR, focusIfIdle } from '../utils/focus-return'
 
 /** Marks an overlay Mod+P may open over: the navigator drawer, and the palette's own closing dialog. */
 export const QUICK_OPEN_REPLACES_ATTR = 'data-quick-open-replaces'
@@ -22,17 +23,6 @@ const otherOverlayOpen = () =>
   Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).some(
     (dialog) => !dialog.closest(`[${QUICK_OPEN_REPLACES_ATTR}]`),
   )
-
-/**
- * Focuses `target` unless the user has moved focus on: nothing is focused, or focus is inside an
- * overlay `QUICK_OPEN_REPLACES_ATTR` marks, as a closing one is until after its exit callback.
- */
-export function focusIfIdle(target: HTMLElement | null): void {
-  const active = document.activeElement
-  if (!active || active === document.body || active.closest(`[${QUICK_OPEN_REPLACES_ATTR}]`)) {
-    target?.focus({ preventScroll: true })
-  }
-}
 
 /** Options rendered at once; the rest are reached by typing more. */
 const MAX_OPTIONS = 50
@@ -128,7 +118,7 @@ export function QuickOpenPalette({
       returnFocus={!returnFocusTo}
       onExitTransitionEnd={() => returnFocusTo && focusIfIdle(returnFocusTo())}
       // Its own dialog lingers through the close transition; Mod+P may reopen it meanwhile.
-      {...{ [QUICK_OPEN_REPLACES_ATTR]: true }}
+      {...{ [QUICK_OPEN_REPLACES_ATTR]: true, [FOCUS_RETURN_ATTR]: true }}
     >
       <Combobox store={combobox} onOptionSubmit={handleSubmit}>
         <Combobox.EventsTarget

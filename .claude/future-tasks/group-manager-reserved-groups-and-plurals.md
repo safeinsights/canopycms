@@ -14,3 +14,5 @@ summary: >-
   agree.
 - **Discard changes** in the save bar throws away staged group edits without a confirm (closing
   the drawer does confirm), unlike discarding drafts (`hooks/useDraftManager.ts`).
+- **Plural sites.** The count is rendered in `group-manager/InternalGroupsTab.tsx` and
+  `group-manager/GroupCard.tsx`; both need the singular at 1.

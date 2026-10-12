@@ -74,11 +74,8 @@ import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
-import {
-  QUICK_OPEN_REPLACES_ATTR,
-  QuickOpenPalette,
-  focusIfIdle,
-} from './components/QuickOpenPalette'
+import { QUICK_OPEN_REPLACES_ATTR, QuickOpenPalette } from './components/QuickOpenPalette'
+import { FOCUS_RETURN_ATTR, focusIfIdle, rememberOpener, returnTarget } from './utils/focus-return'
 import { modKeyLabel } from './platform'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
@@ -263,6 +260,10 @@ const EditorContent: React.FC<EditorProps> = ({
   const [quickOpenOpen, setQuickOpenOpen] = useState(false)
   const [quickOpenFromDrawer, setQuickOpenFromDrawer] = useState(false)
   const navigatorToggleRef = useRef<HTMLButtonElement>(null)
+  const branchToggleRef = useRef<HTMLButtonElement>(null)
+  const settingsToggleRef = useRef<HTMLButtonElement>(null)
+  // Null when the branches drawer opened from a menu item; see `rememberOpener`.
+  const branchOpenerRef = useRef<HTMLElement | null>(null)
   // Null when the drawer opened from a menu item, which unmounts on click, or with focus on the page.
   const navigatorOpenerRef = useRef<HTMLElement | null>(null)
   const quickOpenOpenRef = useRef(false)
@@ -502,7 +503,10 @@ const EditorContent: React.FC<EditorProps> = ({
     currentUser: commentUserId,
     canResolveComments: canResolveAnyComment,
     setSelectedPath,
-    setBranchManagerOpen,
+    setBranchManagerOpen: (open) => {
+      if (open) branchOpenerRef.current = rememberOpener()
+      setBranchManagerOpen(open)
+    },
     onCommentsChange: setCommentsForBranchSummaries,
   })
 
@@ -1152,19 +1156,14 @@ const EditorContent: React.FC<EditorProps> = ({
 
   const quickOpenShortcut = modKeyLabel() === '⌘' ? '⌘P' : 'Ctrl+P'
   const openNavigator = () => {
-    const active = document.activeElement
-    navigatorOpenerRef.current =
-      active instanceof HTMLElement &&
-      active !== document.body &&
-      !active.closest('[role="menuitem"]')
-        ? active
-        : null
+    navigatorOpenerRef.current = rememberOpener()
     setNavigatorOpen(true)
   }
-  const navigatorReturnTarget = () => {
-    const opener = navigatorOpenerRef.current
-    return opener?.isConnected ? opener : navigatorToggleRef.current
-  }
+  const navigatorReturnTarget = () =>
+    returnTarget(navigatorOpenerRef.current, () => navigatorToggleRef.current)
+  const branchReturnTarget = () =>
+    returnTarget(branchOpenerRef.current, () => branchToggleRef.current)
+  const settingsReturnTarget = () => settingsToggleRef.current
   const openQuickOpen = () => {
     if (!quickOpenOpen) setQuickOpenFromDrawer(navigatorOpen)
     setNavigatorOpen(false)
@@ -1379,12 +1378,14 @@ const EditorContent: React.FC<EditorProps> = ({
             branchWriteBlocked={branchContentLocked}
             onNavigatorOpen={openNavigator}
             navigatorToggleRef={navigatorToggleRef}
-            onFileReload={handleReload}
-            onFileDiscardDraft={handleDiscardFileDraft}
+            branchToggleRef={branchToggleRef}
+            onFileReload={() => handleReload(() => navigatorToggleRef.current)}
+            onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
             onEntrySelect={setSelectedPath}
             onBranchReloadData={handleReloadBranchData}
-            onBranchDiscardDrafts={handleDiscardDrafts}
+            onBranchDiscardDrafts={() => handleDiscardDrafts(() => branchToggleRef.current)}
             onBranchManagerOpen={() => {
+              branchOpenerRef.current = rememberOpener()
               setBranchManagerOpen(true)
               // Always retry, not only when branchless. Opening the manager is
               // the one in-app retry for a failed branches fetch, and the fetch
@@ -1457,7 +1458,9 @@ const EditorContent: React.FC<EditorProps> = ({
                                 (currentBranch?.isProtected ?? true) ||
                                 currentBranch?.status === 'archived'
                               }
-                              onDiscard={handleDiscardFileDraft}
+                              onDiscard={() =>
+                                handleDiscardFileDraft(() => navigatorToggleRef.current)
+                              }
                             />
                           )}
                           <FormRenderer
@@ -1547,6 +1550,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 onGroupManagerOpen={userIsAdmin ? () => setGroupManagerOpen(true) : undefined}
                 onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
                 onSystemHealthOpen={userIsAdmin ? () => setSystemHealthOpen(true) : undefined}
+                settingsToggleRef={settingsToggleRef}
                 AccountComponent={AccountComponent}
                 onAccountClick={onAccountClick}
                 onLogoutClick={onLogoutClick}
@@ -1576,7 +1580,7 @@ const EditorContent: React.FC<EditorProps> = ({
             size={360}
           >
             <Drawer.Overlay blur={2} />
-            <Drawer.Content {...{ [QUICK_OPEN_REPLACES_ATTR]: true }}>
+            <Drawer.Content {...{ [QUICK_OPEN_REPLACES_ATTR]: true, [FOCUS_RETURN_ATTR]: true }}>
               <Drawer.Header>
                 <Drawer.Title>Content</Drawer.Title>
                 <Group gap="xs">
@@ -1697,6 +1701,7 @@ const EditorContent: React.FC<EditorProps> = ({
             opened={branchManagerOpen}
             onClose={() => setBranchManagerOpen(false)}
             confirmOpen={branchConfirmOpen}
+            returnFocusTo={branchReturnTarget}
           >
             <BranchManager
               branches={branchSummaries}
@@ -1762,6 +1767,7 @@ const EditorContent: React.FC<EditorProps> = ({
             <GroupManager
               opened={groupManagerOpen}
               onClose={() => setGroupManagerOpen(false)}
+              returnFocusTo={settingsReturnTarget}
               internalGroups={groupsData}
               loading={groupsLoading}
               canEdit={userIsAdmin}
@@ -1776,6 +1782,7 @@ const EditorContent: React.FC<EditorProps> = ({
             <PermissionManager
               opened={permissionManagerOpen}
               onClose={() => setPermissionManagerOpen(false)}
+              returnFocusTo={settingsReturnTarget}
               collections={activeCollections}
               contentRoot={contentRoot}
               permissions={permissionsData}
@@ -1792,6 +1799,7 @@ const EditorContent: React.FC<EditorProps> = ({
             <SystemHealthPanel
               opened={systemHealthOpen}
               onClose={() => setSystemHealthOpen(false)}
+              returnFocusTo={settingsReturnTarget}
             />
           )}
 
@@ -1799,6 +1807,7 @@ const EditorContent: React.FC<EditorProps> = ({
             opened={mediaLibraryOpen}
             onClose={() => setMediaLibraryOpen(false)}
             mode="manage"
+            returnFocusTo={settingsReturnTarget}
           />
 
           {userIsAdmin && (

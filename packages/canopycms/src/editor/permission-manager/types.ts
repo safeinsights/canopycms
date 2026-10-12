@@ -6,6 +6,7 @@ export interface PermissionManagerProps {
   opened: boolean
   /** Closes the drawer; while there are unsaved changes it runs only after the user confirms discarding them. */
   onClose: () => void
+  returnFocusTo?: () => HTMLElement | null
   /** Collections from API */
   collections?: EditorCollection[]
   /** Content root path (default: 'content') */
