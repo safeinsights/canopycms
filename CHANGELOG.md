@@ -39,9 +39,13 @@ entry replaces an earlier one's advice, the earlier one points to it.
 **Action** says who must act; **Template first** means that with `workerCode: { source: 'parameter' }`,
 you deploy the stack template before CI rolls that int's bundle.
 
-The entries below predate changesets and keep their hand-written labels. Nothing in this section is
-edited by hand any more: a new entry is a `.changeset/` file, labelled when an int first carries
-it, and a stable release moves this whole section under **Released**.
+Nothing in this section is edited by hand: each entry is a `.changeset/` file, which a build
+assembles here and labels with the first int that carries it, and a stable release moves the
+entries under **Released**.
+
+<!-- legacy:start -->
+
+The entries below predate changesets and keep their hand-written labels.
 
 | int | Area     | Change                                                                                                                                                                                      | Action                       |
 | --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
@@ -801,6 +805,8 @@ to 8192 everywhere but the lazy Lambda, whose allowlist gains 32, 48, 64, 96 and
 asset URLs.
 
 **Now deletable.** Anything that only fed `publicBaseUrl`, and rounding widths to a multiple of 160.
+
+<!-- legacy:end -->
 
 ---
 
