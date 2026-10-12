@@ -196,7 +196,9 @@ export const EditorPanes: React.FC<EditorPanesProps> = ({
                 h="100%"
                 w="100%"
                 style={{
-                  padding: 20,
+                  // FormHeader reads this to span the padding.
+                  '--canopy-form-pane-padding': '20px',
+                  padding: 'var(--canopy-form-pane-padding)',
                   minHeight: '100%',
                   minWidth: 0,
                   overflow: 'auto',

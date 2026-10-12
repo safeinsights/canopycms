@@ -9,6 +9,7 @@ import {
   buildWritePayload,
   normalizeContentPayload,
   buildCollectionLabels,
+  entryTypeLabel,
   buildBreadcrumbSegments,
   calculatePathToEntry,
 } from './editor-utils'
@@ -1320,5 +1321,79 @@ describe('calculatePathToEntry', () => {
       'collection:blog/featured': true,
       'collection:blog/featured/archive': true,
     })
+  })
+})
+
+describe('entryTypeLabel', () => {
+  const collections: EditorCollection[] = [
+    {
+      path: unsafeAsLogicalPath('content'),
+      name: 'content',
+      type: 'collection',
+      format: 'mdx',
+      entryTypes: [{ name: 'page', label: 'Landing page', format: 'mdx' }],
+      children: [
+        {
+          path: unsafeAsLogicalPath('content/docs'),
+          name: 'docs',
+          type: 'collection',
+          format: 'mdx',
+          entryTypes: [
+            { name: 'page', label: 'Doc page', format: 'mdx' },
+            { name: 'faq', format: 'json' },
+          ],
+          children: [
+            {
+              path: unsafeAsLogicalPath('content/docs/guides'),
+              name: 'guides',
+              type: 'collection',
+              format: 'mdx',
+              entryTypes: [{ name: 'guide', label: 'Guide', format: 'mdx' }],
+            },
+          ],
+        },
+        {
+          path: unsafeAsLogicalPath('content/blog'),
+          name: 'blog',
+          type: 'collection',
+          format: 'mdx',
+        },
+      ],
+    },
+  ]
+
+  const entry = (collectionPath: string, entryType?: string) => ({
+    collectionPath: unsafeAsLogicalPath(collectionPath),
+    entryType,
+  })
+
+  it('is the label the entry type has in its own collection', () => {
+    expect(entryTypeLabel(collections, entry('content', 'page'))).toBe('Landing page')
+  })
+
+  it('finds the entry type in a nested collection, not in a same-named type of another', () => {
+    expect(entryTypeLabel(collections, entry('content/docs', 'page'))).toBe('Doc page')
+    expect(entryTypeLabel(collections, entry('content/docs/guides', 'guide'))).toBe('Guide')
+  })
+
+  it('falls back to the type name when the type has no label', () => {
+    expect(entryTypeLabel(collections, entry('content/docs', 'faq'))).toBe('faq')
+  })
+
+  it('falls back to the type name when the collection does not list that type', () => {
+    expect(entryTypeLabel(collections, entry('content/docs', 'retired'))).toBe('retired')
+    expect(entryTypeLabel(collections, entry('content/blog', 'post'))).toBe('post')
+  })
+
+  it('falls back to the type name when the collection is unknown, or no collections are given', () => {
+    expect(entryTypeLabel(collections, entry('elsewhere', 'page'))).toBe('page')
+    expect(entryTypeLabel(undefined, entry('content', 'page'))).toBe('page')
+    expect(entryTypeLabel([], entry('content', 'page'))).toBe('page')
+  })
+
+  it('is undefined for an entry with no entry type', () => {
+    expect(entryTypeLabel(collections, entry('content'))).toBeUndefined()
+    expect(entryTypeLabel(collections, entry('content', ''))).toBeUndefined()
+    expect(entryTypeLabel(undefined, entry('content'))).toBeUndefined()
   })
 })

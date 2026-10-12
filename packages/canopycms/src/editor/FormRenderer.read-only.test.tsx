@@ -136,14 +136,23 @@ describe('FormRenderer readOnly', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('datetime: the input is locked and a change writes nothing', () => {
-    const { onChange, container } = renderReadOnly(
+  it('datetime: the picker shows the value, is focusable but cannot be cleared or opened, and writes nothing', async () => {
+    const { onChange } = renderReadOnly(
       [{ name: 'publishedAt', type: 'datetime', label: 'Published' }],
       { publishedAt: '2024-01-02T03:04:05.000Z' },
     )
-    const input = container.querySelector<HTMLInputElement>('input[type="datetime-local"]')!
-    expectLocked(input)
-    fireEvent.change(input, { target: { value: '2025-01-01T00:00' } })
+    const picker = screen.getByRole('button', { name: 'Published' })
+    expect(picker.getAttribute('data-read-only')).toBe('true')
+    expect(picker.matches(':disabled')).toBe(false)
+    picker.focus()
+    expect(document.activeElement).toBe(picker)
+    expect(picker.textContent).toMatch(/2024, \d{2}:\d{2}:05$/)
+    expect(screen.queryByRole('button', { name: 'Clear date and time' })).toBeNull()
+
+    fireEvent.click(picker)
+    // Time for an opening transition to mount a dropdown it should not.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(document.querySelector('[data-dates-dropdown]')).toBeNull()
     expect(onChange).not.toHaveBeenCalled()
   })
 
@@ -554,13 +563,14 @@ describe('each field refuses edits on its own', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('DateTimeField: a change event calls no onChange', () => {
+  it('DateTimeField: a click opens no picker and calls no onChange', async () => {
     const onChange = vi.fn()
-    const { container } = renderField(
+    renderField(
       <DateTimeField label="F" value="2024-01-02T03:04:05.000Z" onChange={onChange} readOnly />,
     )
-    const input = container.querySelector<HTMLInputElement>('input[type="datetime-local"]')!
-    fireEvent.change(input, { target: { value: '2025-01-01T00:00' } })
+    fireEvent.click(screen.getByRole('button', { name: 'F' }))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(document.querySelector('[data-dates-dropdown]')).toBeNull()
     expect(onChange).not.toHaveBeenCalled()
   })
 

@@ -1,6 +1,6 @@
 import React, { useId } from 'react'
 
-import { Input } from '@mantine/core'
+import { DateTimePicker } from '@mantine/dates'
 
 import { LabelledInput } from './FieldLabel'
 
@@ -15,52 +15,22 @@ export interface DateTimeFieldProps {
   readOnly?: boolean
 }
 
-/**
- * Converts a stored value (ISO 8601 UTC, e.g. `YYYY-MM-DDTHH:mm:ss.sssZ`)
- * into the local wall-clock string a `datetime-local` input expects
- * (`YYYY-MM-DDTHH:mm:ss`, no timezone). Returns '' for '' or an unparsable value.
- * @internal Exported for tests.
- */
-export function isoToDatetimeLocalValue(iso: string): string {
-  if (!iso) return ''
+/** The stored ISO string as a Date, or null for '' or an unparsable value. */
+const toDate = (iso: string): Date | null => {
+  if (!iso) return null
   const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const base =
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
-    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
-  // Seconds are included only when non-zero, matching a real browser's own
-  // `datetime-local` serialization, so the value we set agrees with what the control reports back.
-  return date.getSeconds() === 0 ? base : `${base}:${pad(date.getSeconds())}`
+  return Number.isNaN(date.getTime()) ? null : date
 }
 
 /**
- * Convert a `datetime-local` input's local wall-clock string back into the
- * ISO 8601 UTC storage format. Returns '' for '' or an unparsable value.
- * @internal Exported for tests.
- */
-export function datetimeLocalValueToIso(local: string): string {
-  if (!local) return ''
-  const date = new Date(local)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toISOString()
-}
-
-/**
- * Editor for `type: 'datetime'` fields.
+ * Editor for `type: 'datetime'` fields, a Mantine `DateTimePicker` in the browser's time zone.
  *
  * Storage format: ISO 8601 UTC string (e.g. `YYYY-MM-DDTHH:mm:ss.sssZ`) — what
  * `Date.prototype.toISOString()` produces and `validation/entry-validator.ts`'s
  * datetime check (`Date.parse`) accepts. Empty string means "not set".
  *
- * Uses a native `datetime-local` input in Mantine's `Input.Wrapper` rather than
- * `@mantine/dates` (not a dependency here) — a real picker with zero new deps.
- *
- * `datetime-local` has no timezone: converts UTC ISO -> local for display and
- * back on change, so an unedited load-then-save round-trips exactly instead of
- * drifting by the browser's offset. `step={1}` preserves seconds in that
- * round-trip; sub-second precision is not preserved (no milliseconds field),
- * so a value with non-zero milliseconds is zeroed out once resaved.
+ * Only a pick writes, so a loaded value saves back unchanged, unparsable ones included. A pick
+ * keeps seconds (`withSeconds`).
  */
 export const DateTimeField: React.FC<DateTimeFieldProps> = ({
   id,
@@ -76,19 +46,22 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
 
   return (
     <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
-      <Input.Wrapper id={inputId} description={description} size="sm">
-        <Input
-          type="datetime-local"
-          step={1}
-          size="sm"
-          value={isoToDatetimeLocalValue(value)}
-          readOnly={readOnly}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-            if (!readOnly) onChange(datetimeLocalValueToIso(e.currentTarget.value))
-          }}
-          data-canopy-field={dataCanopyField}
-        />
-      </Input.Wrapper>
+      <DateTimePicker
+        id={inputId}
+        description={description}
+        size="sm"
+        value={toDate(value)}
+        onChange={(next) => {
+          if (!readOnly) onChange(next ? next.toISOString() : '')
+        }}
+        withSeconds
+        valueFormat="D MMM YYYY, HH:mm:ss"
+        placeholder={readOnly ? undefined : 'Pick a date and time'}
+        clearable={!readOnly}
+        clearButtonProps={{ 'aria-label': 'Clear date and time' }}
+        readOnly={readOnly}
+        data-canopy-field={dataCanopyField}
+      />
     </LabelledInput>
   )
 }

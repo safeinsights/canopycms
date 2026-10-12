@@ -1,6 +1,8 @@
+import React from 'react'
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
+import { FormExpansionContext, type FormExpansionCommand } from './form-expansion'
 import { useItemExpansion, type ItemExpansion } from './item-expansion'
 
 interface Props {
@@ -153,5 +155,89 @@ describe('useItemExpansion', () => {
     hook.rerender({ keys: ['a', 'b', 'c'] })
     hook.rerender({ keys: ['a', 'b', 'c', 'd'] })
     expect(openKeys(hook, ['a', 'b', 'c', 'd'])).toEqual(['a', 'b', 'c', 'd'])
+  })
+})
+
+describe('useItemExpansion under the form-wide Expand all and Collapse all', () => {
+  const KEYS = ['a', 'b', 'c', 'd', 'e']
+
+  /** A list inside a form whose current command the test sets, as FormRenderer does on a press. */
+  const setupInForm = (initialCommand?: FormExpansionCommand) => {
+    let command = initialCommand
+    let keys = KEYS
+    const wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) =>
+      React.createElement(FormExpansionContext.Provider, { value: command }, children)
+    const hook = renderHook<ItemExpansion, Props>(
+      ({ keys, resetKey = 'entry-1' }) => useItemExpansion(keys, resetKey),
+      { initialProps: { keys }, wrapper },
+    )
+    /** Makes a command and re-renders, as a press does; `seq` is one past the last. */
+    const press = (expanded: boolean) => {
+      command = { seq: (command?.seq ?? 0) + 1, expanded }
+      hook.rerender({ keys })
+    }
+    /** Re-renders with the command unchanged, as any other render of the form does. */
+    const rerenderForm = () => hook.rerender({ keys })
+    const setKeys = (next: string[]) => {
+      keys = next
+      rerenderForm()
+    }
+    return { hook, press, rerenderForm, setKeys }
+  }
+
+  it('opens every row on an Expand all made after mount, and shuts every row on a Collapse all', () => {
+    const { hook, press } = setupInForm()
+    expect(openKeys(hook, KEYS)).toEqual(['a'])
+
+    press(true)
+    expect(openKeys(hook, KEYS)).toEqual(KEYS)
+    expect(hook.result.current.allExpanded).toBe(true)
+
+    press(false)
+    expect(openKeys(hook, KEYS)).toEqual([])
+    expect(hook.result.current.allExpanded).toBe(false)
+  })
+
+  it('does not apply a command made before the list mounted', () => {
+    const { hook, rerenderForm } = setupInForm({ seq: 4, expanded: true })
+    expect(openKeys(hook, KEYS)).toEqual(['a'])
+    rerenderForm()
+    expect(openKeys(hook, KEYS)).toEqual(['a'])
+  })
+
+  it('applies a press of the same command again, after a row was toggled by hand', () => {
+    const { hook, press } = setupInForm()
+    press(true)
+    act(() => hook.result.current.setExpanded('c', false))
+    expect(openKeys(hook, KEYS)).toEqual(['a', 'b', 'd', 'e'])
+
+    press(true)
+    expect(openKeys(hook, KEYS)).toEqual(KEYS)
+  })
+
+  it('leaves a hand toggle alone when the form re-renders with the command it already applied', () => {
+    const { hook, press, rerenderForm } = setupInForm()
+    press(true)
+    act(() => hook.result.current.setExpanded('c', false))
+    rerenderForm()
+    rerenderForm()
+    expect(openKeys(hook, KEYS)).toEqual(['a', 'b', 'd', 'e'])
+  })
+
+  it('opens a row added after a Collapse all, and leaves the shut rows shut', () => {
+    const { hook, press, setKeys } = setupInForm()
+    press(false)
+    setKeys([...KEYS, 'f'])
+    expect(openKeys(hook, [...KEYS, 'f'])).toEqual(['f'])
+  })
+
+  it('applies a command to the rows the list has when it is pressed, including ones added since mount', () => {
+    const { hook, press, setKeys } = setupInForm()
+    const grown = [...KEYS, 'f']
+    setKeys(grown)
+    press(false)
+    expect(openKeys(hook, grown)).toEqual([])
+    press(true)
+    expect(openKeys(hook, grown)).toEqual(grown)
   })
 })

@@ -19,7 +19,8 @@ export interface StringListFieldProps {
  * Editor for `type: 'string', list: true` fields.
  *
  * Uses Mantine's TagsInput: type + Enter adds an item, each item renders as a
- * removable pill, and Backspace on an empty input removes the last item.
+ * removable pill, and Backspace on an empty input removes the last item. An editable list says
+ * that Enter adds, after the field's own description.
  */
 export const StringListField: React.FC<StringListFieldProps> = ({
   id,
@@ -37,7 +38,10 @@ export const StringListField: React.FC<StringListFieldProps> = ({
     <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
       <TagsInput
         id={inputId}
-        description={description}
+        // TagsInput gives no sign that Enter adds a typed item.
+        description={
+          readOnly ? description : [description, 'Press Enter to add.'].filter(Boolean).join(' ')
+        }
         value={value}
         size="sm"
         readOnly={readOnly}

@@ -241,6 +241,25 @@ export const buildCollectionLabels = (collections?: EditorCollection[]): Map<str
   return map
 }
 
+/** An entry's type as its collection labels it, else the type's name; undefined when untyped. */
+export const entryTypeLabel = (
+  collections: EditorCollection[] | undefined,
+  entry: Pick<EditorEntry, 'collectionPath' | 'entryType'>,
+): string | undefined => {
+  if (!entry.entryType) return undefined
+  const find = (nodes: EditorCollection[]): EditorCollection | undefined => {
+    for (const c of nodes) {
+      if (c.path === entry.collectionPath) return c
+      const inner = c.children ? find(c.children) : undefined
+      if (inner) return inner
+    }
+    return undefined
+  }
+  const collection = collections ? find(collections) : undefined
+  const type = collection?.entryTypes?.find((t) => t.name === entry.entryType)
+  return type?.label ?? entry.entryType
+}
+
 /**
  * Builds breadcrumb segments for an entry based on its collection hierarchy.
  *

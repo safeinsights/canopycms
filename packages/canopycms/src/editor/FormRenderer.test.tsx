@@ -677,7 +677,34 @@ describe('FormRenderer', () => {
   })
 
   describe("'datetime' field type", () => {
-    it('renders a native datetime-local input, not the "Unsupported field" fallback', () => {
+    /** Picks 20 March 2024 at 14:05:09 local, from an empty field, through the picker's own UI. */
+    const pickMarch20 = async (): Promise<number> => {
+      const picker = screen.getByRole('button', { name: 'Published At' })
+      fireEvent.click(picker)
+      const dropdown = await waitFor(() => {
+        const el = document.querySelector<HTMLElement>('[data-dates-dropdown]')
+        if (!el) throw new Error('picker not open')
+        return el
+      })
+      fireEvent.click(dropdown.querySelector('button[aria-label="20 March 2024"]')!)
+      fireEvent.change(dropdown.querySelector('input[type="time"]')!, {
+        target: { value: '14:05:09' },
+      })
+      return new Date(2024, 2, 20, 14, 5, 9).getTime()
+    }
+
+    // The clock is faked (Date only) so the empty picker opens on a known month.
+    const withClock = async (run: () => Promise<void>) => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2024, 2, 10, 12, 0, 0))
+      try {
+        await run()
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+
+    it('renders a date-time picker, not the "Unsupported field" fallback', () => {
       const fields: FieldConfig[] = [
         { name: 'publishedAt', type: 'datetime', label: 'Published At' },
       ]
@@ -686,36 +713,31 @@ describe('FormRenderer', () => {
           <FormRenderer fields={fields} value={{}} onChange={() => {}} />
         </CanopyCMSProvider>,
       )
-      const input = screen.getByLabelText('Published At') as HTMLInputElement
-      expect(input.type).toBe('datetime-local')
+      const picker = screen.getByLabelText('Published At')
+      expect(picker.getAttribute('data-dates-input')).toBe('true')
       expect(screen.queryByText(/Unsupported field/)).toBeNull()
     })
 
-    it('updates form state when edited, and the value survives a save round-trip', () => {
+    it('updates form state when a date and time are picked, and the value survives a save round-trip', async () => {
       const fields: FieldConfig[] = [
         { name: 'publishedAt', type: 'datetime', label: 'Published At' },
       ]
       render(<StatefulForm fields={fields} initialValue={{}} />)
 
-      const input = screen.getByLabelText('Published At') as HTMLInputElement
-      fireEvent.change(input, { target: { value: '2024-06-15T04:30:00' } })
+      await withClock(async () => {
+        const picked = await pickMarch20()
+        // The expectation is DERIVED from the local wall clock that was picked, never hardcoded:
+        // the ISO string it converts to depends on the runner's time zone, and a hardcoded one
+        // asserts the author's machine. `new Date(y, monthIndex, ...)` constructs in local time,
+        // so this stays correct in every zone, including half-hour offsets and DST boundaries.
+        const expectedIso = new Date(picked).toISOString()
 
-      // The expectation is DERIVED from the same local wall-clock the input
-      // carries, never hardcoded. A datetime-local value is local time, so the
-      // ISO string it converts to depends on the runner's timezone: hardcoding
-      // one asserts the author's machine. The first version of this test did
-      // exactly that and passed locally (UTC-6) while failing in CI's UTC by
-      // precisely six hours -- which is also why a green local suite could not
-      // catch it. `new Date(y, monthIndex, ...)` constructs in local time, so
-      // this stays correct in every zone, including ones with a half-hour
-      // offset or a DST boundary.
-      const expectedIso = new Date(2024, 5, 15, 4, 30, 0).toISOString()
-
-      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
-      expect(state.publishedAt).toBe(expectedIso)
+        const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+        expect(state.publishedAt).toBe(expectedIso)
+      })
     })
 
-    it('a required datetime field can be filled and saved (previously permanently unsaveable)', () => {
+    it('a required datetime field can be filled and saved (previously permanently unsaveable)', async () => {
       const fields: FieldConfig[] = [
         { name: 'publishedAt', type: 'datetime', label: 'Published At', required: true },
       ]
@@ -723,11 +745,11 @@ describe('FormRenderer', () => {
 
       expect(validateEntryData(fields, {})).not.toEqual([])
 
-      const input = screen.getByLabelText('Published At') as HTMLInputElement
-      fireEvent.change(input, { target: { value: '2024-06-15T04:30:00' } })
-
-      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
-      expect(validateEntryData(fields, state)).toEqual([])
+      await withClock(async () => {
+        await pickMarch20()
+        const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+        expect(validateEntryData(fields, state)).toEqual([])
+      })
     })
   })
 
@@ -973,9 +995,12 @@ describe('FormRenderer', () => {
     /**
      * The description text is rendered once, has an id, and exactly one element points
      * at that id through `aria-describedby`: the input itself for Mantine-native fields,
-     * the field's group container for custom ones.
+     * the field's group container for custom ones, the picker's button for a date-time.
      */
-    const expectDescribed = (kind: 'input' | 'group', text: string = DESCRIPTION): HTMLElement => {
+    const expectDescribed = (
+      kind: 'input' | 'picker' | 'group',
+      text: string = DESCRIPTION,
+    ): HTMLElement => {
       const node = screen.getByText(text)
       expect(node.id).toMatch(/-description$/)
       const owners = describedBy(node.id)
@@ -983,6 +1008,8 @@ describe('FormRenderer', () => {
       const owner = owners[0]
       if (kind === 'input') {
         expect(['INPUT', 'TEXTAREA']).toContain(owner.tagName)
+      } else if (kind === 'picker') {
+        expect(owner.tagName).toBe('BUTTON')
       } else {
         expect(owner.getAttribute('role')).toBe('group')
       }
@@ -1000,7 +1027,8 @@ describe('FormRenderer', () => {
 
     it('string list', () => {
       renderFields(described({ name: 'tags', type: 'string', label: 'Tags', list: true }))
-      expectDescribed('input')
+      // An editable list adds the Enter hint after the description.
+      expectDescribed('input', `${DESCRIPTION} Press Enter to add.`)
     })
 
     it('boolean', () => {
@@ -1020,7 +1048,7 @@ describe('FormRenderer', () => {
 
     it('datetime', () => {
       renderFields(described({ name: 'publishedAt', type: 'datetime', label: 'Published At' }))
-      expect(expectDescribed('input')).toBe(screen.getByLabelText('Published At'))
+      expect(expectDescribed('picker')).toBe(screen.getByLabelText('Published At'))
     })
 
     it('markdown', () => {

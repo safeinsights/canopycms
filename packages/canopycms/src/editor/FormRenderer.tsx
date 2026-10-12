@@ -48,6 +48,10 @@ import { ValidationSummary } from './components/ValidationSummary'
 import { fieldBreadcrumb } from './field-breadcrumb'
 import { FieldCrashFallback } from './fields/FieldCrashFallback'
 import { useListItemKeys } from './fields/list-item-keys'
+import { FormExpansionContext, type FormExpansionCommand } from './fields/form-expansion'
+import { FormHeader } from './FormHeader'
+import { buildFormOutline, hasCollapsibleList } from './form-outline'
+import { findFieldTarget, focusFieldTarget } from './field-target'
 import type { FieldRemoval } from './undo-removal'
 
 export type FormValue = Record<string, unknown>
@@ -197,6 +201,11 @@ export interface FormRendererProps {
   onRemoved?: (removal: FieldRemoval) => void
   /** Resolves comment authors to names in field and entry threads; without it they show as ids. */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /**
+   * Shows a sticky header naming the entry, with an outline of its fields and, when it has list
+   * or block fields, Expand all and Collapse all.
+   */
+  header?: { title: string; typeLabel?: string }
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -219,8 +228,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   readOnly = false,
   onRemoved,
   onGetUserMetadata,
+  header,
 }) => {
   const emit = readOnly ? noop : onChange
+  const formRef = useRef<HTMLDivElement>(null)
+  const [expansionCommand, setExpansionCommand] = useState<FormExpansionCommand | undefined>()
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
   const siteMdxAllow = useSiteMdxAllow()
   const bodyName = format === 'md' || format === 'mdx' ? findBodyFieldName(fields) : undefined
@@ -677,66 +689,90 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
   return (
     <FormCommentsContext.Provider value={formComments}>
-      <Stack gap="md" data-form-renderer className={readOnly ? READ_ONLY_FORM_CLASS : undefined}>
-        {readOnly && <ReadOnlyFormStyles />}
-        {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
-          <EntryComments
-            comments={comments}
-            entryPath={currentEntryPath}
-            currentUserId={currentUserId}
-            canResolve={canResolve}
-            onAddComment={onAddComment}
-            onResolveThread={onResolveThread}
-            highlightThreadId={highlightThreadId}
-            onGetUserMetadata={onGetUserMetadata}
-            resetKey={boundaryResetKey}
-          />
-        )}
+      <FormExpansionContext.Provider value={expansionCommand}>
+        <Stack
+          ref={formRef}
+          gap="md"
+          data-form-renderer
+          className={readOnly ? READ_ONLY_FORM_CLASS : undefined}
+        >
+          {header && (
+            <FormHeader
+              title={header.title}
+              typeLabel={header.typeLabel}
+              outline={buildFormOutline(fields, value)}
+              onSelect={(path) => {
+                const target = formRef.current ? findFieldTarget(path, formRef.current) : undefined
+                if (target) focusFieldTarget(target.element)
+              }}
+              onExpandAll={
+                hasCollapsibleList(fields)
+                  ? (expanded) =>
+                      setExpansionCommand((prev) => ({ seq: (prev?.seq ?? 0) + 1, expanded }))
+                  : undefined
+              }
+            />
+          )}
+          {readOnly && <ReadOnlyFormStyles />}
+          {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
+            <EntryComments
+              comments={comments}
+              entryPath={currentEntryPath}
+              currentUserId={currentUserId}
+              canResolve={canResolve}
+              onAddComment={onAddComment}
+              onResolveThread={onResolveThread}
+              highlightThreadId={highlightThreadId}
+              onGetUserMetadata={onGetUserMetadata}
+              resetKey={boundaryResetKey}
+            />
+          )}
 
-        {conflictNotice && (
-          <Alert
-            icon={<IconInfoCircle size={16} />}
-            color="orange"
-            variant="light"
-            title="Page updated since your draft started"
-            data-testid="conflict-alert"
-          >
-            {readOnly
-              ? 'Someone else has recently changed this page.'
-              : 'Someone else has recently changed this page. You can keep editing — a reviewer will reconcile your changes when you submit.'}
-          </Alert>
-        )}
+          {conflictNotice && (
+            <Alert
+              icon={<IconInfoCircle size={16} />}
+              color="orange"
+              variant="light"
+              title="Page updated since your draft started"
+              data-testid="conflict-alert"
+            >
+              {readOnly
+                ? 'Someone else has recently changed this page.'
+                : 'Someone else has recently changed this page. You can keep editing — a reviewer will reconcile your changes when you submit.'}
+            </Alert>
+          )}
 
-        {fieldErrors && <ValidationSummary fields={fields} value={value} errors={fieldErrors} />}
+          {fieldErrors && <ValidationSummary fields={fields} value={value} errors={fieldErrors} />}
 
-        {fields.map((field) => {
-          // Inline groups are transparent to the value — render them directly with parent value/onChange
-          if (field.type === 'group') {
-            const groupField = field as InlineGroupFieldConfig
+          {fields.map((field) => {
+            // Inline groups are transparent to the value — render them directly with parent value/onChange
+            if (field.type === 'group') {
+              const groupField = field as InlineGroupFieldConfig
+              return (
+                <div key={`group-${groupField.name}`}>
+                  <InlineGroupField
+                    label={groupField.label}
+                    description={groupField.description}
+                    fields={groupField.fields}
+                    value={value}
+                    onChange={emit}
+                    renderField={renderField}
+                    path={[]}
+                  />
+                </div>
+              )
+            }
+
+            const val = value[field.name]
+            const path = [field.name]
             return (
-              <div key={`group-${groupField.name}`}>
-                <InlineGroupField
-                  label={groupField.label}
-                  description={groupField.description}
-                  fields={groupField.fields}
-                  value={value}
-                  onChange={emit}
-                  renderField={renderField}
-                  path={[]}
-                />
+              <div key={fieldKey(path)}>
+                {renderField(field, val, (next) => emit({ ...value, [field.name]: next }), path)}
               </div>
             )
-          }
-
-          const val = value[field.name]
-          const path = [field.name]
-          return (
-            <div key={fieldKey(path)}>
-              {renderField(field, val, (next) => emit({ ...value, [field.name]: next }), path)}
-            </div>
-          )
-        })}
-      </Stack>
+          })}
+        </Stack>
+      </FormExpansionContext.Provider>
     </FormCommentsContext.Provider>
   )
 }

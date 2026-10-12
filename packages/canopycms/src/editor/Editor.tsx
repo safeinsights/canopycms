@@ -53,6 +53,7 @@ import {
   buildPreviewRoute,
   buildPreviewSrc,
   buildCollectionLabels,
+  entryTypeLabel,
   buildBreadcrumbSegments,
 } from './editor-utils'
 import {
@@ -1466,6 +1467,10 @@ const EditorContent: React.FC<EditorProps> = ({
                             readOnly={contentReadOnly}
                             onRemoved={handleFieldRemoved}
                             onGetUserMetadata={getCommentUserMetadata}
+                            header={{
+                              title: currentEntry.label,
+                              typeLabel: entryTypeLabel(activeCollections, currentEntry),
+                            }}
                             // The one writer of drafts. Read-only content gets none, whatever a
                             // field emits (MDXEditor's mount-time normalisation included).
                             onChange={(next) => {

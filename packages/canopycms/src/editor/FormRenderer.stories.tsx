@@ -216,6 +216,37 @@ export const Default: Story = {
   },
 }
 
+/**
+ * In a scroller like the editor's form pane: the header stays at the top while the form scrolls,
+ * "Outline" jumps to a field or row, and the chevrons expand or collapse every list.
+ */
+export const WithHeader: Story = {
+  render: () => {
+    const [value, setValue] = useState<PostValue>(initialPost)
+    return (
+      <div
+        style={
+          {
+            '--canopy-form-pane-padding': '20px',
+            padding: 'var(--canopy-form-pane-padding)',
+            height: 600,
+            maxWidth: 560,
+            overflow: 'auto',
+            backgroundColor: 'var(--mantine-color-gray-1)',
+          } as React.CSSProperties
+        }
+      >
+        <FormRenderer
+          fields={postSchema}
+          value={value}
+          onChange={(next) => setValue(next as unknown as PostValue)}
+          header={{ title: value.title, typeLabel: 'Post' }}
+        />
+      </div>
+    )
+  },
+}
+
 /** A locked branch: every field shows its value read-only, with no add, remove or reorder. */
 export const ReadOnly: Story = {
   render: () => (
