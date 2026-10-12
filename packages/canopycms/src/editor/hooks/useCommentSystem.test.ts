@@ -19,6 +19,7 @@ import {
   setupMockConsole,
   createApiClientWrapper,
   createStrictModeApiClientWrapper,
+  gatewayPage,
 } from './__test__/test-utils'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 
@@ -430,6 +431,17 @@ describe('useCommentSystem', () => {
     })
 
     await waitFor(() => expect(result.current.comments).toEqual([landed]))
+  })
+
+  it("says a post answered by a gateway's 5xx page may have been posted", async () => {
+    mockClient.comments.add.mockResolvedValueOnce(await gatewayPage(504))
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+
+    await act(async () => {
+      await expect(result.current.handleAddComment('Test comment', 'branch')).rejects.toThrow(
+        COMMENT_MAY_BE_ADDED,
+      )
+    })
   })
 
   it('resolves thread successfully', async () => {

@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Small UX follow-ups to the editor's request timeouts. A comment post that "may have been posted" shows in the composer's red error Alert, where save and branch outcomes use yellow. The Retry on the content and branch load toasts hides the toast and drops keyboard focus to `<body>` with nothing showing a retry is running. No story covers a comments surface refusing to close while a write is in flight. And the guidelines do not yet say how an unknown outcome (a write that may have landed) is shown.
+  Small UX follow-ups to the editor's request timeouts. A renamed entry that landed after no answer loses its selection, and a read-only POST that times out says it may have gone through. A comment post that "may have been posted" shows in the composer's red error Alert, where save and branch outcomes use yellow. The Retry on the content and branch load toasts hides the toast and drops keyboard focus to `<body>` with nothing showing a retry is running. No story covers a comments surface refusing to close while a write is in flight. And the guidelines do not yet say how an unknown outcome (a write that may have landed) is shown.
 ---
 
 # Request-timeout UX follow-ups
@@ -18,6 +18,12 @@ summary: >-
 - `CloseRefusedNotice` (`editor/comments/CloseRefusedNotice.tsx`) has no story; a
   `CloseWhileSaving` story on CommentsPanel and FieldWrapper with a never-resolving
   `onAddComment` and an Escape play step would cover it.
+- A rename that got no answer but landed reloads the content tree (`useEntryManager.renameEntry`);
+  the old path is then gone, so the selection falls back to the first entry instead of the
+  renamed one. Selecting the refreshed entry with the same `contentId` would keep the user there.
+- `ApiTimeoutError` picks its message by method, so a read-only POST (`assets.presign`,
+  `content.resolveReferences`, `permissions.batchGetUserMetadata`) that times out says it "may
+  have gone through". Route metadata could mark such endpoints as reads.
 - docs/ux-guidelines.md says nothing about an unknown outcome's colour, whether it is sticky, or
   that it must not say "try again"; nor where a live status line goes in an overlay whose title
   is its `aria-labelledby`.

@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SAVE_TIMED_OUT_MESSAGE, useDraftManager } from './useDraftManager'
 import { ApiTimeoutError } from '../../api/request-deadline'
+import { UnansweredError } from '../unanswered'
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import type { EditorEntry } from '../Editor'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
@@ -688,6 +689,25 @@ describe('useDraftManager', () => {
         expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
           message: 'Saved',
         })
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-save-timed-out:abc123def456')
+      })
+
+      it("treats a gateway's 5xx page the same, and takes the warning down on discard", async () => {
+        mockGetEntryVersion.mockReturnValue(100)
+        mockSaveEntry.mockRejectedValueOnce(new UnansweredError())
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        act(() => {
+          result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+        })
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({ message: SAVE_TIMED_OUT_MESSAGE, color: 'yellow' }),
+        )
+        act(() => result.current.handleDiscardDrafts())
         expect(notifications.hide).toHaveBeenCalledWith('canopy-save-timed-out:abc123def456')
       })
     })

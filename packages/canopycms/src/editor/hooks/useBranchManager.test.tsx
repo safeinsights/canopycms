@@ -1142,6 +1142,35 @@ describe('useBranchManager', () => {
       expect(result.current.branchName).toBe('brand-new')
     })
 
+    it("takes the API's 404 as an earlier delete having gone through, and leaves the branch", async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const remaining = editingFeature.filter((b) => b.name !== 'feature')
+      mockClient.branches.list
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { branches: editingFeature, users: [] },
+        })
+        .mockResolvedValue({ ok: true, status: 200, data: { branches: remaining, users: [] } })
+      mockClient.branches.delete.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        error: 'Branch not found',
+      })
+      const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+      act(() => result.current.setBranchName('feature'))
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Branch deleted' }),
+      )
+      expect(result.current.branchName).not.toBe('feature')
+    })
+
     it('treats a gateway error page like no answer', async () => {
       const { notifications } = await import('@mantine/notifications')
       const gateway = new CanopyApiClient({

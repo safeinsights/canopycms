@@ -10,7 +10,7 @@ import type {
 import type { EntryReferencedBy } from '../../api/entries'
 import type { LogicalPath, ContentId } from '../../paths/types'
 import { getErrorMessage } from '../../utils/error'
-import { isApiTimeoutError } from '../../api/client'
+import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 
 export interface UseSchemaManagerOptions {
   branchName: string
@@ -304,6 +304,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         if (!result.ok && referencedBy) {
           return { ok: false, error: result.error ?? 'Entry is referenced', referencedBy }
         }
+        if (isGatewayFailure(result)) throw new UnansweredError()
         if (!result.ok) {
           throw new Error(result.error || 'Failed to delete entry')
         }
@@ -314,8 +315,9 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
-        // A timed-out delete may have landed; the content tree then drops the entry.
-        if (isApiTimeoutError(error)) options.onSchemaChange?.()
+        // An unanswered delete may have landed; the content tree then drops the entry.
+        if (isUnanswered(error))
+          void Promise.resolve(options.onSchemaChange?.()).catch(console.error)
         return { ok: false, error: handleError('Failed to delete entry', error) }
       } finally {
         setIsLoading(false)

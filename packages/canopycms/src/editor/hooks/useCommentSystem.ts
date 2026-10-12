@@ -5,7 +5,7 @@ import type { UserSearchResult } from '../../auth/types'
 import type { EditorEntry } from '../Editor'
 import { findFieldTarget } from '../field-target'
 import { useApiClient } from '../context'
-import { isApiTimeoutError } from '../../api/client'
+import { isGatewayFailure, isUnanswered } from '../unanswered'
 import { resolveMessageOrigin } from '../preview-bridge'
 import { isSamePreviewPath } from '../preview-path'
 import { commentsKey, fetchCommentsSeedingUsers, useCommentsData } from './useCommentsData'
@@ -139,12 +139,12 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
     if (!branch) return
     const result = await apiClient.comments
       .add({ branch }, { text, threadId, type, entryPath, canopyPath })
-      .catch((err: unknown) => {
-        // A timed-out post may have landed: reload so the thread shows it if it did.
-        if (!isApiTimeoutError(err)) return null
-        void loadComments(branch)
-        throw new Error(COMMENT_MAY_BE_ADDED)
-      })
+      .catch((err: unknown) => (isUnanswered(err) ? 'unanswered' : null))
+    if (result === 'unanswered' || (result && isGatewayFailure(result))) {
+      // An unanswered post may have landed: reload so the thread shows it if it did.
+      void loadComments(branch)
+      throw new Error(COMMENT_MAY_BE_ADDED)
+    }
     if (!result?.ok) throw new Error(COMMENT_NOT_ADDED)
     await loadComments(branch)
   }

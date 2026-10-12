@@ -18,23 +18,17 @@ import { BRANCHES_KEY, fetchBranches, useBranchesData, type BranchesData } from 
 // paths/branch-name.ts is the dependency-free home of sanitizeBranchName.
 import { sanitizeBranchName } from '../../paths/branch-name'
 import { RetryToastMessage } from '../components/RetryToastMessage'
-import { isApiTimeoutError, isNonApiResponse } from '../../api/client'
+import { isNonApiResponse } from '../../api/client'
+import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 import type { ApiResponse } from '../../api/types'
 
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
 const BRANCH_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-branch-outcome-unknown'
 
-/** A branch action whose answer never came, or came from a gateway in front of the API. */
-class UnansweredActionError extends Error {}
-
 /** The error a refused branch action throws; a gateway's 5xx says nothing of whether it ran. */
 function actionError(result: ApiResponse, fallback: string): Error {
-  if (isNonApiResponse(result) && result.status >= 500) return new UnansweredActionError(fallback)
-  return new Error(result.error || fallback)
+  return isGatewayFailure(result) ? new UnansweredError() : new Error(result.error || fallback)
 }
-
-const isOutcomeUnknown = (err: unknown) =>
-  isApiTimeoutError(err) || err instanceof UnansweredActionError
 
 /** @internal Exported for tests. */
 export const branchActionOutcomeUnknown = (action: string) =>
@@ -558,7 +552,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     })
   }
   const reportActionFailure = async (err: unknown, fallback: string, action: string) => {
-    if (isOutcomeUnknown(err)) {
+    if (isUnanswered(err)) {
       showOutcomeUnknown(action)
       await loadBranches()
       return
@@ -720,6 +714,12 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 const result = await apiClient.branches.delete({
                   branch: branchNameToDelete,
                 })
+                // The API's own 404: an earlier, unanswered delete already went through.
+                if (!result.ok && result.status === 404 && !isNonApiResponse(result)) {
+                  notifications.show({ message: 'Branch deleted', color: 'green' })
+                  leaveDeletedBranch(branchNameToDelete, await reloadBranches())
+                  return
+                }
                 if (!result.ok) throw actionError(result, 'Failed to delete branch')
                 const cleanupWarning = result.data?.cleanupWarning
                 notifications.show(
@@ -733,12 +733,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 )
                 leaveDeletedBranch(branchNameToDelete, await reloadBranches())
               } catch (err) {
-                if (!isOutcomeUnknown(err)) {
+                if (!isUnanswered(err)) {
                   await reportActionFailure(err, 'Failed to delete branch', 'Delete branch')
                   return
                 }
-                // The list settles an unanswered delete: a branch no longer listed, nor created
-                // too recently for every listing to show, was deleted.
+                // Settled by the list: unlisted, and not created too recently to be listed, means deleted.
                 const fresh = await reloadBranches()
                 const recent = pendingBranches.filter(
                   (p) => Date.now() - p.addedAt <= CREATED_BRANCH_GRACE_MS,

@@ -10,6 +10,7 @@ import type { EditorEntry, EditorCollection } from '../Editor'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import type { ContentId } from '../../paths/types'
 import { notifications } from '@mantine/notifications'
+import { UnansweredError } from '../unanswered'
 import type React from 'react'
 import { ApiTimeoutError, WRITE_TIMED_OUT_MESSAGE } from '../../api/request-deadline'
 import type { RetryToastMessageProps } from '../components/RetryToastMessage'
@@ -20,6 +21,7 @@ import {
   setupMockConsole,
   createApiClientWrapper,
   createStrictModeApiClientWrapper,
+  gatewayPage,
 } from './__test__/test-utils'
 import {
   unsafeAsLogicalPath,
@@ -197,6 +199,24 @@ describe('useEntryManager', () => {
       )
     })
 
+    it("treats a gateway's 5xx page on create the same way", async () => {
+      mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await act(async () => {
+        await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
+      })
+      const listCalls = mockClient.entries.list.mock.calls.length
+
+      await act(async () => {
+        await result.current.handleCreateModalSubmit('new-post', 'post')
+      })
+
+      expect(result.current.createModalError).toBe(WRITE_TIMED_OUT_MESSAGE)
+      await waitFor(() =>
+        expect(mockClient.entries.list.mock.calls.length).toBeGreaterThan(listCalls),
+      )
+    })
+
     it('reloads the content tree after a timed-out rename', async () => {
       mockClient.content.renameEntry.mockRejectedValueOnce(
         new ApiTimeoutError('PATCH', '/main/rename-entry/content/posts/a', 75_000),
@@ -325,6 +345,16 @@ describe('useEntryManager', () => {
 
     await expect(result.current.loadEntry(mockEntry)).rejects.toBeInstanceOf(
       EntrySchemaUnavailableError,
+    )
+  })
+
+  it("rejects a save answered by a gateway's 5xx page as unanswered, not as the server's refusal", async () => {
+    mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    await loadForSave(result)
+
+    await expect(result.current.saveEntry(mockEntry, { title: 'T' })).rejects.toBeInstanceOf(
+      UnansweredError,
     )
   })
 

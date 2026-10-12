@@ -4,7 +4,7 @@ import { ApiTimeoutError } from '../../api/request-deadline'
 import { renderHook, act } from '@testing-library/react'
 import { useSchemaManager } from './useSchemaManager'
 import type { MockApiClient } from '../../api/__test__/mock-client'
-import { setupMockApiClient, createApiClientWrapper } from './__test__/test-utils'
+import { setupMockApiClient, createApiClientWrapper, gatewayPage } from './__test__/test-utils'
 import { mockSuccess, mockError } from '../../api/__test__/mock-client'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 import { mockConsole } from '../../test-utils/console-spy'
@@ -357,6 +357,21 @@ describe('useSchemaManager', () => {
       })
 
       expect(deleteResult.ok).toBe(false)
+      expect(onSchemaChange).toHaveBeenCalled()
+    })
+
+    it("refreshes the content tree after a delete answered by a gateway's 5xx page", async () => {
+      mockClient.entries.delete.mockResolvedValueOnce(await gatewayPage(504))
+      const onSchemaChange = vi.fn(() => Promise.reject(new Error('still down')))
+      const { result } = renderHook(
+        () => useSchemaManager({ branchName: 'main', onSchemaChange }),
+        { wrapper },
+      )
+
+      await act(async () => {
+        await result.current.deleteEntry(unsafeAsLogicalPath('posts/a'))
+      })
+
       expect(onSchemaChange).toHaveBeenCalled()
     })
 

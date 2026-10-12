@@ -10,7 +10,7 @@ import { validateEntryFormValue, type EntryFieldError } from '../../validation/e
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
-import { isApiTimeoutError } from '../../api/client'
+import { isUnanswered } from '../unanswered'
 
 /** @internal Exported for tests. */
 export const SAVE_TIMED_OUT_MESSAGE =
@@ -213,7 +213,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN. That save may have
   // landed, so re-sending the token would bounce off the user's own write; held until re-read.
   const reloadRequiredRef = useRef<Record<string, number | undefined>>({})
-  // Entries whose timed-out save toast is up, taken down by their next successful save.
+  // Entries whose timed-out save toast is up, taken down once a save, reload or discard ends it.
   const timedOutSavesRef = useRef(new Set<string>())
   // The draft ids the reconcile effect below has already accounted for. It
   // prunes on an observed present -> absent TRANSITION rather than on "not
@@ -786,7 +786,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           reloadRequiredRef.current[currentId] = options.getEntryVersion?.(currentId)
         }
         showConflictNotification(err.serverMessage || undefined)
-      } else if (isApiTimeoutError(err)) {
+      } else if (isUnanswered(err)) {
         // Saving again is safe: a save that did land moved the version, so the server refuses the
         // retry as a conflict rather than overwriting.
         timedOutSavesRef.current.add(currentId)
@@ -816,6 +816,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   const performDiscardDrafts = () => {
+    for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
+    timedOutSavesRef.current.clear()
     options.onDraftsReset?.()
     setDrafts({})
     setErrorState(null)
@@ -914,6 +916,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       const loaded = await options.loadEntry(options.currentEntry)
       options.onDraftsReset?.(currentId)
       delete reloadRequiredRef.current[currentId]
+      if (timedOutSavesRef.current.delete(currentId)) {
+        notifications.hide(saveTimedOutToastId(currentId))
+      }
       setLoadedValues((prev) => ({ ...prev, [currentId]: loaded }))
       // Drop the draft rather than seeding it with `loaded`. `effectiveValue`
       // falls back to `loadedValues`, so the rendered value is identical --

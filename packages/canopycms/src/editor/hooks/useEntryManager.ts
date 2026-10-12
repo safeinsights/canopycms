@@ -15,7 +15,7 @@ import { useApiClient } from '../context'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
 import { RetryToastMessage } from '../components/RetryToastMessage'
-import { isApiTimeoutError } from '../../api/client'
+import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 
 const ENTRIES_LOAD_FAILED_TOAST_ID = 'canopy-entries-load-failed'
 
@@ -384,6 +384,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       expectedVersion,
     }
     const result = await apiClient.content.write(writeParams, writeBody)
+    if (isGatewayFailure(result)) throw new UnansweredError()
     if (!result.ok)
       throw new SaveApiError(result.status, result.error, result.fieldErrors, result.code)
     // Update stored version token from write response
@@ -491,6 +492,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         payload as unknown as WriteContentBody,
       )
 
+      if (isGatewayFailure(result)) throw new UnansweredError()
       if (!result.ok) {
         const errorMsg = 'error' in result ? result.error : `Create failed: ${result.status}`
         throw new Error(errorMsg)
@@ -520,8 +522,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       console.error(err)
       const errorMessage = err instanceof Error ? err.message : 'Create failed'
       setCreateModalError(errorMessage)
-      // A timed-out create may have landed; the content tree then shows it.
-      if (isApiTimeoutError(err)) void refreshEntries().catch(console.error)
+      // An unanswered create may have landed; the content tree then shows it.
+      if (isUnanswered(err)) void refreshEntries().catch(console.error)
     } finally {
       setCreateModalCreating(false)
     }
@@ -544,6 +546,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         },
         { newSlug },
       )
+      if (isGatewayFailure(result)) throw new UnansweredError()
       if (!result.ok) {
         const errorMsg = 'error' in result ? result.error : `Rename failed: ${result.status}`
         throw new Error(errorMsg)
@@ -564,7 +567,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       console.error(err)
       const errorMessage = err instanceof Error ? err.message : 'Rename failed'
       notifications.show({ message: errorMessage, color: 'red' })
-      if (isApiTimeoutError(err)) void refreshEntries().catch(console.error)
+      if (isUnanswered(err)) void refreshEntries().catch(console.error)
       throw err
     } finally {
       options.setBusy(false)
