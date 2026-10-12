@@ -795,6 +795,24 @@ describe('CollectionEditor', () => {
         await waitFor(() => expect(screen.queryByTestId('confirm-delete-modal')).toBeNull())
       })
 
+      it('locks the entry types and ignores Escape while collection details save', async () => {
+        const user = userEvent.setup()
+        const { props } = renderCollectionEditor({ ...editProps(), isSaving: true })
+
+        expect(
+          screen.getByRole('button', { name: 'Add entry type…' }).hasAttribute('disabled'),
+        ).toBe(true)
+        for (const row of ['post', 'featured']) {
+          expect(
+            screen.getByRole('button', { name: `Actions for ${row}` }).hasAttribute('disabled'),
+          ).toBe(true)
+        }
+
+        await user.keyboard('{Escape}')
+
+        expect(props.onClose).not.toHaveBeenCalled()
+      })
+
       it('ignores Escape on the collection dialog while the entry type dialog is open', async () => {
         const user = userEvent.setup()
         const { props } = renderCollectionEditor(editProps())

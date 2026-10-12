@@ -93,6 +93,10 @@ export function EntryTypeEditor({
 
   const [validationError, setValidationError] = useState<string | null>(null)
 
+  // A refresh hands over a new `availableSchemas` array after every schema change; keying the reset
+  // on its first value rather than its identity keeps what the user is typing.
+  const defaultSchema = availableSchemas[0] || ''
+
   /* eslint-disable react-hooks/set-state-in-effect -- intentional: sync form state from props on open */
   useEffect(() => {
     if (isOpen) {
@@ -110,14 +114,14 @@ export function EntryTypeEditor({
           name: '',
           label: '',
           format: 'json',
-          schema: availableSchemas[0] || '',
+          schema: defaultSchema,
           default: false,
           maxItems: undefined,
         })
       }
       setValidationError(null)
     }
-  }, [isOpen, editingEntryType, availableSchemas])
+  }, [isOpen, editingEntryType, defaultSchema])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const updateField = useCallback(

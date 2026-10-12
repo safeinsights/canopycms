@@ -504,9 +504,13 @@ export function CollectionEditor({
   // entry-type action runs; the footer must not spin or close over that action's result.
   const entryTypeBusy = entryTypeSaving || removing
 
+  // Any request in flight, a details save included: the parent closes this dialog when a details
+  // save succeeds, so an entry-type action started meanwhile would report into a closed dialog.
+  const requestBusy = isSaving || entryTypeBusy
+
   // Mantine's Escape handler fires on every open Modal, so one Esc would close a sub-dialog and
   // this dialog together, losing staged details. A request in flight must not be hidden either.
-  const dismissBlocked = entryTypeBusy || entryTypeEditorOpen || deleteEntryTypeModalOpen
+  const dismissBlocked = requestBusy || entryTypeEditorOpen || deleteEntryTypeModalOpen
 
   const propErrorVisible = !!error && !errorDismissed
   const displayError = propErrorVisible ? error : validationError
@@ -590,6 +594,7 @@ export function CollectionEditor({
                       <ActionIcon
                         variant="subtle"
                         aria-label={`Actions for ${entryType.name}`}
+                        disabled={requestBusy}
                         ref={(el) => {
                           if (el) triggerRefs.current.set(entryType.name, el)
                           else triggerRefs.current.delete(entryType.name)
@@ -670,6 +675,7 @@ export function CollectionEditor({
         variant="light"
         leftSection={<IconPlus size={16} />}
         onClick={handleOpenAddEntryType}
+        disabled={requestBusy}
       >
         Add entry type…
       </Button>

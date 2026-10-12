@@ -146,6 +146,22 @@ describe('EntryTypeEditor', () => {
       maxItems: 10,
     }
 
+    it('keeps typed input when a schema refresh hands over a new schema list', async () => {
+      const user = userEvent.setup()
+      const { rerender, props } = renderEntryTypeEditor({ editingEntryType: existingEntryType })
+      const labelInput = screen.getByLabelText(/^Label/) as HTMLInputElement
+      await user.clear(labelInput)
+      await user.type(labelInput, 'Article')
+
+      rerender(
+        <CanopyCMSProvider>
+          <EntryTypeEditor {...props} availableSchemas={[...props.availableSchemas]} />
+        </CanopyCMSProvider>,
+      )
+
+      expect((screen.getByLabelText(/^Label/) as HTMLInputElement).value).toBe('Article')
+    })
+
     it('renders edit modal with existing data', () => {
       renderEntryTypeEditor({ editingEntryType: existingEntryType })
 
