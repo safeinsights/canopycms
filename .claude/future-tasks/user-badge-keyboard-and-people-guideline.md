@@ -25,6 +25,6 @@ made names on comment surfaces visible to every editor.
    id to `null` when `/users/batch` fails, so SWR replaces a good cached record with `null` and
    the badge drops to an id. Rejecting instead would keep the last good record.
 4. **The fallback shows the raw id.** When a name can't be resolved, `UserBadge` renders the
-   `userId` as the visible text, with "Name unavailable" only in the tooltip. The People rule
+   `userId` as the visible text, with "Name unavailable" or "Couldn't load this name" only in the tooltip. The People rule
    in [docs/ux-guidelines.md](../../docs/ux-guidelines.md#people) counts an id as an internal
    name: show the fallback text instead.

@@ -35,7 +35,8 @@ Check each changed surface against these rules:
 - toast pause, and focus after Undo
   ([Choosing a surface](../../docs/ux-guidelines.md#choosing-a-surface),
   [Destructive actions](../../docs/ux-guidelines.md#destructive-actions))
-- names, fallbacks, avatars, tooltip-only details ([People](../../docs/ux-guidelines.md#people))
+- names, fallbacks and avatars ([People](../../docs/ux-guidelines.md#people)), and tooltip-only
+  details ([Accessibility](../../docs/ux-guidelines.md#accessibility))
 - named colour tokens
   ([Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast))
 - no reorder under the pointer

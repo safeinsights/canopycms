@@ -13,7 +13,8 @@ description: Review a CanopyCMS PR or branch's editor UI changes against docs/ux
    for a PR, its number. In a `/review-rounds` run, alternate it with Fable between rounds, and
    point a later round at the previous round's fixes. Pass through anything the user named:
    flows, users, breakpoints. The agent's step 2 lists the guideline rules reviews most often
-   miss, by section; when a new ruling lands in `docs/ux-guidelines.md`, add it there.
+   miss, by section; when a ruling that reviews keep missing lands in `docs/ux-guidelines.md`,
+   add it to that list.
 3. **Relay its report** unchanged in shape: severity-ordered findings, each with a
    recommendation and screenshot, then the consolidated fix set and any guideline gaps. Attach
    the screenshots with `SendUserFile`.

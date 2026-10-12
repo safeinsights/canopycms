@@ -8,19 +8,19 @@ The standard for every change to the CanopyCMS editor (`packages/canopycms/src/e
 One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 `packages/canopycms/src/editor/copy.ts`.
 
-| Say                       | For                                                    | Not                            |
-| ------------------------- | ------------------------------------------------------ | ------------------------------ |
-| **Save**                  | Writing the open entry to the branch                   | Save file, Commit              |
-| **Submit for review**     | Committing the branch and opening its pull request     | Submit branch, Publish         |
-| **Withdraw from review**  | Taking a submitted branch back for editing             | Withdraw branch                |
-| **Request changes**       | A reviewer sending a branch back to its editor         | Reject                         |
-| **Switch branch**         | Opening another branch                                 | Change branch, Change / Manage |
-| **New branch**            | Creating a branch                                      | Create branch                  |
-| **Remove**                | Taking an item out of a list, block list or field      | Clear, Delete                  |
-| **Delete**                | Destroying a stored entry, collection, branch or group | Remove                         |
-| **Discard changes**       | Throwing away unsaved edits                            | Discard drafts, Revert         |
-| **entry**, **collection** | A content item, and the folder that holds entries      | file, page, item; folder       |
-| **file**                  | An item in the media library                           | asset, media item              |
+| Say                       | For                                                    | Not                                         |
+| ------------------------- | ------------------------------------------------------ | ------------------------------------------- |
+| **Save**                  | Writing the open entry to the branch                   | Save file, Commit                           |
+| **Submit for review**     | Committing the branch and opening its pull request     | Submit branch, Publish                      |
+| **Withdraw from review**  | Taking a submitted branch back for editing             | Withdraw branch                             |
+| **Request changes**       | A reviewer sending a branch back to its editor         | Reject                                      |
+| **Switch branch**         | Opening another branch                                 | Change branch, Change / Manage              |
+| **New branch**            | Creating a branch                                      | Create branch, except as its form's confirm |
+| **Remove**                | Taking an item out of a list, block list or field      | Clear, Delete                               |
+| **Delete**                | Destroying a stored entry, collection, branch or group | Remove                                      |
+| **Discard changes**       | Throwing away unsaved edits                            | Discard drafts, Revert                      |
+| **entry**, **collection** | A content item, and the folder that holds entries      | file, page, item; folder                    |
+| **file**                  | An item in the media library                           | asset, media item                           |
 
 Branch status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`.
 
@@ -33,8 +33,9 @@ Branch status labels and colours come from `packages/canopycms/src/editor/branch
 - **`…`, the single character,** marks an in-progress state ("Saving…") or a command that
   asks for more input ("Rename…"). None on a command that acts at once or only opens a
   confirm ("Delete branch"); never three ASCII dots.
-- **One primary action per card, by role**: a submitted branch's card shows a reviewer
-  "Request changes" and everyone else "Open".
+- **One primary action per card, by role**: on the open branch's card, a reviewer of someone
+  else's submission sees "Request changes" and anyone else its workflow action; other cards
+  show "Open".
 - **Quote a named control**: the "Tasks" tab.
 - **No "successfully"**: "Branch created".
 - **Human labels, never internal names**: "Page sections › Hero › Heading", never
@@ -79,8 +80,9 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
   giving the reason and the way forward ("This branch is in review. Withdraw it to make
   changes."). Mantine's `data-disabled` keeps the Tooltip working. It also opens on keyboard
   focus and touch; Mantine's default is hover only.
-- A submit button waiting only on its own adjacent input, such as Reply, needs no reason.
-- A disabled menu item keeps focus (`aria-disabled`, not `disabled`) and shows the reason
+- A submit button disabled only because its adjacent input is empty, such as Reply, needs no
+  reason.
+- A disabled menu item stays focusable (`aria-disabled`, not `disabled`) and shows the reason
   inline.
 - **Hide** a control that can never apply for this user, such as admin items for an editor.
 
@@ -132,6 +134,8 @@ Until that route exists, the control stays in the tab order.
 - An `iframe` has a `title`; an input has a label or `aria-label`.
 - Focus rings stay visible; never set `outline: none`.
 - `autoFocus` only on the first field of a dialog the user just opened.
+- A detail shown only in a tooltip, such as an email or an absolute date, also needs a
+  focusable route: a focusable trigger, or visually hidden text via `aria-describedby`.
 - A live region announces background progress when its phase changes (started, finished,
   result count), never page by page.
 
@@ -140,19 +144,18 @@ Until that route exists, the control stays in the tab order.
 Colour carries meaning: green success, blue info, yellow warning, red error. State is never
 shown by colour alone. Text contrast is at least 4.5:1, or 3:1 for large text.
 
-- Dimmed text uses the `--mantine-color-dimmed` token (`gray.7` in light mode), never a
-  per-component colour.
+- Dimmed text uses only the `--mantine-color-dimmed` token, never a per-component colour; the
+  theme must set it to `gray.7` in light mode.
 - Count badges: text colour on a tinted background, at least 4.5:1.
 - Filled destructive buttons are `red.8`, 4.5:1 under white. No orange shade reaches that under
-  white, so filled warning buttons are `orange.6` with black text.
+  white, so filled orange buttons, such as a "Withdraw from review" confirm, are `orange.6` with black
+  text.
 
 ## People
 
 - Show a person's name or a fallback ("Name unavailable"), never a raw user id: an id is an
   internal name.
 - An avatar beside a name has empty `alt`.
-- A detail shown only in a tooltip, such as an email, also needs a focusable route: a focusable
-  trigger, or visually hidden text via `aria-describedby`.
 
 ## Shell regions
 
@@ -161,7 +164,7 @@ indicator, Save), **banner** (branch-wide notices), **rail** (activity icons), *
 (content tree, branches, comments, media), **main** (preview and form) and **overlays**
 (drawers, modals, toasts). The regions are layout only; features plug into them. New UI goes
 into an existing region, and adding a region is a design decision. The unsaved indicator is
-icon-only below `lg`; its form is provisional until the shell redesign settles.
+icon-only below `lg`; its presentation is provisional until the shell redesign settles.
 
 ## Enforcement
 
