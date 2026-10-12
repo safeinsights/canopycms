@@ -137,6 +137,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                             color="gray"
                             showEmailTooltip={true}
                             showBadge={true}
+                            revealIdOnFallback
                           />
                         ) : (
                           <Badge

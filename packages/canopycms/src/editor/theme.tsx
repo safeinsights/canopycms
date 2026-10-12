@@ -3,12 +3,14 @@
 import React, { useMemo } from 'react'
 
 import {
+  Alert,
   ActionIcon,
   Button,
   DEFAULT_THEME,
   Drawer,
   MantineProvider,
   Modal,
+  Notification,
   getDefaultZIndex,
   mergeThemeOverrides,
   type CSSVariablesResolver,
@@ -80,7 +82,8 @@ const toScale = (
 // The editor's default control sizes; a per-call `size` is only for a deliberate exception.
 // Filled red is red.8 under white; filled orange is orange.6 under black, since no orange shade
 // reaches 4.5:1 under white. Callers pass a plain `color`.
-// An icon-only close button has no other name, so every Modal and Drawer names it here. Mantine
+// An icon-only close button has no other name, so modals, drawers (whole, or built from
+// `Drawer.Root` with its own `CloseButton`), toasts and dismissible alerts name it here. Mantine
 // replaces `closeButtonProps` whole, so a caller that passes its own repeats the `aria-label`.
 const CLOSE_BUTTON_PROPS = { 'aria-label': 'Close' }
 const canopyComponents = {
@@ -108,6 +111,10 @@ const canopyComponents = {
   ActionIcon: ActionIcon.extend({ defaultProps: { size: 'sm' } }),
   Modal: Modal.extend({ defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS } }),
   Drawer: Drawer.extend({ defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS } }),
+  ModalCloseButton: Modal.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
+  DrawerCloseButton: Drawer.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
+  Notification: Notification.extend({ defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS } }),
+  Alert: Alert.extend({ defaultProps: { closeButtonLabel: 'Close' } }),
 }
 
 export const createCanopyTheme = (

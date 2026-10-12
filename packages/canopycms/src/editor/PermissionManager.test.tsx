@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, cleanup } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { PermissionManager } from './PermissionManager'
 import type { PathPermission } from '../config'
@@ -438,6 +438,34 @@ describe('PermissionManager', () => {
         await screen.findByRole('button', { name: 'Remove Name unavailable · alice' }),
       ).toBeTruthy()
     })
+  })
+
+  it('shows the id for an unresolved user inherited from a parent rule', async () => {
+    render(
+      <PermissionManager
+        opened
+        onClose={vi.fn()}
+        collections={mockCollections}
+        permissions={[
+          ...mockPermissions,
+          { path: unsafeAsPermissionPath('content/**'), read: { allowedUsers: ['zed'] } },
+        ]}
+        canEdit={true}
+        onSave={mockOnSave}
+        onSearchUsers={mockOnSearchUsers}
+        onListGroups={mockOnListGroups}
+        onGetUserMetadata={async () => null}
+      />,
+      { wrapper },
+    )
+    fireEvent.click(screen.getByText('Expand All'))
+    await waitFor(() => screen.getByText('About'))
+    fireEvent.click(screen.getByText('About'))
+
+    const heading = await screen.findByText('Inherited from parent')
+    const inherited = heading.parentElement
+    if (!inherited) throw new Error('no inherited section')
+    expect(await within(inherited).findByText('· zed')).toBeTruthy()
   })
 
   describe('permission badges in tree', () => {

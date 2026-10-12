@@ -1,7 +1,16 @@
 import React, { useEffect } from 'react'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { ActionIcon, Button, DEFAULT_THEME, Drawer, Modal, getDefaultZIndex } from '@mantine/core'
+import {
+  ActionIcon,
+  Alert,
+  Button,
+  DEFAULT_THEME,
+  Drawer,
+  Modal,
+  Notification,
+  getDefaultZIndex,
+} from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { CanopyCMSProvider } from './theme'
 import { openConfirm } from './utils/confirm-modal'
@@ -213,6 +222,31 @@ describe('CanopyCMSProvider close buttons', () => {
       expect(labels).toEqual(['Close', 'Close'])
     })
     modals.closeAll()
+  })
+
+  it("names a close button a Drawer.Root draws itself, a toast's and a dismissible alert's", async () => {
+    render(
+      <CanopyCMSProvider>
+        <Drawer.Root opened onClose={() => {}}>
+          <Drawer.Content>
+            <Drawer.Header>
+              <Drawer.CloseButton />
+            </Drawer.Header>
+          </Drawer.Content>
+        </Drawer.Root>
+        <Notification onClose={() => {}}>Saved</Notification>
+        <Alert withCloseButton onClose={() => {}}>
+          Failed
+        </Alert>
+      </CanopyCMSProvider>,
+    )
+    await waitFor(() => expect(closeButton('Drawer')?.getAttribute('aria-label')).toBe('Close'))
+    expect(
+      document.body.querySelector('.mantine-Notification-root button')?.getAttribute('aria-label'),
+    ).toBe('Close')
+    expect(
+      document.body.querySelector('.mantine-Alert-root button')?.getAttribute('aria-label'),
+    ).toBe('Close')
   })
 
   it('leaves a caller that names its own close button in charge of the name', async () => {

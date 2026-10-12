@@ -259,11 +259,13 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   const saveBlockedReason = branchReadOnly
     ? 'The base branch is read-only. Create a branch to make changes.'
     : branchDataUnavailable
-      ? 'Branch details are still loading. Saving is available once they arrive.'
+      ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
       : statusLocked
         ? branchStatus === 'submitted'
           ? 'This branch is in review. Withdraw it to make changes.'
-          : `This branch is ${branchStatus}. Its content is read-only.`
+          : branchStatus === 'approved'
+            ? 'This branch is approved. Withdraw it to make changes.'
+            : `This branch is ${branchStatus}. Its content is read-only.`
         : !branchName
           ? 'Open a branch first.'
           : !currentEntry

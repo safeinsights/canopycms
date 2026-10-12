@@ -437,11 +437,12 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
   })
 
   it('shows no Save reason while a save is in flight', async () => {
-    renderHeader({ busy: true })
+    // Even one that would show the moment the save finishes.
+    renderHeader({ busy: true, hasUnsavedChanges: false })
     act(() => screen.getByTestId('save-button').focus())
 
     expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
-    expect(screen.queryByRole('tooltip')).toBeNull()
+    await expect(screen.findByRole('tooltip', {}, { timeout: 300 })).rejects.toThrow()
   })
 
   it('gives the base-branch and in-review Save reasons a way forward', async () => {
@@ -457,6 +458,22 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
     expect(
       await screen.findByText('This branch is in review. Withdraw it to make changes.'),
     ).toBeTruthy()
+  })
+
+  it('points an approved branch to Withdraw, and unloadable branch details to a retry', async () => {
+    const { unmount } = renderHeader({ branchStatus: 'approved', branchWriteBlocked: true })
+    act(() => screen.getByTestId('save-button').focus())
+    expect(
+      await screen.findByText('This branch is approved. Withdraw it to make changes.'),
+    ).toBeTruthy()
+    unmount()
+
+    renderHeader({ branchStatus: undefined, branchWriteBlocked: true })
+    act(() => screen.getByTestId('save-button').focus())
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip.textContent).toBe(
+      'Branch details could not be loaded. Use "Switch branch…" to retry.',
+    )
   })
 
   it('keeps a Submit for review the user may not use focusable, explains it on focus, and ignores its click', async () => {
