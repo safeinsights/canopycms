@@ -250,6 +250,9 @@ const EditorContent: React.FC<EditorProps> = ({
   const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
 
   const [quickOpenOpen, setQuickOpenOpen] = useState(false)
+  // A palette opened from the drawer returns focus to the header's toggle; the drawer unmounts its opener.
+  const [quickOpenFromDrawer, setQuickOpenFromDrawer] = useState(false)
+  const navigatorToggleRef = useRef<HTMLButtonElement>(null)
 
   const [renameModalOpen, setRenameModalOpen] = useState(false)
   const [renamingEntry, setRenamingEntry] = useState<EditorEntry | null>(null)
@@ -1126,6 +1129,11 @@ const EditorContent: React.FC<EditorProps> = ({
   ])
 
   const quickOpenShortcut = modKeyLabel() === '⌘' ? '⌘P' : 'Ctrl+P'
+  const openQuickOpen = () => {
+    if (!quickOpenOpen) setQuickOpenFromDrawer(navigatorOpen)
+    setNavigatorOpen(false)
+    setQuickOpenOpen(true)
+  }
 
   const dirtyPaths = useMemo<ReadonlySet<string>>(
     () => new Set(editedFiles.map((file) => file.path)),
@@ -1334,6 +1342,7 @@ const EditorContent: React.FC<EditorProps> = ({
             branchReadOnly={currentBranch?.readOnly}
             branchWriteBlocked={branchContentLocked}
             onNavigatorOpen={() => setNavigatorOpen(true)}
+            navigatorToggleRef={navigatorToggleRef}
             onFileReload={handleReload}
             onFileDiscardDraft={handleDiscardFileDraft}
             onEntrySelect={setSelectedPath}
@@ -1571,10 +1580,7 @@ const EditorContent: React.FC<EditorProps> = ({
                     <ActionIcon
                       variant="subtle"
                       color="gray"
-                      onClick={() => {
-                        setNavigatorOpen(false)
-                        setQuickOpenOpen(true)
-                      }}
+                      onClick={openQuickOpen}
                       aria-label="Quick open"
                       data-testid="quick-open-button"
                     >
@@ -1641,11 +1647,9 @@ const EditorContent: React.FC<EditorProps> = ({
           </Drawer.Root>
           <QuickOpenPalette
             opened={quickOpenOpen}
-            onOpen={() => {
-              setNavigatorOpen(false)
-              setQuickOpenOpen(true)
-            }}
+            onOpen={openQuickOpen}
             onClose={() => setQuickOpenOpen(false)}
+            returnFocusTo={quickOpenFromDrawer ? navigatorToggleRef : undefined}
             entries={entriesState}
             // The hidden root's entries sit at the top of the tree, so they get no heading here either.
             collectionLabel={(path) => (path === hiddenRootPath ? '' : collectionLabels.get(path))}

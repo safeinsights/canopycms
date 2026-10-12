@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, type Ref } from 'react'
 import {
   Alert,
   Badge,
@@ -90,6 +90,9 @@ export interface EditorHeaderProps {
    * Callback to open the entry navigator.
    */
   onNavigatorOpen: () => void
+
+  /** Ref to the button whose menu opens the file navigator. */
+  navigatorToggleRef?: Ref<HTMLButtonElement>
 
   /**
    * Callback to reload the current file.
@@ -208,6 +211,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
     unresolvedCommentCount: _,
     comments,
     onNavigatorOpen,
+    navigatorToggleRef,
     onFileReload,
     onFileDiscardDraft,
     onEntrySelect,
@@ -290,6 +294,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               <Menu withinPortal shadow="sm">
                 <Menu.Target>
                   <Button
+                    ref={navigatorToggleRef}
                     data-testid="file-dropdown-button"
                     variant="outline"
                     color="gray"

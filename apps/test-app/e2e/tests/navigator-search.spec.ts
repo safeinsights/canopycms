@@ -1,5 +1,5 @@
 import { BASE_URL } from '../fixtures/base-url'
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
@@ -58,4 +58,27 @@ test.describe('Navigator search', () => {
     })
     await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
   })
+
+  for (const [route, open] of [
+    [
+      "the drawer's Quick open button",
+      (page: Page) => page.getByTestId('quick-open-button').click(),
+    ],
+    ['Mod+P pressed inside the drawer', (page: Page) => page.keyboard.press('ControlOrMeta+P')],
+  ] as const) {
+    test(`closing the palette opened by ${route} returns focus to the navigator toggle`, async ({
+      page,
+    }) => {
+      await editorPage.openContentNavigator()
+
+      await open(page)
+      await expect(page.getByTestId('quick-open-input')).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await page.keyboard.press('Escape')
+
+      await expect(page.getByTestId('quick-open-input')).not.toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
+      await expect(page.getByTestId('file-dropdown-button')).toBeFocused({ timeout: SHORT_TIMEOUT })
+    })
+  }
 })

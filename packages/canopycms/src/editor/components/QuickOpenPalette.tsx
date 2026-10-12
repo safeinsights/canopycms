@@ -2,7 +2,7 @@
 
 /** Mod+P palette: type part of an entry's title or slug, pick it with the keyboard or mouse. */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type RefObject } from 'react'
 import { Combobox, Highlight, Modal, ScrollArea, Text, TextInput, useCombobox } from '@mantine/core'
 import { useHotkeys } from '@mantine/hooks'
 import { IconSearch } from '@tabler/icons-react'
@@ -43,6 +43,8 @@ export interface QuickOpenPaletteProps {
   /** Display name for a collection heading; the collection's own name when absent, none when ''. */
   collectionLabel?: (collectionPath: string) => string | undefined
   onSelect: (path: string) => void
+  /** Takes focus after the palette closes, for a caller that unmounts the element focused at opening. */
+  returnFocusTo?: RefObject<HTMLElement | null>
 }
 
 export function QuickOpenPalette({
@@ -52,6 +54,7 @@ export function QuickOpenPalette({
   entries,
   collectionLabel,
   onSelect,
+  returnFocusTo,
 }: QuickOpenPaletteProps) {
   // `[]` ignores no tags and `true` fires from contenteditable, so the shortcut works from inside
   // a text field or the MDX editor.
@@ -111,6 +114,8 @@ export function QuickOpenPalette({
       title="Open entry"
       size="lg"
       yOffset="10vh"
+      returnFocus={!returnFocusTo}
+      onExitTransitionEnd={() => returnFocusTo?.current?.focus()}
       // Its own dialog lingers through the close transition; Mod+P may reopen it meanwhile.
       {...{ [QUICK_OPEN_REPLACES_ATTR]: true }}
     >
