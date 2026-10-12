@@ -1,5 +1,6 @@
 import type React from 'react'
 import { ApiTimeoutError } from '../../api/request-deadline'
+import { CanopyApiClient } from '../../api/client'
 import type { RetryToastMessageProps } from '../components/RetryToastMessage'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useSWRConfig } from 'swr'
@@ -1113,6 +1114,64 @@ describe('useBranchManager', () => {
         expect.objectContaining({ message: 'Branch deleted' }),
       )
       expect(result.current.branchName).not.toBe('feature')
+    })
+
+    it('does not report a just-created branch deleted when only the listing lacks it', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const created = { ...mockBranches[1], name: 'brand-new', status: 'editing' as const }
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: editingFeature, users: [] },
+      })
+      mockClient.branches.delete.mockRejectedValueOnce(
+        new ApiTimeoutError('DELETE', '/brand-new', 75_000),
+      )
+      const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+      act(() => result.current.addCreatedBranch(created as unknown as BranchListItem))
+      act(() => result.current.setBranchName('brand-new'))
+
+      await act(async () => {
+        await result.current.handleDelete('brand-new')
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: branchActionOutcomeUnknown('Delete branch') }),
+      )
+      expect(result.current.branchName).toBe('brand-new')
+    })
+
+    it('treats a gateway error page like no answer', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const gateway = new CanopyApiClient({
+        fetch: vi.fn().mockResolvedValue({
+          ok: false,
+          status: 504,
+          headers: new Headers(),
+          json: async () => {
+            throw new SyntaxError('Unexpected token <')
+          },
+        }),
+      })
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: editingFeature, users: [] },
+      })
+      mockClient.workflow.submit.mockResolvedValueOnce(
+        await gateway.workflow.submit({ branch: 'feature' }),
+      )
+      const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+
+      await act(async () => {
+        await result.current.handleSubmit('feature').catch(() => {})
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: branchActionOutcomeUnknown('Submit for review') }),
+      )
     })
 
     it('says it may have gone through when the branch is still listed', async () => {

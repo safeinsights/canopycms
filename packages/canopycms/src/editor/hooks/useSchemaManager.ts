@@ -10,6 +10,7 @@ import type {
 import type { EntryReferencedBy } from '../../api/entries'
 import type { LogicalPath, ContentId } from '../../paths/types'
 import { getErrorMessage } from '../../utils/error'
+import { isApiTimeoutError } from '../../api/client'
 
 export interface UseSchemaManagerOptions {
   branchName: string
@@ -313,6 +314,8 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
+        // A timed-out delete may have landed; the content tree then drops the entry.
+        if (isApiTimeoutError(error)) options.onSchemaChange?.()
         return { ok: false, error: handleError('Failed to delete entry', error) }
       } finally {
         setIsLoading(false)

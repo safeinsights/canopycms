@@ -10,6 +10,7 @@ import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 vi.mock('@mantine/notifications', () => ({
   notifications: {
     show: vi.fn(),
+    hide: vi.fn(),
   },
 }))
 
@@ -683,6 +684,11 @@ describe('useDraftManager', () => {
           await result.current.handleSave()
         })
         expect(mockSaveEntry).toHaveBeenCalledTimes(2)
+        // The next save that lands takes the warning down.
+        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
+          message: 'Saved',
+        })
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-save-timed-out:abc123def456')
       })
     })
 

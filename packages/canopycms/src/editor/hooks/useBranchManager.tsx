@@ -18,9 +18,23 @@ import { BRANCHES_KEY, fetchBranches, useBranchesData, type BranchesData } from 
 // paths/branch-name.ts is the dependency-free home of sanitizeBranchName.
 import { sanitizeBranchName } from '../../paths/branch-name'
 import { RetryToastMessage } from '../components/RetryToastMessage'
-import { isApiTimeoutError } from '../../api/client'
+import { isApiTimeoutError, isNonApiResponse } from '../../api/client'
+import type { ApiResponse } from '../../api/types'
 
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
+const BRANCH_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-branch-outcome-unknown'
+
+/** A branch action whose answer never came, or came from a gateway in front of the API. */
+class UnansweredActionError extends Error {}
+
+/** The error a refused branch action throws; a gateway's 5xx says nothing of whether it ran. */
+function actionError(result: ApiResponse, fallback: string): Error {
+  if (isNonApiResponse(result) && result.status >= 500) return new UnansweredActionError(fallback)
+  return new Error(result.error || fallback)
+}
+
+const isOutcomeUnknown = (err: unknown) =>
+  isApiTimeoutError(err) || err instanceof UnansweredActionError
 
 /** @internal Exported for tests. */
 export const branchActionOutcomeUnknown = (action: string) =>
@@ -533,15 +547,18 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // A workflow action that timed out may have gone through, so the list reloads to show where
   // the branch stands rather than inviting a blind retry.
-  const showOutcomeUnknown = (action: string) =>
+  const showOutcomeUnknown = (action: string) => {
+    notifications.hide(BRANCH_OUTCOME_UNKNOWN_TOAST_ID)
     notifications.show({
+      id: BRANCH_OUTCOME_UNKNOWN_TOAST_ID,
       message: branchActionOutcomeUnknown(action),
       color: 'yellow',
       autoClose: false,
       withCloseButton: true,
     })
+  }
   const reportActionFailure = async (err: unknown, fallback: string, action: string) => {
-    if (isApiTimeoutError(err)) {
+    if (isOutcomeUnknown(err)) {
       showOutcomeUnknown(action)
       await loadBranches()
       return
@@ -575,9 +592,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 const result = await apiClient.workflow.submit({
                   branch: branchNameToSubmit,
                 })
-                if (!result.ok) {
-                  throw new Error(result.error || 'Failed to submit branch')
-                }
+                if (!result.ok) throw actionError(result, 'Failed to submit branch')
                 notifications.show({
                   message: 'Branch submitted for review',
                   color: 'green',
@@ -620,9 +635,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 const result = await apiClient.workflow.withdraw({
                   branch: branchNameToWithdraw,
                 })
-                if (!result.ok) {
-                  throw new Error(result.error || 'Failed to withdraw branch')
-                }
+                if (!result.ok) throw actionError(result, 'Failed to withdraw branch')
                 notifications.show({ message: 'Branch withdrawn', color: 'blue' })
                 updateCreatedBranch(branchNameToWithdraw, result.data?.branch)
                 await loadBranches()
@@ -658,9 +671,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 const result = await apiClient.workflow.requestChanges({
                   branch: branchNameForChanges,
                 })
-                if (!result.ok) {
-                  throw new Error(result.error || 'Failed to request changes')
-                }
+                if (!result.ok) throw actionError(result, 'Failed to request changes')
                 notifications.show({ message: 'Changes requested', color: 'blue' })
                 updateCreatedBranch(branchNameForChanges, result.data?.branch)
                 await loadBranches()
@@ -709,9 +720,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 const result = await apiClient.branches.delete({
                   branch: branchNameToDelete,
                 })
-                if (!result.ok) {
-                  throw new Error(result.error || 'Failed to delete branch')
-                }
+                if (!result.ok) throw actionError(result, 'Failed to delete branch')
                 const cleanupWarning = result.data?.cleanupWarning
                 notifications.show(
                   cleanupWarning
@@ -724,13 +733,17 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 )
                 leaveDeletedBranch(branchNameToDelete, await reloadBranches())
               } catch (err) {
-                if (!isApiTimeoutError(err)) {
+                if (!isOutcomeUnknown(err)) {
                   await reportActionFailure(err, 'Failed to delete branch', 'Delete branch')
                   return
                 }
-                // The list settles a timed-out delete: a branch no longer listed was deleted.
+                // The list settles an unanswered delete: a branch no longer listed, nor created
+                // too recently for every listing to show, was deleted.
                 const fresh = await reloadBranches()
-                const listed = fresh?.branches.some(
+                const recent = pendingBranches.filter(
+                  (p) => Date.now() - p.addedAt <= CREATED_BRANCH_GRACE_MS,
+                )
+                const listed = mergePendingBranches(fresh?.branches ?? [], recent).some(
                   (b) => sanitizeBranchName(b.name) === sanitizeBranchName(branchNameToDelete),
                 )
                 if (fresh && !listed) {

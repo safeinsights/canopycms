@@ -16,6 +16,8 @@ import { isApiTimeoutError } from '../../api/client'
 export const SAVE_TIMED_OUT_MESSAGE =
   "Save didn't finish in time, and may not have gone through. Your changes are still here, so save again."
 
+const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
+
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
 const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
   const map: Record<string, string> = {}
@@ -211,6 +213,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN. That save may have
   // landed, so re-sending the token would bounce off the user's own write; held until re-read.
   const reloadRequiredRef = useRef<Record<string, number | undefined>>({})
+  // Entries whose timed-out save toast is up, taken down by their next successful save.
+  const timedOutSavesRef = useRef(new Set<string>())
   // The draft ids the reconcile effect below has already accounted for. It
   // prunes on an observed present -> absent TRANSITION rather than on "not
   // currently in drafts": the restore effect stamps base versions for ids
@@ -738,6 +742,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         return next
       })
       setLoadedValues((prev) => ({ ...prev, [currentId]: saved }))
+      if (timedOutSavesRef.current.delete(currentId)) {
+        notifications.hide(saveTimedOutToastId(currentId))
+      }
       notifications.show({
         message: 'Saved',
         color: 'green',
@@ -782,7 +789,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       } else if (isApiTimeoutError(err)) {
         // Saving again is safe: a save that did land moved the version, so the server refuses the
         // retry as a conflict rather than overwriting.
+        timedOutSavesRef.current.add(currentId)
         notifications.show({
+          id: saveTimedOutToastId(currentId),
           message: SAVE_TIMED_OUT_MESSAGE,
           color: 'yellow',
           autoClose: false,

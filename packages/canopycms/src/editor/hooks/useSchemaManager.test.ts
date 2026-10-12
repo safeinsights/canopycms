@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ApiTimeoutError } from '../../api/request-deadline'
 import { renderHook, act } from '@testing-library/react'
 import { useSchemaManager } from './useSchemaManager'
 import type { MockApiClient } from '../../api/__test__/mock-client'
@@ -22,6 +23,7 @@ vi.mock('../../api', async () => {
 vi.mock('@mantine/notifications', () => ({
   notifications: {
     show: vi.fn(),
+    hide: vi.fn(),
   },
 }))
 
@@ -336,6 +338,25 @@ describe('useSchemaManager', () => {
         branch: 'main',
         entryPath: 'posts/hello-world',
       })
+      expect(onSchemaChange).toHaveBeenCalled()
+    })
+
+    it('refreshes the content tree after a timed-out delete, which may have landed', async () => {
+      mockClient.entries.delete.mockRejectedValueOnce(
+        new ApiTimeoutError('DELETE', '/main/entries/posts/a', 75_000),
+      )
+      const onSchemaChange = vi.fn()
+      const { result } = renderHook(
+        () => useSchemaManager({ branchName: 'main', onSchemaChange }),
+        { wrapper },
+      )
+
+      let deleteResult: Awaited<ReturnType<typeof result.current.deleteEntry>> = { ok: true }
+      await act(async () => {
+        deleteResult = await result.current.deleteEntry(unsafeAsLogicalPath('posts/a'))
+      })
+
+      expect(deleteResult.ok).toBe(false)
       expect(onSchemaChange).toHaveBeenCalled()
     })
 

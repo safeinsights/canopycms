@@ -11,7 +11,7 @@ import type { MockApiClient } from '../../api/__test__/mock-client'
 import type { ContentId } from '../../paths/types'
 import { notifications } from '@mantine/notifications'
 import type React from 'react'
-import { ApiTimeoutError } from '../../api/request-deadline'
+import { ApiTimeoutError, WRITE_TIMED_OUT_MESSAGE } from '../../api/request-deadline'
 import type { RetryToastMessageProps } from '../components/RetryToastMessage'
 import {
   setupMockApiClient,
@@ -167,6 +167,52 @@ describe('useEntryManager', () => {
     )
 
     expect(result.current.selectedPath).toBe('entry1')
+  })
+
+  describe('a create or rename that times out', () => {
+    let restoreConsole: () => void
+    beforeEach(() => {
+      restoreConsole = setupMockConsole(['error']).restore
+    })
+    afterEach(() => restoreConsole())
+
+    it('keeps the create form open with the error, and reloads the content tree', async () => {
+      mockClient.content.write.mockRejectedValueOnce(
+        new ApiTimeoutError('PUT', '/main/content/content/posts/new-post', 75_000),
+      )
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await act(async () => {
+        await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
+      })
+      const listCalls = mockClient.entries.list.mock.calls.length
+
+      await act(async () => {
+        await result.current.handleCreateModalSubmit('new-post', 'post')
+      })
+
+      expect(result.current.createModalOpen).toBe(true)
+      expect(result.current.createModalError).toBe(WRITE_TIMED_OUT_MESSAGE)
+      await waitFor(() =>
+        expect(mockClient.entries.list.mock.calls.length).toBeGreaterThan(listCalls),
+      )
+    })
+
+    it('reloads the content tree after a timed-out rename', async () => {
+      mockClient.content.renameEntry.mockRejectedValueOnce(
+        new ApiTimeoutError('PATCH', '/main/rename-entry/content/posts/a', 75_000),
+      )
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(mockClient.entries.list).toHaveBeenCalled())
+      const listCalls = mockClient.entries.list.mock.calls.length
+
+      await act(async () => {
+        await result.current.renameEntry('content/posts/a', 'b').catch(() => {})
+      })
+
+      await waitFor(() =>
+        expect(mockClient.entries.list.mock.calls.length).toBeGreaterThan(listCalls),
+      )
+    })
   })
 
   it('builds collectionByPath map correctly', () => {
