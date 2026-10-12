@@ -11,16 +11,21 @@
  * publish.yml run whose number is the int's N. A mismatch, or an existing tag
  * at another commit, is reported and that version is skipped.
  *
+ * Tags are pushed with git, not created through the REST API, which refuses
+ * most older commits with a 404.
+ *
  * Usage: node scripts/backfill-int-tags.mjs           # dry run: print the plan
- *        node scripts/backfill-int-tags.mjs --push    # create the missing tags
- * Needs `gh` (signed in, and allowed to create refs for --push), `npm`, and network access.
+ *        node scripts/backfill-int-tags.mjs --push    # push the missing tags to origin
+ * Run from a clone whose `origin` is safeinsights/canopycms. Needs `gh` (signed in), `npm`, git push
+ * access for --push, and network access.
  */
 
 import { execFileSync } from 'node:child_process'
 
+import { attestedCommit as npmAttestedCommit } from './npm-attested-commit.mjs'
+
 const REPO = 'safeinsights/canopycms'
 const INT_VERSION_RE = /^\d+\.\d+\.\d+-int\.(\d+)$/
-const SHA_RE = /^[0-9a-f]{40}$/
 
 const args = process.argv.slice(2)
 if (args.length > 1 || (args.length === 1 && args[0] !== '--push')) {
@@ -31,20 +36,13 @@ const push = args[0] === '--push'
 
 const run = (cmd, argv) => execFileSync(cmd, argv, { encoding: 'utf8' })
 
-/** The commit an npm version's SLSA provenance says it was built from. */
+/** The commit a canopycms version's SLSA provenance says it was built from, or null. */
 async function attestedCommit(version) {
-  const res = await fetch(
-    `https://registry.npmjs.org/-/npm/v1/attestations/canopycms@${encodeURIComponent(version)}`,
-  )
-  if (!res.ok) return null
-  const body = await res.json()
-  const slsa = body.attestations?.find((a) => a.predicateType === 'https://slsa.dev/provenance/v1')
-  if (!slsa) return null
-  const statement = JSON.parse(
-    Buffer.from(slsa.bundle.dsseEnvelope.payload, 'base64').toString('utf8'),
-  )
-  const sha = statement.predicate?.buildDefinition?.resolvedDependencies?.[0]?.digest?.gitCommit
-  return typeof sha === 'string' && SHA_RE.test(sha) ? sha : null
+  try {
+    return await npmAttestedCommit('canopycms', version)
+  } catch {
+    return null
+  }
 }
 
 /** publish.yml dispatch runs by run number, which is an int's N. */
@@ -108,16 +106,12 @@ for (const version of versions) {
     console.log(`${version}: would tag ${attested}`)
     continue
   }
-  run('gh', [
-    'api',
-    '-X',
-    'POST',
-    `repos/${REPO}/git/refs`,
-    '-f',
-    `ref=refs/tags/v${version}`,
-    '-f',
-    `sha=${attested}`,
-  ])
+  try {
+    execFileSync('git', ['cat-file', '-e', `${attested}^{commit}`], { stdio: 'ignore' })
+  } catch {
+    run('git', ['fetch', '--quiet', 'origin', attested])
+  }
+  run('git', ['push', '--quiet', 'origin', `${attested}:refs/tags/v${version}`])
   console.log(`${version}: tagged ${attested}`)
 }
 process.exit(failed ? 1 : 0)

@@ -22,9 +22,9 @@ permissions:
   pull-requests: read
 
 jobs:
-  # The lint, typecheck, build, unit-test and changesets jobs below run in parallel, and
-  # `validate` at the end of this group passes only when every one of them
-  # did. Each job installs through .github/actions/setup.
+  # The lint, typecheck, build, unit-test, changesets and release-dry-run jobs
+  # below run in parallel, and `validate` at the end of this group passes only
+  # when every one of them did. Each job installs through .github/actions/setup.
   lint:
     name: Lint, Format & Generated Files
     runs-on: ubuntu-latest
@@ -420,14 +420,87 @@ jobs:
             fi
           fi
 
-  # One check that stands for the six jobs above, under the name the single
+  # Rehearses the stable release without committing, pushing or publishing:
+  # scripts/release-stable.mjs --prepare, the shipped changelog and the
+  # canopycms tarball, exactly as publish.yml's release jobs run them. Every PR
+  # into main gets it, since that merge is the release; any other PR gets it
+  # when it touches the release path. It always runs and gates per step, so
+  # `validate` never sees it skipped.
+  release-dry-run:
+    name: Release dry run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The plan counts changesets since the latest stable tag, and the
+          # changelog labels entries from int tags.
+          fetch-depth: 0
+
+      - name: Check for release-path changes
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            relevant:
+              - '.github/workflows/publish.yml'
+              - '.github/workflows/ci.yml'
+              - 'scripts/release-stable.mjs'
+              - 'scripts/migration-notes.mjs'
+              - 'scripts/bump-version.mjs'
+              - 'scripts/npm-attested-commit.mjs'
+              - '.changeset/**'
+              - 'CHANGELOG.md'
+
+      - name: Decide
+        id: gate
+        env:
+          RELEVANT: ${{ github.event_name == 'pull_request' && (github.base_ref == 'main' || steps.filter.outputs.relevant == 'true') }}
+        run: echo "run=$RELEVANT" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup
+        if: steps.gate.outputs.run == 'true'
+
+      - name: Generate API clients
+        if: steps.gate.outputs.run == 'true'
+        run: pnpm run generate:client
+        working-directory: packages/canopycms
+
+      - name: Prepare the release
+        id: prepare
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          result=$(node scripts/release-stable.mjs --prepare)
+          echo "$result"
+          release=$(node -pe 'JSON.parse(process.argv[1]).release === true' "$result")
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          if [ "$release" = "true" ]; then
+            echo "version=$(node -pe 'JSON.parse(process.argv[1]).version' "$result")" >> "$GITHUB_OUTPUT"
+          fi
+          git status --short
+
+      - name: Ship and pack canopycms
+        if: steps.prepare.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          node scripts/migration-notes.mjs --ship --version "$VERSION" --sha "$(git rev-parse HEAD)" \
+            --out packages/canopycms/CHANGELOG.md --summary "$GITHUB_STEP_SUMMARY"
+          cd packages/canopycms
+          pnpm pack
+          contents=$(tar -tzf canopycms-*.tgz)
+          grep -qx 'package/CHANGELOG.md' <<<"$contents" || { echo "::error::the tarball has no CHANGELOG.md"; exit 1; }
+          echo "Release dry run: would publish $VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+  # One check that stands for the seven jobs above, under the name the single
   # job had. `always()` makes it run, and fail, when a needed job failed, was
   # cancelled or was skipped; a gate that was itself skipped would read as
   # passing to anything that requires it.
   validate:
     name: Validate, Typecheck & Test
     if: always()
-    needs: [lint, typecheck, build, unit-canopycms, unit-packages, changesets]
+    needs: [lint, typecheck, build, unit-canopycms, unit-packages, changesets, release-dry-run]
     runs-on: ubuntu-latest
     steps:
       - name: Require every validate job to have succeeded

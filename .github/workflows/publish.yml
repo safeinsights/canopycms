@@ -25,27 +25,32 @@ concurrency:
   # peer dependencies between these packages are EXACT pins, so a mismatch is
   # an install-time ERESOLVE, not a subtle incompatibility.
   #
-  # On the stable channel it is worse than a mismatched set. The version-bump
-  # commit lands only AFTER all five publishes, so a cancellation leaves npm
-  # holding a version main does not know about; every later run then re-derives
-  # that same version and dies on "cannot publish over previously published
-  # version", wedging the release train until a human intervenes. (The bump is
-  # now registry-floored as well, so that specific wedge self-heals -- but not
-  # cancelling is what stops it happening in the first place.)
+  # On the stable channel a run cancelled mid-publish is resumable ("Re-run
+  # failed jobs" on `publish`), but a queued run never needs resuming.
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Build & Publish
+  # A stable release is two jobs, so no job holds both a token that writes to
+  # the repository and npm's id-token: `release-commit` writes, `publish`
+  # publishes. The release is committed and tagged BEFORE anything is
+  # published, so main and npm never disagree about a version: either nothing
+  # was pushed and the next push to main starts over, or the tag exists and
+  # `publish` resumes with "Re-run failed jobs".
+  release-commit:
+    name: Release commit
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     permissions:
-      contents: write
-      id-token: write
+      # The release-bot app token below does the writing.
+      contents: read
       # List this commit's CI workflow runs, for the gate below. That is the
       # `actions` scope, not `checks` -- workflow runs and check runs are
       # different APIs, and `checks: read` would not authorize it.
       actions: read
+    outputs:
+      release: ${{ steps.prepare.outputs.release }}
+      version: ${{ steps.prepare.outputs.version }}
+      sha: ${{ steps.commit.outputs.sha }}
 
     steps:
       # THE CI GATE.
@@ -126,21 +131,12 @@ jobs:
           client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
+      # Full history and tags: the release plan counts changesets since the
+      # latest stable tag, and the changelog labels entries from int tags.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.app-token.outputs.token }}
-
-      # This job does not consume .changeset/ yet: it would release a patch and
-      # leave every pending entry to ship again as unreleased. It stops here
-      # until the changesets release path replaces it.
-      - name: Refuse to release over pending changesets
-        run: |
-          pending=$(find .changeset -maxdepth 1 -name '*.md' ! -iname 'readme.md' ! -name 'AGENTS.md' \
-            ! -name 'CLAUDE.md' ! -name 'GEMINI.md' ! -name '.*' 2>/dev/null | grep -c . || true)
-          if [ "$pending" -gt 0 ]; then
-            echo "::error::$pending pending changeset(s), and this job cannot release them yet."
-            exit 1
-          fi
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
@@ -157,29 +153,88 @@ jobs:
         run: pnpm run generate:client
         working-directory: packages/canopycms
 
-      # Floored on the REGISTRY, not just the committed version. The bump
-      # commit lands only after all five publishes, so an interrupted run
-      # leaves npm ahead of main -- after which bumping from the committed
-      # value re-derives an already-published version and every subsequent run
-      # dies on "cannot publish over previously published version", forever.
-      # Taking max(committed, registry) makes that state self-healing.
-      #
-      # `|| true` plus the empty check: a brand-new package that has never been
-      # published has no registry version, which is not an error.
-      - name: Bump version
-        id: bump
+      # Promotes CHANGELOG.md's Unreleased entries under the new version,
+      # consumes the changesets and sets every version field; see
+      # scripts/release-stable.mjs. Nothing release-worthy pending (no
+      # changesets, or only empty ones) publishes nothing.
+      - name: Prepare the release
+        id: prepare
         run: |
           set -euo pipefail
-          PUBLISHED=$(npm view canopycms version 2>/dev/null || true)
-          if [ -n "$PUBLISHED" ]; then
-            echo "Registry has canopycms@$PUBLISHED"
-            NEW_VERSION=$(node scripts/bump-version.mjs --min "$PUBLISHED")
+          result=$(node scripts/release-stable.mjs --prepare)
+          echo "$result"
+          release=$(node -pe 'JSON.parse(process.argv[1]).release === true' "$result")
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          if [ "$release" = "true" ]; then
+            version=$(node -pe 'JSON.parse(process.argv[1]).version' "$result")
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a release version: '$version'"; exit 1; }
+            echo "version=$version" >> "$GITHUB_OUTPUT"
           else
-            echo "No published canopycms version found; bumping from the repo"
-            NEW_VERSION=$(node scripts/bump-version.mjs)
+            reason=$(node -pe 'JSON.parse(process.argv[1]).reason' "$result")
+            echo "Nothing to release: $reason" >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Bumped to $NEW_VERSION"
+
+      # The prepared tree is the release commit. Anything else changed means a
+      # step did more than it should, so the job stops before pushing.
+      #
+      # `--atomic` lands the commit and its tag together or not at all. A push
+      # refused because main moved publishes nothing; the next push to main
+      # releases from there, with the changesets still pending.
+      - name: Commit, tag and push the release
+        id: commit
+        if: steps.prepare.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A -- CHANGELOG.md .changeset package.json 'packages/*/package.json' \
+            packages/canopycms/src/version.ts '*.md'
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "::error::the release changed files outside the version and changelog set"
+            exit 1
+          fi
+          # [skip ci] is required: app-token pushes DO re-trigger workflows
+          # (GITHUB_TOKEN pushes don't), so without it this push would re-run
+          # publish.yml on its own release commit.
+          git commit -m "chore: release v$VERSION [skip ci]"
+          git tag "v$VERSION"
+          git push --atomic origin HEAD:main "refs/tags/v$VERSION"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Released v$VERSION at $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Build & Publish
+    needs: release-commit
+    if: needs.release-commit.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      # The release commit, with history and tags for the changelog's labels.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-commit.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate API clients
+        run: pnpm run generate:client
+        working-directory: packages/canopycms
 
       - name: Build publishable packages
         run: |
@@ -190,6 +245,14 @@ jobs:
           pnpm --filter canopycms-cdk run build
           pnpm --filter canopycms-cdk run build:worker
           pnpm --filter canopycms-cdk run build:lambda
+
+      - name: Assemble the shipped changelog
+        env:
+          VERSION: ${{ needs.release-commit.outputs.version }}
+          SHA: ${{ needs.release-commit.outputs.sha }}
+        run: >-
+          node scripts/migration-notes.mjs --ship --version "$VERSION" --sha "$SHA"
+          --out packages/canopycms/CHANGELOG.md --summary "$GITHUB_STEP_SUMMARY"
 
       # pnpm pack resolves workspace: protocol refs to real versions.
       #
@@ -227,48 +290,39 @@ jobs:
       # 11.19.0 is what `npm@11` resolves to today, i.e. exactly what those
       # working releases used -- now pinned rather than floated. When bumping,
       # stay >= 11.5.0.
-      - name: Publish canopycms
+      #
+      # Each publish is idempotent, so "Re-run failed jobs" resumes a release
+      # that stopped part-way: a version already on npm built from this release
+      # commit (its provenance says so) is skipped, and one built from any other
+      # commit fails the job rather than being published over.
+      - name: Publish the five packages
+        env:
+          VERSION: ${{ needs.release-commit.outputs.version }}
+          SHA: ${{ needs.release-commit.outputs.sha }}
         run: |
-          pnpm pack
-          pnpm dlx npm@11.19.0 publish canopycms-*.tgz --access public --provenance
-        working-directory: packages/canopycms
-
-      - name: Publish canopycms-next
-        run: |
-          pnpm pack
-          pnpm dlx npm@11.19.0 publish canopycms-next-*.tgz --access public --provenance
-        working-directory: packages/canopycms-next
-
-      - name: Publish canopycms-auth-clerk
-        run: |
-          pnpm pack
-          pnpm dlx npm@11.19.0 publish canopycms-auth-clerk-*.tgz --access public --provenance
-        working-directory: packages/canopycms-auth-clerk
-
-      - name: Publish canopycms-auth-dev
-        run: |
-          pnpm pack
-          pnpm dlx npm@11.19.0 publish canopycms-auth-dev-*.tgz --access public --provenance
-        working-directory: packages/canopycms-auth-dev
-
-      - name: Publish canopycms-cdk
-        run: |
-          pnpm pack
-          pnpm dlx npm@11.19.0 publish canopycms-cdk-*.tgz --access public --provenance
-        working-directory: packages/canopycms-cdk
-
-      - name: Commit version bump
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A '*/package.json' package.json packages/canopycms/src/version.ts
-          # [skip ci] is required: app-token pushes DO re-trigger workflows
-          # (GITHUB_TOKEN pushes don't), so without it this push would re-run
-          # publish.yml and loop forever bumping the version.
-          git commit -m "chore: release v${{ steps.bump.outputs.version }} [skip ci]"
-          git tag "v${{ steps.bump.outputs.version }}"
-          git push
-          git push --tags
+          set -euo pipefail
+          for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
+            attested=$(node scripts/npm-attested-commit.mjs "$pkg" "$VERSION")
+            if [ "$attested" = "$SHA" ]; then
+              echo "$pkg@$VERSION is already published from $SHA"
+              continue
+            fi
+            if [ -n "$attested" ]; then
+              echo "::error::$pkg@$VERSION is on npm from $attested, not this release ($SHA)"
+              exit 1
+            fi
+            (
+              cd "packages/$pkg"
+              pnpm pack
+              if [ "$pkg" = canopycms ]; then
+                # `files` lists CHANGELOG.md, and pack omits a listed file that is
+                # missing without a word.
+                contents=$(tar -tzf canopycms-*.tgz)
+                grep -qx 'package/CHANGELOG.md' <<<"$contents" || { echo "::error::the tarball has no CHANGELOG.md"; exit 1; }
+              fi
+              pnpm dlx npm@11.19.0 publish "$pkg"-*.tgz --access public --provenance
+            )
+          done
 
   # Manual dispatch routes here instead: publish the selected branch under the
   # `int` dist-tag, without bumping or committing any version field.
@@ -285,8 +339,9 @@ jobs:
   # Tags each int at the commit it was built from (`v0.0.68-int.114`), which is
   # how the shipped changelog labels entries and how adopters browse a build's
   # docs. The only writer on the prerelease path, so it checks out nothing and
-  # runs no repository code: a lookup and a create through the API, with
-  # validated inputs. The
+  # runs no repository code: an API lookup, then a fetch of the one commit and
+  # a push of the tag, with validated inputs. The push goes through git because
+  # the REST API refuses to create refs to many existing commits. The
   # `release-tags-immutable` ruleset stops this token moving or deleting any
   # `v*` tag, and `stable-tags-release-bot-only` stops it creating a stable one.
   tag-prerelease:
@@ -318,5 +373,13 @@ jobs:
             echo "::error::v$VERSION already tags $existing, not $SHA"
             exit 1
           fi
-          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$SHA" >/dev/null
+          # The token travels in a header, never in a URL; its base64 form is not
+          # masked automatically.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git init -q tagger
+          cd tagger
+          remote="https://github.com/$GITHUB_REPOSITORY"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" fetch -q --depth=1 "$remote" "$SHA"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push -q "$remote" "$SHA:refs/tags/v$VERSION"
           echo "Tagged $SHA as v$VERSION"
