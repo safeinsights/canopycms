@@ -16,6 +16,6 @@ and a "…" menu: Move up, Move down, Duplicate, Remove. Blocks are added from "
 `list: true` object takes an optional `itemLabel` ("team member") naming its items.
 
 **To adopt.** Optionally set `itemLabel`. Browser tests that clicked a row's "Remove", "Move block
-up" or the "Add block..." select use the row's `Actions for <title>` menu or "Add section".
+up" or the "Add block..." select use the row's `Actions for <title>…` menu or "Add section".
 
 **Now deletable.** Template labels that repeated the template's description.

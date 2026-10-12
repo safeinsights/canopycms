@@ -15,7 +15,8 @@ are `red.8`; filled orange, `orange.6` with black text. A blocked Save, Submit, 
 menu item is `aria-disabled`, not `disabled`, so its reason shows on focus. The header's entry
 menu says "Reload entry" and "Discard changes".
 
-**To adopt.** A `themeOverride` setting `components.Button.vars` replaces the editor's resolver.
+**To adopt.** A `themeOverride` setting `components.Button.vars` or `components.Alert.vars`
+replaces the editor's resolver, which also darkens a light yellow Alert's title and icon.
 Browser tests check `aria-disabled`; Playwright's `toBeDisabled` reads it. Tests that click the
 old "Reload File" or "Discard File Draft" use the new labels.
 
