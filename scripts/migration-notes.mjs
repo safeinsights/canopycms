@@ -73,12 +73,16 @@ const INT_LABEL_RE = /(?<![\w.-])int\.\d+/
 const NEXT_LABEL_RE = /\(next(?: int)?\)/i
 const ABSOLUTE_URL_RE = /^[a-z][a-z0-9+.-]*:/i
 const HANDOFF =
-  "If you upgraded from a build on another branch, compare the `<!-- changeset: … -->` slugs in your previous build's `CHANGELOG.md` (`npm pack canopycms@<old>` fetches it) with this one's: entries whose slug your old file lacks are new to you. Legacy entries above the changeset entries carry hand-written int labels."
+  "If you upgraded from a build on another branch, compare the `<!-- changeset: … -->` slugs in your previous build's `CHANGELOG.md` (`npm pack canopycms@<old>` fetches it) with this one's: entries whose slug your old file lacks are new to you."
+const HANDOFF_LEGACY = 'Legacy entries above the changeset entries carry hand-written int labels.'
 
 /** Anchors the shipped `## This build` section takes, so no other heading may. */
 const RESERVED_ANCHOR_RE = /^(?:this-build|(?:new|revised)-since-int\d+)$/
 const PLAIN_VERSION_RE = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/
 const LEGACY_MARKER_RE = /^<!--\s*legacy:(start|end)\s*-->$/
+/** The heading `renderItem` writes for a part of an entry, in any of its label forms. */
+const GENERATED_PART_RE = /^Added(?:, not yet in an int| in \S+)$/
+const CHANGESET_MARKER_RE = /^<!--\s*changeset:\s*[a-z0-9-]+\s*-->$/
 
 const problem = (file, line, message, severity = 'error') => ({ file, line, message, severity })
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
@@ -567,6 +571,7 @@ function readBase(root, problems) {
   const tree = fromMarkdown(text)
   const tops = tree.children
   const slugger = new GithubSlugger()
+  const topIndex = new Map(tops.map((n, i) => [n, i]))
   const headings = headingsOf(tree).map((node) => {
     const h = {
       key: `base:${node.position.start.offset}`,
@@ -576,6 +581,13 @@ function readBase(root, problems) {
       origin: `${CHANGELOG}:${node.position.start.line}`,
     }
     h.rawAnchor = slugger.slug(h.text)
+    // A promoted part's heading, which its changeset marker follows; text
+    // alone could be a hand-written heading someone links to.
+    const next = tops[(topIndex.get(node) ?? -2) + 1]
+    h.generated =
+      GENERATED_PART_RE.test(h.text) &&
+      next?.type === 'html' &&
+      CHANGESET_MARKER_RE.test(next.value.trim())
     return h
   })
   const unrel = sectionRange(tops, 'Unreleased')
@@ -855,7 +867,7 @@ function fileUrl(root, sha, repoPath, image) {
 function rewriteBodyUrl(node, L, anchorOf) {
   const link = resolveLink(node.url)
   if (link.kind === 'changeset') {
-    const anchor = anchorOf(`cs:${link.slug}`)
+    const anchor = anchorOf(L.linkKey(link.slug))
     return anchor === undefined ? null : `#${anchor}`
   }
   if (link.kind === 'hash') return node.url.startsWith('#') ? null : `#${link.anchor}`
@@ -1001,7 +1013,7 @@ function renderThisBuild(L, anchorOf) {
   } else {
     lines.push('', "No earlier int is in this build's history, so read every Unreleased entry.")
   }
-  lines.push('', HANDOFF)
+  lines.push('', L.base.legacy ? `${HANDOFF} ${HANDOFF_LEGACY}` : HANDOFF)
   return { text: lines.join('\n'), headings }
 }
 
@@ -1123,17 +1135,24 @@ function analyze(root, { fallbackLabel, ship = null }) {
       }
       continue
     }
-    const section = t.type === 'legacy' ? base.unreleased : base.released
+    const inSection = (h, section) =>
+      section && h.offset >= section.start && h.offset < section.end && h.rawAnchor === t.anchor
+    // Once a release has promoted the legacy block, its entries are released
+    // headings, and a legacy# part from a branch older than that release
+    // resolves there.
+    const promoted = t.type === 'legacy' && base.legacy === null
     const parent = base.headings.find(
       (h) =>
-        section &&
-        h.offset >= section.start &&
-        h.offset < section.end &&
-        h.rawAnchor === t.anchor &&
-        (t.type === 'released' || h.depth === 3),
+        (t.type === 'legacy' && h.depth === 3 && inSection(h, base.unreleased)) ||
+        ((t.type === 'released' || promoted) && h.depth >= 3 && inSection(h, base.released)),
     )
     if (!parent) {
-      const where = t.type === 'legacy' ? 'no ### in ## Unreleased' : 'no heading in ## Released'
+      const where =
+        t.type === 'released'
+          ? 'no heading in ## Released'
+          : promoted
+            ? 'no ### in ## Unreleased or heading in ## Released'
+            : 'no ### in ## Unreleased'
       fail(r, `extends ${t.type}#${t.anchor}, but ${where} has that anchor`)
       continue
     }
@@ -1228,7 +1247,10 @@ function analyze(root, { fallbackLabel, ship = null }) {
     if (ship) Object.assign(ship, { M: null, fresh: shippable, revised: [] })
   }
 
-  const L = { root, base, items, labels, ship }
+  // A link to a nested part lands on its entry: the part's "Added in" heading
+  // is generated, so its anchor is exempt from the stability rule above.
+  const linkKey = (slug) => `cs:${bySlug.get(slug)?.parentEntry?.slug ?? slug}`
+  const L = { root, base, items, labels, ship, linkKey }
   const draft = build(L, () => 'pending')
   const slugger = new GithubSlugger()
   const anchors = new Map(draft.model.map((h) => [h.key, slugger.slug(h.text)]))
@@ -1250,9 +1272,11 @@ function analyze(root, { fallbackLabel, ship = null }) {
   }
   // An inserted heading sharing a base heading's slug renumbers every later
   // copy, so a Released anchor adopters already link to would silently move.
+  // A promoted part's generated heading is exempt: no author can retitle it,
+  // and a pending part first carried by the same int takes the same text.
   for (const h of base.headings) {
     const now = anchors.get(h.key)
-    if (now === h.rawAnchor) continue
+    if (now === h.rawAnchor || h.generated) continue
     const s = baseSlug(h.text)
     const culprits = draft.model.filter((m) => !m.key.startsWith('base:') && baseSlug(m.text) === s)
     const why = culprits.map((m) => `"${m.text}" (${m.origin})`).join(', ') || 'an inserted heading'
@@ -1288,7 +1312,7 @@ function analyze(root, { fallbackLabel, ship = null }) {
       } else if (link.kind === 'changeset') {
         const target = bySlug.get(link.slug)
         if (!target) fail(rec, `link "${node.url}": there is no .changeset/${link.slug}.md`, line)
-        else if (!target.broken && !anchors.has(`cs:${link.slug}`)) {
+        else if (!target.broken && !anchors.has(linkKey(link.slug))) {
           fail(rec, `link "${node.url}" points at a changeset that renders nothing`, line)
         }
       } else if (link.kind === 'hash' && !anchorSet.has(link.anchor)) {
@@ -1531,7 +1555,7 @@ function promote(root, version) {
     )
   }
 
-  const anchorOfSlug = (slug) => (rendered.has(slug) ? promoted.get(`cs:${slug}`) : undefined)
+  const anchorOfSlug = (slug) => (rendered.has(slug) ? promoted.get(L.linkKey(slug)) : undefined)
   const writes = new Map([[CHANGELOG, rewriteInbound(CHANGELOG, text, anchorOfSlug, problems)]])
   for (const file of trackedMarkdown(root)) {
     const before = readFileSync(join(root, file), 'utf8')
@@ -1701,6 +1725,11 @@ function selfTest() {
     'Body.',
     '',
   ].join('\n')
+  /** BASE with its legacy block marked, as CHANGELOG.md is until a release promotes it. */
+  const LBASE = BASE.replace(
+    'Intro paragraph.\n',
+    'Intro paragraph.\n\n<!-- legacy:start -->\n',
+  ).replace('Body.\n\n---\n\n## Released', 'Body.\n\n<!-- legacy:end -->\n\n---\n\n## Released')
   const fm = (bump) => (bump ? `---\n"canopycms": ${bump}\n---\n\n` : '---\n---\n\n')
   const metaBlock = (m) =>
     [
@@ -1866,11 +1895,13 @@ function selfTest() {
       'kinds: a part of a missing legacy anchor',
       { 'a-part.md': part('legacy#nope') },
       /no ### in ## Unreleased has that anchor/,
+      LBASE,
     )
     refused(
       'kinds: legacy# only names a ### in Unreleased',
       { 'a-part.md': part('legacy#0067', { meta: { area: 'Ops' } }) },
       /extends legacy#0067, but no ### in ## Unreleased has that anchor/,
+      LBASE,
     )
     clean('kinds: a part of a released heading', {
       'a-part.md': part('released#released-thing', { meta: { area: 'Ops' } }),
@@ -2166,7 +2197,7 @@ function selfTest() {
       'kinds: legacy# names a ### only, not a deeper heading in Unreleased',
       { 'a-part.md': part('legacy#sub-legacy', { meta: { area: 'Ops' } }) },
       /extends legacy#sub-legacy, but no ### in ## Unreleased has that anchor/,
-      BASE.replace('**What changed.** Old.', '**What changed.** Old.\n\n#### Sub legacy'),
+      LBASE.replace('**What changed.** Old.', '**What changed.** Old.\n\n#### Sub legacy'),
     )
 
     // assembly: placement, the table, parts, rebasing
@@ -2675,10 +2706,6 @@ function selfTest() {
     }
 
     // legacy markers
-    const LBASE = BASE.replace(
-      'Intro paragraph.\n',
-      'Intro paragraph.\n\n<!-- legacy:start -->\n',
-    ).replace('Body.\n\n---\n\n## Released', 'Body.\n\n<!-- legacy:end -->\n\n---\n\n## Released')
     clean('legacy: a marked block checks cleanly', { 'an-entry.md': entry() }, LBASE)
     refused(
       'legacy: a start marker without an end',
@@ -2732,7 +2759,12 @@ function selfTest() {
       write(
         prepo,
         '.changeset/beta.md',
-        entry({ title: 'Beta entry', bump: 'patch', meta: { action: 'None' }, body: [WHAT] }),
+        entry({
+          title: 'Beta entry',
+          bump: 'patch',
+          meta: { action: 'None' },
+          body: [WHAT, 'See [p](./alpha-more.md) and [l](./legacy-more.md).'],
+        }),
       )
       write(prepo, '.changeset/alpha-more.md', part('alpha'))
       write(prepo, '.changeset/legacy-more.md', part('legacy#legacy-thing'))
@@ -2742,7 +2774,7 @@ function selfTest() {
         part('released#released-thing', { meta: { area: 'Ops' } }),
       )
       const inbound =
-        '# Readme\n\n[a](.changeset/alpha.md), [m](./.changeset/alpha-more.md#frag), [g](.changeset/README.md) and [x][d].\n\n[d]: /.changeset/beta.md\n'
+        '# Readme\n\n[a](.changeset/alpha.md), [m](./.changeset/alpha-more.md#frag), [l](.changeset/legacy-more.md), [g](.changeset/README.md) and [x][d].\n\n[d]: /.changeset/beta.md\n'
       write(prepo, 'README.md', inbound)
       write(prepo, 'docs/guide.md', '# Guide\n\n[a](../.changeset/alpha.md)\n')
       write(prepo, '.claude/notes.md', '[a](../.changeset/alpha.md)\n')
@@ -2751,6 +2783,14 @@ function selfTest() {
       g(prepo, 'commit', '-qm', 'more')
       write(prepo, 'notes/untracked.md', '[a](../.changeset/alpha.md)\n')
       const before = analyze(prepo, { fallbackLabel: '0.1.0' })
+      const intOut = join(tmp, 'ship-legacy.md')
+      ship(prepo, { version: '0.0.68-int.10', sha: SHA, out: intOut })
+      expect(
+        'ship: a build with a legacy block says its entries carry hand-written labels',
+        (existsSync(intOut) ? readFileSync(intOut, 'utf8') : '').includes(
+          `${HANDOFF} ${HANDOFF_LEGACY}`,
+        ),
+      )
       const r = promote(prepo, '0.1.0')
       const text = readFileSync(join(prepo, CHANGELOG), 'utf8')
       expect(
@@ -2816,6 +2856,8 @@ function selfTest() {
             '',
             WHAT,
             '',
+            'See [p](#alpha-entry) and [l](#legacy-thing-continued).',
+            '',
             '#### Legacy thing, continued',
             '',
             '<!-- changeset: legacy-more -->',
@@ -2839,9 +2881,19 @@ function selfTest() {
       expect(
         'promote: tracked links to a changeset point at its entry, relative to the file',
         readFileSync(join(prepo, 'README.md'), 'utf8') ===
-          '# Readme\n\n[a](CHANGELOG.md#alpha-entry), [m](CHANGELOG.md#added-in-010), [g](.changeset/README.md) and [x][d].\n\n[d]: CHANGELOG.md#beta-entry\n' &&
+          '# Readme\n\n[a](CHANGELOG.md#alpha-entry), [m](CHANGELOG.md#alpha-entry), [l](CHANGELOG.md#legacy-thing-continued), [g](.changeset/README.md) and [x][d].\n\n[d]: CHANGELOG.md#beta-entry\n' &&
           readFileSync(join(prepo, 'docs/guide.md'), 'utf8') ===
             '# Guide\n\n[a](../CHANGELOG.md#alpha-entry)\n',
+      )
+      expect(
+        'links: a body link to a nested part lands on its entry, to a legacy# part on its own',
+        text.includes('See [p](#alpha-entry) and [l](#legacy-thing-continued).'),
+      )
+      expect(
+        'links: an inbound link to a nested part lands on its entry, to a legacy# part on its own',
+        readFileSync(join(prepo, 'README.md'), 'utf8').includes(
+          '[m](CHANGELOG.md#alpha-entry), [l](CHANGELOG.md#legacy-thing-continued)',
+        ),
       )
       expect(
         'promote: .claude/, .changeset/ and untracked files keep their links',
@@ -2892,6 +2944,85 @@ function selfTest() {
         `ship: after promote, a stable build links its section, got ${JSON.stringify(s.problems)}`,
         shipped.includes('Its entries are [0.1.0](#010), under **Released**.') &&
           !shipped.includes('New since'),
+      )
+      expect(
+        'ship: once the legacy block is promoted, the handoff drops the legacy sentence',
+        shipped.includes(`${HANDOFF}\n`) && !shipped.includes(HANDOFF_LEGACY),
+      )
+      // A branch cut before the release still holds a legacy# part, which
+      // merging the release in must not strand.
+      write(
+        prepo,
+        '.changeset/late-legacy.md',
+        part('legacy#other-legacy', { meta: { area: 'Ops' } }),
+      )
+      const late = check(prepo)
+      expect(
+        `promote: a legacy# part resolves to the promoted entry under Released, got ${JSON.stringify(late.problems)}`,
+        late.problems.filter((p) => p.severity === 'error').length === 0 &&
+          (late.text ?? '').includes(
+            '| next | Ops | [Other legacy, continued](#other-legacy-continued) | None |',
+          ) &&
+          (late.text ?? '').includes(
+            '### Other legacy, continued\n\n<!-- changeset: late-legacy -->\n\n_Not yet in an int._\n\nContinues [Other legacy](#other-legacy).',
+          ) &&
+          /\n#### Other legacy\n/.test(late.text ?? ''),
+      )
+    }
+    {
+      // An int carried a part released in 0.1.0 and, on the int branch, a
+      // pending part of another entry; both render as "Added in int.7".
+      const released = (marked) =>
+        [
+          '# Guide',
+          '',
+          '## Unreleased',
+          '',
+          'Intro paragraph.',
+          '',
+          '---',
+          '',
+          '## Released',
+          '',
+          '### 0.1.0',
+          '',
+          '#### Old entry',
+          '',
+          '<!-- changeset: old-entry -->',
+          '',
+          '_First in int.5._',
+          '',
+          '**What changed.** Old.',
+          '',
+          '##### Added in int.7',
+          '',
+          ...(marked ? ['<!-- changeset: old-part -->', ''] : []),
+          '**What changed.** More.',
+          '',
+        ].join('\n')
+      const grepo = join(tmp, 'g')
+      mkdirSync(grepo)
+      g(grepo, 'init', '-q')
+      write(grepo, CHANGELOG, released(true))
+      write(grepo, '.changeset/new-entry.md', titled('New entry'))
+      write(grepo, '.changeset/new-part.md', part('new-entry'))
+      g(grepo, 'add', '-A')
+      g(grepo, 'commit', '-qm', 'int 7')
+      g(grepo, 'tag', 'v0.1.1-int.7')
+      const r = check(grepo)
+      expect(
+        `stability: a pending part's generated heading may renumber a promoted one, got ${JSON.stringify(r.problems)}`,
+        r.problems.filter((p) => p.severity === 'error').length === 0 &&
+          (r.text ?? '').includes('#### Added in int.7\n\n<!-- changeset: new-part -->'),
+      )
+      write(grepo, CHANGELOG, released(false))
+      expect(
+        'stability: a hand-written heading of the same text still may not move',
+        check(grepo).problems.some((p) =>
+          /moves "Added in int\.7" \(CHANGELOG\.md:\d+\) from #added-in-int7 to #added-in-int7-1/.test(
+            p.message,
+          ),
+        ),
       )
     }
     {

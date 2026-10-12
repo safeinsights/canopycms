@@ -493,6 +493,45 @@ function selfTest() {
       expect('backwards: nothing is written', status(dir) === '')
     }
     {
+      const dir = fixture('tag-aside')
+      g(dir, 'checkout', '-qb', 'side')
+      write(dir, 'side.txt', 'side\n')
+      g(dir, 'add', '-A')
+      g(dir, 'commit', '-qm', 'side')
+      g(dir, 'tag', 'v0.2.0')
+      g(dir, 'checkout', '-q', 'main')
+      write(dir, '.changeset/a-change.md', minorEntry('A change'))
+      g(dir, 'add', '-A')
+      g(dir, 'commit', '-qm', 'change')
+      const r = run(dir)
+      expect(
+        `tag: a latest stable tag that HEAD does not contain is refused, got ${show(r)}`,
+        r.status === 1 &&
+          r.stdout === '' &&
+          /HEAD does not contain v0\.2\.0, the latest stable release/.test(r.stderr) &&
+          status(dir) === '',
+      )
+    }
+    {
+      // A doc without a word budget fails check-docs, whatever the release wrote.
+      const dir = fixture('docs-fail', [
+        {
+          files: {
+            '.changeset/a-change.md': minorEntry('A change'),
+            'docs/unbudgeted.md': '# Unbudgeted\n\nText.\n',
+          },
+        },
+      ])
+      const r = run(dir)
+      expect(
+        `validate: a lint:docs failure exits 1 with nothing on stdout, got ${show(r)}`,
+        r.status === 1 &&
+          r.stdout === '' &&
+          /`pnpm lint:docs` failed/.test(r.stderr) &&
+          /missing doc budget/.test(r.stderr),
+      )
+    }
+    {
       // int.5 carries alpha, the legacy owner and an empty changeset; the rest is untagged.
       const dir = fixture('full', [
         {
@@ -611,7 +650,7 @@ function selfTest() {
       expect(
         'full: links to a consumed changeset point at its entry',
         read(dir, 'README.md') ===
-          '# README.md\n\nSee [alpha](CHANGELOG.md#alpha-entry) and [more](CHANGELOG.md#added-in-010).\n' &&
+          '# README.md\n\nSee [alpha](CHANGELOG.md#alpha-entry) and [more](CHANGELOG.md#alpha-entry).\n' &&
           read(dir, 'site/guide.md') === '# Guide\n\nSee [beta](../CHANGELOG.md#beta-entry).\n',
       )
       expect(
