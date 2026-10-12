@@ -23,8 +23,8 @@ import { isApiTimeoutError } from '../../api/client'
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
 
 /** @internal Exported for tests. */
-export const BRANCH_ACTION_OUTCOME_UNKNOWN =
-  "The server didn't answer in time, so this may have gone through anyway. Check the branch list before trying again."
+export const branchActionOutcomeUnknown = (action: string) =>
+  `${action} may have gone through even though the server didn't answer in time. Check the branch's status before trying again.`
 
 /**
  * Wire a confirm modal's exits so exactly ONE of {confirmed, dismissed} runs,
@@ -369,11 +369,13 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     }
   }, [branchesData, branchName])
 
-  // Fixed id: a retry updates the existing toast instead of stacking; sticky because the editor
+  // One toast, replaced on each failure (a shown id ignores `show`); sticky because the editor
   // cannot function without the branch list.
   const showBranchesLoadFailed = (message: string) => {
+    notifications.hide(BRANCHES_LOAD_FAILED_TOAST_ID)
     notifications.show({
       id: BRANCHES_LOAD_FAILED_TOAST_ID,
+      title: 'Could not load branches',
       message: (
         <RetryToastMessage
           message={message}
@@ -531,10 +533,17 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // A workflow action that timed out may have gone through, so the list reloads to show where
   // the branch stands rather than inviting a blind retry.
-  const reportActionFailure = (err: unknown, fallback: string) => {
+  const showOutcomeUnknown = (action: string) =>
+    notifications.show({
+      message: branchActionOutcomeUnknown(action),
+      color: 'yellow',
+      autoClose: false,
+      withCloseButton: true,
+    })
+  const reportActionFailure = async (err: unknown, fallback: string, action: string) => {
     if (isApiTimeoutError(err)) {
-      notifications.show({ message: BRANCH_ACTION_OUTCOME_UNKNOWN, color: 'yellow' })
-      void loadBranches()
+      showOutcomeUnknown(action)
+      await loadBranches()
       return
     }
     notifications.show({ message: err instanceof Error ? err.message : fallback, color: 'red' })
@@ -577,7 +586,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 await loadBranches()
                 resolve()
               } catch (err) {
-                reportActionFailure(err, 'Failed to submit branch')
+                await reportActionFailure(
+                  err,
+                  'Failed to submit branch',
+                  EDITOR_ACTIONS.submitForReview,
+                )
                 reject(err)
               } finally {
                 options.setBusy(false)
@@ -615,7 +628,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 await loadBranches()
                 resolve()
               } catch (err) {
-                reportActionFailure(err, 'Failed to withdraw branch')
+                await reportActionFailure(
+                  err,
+                  'Failed to withdraw branch',
+                  EDITOR_ACTIONS.withdrawFromReview,
+                )
                 reject(err)
               } finally {
                 options.setBusy(false)
@@ -648,7 +665,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 updateCreatedBranch(branchNameForChanges, result.data?.branch)
                 await loadBranches()
               } catch (err) {
-                reportActionFailure(err, 'Failed to request changes')
+                await reportActionFailure(
+                  err,
+                  'Failed to request changes',
+                  EDITOR_ACTIONS.requestChanges,
+                )
               } finally {
                 options.setBusy(false)
                 resolve()
@@ -658,6 +679,19 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           )
         }),
     )
+
+  /** After a delete: drop it from the created-branch overlay, and leave it if it is open. */
+  const leaveDeletedBranch = (deleted: string, fresh: BranchesData | undefined) => {
+    forgetCreatedBranch(deleted)
+    // Matched the way `currentBranch` resolves a name, since the deleted branch is no longer
+    // listed to resolve against.
+    const open = latest.current.branchName
+    if (open === deleted || sanitizeBranchName(open) === deleted) {
+      // Nothing is left to keep, so no unsaved-changes prompt. With no default known yet, the
+      // empty name lets the default-branch adoption effect pick it.
+      setBranchName(fresh?.defaultBranch ?? latest.current.branchesData?.defaultBranch ?? '')
+    }
+  }
 
   const handleDelete = (requested: string) => {
     const branchNameToDelete = listedName(requested)
@@ -688,23 +722,23 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                       }
                     : { message: 'Branch deleted', color: 'green' },
                 )
-                forgetCreatedBranch(branchNameToDelete)
-                const fresh = await reloadBranches()
-                // Matched the way `currentBranch` resolves a name, since the deleted branch is
-                // no longer listed to resolve against.
-                const open = latest.current.branchName
-                if (
-                  open === branchNameToDelete ||
-                  sanitizeBranchName(open) === branchNameToDelete
-                ) {
-                  // Nothing is left to keep, so no unsaved-changes prompt. With no default known
-                  // yet, the empty name lets the default-branch adoption effect pick it.
-                  setBranchName(
-                    fresh?.defaultBranch ?? latest.current.branchesData?.defaultBranch ?? '',
-                  )
-                }
+                leaveDeletedBranch(branchNameToDelete, await reloadBranches())
               } catch (err) {
-                reportActionFailure(err, 'Failed to delete branch')
+                if (!isApiTimeoutError(err)) {
+                  await reportActionFailure(err, 'Failed to delete branch', 'Delete branch')
+                  return
+                }
+                // The list settles a timed-out delete: a branch no longer listed was deleted.
+                const fresh = await reloadBranches()
+                const listed = fresh?.branches.some(
+                  (b) => sanitizeBranchName(b.name) === sanitizeBranchName(branchNameToDelete),
+                )
+                if (fresh && !listed) {
+                  notifications.show({ message: 'Branch deleted', color: 'green' })
+                  leaveDeletedBranch(branchNameToDelete, fresh)
+                } else {
+                  showOutcomeUnknown('Delete branch')
+                }
               } finally {
                 options.setBusy(false)
                 // Failures surface as the toast above, never as a rejection; cancelling resolves too.

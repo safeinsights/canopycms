@@ -5,7 +5,7 @@ import { notifications } from '@mantine/notifications'
 import { getErrorMessage } from '../../utils/error'
 
 /** Shown while a surface refuses to close because a comment write is still in flight. */
-export const CLOSE_WAITS_FOR_WRITE = 'Still sending. This closes once it finishes.'
+export const CLOSE_WAITS_FOR_WRITE = 'Still saving… You can close this once it finishes.'
 
 /**
  * Wraps a surface's comment writes: `inFlight` counts the unsettled ones, and a write that fails

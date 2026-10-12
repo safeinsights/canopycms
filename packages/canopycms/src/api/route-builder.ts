@@ -150,8 +150,8 @@ interface EndpointConfigBase<
   /** See `RouteDefinition['bodyFormat']` above. */
   bodyFormat?: 'multipart'
   /**
-   * The generated client's timeout for this endpoint, when not its method's default (`read` for
-   * GET, `write` otherwise); see `REQUEST_TIMEOUT_MS` in request-deadline.ts.
+   * The generated client's timeout for this endpoint, when not `standard`; see
+   * `REQUEST_TIMEOUT_MS` in request-deadline.ts.
    */
   clientTimeout?: 'long' | 'none'
 }

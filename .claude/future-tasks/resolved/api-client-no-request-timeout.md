@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  RESOLVED (2026-10-12) — every generated client call runs under a deadline (`api/request-deadline.ts`): 30 s for reads, 75 s for writes, 180 s for endpoints declared `clientTimeout: 'long'`, and a per-call `timeoutMs`/`signal` through `RequestOptions`. Past it the call rejects with `ApiTimeoutError`. Save treats a timeout as outcome-unknown, a timed-out comment post says it may have landed and reloads the threads, timed-out branch actions reload the branch list, and the content and branch load toasts offer Retry.
+  RESOLVED (2026-10-12) — every generated client call runs under a deadline (`api/request-deadline.ts`): 75 s, 180 s for endpoints declared `clientTimeout: 'long'`, and a per-call `timeoutMs`/`signal` through `RequestOptions`. Past it the call rejects with `ApiTimeoutError`. A timed-out save keeps the draft for saving again (the server's version check refuses a retry of a save that landed); a timed-out comment post says it may have been posted and reloads the threads; a timed-out branch action names itself, says it may have gone through and reloads the list, and a timed-out delete settles from the list; the content and branch load toasts offer Retry.
 ---
 
 # Editor API requests have no timeout

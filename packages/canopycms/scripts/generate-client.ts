@@ -84,9 +84,9 @@ const HAND_WRITTEN_METHODS: Record<string, (route: RouteMetadata) => string> = {
     }`,
 }
 
-/** The endpoint's timeout class: its declared `clientTimeout`, else `read` for GET and `write` otherwise. */
+/** The endpoint's timeout class: its declared `clientTimeout`, else `standard`. */
 function timeoutClassLiteral(route: RouteMetadata): string {
-  return `'${route.clientTimeout ?? (route.method === 'GET' ? 'read' : 'write')}'`
+  return `'${route.clientTimeout ?? 'standard'}'`
 }
 
 /**

@@ -21,7 +21,8 @@ import { UserBadge } from './components/UserBadge'
 import { userIdLabel } from './user-display'
 import { RelativeTime } from './components/RelativeTime'
 import { ThreadReplyControls } from './comments/ThreadReplyControls'
-import { CLOSE_WAITS_FOR_WRITE, useTrackedWrites } from './comments/use-tracked-writes'
+import { useTrackedWrites } from './comments/use-tracked-writes'
+import { CloseRefusedNotice } from './comments/CloseRefusedNotice'
 import { getErrorMessage } from '../utils/error'
 
 export interface CommentsPanelProps {
@@ -146,13 +147,11 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
           <Text size="xs" c="dimmed">
             {branchName}
           </Text>
-          <Text size="xs" c="dimmed" role="status">
-            {closeRefused ? CLOSE_WAITS_FOR_WRITE : null}
-          </Text>
         </div>
       }
     >
       <Stack gap="md" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
+        <CloseRefusedNotice refused={closeRefused} />
         <Paper withBorder p="md">
           <Stack gap="sm">
             <Text size="xs" c="dimmed">

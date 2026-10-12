@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  A branch's comment list that fails to load (an error status, or a read past the API client's 30 s deadline) shows no error and no Retry. `useCommentsData` rejects and SWR keeps any threads already shown, but on a first load the comments panel, the field popovers and the entry button read as "no comments" with nothing saying otherwise. Surface the load error with a Retry in the comments panel, per docs/ux-guidelines.md's states rules.
+  A branch's comment list that fails to load (an error status, or a read past the API client's deadline) shows no error and no Retry. `useCommentsData` rejects and SWR keeps any threads already shown, but on a first load the comments panel, the field popovers and the entry button read as "no comments" with nothing saying otherwise. Surface the load error with a Retry in the comments panel, per docs/ux-guidelines.md's states rules.
 ---
 
 # A failed comment-list load reads as "no comments"

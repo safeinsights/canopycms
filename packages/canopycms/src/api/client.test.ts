@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { CanopyApiClient, createApiClient, isNonApiResponse } from './client'
 import { computeContentSha256Hex } from './request-body-hash'
-import { ApiTimeoutError, REQUEST_TIMED_OUT_MESSAGE, REQUEST_TIMEOUT_MS } from './request-deadline'
+import {
+  ApiTimeoutError,
+  REQUEST_TIMED_OUT_MESSAGE,
+  REQUEST_TIMEOUT_MS,
+  WRITE_TIMED_OUT_MESSAGE,
+} from './request-deadline'
 
 describe('CanopyApiClient', () => {
   describe('Response handling', () => {
@@ -412,7 +417,7 @@ describe('CanopyApiClient', () => {
       vi.restoreAllMocks()
     })
 
-    it('rejects a read that never answers with a typed timeout at the read deadline, aborting the fetch', async () => {
+    it('rejects a read that never answers with a typed timeout at the standard deadline, aborting the fetch', async () => {
       const { fetch, signals } = stalledFetch()
       const pending = new CanopyApiClient({ fetch }).branches.list()
       let settled = false
@@ -424,7 +429,7 @@ describe('CanopyApiClient', () => {
         },
       )
 
-      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.read - 1)
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard - 1)
       expect(settled).toBe(false)
       expect(signals[0]?.aborted).toBe(false)
       await vi.advanceTimersByTimeAsync(1)
@@ -435,34 +440,36 @@ describe('CanopyApiClient', () => {
         name: 'ApiTimeoutError',
         method: 'GET',
         path: '/branches',
-        timeoutMs: REQUEST_TIMEOUT_MS.read,
+        timeoutMs: REQUEST_TIMEOUT_MS.standard,
         message: REQUEST_TIMED_OUT_MESSAGE,
       })
       expect(signals[0]?.aborted).toBe(true)
     })
 
-    it('gives a write the longer write deadline', async () => {
+    it('says a timed-out write may have gone through, rather than inviting a retry', async () => {
       const { fetch } = stalledFetch()
       const pending = new CanopyApiClient({ fetch }).comments.add(
         { branch: 'main' },
         { text: 'hi', type: 'entry', entryPath: 'posts/hello' },
       )
       const rejection = expect(pending).rejects.toMatchObject({
-        timeoutMs: REQUEST_TIMEOUT_MS.write,
+        method: 'POST',
+        timeoutMs: REQUEST_TIMEOUT_MS.standard,
+        message: WRITE_TIMED_OUT_MESSAGE,
       })
-      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.write)
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard)
       await rejection
     })
 
-    it('does not cut a long operation off at the write deadline', async () => {
+    it('does not cut a long operation off at the standard deadline', async () => {
       const { fetch } = stalledFetch()
       const pending = new CanopyApiClient({ fetch }).workflow.submit({ branch: 'feature' })
       let settled = false
       pending.catch(() => {}).finally(() => (settled = true))
 
-      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.write + 1)
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard + 1)
       expect(settled).toBe(false)
-      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.long - REQUEST_TIMEOUT_MS.write - 1)
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.long - REQUEST_TIMEOUT_MS.standard - 1)
       await expect(pending).rejects.toMatchObject({ timeoutMs: REQUEST_TIMEOUT_MS.long })
     })
 
@@ -517,7 +524,7 @@ describe('CanopyApiClient', () => {
       const { fetch } = stalledFetch()
       const pending = new CanopyApiClient({ fetch }).entries.list({ branch: 'main' })
       const rejection = expect(pending).rejects.toBeInstanceOf(ApiTimeoutError)
-      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.read)
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard)
       await rejection
     })
 

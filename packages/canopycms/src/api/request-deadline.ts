@@ -8,14 +8,14 @@
 /**
  * @internal Exported for tests.
  *
- * How long each class of request may take. `write` is past the 60 s an API behind CloudFront
- * gets, so a server still working answers (or its proxy's 504 does) before the editor gives up.
- * `long` is for the operations that legitimately run longer: provisioning, submit, admin scans
- * and repairs, and an upload without progress.
+ * How long each class of request may take. `standard` is past the 60 s an API behind CloudFront
+ * gets, so a server still working answers (or its proxy's 504 does) before the editor gives up;
+ * reads get it too, since any request may first provision the base branch's workspace. `long` is
+ * for the operations that legitimately run longer: branch create, submit, admin scans and
+ * repairs, and an upload without progress.
  */
 export const REQUEST_TIMEOUT_MS = {
-  read: 30_000,
-  write: 75_000,
+  standard: 75_000,
   long: 180_000,
 } as const
 
@@ -30,9 +30,13 @@ export interface RequestOptions {
   timeoutMs?: number | null
 }
 
-/** @internal Exported for tests. The message an {@link ApiTimeoutError} carries. */
+/** @internal Exported for tests. A timed-out read's message: retrying it is safe. */
 export const REQUEST_TIMED_OUT_MESSAGE =
   "The server didn't answer in time. Check your connection and try again."
+
+/** @internal Exported for tests. A timed-out write's message: the server may have acted on it. */
+export const WRITE_TIMED_OUT_MESSAGE =
+  "The server didn't answer in time, so this may have gone through anyway. Check before trying again."
 
 /** A request ran past its deadline and was abandoned; the server may still have acted on it. */
 export class ApiTimeoutError extends Error {
@@ -43,7 +47,7 @@ export class ApiTimeoutError extends Error {
     readonly path: string,
     readonly timeoutMs: number,
   ) {
-    super(REQUEST_TIMED_OUT_MESSAGE)
+    super(method === 'GET' ? REQUEST_TIMED_OUT_MESSAGE : WRITE_TIMED_OUT_MESSAGE)
   }
 }
 

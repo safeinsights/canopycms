@@ -1527,6 +1527,51 @@ describe('useEntryManager', () => {
       restore()
     })
 
+    it("hides the load-failure toast once the branch shown loads, and replaces another branch's", async () => {
+      const { restore } = setupMockConsole(['error'])
+      try {
+        const succeeded = mockClient.schema.get.getMockImplementation()
+        mockClient.schema.get.mockImplementation((params: Record<string, string>) =>
+          params.branch === 'branch-ok'
+            ? (succeeded?.(params) ?? Promise.reject(new Error('no default')))
+            : Promise.reject(new ApiTimeoutError('GET', `/${params.branch}/schema`, 75_000)),
+        )
+        const failureToasts = () =>
+          vi
+            .mocked(notifications.show)
+            .mock.calls.map(([n]) => n)
+            .filter((n) => n.id === 'canopy-entries-load-failed')
+
+        const { rerender } = renderHook((props) => useEntryManager(props), {
+          wrapper,
+          initialProps: optionsFor('branch-a'),
+        })
+        await waitFor(() => expect(failureToasts()).toHaveLength(1))
+
+        // Another failing branch: its own toast, after the first is taken down.
+        vi.mocked(notifications.hide).mockClear()
+        rerender(optionsFor('branch-b'))
+        await waitFor(() => expect(failureToasts()).toHaveLength(2))
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-entries-load-failed')
+
+        // Back to a branch whose failure is cached: no error-free render takes the toast down.
+        vi.mocked(notifications.hide).mockClear()
+        rerender(optionsFor('branch-a'))
+        await waitFor(() => expect(failureToasts()).toHaveLength(3))
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-entries-load-failed')
+
+        // A branch that loads: the toast goes, with no Retry pressed.
+        vi.mocked(notifications.hide).mockClear()
+        rerender(optionsFor('branch-ok'))
+        await waitFor(() =>
+          expect(notifications.hide).toHaveBeenCalledWith('canopy-entries-load-failed'),
+        )
+        expect(failureToasts()).toHaveLength(3)
+      } finally {
+        restore()
+      }
+    })
+
     it('a timed-out load settles, fetches once, and its toast stays with a Retry that reloads it', async () => {
       const { restore } = setupMockConsole(['error'])
       try {

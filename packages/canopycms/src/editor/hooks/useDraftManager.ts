@@ -14,7 +14,7 @@ import { isApiTimeoutError } from '../../api/client'
 
 /** @internal Exported for tests. */
 export const SAVE_TIMED_OUT_MESSAGE =
-  "Save didn't finish in time. It may have saved anyway, so reload this entry to check before saving again."
+  "Save didn't finish in time, and may not have gone through. Your changes are still here, so save again."
 
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
 const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
@@ -780,9 +780,14 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         }
         showConflictNotification(err.serverMessage || undefined)
       } else if (isApiTimeoutError(err)) {
-        // As with WRITE_OUTCOME_UNKNOWN, the write may have landed after the editor stopped waiting.
-        reloadRequiredRef.current[currentId] = options.getEntryVersion?.(currentId)
-        showConflictNotification(SAVE_TIMED_OUT_MESSAGE)
+        // Saving again is safe: a save that did land moved the version, so the server refuses the
+        // retry as a conflict rather than overwriting.
+        notifications.show({
+          message: SAVE_TIMED_OUT_MESSAGE,
+          color: 'yellow',
+          autoClose: false,
+          withCloseButton: true,
+        })
       } else {
         const explained = isValidation || isForbidden || isUnavailable
         notifications.show({

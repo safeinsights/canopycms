@@ -26,7 +26,8 @@ import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { getErrorMessage } from '../../utils/error'
 import { InlineCommentThread } from './InlineCommentThread'
-import { CLOSE_WAITS_FOR_WRITE, useTrackedWrites } from './use-tracked-writes'
+import { useTrackedWrites } from './use-tracked-writes'
+import { CloseRefusedNotice } from './CloseRefusedNotice'
 import { useRefocusAfterSubmit } from './ThreadReplyControls'
 import { commentsAriaKeyShortcuts, commentsShortcutLabel } from './form-comments'
 import { choosePopoverSide, type FieldAnchors, type PopoverSide } from './popover-placement'
@@ -457,9 +458,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
               </Button>
             </Group>
           )}
-          <Text size="xs" c="dimmed" role="status">
-            {closeRefused ? CLOSE_WAITS_FOR_WRITE : null}
-          </Text>
+          <CloseRefusedNotice refused={closeRefused} />
         </Stack>
       </Popover.Dropdown>
     </Popover>

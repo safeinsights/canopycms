@@ -68,7 +68,7 @@ export interface UseCommentSystemReturn {
 export const COMMENT_NOT_ADDED = "Couldn't add the comment. Try again."
 /** @internal Exported for tests. */
 export const COMMENT_MAY_BE_ADDED =
-  "The server didn't answer in time, so the comment may have been added. Check the thread before sending it again."
+  "The server didn't answer in time, so your comment may have been posted. Check the comments above before sending it again."
 /** @internal Exported for tests. */
 export const THREAD_NOT_RESOLVED = "Couldn't resolve the thread. Try again."
 
@@ -91,7 +91,10 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // Mode's double effect invoke collapses to a single request). Switching
   // branches re-keys automatically, so no manual branch-change effect is
   // needed.
-  const { data: commentsData } = useCommentsData(apiClient, options.branchName)
+  const { data: commentsData, error: commentsError } = useCommentsData(
+    apiClient,
+    options.branchName,
+  )
   const comments = commentsData?.threads ?? []
   const getCommentUser = useSeededUserResolver()
 
@@ -99,9 +102,11 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // stable setState passthrough, and this file is plain .ts (not .tsx), so
   // the react-hooks/exhaustive-deps rule isn't active here anyway --
   // including it would refire this on every Editor.tsx render regardless.
+  // A branch whose comments never loaded reports none, not the previous branch's.
   useEffect(() => {
     if (commentsData) options.onCommentsChange?.(commentsData.threads)
-  }, [commentsData])
+    else if (commentsError) options.onCommentsChange?.([])
+  }, [commentsData, commentsError])
 
   // Explicit reload: always issues a fresh, independent fetch (raw call, not
   // SWR's `mutate()` revalidate path) so a caller requesting a reload right

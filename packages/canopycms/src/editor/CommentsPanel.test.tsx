@@ -421,7 +421,7 @@ describe('CommentsPanel', () => {
 
       expect(onClose).not.toHaveBeenCalled()
       // A refused close says why.
-      expect(screen.getByText(CLOSE_WAITS_FOR_WRITE).getAttribute('role')).toBe('status')
+      expect(screen.getByRole('status').textContent).toBe(CLOSE_WAITS_FOR_WRITE)
       expect(
         (within(card('a')).getByRole('button', { name: 'Jump to field' }) as HTMLButtonElement)
           .disabled,
@@ -430,7 +430,7 @@ describe('CommentsPanel', () => {
       await act(async () => {
         finish()
       })
-      expect(screen.queryByText(CLOSE_WAITS_FOR_WRITE)).toBeNull()
+      expect(screen.getByRole('status').textContent).toBe('')
       await userEvent.keyboard('{Escape}')
       expect(onClose).toHaveBeenCalledTimes(1)
     })

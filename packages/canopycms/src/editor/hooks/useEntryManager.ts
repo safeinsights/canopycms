@@ -687,6 +687,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const branch = options.branchName
     notifiedErrorBranchRef.current = branch
     console.error(entriesError)
+    // A shown toast with this id ignores `show`, so another branch's would keep its Retry.
+    notifications.hide(ENTRIES_LOAD_FAILED_TOAST_ID)
     notifications.show({
       id: ENTRIES_LOAD_FAILED_TOAST_ID,
       title: 'Could not load content',

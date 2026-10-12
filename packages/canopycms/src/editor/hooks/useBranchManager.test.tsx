@@ -5,7 +5,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { useSWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  BRANCH_ACTION_OUTCOME_UNKNOWN,
+  branchActionOutcomeUnknown,
   CREATED_BRANCH_GRACE_MS,
   useBranchManager,
   UseBranchManagerOptions,
@@ -235,6 +235,7 @@ describe('useBranchManager', () => {
       expect(toast).toBeDefined()
     })
     expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
+    expect(toast).toMatchObject({ title: 'Could not load branches' })
 
     await act(async () =>
       (toast?.message as React.ReactElement<RetryToastMessageProps>).props.onRetry(),
@@ -1049,20 +1050,80 @@ describe('useBranchManager', () => {
 
     const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
     await waitFor(() => expect(result.current.branches).toHaveLength(2))
-    const listCalls = mockClient.branches.list.mock.calls.length
+    let finishReload: () => void = () => {}
+    mockClient.branches.list.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishReload = () =>
+            resolve({ ok: true, status: 200, data: { branches: editingFeature, users: [] } })
+        }),
+    )
 
+    let settled = false
     await act(async () => {
-      await result.current.handleSubmit('feature').catch(() => {})
+      void result.current
+        .handleSubmit('feature')
+        .catch(() => {})
+        .finally(() => (settled = true))
     })
 
-    expect(mockSetBusy).toHaveBeenLastCalledWith(false)
     expect(notifications.show).toHaveBeenCalledWith(
-      expect.objectContaining({ message: BRANCH_ACTION_OUTCOME_UNKNOWN, color: 'yellow' }),
+      expect.objectContaining({
+        message: branchActionOutcomeUnknown('Submit for review'),
+        color: 'yellow',
+        autoClose: false,
+      }),
     )
-    await waitFor(() =>
-      expect(mockClient.branches.list.mock.calls.length).toBeGreaterThan(listCalls),
-    )
+    // The reload runs inside the action's busy window: still busy until the list answers.
+    expect(settled).toBe(false)
+    expect(mockSetBusy).toHaveBeenLastCalledWith(true)
+    await act(async () => finishReload())
+    await waitFor(() => expect(settled).toBe(true))
+    expect(mockSetBusy).toHaveBeenLastCalledWith(false)
     restore()
+  })
+
+  describe('a delete that times out', () => {
+    const deleteTimesOut = async (listedAfter: BranchMetadata[]) => {
+      mockClient.branches.list
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { branches: editingFeature, users: [] },
+        })
+        .mockResolvedValue({ ok: true, status: 200, data: { branches: listedAfter, users: [] } })
+      mockClient.branches.delete.mockRejectedValueOnce(
+        new ApiTimeoutError('DELETE', '/feature', 75_000),
+      )
+      const hook = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(hook.result.current.branches).toHaveLength(2))
+      act(() => hook.result.current.setBranchName('feature'))
+      await act(async () => {
+        await hook.result.current.handleDelete('feature')
+      })
+      return hook
+    }
+
+    it('reports it deleted, and leaves it, when the reloaded list no longer has it', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const remaining = editingFeature.filter((b) => b.name !== 'feature')
+      const { result } = await deleteTimesOut(remaining)
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Branch deleted' }),
+      )
+      expect(result.current.branchName).not.toBe('feature')
+    })
+
+    it('says it may have gone through when the branch is still listed', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const { result } = await deleteTimesOut(editingFeature)
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: branchActionOutcomeUnknown('Delete branch') }),
+      )
+      expect(result.current.branchName).toBe('feature')
+    })
   })
 
   it('withdraws branch successfully', async () => {

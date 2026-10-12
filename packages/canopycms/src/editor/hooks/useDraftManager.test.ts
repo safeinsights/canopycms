@@ -654,7 +654,7 @@ describe('useDraftManager', () => {
         consoleErrorSpy.mockRestore()
       })
 
-      it('ends the save, keeps the draft, says it may have saved, and holds a blind re-save', async () => {
+      it('ends the save, keeps the draft, says so until dismissed, and lets the next save go out', async () => {
         mockGetEntryVersion.mockReturnValue(100)
         mockSaveEntry.mockRejectedValueOnce(
           new ApiTimeoutError('PUT', '/main/content/posts/a', 75_000),
@@ -669,15 +669,20 @@ describe('useDraftManager', () => {
 
         const { notifications } = await import('@mantine/notifications')
         expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
-          expect.objectContaining({ message: SAVE_TIMED_OUT_MESSAGE, color: 'yellow' }),
+          expect.objectContaining({
+            message: SAVE_TIMED_OUT_MESSAGE,
+            color: 'yellow',
+            autoClose: false,
+          }),
         )
         expect(mockSetBusy).toHaveBeenLastCalledWith(false)
         expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft' })
 
+        // The server's version check, not a forced reload, guards a save that did land.
         await act(async () => {
           await result.current.handleSave()
         })
-        expect(mockSaveEntry).toHaveBeenCalledTimes(1)
+        expect(mockSaveEntry).toHaveBeenCalledTimes(2)
       })
     })
 

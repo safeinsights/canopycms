@@ -175,6 +175,18 @@ describe('useCommentSystem', () => {
     expect(mockClient.comments.list).toHaveBeenCalledWith({ branch: 'main' })
   })
 
+  it('reports no comments for a branch whose comments failed to load', async () => {
+    const { restore } = setupMockConsole(['error'])
+    mockClient.comments.list.mockRejectedValueOnce(
+      new ApiTimeoutError('GET', '/main/comments', 75_000),
+    )
+    const onCommentsChange = vi.fn()
+    renderHook(() => useCommentSystem({ ...defaultOptions, onCommentsChange }), { wrapper })
+
+    await waitFor(() => expect(onCommentsChange).toHaveBeenCalledWith([]))
+    restore()
+  })
+
   it('keeps the threads already shown when a reload fails', async () => {
     const { error, restore } = setupMockConsole(['error'])
     mockClient.comments.list.mockResolvedValueOnce({
