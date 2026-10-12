@@ -1,7 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react'
 
-import { CollectionEditor, type ExistingCollection } from './CollectionEditor'
+import {
+  CollectionEditor,
+  type ExistingCollection,
+  type ExistingEntryType,
+} from './CollectionEditor'
 import type { SchemaOpResult } from '../hooks/useSchemaManager'
+import { WRITE_TIMED_OUT_MESSAGE } from '../../api/client'
 import { unsafeAsLogicalPath } from '../../paths/test-utils'
 
 const meta: Meta<typeof CollectionEditor> = {
@@ -41,6 +46,12 @@ const savesAfterAPause = async (): Promise<SchemaOpResult> => {
   return { ok: true }
 }
 
+// Ends as a write a gateway gave up on: unanswered, so it may have landed.
+const goesUnanswered = async (): Promise<SchemaOpResult> => {
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  return { ok: false, error: WRITE_TIMED_OUT_MESSAGE, unanswered: true }
+}
+
 export const Create: Story = {
   args: { editingCollection: null },
 }
@@ -60,5 +71,22 @@ export const EditWithError: Story = {
   args: {
     editingCollection: collection,
     error: 'Could not save the collection: the branch changed. Reload and try again.',
+  },
+}
+
+// Every entry-type action goes unanswered, then the list is re-read: it has "featured" gone and
+// "page" added as the form's defaults send it (JSON, postSchema, no label). Removing "featured" or
+// adding "page" with those defaults reads as done; any other add, or an edit that changes
+// something, stays unsettled and keeps its dialog open.
+export const EditUnanswered: Story = {
+  args: {
+    editingCollection: collection,
+    onAddEntryType: goesUnanswered,
+    onUpdateEntryType: goesUnanswered,
+    onRemoveEntryType: goesUnanswered,
+    onReloadEntryTypes: async () => [
+      collection.entries[0] as ExistingEntryType,
+      { name: 'page', format: 'json', schema: 'postSchema', usageCount: 0 },
+    ],
   },
 }

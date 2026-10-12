@@ -797,84 +797,55 @@ const EditorContent: React.FC<EditorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path/branch/loadedValues change
   }, [currentEntry, loadedValues, selectedPath, branchNameState, loadAttempt])
 
+  // The collection dialog's entry types, with schema and usage, as the branch has them; null when
+  // the API refuses the read or the collection is gone, and a rejection when the read times out.
+  const readEntryTypes = async (
+    collectionPath: LogicalPath,
+  ): Promise<ExistingEntryType[] | null> => {
+    const result = await apiClient.schema.getCollection({
+      branch: branchNameState,
+      collectionPath,
+    })
+    const withUsage = result.ok ? result.data?.entryTypesWithUsage : undefined
+    return withUsage
+      ? withUsage.map(
+          (et): ExistingEntryType => ({
+            name: et.name,
+            label: et.label,
+            format: et.format,
+            schema: et.schemaRef,
+            default: et.default,
+            maxItems: et.maxItems,
+            usageCount: et.usageCount,
+          }),
+        )
+      : null
+  }
+
   const handleOpenCollectionEditor = async (
     collection: EditorCollection | null,
     parentPath?: LogicalPath,
   ) => {
     if (collection) {
-      try {
-        const result = await apiClient.schema.getCollection({
-          branch: branchNameState,
-          collectionPath: collection.path,
-        })
-
-        if (result.ok && result.data && result.data.collection) {
-          const entries: ExistingEntryType[] = result.data.entryTypesWithUsage
-            ? result.data.entryTypesWithUsage.map(
-                (et): ExistingEntryType => ({
-                  name: et.name,
-                  label: et.label,
-                  format: et.format,
-                  schema: et.schemaRef,
-                  default: et.default,
-                  maxItems: et.maxItems,
-                  usageCount: et.usageCount,
-                }),
-              )
-            : (collection.entryTypes ?? []).map(
-                (et): ExistingEntryType => ({
-                  name: et.name,
-                  label: et.label,
-                  format: et.format,
-                  schema: '', // Fallback if entryTypesWithUsage not available
-                  default: et.default,
-                  maxItems: et.maxItems,
-                }),
-              )
-
-          const existingCollection: ExistingCollection = {
-            name: collection.name,
-            label: collection.label,
-            logicalPath: collection.path,
-            entries,
-          }
-          setEditingCollection(existingCollection)
-        } else {
-          const existingCollection: ExistingCollection = {
-            name: collection.name,
-            label: collection.label,
-            logicalPath: collection.path,
-            entries: (collection.entryTypes ?? []).map(
-              (et): ExistingEntryType => ({
-                name: et.name,
-                label: et.label,
-                format: et.format,
-                schema: '',
-                default: et.default,
-                maxItems: et.maxItems,
-              }),
-            ),
-          }
-          setEditingCollection(existingCollection)
-        }
-      } catch {
-        const existingCollection: ExistingCollection = {
-          name: collection.name,
-          label: collection.label,
-          logicalPath: collection.path,
-          entries: (collection.entryTypes ?? []).map(
-            (et): ExistingEntryType => ({
-              name: et.name,
-              label: et.label,
-              format: et.format,
-              schema: '',
-              default: et.default,
-              maxItems: et.maxItems,
-            }),
-          ),
-        }
-        setEditingCollection(existingCollection)
-      }
+      // The tree's entry types, the fallback, carry no schema or usage.
+      const entries =
+        (await readEntryTypes(collection.path).catch(() => null)) ??
+        (collection.entryTypes ?? []).map(
+          (et): ExistingEntryType => ({
+            name: et.name,
+            label: et.label,
+            format: et.format,
+            schema: '',
+            default: et.default,
+            maxItems: et.maxItems,
+          }),
+        )
+      setEditingCollection({
+        name: collection.name,
+        label: collection.label,
+        logicalPath: collection.path,
+        entries,
+      })
       setCollectionEditorParentPath(undefined)
     } else {
       setEditingCollection(null)
@@ -901,7 +872,9 @@ const EditorContent: React.FC<EditorProps> = ({
     // instead of try/catch.
     if (isNew) {
       const result = await createCollection(data as Parameters<typeof createCollection>[0])
-      if (result.ok) {
+      // A retried create that had landed makes a second collection, so an unanswered one closes
+      // the dialog too, leaving the hook's toast to say to check the "Content" panel first.
+      if (result.ok || result.unanswered) {
         handleCloseCollectionEditor()
       } else {
         setCollectionEditorError(result.error)
@@ -911,7 +884,9 @@ const EditorContent: React.FC<EditorProps> = ({
         editingCollection.logicalPath,
         data as Parameters<typeof updateCollection>[1],
       )
-      if (result.ok) {
+      // An unanswered save may have renamed the collection, leaving `editingCollection`'s path
+      // stale, so the dialog closes; the hook's toast says to reopen it and check.
+      if (result.ok || result.unanswered) {
         handleCloseCollectionEditor()
       } else {
         setCollectionEditorError(result.error)
@@ -1826,6 +1801,7 @@ const EditorContent: React.FC<EditorProps> = ({
               onRemoveEntryType={
                 editingCollection ? (path, name) => removeEntryType(path, name) : undefined
               }
+              onReloadEntryTypes={editingCollection ? readEntryTypes : undefined}
               onClose={handleCloseCollectionEditor}
               isSaving={schemaLoading}
               error={collectionEditorError}

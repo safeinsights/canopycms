@@ -10,7 +10,8 @@
  * details", but every entry-type add, update and remove saves to the branch
  * at once. The footer's dismiss button says what leaving does: "Discard
  * changes" while details are staged, "Close" once an entry-type change has
- * saved, else "Cancel" (which would promise a revert it cannot do after one).
+ * saved or may have, else "Cancel" (which would promise a revert it cannot do
+ * after one).
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react'
@@ -31,6 +32,7 @@ import {
 } from '@mantine/core'
 import {
   IconAlertCircle,
+  IconAlertTriangle,
   IconCheck,
   IconPlus,
   IconDotsVertical,
@@ -104,6 +106,11 @@ export interface CollectionEditorProps {
     collectionPath: LogicalPath,
     entryTypeName: string,
   ) => Promise<SchemaOpResult>
+  /**
+   * Re-reads the entry types from the branch (edit mode only), after an action the server never
+   * answered; resolves to null when the read fails.
+   */
+  onReloadEntryTypes?: (collectionPath: LogicalPath) => Promise<ExistingEntryType[] | null>
   onClose: () => void
   isSaving?: boolean
   error?: string | null
@@ -114,6 +121,15 @@ function slugOf(logicalPath: LogicalPath): string {
   const pathParts = logicalPath.split('/')
   const lastPart = pathParts[pathParts.length - 1]
   return lastPart?.split('.')[0] || ''
+}
+
+/** Whether a listed entry type holds every field an add or update sent. */
+function showsFields(entryType: ExistingEntryType, fields: Partial<CreateEntryTypeInput>): boolean {
+  return Object.entries(fields).every(([key, value]) =>
+    key === 'default'
+      ? !!entryType.default === !!value
+      : entryType[key as keyof CreateEntryTypeInput] === value,
+  )
 }
 
 function usageOf(entryType: ExistingEntryType | CreateEntryTypeInput): number {
@@ -129,6 +145,7 @@ export function CollectionEditor({
   onAddEntryType,
   onUpdateEntryType,
   onRemoveEntryType,
+  onReloadEntryTypes,
   onClose,
   isSaving = false,
   error = null,
@@ -158,9 +175,14 @@ export function CollectionEditor({
   const [entryTypes, setEntryTypes] = useState<ExistingEntryType[]>(
     () => editingCollection?.entries ?? [],
   )
-  // True once an immediate entry-type change has saved in this opening of the dialog.
+  // True once an immediate entry-type change has saved, or may have, in this opening of the dialog.
   const [entryTypeChanged, setEntryTypeChanged] = useState(false)
   const [entryTypeStatus, setEntryTypeStatus] = useState('')
+  // An unanswered remove the re-read did not settle, shown above the list.
+  const [entryTypeUnanswered, setEntryTypeUnanswered] = useState<string | null>(null)
+  // An unanswered add or update the re-read did not settle, shown in the entry type dialog,
+  // which stays open with the user's input.
+  const [entryTypeWarning, setEntryTypeWarning] = useState<string | null>(null)
   const [removeFailure, setRemoveFailure] = useState<{ name: string; message: string } | null>(null)
   const [removing, setRemoving] = useState(false)
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null)
@@ -199,6 +221,7 @@ export function CollectionEditor({
       setValidationError(null)
       setEntryTypeChanged(false)
       setEntryTypeStatus('')
+      setEntryTypeUnanswered(null)
       setRemoveFailure(null)
     } else {
       // The parent closes this dialog (and nulls `editingCollection`) when details save, so a
@@ -311,11 +334,32 @@ export function CollectionEditor({
     setEntryTypeChanged(true)
   }, [])
 
+  /**
+   * After an entry-type action the server never answered, which may have landed: re-reads the
+   * list from the branch and shows it, and counts the action as a possible change (the footer
+   * reads "Close"). Resolves to the re-read list, or null when it could not be read.
+   */
+  const reloadEntryTypes = useCallback(
+    async (collectionPath: LogicalPath): Promise<ExistingEntryType[] | null> => {
+      setEntryTypeChanged(true)
+      const reloaded = await (onReloadEntryTypes?.(collectionPath) ?? Promise.resolve(null)).catch(
+        (err: unknown) => {
+          console.error(err)
+          return null
+        },
+      )
+      if (reloaded) setEntryTypes(reloaded)
+      return reloaded
+    },
+    [onReloadEntryTypes],
+  )
+
   const closeEntryTypeEditor = useCallback(() => {
     setEntryTypeEditorOpen(false)
     setEditingEntryType(null)
     setEditingEntryTypeIndex(null)
     setEntryTypeError(null)
+    setEntryTypeWarning(null)
   }, [])
 
   // Esc, the close button and a click outside all land here; closing mid-request would hide
@@ -348,7 +392,9 @@ export function CollectionEditor({
 
         setEntryTypeSaving(true)
         setEntryTypeError(null)
+        setEntryTypeWarning(null)
         setEntryTypeStatus('')
+        setEntryTypeUnanswered(null)
         setRemoveFailure(null)
         try {
           // An absent callback leaves `result` undefined: nothing was saved, so nothing is
@@ -370,6 +416,26 @@ export function CollectionEditor({
               )
               announceEntryTypeChange(`Entry type "${name}" updated`)
             }
+          }
+          if (result && !result.ok && result.unanswered) {
+            // The re-read settles it when the branch already shows the change. Otherwise this
+            // dialog keeps the input: re-sending an update sends the same change, and re-sending
+            // an add that had landed is refused because the name exists (`schema-store.ts`).
+            const name = isNew ? (data as CreateEntryTypeInput).name : editingEntryType?.name
+            const reloaded = await reloadEntryTypes(editingCollection.logicalPath)
+            const now = reloaded?.find((et) => et.name === name)
+            if (name && now && showsFields(now, stored)) {
+              announceEntryTypeChange(`Entry type "${name}" ${isNew ? 'added' : 'updated'}`)
+              closeEntryTypeEditor()
+              setFocusRequest({ row: name })
+              return
+            }
+            setEntryTypeWarning(
+              isNew
+                ? `"${name}" may not have been added. Select "Add entry type" to try again: if it was added, you'll be told it already exists.`
+                : 'The change may not have been saved. Select "Save entry type" to send it again.',
+            )
+            return
           }
           if (result && !result.ok) {
             setEntryTypeError(result.error)
@@ -409,6 +475,7 @@ export function CollectionEditor({
       onAddEntryType,
       onUpdateEntryType,
       announceEntryTypeChange,
+      reloadEntryTypes,
       closeEntryTypeEditor,
     ],
   )
@@ -447,6 +514,7 @@ export function CollectionEditor({
         if (!onRemoveEntryType) return
         setRemoving(true)
         setEntryTypeStatus('')
+        setEntryTypeUnanswered(null)
         try {
           const result = await onRemoveEntryType(editingCollection.logicalPath, name)
           if (result.ok) {
@@ -454,6 +522,22 @@ export function CollectionEditor({
             setRemoveFailure(null)
             announceEntryTypeChange(`Entry type "${name}" removed`)
             setFocusRequest({ row: neighbour })
+          } else if (result.unanswered) {
+            setRemoveFailure(null)
+            // The re-read settles it when the entry type is gone.
+            const reloaded = await reloadEntryTypes(editingCollection.logicalPath)
+            const listed = reloaded?.map((et) => et.name)
+            if (listed && !listed.includes(name)) {
+              announceEntryTypeChange(`Entry type "${name}" removed`)
+              setFocusRequest({ row: neighbour && listed.includes(neighbour) ? neighbour : null })
+            } else {
+              setEntryTypeUnanswered(
+                listed
+                  ? `"${name}" is still listed, so it may not have been removed yet. Remove it again to retry, or close and reopen this collection later to check.`
+                  : `"${name}" may already have been removed. Close and reopen this collection to check before trying again.`,
+              )
+              setFocusRequest({ row: name })
+            }
           } else {
             setRemoveFailure({ name, message: result.error })
             setFocusRequest({ row: name })
@@ -472,7 +556,14 @@ export function CollectionEditor({
         setFocusRequest({ row: neighbour })
       }
     },
-    [displayEntryTypes, isEditMode, editingCollection, onRemoveEntryType, announceEntryTypeChange],
+    [
+      displayEntryTypes,
+      isEditMode,
+      editingCollection,
+      onRemoveEntryType,
+      announceEntryTypeChange,
+      reloadEntryTypes,
+    ],
   )
 
   const confirmRemoveEntryType = useCallback(async () => {
@@ -545,6 +636,21 @@ export function CollectionEditor({
           </Text>
         )}
       </div>
+
+      {entryTypeUnanswered && (
+        <Alert
+          icon={<IconAlertTriangle size={16} />}
+          color="yellow"
+          title="No answer from the server"
+          withCloseButton
+          onClose={() => {
+            setEntryTypeUnanswered(null)
+            setFocusRequest({ row: null })
+          }}
+        >
+          {entryTypeUnanswered}
+        </Alert>
+      )}
 
       {displayEntryTypes.length === 0 ? (
         <Paper p="md" withBorder>
@@ -653,7 +759,10 @@ export function CollectionEditor({
           color="red"
           title="Couldn't remove entry type"
           withCloseButton
-          onClose={() => setRemoveFailure(null)}
+          onClose={() => {
+            setRemoveFailure(null)
+            setFocusRequest({ row: null })
+          }}
         >
           <Stack gap="xs" align="flex-start">
             <Text size="sm">{removeFailure.message}</Text>
@@ -797,6 +906,7 @@ export function CollectionEditor({
         onClose={dismissEntryTypeEditor}
         isSaving={entryTypeSaving}
         error={entryTypeError}
+        warning={entryTypeWarning}
       />
 
       <ConfirmDeleteModal

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ApiTimeoutError } from '../../api/request-deadline'
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
+import { ApiTimeoutError, WRITE_TIMED_OUT_MESSAGE } from '../../api/request-deadline'
 import { renderHook, act } from '@testing-library/react'
-import { useSchemaManager } from './useSchemaManager'
+import { useSchemaManager, schemaChangeOutcomeUnknown } from './useSchemaManager'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper, gatewayPage } from './__test__/test-utils'
 import { mockSuccess, mockError } from '../../api/__test__/mock-client'
@@ -132,6 +132,34 @@ describe('useSchemaManager', () => {
         { label: 'Blog Posts' },
       )
       expect(onSchemaChange).toHaveBeenCalled()
+    })
+
+    it('reports a landed save as saved when the content tree refresh fails', async () => {
+      mockClient.schema.updateCollection.mockResolvedValueOnce(mockSuccess({ success: true }))
+      const onSchemaChange = vi.fn(() =>
+        Promise.reject(new ApiTimeoutError('GET', '/main/schema', 75_000)),
+      )
+      const { result } = renderHook(
+        () => useSchemaManager({ branchName: 'main', onSchemaChange }),
+        { wrapper },
+      )
+
+      let updateResult: Awaited<ReturnType<typeof result.current.updateCollection>> = {
+        ok: false,
+        error: 'not called',
+      }
+      await act(async () => {
+        updateResult = await result.current.updateCollection(unsafeAsLogicalPath('posts'), {
+          label: 'Blog Posts',
+        })
+      })
+
+      expect(updateResult).toEqual({ ok: true })
+      expect(onSchemaChange).toHaveBeenCalledTimes(1)
+      expect(notifications.show).toHaveBeenCalledTimes(1)
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Collection updated', color: 'green' }),
+      )
     })
 
     it('returns a failure result with the underlying error message', async () => {
@@ -386,40 +414,6 @@ describe('useSchemaManager', () => {
       expect(onSchemaChange).toHaveBeenCalled()
     })
 
-    it('refreshes the content tree after a timed-out delete, which may have landed', async () => {
-      mockClient.entries.delete.mockRejectedValueOnce(
-        new ApiTimeoutError('DELETE', '/main/entries/posts/a', 75_000),
-      )
-      const onSchemaChange = vi.fn()
-      const { result } = renderHook(
-        () => useSchemaManager({ branchName: 'main', onSchemaChange }),
-        { wrapper },
-      )
-
-      let deleteResult: Awaited<ReturnType<typeof result.current.deleteEntry>> = { ok: true }
-      await act(async () => {
-        deleteResult = await result.current.deleteEntry(unsafeAsLogicalPath('posts/a'))
-      })
-
-      expect(deleteResult.ok).toBe(false)
-      expect(onSchemaChange).toHaveBeenCalled()
-    })
-
-    it("refreshes the content tree after a delete answered by a gateway's 5xx page", async () => {
-      mockClient.entries.delete.mockResolvedValueOnce(await gatewayPage(504))
-      const onSchemaChange = vi.fn(() => Promise.reject(new Error('still down')))
-      const { result } = renderHook(
-        () => useSchemaManager({ branchName: 'main', onSchemaChange }),
-        { wrapper },
-      )
-
-      await act(async () => {
-        await result.current.deleteEntry(unsafeAsLogicalPath('posts/a'))
-      })
-
-      expect(onSchemaChange).toHaveBeenCalled()
-    })
-
     it('returns a failure result when lacking permission', async () => {
       mockClient.entries.delete.mockResolvedValueOnce(mockError(403, 'Edit permission required'))
 
@@ -489,6 +483,195 @@ describe('useSchemaManager', () => {
         confirmReferenced: 'true',
       })
     })
+  })
+
+  describe.each<{
+    op: string
+    mock: (client: MockApiClient) => Mock
+    call: (hook: ReturnType<typeof useSchemaManager>) => Promise<{ ok: boolean }>
+    unknownToast: string | null
+    failureToast: string | null
+  }>([
+    {
+      op: 'createCollection',
+      mock: (c) => c.schema.createCollection as Mock,
+      call: (h) =>
+        h.createCollection({
+          name: 'posts',
+          entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+        }),
+      unknownToast: schemaChangeOutcomeUnknown(
+        'Creating the collection',
+        'Check the "Content" panel',
+      ),
+      failureToast: 'Failed to create collection: x',
+    },
+    {
+      op: 'updateCollection',
+      mock: (c) => c.schema.updateCollection as Mock,
+      call: (h) => h.updateCollection(unsafeAsLogicalPath('posts'), { label: 'Blog' }),
+      unknownToast: schemaChangeOutcomeUnknown(
+        'Saving collection details',
+        'Reopen the collection to check',
+      ),
+      failureToast: 'Failed to update collection: x',
+    },
+    {
+      op: 'deleteCollection',
+      mock: (c) => c.schema.deleteCollection as Mock,
+      call: (h) => h.deleteCollection(unsafeAsLogicalPath('posts')),
+      unknownToast: schemaChangeOutcomeUnknown(
+        'Deleting the collection',
+        'Check the "Content" panel',
+      ),
+      failureToast: 'Failed to delete collection: x',
+    },
+    {
+      op: 'updateOrder',
+      mock: (c) => c.schema.updateOrder as Mock,
+      call: (h) => h.updateOrder(unsafeAsLogicalPath('posts'), ['id2', 'id1']),
+      unknownToast: schemaChangeOutcomeUnknown('Reordering entries', 'Check the "Content" panel'),
+      failureToast: 'Failed to update order: x',
+    },
+    {
+      op: 'deleteEntry',
+      mock: (c) => c.entries.delete as Mock,
+      call: (h) => h.deleteEntry(unsafeAsLogicalPath('posts/a')),
+      unknownToast: schemaChangeOutcomeUnknown('Deleting the entry', 'Check the "Content" panel'),
+      failureToast: 'Failed to delete entry: x',
+    },
+    {
+      op: 'addEntryType',
+      mock: (c) => c.schema.addEntryType as Mock,
+      call: (h) =>
+        h.addEntryType(unsafeAsLogicalPath('posts'), {
+          name: 'featured',
+          format: 'mdx',
+          schema: 'postSchema',
+        }),
+      unknownToast: null,
+      failureToast: null,
+    },
+    {
+      op: 'updateEntryType',
+      mock: (c) => c.schema.updateEntryType as Mock,
+      call: (h) => h.updateEntryType(unsafeAsLogicalPath('posts'), 'post', { label: 'Post' }),
+      unknownToast: null,
+      failureToast: null,
+    },
+    {
+      op: 'removeEntryType',
+      mock: (c) => c.schema.removeEntryType as Mock,
+      call: (h) => h.removeEntryType(unsafeAsLogicalPath('posts'), 'post'),
+      unknownToast: null,
+      failureToast: null,
+    },
+  ])('$op outcome handling', ({ mock, call, unknownToast, failureToast }) => {
+    const run = async (onSchemaChange: () => unknown) => {
+      const { result } = renderHook(
+        () => useSchemaManager({ branchName: 'main', onSchemaChange }),
+        { wrapper },
+      )
+      let outcome: Awaited<ReturnType<typeof call>> = { ok: true }
+      await act(async () => {
+        outcome = await call(result.current)
+      })
+      return outcome
+    }
+
+    // An unanswered write may have landed, so it is neither a plain failure nor a success.
+    const expectUnanswered = (outcome: unknown) => {
+      expect(outcome).toEqual({ ok: false, error: WRITE_TIMED_OUT_MESSAGE, unanswered: true })
+      expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ color: 'red' }))
+      if (unknownToast) {
+        expect(notifications.show).toHaveBeenCalledTimes(1)
+        expect(notifications.show).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: 'canopy-schema-outcome-unknown',
+            message: unknownToast,
+            color: 'yellow',
+            autoClose: false,
+          }),
+        )
+      } else {
+        expect(notifications.show).not.toHaveBeenCalled()
+      }
+    }
+
+    it('reloads the content tree and reports a client timeout as unanswered', async () => {
+      mock(mockClient).mockRejectedValueOnce(new ApiTimeoutError('POST', '/main/schema', 75_000))
+      const onSchemaChange = vi.fn()
+
+      expectUnanswered(await run(onSchemaChange))
+      expect(onSchemaChange).toHaveBeenCalledTimes(1)
+    })
+
+    it("reloads the content tree and reports a gateway's 5xx page as unanswered", async () => {
+      mock(mockClient).mockResolvedValueOnce(await gatewayPage(504))
+      const onSchemaChange = vi.fn()
+
+      expectUnanswered(await run(onSchemaChange))
+      expect(onSchemaChange).toHaveBeenCalledTimes(1)
+    })
+
+    it('stays unanswered when the content tree reload rejects', async () => {
+      mock(mockClient).mockResolvedValueOnce(await gatewayPage(502))
+      // Not a `vi.fn`, which handles the rejection of a promise it returns.
+      let reloads = 0
+      const onSchemaChange = () => {
+        reloads += 1
+        return Promise.reject(new Error('still down'))
+      }
+      const unhandled: unknown[] = []
+      const record = (reason: unknown) => unhandled.push(reason)
+      process.on('unhandledRejection', record)
+
+      try {
+        expectUnanswered(await run(onSchemaChange))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      } finally {
+        process.off('unhandledRejection', record)
+      }
+
+      expect(reloads).toBe(1)
+      expect(unhandled).toEqual([])
+    })
+
+    it('reports a plain failure without reloading the content tree or marking it unanswered', async () => {
+      mock(mockClient).mockResolvedValueOnce(mockError(400, 'x'))
+      const onSchemaChange = vi.fn()
+
+      const outcome = await run(onSchemaChange)
+
+      expect(outcome).toEqual({ ok: false, error: 'x' })
+      expect(outcome).not.toHaveProperty('unanswered')
+      expect(onSchemaChange).not.toHaveBeenCalled()
+      if (failureToast) {
+        expect(notifications.show).toHaveBeenCalledTimes(1)
+        expect(notifications.show).toHaveBeenCalledWith(
+          expect.objectContaining({ color: 'red', message: failureToast }),
+        )
+      } else {
+        expect(notifications.show).not.toHaveBeenCalled()
+      }
+    })
+  })
+
+  it('replaces an earlier outcome-unknown toast instead of stacking another', async () => {
+    mockClient.schema.updateOrder.mockRejectedValue(
+      new ApiTimeoutError('PATCH', '/main/schema/order', 75_000),
+    )
+    const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
+
+    await act(async () => {
+      await result.current.updateOrder(unsafeAsLogicalPath('posts'), ['a'])
+    })
+    await act(async () => {
+      await result.current.updateOrder(unsafeAsLogicalPath('posts'), ['b'])
+    })
+
+    expect(notifications.hide).toHaveBeenCalledTimes(2)
+    expect(notifications.hide).toHaveBeenCalledWith('canopy-schema-outcome-unknown')
   })
 
   describe('isLoading state', () => {

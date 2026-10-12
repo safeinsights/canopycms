@@ -22,7 +22,7 @@ import {
   Alert,
   Tooltip,
 } from '@mantine/core'
-import { IconAlertCircle, IconLock } from '@tabler/icons-react'
+import { IconAlertCircle, IconAlertTriangle, IconLock } from '@tabler/icons-react'
 
 import type { ContentFormat } from '../../config'
 import type { CreateEntryTypeInput, UpdateEntryTypeInput } from '../../schema/schema-store-types'
@@ -58,6 +58,8 @@ export interface EntryTypeEditorProps {
   onClose: () => void
   isSaving?: boolean
   error?: string | null
+  /** A note above the kept form that the last save's outcome is unknown, and how to retry. */
+  warning?: string | null
 }
 
 const FORMAT_OPTIONS: { value: ContentFormat; label: string }[] = [
@@ -77,6 +79,7 @@ export function EntryTypeEditor({
   onClose,
   isSaving = false,
   error = null,
+  warning = null,
 }: EntryTypeEditorProps) {
   const isEditMode = editingEntryType !== null
   const usageCount = editingEntryType?.usageCount ?? 0
@@ -217,6 +220,16 @@ export function EntryTypeEditor({
       size="md"
     >
       <Stack gap="md">
+        {warning && !displayError && (
+          <Alert
+            icon={<IconAlertTriangle size={16} />}
+            color="yellow"
+            title="No answer from the server"
+          >
+            {warning}
+          </Alert>
+        )}
+
         {displayError && (
           <Alert
             icon={<IconAlertCircle size={16} />}

@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Small UX follow-ups to the editor's request timeouts. A renamed entry that landed after no answer loses its selection, and a read-only POST that times out says it may have gone through. A comment post that "may have been posted" shows as a red error, where save and branch outcomes use yellow. The Retry on the content and branch load toasts hides the toast and drops keyboard focus to `<body>` with nothing showing a retry is running. No story covers a comments surface refusing to close while a write is in flight. And the guidelines do not yet say how an unknown outcome (a write that may have landed) is shown.
+  Small UX follow-ups to the editor's request timeouts. A renamed entry that landed after no answer loses its selection, and a read-only POST that times out says it may have gone through. A comment post that "may have been posted" shows as a red error, where save and branch outcomes use yellow. The Retry on the content and branch load toasts hides the toast and drops keyboard focus to `<body>` with nothing showing a retry is running. No story covers a comments surface refusing to close while a write is in flight. The sticky "save may have landed" toast names no entry, and the collection dialog's unsettled entry-type retries can be refused with a stale list.
 ---
 
 # Request-timeout UX follow-ups
@@ -25,10 +25,20 @@ summary: >-
 - `ApiTimeoutError` picks its message by method, so a read-only POST (`assets.presign`,
   `content.resolveReferences`, `permissions.batchGetUserMetadata`) that times out says it "may
   have gone through". Route metadata could mark such endpoints as reads.
-- docs/ux-guidelines.md says nothing about an unknown outcome's colour, whether it is sticky, or
-  that it must not say "try again"; nor where a live status line goes in an overlay whose title
-  is its `aria-labelledby`.
+- docs/ux-guidelines.md covers an unknown outcome's colour and stickiness, but not where a live
+  status line goes in an overlay whose title is its `aria-labelledby`.
+- The "may already have gone through" save toast (`showSaveMayHaveLanded` in
+  `editor/hooks/useDraftManager.ts`) stays up while the user opens other entries, and names none,
+  so its "Reload entry" instruction reads as being about whichever entry is open. Hide it while
+  another entry is selected and show it again on return, or name the entry.
+- The collection dialog (`editor/schema-editor/CollectionEditor.tsx`) settles an unanswered
+  entry-type action from one re-read, which can come back before the write finishes. A retry
+  that is then refused ("already exists" for an add, "not found" for a remove) leaves the list
+  stale, and a refused remove offers a Retry that cannot succeed. Re-read after a refusal that
+  follows an unsettled action. Likewise an unsettled update whose entry type is gone from the
+  re-read keeps its dialog open inviting a save that will be refused, and Cancel then focuses a
+  row that no longer exists; close it with a note and focus the heading instead.
 
 ## Done when
 
-Each point above is fixed or ruled out, and the guidelines cover unknown outcomes.
+Each point above is fixed or ruled out.

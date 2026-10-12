@@ -112,7 +112,15 @@ const canopyComponents = {
   ModalCloseButton: Modal.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
   DrawerCloseButton: Drawer.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
   Notification: Notification.extend({ defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS } }),
-  Alert: Alert.extend({ defaultProps: { closeButtonLabel: 'Close' } }),
+  // A light yellow Alert's title, icon and close button are yellow on pale yellow, under 2:1, so
+  // they take the text colour; the tint and the icon's shape still mark it a warning.
+  Alert: Alert.extend({
+    defaultProps: { closeButtonLabel: 'Close' },
+    vars: (_theme, props) =>
+      props.color === 'yellow' && (props.variant ?? 'light') === 'light'
+        ? { root: { '--alert-color': 'var(--mantine-color-text)' } }
+        : { root: {} },
+  }),
 }
 
 export const createCanopyTheme = (

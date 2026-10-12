@@ -16,6 +16,12 @@ import { isUnanswered } from '../unanswered'
 export const SAVE_TIMED_OUT_MESSAGE =
   "Save didn't finish, and may not have gone through. Your changes are still here, so save again."
 
+/** @internal Exported for tests. Shown when a save may already have landed, until a reload. */
+export const SAVE_MAY_HAVE_LANDED_MESSAGE =
+  'Your last save may already have gone through. Before saving again, choose "Reload entry" in the menu under the entry\'s name; your unsaved edits will be lost.'
+
+const saveMayHaveLandedToastId = (contentId: string) => `canopy-save-may-have-landed:${contentId}`
+
 const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
 
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
@@ -210,10 +216,12 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const draftBaseVersionsRef = useRef<Record<string, number | null>>({})
   const [draftStorageFailed, setDraftStorageFailed] = useState(false)
   const [saveInFlight, setSaveInFlight] = useState(false)
-  // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN. That save may have
-  // landed, so re-sending the token would bounce off the user's own write; held until re-read.
+  // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN, or when the retry of
+  // a timed-out save was refused as a version conflict. That save may have landed, so re-sending
+  // the token would bounce off the user's own write; held until re-read.
   const reloadRequiredRef = useRef<Record<string, number | undefined>>({})
-  // Entries whose timed-out save toast is up, taken down once a save, reload or discard ends it.
+  // Entries whose timed-out save toast is up, taken down once a save, reload, discard or branch
+  // switch ends it, or a retry is refused as having landed.
   const timedOutSavesRef = useRef(new Set<string>())
   // The draft ids the reconcile effect below has already accounted for. It
   // prunes on an observed present -> absent TRANSITION rather than on "not
@@ -337,7 +345,13 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // them across a switch would compare one branch's version against
       // another's.
       draftBaseVersionsRef.current = {}
+      for (const id of Object.keys(reloadRequiredRef.current)) {
+        notifications.hide(saveMayHaveLandedToastId(id))
+      }
       reloadRequiredRef.current = {}
+      // A timed-out save belongs to the branch it was sent to; content ids repeat across branches.
+      for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
+      timedOutSavesRef.current.clear()
       reconciledDraftIdsRef.current = new Set()
     }
     prevBranchRef.current = options.branchName
@@ -606,6 +620,18 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }
 
+  /** Stays until dismissed or the entry is reloaded: saving is held until then. */
+  const showSaveMayHaveLanded = (contentId: string, message = SAVE_MAY_HAVE_LANDED_MESSAGE) => {
+    notifications.hide(saveMayHaveLandedToastId(contentId))
+    notifications.show({
+      id: saveMayHaveLandedToastId(contentId),
+      message: message || SAVE_MAY_HAVE_LANDED_MESSAGE,
+      color: 'yellow',
+      autoClose: false,
+      withCloseButton: true,
+    })
+  }
+
   /**
    * How the selected entry's draft relates to the server version we hold.
    *
@@ -677,12 +703,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     if (currentId in reloadRequiredRef.current) {
       if (reloadRequiredRef.current[currentId] === options.getEntryVersion?.(currentId)) {
-        showConflictNotification(
-          'Your last save may already have been recorded. Reload this entry before saving again (your unsaved edits will be lost).',
-        )
+        showSaveMayHaveLanded(currentId)
         return
       }
       delete reloadRequiredRef.current[currentId]
+      notifications.hide(saveMayHaveLandedToastId(currentId))
     }
 
     // Conflict check first: a stale-based draft must not be schema-validated
@@ -782,10 +807,22 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         setErrorState({ entryId: currentId, errors: toFieldErrorMap(err.fieldErrors) })
       }
       if (isConflict) {
-        if (err.code === 'WRITE_OUTCOME_UNKNOWN') {
+        // A version conflict on the retry of a save that went unanswered is most likely that
+        // save having landed, which a reload settles just as for WRITE_OUTCOME_UNKNOWN.
+        const ownSaveLanded =
+          err.serverMessage === ENTRY_CHANGED_MESSAGE && timedOutSavesRef.current.has(currentId)
+        if (err.code === 'WRITE_OUTCOME_UNKNOWN' || ownSaveLanded) {
           reloadRequiredRef.current[currentId] = options.getEntryVersion?.(currentId)
         }
-        showConflictNotification(err.serverMessage || undefined)
+        if (ownSaveLanded) {
+          timedOutSavesRef.current.delete(currentId)
+          notifications.hide(saveTimedOutToastId(currentId))
+        }
+        if (err.code === 'WRITE_OUTCOME_UNKNOWN' || ownSaveLanded) {
+          showSaveMayHaveLanded(currentId, ownSaveLanded ? undefined : err.serverMessage)
+        } else {
+          showConflictNotification(err.serverMessage || undefined)
+        }
       } else if (isUnanswered(err)) {
         // A save that did land moved the file's version, so the server refuses the retry as a
         // conflict; a file since deleted or moved is the exception (`ContentStore.write`).
@@ -916,6 +953,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       const loaded = await options.loadEntry(options.currentEntry)
       options.onDraftsReset?.(currentId)
       delete reloadRequiredRef.current[currentId]
+      notifications.hide(saveMayHaveLandedToastId(currentId))
       if (timedOutSavesRef.current.delete(currentId)) {
         notifications.hide(saveTimedOutToastId(currentId))
       }
