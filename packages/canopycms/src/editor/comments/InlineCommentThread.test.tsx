@@ -323,6 +323,29 @@ describe('InlineCommentThread', () => {
       await waitFor(() => expect(calls).toEqual(['reply:Last word', 'resolve']))
     })
 
+    it('locks the reply box while Reply and resolve is in flight', async () => {
+      let finish: () => void = () => {}
+      const onAddReply = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          }),
+      )
+      const user = userEvent.setup()
+      renderThread({ onAddReply })
+
+      await user.click(screen.getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'first')
+      await user.click(screen.getByTestId('resolve-thread-button'))
+
+      expect((screen.getByLabelText('Reply to this thread') as HTMLTextAreaElement).disabled).toBe(
+        true,
+      )
+      await act(async () => {
+        finish()
+      })
+    })
+
     it('does not resolve, and keeps the draft, when the reply before it fails', async () => {
       const onAddReply = vi.fn().mockRejectedValue(new Error("Couldn't add the comment."))
       const onResolve = vi.fn().mockResolvedValue(undefined)

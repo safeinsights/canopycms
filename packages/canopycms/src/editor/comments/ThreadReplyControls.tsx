@@ -146,7 +146,7 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
             value={replyText}
             onChange={(e) => setReplyText(e.target.value)}
             minRows={2}
-            disabled={replying}
+            disabled={replying || resolving}
           />
           <Group gap="xs">
             <Button

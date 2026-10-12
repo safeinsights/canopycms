@@ -22,12 +22,14 @@ import { userIdLabel } from './user-display'
 import { RelativeTime } from './components/RelativeTime'
 import { ThreadReplyControls } from './comments/ThreadReplyControls'
 import { useTrackedWrites } from './comments/use-tracked-writes'
+import { moveFocusIfUnmoved } from './comments/move-focus-if-unmoved'
 import { getErrorMessage } from '../utils/error'
 
 export interface CommentsPanelProps {
   /**
    * Whether the drawer is open. The panel stays mounted while closed, so the composer text and
-   * reply drafts survive a close; key it by branch to reset them for another one.
+   * reply drafts survive a close; key it by branch to reset them for another one. It refuses to
+   * close while a write is in flight, since its busy state and any error go with the drawer.
    */
   opened: boolean
   branchName: string
@@ -82,9 +84,12 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   const [showResolved, setShowResolved] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const { track } = useTrackedWrites()
-  const addReply = track(onAddComment)
+  const { inFlight, track } = useTrackedWrites()
+  const addComment = track(onAddComment)
   const resolveThread = track(onResolveThread)
+  const close = () => {
+    if (inFlight === 0) onClose()
+  }
   // A resolved thread's card leaves the list with the focused button, so focus lands here.
   const threadCountRef = useRef<HTMLParagraphElement>(null)
   // With resolved threads shown, the card stays and its heading takes the focus instead.
@@ -100,7 +105,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     setIsSubmitting(true)
     setError(null)
     try {
-      await onAddComment(newCommentText, 'branch', undefined, undefined, undefined)
+      await addComment(newCommentText, 'branch', undefined, undefined, undefined)
       setNewCommentText('')
     } catch (err) {
       setError(getErrorMessage(err))
@@ -122,7 +127,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   return (
     <Drawer
       opened={opened}
-      onClose={onClose}
+      onClose={close}
       position="right"
       size={420}
       title={
@@ -225,6 +230,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         onJumpToField && (
                           <Button
                             variant="light"
+                            disabled={inFlight > 0}
                             onClick={() => {
                               onJumpToField(thread.entryPath!, thread.canopyPath!, thread.id)
                               onClose()
@@ -236,6 +242,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                       {thread.type === 'entry' && thread.entryPath && onJumpToEntry && (
                         <Button
                           variant="light"
+                          disabled={inFlight > 0}
                           onClick={() => {
                             onJumpToEntry(thread.entryPath!, thread.id)
                             onClose()
@@ -247,6 +254,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                       {thread.type === 'branch' && onJumpToBranch && (
                         <Button
                           variant="light"
+                          disabled={inFlight > 0}
                           onClick={() => {
                             onJumpToBranch(thread.id)
                             onClose()
@@ -298,7 +306,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                       <ThreadReplyControls
                         thread={thread}
                         onAddReply={(text) =>
-                          addReply(
+                          addComment(
                             text,
                             thread.type,
                             thread.entryPath,
@@ -307,11 +315,14 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                           )
                         }
                         onResolve={async () => {
+                          const origin = document.activeElement
                           await resolveThread(thread.id)
-                          ;(showResolved
-                            ? headingRefs.current.get(thread.id)
-                            : threadCountRef.current
-                          )?.focus()
+                          moveFocusIfUnmoved(
+                            origin,
+                            showResolved
+                              ? headingRefs.current.get(thread.id)
+                              : threadCountRef.current,
+                          )
                         }}
                         currentUserId={currentUserId}
                         canResolve={canResolve}

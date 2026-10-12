@@ -17,6 +17,7 @@ import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { InlineCommentThread } from './InlineCommentThread'
 import { useTrackedWrites } from './use-tracked-writes'
+import { moveFocusIfUnmoved } from './move-focus-if-unmoved'
 
 /**
  * ## Purpose
@@ -377,8 +378,9 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                       thread={thread}
                       onAddReply={(text) => addComment(text, thread.id)}
                       onResolve={async () => {
+                        const origin = document.activeElement
                         await resolveThread(thread.id)
-                        labelRef.current?.focus()
+                        moveFocusIfUnmoved(origin, labelRef.current)
                       }}
                       currentUserId={currentUserId}
                       canResolve={canResolve}

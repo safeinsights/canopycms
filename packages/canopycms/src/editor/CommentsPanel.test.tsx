@@ -337,7 +337,7 @@ describe('CommentsPanel', () => {
       )
     })
 
-    it('reports a reply that fails after the panel closed, as a toast', async () => {
+    it('reports a reply that fails after the panel is gone (another branch opened), as a toast', async () => {
       showNotification.mockClear()
       let fail: (err: Error) => void = () => {}
       const onAddComment = vi.fn(
@@ -351,6 +351,84 @@ describe('CommentsPanel', () => {
       await userEvent.click(within(card('a')).getByTestId('reply-thread-button'))
       await userEvent.type(screen.getByLabelText('Reply to this thread'), 'Too late')
       await userEvent.click(screen.getByTestId('submit-reply-button'))
+      unmount()
+      await act(async () => {
+        fail(new Error("Couldn't add the comment. Try again."))
+      })
+
+      expect(showNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'red', message: "Couldn't add the comment. Try again." }),
+      )
+    })
+
+    it('refuses to close, and disables its jumps, while a reply is in flight', async () => {
+      let finish: () => void = () => {}
+      const onAddComment = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          }),
+      )
+      const onClose = vi.fn()
+      renderPanel({
+        comments: [fieldThread('a')],
+        onAddComment,
+        onClose,
+        onJumpToField: vi.fn(),
+      })
+
+      await userEvent.click(within(card('a')).getByTestId('reply-thread-button'))
+      await userEvent.type(screen.getByLabelText('Reply to this thread'), 'Wait for me')
+      await userEvent.click(screen.getByTestId('submit-reply-button'))
+      await userEvent.keyboard('{Escape}')
+
+      expect(onClose).not.toHaveBeenCalled()
+      expect(
+        (within(card('a')).getByRole('button', { name: 'Jump to field' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true)
+
+      await act(async () => {
+        finish()
+      })
+      await userEvent.keyboard('{Escape}')
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('leaves focus where the user put it while a resolve was in flight', async () => {
+      let finish: () => void = () => {}
+      const onResolveThread = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          }),
+      )
+      renderPanel({ comments: [fieldThread('a'), fieldThread('b')], onResolveThread })
+
+      await userEvent.click(within(card('a')).getByTestId('resolve-thread-button'))
+      const composer = screen.getByTestId('comment-textarea')
+      await userEvent.click(composer)
+      await act(async () => {
+        finish()
+      })
+
+      await waitFor(() => expect(onResolveThread).toHaveBeenCalled())
+      expect(document.activeElement).toBe(composer)
+    })
+
+    it('reports a new comment that fails after the panel is gone, as a toast', async () => {
+      showNotification.mockClear()
+      let fail: (err: Error) => void = () => {}
+      const onAddComment = vi.fn(
+        () =>
+          new Promise<void>((_, reject) => {
+            fail = reject
+          }),
+      )
+      const { unmount } = renderPanel({ onAddComment })
+
+      await userEvent.type(screen.getByTestId('comment-textarea'), 'Lost?')
+      await userEvent.click(screen.getByTestId('comment-submit'))
       unmount()
       await act(async () => {
         fail(new Error("Couldn't add the comment. Try again."))
