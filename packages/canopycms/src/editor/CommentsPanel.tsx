@@ -90,6 +90,15 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   const close = () => {
     if (inFlight === 0) onClose()
   }
+  // A jump hands focus to its target, the field's or entry's comment popover, so the drawer
+  // returns none: its return would land after the popover took focus.
+  const [jumping, setJumping] = useState(false)
+  if (opened && jumping) setJumping(false)
+  const jump = (go: () => void) => {
+    setJumping(true)
+    go()
+    onClose()
+  }
   // A resolved thread's card leaves the list with the focused button, so focus lands here.
   const threadCountRef = useRef<HTMLParagraphElement>(null)
   // With resolved threads shown, the card stays and its heading takes the focus instead.
@@ -128,6 +137,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     <Drawer
       opened={opened}
       onClose={close}
+      returnFocus={!jumping}
       position="right"
       size={420}
       title={
@@ -231,10 +241,11 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                           <Button
                             variant="light"
                             disabled={inFlight > 0}
-                            onClick={() => {
-                              onJumpToField(thread.entryPath!, thread.canopyPath!, thread.id)
-                              onClose()
-                            }}
+                            onClick={() =>
+                              jump(() =>
+                                onJumpToField(thread.entryPath!, thread.canopyPath!, thread.id),
+                              )
+                            }
                           >
                             Jump to field
                           </Button>
@@ -243,10 +254,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         <Button
                           variant="light"
                           disabled={inFlight > 0}
-                          onClick={() => {
-                            onJumpToEntry(thread.entryPath!, thread.id)
-                            onClose()
-                          }}
+                          onClick={() => jump(() => onJumpToEntry(thread.entryPath!, thread.id))}
                         >
                           Jump to entry
                         </Button>

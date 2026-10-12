@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Badge,
@@ -107,15 +107,22 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   const noHover = useMediaQuery('(hover: none)')
   const popoverId = useId()
   const [controlNode, setControlNode] = useState<HTMLButtonElement | null>(null)
+  // Read when focus returns: a popover that mounts open has no control yet when it opens.
+  const controlRef = useRef<HTMLButtonElement | null>(null)
+  const setControl = useCallback((el: HTMLButtonElement | null) => {
+    controlRef.current = el
+    setControlNode(el)
+  }, [])
   const [dropdownNode, setDropdownNode] = useState<HTMLDivElement | null>(null)
-  // Set by a menu item's open, whose item is gone by close, and kept until the next open, so
-  // Mantine's own return stays off through the close.
+  // Set by a menu item's open, whose item is gone by close: its menu's trigger stands in.
   const [returnFocusTo, setReturnFocusTo] = useState<OpenRequest['returnFocusTo']>(undefined)
+  // Where focus returns on close, recorded as the popover opens, before its focus trap runs.
+  const openerRef = useRef<{ target: () => HTMLElement | null; standIn: boolean } | null>(null)
   const [side, setSide] = useState<PopoverSide>('below')
   // A highlight opens the popover after a jump has started scrolling, so its placement scrolls too.
   const [scrollOnOpen, setScrollOnOpen] = useState(false)
   const placedRef = useRef(false)
-  // A click elsewhere chose where focus goes, so a stand-in never takes it.
+  // A click chose where focus goes, so a stand-in never takes it.
   const pointerClosedRef = useRef(false)
   const open = ({ scroll = false }: { scroll?: boolean } = {}) => {
     setReturnFocusTo(undefined)
@@ -156,31 +163,48 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       placedRef.current = false
       return
     }
-    pointerClosedRef.current = false
     if (placedRef.current || !anchors?.above || !anchors.below) return
     placedRef.current = true
     setSide(choosePopoverSide(anchors, { scroll: scrollOnOpen }))
   }, [opened, anchors])
 
+  useIsomorphicEffect(() => {
+    if (!opened) return
+    pointerClosedRef.current = false
+    const active = document.activeElement
+    openerRef.current = returnFocusTo
+      ? { target: returnFocusTo, standIn: true }
+      : {
+          // A popover that opened with nothing focused, as on a highlight, returns to its control.
+          target: () =>
+            active instanceof HTMLElement && active !== document.body && active.isConnected
+              ? active
+              : controlRef.current,
+          standIn: false,
+        }
+  }, [opened])
+
+  // Focus returns here rather than through Mantine, which refocuses the opener even after a click
+  // has put focus on another control.
   useDidUpdate(() => {
-    if (opened || !returnFocusTo) return
-    // Focus left in the fading dropdown, on a detached or closing menu item, or nowhere, hasn't
-    // been moved on by the user.
-    if (pointerClosedRef.current) return
+    const opener = openerRef.current
+    if (opened || !opener) return
+    if (pointerClosedRef.current && opener.standIn) return
     const closing = dropdownNode
     const timer = window.setTimeout(() => {
       const active = document.activeElement
-      if (
+      // Focus left in the fading dropdown, on a detached or closing menu item, or nowhere, hasn't
+      // been moved on by the user.
+      const unmoved =
         !active ||
         active === document.body ||
         !active.isConnected ||
         closing?.contains(active) ||
         active.closest('[data-menu-dropdown]')
-      ) {
-        const target = returnFocusTo()
-        target?.focus({ preventScroll: true })
-        target?.scrollIntoView?.({ block: 'nearest' })
-      }
+      if (!unmoved) return
+      const target = opener.target()
+      target?.focus({ preventScroll: true })
+      if (opener.standIn) target?.scrollIntoView?.({ block: 'nearest' })
     }, 20)
     return () => window.clearTimeout(timer)
   }, [opened])
@@ -226,16 +250,13 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       ? `Comment on ${subject} (${openThreadsLabel(openCount)}, ${commentsShortcutLabel()})`
       : `Comment on ${subject} (${commentsShortcutLabel()})`
 
+  const closeByPointer = () => {
+    if (inFlight > 0) return
+    pointerClosedRef.current = true
+    close()
+  }
   // Anchored, the control is outside the popover's target, so clicks on it count as inside here.
-  useClickOutside(
-    () => {
-      if (!anchored || !opened || inFlight > 0) return
-      pointerClosedRef.current = true
-      close()
-    },
-    null,
-    [controlNode, dropdownNode],
-  )
+  useClickOutside(() => anchored && opened && closeByPointer(), null, [controlNode, dropdownNode])
 
   const target =
     variant === 'entry' ? (
@@ -252,10 +273,11 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
             </Badge>
           ) : undefined
         }
+        ref={setControl}
         aria-label={controlLabel}
         aria-expanded={opened}
         aria-haspopup="dialog"
-        onClick={() => (opened ? close() : open())}
+        onClick={(event) => (!opened ? open() : event.detail > 0 ? closeByPointer() : close())}
         data-testid={testId}
       >
         Comment on this entry
@@ -269,14 +291,14 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
         c={openCount > 0 ? 'dark.7' : undefined}
         size="compact-xs"
         px={4}
-        ref={setControlNode}
+        ref={setControl}
         tabIndex={idle ? -1 : undefined}
         aria-label={controlLabel}
         aria-expanded={opened}
         aria-haspopup="dialog"
         aria-controls={anchored && opened ? `${popoverId}-dropdown` : undefined}
         aria-keyshortcuts={commentsAriaKeyShortcuts()}
-        onClick={() => (opened ? close() : open())}
+        onClick={(event) => (!opened ? open() : event.detail > 0 ? closeByPointer() : close())}
         data-testid={testId}
         data-comment-control
         data-revealed={shown ? '' : undefined}
@@ -324,7 +346,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       shadow="md"
       withArrow={!anchored}
       trapFocus
-      returnFocus={!returnFocusTo}
+      returnFocus={false}
       closeOnEscape
       closeOnClickOutside={!anchored}
       // Anchored, the target is an empty element, so the control and dropdown carry the roles.

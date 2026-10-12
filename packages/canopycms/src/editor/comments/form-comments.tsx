@@ -183,7 +183,12 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
         'mod+alt+M',
         (event) => {
           // A layout whose letters aren't Latin, such as Cyrillic or Greek, matches by position.
-          if (modKeyLabel() !== '⌘' && NON_LATIN_LETTER.test(event.key)) onShortcut(event)
+          if (
+            modKeyLabel() !== '⌘' &&
+            NON_LATIN_LETTER.test(event.key) &&
+            !event.getModifierState?.('AltGraph')
+          )
+            onShortcut(event)
         },
         { preventDefault: false, usePhysicalKeys: true },
       ],

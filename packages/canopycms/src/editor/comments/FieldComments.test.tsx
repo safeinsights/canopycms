@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -909,6 +909,42 @@ describe('the form keyboard route to field comments', () => {
     expect(scrollButton).not.toHaveBeenCalled()
   })
 
+  it('leaves focus on the control a click moved it to, whichever way the popover opened', async () => {
+    const user = userEvent.setup()
+    renderForm({ comments: [thread('t1', 'title')] })
+    // By the shortcut in Title, then a click into Summary: typing must land in Summary.
+    act(() => screen.getByLabelText('Title').focus())
+    await pressShortcut(user)
+    await screen.findByTestId('field-comment-title-popover')
+    await user.click(screen.getByLabelText('Summary'))
+    await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+    await act(() => new Promise((resolve) => setTimeout(resolve, 60)))
+    expect(document.activeElement).toBe(screen.getByLabelText('Summary'))
+    // By its control, then a click into Summary.
+    await user.click(control('title'))
+    await screen.findByTestId('field-comment-title-popover')
+    await user.click(screen.getByLabelText('Summary'))
+    await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+    await act(() => new Promise((resolve) => setTimeout(resolve, 60)))
+    expect(document.activeElement).toBe(screen.getByLabelText('Summary'))
+  })
+
+  it("doesn't send focus to the menu's button when the control's own click closes it", async () => {
+    const user = userEvent.setup()
+    renderForm({ comments: [thread('t1', 'title')] })
+    await user.click(menuButton())
+    await user.click(await screen.findByTestId('form-comments-field-title'))
+    await screen.findByTestId('field-comment-title-popover')
+    const scrollButton = vi.fn()
+    menuButton().scrollIntoView = scrollButton
+    // As Safari and Firefox on macOS do, the click doesn't focus the button it lands on.
+    fireEvent.click(control('title'), { detail: 1 })
+    await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+    await act(() => new Promise((resolve) => setTimeout(resolve, 60)))
+    expect(document.activeElement).not.toBe(menuButton())
+    expect(scrollButton).not.toHaveBeenCalled()
+  })
+
   it('starts a thread on the field last focused', async () => {
     const user = userEvent.setup()
     const { onAddComment } = renderForm()
@@ -1040,7 +1076,7 @@ describe('field comment popover placement', () => {
     await user.click(control('title'))
     await screen.findByTestId('field-comment-title-popover')
     // 600px tall is a tall field: it prefers above its label row, and scrolls that into view.
-    expect(scrollAbove).toHaveBeenCalledWith({ block: 'center' })
+    expect(scrollAbove).toHaveBeenCalledWith({ block: 'center', behavior: 'instant' })
   })
 })
 
@@ -1103,6 +1139,21 @@ describe('field comment popover placement, when a highlight opens it', () => {
     renderForm({ comments: [thread('t1', 'title')], highlightThreadId: 't1' })
     await screen.findByTestId('field-comment-title-popover')
     expect(scrolled).toContainEqual({ anchor: 'below', field: 'title' })
+  })
+
+  it('returns focus to its control when a popover that mounted open closes', async () => {
+    stubLayout({ title: [100, 160] })
+    const user = userEvent.setup()
+    renderForm({ comments: [thread('t1', 'title')], highlightThreadId: 't1' })
+    await screen.findByTestId('field-comment-title-popover')
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('field-comment-title-popover').contains(document.activeElement),
+      ).toBe(true),
+    )
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(control('title')))
   })
 
   it("scrolls a highlighted field even when it fits, overriding a jump's smooth scroll", async () => {

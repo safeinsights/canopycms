@@ -55,7 +55,11 @@ export const choosePopoverSide = (
     if (room[preferred]) return preferred
     if (room[other]) return other
   }
-  ;(preferred === 'above' ? above : below).scrollIntoView?.({ block: 'center' })
+  // Instant, so the second measure reads the new geometry even under `scroll-behavior: smooth`.
+  ;(preferred === 'above' ? above : below).scrollIntoView?.({
+    block: 'center',
+    behavior: 'instant',
+  })
   room = measure()
   if (room[preferred]) return preferred
   if (room[other]) return other
