@@ -1,7 +1,7 @@
 ---
 priority: P3
 summary: >-
-  New 2026-08-22, from the human review of PR #257. The infra-review epic closed the CANCELLATION path (`cancel-in-progress: false`) and its analysis was entirely about cancellation — but a **failing** publish step produces the identical state, since the five packages publish as five sequential steps: `latest` moved for some and not others. Published peer deps are exact pins (pnpm pack resolves `workspace:*` at pack time), so a mixed install in that window is an ERESOLVE. The `--min` registry floor makes the VERSION self-healing on the next push to main; the window itself is unaddressed and unreported. Cheap fix: pack all five before publishing any, which moves most realistic failures to before anything ships, plus an `if: failure()` step naming what already published
+  RESOLVED 2026-10-11 by changesets PR B: the stable publish job packs all five packages before publishing any, publishes each idempotently against its npm provenance so "Re-run failed jobs" completes a partial release, and an if: failure() step lists which packages are out. The release is committed and tagged before publishing, which replaces the --min self-heal
 ---
 # [P3] A FAILING publish step leaves the same mismatched dist-tags cancellation did
 
@@ -43,5 +43,5 @@ Two cheap steps, in order of value:
    the self-heal or intervene.
 
 Neither changes the happy path. Consider alongside
-[release-required-status-checks.md](release-required-status-checks.md), which is
+[release-required-status-checks.md](../release-required-status-checks.md), which is
 the other open release-pipeline item.

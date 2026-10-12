@@ -291,10 +291,25 @@ jobs:
       # working releases used -- now pinned rather than floated. When bumping,
       # stay >= 11.5.0.
       #
+      # Packed first, all five, so a build or pack failure stops the release
+      # before any package is on npm; only a registry-side failure can land
+      # mid-sequence, and the step after this one names what got through.
+      #
       # Each publish is idempotent, so "Re-run failed jobs" resumes a release
       # that stopped part-way: a version already on npm built from this release
       # commit (its provenance says so) is skipped, and one built from any other
       # commit fails the job rather than being published over.
+      - name: Pack the five packages
+        run: |
+          set -euo pipefail
+          for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
+            (cd "packages/$pkg" && pnpm pack)
+          done
+          # `files` lists CHANGELOG.md, and pack omits a listed file that is
+          # missing without a word.
+          contents=$(tar -tzf packages/canopycms/canopycms-*.tgz)
+          grep -qx 'package/CHANGELOG.md' <<<"$contents" || { echo "::error::the tarball has no CHANGELOG.md"; exit 1; }
+
       - name: Publish the five packages
         env:
           VERSION: ${{ needs.release-commit.outputs.version }}
@@ -311,18 +326,27 @@ jobs:
               echo "::error::$pkg@$VERSION is on npm from $attested, not this release ($SHA)"
               exit 1
             fi
-            (
-              cd "packages/$pkg"
-              pnpm pack
-              if [ "$pkg" = canopycms ]; then
-                # `files` lists CHANGELOG.md, and pack omits a listed file that is
-                # missing without a word.
-                contents=$(tar -tzf canopycms-*.tgz)
-                grep -qx 'package/CHANGELOG.md' <<<"$contents" || { echo "::error::the tarball has no CHANGELOG.md"; exit 1; }
-              fi
-              pnpm dlx npm@11.19.0 publish "$pkg"-*.tgz --access public --provenance
-            )
+            (cd "packages/$pkg" && pnpm dlx npm@11.19.0 publish "$pkg"-*.tgz --access public --provenance)
           done
+
+      # Until a re-run completes the set, an install mixing these versions fails
+      # on the packages' exact peer pins, so the summary says which are out.
+      - name: Report a partial release
+        if: failure()
+        env:
+          VERSION: ${{ needs.release-commit.outputs.version }}
+          SHA: ${{ needs.release-commit.outputs.sha }}
+        run: |
+          {
+            echo "### Release v$VERSION stopped part-way"
+            echo
+            for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
+              attested=$(node scripts/npm-attested-commit.mjs "$pkg" "$VERSION" 2>&1 || true)
+              if [ "$attested" = "$SHA" ]; then echo "- $pkg: published"; else echo "- $pkg: not published (${attested:-absent})"; fi
+            done
+            echo
+            echo 'Use "Re-run failed jobs" on this run: it publishes only the missing packages.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Manual dispatch routes here instead: publish the selected branch under the
   # `int` dist-tag, without bumping or committing any version field.
