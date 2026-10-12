@@ -320,6 +320,16 @@ describe('dialogs opened from the navigator', () => {
   })
 })
 
+/** Opens a row's "..." menu and chooses Remove, as a person does. */
+const removeRow = async (rowTitle: string) => {
+  fireEvent.click(
+    within(screen.getByRole('group', { name: rowTitle })).getByRole('button', {
+      name: `Actions for ${rowTitle}`,
+    }),
+  )
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove' }))
+}
+
 describe('Undo after Remove', () => {
   const undoToast = () => {
     const call = vi
@@ -334,8 +344,7 @@ describe('Undo after Remove', () => {
     renderEditor()
     await loaded()
 
-    const second = screen.getByRole('group', { name: '/b' })
-    fireEvent.click(within(second).getByRole('button', { name: 'Remove' }))
+    await removeRow('/b')
     await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
     fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
       target: { value: 'Edited after the removal' },
@@ -359,9 +368,7 @@ describe('Undo after Remove', () => {
     renderEditor()
     await loaded()
 
-    fireEvent.click(
-      within(screen.getByRole('group', { name: '/b' })).getByRole('button', { name: 'Remove' }),
-    )
+    await removeRow('/b')
     await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
     const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
     // The toast's Undo button holds focus, as it does when a keyboard user presses it.
@@ -378,13 +385,9 @@ describe('Undo after Remove', () => {
     stubApi([], [], 'user-1', 'main', [{ href: '/a' }, { href: '/b' }, { href: '/c' }])
     renderEditor()
     await loaded()
-    const remove = (name: string) =>
-      fireEvent.click(
-        within(screen.getByRole('group', { name })).getByRole('button', { name: 'Remove' }),
-      )
 
-    remove('/c')
-    remove('/a')
+    await removeRow('/c')
+    await removeRow('/a')
     await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/b' }]))
     const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
     act(() => fireEvent.click(message.getByRole('button', { name: /^Undo removing / })))
@@ -400,11 +403,7 @@ describe('Undo after Remove', () => {
     await loaded()
 
     const list = screen.getByRole('group', { name: 'Links' })
-    fireEvent.click(
-      within(screen.getByRole('group', { name: '/b' })).getByRole('button', {
-        name: 'Remove',
-      }),
-    )
+    await removeRow('/b')
     expect(document.activeElement).toBe(list)
 
     const toast = undoToast()
@@ -425,11 +424,7 @@ describe('Undo after Remove', () => {
     renderEditor()
     await loaded()
 
-    fireEvent.click(
-      within(screen.getByRole('group', { name: '/a' })).getByRole('button', {
-        name: 'Remove',
-      }),
-    )
+    await removeRow('/a')
     const toast = undoToast()
     expect(notifications.hide).not.toHaveBeenCalledWith(toast.id)
 
@@ -447,18 +442,13 @@ describe('Undo is one-shot and ends with the draft', () => {
       .mock.calls.find(([options]) => String(options.id ?? '').startsWith('canopy-undo-'))
     return call![0]
   }
-  const removeSecondLink = () =>
-    fireEvent.click(
-      within(screen.getByRole('group', { name: '/b' })).getByRole('button', {
-        name: 'Remove',
-      }),
-    )
+  const removeSecondLink = () => removeRow('/b')
 
   it('puts an item back once, however many times Undo is clicked', async () => {
     stubApi([])
     renderEditor()
     await loaded()
-    removeSecondLink()
+    await removeSecondLink()
     await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
 
     const message = render(<MantineProvider>{undoToastOf().message}</MantineProvider>)
@@ -484,7 +474,7 @@ describe('Undo is one-shot and ends with the draft', () => {
     stubApi([])
     renderEditor()
     await loaded()
-    removeSecondLink()
+    await removeSecondLink()
     await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
     const toast = undoToastOf()
 
@@ -512,7 +502,7 @@ describe('Undo is one-shot and ends with the draft', () => {
     stubApi([])
     renderEditor()
     await loaded()
-    removeSecondLink()
+    await removeSecondLink()
     await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
     const toast = undoToastOf()
 

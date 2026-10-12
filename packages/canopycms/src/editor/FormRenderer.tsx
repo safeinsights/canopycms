@@ -78,7 +78,8 @@ const removedItemLabel = (
   index: number,
 ): string => {
   const text = listItemTitle(item, objectField)
-  return text ? `"${text}" from ${listLabel}` : `item ${index + 1} from ${listLabel}`
+  const byPosition = `${objectField.itemLabel ?? 'item'} ${index + 1}`
+  return text ? `"${text}" from ${listLabel}` : `${byPosition} from ${listLabel}`
 }
 
 const normalizeOptions = (
@@ -225,6 +226,16 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   const bodyName = format === 'md' || format === 'mdx' ? findBodyFieldName(fields) : undefined
 
   const keysForList = useListItemKeys()
+
+  // Whether a list row holds an error, so a collapsed row can say so.
+  const rowHasErrors =
+    (listPath: Array<string | number>) =>
+    (index: number): boolean => {
+      const row = normalizeCanopyPath([...listPath, index])
+      return Object.keys(fieldErrors ?? {}).some(
+        (key) => key === row || key.startsWith(`${row}.`) || key.startsWith(`${row}[`),
+      )
+    }
   const [formComments] = useState(createFormComments)
   // The field last focused on one entry is never offered on the next.
   useEffect(() => formComments.noteFocus(undefined), [formComments, boundaryResetKey])
@@ -564,6 +575,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             path={path}
             dataCanopyField={normalizeCanopyPath(path)}
             readOnly={readOnly}
+            resetKey={boundaryResetKey}
+            hasErrors={rowHasErrors(path)}
             onRemoved={(index, block) =>
               onRemoved?.({
                 kind: 'list-item',
@@ -598,6 +611,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               path={path}
               canopyPath={canopyPath}
               readOnly={readOnly}
+              resetKey={boundaryResetKey}
+              hasErrors={rowHasErrors(path)}
               onRemoved={(index, item) =>
                 onRemoved?.({
                   kind: 'list-item',
