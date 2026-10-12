@@ -14,7 +14,7 @@ import { isUnanswered } from '../unanswered'
 
 /** @internal Exported for tests. */
 export const SAVE_TIMED_OUT_MESSAGE =
-  "Save didn't finish in time, and may not have gone through. Your changes are still here, so save again."
+  "Save didn't finish, and may not have gone through. Your changes are still here, so save again."
 
 const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
 
@@ -787,8 +787,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         }
         showConflictNotification(err.serverMessage || undefined)
       } else if (isUnanswered(err)) {
-        // Saving again is safe: a save that did land moved the version, so the server refuses the
-        // retry as a conflict rather than overwriting.
+        // A save that did land moved the file's version, so the server refuses the retry as a
+        // conflict; a file since deleted or moved is the exception (`ContentStore.write`).
         timedOutSavesRef.current.add(currentId)
         notifications.show({
           id: saveTimedOutToastId(currentId),

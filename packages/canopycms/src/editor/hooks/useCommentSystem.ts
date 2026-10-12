@@ -68,7 +68,7 @@ export interface UseCommentSystemReturn {
 export const COMMENT_NOT_ADDED = "Couldn't add the comment. Try again."
 /** @internal Exported for tests. */
 export const COMMENT_MAY_BE_ADDED =
-  "The server didn't answer in time, so your comment may have been posted. Check the comments above before sending it again."
+  "The server didn't answer, so your comment may have been posted. Check the comments above before sending it again."
 /** @internal Exported for tests. */
 export const THREAD_NOT_RESOLVED = "Couldn't resolve the thread. Try again."
 

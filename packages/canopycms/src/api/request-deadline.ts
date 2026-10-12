@@ -9,8 +9,9 @@
  * @internal Exported for tests.
  *
  * How long each class of request may take. `standard` is past the 60 s an API behind CloudFront
- * gets, so a server still working answers (or its proxy's 504 does) before the editor gives up;
- * reads get it too, since any request may first provision the base branch's workspace. `long` is
+ * gets (canopycms-cdk's `assertOriginReadTimeout`), so a server still working answers, or its
+ * proxy's 504 does, before the editor gives up; reads get it too, since any request may first
+ * provision the base branch's workspace (`http/handler.ts`). `long` is
  * for the operations that legitimately run longer: branch create, submit, admin scans and
  * repairs, and an upload without progress.
  */
@@ -36,7 +37,7 @@ export const REQUEST_TIMED_OUT_MESSAGE =
 
 /** @internal Exported for tests. A timed-out write's message: the server may have acted on it. */
 export const WRITE_TIMED_OUT_MESSAGE =
-  "The server didn't answer in time, so this may have gone through anyway. Check before trying again."
+  "The server didn't answer, so this may have gone through anyway. Check before trying again."
 
 /** A request ran past its deadline and was abandoned; the server may still have acted on it. */
 export class ApiTimeoutError extends Error {

@@ -10,8 +10,8 @@ summary: >-
 ## What is known
 
 - `fetchComments` (`editor/hooks/useCommentsData.ts`) rejects on a failed read, and
-  `useCommentsData` logs it through SWR's `onError`. The `error` it returns is unused:
-  `useCommentSystem` reads only `data`.
+  `useCommentsData` logs it through SWR's `onError`. `useCommentSystem` uses the `error` only to
+  report no comments to the branch summaries; nothing shows it.
 - `useCommentSystem.loadComments` logs a failed reload and keeps the threads already shown.
 - With `shouldRetryOnError: false` (`editor/context/SWRProvider.tsx`) the failure is terminal
   until the key is revalidated, by a write's reload, a branch switch or a re-sign-in.

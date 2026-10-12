@@ -32,7 +32,7 @@ function actionError(result: ApiResponse, fallback: string): Error {
 
 /** @internal Exported for tests. */
 export const branchActionOutcomeUnknown = (action: string) =>
-  `${action} may have gone through even though the server didn't answer in time. Check the branch's status before trying again.`
+  `${action} may have gone through even though the server didn't answer. Check the branch's status before trying again.`
 
 /**
  * Wire a confirm modal's exits so exactly ONE of {confirmed, dismissed} runs,
@@ -539,8 +539,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     }
   }
 
-  // A workflow action that timed out may have gone through, so the list reloads to show where
-  // the branch stands rather than inviting a blind retry.
+  // A workflow action that got no answer may have gone through, so the list reloads to show
+  // where the branch stands rather than inviting a blind retry.
   const showOutcomeUnknown = (action: string) => {
     notifications.hide(BRANCH_OUTCOME_UNKNOWN_TOAST_ID)
     notifications.show({
@@ -714,7 +714,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 const result = await apiClient.branches.delete({
                   branch: branchNameToDelete,
                 })
-                // The API's own 404: an earlier, unanswered delete already went through.
+                // The API's own 404: the branch is already gone, by an earlier unanswered delete or
+                // another user's.
                 if (!result.ok && result.status === 404 && !isNonApiResponse(result)) {
                   notifications.show({ message: 'Branch deleted', color: 'green' })
                   leaveDeletedBranch(branchNameToDelete, await reloadBranches())

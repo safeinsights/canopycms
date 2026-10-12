@@ -13,9 +13,10 @@ summary: >-
   comes from a read of an existing file; the editor's `saveEntry` refuses to save without one.
 - In `ContentStore.write`, `fs.stat` failing with `ENOENT` falls through for both `null` (correct)
   and a number (the stale path), inside the per-entry lock.
-- The editor refreshes its content tree after a timed-out delete, rename or create
-  (`useSchemaManager.deleteEntry`, `useEntryManager.renameEntry` and `handleCreateModalSubmit`),
-  but an entry left open with a draft can still be saved back.
+- The editor refreshes its content tree after a delete, rename or create that got no answer (a
+  timeout or a gateway's 5xx page: `editor/unanswered.ts`), in `useSchemaManager.deleteEntry`,
+  `useEntryManager.renameEntry` and `handleCreateModalSubmit`, but an entry left open with a draft
+  can still be saved back.
 - Read [docs/concurrency.md](../../docs/concurrency.md) before changing the check: it is the
   authoritative OCC gate for entry writes.
 
