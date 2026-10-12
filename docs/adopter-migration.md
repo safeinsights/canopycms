@@ -92,6 +92,7 @@ replaces each `next` with its number.
 | next | Editing  | [Branches drawer and comment replies](#the-branches-drawer-shows-one-action-per-branch-and-comments-reply-in-place)                                                                         | Editor UI tests              |
 | next | Editing  | [Editor contrast; blocked buttons stay focusable](#editor-contrast-and-blocked-buttons-stay-focusable)                                                                                      | Browser tests                |
 | next | Editing  | [List items and blocks collapse](#list-items-and-blocks-collapse-and-reorder-from-one-menu)                                                                                                 | Editor UI tests              |
+| next | Editing  | [Date picker, form header, wrapping toolbar](#a-date-picker-a-form-header-and-a-toolbar-that-wraps)                                                                                         | Editor UI tests              |
 | next | Editing  | [Editor requests time out](#editor-requests-time-out-instead-of-hanging)                                                                                                                    | Slow-API browser tests       |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
@@ -320,6 +321,16 @@ Browser tests check `aria-disabled`; Playwright's `toBeDisabled` reads it. Tests
 old "Reload File" or "Discard File Draft" use the new labels.
 
 **Now deletable.** Local overrides that darkened the same text or buttons.
+
+### A date picker, a form header, and a toolbar that wraps
+
+**What changed.** A `datetime` field is a Mantine `DateTimePicker`, still stored as ISO UTC. The
+form has a sticky header with the entry's title and type, an "Outline" of its fields and rows to
+jump to, and Expand or Collapse all lists. The markdown toolbar wraps in a narrow form. canopycms
+now depends on `@mantine/dates` and `dayjs`, and loads `@mantine/dates/styles.css` with its other
+editor styles.
+
+**To adopt.** Nothing. Browser tests that typed into a `datetime-local` input pick a date instead.
 
 ### List items and blocks collapse, and reorder from one menu
 

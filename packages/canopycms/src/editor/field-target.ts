@@ -84,8 +84,9 @@ const focusShownField = (element: HTMLElement): void => {
   const inputs = [element, ...element.querySelectorAll<HTMLElement>(EDITABLE)].filter(
     (el) => el.matches(EDITABLE) && canTakeFocus(el),
   )
-  const controls = [...element.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (el) => canTakeFocus(el) && !el.closest('[data-comment-control]'),
+  // The element itself counts: a date field's target is its picker's trigger button.
+  const controls = [element, ...element.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (el) => el.matches(FOCUSABLE) && canTakeFocus(el) && !el.closest('[data-comment-control]'),
   )
   const focusable =
     inputs[0] ?? controls[0] ?? (element.hasAttribute('tabindex') ? element : undefined)

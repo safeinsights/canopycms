@@ -53,6 +53,19 @@ const inputAt = (container: HTMLElement, index: number): HTMLInputElement =>
   rowAt(container, index).querySelector<HTMLInputElement>('input')!
 
 describe('focusFieldTarget', () => {
+  it('focuses a target that is itself a button, as a date picker trigger is', () => {
+    render(
+      <div>
+        <button type="button" data-canopy-field="publishedAt">
+          12 Oct 2026
+        </button>
+      </div>,
+    )
+    const trigger = screen.getByRole('button', { name: '12 Oct 2026' })
+    act(() => focusFieldTarget(trigger))
+    expect(document.activeElement).toBe(trigger)
+  })
+
   it('opens the collapsed row holding an input, then focuses the input', async () => {
     const { container } = renderFiveRows()
     const input = inputAt(container, 3)

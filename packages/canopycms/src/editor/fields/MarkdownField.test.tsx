@@ -110,6 +110,34 @@ describe('MarkdownField', () => {
     expect(screen.getByTestId('insert-entry-link-button')).toBeTruthy()
   })
 
+  it('gives the toolbar the class its wrapping style targets, and ships that style', async () => {
+    const Wrapper = wrapper
+    render(
+      <CanopyCMSProvider>
+        <Wrapper>
+          <MarkdownField value="hello" onChange={() => {}} />
+        </Wrapper>
+      </CanopyCMSProvider>,
+    )
+    const toolbar = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('[role="toolbar"]')
+      if (!el) throw new Error('toolbar not mounted')
+      return el
+    })
+    expect(toolbar.classList.contains('canopy-mdx-toolbar')).toBe(true)
+    // The rule must reach the toolbar from inside the editor root, which sets the toolbar's
+    // own overflow and wrapping.
+    expect(toolbar.closest('.mdxeditor')).not.toBeNull()
+    const styles = [...document.querySelectorAll('style')].map((el) => el.textContent ?? '')
+    expect(
+      styles.some((css) =>
+        /\.mdxeditor \.canopy-mdx-toolbar\s*\{[^}]*flex-wrap:\s*wrap[^}]*overflow-x:\s*visible/.test(
+          css,
+        ),
+      ),
+    ).toBe(true)
+  })
+
   function renderField(value: string, onChange: (value: string) => void = () => {}) {
     const Wrapper = wrapper
     return render(

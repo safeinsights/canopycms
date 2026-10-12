@@ -48,6 +48,10 @@ import { ValidationSummary } from './components/ValidationSummary'
 import { fieldBreadcrumb } from './field-breadcrumb'
 import { FieldCrashFallback } from './fields/FieldCrashFallback'
 import { useListItemKeys } from './fields/list-item-keys'
+import { FormExpansionContext, type FormExpansionCommand } from './fields/form-expansion'
+import { FormHeader } from './FormHeader'
+import { buildFormOutline, hasCollapsibleList } from './form-outline'
+import { findFieldTarget, focusFieldTarget } from './field-target'
 import type { FieldRemoval } from './undo-removal'
 
 export type FormValue = Record<string, unknown>
@@ -96,10 +100,13 @@ const noop = (): void => {}
 const FENCE_STYLE: React.CSSProperties = { border: 0, padding: 0, margin: 0, minWidth: 0 }
 const READ_ONLY_FORM_CLASS = 'canopy-read-only-form'
 
-/** Read-only inputs look disabled but stay focusable, so a reviewer can select and copy them. */
+/**
+ * Read-only inputs look disabled but stay focusable, so a reviewer can select and copy them. A
+ * picker's trigger is a button, which Mantine marks `data-read-only` instead.
+ */
 const ReadOnlyFormStyles: React.FC = () => (
   <style>{`
-    .${READ_ONLY_FORM_CLASS} .mantine-Input-input:is([readonly], :has(input[readonly])) {
+    .${READ_ONLY_FORM_CLASS} .mantine-Input-input:is([readonly], [data-read-only], :has(input[readonly])) {
       background-color: var(--input-disabled-bg);
     }
     .${READ_ONLY_FORM_CLASS} .canopy-mdx-content {
@@ -197,6 +204,13 @@ export interface FormRendererProps {
   onRemoved?: (removal: FieldRemoval) => void
   /** Resolves comment authors to names in field and entry threads; without it they show as ids. */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /**
+   * Shows a sticky header naming the entry, with an outline of its fields and, when it has list
+   * or block fields, Expand all and Collapse all.
+   */
+  header?: { title: string; typeLabel?: string }
+  /** An entry-wide notice, shown first under the header. */
+  notice?: React.ReactNode
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -219,8 +233,13 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   readOnly = false,
   onRemoved,
   onGetUserMetadata,
+  header,
+  notice,
 }) => {
   const emit = readOnly ? noop : onChange
+  const formRef = useRef<HTMLDivElement>(null)
+  const customTypes = new Set(Object.keys(customRenderers ?? {}))
+  const [expansionCommand, setExpansionCommand] = useState<FormExpansionCommand | undefined>()
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
   const siteMdxAllow = useSiteMdxAllow()
   const bodyName = format === 'md' || format === 'mdx' ? findBodyFieldName(fields) : undefined
@@ -677,66 +696,91 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
   return (
     <FormCommentsContext.Provider value={formComments}>
-      <Stack gap="md" data-form-renderer className={readOnly ? READ_ONLY_FORM_CLASS : undefined}>
-        {readOnly && <ReadOnlyFormStyles />}
-        {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
-          <EntryComments
-            comments={comments}
-            entryPath={currentEntryPath}
-            currentUserId={currentUserId}
-            canResolve={canResolve}
-            onAddComment={onAddComment}
-            onResolveThread={onResolveThread}
-            highlightThreadId={highlightThreadId}
-            onGetUserMetadata={onGetUserMetadata}
-            resetKey={boundaryResetKey}
-          />
-        )}
+      <FormExpansionContext.Provider value={expansionCommand}>
+        <Stack
+          ref={formRef}
+          gap="md"
+          data-form-renderer
+          className={readOnly ? READ_ONLY_FORM_CLASS : undefined}
+        >
+          {header && (
+            <FormHeader
+              title={header.title}
+              typeLabel={header.typeLabel}
+              outline={buildFormOutline(fields, value, customTypes)}
+              onSelect={(path) => {
+                const target = formRef.current ? findFieldTarget(path, formRef.current) : undefined
+                if (target) focusFieldTarget(target.element)
+              }}
+              onExpandAll={
+                hasCollapsibleList(fields, customTypes)
+                  ? (expanded) =>
+                      setExpansionCommand((prev) => ({ seq: (prev?.seq ?? 0) + 1, expanded }))
+                  : undefined
+              }
+            />
+          )}
+          {notice}
+          {readOnly && <ReadOnlyFormStyles />}
+          {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
+            <EntryComments
+              comments={comments}
+              entryPath={currentEntryPath}
+              currentUserId={currentUserId}
+              canResolve={canResolve}
+              onAddComment={onAddComment}
+              onResolveThread={onResolveThread}
+              highlightThreadId={highlightThreadId}
+              onGetUserMetadata={onGetUserMetadata}
+              resetKey={boundaryResetKey}
+            />
+          )}
 
-        {conflictNotice && (
-          <Alert
-            icon={<IconInfoCircle size={16} />}
-            color="orange"
-            variant="light"
-            title="Page updated since your draft started"
-            data-testid="conflict-alert"
-          >
-            {readOnly
-              ? 'Someone else has recently changed this page.'
-              : 'Someone else has recently changed this page. You can keep editing — a reviewer will reconcile your changes when you submit.'}
-          </Alert>
-        )}
+          {conflictNotice && (
+            <Alert
+              icon={<IconInfoCircle size={16} />}
+              color="orange"
+              variant="light"
+              title="Page updated since your draft started"
+              data-testid="conflict-alert"
+            >
+              {readOnly
+                ? 'Someone else has recently changed this page.'
+                : 'Someone else has recently changed this page. You can keep editing — a reviewer will reconcile your changes when you submit.'}
+            </Alert>
+          )}
 
-        {fieldErrors && <ValidationSummary fields={fields} value={value} errors={fieldErrors} />}
+          {fieldErrors && <ValidationSummary fields={fields} value={value} errors={fieldErrors} />}
 
-        {fields.map((field) => {
-          // Inline groups are transparent to the value — render them directly with parent value/onChange
-          if (field.type === 'group') {
-            const groupField = field as InlineGroupFieldConfig
+          {fields.map((field) => {
+            // Inline groups are transparent to the value — render them directly with parent value/onChange
+            if (field.type === 'group') {
+              const groupField = field as InlineGroupFieldConfig
+              return (
+                <div key={`group-${groupField.name}`}>
+                  <InlineGroupField
+                    label={groupField.label}
+                    description={groupField.description}
+                    fields={groupField.fields}
+                    value={value}
+                    onChange={emit}
+                    renderField={renderField}
+                    path={[]}
+                  />
+                </div>
+              )
+            }
+
+            const val = value[field.name]
+            const path = [field.name]
             return (
-              <div key={`group-${groupField.name}`}>
-                <InlineGroupField
-                  label={groupField.label}
-                  description={groupField.description}
-                  fields={groupField.fields}
-                  value={value}
-                  onChange={emit}
-                  renderField={renderField}
-                  path={[]}
-                />
+              <div key={fieldKey(path)}>
+                {renderField(field, val, (next) => emit({ ...value, [field.name]: next }), path)}
               </div>
             )
-          }
-
-          const val = value[field.name]
-          const path = [field.name]
-          return (
-            <div key={fieldKey(path)}>
-              {renderField(field, val, (next) => emit({ ...value, [field.name]: next }), path)}
-            </div>
-          )
-        })}
-      </Stack>
+          })}
+        </Stack>
+      </FormExpansionContext.Provider>
     </FormCommentsContext.Provider>
   )
 }

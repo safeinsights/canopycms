@@ -44,7 +44,7 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
           onChange={(e) => {
             if (!readOnly) onChange(e.currentTarget.checked)
           }}
-          size="md"
+          size="sm"
           data-canopy-field={dataCanopyField}
           wrapperProps={testId ? { 'data-testid': testId } : undefined}
         />

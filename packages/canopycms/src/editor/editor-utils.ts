@@ -241,6 +241,41 @@ export const buildCollectionLabels = (collections?: EditorCollection[]): Map<str
   return map
 }
 
+/** A schema name read as words in sentence case: `blogPost` is "Blog post", `HTMLPage` "HTML page". */
+const humanizeName = (name: string): string => {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    // An acronym ("HTML") keeps its capitals.
+    .map((word) => (/^[A-Z0-9]{2,}$/.test(word) ? word : word.toLowerCase()))
+    .join(' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/**
+ * An entry's type as its collection labels it, else its name read as words; undefined when
+ * untyped.
+ */
+export const entryTypeLabel = (
+  collections: EditorCollection[] | undefined,
+  entry: Pick<EditorEntry, 'collectionPath' | 'entryType'>,
+): string | undefined => {
+  if (!entry.entryType) return undefined
+  const find = (nodes: EditorCollection[]): EditorCollection | undefined => {
+    for (const c of nodes) {
+      if (c.path === entry.collectionPath) return c
+      const inner = c.children ? find(c.children) : undefined
+      if (inner) return inner
+    }
+    return undefined
+  }
+  const collection = collections ? find(collections) : undefined
+  const type = collection?.entryTypes?.find((t) => t.name === entry.entryType)
+  return type?.label ?? humanizeName(entry.entryType)
+}
+
 /**
  * Builds breadcrumb segments for an entry based on its collection hierarchy.
  *

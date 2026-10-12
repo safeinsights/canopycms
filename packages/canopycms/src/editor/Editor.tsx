@@ -53,6 +53,7 @@ import {
   buildPreviewRoute,
   buildPreviewSrc,
   buildCollectionLabels,
+  entryTypeLabel,
   buildBreadcrumbSegments,
 } from './editor-utils'
 import {
@@ -1451,21 +1452,27 @@ const EditorContent: React.FC<EditorProps> = ({
                     ) : schema.length > 0 && displayValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <SiteMdxAllowContext.Provider value={mdxAllow}>
-                          {hiddenDraftNotice && (
-                            <ReadOnlyDraftNotice
-                              permanentlyReadOnly={
-                                (currentBranch?.isProtected ?? true) ||
-                                currentBranch?.status === 'archived'
-                              }
-                              onDiscard={handleDiscardFileDraft}
-                            />
-                          )}
                           <FormRenderer
+                            notice={
+                              hiddenDraftNotice && (
+                                <ReadOnlyDraftNotice
+                                  permanentlyReadOnly={
+                                    (currentBranch?.isProtected ?? true) ||
+                                    currentBranch?.status === 'archived'
+                                  }
+                                  onDiscard={handleDiscardFileDraft}
+                                />
+                              )
+                            }
                             fields={schema}
                             value={displayValue}
                             readOnly={contentReadOnly}
                             onRemoved={handleFieldRemoved}
                             onGetUserMetadata={getCommentUserMetadata}
+                            header={{
+                              title: currentEntry.label,
+                              typeLabel: entryTypeLabel(activeCollections, currentEntry),
+                            }}
                             // The one writer of drafts. Read-only content gets none, whatever a
                             // field emits (MDXEditor's mount-time normalisation included).
                             onChange={(next) => {

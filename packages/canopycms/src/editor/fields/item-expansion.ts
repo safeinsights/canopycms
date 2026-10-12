@@ -1,4 +1,6 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
+
+import { FormExpansionContext } from './form-expansion'
 
 /** Up to this many rows all start expanded; a longer list starts with only its first open. */
 const EXPAND_ALL_UP_TO = 3
@@ -14,9 +16,9 @@ export interface ItemExpansion {
 /**
  * Which rows of a collapsible list are open, by list-item key (`useListItemKeys`), so a row keeps
  * its state through moves, and through a Remove and its Undo. A list inside a row that moves
- * remounts and starts over. A list's first rows start open as
- * `EXPAND_ALL_UP_TO` says; a row added later (Add, Duplicate) starts open. `resetKey` names the
- * entry being edited: a new one starts over.
+ * remounts and starts over. A list's first rows start open as `EXPAND_ALL_UP_TO` says; a row added
+ * later (Add, Duplicate) starts open. `resetKey` names the entry being edited: a new one starts
+ * over. The form's own Expand all and Collapse all (`FormExpansionContext`) reach every list.
  */
 export function useItemExpansion(itemKeys: readonly string[], resetKey: string): ItemExpansion {
   const [toggled, setToggled] = useState<{ resetKey: string; open: Map<string, boolean> }>(() => ({
@@ -58,6 +60,18 @@ export function useItemExpansion(itemKeys: readonly string[], resetKey: string):
 
   const setAll = (expanded: boolean) =>
     setToggled(() => ({ resetKey, open: new Map(itemKeys.map((key) => [key, expanded])) }))
+
+  const command = useContext(FormExpansionContext)
+  const appliedSeq = useRef(command?.seq)
+  const keysRef = useRef(itemKeys)
+  useEffect(() => {
+    keysRef.current = itemKeys
+  })
+  useEffect(() => {
+    if (!command || command.seq === appliedSeq.current) return
+    appliedSeq.current = command.seq
+    setToggled({ resetKey, open: new Map(keysRef.current.map((key) => [key, command.expanded])) })
+  }, [command, resetKey])
 
   return {
     isExpanded,

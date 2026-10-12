@@ -266,6 +266,7 @@ export const MDXEditorLazy = React.lazy(async () => {
             ? []
             : [
                 toolbarPlugin({
+                  toolbarClassName: 'canopy-mdx-toolbar',
                   toolbarContents: () => (
                     <>
                       <UndoRedo />
@@ -307,11 +308,13 @@ const editorWrapperStyle: React.CSSProperties = {
 
 /**
  * Mantine's global CSS reset strips styles from semantic HTML elements.
- * Restore them inside the MDXEditor content area so formatting is visible.
+ * Restore them inside the MDXEditor content area so formatting is visible. The toolbar wraps
+ * rather than scrolling sideways, so a narrow form hides none of its buttons.
  */
 const EditorContentStyles: React.FC = () => (
   <style>{`
     .canopy-mdx-content { min-height: 120px; padding: 8px 12px; }
+    .mdxeditor .canopy-mdx-toolbar { flex-wrap: wrap; overflow-x: visible; }
     .canopy-mdx-content ul { list-style-type: disc; padding-left: 1.5em; margin: 0.5em 0; }
     .canopy-mdx-content ol { list-style-type: decimal; padding-left: 1.5em; margin: 0.5em 0; }
     .canopy-mdx-content ul ul { list-style-type: circle; }

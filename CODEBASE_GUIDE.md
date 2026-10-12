@@ -484,6 +484,7 @@ Top-level components and helpers:
 - `EntryNavigator.tsx` — entry tree: filter, unsaved dots, read-only locks, conflict badges
 - `entry-search.ts` — label/slug match, collection grouping
 - `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
+- `FormHeader.tsx` / `form-outline.ts` — the form's sticky header and its field outline
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
 - `CommentsPanel.tsx` — comment panel
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group, permission drawers
