@@ -842,6 +842,24 @@ describe('ensureItemTitleFieldsExist', () => {
     fields: [{ name: 'title', type: 'string' }],
   })
 
+  it('throws when itemLabel sits on an object that is not a list', () => {
+    const { list: _list, ...single } = listObject()
+    expect(() =>
+      ensureItemTitleFieldsExist([{ ...listObject(), itemLabel: 'feature' }]),
+    ).not.toThrow()
+    expect(() => ensureItemTitleFieldsExist([{ ...single, itemLabel: 'feature' }])).toThrow(
+      'itemLabel applies only to list: true objects',
+    )
+  })
+
+  it('throws when itemLabel is blank or not text', () => {
+    for (const itemLabel of ['', '   ', 3]) {
+      expect(() => ensureItemTitleFieldsExist([{ ...listObject(), itemLabel }])).toThrow(
+        'which must be non-blank text',
+      )
+    }
+  })
+
   it('passes when itemTitleField names a direct child, or is absent', () => {
     expect(() => ensureItemTitleFieldsExist([listObject('title')])).not.toThrow()
     expect(() => ensureItemTitleFieldsExist([listObject()])).not.toThrow()

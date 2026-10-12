@@ -115,9 +115,11 @@ export const forEachReferenceField = (
 }
 
 /**
- * Check that every `itemTitleField` sits on a `list: true` object and names a direct child
- * of type `string` or `number`, the only values the card heading shows as typed (a reference
- * would show its raw id, a select its stored value). Throws an error when it does not.
+ * Check that every `itemLabel` is non-blank text and, like every `itemTitleField`, sits on a
+ * `list: true` object, and that every `itemTitleField` names a direct child of type `string` or
+ * `number`, the only values the card heading shows as typed (a reference would show its raw id, a
+ * select its stored value). Throws an error when it does not. Entry schemas reach the editor
+ * through these checks, not the zod field schema.
  */
 export const ensureItemTitleFieldsExist = (fields: unknown): void => {
   if (!Array.isArray(fields)) return
@@ -125,6 +127,15 @@ export const ensureItemTitleFieldsExist = (fields: unknown): void => {
     const f = field as Record<string, unknown>
     if (f?.type === 'object') {
       const children = Array.isArray(f.fields) ? (f.fields as Array<Record<string, unknown>>) : []
+      if (f.itemLabel !== undefined) {
+        const label = `Object field "${(f.name as string) ?? 'unknown'}" has itemLabel`
+        if (f.list !== true) {
+          throw new Error(`${label}, but itemLabel applies only to list: true objects`)
+        }
+        if (typeof f.itemLabel !== 'string' || f.itemLabel.trim() === '') {
+          throw new Error(`${label}, which must be non-blank text`)
+        }
+      }
       if (f.itemTitleField !== undefined) {
         const label = `Object field "${(f.name as string) ?? 'unknown'}" has itemTitleField "${String(f.itemTitleField)}"`
         if (f.list !== true) {

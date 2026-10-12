@@ -1,33 +1,33 @@
 'use client'
 
-import React, { useId, useMemo, useState } from 'react'
+import React, { useId, useRef, useState } from 'react'
 
-import { ActionIcon, Button, Group, Paper, Select, Stack, Text } from '@mantine/core'
 import {
-  DndContext,
-  type DragEndEvent,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import {
-  SortableContext,
-  arrayMove,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
+  ActionIcon,
+  Box,
+  Button,
+  Group,
+  Menu,
+  Paper,
+  ScrollArea,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core'
+import { useMediaQuery } from '@mantine/hooks'
+import { IconPlus } from '@tabler/icons-react'
 
 import type { BlockConfig, FieldConfig } from '../../config'
 import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
-import { EDITOR_ACTIONS } from '../copy'
 import { useFieldCommentControl } from '../comments/field-comment-context'
+import { ExpandAllButton } from './ExpandAllButton'
 import { groupDescriptionProps } from './FieldDescription'
 import { FieldLabel } from './FieldLabel'
+import { ItemList } from './ItemList'
+import { useItemExpansion } from './item-expansion'
 import { useListItemKeys } from './list-item-keys'
+import { listItemSecondary } from './list-item-title'
 
 export interface BlockInstance {
   template: string
@@ -51,8 +51,12 @@ export interface BlockFieldProps {
   renderField: RenderField
   path: Array<string | number>
   dataCanopyField?: string
-  /** No add, remove, reorder or drag. */
+  /** No add, remove, reorder or drag; rows still collapse. */
   readOnly?: boolean
+  /** Names the entry being edited; another entry starts with the default rows open. */
+  resetKey?: string
+  /** True when a field inside block `index` has a validation error. */
+  hasErrors?: (index: number) => boolean
   /** Told of each block Remove takes out, so the caller can offer Undo. */
   onRemoved?: (index: number, block: BlockInstance) => void
 }
@@ -60,52 +64,101 @@ export interface BlockFieldProps {
 const findTemplate = (templates: BlockConfig[], name: string) =>
   templates.find((t) => t.name === name)
 
-const SortableBlock: React.FC<{
-  id: string
-  /** The block's own path (`blocks[2]`), which preview focus lands on for the block as a whole. */
-  canopyPath: string
-  readOnly: boolean
-  children: React.ReactNode
-}> = ({ id, canopyPath, readOnly, children }) => {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id,
-    disabled: readOnly,
-  })
+const ADD_SECTION = 'Add section'
 
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.85 : 1,
-  }
-
-  return (
-    <Paper
-      ref={setNodeRef}
-      withBorder
-      p="sm"
-      shadow="xs"
-      style={style}
-      data-canopy-field={canopyPath}
-    >
-      <Group align="flex-start" gap="sm">
-        {!readOnly && (
-          <ActionIcon
-            size="md"
-            key="drag-handle"
-            variant="subtle"
-            aria-label="Drag to reorder"
-            {...attributes}
-            {...listeners}
-            style={{ cursor: 'grab' }}
+/**
+ * The block templates as a menu, each with its description, so an editor picks a section by
+ * what it is for. `target` is the control that opens it.
+ */
+const TemplateMenu: React.FC<{
+  templates: BlockConfig[]
+  onPick: (templateName: string) => void
+  onOpenChange?: (opened: boolean) => void
+  target: React.ReactNode
+}> = ({ templates, onPick, onOpenChange, target }) => (
+  <Menu position="bottom-start" withinPortal shadow="md" width={320} onChange={onOpenChange}>
+    {target}
+    <Menu.Dropdown data-testid="block-template-menu">
+      <ScrollArea.Autosize mah={360} type="auto">
+        {templates.map((template) => (
+          <Menu.Item
+            key={template.name}
+            onClick={() => onPick(template.name)}
+            data-testid={`block-template-${template.name}`}
           >
-            ⇅
-          </ActionIcon>
-        )}
-        <div key="content" style={{ flex: 1, minWidth: 0, width: '100%' }}>
-          {children}
-        </div>
+            <Text size="sm" fw={500}>
+              {template.label ?? template.name}
+            </Text>
+            {template.description && (
+              <Text size="xs" c="dimmed" style={{ whiteSpace: 'normal' }}>
+                {template.description}
+              </Text>
+            )}
+          </Menu.Item>
+        ))}
+      </ScrollArea.Autosize>
+    </Menu.Dropdown>
+  </Menu>
+)
+
+/**
+ * The gap before a block. Its add control shows while the gap is hovered, the control is focused
+ * or its menu is open, and stays in the tab order, so a keyboard reaches it before each block.
+ */
+const InsertBetween: React.FC<{
+  templates: BlockConfig[]
+  onPick: (templateName: string) => void
+}> = ({ templates, onPick }) => {
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const [opened, setOpened] = useState(false)
+  // A touch screen has no hover, so the control stays faintly visible there.
+  const noHover = useMediaQuery('(hover: none)')
+  const shown = hovered || focused || opened
+  const opacity = shown ? 1 : noHover ? 0.6 : 0
+  return (
+    <Box
+      h={20}
+      pos="relative"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      data-testid="block-insert-between"
+    >
+      <Box
+        aria-hidden
+        pos="absolute"
+        left={0}
+        right={0}
+        top="50%"
+        h={2}
+        bg="blue.4"
+        style={{ opacity: shown ? 1 : 0, transition: 'opacity 120ms ease' }}
+      />
+      <Group justify="center" h="100%" style={{ position: 'relative' }}>
+        <TemplateMenu
+          templates={templates}
+          onPick={onPick}
+          onOpenChange={setOpened}
+          target={
+            <Tooltip label="Add section here" openDelay={300}>
+              <Menu.Target>
+                <ActionIcon
+                  size="sm"
+                  radius="xl"
+                  variant="default"
+                  aria-label="Add section here"
+                  onFocus={() => setFocused(true)}
+                  onBlur={() => setFocused(false)}
+                  style={{ opacity, transition: 'opacity 120ms ease' }}
+                >
+                  <IconPlus size={14} aria-hidden />
+                </ActionIcon>
+              </Menu.Target>
+            </Tooltip>
+          }
+        />
       </Group>
-    </Paper>
+    </Box>
   )
 }
 
@@ -120,43 +173,29 @@ export const BlockField: React.FC<BlockFieldProps> = ({
   path,
   dataCanopyField,
   readOnly = false,
+  resetKey = '',
+  hasErrors,
   onRemoved,
 }) => {
   const descriptionBaseId = useId()
   const commentControl = useFieldCommentControl(dataCanopyField ?? formatCanopyPath(path))
   const keysFor = useListItemKeys()
   const itemKeys = keysFor(value, 'blocks')
-  const [pendingTemplate, setPendingTemplate] = useState<string | null>(null)
-
-  // Constant: DndContext's hooks depend on the sensor count; read-only disables each item instead.
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  )
+  const expansion = useItemExpansion(itemKeys, resetKey)
+  const focusAfterRenderRef = useRef<number | null>(null)
 
   const emit = (next: BlockInstance[]) => {
     if (!readOnly) onChange(next)
   }
 
-  const addBlock = (templateName: string) => {
-    const template = findTemplate(templates, templateName)
-    if (!template) return
-    if (readOnly) return
-    emit([...value, { template: templateName, value: {} }])
+  const insertAt = (index: number, block: BlockInstance) => {
+    focusAfterRenderRef.current = index
+    emit([...value.slice(0, index), block, ...value.slice(index)])
   }
 
-  const moveBlock = (from: number, to: number) => {
-    if (from === to || from < 0 || to < 0 || from >= value.length || to >= value.length) return
-    if (readOnly) return
-    emit(arrayMove(value, from, to))
-  }
-
-  const removeBlock = (index: number) => {
-    if (readOnly) return
-    emit(value.filter((_, idx) => idx !== index))
-    onRemoved?.(index, value[index])
+  const addAt = (index: number) => (templateName: string) => {
+    if (findTemplate(templates, templateName))
+      insertAt(index, { template: templateName, value: {} })
   }
 
   const updateBlockValue = (index: number, val: Record<string, unknown>) => {
@@ -164,21 +203,6 @@ export const BlockField: React.FC<BlockFieldProps> = ({
     next[index] = { ...next[index], value: val }
     emit(next)
   }
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-
-    const oldIndex = itemKeys.indexOf(String(active.id))
-    const newIndex = itemKeys.indexOf(String(over.id))
-    if (oldIndex === -1 || newIndex === -1) return
-    moveBlock(oldIndex, newIndex)
-  }
-
-  const selectableTemplates = useMemo(
-    () => templates.map((t) => ({ value: t.name, label: t.label ?? t.name })),
-    [templates],
-  )
 
   return (
     <Paper
@@ -200,111 +224,100 @@ export const BlockField: React.FC<BlockFieldProps> = ({
           description={description}
           descriptionBaseId={descriptionBaseId}
           commentControl={commentControl}
-          actions={
-            !readOnly && (
-              <Select
-                aria-label="Add block"
-                placeholder="Add block..."
-                data={selectableTemplates}
-                value={pendingTemplate}
-                onChange={(next) => {
-                  if (next) {
-                    addBlock(next)
-                  }
-                  setPendingTemplate(null)
-                }}
-                allowDeselect
-                size="xs"
-                w={180}
-              />
-            )
-          }
+          actions={value.length > 1 && <ExpandAllButton expansion={expansion} />}
         />
 
-        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-          <SortableContext items={itemKeys} strategy={verticalListSortingStrategy}>
-            <Stack gap="sm">
-              {value.map((block, idx) => {
-                const template = findTemplate(templates, block.template)
-                const currentPath = [...path, idx]
+        <ItemList
+          items={value}
+          itemKeys={itemKeys}
+          path={path}
+          readOnly={readOnly}
+          expansion={expansion}
+          focusAfterRenderRef={focusAfterRenderRef}
+          hasErrors={hasErrors}
+          summarize={(block) => {
+            const template = findTemplate(templates, block.template)
+            return {
+              title: template?.label ?? block.template ?? 'Unknown block',
+              secondary: template ? listItemSecondary(block.value, template.fields) : undefined,
+            }
+          }}
+          describe={(block) => findTemplate(templates, block.template)?.description}
+          onMove={(from, to) => {
+            if (from === to || to < 0 || to >= value.length) return
+            const next = [...value]
+            const [moved] = next.splice(from, 1)
+            next.splice(to, 0, moved)
+            emit(next)
+          }}
+          onDuplicate={(idx) =>
+            // Focus stays on the row's menu, which stands in for the item that acted.
+            emit([...value.slice(0, idx + 1), structuredClone(value[idx]), ...value.slice(idx + 1)])
+          }
+          onRemove={(idx) => {
+            if (readOnly) return
+            const block = value[idx]
+            emit(value.filter((_, i) => i !== idx))
+            onRemoved?.(idx, block)
+          }}
+          renderBetween={
+            readOnly
+              ? undefined
+              : (idx) => <InsertBetween templates={templates} onPick={addAt(idx)} />
+          }
+          renderItem={(block, idx) => {
+            const template = findTemplate(templates, block.template)
+            const currentPath = [...path, idx]
+            if (!template) {
+              return (
+                <Text size="sm" c="red.8">
+                  No template found for &quot;{block.template}&quot;
+                </Text>
+              )
+            }
+            return template.fields.map((f: FieldConfig) => (
+              <React.Fragment key={f.name}>
+                {renderField(
+                  f,
+                  block.value?.[f.name],
+                  (next) =>
+                    updateBlockValue(idx, {
+                      ...(isPlainRecord(block.value) ? block.value : {}),
+                      [f.name]: next,
+                    }),
+                  [...currentPath, f.name],
+                )}
+              </React.Fragment>
+            ))
+          }}
+        />
 
-                return (
-                  <SortableBlock
-                    key={itemKeys[idx]}
-                    id={itemKeys[idx]}
-                    canopyPath={formatCanopyPath(currentPath)}
-                    readOnly={readOnly}
+        {value.length === 0 && (
+          <Text size="sm" c="dimmed">
+            {readOnly ? 'No sections.' : 'No sections yet.'}
+          </Text>
+        )}
+
+        {!readOnly && (
+          <Group>
+            <TemplateMenu
+              templates={templates}
+              onPick={addAt(value.length)}
+              target={
+                <Menu.Target>
+                  <Button
+                    variant="light"
+                    size="xs"
+                    leftSection={<IconPlus size={14} aria-hidden />}
+                    data-testid="block-add-section"
                   >
-                    <Stack gap="xs">
-                      <FieldLabel
-                        label={template?.label ?? block.template ?? 'Unknown block'}
-                        actions={
-                          !readOnly && (
-                            <>
-                              <ActionIcon
-                                size="md"
-                                variant="light"
-                                aria-label="Move block up"
-                                disabled={idx === 0}
-                                onClick={() => moveBlock(idx, idx - 1)}
-                              >
-                                ↑
-                              </ActionIcon>
-                              <ActionIcon
-                                size="md"
-                                variant="light"
-                                aria-label="Move block down"
-                                disabled={idx === value.length - 1}
-                                onClick={() => moveBlock(idx, idx + 1)}
-                              >
-                                ↓
-                              </ActionIcon>
-                              <Button
-                                variant="subtle"
-                                color="red"
-                                onClick={(event) => {
-                                  const list =
-                                    event.currentTarget.closest<HTMLElement>('[data-removal-focus]')
-                                  removeBlock(idx)
-                                  list?.focus()
-                                }}
-                              >
-                                {EDITOR_ACTIONS.remove}
-                              </Button>
-                            </>
-                          )
-                        }
-                      />
-
-                      {template ? (
-                        <Stack gap="sm">
-                          {template.fields.map((f: FieldConfig) => (
-                            <React.Fragment key={f.name}>
-                              {renderField(
-                                f,
-                                block.value?.[f.name],
-                                (next) =>
-                                  updateBlockValue(idx, {
-                                    ...(isPlainRecord(block.value) ? block.value : {}),
-                                    [f.name]: next,
-                                  }),
-                                [...currentPath, f.name],
-                              )}
-                            </React.Fragment>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Text size="xs" c="red">
-                          No template found for &quot;{block.template}&quot;
-                        </Text>
-                      )}
-                    </Stack>
-                  </SortableBlock>
-                )
-              })}
-            </Stack>
-          </SortableContext>
-        </DndContext>
+                    {ADD_SECTION}
+                  </Button>
+                </Menu.Target>
+              }
+            />
+          </Group>
+        )}
       </Stack>
     </Paper>
   )

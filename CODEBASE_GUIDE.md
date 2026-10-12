@@ -495,7 +495,7 @@ Top-level components and helpers:
 - `preview-asset-base.ts` — the preview's asset-route prefix `assetUrl` reads
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
 - `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
-- `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`
+- `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`, `revealField`
 - `undo-removal.ts` — `FieldRemoval`, `restoreRemoval` — undo for a form Remove
 - `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
 - `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
@@ -554,6 +554,7 @@ Field components, in `editor/fields/`:
 - `CodeField.tsx` — code and Mermaid field
 - `ObjectField.tsx` — nested object; Clear when optional and filled
 - `ObjectListField.tsx` / `list-item-title.ts` — `list: true` objects; item titles
+- `ItemList.tsx` / `item-expansion.ts` — collapsible sortable rows
 - `InlineGroupField.tsx` — `type: 'group'` as a bordered container, transparent to the data path
 - `BlockField.tsx` — blocks
 - `list-item-keys.ts` — `useListItemKeys`, identity keys for object lists and `BlockField`

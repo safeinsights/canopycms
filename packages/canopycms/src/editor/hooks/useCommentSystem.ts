@@ -3,7 +3,7 @@ import { useSWRConfig } from 'swr'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import type { EditorEntry } from '../Editor'
-import { findFieldTarget } from '../field-target'
+import { findFieldTarget, whenRevealed } from '../field-target'
 import { useApiClient } from '../context'
 import { isGatewayFailure, isUnanswered } from '../unanswered'
 import { resolveMessageOrigin } from '../preview-bridge'
@@ -226,7 +226,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
       const found = typeof msg.fieldPath === 'string' ? findFieldTarget(msg.fieldPath) : undefined
       if (found) {
         const target = found.element
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        whenRevealed(target, () => target.scrollIntoView({ behavior: 'smooth', block: 'center' }))
         const previous = target.style.boxShadow
         target.style.boxShadow = '0 0 0 3px rgba(79, 70, 229, 0.35)'
         later(() => {
@@ -256,7 +256,10 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
 
     window.setTimeout(
       () => {
-        findFieldTarget(canopyPath)?.element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        const target = findFieldTarget(canopyPath)?.element
+        if (target) {
+          whenRevealed(target, () => target.scrollIntoView({ behavior: 'smooth', block: 'center' }))
+        }
         setFocusedFieldPath(canopyPath)
         setHighlightThreadId(threadId)
         window.setTimeout(() => {

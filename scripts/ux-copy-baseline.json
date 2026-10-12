@@ -20,9 +20,6 @@
     "packages/canopycms/src/editor/Editor.tsx": {
       "title-case": 4
     },
-    "packages/canopycms/src/editor/fields/BlockField.tsx": {
-      "ellipsis": 1
-    },
     "packages/canopycms/src/editor/fields/entry-link/InsertEntryLink.tsx": {
       "title-case": 1,
       "ellipsis": 1
@@ -72,12 +69,6 @@
     },
     "packages/canopycms/src/editor/permission-manager/UserSelector.tsx": {
       "ellipsis": 1
-    },
-    "packages/canopycms/src/editor/schema-editor/CollectionEditor.tsx": {
-      "title-case": 7
-    },
-    "packages/canopycms/src/editor/schema-editor/EntryTypeEditor.tsx": {
-      "title-case": 4
     }
   }
 }

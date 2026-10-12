@@ -73,8 +73,8 @@
     },
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 750,
-      "words": 4229
+      "maxSectionWords": 753,
+      "words": 4232
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
@@ -84,12 +84,12 @@
     "README.md": {
       "historyMarkers": 0,
       "maxSectionWords": 4914,
-      "words": 15987
+      "words": 15995
     },
     "docs/adopter-migration.md": {
       "historyMarkers": null,
-      "maxSectionWords": 5666,
-      "words": 10543
+      "maxSectionWords": 5782,
+      "words": 10659
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
