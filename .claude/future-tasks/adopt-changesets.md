@@ -9,12 +9,200 @@ summary: >-
 ## Status
 
 - **PR A, int side** (`feat/changesets-int-side`): `.changeset/` config and author guide, `scripts/migration-notes.mjs`, the CI `changesets` gate, the move of `docs/adopter-migration.md` to a root `CHANGELOG.md` with its legacy entries frozen, int tags, the shipped changelog and handoff, and the stable job's refusal to publish over pending changesets.
-- **PR B, stable side**: not started. It must land on int-202610-b **before int-202610-b merges to main**. Until it does, the stable job stops on pending changesets rather than releasing them as a patch.
+- **PR B, stable side**: in progress on `feat/changesets-stable-release` (spec below). It must land on int-202610-b **before int-202610-b merges to main**. Until it does, the stable job stops on pending changesets rather than releasing them as a patch.
 - **Done outside the repo**: the `release-tags-immutable` and `stable-tags-release-bot-only` tag rulesets (2026-10-11).
 - **To do right after A merges, before the first int it publishes**: `node scripts/backfill-int-tags.mjs --push` (JP approved the backfill). It tags all 32 published ints (0.0.61-int.74 to 0.0.68-int.113 on 2026-10-11) at their npm-attested commits, each matching its publish.yml run's head SHA; `--ship` needs the tags to find the previous int. Run it without `--push` first: the dry run must show no mismatch.
 - **Unverified**: `tag-prerelease` runs after a partly failed prerelease only if a failed reusable workflow still passes its `published` output to the caller. If it does not, that int goes untagged; tag it with the backfill script.
 
 The design below was reviewed adversarially before any code; JP and the manager settled its six decisions (D-1 to D-6) on 2026-10-11.
+
+## PR B spec (GO 2026-10-11)
+
+The manager's three conditions on GO:
+1. The release dry run runs on the int-b → main PR itself, not only on PRs that touch the
+   release path.
+2. Main's rulesets must allow the release bot's atomic push of the commit and its tag.
+   Checked by reading on 2026-10-11:
+   - Main is governed by `require-pr` (deletion, non_fast_forward and pull_request, with the
+     release-bot app 4038189 as an `always` bypass) and by `main` (deletion and
+     non_fast_forward).
+   - A fast-forward push breaks neither ruleset, and `stable-tags-release-bot-only` lets the
+     bot create `vX.Y.Z`.
+   - There is no classic branch protection.
+3. This spec lives here.
+
+Base: `int-202610-b` at d114dade, after PR A #524. Design and decisions:
+`.claude/future-tasks/adopt-changesets.md`. Its "As built in PR A" block wins over the memo.
+**PR B must be on int-b before int-b merges to main.** Until then, the stable job's tripwire
+refuses to publish while any changeset is pending.
+
+### Goal
+
+A push to `main` that CI passes does one of two things:
+- releases every pending changeset as one version, with the five packages in lockstep and the
+  version taken from the changesets (D-1, D-2);
+- or, if nothing is release-worthy, publishes nothing (D-5).
+
+A release:
+1. promotes the Unreleased entries into `CHANGELOG.md`;
+2. consumes the changesets;
+3. commits and tags the release;
+4. then publishes each package idempotently, with the assembled `CHANGELOG.md` in the
+   canopycms tarball.
+
+### 1. `scripts/release-stable.mjs` (new; the logic the workflow and the dry run share)
+
+`node scripts/release-stable.mjs --prepare [--allow-dirty]` works in the current tree and
+commits nothing. It prints a JSON result on stdout:
+
+- `{"release": false, "reason": "..."}` when nothing is release-worthy:
+  - no changeset files;
+  - or only empty changesets: `changeset status` releases nothing, and they stay to be consumed
+    by the next real release.
+- Otherwise `{"release": true, "version": "X.Y.Z"}`, after doing this in order:
+  1. Read the plan: `changeset status --since=<latest stable vX.Y.Z tag> --output <tmp>`. Every
+     present changeset counts, as on the prerelease path.
+  2. **Refuse to go backwards.** If `X.Y.Z` is not greater than both the latest stable tag and
+     npm's `latest`, fail with a clear error, and never re-derive a different version.
+  3. `node scripts/migration-notes.mjs --promote X.Y.Z` (§2).
+  4. `pnpm exec changeset version`: bumps the five manifests and deletes the consumed
+     changesets, empty ones included.
+  5. `node scripts/bump-version.mjs X.Y.Z`: `version.ts` and the root manifest, which
+     `changeset version` never touches.
+  6. Validate with `pnpm lint:docs` and `node scripts/migration-notes.mjs --check`. Check 9 must
+     now find `### X.Y.Z`.
+
+`--self-test` runs against throwaway repos, the same way migration-notes does, and covers:
+- no changesets;
+- empty-only changesets;
+- a patch and a minor, with every manifest and `version.ts` checked;
+- the backwards refusal;
+- a full prepare whose CHANGELOG.md and `.changeset/` match expectations.
+
+### 2. `migration-notes.mjs --promote <X.Y.Z>`
+
+- **CHANGELOG.md markers.** The legacy part of `## Unreleased` sits between
+  `<!-- legacy:start -->` and `<!-- legacy:end -->` markers, which PR B adds. That covers the
+  legacy paragraph, the table and the frozen `###` entries. The generic intro stays outside the
+  markers.
+- **The new section.** `### X.Y.Z` is written as the first child of `## Released`. In it:
+  1. The legacy entries, demoted `###` → `####`, keeping their int labels.
+  2. The assembled changeset entries in table order, each as `####`, with its
+     `<!-- changeset: <slug> -->` marker and its `_First in int.N._` line. A changeset in no
+     int tag is labelled `First in X.Y.Z`.
+  3. Each changeset entry's unreleased parts as `##### Added in int.N`.
+  4. Each legacy- or released-parent part as its own `####` "…, continued".
+  5. Body links rebased from `.changeset/` to the repo root.
+- **What is removed.** The legacy block, markers included, comes out of Unreleased. Unreleased
+  keeps only its generic intro, so the next build creates a fresh table (as built in PR A).
+- **Inbound links.** Every link in a tracked `*.md` outside `.changeset/` and `.claude/` that
+  points at `.changeset/<slug>.md` is rewritten to `CHANGELOG.md#<anchor>`, relative to that
+  file.
+- **The changeset files stay.** `changeset version` consumes them. The markers are what let
+  `--check`'s shipped-then-missing rule accept that they are gone.
+- **Invariants, tested:**
+  - every existing anchor is unchanged, and the new section's anchors collide with nothing;
+  - running `--promote` twice is refused (the `### X.Y.Z` already exists).
+- **Stable `--ship`** (`--version X.Y.Z` with no `-int`): the "This build" section names the
+  version and links to `### X.Y.Z`, with no "New since int.M". The rest is as built in PR A.
+
+### 3. `publish.yml`: the stable path becomes two jobs
+
+**`release-commit`** runs on push to main, with `contents: write` through the release-bot app
+token and **no** `id-token`. Its steps:
+1. The CI gate (unchanged).
+2. Check out with `fetch-depth: 0`.
+3. Install, then `generate:client`.
+4. `release-stable.mjs --prepare`. If `release: false`, write the reason to the summary, end
+   green and publish nothing.
+5. `git commit -m "chore: release vX.Y.Z [skip ci]"` and tag `vX.Y.Z`.
+6. `git push --atomic origin HEAD:main refs/tags/vX.Y.Z`.
+   - If main has moved, the push is rejected, the job fails, and nothing is published. The next
+     push to main runs again from the new head, with the changesets still pending.
+
+Its outputs are `version` and `sha` (the release commit).
+
+**`publish`** has `needs: release-commit` and runs only if a release was made. It has
+`id-token: write` and `contents: read`, and **no** write token. Its steps:
+1. Check out the release commit with `fetch-depth: 0` (tags are needed for labels).
+2. Build.
+3. `migration-notes.mjs --ship --version X.Y.Z --sha <release sha> --out packages/canopycms/CHANGELOG.md`.
+4. Pack, and assert that `package/CHANGELOG.md` is in the canopycms tarball.
+5. Publish each package **idempotently**:
+   - if `npm view <pkg>@X.Y.Z` exists **and** its attested `gitCommit` equals the release SHA,
+     skip it;
+   - if it exists at another commit, fail loudly;
+   - otherwise publish.
+
+   A publish that fails part-way is resumed with "Re-run failed jobs": it skips what is already
+   on npm.
+
+This replaces the old single job and its `--min` floor. The tripwire goes, since this path
+consumes changesets. The commit-and-tag step runs first, so main and npm can't disagree about a
+version: either nothing is pushed, or the tag exists and publishing can resume.
+
+**Separation of privilege.** Writes happen only where no `id-token` exists, and `id-token` only
+where no write token exists. That is stricter than today's single job, which holds both.
+
+### 4. Int tagging through git (manager-approved)
+
+- **`tag-prerelease`** still checks out nothing and runs no repo code. It does:
+  1. `git init`;
+  2. fetch the single commit with an auth header built from `GITHUB_TOKEN` (the same header
+     form `actions/checkout` uses; no token in a URL);
+  3. `git push <sha>:refs/tags/v<version>`;
+  4. the existing `matching-refs` GET as the idempotence check.
+- **`scripts/backfill-int-tags.mjs --push`** uses `git push origin <sha>:refs/tags/v<version>`
+  (after `git fetch` if the commit is missing locally) instead of `gh api POST git/refs`.
+
+### 5. Dry run in CI
+
+A `release-dry-run` job in `ci.yml`, path-filtered with the `dual-build` pattern so it always
+reports. It runs on every PR into `main` (the int-b → main PR's dry run matters most), and on any
+other PR that touches the paths below. Its trigger paths: `.github/workflows/publish.yml`, `scripts/release-stable.mjs`,
+`scripts/migration-notes.mjs`, `scripts/bump-version.mjs`, `.changeset/config.json` and
+`.changeset/*.md`. It runs:
+
+1. `release-stable.mjs --prepare` on a full checkout;
+2. `--ship` into a temp file;
+3. `pnpm pack` of canopycms, with the tarball assertion;
+4. prints `git diff --stat` and the planned version.
+
+It never commits, pushes or publishes. The first real run, the int-b → main merge, is thereby
+rehearsed on every PR that touches the release path.
+
+### 6. Docs
+
+- **DEVELOPING.md Releasing:**
+  - stable channel = the two jobs, D-5, and resuming with "Re-run failed jobs";
+  - the `--min` paragraph is replaced by the resume rule;
+  - the tripwire sentence is deleted.
+- **`.changeset/README.md` and CHANGELOG.md's intro:** the "is to / until that release path
+  exists" wording becomes present tense.
+- **`adopt-changesets.md`:** marked resolved, with a final status. The task moves to `resolved/`
+  once B merges.
+- **Doc deltas** are reported, and superseded text is deleted, not appended to.
+
+### 7. Work split, tiering and review
+
+- **One Opus worker** writes `release-stable.mjs`, the `--promote` mode and the stable-ship
+  variant, against this spec. This is design-heavy and gets self-tests with break-and-rerun.
+- **The orchestrator** (this session) does the workflows, the dry-run job, the
+  backfill/tag-prerelease git push, and the docs.
+- **Review:**
+  - `/review-rounds` with Opus code rounds;
+  - the claims pass;
+  - then a **Fable full-diff review**, as agreed, before reporting merge-ready.
+- **Merging:** through the manager's queue, with auto-fix off until my turn.
+
+### Open points (my recommendation in brackets)
+
+1. **Empty-only changesets on main** stay until the next real release consumes them. [Yes.
+   Deleting them in a release-less bot commit is noise.]
+2. **Where `--promote` sits.** It runs before `changeset version`, so the label computation can
+   still read the files. [Required by design.]
+3. **Should the first stable release (int-b → main) also get a GitHub Release?** [No. Out of
+   scope; CHANGELOG.md is the record.]
 
 ## As built in PR A (overrides the memo below where they differ)
 
