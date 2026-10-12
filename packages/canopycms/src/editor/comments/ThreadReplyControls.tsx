@@ -5,6 +5,7 @@ import { Alert, Button, Group, Stack, Textarea } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import { getErrorMessage } from '../../utils/error'
+import { moveFocusIfUnmoved } from './move-focus-if-unmoved'
 
 export interface ThreadReplyControlsProps {
   /** An unresolved thread; a resolved one has nothing to reply to. */
@@ -12,6 +13,11 @@ export interface ThreadReplyControlsProps {
   /** Adds a reply to this thread; rejecting keeps the box open with the text. */
   onAddReply: (text: string) => Promise<void>
   onResolve: () => Promise<void>
+  /**
+   * Where focus goes once the thread is resolved and these controls are gone, unless the user put
+   * it somewhere else after clicking Resolve.
+   */
+  focusAfterResolve?: () => HTMLElement | null | undefined
   currentUserId: string
   /** Whether the user may resolve any thread; a thread's own author always may resolve it. */
   canResolve: boolean
@@ -41,6 +47,7 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
   thread,
   onAddReply,
   onResolve,
+  focusAfterResolve,
   currentUserId,
   canResolve,
   replyText: controlledReply,
@@ -95,6 +102,8 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
   const hasDraft = replyText.trim().length > 0
 
   const handleResolve = async () => {
+    // Taken at the click: a draft posts first, and focus moved during that post is the user's.
+    const origin = document.activeElement
     setResolving(true)
     setError(null)
     try {
@@ -103,6 +112,7 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
         setReplyText('')
       }
       await onResolve()
+      if (focusAfterResolve) moveFocusIfUnmoved(origin, focusAfterResolve())
     } catch (err) {
       setError(getErrorMessage(err))
     } finally {

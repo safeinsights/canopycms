@@ -16,6 +16,8 @@ export interface InlineCommentThreadProps {
   onAddReply: (text: string) => Promise<void>
   /** Handler to resolve this thread */
   onResolve: () => Promise<void>
+  /** Where focus goes after a resolve; see `ThreadReplyControls`. */
+  focusAfterResolve?: () => HTMLElement | null | undefined
   /** Current user ID for permission checking */
   currentUserId: string
   /** Whether the user may resolve any thread; a thread's own author always may resolve it. */
@@ -35,6 +37,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
   thread,
   onAddReply,
   onResolve,
+  focusAfterResolve,
   currentUserId,
   canResolve,
   onGetUserMetadata,
@@ -113,6 +116,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
             thread={thread}
             onAddReply={onAddReply}
             onResolve={onResolve}
+            focusAfterResolve={focusAfterResolve}
             currentUserId={currentUserId}
             canResolve={canResolve}
             replyText={replyText}

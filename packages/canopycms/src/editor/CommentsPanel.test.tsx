@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -410,6 +411,51 @@ describe('CommentsPanel', () => {
       await userEvent.click(composer)
       await act(async () => {
         finish()
+      })
+
+      await waitFor(() => expect(onResolveThread).toHaveBeenCalled())
+      expect(document.activeElement).toBe(composer)
+    })
+
+    it('moves focus to the thread count when the resolved card actually leaves the list', async () => {
+      const Harness = () => {
+        const [comments, setComments] = useState([fieldThread('a'), fieldThread('b')])
+        return (
+          <CommentsPanel
+            {...panelProps({
+              comments,
+              onResolveThread: async (id) =>
+                setComments((all) => all.map((t) => (t.id === id ? { ...t, resolved: true } : t))),
+            })}
+          />
+        )
+      }
+      render(<Harness />, { wrapper: Wrapper })
+
+      await userEvent.click(within(card('a')).getByTestId('resolve-thread-button'))
+
+      await waitFor(() => expect(screen.queryByText('Comment in a')).toBeNull())
+      await waitFor(() => expect(document.activeElement?.textContent).toBe('1 thread'))
+    })
+
+    it('leaves focus the user moved while Reply and resolve posted its reply', async () => {
+      let finishReply: () => void = () => {}
+      const onAddComment = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishReply = resolve
+          }),
+      )
+      const onResolveThread = vi.fn().mockResolvedValue(undefined)
+      renderPanel({ comments: [fieldThread('a'), fieldThread('b')], onAddComment, onResolveThread })
+
+      await userEvent.click(within(card('a')).getByTestId('reply-thread-button'))
+      await userEvent.type(screen.getByLabelText('Reply to this thread'), 'Last word')
+      await userEvent.click(within(card('a')).getByTestId('resolve-thread-button'))
+      const composer = screen.getByTestId('comment-textarea')
+      await userEvent.click(composer)
+      await act(async () => {
+        finishReply()
       })
 
       await waitFor(() => expect(onResolveThread).toHaveBeenCalled())

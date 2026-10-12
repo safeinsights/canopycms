@@ -258,11 +258,9 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
                     <InlineCommentThread
                       thread={thread}
                       onAddReply={(text) => addComment(text, thread.id)}
-                      onResolve={async () => {
-                        await resolveThread(thread.id)
-                        // Resolve and the reply box go with the open state, so focus stays inside.
-                        headingRef.current?.focus()
-                      }}
+                      onResolve={() => resolveThread(thread.id)}
+                      // Resolve and the reply box go with the open state, so focus stays inside.
+                      focusAfterResolve={() => headingRef.current}
                       replyText={replyDrafts[thread.id] ?? ''}
                       onReplyTextChange={(text) =>
                         setReplyDrafts((prev) => ({ ...prev, [thread.id]: text }))

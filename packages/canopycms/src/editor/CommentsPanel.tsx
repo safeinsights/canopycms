@@ -22,7 +22,6 @@ import { userIdLabel } from './user-display'
 import { RelativeTime } from './components/RelativeTime'
 import { ThreadReplyControls } from './comments/ThreadReplyControls'
 import { useTrackedWrites } from './comments/use-tracked-writes'
-import { moveFocusIfUnmoved } from './comments/move-focus-if-unmoved'
 import { getErrorMessage } from '../utils/error'
 
 export interface CommentsPanelProps {
@@ -314,16 +313,10 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                             thread.id,
                           )
                         }
-                        onResolve={async () => {
-                          const origin = document.activeElement
-                          await resolveThread(thread.id)
-                          moveFocusIfUnmoved(
-                            origin,
-                            showResolved
-                              ? headingRefs.current.get(thread.id)
-                              : threadCountRef.current,
-                          )
-                        }}
+                        onResolve={() => resolveThread(thread.id)}
+                        focusAfterResolve={() =>
+                          showResolved ? headingRefs.current.get(thread.id) : threadCountRef.current
+                        }
                         currentUserId={currentUserId}
                         canResolve={canResolve}
                         replyText={replyDrafts[thread.id] ?? ''}

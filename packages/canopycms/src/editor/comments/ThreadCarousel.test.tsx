@@ -139,6 +139,38 @@ describe('ThreadCarousel', () => {
     await waitFor(() => expect(document.activeElement?.textContent).toMatch(/^Branch discussion/))
   })
 
+  it('leaves focus the user moved while a resolve was in flight', async () => {
+    let finish: () => void = () => {}
+    const user = userEvent.setup()
+    render(
+      <ThreadCarousel
+        threads={[mockThreads[0]]}
+        label="Branch discussion"
+        contextType="branch"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              finish = resolve
+            }),
+        )}
+      />,
+      { wrapper: Wrapper },
+    )
+    await user.click(screen.getByTestId('resolve-thread-button'))
+    const elsewhere = document.createElement('input')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+    await act(async () => {
+      finish()
+    })
+
+    expect(document.activeElement).toBe(elsewhere)
+    elsewhere.remove()
+  })
+
   it('labels the previous and next thread buttons', () => {
     render(
       <ThreadCarousel
