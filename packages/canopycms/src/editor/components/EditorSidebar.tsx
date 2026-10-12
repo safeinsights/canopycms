@@ -1,5 +1,6 @@
-import type { Ref } from 'react'
+import { useRef, useState, type Ref } from 'react'
 import { ActionIcon, Indicator, Menu, Paper, Stack, Tooltip } from '@mantine/core'
+import { useMergedRef } from '@mantine/hooks'
 import {
   IconUserCircle,
   IconLogout,
@@ -12,6 +13,9 @@ import {
 } from '@tabler/icons-react'
 import type { PaneLayout } from '../EditorPanes'
 import type { InexactMark } from '../preview-marks'
+import { focusIfDropped } from '../utils/focus-return'
+
+const ICON_TOOLTIP_EVENTS = { hover: true, focus: true, touch: true } as const
 
 export interface EditorSidebarProps {
   /**
@@ -126,6 +130,10 @@ export function EditorSidebar({
   onAccountClick,
   onLogoutClick,
 }: EditorSidebarProps) {
+  const [settingsOpened, setSettingsOpened] = useState(false)
+  const settingsToggle = useRef<HTMLButtonElement>(null)
+  const settingsMergedRef = useMergedRef(settingsToggle, settingsToggleRef)
+
   return (
     <Paper
       withBorder
@@ -146,15 +154,17 @@ export function EditorSidebar({
       }}
     >
       <Stack gap="sm" align="center" style={{ width: '100%', paddingTop: 6 }}>
-        <ActionIcon
-          variant="subtle"
-          size="lg"
-          radius="md"
-          aria-label="Toggle layout"
-          onClick={() => onLayoutChange(layout === 'side' ? 'stacked' : 'side')}
-        >
-          {layout === 'side' ? <IconLayoutRows size={18} /> : <IconLayoutColumns size={18} />}
-        </ActionIcon>
+        <Tooltip label="Toggle layout" position="left" events={ICON_TOOLTIP_EVENTS}>
+          <ActionIcon
+            variant="subtle"
+            size="lg"
+            radius="md"
+            aria-label="Toggle layout"
+            onClick={() => onLayoutChange(layout === 'side' ? 'stacked' : 'side')}
+          >
+            {layout === 'side' ? <IconLayoutRows size={18} /> : <IconLayoutColumns size={18} />}
+          </ActionIcon>
+        </Tooltip>
 
         <Tooltip
           label={
@@ -203,19 +213,33 @@ export function EditorSidebar({
         </Tooltip>
       </Stack>
       <Stack gap="xs" align="center">
-        <Menu shadow="md" width={200} position="left">
-          <Menu.Target>
-            <ActionIcon
-              ref={settingsToggleRef}
-              variant="subtle"
-              size="lg"
-              radius="md"
-              aria-label="Settings"
-              data-testid="settings-button"
-            >
-              <IconSettings size={18} />
-            </ActionIcon>
-          </Menu.Target>
+        <Menu
+          shadow="md"
+          width={200}
+          position="left"
+          opened={settingsOpened}
+          onChange={setSettingsOpened}
+          onExitTransitionEnd={() => focusIfDropped(settingsToggle.current)}
+        >
+          <Tooltip
+            label="Settings"
+            position="left"
+            events={ICON_TOOLTIP_EVENTS}
+            disabled={settingsOpened}
+          >
+            <Menu.Target>
+              <ActionIcon
+                ref={settingsMergedRef}
+                variant="subtle"
+                size="lg"
+                radius="md"
+                aria-label="Settings"
+                data-testid="settings-button"
+              >
+                <IconSettings size={18} />
+              </ActionIcon>
+            </Menu.Target>
+          </Tooltip>
           <Menu.Dropdown data-testid="settings-menu">
             <Menu.Label>Settings</Menu.Label>
             {onPermissionManagerOpen && (

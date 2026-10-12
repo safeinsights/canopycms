@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import { act, render, screen, cleanup, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { EditorSidebar, type EditorSidebarProps } from './EditorSidebar'
@@ -101,5 +101,55 @@ describe('EditorSidebar - highlight toggle', () => {
 
     rerender(<EditorSidebar {...defaultProps} previewMarksNothing />)
     await waitFor(() => expect(screen.queryByText(/marks no editable elements/)).toBeNull())
+  })
+})
+
+describe('EditorSidebar - icon button tooltips', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it.each(['Settings', 'Toggle layout'])('shows the %s tooltip on keyboard focus', async (name) => {
+    render(<EditorSidebar {...defaultProps} />, { wrapper: Wrapper })
+    expect(screen.queryByRole('tooltip')).toBeNull()
+
+    act(() => screen.getByRole('button', { name }).focus())
+
+    expect((await screen.findByRole('tooltip')).textContent).toBe(name)
+  })
+
+  it('returns focus to the Settings button after an item that opens no overlay acts', async () => {
+    const onMediaLibraryOpen = vi.fn()
+    render(<EditorSidebar {...defaultProps} onMediaLibraryOpen={onMediaLibraryOpen} />, {
+      wrapper: Wrapper,
+    })
+    const settings = screen.getByRole('button', { name: 'Settings' })
+
+    act(() => settings.focus())
+    await userEvent.keyboard('{Enter}')
+    const item = await screen.findByRole('menuitem', { name: 'Media library' })
+    for (let i = 0; i < 6 && document.activeElement !== item; i++) {
+      await userEvent.keyboard('{ArrowDown}')
+    }
+    await userEvent.keyboard('{Enter}')
+
+    expect(onMediaLibraryOpen).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(screen.queryByRole('menuitem')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(settings))
+  })
+
+  it('hides the Settings tooltip while its menu is open', async () => {
+    render(<EditorSidebar {...defaultProps} />, { wrapper: Wrapper })
+    const settings = screen.getByRole('button', { name: 'Settings' })
+
+    await userEvent.hover(settings)
+    await screen.findByRole('tooltip')
+    await userEvent.click(settings)
+
+    await screen.findByText('Media library')
+    // Otherwise it lingers beside the menu while the pointer stays on the button. It fades out, so
+    // read its opacity; the open menu hides the page from the accessibility tree, so query the DOM.
+    const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]')
+    expect(tooltip?.style.opacity ?? '0').toBe('0')
   })
 })

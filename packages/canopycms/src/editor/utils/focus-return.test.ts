@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   FOCUS_RETURN_ATTR,
+  focusIfDropped,
   focusIfIdle,
   focusReturnProps,
   rememberOpener,
@@ -63,6 +64,58 @@ describe('focusIfIdle', () => {
     elsewhere.focus()
     expect(() => focusIfIdle(null)).not.toThrow()
     expect(document.activeElement).toBe(elsewhere)
+  })
+})
+
+describe('focusIfDropped', () => {
+  const frame = () => new Promise((resolve) => requestAnimationFrame(resolve))
+
+  it('focuses the target once focus has dropped to the page, not before', async () => {
+    const menu = add(document.createElement('div'))
+    const item = button(menu)
+    const target = button()
+    item.focus()
+
+    focusIfDropped(target)
+    expect(document.activeElement).toBe(item)
+    item.remove()
+    await frame()
+    await frame()
+
+    expect(document.activeElement).toBe(target)
+  })
+
+  it('leaves focus inside an overlay marked as returning focus, which an item just opened', async () => {
+    const overlay = add(document.createElement('div'))
+    overlay.setAttribute(FOCUS_RETURN_ATTR, '')
+    const inside = button(overlay)
+    const target = button()
+    inside.focus()
+
+    focusIfDropped(target)
+    await frame()
+    await frame()
+
+    expect(document.activeElement).toBe(inside)
+  })
+
+  it('leaves focus where the user moved it', async () => {
+    const target = button()
+    const elsewhere = button()
+    elsewhere.focus()
+
+    focusIfDropped(target)
+    await frame()
+    await frame()
+
+    expect(document.activeElement).toBe(elsewhere)
+  })
+
+  it('does nothing without a target', async () => {
+    focusIfDropped(null)
+    await frame()
+    await frame()
+    expect(document.activeElement).toBe(document.body)
   })
 })
 

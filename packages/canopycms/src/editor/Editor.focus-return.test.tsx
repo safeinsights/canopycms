@@ -384,6 +384,61 @@ describe('Switch branch… (branch menu)', () => {
   })
 })
 
+describe('Menu items that act without opening an overlay', () => {
+  const settled = () => act(() => new Promise((resolve) => setTimeout(resolve, 60)))
+
+  it.each([
+    ['Reload entry', fileTrigger, () => screen.findByRole('menuitem', { name: 'Reload entry' })],
+    ['Discard changes with nothing to lose', fileTrigger, byTestId('discard-file-draft-menu-item')],
+    [
+      'Reload all entries',
+      branchTrigger,
+      () => screen.findByRole('menuitem', { name: 'Reload all entries' }),
+    ],
+    [
+      'Discard all changes with nothing modified',
+      branchTrigger,
+      byTestId('discard-all-drafts-menu-item'),
+    ],
+  ])('%s leaves focus on its menu button', async (_name, trigger, find) => {
+    stubApi()
+    renderEditor()
+    await loaded()
+
+    await activateByKeyboard(trigger(), find)
+
+    await waitFor(() => expect(document.activeElement).toBe(trigger()))
+  })
+
+  it('picking a recently modified entry leaves focus on the file menu button', async () => {
+    stubApi()
+    renderEditor()
+    await loaded()
+    await editTitle()
+
+    await activateByKeyboard(fileTrigger(), async () => {
+      const items = await screen.findAllByRole('menuitem', { name: 'Hello' })
+      return items[0]
+    })
+
+    await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
+  })
+
+  it('leaves focus in the drawer that Switch branch… opened', async () => {
+    stubApi()
+    renderEditor()
+    await loaded()
+
+    await activateByKeyboard(branchTrigger(), byTestId('manage-branches-menu-item'))
+    await screen.findByText('Manage access, status, and lifecycle')
+    await waitFor(() => expect(screen.queryByTestId('branch-menu')).toBeNull())
+    await settled()
+
+    expect(document.activeElement).not.toBe(branchTrigger())
+    expect(document.activeElement?.closest('[role="dialog"]')).not.toBeNull()
+  })
+})
+
 describe('Settings menu', () => {
   it.each([
     ['Media library', 'settings-menu-media-library'],

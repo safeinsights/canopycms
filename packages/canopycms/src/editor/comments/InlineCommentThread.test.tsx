@@ -72,6 +72,22 @@ describe('InlineCommentThread', () => {
     resolvedAt: new Date('2024-01-01T12:00:00Z').toISOString(),
   }
 
+  it('draws the divider between comments with the scheme-aware border token', () => {
+    const { container } = render(
+      <InlineCommentThread
+        thread={mockThread}
+        onAddReply={vi.fn()}
+        onResolve={vi.fn()}
+        currentUserId="alice"
+        canResolve={true}
+      />,
+      { wrapper: Wrapper },
+    )
+
+    const divider = container.querySelector<HTMLElement>('div[style*="border-top"]')
+    expect(divider?.style.borderTop).toBe('1px solid var(--mantine-color-default-border)')
+  })
+
   it('renders all comments in thread', () => {
     render(
       <InlineCommentThread

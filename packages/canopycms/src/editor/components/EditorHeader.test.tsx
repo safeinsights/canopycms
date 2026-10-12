@@ -206,13 +206,13 @@ describe('EditorHeader - branch menu with no edits', () => {
     cleanup()
   })
 
-  it('says no entries have been edited yet', async () => {
+  it('says no entries have been edited yet, once, without a zero count above it', async () => {
     renderHeader({ modifiedCount: 0, editedFiles: [] })
 
     await userEvent.click(screen.getByTestId('branch-dropdown-button'))
 
-    expect(await screen.findByText('0 entries modified')).toBeTruthy()
-    const note = screen.getByText('No edited entries yet')
+    const note = await screen.findByText('No edited entries yet')
+    expect(screen.queryByText('0 entries modified')).toBeNull()
     expect(note.closest('[role="menuitem"]')).toBeNull()
     expect(
       within(screen.getByTestId('branch-menu')).getAllByRole('menuitem').length,

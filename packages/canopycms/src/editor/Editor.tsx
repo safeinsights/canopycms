@@ -1458,7 +1458,9 @@ const EditorContent: React.FC<EditorProps> = ({
                                 (currentBranch?.isProtected ?? true) ||
                                 currentBranch?.status === 'archived'
                               }
-                              onDiscard={() => handleDiscardFileDraft()}
+                              onDiscard={() =>
+                                handleDiscardFileDraft(() => navigatorToggleRef.current)
+                              }
                             />
                           )}
                           <FormRenderer

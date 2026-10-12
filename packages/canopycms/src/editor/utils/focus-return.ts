@@ -16,6 +16,19 @@ export function focusIfIdle(target: HTMLElement | null): void {
   }
 }
 
+/**
+ * For a Mantine `Menu`'s `onExitTransitionEnd`: focuses the menu's `target` trigger once an item
+ * that opened no overlay has unmounted and dropped focus to the page. Mantine calls it just before
+ * unmounting the items, hence the frame's wait; `returnFocus` would instead steal focus from an
+ * overlay the item opened, which holds it by then.
+ */
+export function focusIfDropped(target: HTMLElement | null): void {
+  requestAnimationFrame(() => {
+    const active = document.activeElement
+    if (!active || active === document.body) target?.focus({ preventScroll: true })
+  })
+}
+
 /** The focused control to hand focus back to, or null when it is a menu item (gone once it acts) or the page. */
 export function rememberOpener(): HTMLElement | null {
   const active = document.activeElement

@@ -1,4 +1,4 @@
-import { forwardRef, type Ref } from 'react'
+import { forwardRef, useRef, type Ref } from 'react'
 import {
   Alert,
   Badge,
@@ -14,6 +14,7 @@ import {
   Tooltip,
   VisuallyHidden,
 } from '@mantine/core'
+import { useMergedRef } from '@mantine/hooks'
 import { IconFolderOpen, IconChevronDown, IconGitBranch, IconLock } from '@tabler/icons-react'
 import type { OperatingMode } from '../../operating-mode'
 import type { BranchStatus } from '../../types'
@@ -25,6 +26,7 @@ import { branchStatusPresentation } from '../branch-status'
 import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
+import { focusIfDropped } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
   /**
@@ -255,6 +257,11 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   const branchDataUnavailable =
     statusLocked && (branchStatus === undefined || branchStatus === 'editing')
 
+  const fileToggle = useRef<HTMLButtonElement>(null)
+  const fileToggleRef = useMergedRef(fileToggle, navigatorToggleRef)
+  const branchToggle = useRef<HTMLButtonElement>(null)
+  const branchToggleMergedRef = useMergedRef(branchToggle, branchToggleRef)
+
   // Save stays focusable while blocked (`aria-disabled`, not `disabled`), so its reason opens on
   // keyboard focus and touch as well as hover; the click does nothing.
   const saveBlocked =
@@ -319,10 +326,14 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               align="center"
               style={{ minWidth: 0, justifyContent: 'center' }}
             >
-              <Menu withinPortal shadow="sm">
+              <Menu
+                withinPortal
+                shadow="sm"
+                onExitTransitionEnd={() => focusIfDropped(fileToggle.current)}
+              >
                 <Menu.Target>
                   <Button
-                    ref={navigatorToggleRef}
+                    ref={fileToggleRef}
                     data-testid="file-dropdown-button"
                     variant="outline"
                     color="gray"
@@ -392,10 +403,14 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 ))}
               </Group>
 
-              <Menu withinPortal shadow="sm">
+              <Menu
+                withinPortal
+                shadow="sm"
+                onExitTransitionEnd={() => focusIfDropped(branchToggle.current)}
+              >
                 <Menu.Target>
                   <Button
-                    ref={branchToggleRef}
+                    ref={branchToggleMergedRef}
                     variant="outline"
                     color="gray"
                     leftSection={<IconGitBranch size={16} />}
@@ -425,7 +440,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     {`${EDITOR_ACTIONS.switchBranch}…`}
                   </Menu.Item>
                   <Menu.Divider />
-                  <Menu.Label>{`${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'} modified`}</Menu.Label>
+                  {modifiedCount > 0 && (
+                    <Menu.Label>{`${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'} modified`}</Menu.Label>
+                  )}
                   {editedFiles.length === 0 ? (
                     <Text size="sm" c="dimmed" px="sm" py={6}>
                       No edited entries yet

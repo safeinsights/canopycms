@@ -72,7 +72,7 @@ const JumpButton: React.FC<{
   children: React.ReactNode
 }> = ({ blocked, onClick, children }) => (
   <Tooltip
-    label="A comment is still saving. Jump once it finishes."
+    label="Your change is still saving. Try again once it finishes."
     disabled={!blocked}
     events={{ hover: true, focus: true, touch: true }}
     multiline
@@ -238,7 +238,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                   p="md"
                   component="article"
                   aria-labelledby={headingId(thread.id)}
-                  bg={thread.resolved ? 'gray.0' : undefined}
+                  bg={thread.resolved ? 'var(--mantine-color-default-hover)' : undefined}
                   data-testid="comment-thread"
                 >
                   <Stack gap="xs">
@@ -305,7 +305,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         {idx > 0 && (
                           <div
                             style={{
-                              borderTop: '1px solid var(--mantine-color-gray-3)',
+                              borderTop: '1px solid var(--mantine-color-default-border)',
                               margin: '8px 0',
                             }}
                           />

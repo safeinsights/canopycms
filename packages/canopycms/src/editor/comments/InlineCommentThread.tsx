@@ -77,7 +77,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
               {idx > 0 && (
                 <div
                   style={{
-                    borderTop: '1px solid var(--mantine-color-gray-3)',
+                    borderTop: '1px solid var(--mantine-color-default-border)',
                     marginTop: 8,
                     marginBottom: 8,
                   }}
