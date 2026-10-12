@@ -2,12 +2,12 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  docs/ux-guidelines.md's Disabled controls section now asks that a disabled control's reason Tooltip open on keyboard focus and touch, and that disabled menu items stay focusable with `aria-disabled`. Only BranchManager's card actions do both; the rest of the editor uses hover-only Tooltips and native `disabled`, starting with EditorHeader's Save.
+  RESOLVED: Save, Submit for review / Withdraw from review and System health's Purge stay focusable with `aria-disabled` and open their reason on hover, focus and touch; disabled menu items (Move up/down, header reload and discard, a collection's last entry type) use the shared `ReasonedMenuItem`, which shows the reason inline.
 ---
 
 # Disabled reasons on focus and touch across the editor
 
-The rules are in [docs/ux-guidelines.md](../../docs/ux-guidelines.md#disabled-controls).
+The rules are in [docs/ux-guidelines.md](../../../docs/ux-guidelines.md#disabled-controls).
 `packages/canopycms/src/editor/BranchManager.tsx` is the pattern: `events={{ hover: true, focus: true, touch: true }}`
 on the Tooltip and `data-disabled` / `aria-disabled` on the Button, so the control stays
 focusable. Mantine's Tooltip defaults to hover only.

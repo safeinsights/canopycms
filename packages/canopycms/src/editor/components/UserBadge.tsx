@@ -1,4 +1,13 @@
-import { Avatar, Badge, Tooltip, Group, Text, Skeleton, ActionIcon } from '@mantine/core'
+import {
+  Avatar,
+  Badge,
+  Tooltip,
+  Group,
+  Text,
+  Skeleton,
+  ActionIcon,
+  VisuallyHidden,
+} from '@mantine/core'
 import { IconRobot, IconUserOff, IconX } from '@tabler/icons-react'
 import type { UserSearchResult } from '../../auth/types'
 import type { CanopyUserId } from '../../types'
@@ -38,6 +47,9 @@ export interface UserBadgeProps {
 
   /** Cached user data to avoid fetching (e.g., from search results) */
   cachedUser?: UserSearchResult
+
+  /** Admin-only surfaces: an unresolved person's id joins the tooltip, remove label and hidden text. */
+  revealIdOnFallback?: boolean
 }
 
 export const UserBadge: React.FC<UserBadgeProps> = ({
@@ -52,6 +64,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
   showBadge = false,
   loading: loadingOverride,
   cachedUser,
+  revealIdOnFallback = false,
 }) => {
   const { userMetadata, isLoading, error } = useUserMetadata(userId, getUserMetadata, cachedUser)
 
@@ -84,7 +97,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
   // A light or outline badge tints its label with the badge colour, too faint for a name.
   const nameColor = inBadge && badgeVariant !== 'filled' ? 'var(--mantine-color-text)' : undefined
 
-  const wrap = (content: React.ReactNode, tooltip: string) => {
+  const wrap = (content: React.ReactNode, tooltip: string, personLabel: string) => {
     const wrapped = inBadge ? (
       <Badge
         variant={badgeVariant}
@@ -93,16 +106,18 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
         pl={4}
         rightSection={
           onRemove ? (
-            <ActionIcon
-              size="xs"
-              radius="xl"
-              variant="transparent"
-              onClick={() => onRemove(userId)}
-              aria-label="Remove user"
-              style={{ color: 'var(--mantine-color-white)' }}
-            >
-              <IconX size={12} stroke={2.5} />
-            </ActionIcon>
+            <Tooltip label={`Remove ${personLabel}`} position="bottom">
+              <ActionIcon
+                size="xs"
+                radius="xl"
+                variant="transparent"
+                onClick={() => onRemove(userId)}
+                aria-label={`Remove ${personLabel}`}
+                style={{ color: 'var(--mantine-color-white)' }}
+              >
+                <IconX size={12} stroke={2.5} />
+              </ActionIcon>
+            </Tooltip>
           ) : undefined
         }
         styles={{
@@ -129,6 +144,12 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
   }
 
   if (error || !userMetadata) {
+    // The id shows only where `revealIdOnFallback` is set (admin surfaces); the People rule treats
+    // an id as an internal name.
+    const unavailable = error ? "Couldn't load this name" : 'Name unavailable'
+    const described = revealIdOnFallback ? `${unavailable} · ${userId}` : unavailable
+    // A filled badge keeps its white text; dimmed would not contrast with its fill.
+    const fallbackColor = inBadge && badgeVariant === 'filled' ? undefined : 'dimmed'
     return wrap(
       <Group gap={4}>
         <Avatar
@@ -136,13 +157,21 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
           color="gray"
           aria-hidden={variant !== 'avatar-only' || undefined}
         />
-        {variant !== 'avatar-only' && (
-          <Text size={textSize} c={nameColor}>
-            {userId}
-          </Text>
+        {variant === 'avatar-only' ? (
+          <VisuallyHidden component="span">{described}</VisuallyHidden>
+        ) : (
+          <>
+            <Text size={textSize} c={fallbackColor} fs="italic">
+              {unavailable}
+            </Text>
+            {revealIdOnFallback && (
+              <VisuallyHidden component="span">{` · ${userId}`}</VisuallyHidden>
+            )}
+          </>
         )}
       </Group>,
-      error ? "Couldn't load this name" : 'Name unavailable',
+      variant === 'avatar-only' || revealIdOnFallback ? described : '',
+      described,
     )
   }
 
@@ -200,12 +229,26 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     )
   }
 
+  // The tooltip's email, read after the name by a screen reader, with no tab stop.
+  const detail =
+    showEmailTooltip && variant !== 'full' && userId !== 'anonymous' ? userMetadata.email : ''
+  const detailText = detail ? (
+    <VisuallyHidden component="span">{`, ${detail}`}</VisuallyHidden>
+  ) : null
+
   const renderContent = () => {
     const avatar = renderAvatar()
 
     switch (variant) {
       case 'avatar-only':
-        return avatar
+        return detailText ? (
+          <Group gap={0}>
+            {avatar}
+            {detailText}
+          </Group>
+        ) : (
+          avatar
+        )
 
       case 'full':
         return (
@@ -230,10 +273,15 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
             <Text size={textSize} fw={500} c={nameColor}>
               {userId === 'anonymous' ? 'Anonymous (Public)' : userMetadata.name}
             </Text>
+            {detailText}
           </Group>
         )
     }
   }
 
-  return wrap(renderContent(), variant === 'full' ? '' : userMetadata.email)
+  return wrap(
+    renderContent(),
+    variant === 'full' ? '' : userMetadata.email,
+    userId === 'anonymous' ? 'Anonymous (Public)' : userMetadata.name,
+  )
 }

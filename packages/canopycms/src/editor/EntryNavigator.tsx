@@ -39,6 +39,7 @@ import {
 
 import { calculatePathToEntry } from './editor-utils'
 import { matchesEntryQuery } from './entry-search'
+import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { UnavailableTypeMessage } from './components/UnavailableTypeMessage'
 
 type TreeController = ReturnType<typeof useTree>
@@ -796,26 +797,26 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                   )}
                   {canReorder && (
                     <>
-                      <Menu.Item
+                      <ReasonedMenuItem
                         leftSection={<IconArrowUp size={14} />}
-                        disabled={!canMoveUp}
+                        blockedReason={canMoveUp ? undefined : 'Already first'}
                         onClick={(event) => {
                           event.stopPropagation()
                           onReorderEntry?.(parentCollectionPath!, contentId!, 'up')
                         }}
                       >
                         Move up
-                      </Menu.Item>
-                      <Menu.Item
+                      </ReasonedMenuItem>
+                      <ReasonedMenuItem
                         leftSection={<IconArrowDown size={14} />}
-                        disabled={!canMoveDown}
+                        blockedReason={canMoveDown ? undefined : 'Already last'}
                         onClick={(event) => {
                           event.stopPropagation()
                           onReorderEntry?.(parentCollectionPath!, contentId!, 'down')
                         }}
                       >
                         Move down
-                      </Menu.Item>
+                      </ReasonedMenuItem>
                     </>
                   )}
                   {adminItems && (
@@ -890,26 +891,26 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                   )}
                   {onReorderEntry && contentId && parentCollectionPath && (
                     <>
-                      <Menu.Item
+                      <ReasonedMenuItem
                         leftSection={<IconArrowUp size={14} />}
-                        disabled={!canMoveUp}
+                        blockedReason={canMoveUp ? undefined : 'Already first'}
                         onClick={(event) => {
                           event.stopPropagation()
                           onReorderEntry(parentCollectionPath, contentId, 'up')
                         }}
                       >
                         Move up
-                      </Menu.Item>
-                      <Menu.Item
+                      </ReasonedMenuItem>
+                      <ReasonedMenuItem
                         leftSection={<IconArrowDown size={14} />}
-                        disabled={!canMoveDown}
+                        blockedReason={canMoveDown ? undefined : 'Already last'}
                         onClick={(event) => {
                           event.stopPropagation()
                           onReorderEntry(parentCollectionPath, contentId, 'down')
                         }}
                       >
                         Move down
-                      </Menu.Item>
+                      </ReasonedMenuItem>
                     </>
                   )}
                   {onDeleteEntry && (

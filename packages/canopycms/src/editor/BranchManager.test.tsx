@@ -1,6 +1,7 @@
 import React from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { SWRConfig } from 'swr'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { BranchManager, getBranchPermissions } from './BranchManager'
 import type { BranchSummary } from './BranchManager'
@@ -49,9 +50,11 @@ afterEach(() => {
 
 const renderBranchManager = (props: React.ComponentProps<typeof BranchManager>) => {
   return render(
-    <CanopyCMSProvider>
-      <BranchManager {...props} />
-    </CanopyCMSProvider>,
+    <SWRConfig value={{ provider: () => new Map() }}>
+      <CanopyCMSProvider>
+        <BranchManager {...props} />
+      </CanopyCMSProvider>
+    </SWRConfig>,
   )
 }
 
@@ -1488,7 +1491,7 @@ describe('BranchManager', () => {
       expect(onGetUserMetadata).not.toHaveBeenCalledWith('commenter')
     })
 
-    it('names owners through the owner resolver, and leaves access users to the privileged one', async () => {
+    it('names owners and access users through the owner resolver', async () => {
       const onGetOwnerMetadata = vi.fn(async (id: string) => ({
         id,
         name: `Named ${id}`,
@@ -1509,8 +1512,26 @@ describe('BranchManager', () => {
       })
 
       expect(await screen.findByText('Named owner1')).toBeDefined()
-      expect(onGetOwnerMetadata).not.toHaveBeenCalledWith('acl-user')
-      expect(screen.getByText('acl-user')).toBeDefined()
+      expect(onGetOwnerMetadata).toHaveBeenCalledWith('acl-user')
+      expect(screen.queryByText('acl-user')).toBeNull()
+    })
+
+    it('shows access users as unnamed, never as ids, when nothing can name them', async () => {
+      const { container } = renderBranchManager({
+        branches: [
+          {
+            name: 'feature/shared',
+            status: 'editing',
+            createdBy: 'owner1',
+            access: { users: ['acl-user'] },
+          },
+        ],
+        mode: 'prod',
+        user: creatorUser,
+      })
+
+      expect(await screen.findByText('Name unavailable')).toBeDefined()
+      expect(container.textContent).not.toContain('acl-user')
     })
   })
 })

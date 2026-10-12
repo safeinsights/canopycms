@@ -16,7 +16,19 @@ describe('RelativeTime', () => {
 
     const time = container.querySelector('time')
     expect(time?.getAttribute('datetime')).toBe(iso)
-    expect(time?.textContent).toBe('Updated 3h ago')
+    expect(time?.firstChild?.textContent).toBe('Updated ')
+    expect(time?.textContent).toContain('Updated 3h ago')
+  })
+
+  it('reads the absolute date after the label for a screen reader, with no tab stop', () => {
+    const iso = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+    const { container } = render(<RelativeTime iso={iso} />, { wrapper: Wrapper })
+
+    const time = container.querySelector('time') as HTMLElement
+    const hidden = time.querySelector('.mantine-VisuallyHidden-root')
+    expect(hidden?.textContent).toBe(`, ${new Date(iso).toLocaleString()}`)
+    expect(time.textContent).toBe(`3h ago, ${new Date(iso).toLocaleString()}`)
+    expect(time.querySelectorAll('button, a, [tabindex]')).toHaveLength(0)
   })
 
   it('shows the absolute date and time in a tooltip', async () => {
@@ -40,5 +52,6 @@ describe('RelativeTime', () => {
 
     expect(time.textContent).toBe('not-a-date')
     expect(screen.queryByText('Invalid Date')).toBeNull()
+    expect(time.querySelector('.mantine-VisuallyHidden-root')).toBeNull()
   })
 })

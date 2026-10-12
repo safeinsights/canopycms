@@ -252,6 +252,28 @@ describe('CollectionEditor', () => {
     })
   })
 
+  describe('removing the only entry type', () => {
+    it('keeps Remove focusable and says what to do first', async () => {
+      const user = userEvent.setup()
+      const onlyOne: ExistingCollection = {
+        name: 'settings',
+        logicalPath: unsafeAsLogicalPath('settings'),
+        entries: [{ name: 'config', format: 'json', schema: 'postSchema', maxItems: 1 }],
+      }
+      const { container } = renderCollectionEditor({ editingCollection: onlyOne })
+      const menuButton = container.ownerDocument.querySelector(
+        '.mantine-Modal-body .mantine-ActionIcon-root',
+      ) as HTMLElement
+      await user.click(menuButton)
+
+      const remove = await screen.findByRole('menuitem', { name: /^Remove/ })
+      expect(remove.getAttribute('aria-disabled')).toBe('true')
+      expect(remove.textContent).toContain(
+        'A collection needs at least one entry type. Add another before removing this one.',
+      )
+    })
+  })
+
   describe('error handling', () => {
     it('displays external error', () => {
       renderCollectionEditor({ error: 'Collection already exists' })

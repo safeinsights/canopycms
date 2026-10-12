@@ -297,7 +297,7 @@ describe('Editor: an entry of an unavailable type', () => {
       "This section uses a content type this editor version doesn't know yet (widgetSchema). It usually appears after the editor finishes updating; reload in a few minutes.",
     )
     expect(screen.queryByRole('textbox', { hidden: true })).toBeNull()
-    expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
     // Give a (wrongly) issued read time to land before asserting there was none.
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(readCalls(fetchMock, '/content/widgets/first')).toHaveLength(0)
@@ -385,7 +385,7 @@ describe('Editor: an entry of an unavailable type', () => {
     })
     fireEvent.change(title, { target: { value: 'Edited title' } })
     await waitFor(() => {
-      expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(false)
+      expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBeNull()
     })
     const entriesCallsBefore = fetchMock.mock.calls.filter(([input]) =>
       String(input).includes('/entries'),
@@ -423,7 +423,7 @@ describe('Editor: an entry of an unavailable type', () => {
 
     widgetResponse = () => okJson({ ok: true, status: 200, data: { size: 'large', version: 1 } })
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    fireEvent.click(await screen.findByText('Reload File'))
+    fireEvent.click(await screen.findByText('Reload entry'))
 
     await waitFor(() => {
       const el = screen.queryByRole('textbox', {
@@ -460,7 +460,7 @@ describe('Editor: an entry of an unavailable type', () => {
       await screen.findByTestId('unavailable-entry-notice')
       // Let the restored draft settle before asserting on Save.
       await new Promise((resolve) => setTimeout(resolve, 50))
-      expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+      expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
       expect(writeCalls(fetchMock)).toHaveLength(0)
       expect(window.localStorage.getItem('canopycms:drafts:main')).toContain('draft size')
       // The draft would otherwise frame a page the site cannot read.
@@ -493,7 +493,7 @@ describe('Editor: an entry of an unavailable type', () => {
       renderEditor('widgets/first')
 
       await screen.findByTestId('unavailable-entry-notice')
-      expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+      expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
       expect(writeCalls(fetchMock)).toHaveLength(0)
       expect(window.localStorage.getItem('canopycms:drafts:main')).toContain('draft size')
     })

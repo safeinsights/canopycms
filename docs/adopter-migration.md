@@ -90,6 +90,7 @@ replaces each `next` with its number.
 | next | Worker   | [GitHub objects cross as bundles](#the-worker-moves-objects-between-github-and-remotegit-as-bundles)                                                                                        | None                         |
 | next | Editing  | [Comments and branches name their people](#comments-and-branches-name-their-people-for-every-editor--behaviour-change-on-two-apis)                                                          | Direct API callers           |
 | next | Editing  | [Branches drawer and comment replies](#the-branches-drawer-shows-one-action-per-branch-and-comments-reply-in-place)                                                                         | Editor UI tests              |
+| next | Editing  | [Editor contrast; blocked buttons stay focusable](#editor-contrast-and-blocked-buttons-stay-focusable)                                                                                      | Browser tests                |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -304,6 +305,19 @@ cache; a failed lookup leaves the names out.
 rest in a "…" menu, in the editor's vocabulary. A thread's Reply opens a box under it.
 
 **To adopt.** Nothing, unless your browser tests click the old drawer buttons or labels.
+
+### Editor contrast, and blocked buttons stay focusable
+
+**What changed.** (next) Dimmed editor text is `gray.7`, or `dark.1` in dark mode. Filled red
+buttons are `red.8`; filled orange, `orange.6` with black text. A blocked Save, Submit, Withdraw,
+Purge or menu item is `aria-disabled`, not `disabled`, so its reason shows on focus. The header's
+entry menu says "Reload entry" and "Discard changes".
+
+**To adopt.** A `themeOverride` setting `components.Button.vars` replaces the editor's resolver.
+Browser tests check `aria-disabled`; Playwright's `toBeDisabled` reads it. Tests that click the
+old "Reload File" or "Discard File Draft" use the new labels.
+
+**Now deletable.** Local overrides that darkened the same text or buttons.
 
 ### Field editing: descriptions, list-card titles, and `public/` images
 

@@ -2,11 +2,11 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Code only: docs/ux-guidelines.md now names `--mantine-color-dimmed` (`gray.7` in light mode) for dimmed text. The theme still leaves it at Mantine's gray.6 (#868e96, 3.32:1 on white), so every `c="dimmed"` label in the editor fails 4.5:1.
+  RESOLVED: `CanopyCMSProvider` sets `--mantine-color-dimmed` to `gray.7` in light mode and `dark.1` in dark mode, and the `c="gray.7"` stand-ins in BranchManager, EditorHeader and ToggleField now use `c="dimmed"`.
 ---
 # Dimmed editor text misses 4.5:1 contrast
 
-[docs/ux-guidelines.md](../../docs/ux-guidelines.md#colour-and-contrast) asks for 4.5:1 and names
+[docs/ux-guidelines.md](../../../docs/ux-guidelines.md#colour-and-contrast) asks for 4.5:1 and names
 `--mantine-color-dimmed` (`gray.7` in light mode) as the only dimmed colour, but the theme's default `--mantine-color-dimmed` (gray.6, `#868e96`) measures 3.32:1 on white in light
 mode, so every `c="dimmed"` label fails: upload dates, list metadata and status lines in the
 media library, branch "Updated …" lines, comment timestamps, field descriptions.

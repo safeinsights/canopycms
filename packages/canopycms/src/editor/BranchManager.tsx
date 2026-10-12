@@ -28,6 +28,7 @@ import { userIdLabel } from './user-display'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
+import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
 import { branchStatusPresentation } from './branch-status'
 import { EDITOR_ACTIONS } from './copy'
@@ -203,13 +204,16 @@ export interface BranchManagerProps {
   ) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
   highlightThreadId?: string
-  /** Names access users, and owners when `onGetOwnerMetadata` is absent; without it they show as ids */
+  /** Names people without `onGetOwnerMetadata`; with neither, access users are unnamed, owners ids */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
-  /** Names branch owners; the branch listing seeds them for every editor */
+  /** Names branch owners and access users; the branch listing seeds owners only */
   onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Names the people in branch comments; without it they show as ids */
   onGetCommentUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
+
+/** The access-list lookup when a card has none: its access users show as unnamed. */
+const noUserLookup = async (): Promise<UserSearchResult | null> => null
 
 const CLOSED_PULL_REQUEST_REASON =
   'The pull request was closed on GitHub. Withdraw the branch from review, then submit it again to open a new one.'
@@ -264,39 +268,6 @@ const isReviewerOfOthersSubmission = (b: BranchSummary, user: UserContext | unde
   b.createdBy !== user.userId &&
   !b.access?.users?.includes(user.userId) &&
   !user.groups?.some((g) => b.access?.groups?.includes(g))
-
-/**
- * A menu item that stays visible when it cannot act, with its reason beneath the label.
- * Mantine's Menu drops an item carrying `disabled` or `data-disabled` from its arrow-key order,
- * which would hide the reason from a keyboard user; a blocked item is `aria-disabled` instead,
- * stays focusable, and ignores its click without closing the menu.
- */
-const BranchMenuItem: React.FC<{
-  label: string
-  testId: string
-  color?: string
-  blockedReason?: string
-  onClick: () => void
-}> = ({ label, testId, color, blockedReason, onClick }) => (
-  <Menu.Item
-    color={blockedReason ? undefined : color}
-    c={blockedReason ? 'gray.7' : undefined}
-    aria-disabled={blockedReason ? true : undefined}
-    closeMenuOnClick={blockedReason ? false : undefined}
-    style={blockedReason ? { cursor: 'not-allowed' } : undefined}
-    onClick={() => {
-      if (!blockedReason) onClick()
-    }}
-    data-testid={testId}
-  >
-    {label}
-    {blockedReason && (
-      <Text size="xs" c="gray.7" component="span" display="block" style={{ whiteSpace: 'normal' }}>
-        {blockedReason}
-      </Text>
-    )}
-  </Menu.Item>
-)
 
 interface BranchCardProps {
   branch: BranchSummary
@@ -480,22 +451,16 @@ const BranchCard: React.FC<BranchCardProps> = ({
           </Group>
           {b.access && (
             <Group gap={6}>
-              {b.access.users?.map((u) =>
-                onGetUserMetadata ? (
-                  <UserBadge
-                    key={u}
-                    userId={u}
-                    getUserMetadata={onGetUserMetadata}
-                    variant="avatar-only"
-                    size="xs"
-                    showEmailTooltip={true}
-                  />
-                ) : (
-                  <Badge key={u} variant="outline" color="neutral">
-                    {u}
-                  </Badge>
-                ),
-              )}
+              {b.access.users?.map((u) => (
+                <UserBadge
+                  key={u}
+                  userId={u}
+                  getUserMetadata={onGetOwnerMetadata ?? noUserLookup}
+                  variant="avatar-only"
+                  size="xs"
+                  showEmailTooltip={true}
+                />
+              ))}
               {b.access.groups?.map((g) => (
                 <Badge key={g} variant="outline" color="neutral">
                   {g}
@@ -552,13 +517,14 @@ const BranchCard: React.FC<BranchCardProps> = ({
               </Tooltip>
               <Menu.Dropdown>
                 {menuActions.map((action) => (
-                  <BranchMenuItem
+                  <ReasonedMenuItem
                     key={action.testId}
-                    label={action.label}
-                    testId={action.testId}
                     blockedReason={action.blockedReason}
                     onClick={action.run}
-                  />
+                    data-testid={action.testId}
+                  >
+                    {action.label}
+                  </ReasonedMenuItem>
                 ))}
                 {showViewPullRequest && (
                   <Menu.Item
@@ -577,17 +543,18 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 {showDelete && (
                   <>
                     {(menuActions.length > 0 || showViewPullRequest) && <Menu.Divider />}
-                    <BranchMenuItem
-                      label="Delete branch"
+                    <ReasonedMenuItem
                       color="red"
-                      testId={`delete-branch-button-${b.name}`}
+                      data-testid={`delete-branch-button-${b.name}`}
                       blockedReason={
                         b.status === 'submitted' || b.status === 'approved'
                           ? 'This branch is in review. Withdraw it from review before deleting it.'
                           : undefined
                       }
                       onClick={() => onDelete?.(b.name)}
-                    />
+                    >
+                      Delete branch
+                    </ReasonedMenuItem>
                   </>
                 )}
               </Menu.Dropdown>

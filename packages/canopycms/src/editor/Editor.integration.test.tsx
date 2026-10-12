@@ -264,7 +264,7 @@ describe('Editor integration', () => {
 
     // Verify save button is disabled when there are no unsaved changes
     let saveButton = await screen.findByRole('button', { name: /^save$/i })
-    expect(saveButton.hasAttribute('disabled')).toBe(true)
+    expect(saveButton.getAttribute('aria-disabled')).toBe('true')
 
     // Make a change to the form
     fireEvent.change(input!, { target: { value: 'Modified title' } })
@@ -272,7 +272,7 @@ describe('Editor integration', () => {
     // Verify save button becomes enabled after making a change
     await waitFor(() => {
       saveButton = screen.getByRole('button', { name: /^save$/i })
-      expect(saveButton.hasAttribute('disabled')).toBe(false)
+      expect(saveButton.getAttribute('aria-disabled')).toBeNull()
     })
 
     fireEvent.click(saveButton)
@@ -444,7 +444,7 @@ describe('Editor integration', () => {
 
     // ...and the editor agrees there is nothing modified.
     const saveButton = await screen.findByRole('button', { name: /^save$/i })
-    expect(saveButton.hasAttribute('disabled')).toBe(true)
+    expect(saveButton.getAttribute('aria-disabled')).toBe('true')
   })
 
   it('names the entry path and whom to ask, and renders no form, for an entry the user cannot edit', async () => {
@@ -781,7 +781,7 @@ describe('Editor integration', () => {
     fireEvent.change(input, { target: { value: 'Edited on feature' } })
     const saveButton = await waitFor(() => {
       const btn = screen.getByRole('button', { name: /^save$/i })
-      expect(btn.hasAttribute('disabled')).toBe(false)
+      expect(btn.getAttribute('aria-disabled')).toBeNull()
       return btn
     })
     fireEvent.click(saveButton)
@@ -1168,7 +1168,7 @@ describe('Editor integration', () => {
       // false positive.
       await waitFor(() => {
         const saveButton = screen.getByRole('button', { name: /^save$/i })
-        expect(saveButton.hasAttribute('disabled')).toBe(false)
+        expect(saveButton.getAttribute('aria-disabled')).toBeNull()
       })
     } finally {
       window.localStorage.removeItem('canopycms:drafts:main')
@@ -1328,7 +1328,7 @@ describe('Editor integration', () => {
         const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
         expect(el?.value).toBe('Draft title from localStorage')
         saveButton = screen.getByRole('button', { name: /^save$/i })
-        expect(saveButton.hasAttribute('disabled')).toBe(false)
+        expect(saveButton.getAttribute('aria-disabled')).toBeNull()
       })
 
       fireEvent.click(saveButton)
@@ -1499,7 +1499,7 @@ describe('Editor integration', () => {
 
     await waitFor(() => {
       const saveButton = screen.getByTestId('save-button')
-      expect(saveButton.hasAttribute('disabled')).toBe(true)
+      expect(saveButton.getAttribute('aria-disabled')).toBe('true')
     })
 
     // Open the entry navigator (File dropdown -> All Files) and confirm the
@@ -1593,7 +1593,7 @@ describe('Editor integration', () => {
 
     await waitFor(() => {
       const withdrawButton = screen.getByTestId('withdraw-button')
-      expect(withdrawButton.hasAttribute('disabled')).toBe(false)
+      expect(withdrawButton.getAttribute('aria-disabled')).toBeNull()
     })
   })
 
@@ -1725,7 +1725,7 @@ describe('Editor integration', () => {
     expect(readPersistedDrafts('main')).not.toHaveProperty('def456ABC123')
     await waitFor(() => {
       const saveButton = screen.getByTestId('save-button')
-      expect(saveButton.hasAttribute('disabled')).toBe(true)
+      expect(saveButton.getAttribute('aria-disabled')).toBe('true')
     })
 
     // isProtected's absence must also fail closed -- Submit hides entirely,

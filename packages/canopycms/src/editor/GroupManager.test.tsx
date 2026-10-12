@@ -532,6 +532,25 @@ describe('GroupManager', () => {
       expect(screen.getByText('user-3')).toBeTruthy()
     })
 
+    it('tells unresolved members apart, and names whom each Remove removes (admin surface)', async () => {
+      render(
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+          onGetUserMetadata={async () => null}
+        />,
+        { wrapper },
+      )
+
+      expect(
+        await screen.findByRole('button', { name: 'Remove Name unavailable · user-1' }),
+      ).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Remove Name unavailable · user-2' })).toBeTruthy()
+    })
+
     it('shows Add Member button for each group', () => {
       render(
         <GroupManager

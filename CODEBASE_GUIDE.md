@@ -566,13 +566,14 @@ Field components, in `editor/fields/`:
 
 Components, in `editor/components/`:
 
-- `EditorHeader.tsx` — save, submit and the read-only protected-branch banner
+- `EditorHeader.tsx` — save, submit, the read-only banner
 - `EditorFooter.tsx` / `EditorSidebar.tsx` — chrome
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `QuickOpenPalette.tsx` — Mod+P quick-open palette
 - `BranchesDrawer.tsx` — Branches drawer
 - `StagedChangesDrawer.tsx` — unsaved-changes drawer shell
 - `UserBadge.tsx` — user avatar and name
+- `ReasonedMenuItem.tsx` — a blocked menu item and why
 - `UndoToastMessage.tsx` — a form Remove's undo toast
 - `ValidationSummary.tsx` — pre-save issues alert with breadcrumb buttons
 - `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`

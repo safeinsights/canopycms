@@ -954,7 +954,7 @@ describe('useDraftManager', () => {
   })
 
   describe('reload confirmation (D5)', () => {
-    // "Reload File" overwrites the working value with the server's copy, so it
+    // "Reload entry" overwrites the working value with the server's copy, so it
     // is at least as destructive as "Discard draft" -- which has always been
     // behind a confirm. It is also the recovery path the 409 conflict toast
     // points at, so an unguarded reload destroys exactly the work the user was
@@ -983,7 +983,7 @@ describe('useDraftManager', () => {
 
       const { modals } = await import('@mantine/modals')
       expect(modals.openConfirmModal).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Reload file' }),
+        expect.objectContaining({ title: 'Reload entry' }),
       )
       // Auto-confirmed by the modals mock, so the reload still went through and
       // the stale draft is gone (the loaded value is the working value again).
