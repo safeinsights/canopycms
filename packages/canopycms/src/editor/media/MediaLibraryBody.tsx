@@ -33,6 +33,7 @@ import {
 
 import type { AssetRecord } from '../../api'
 import { getErrorMessage } from '../../utils/error'
+import { isNonApiResponse } from '../../api/client'
 // Import directly from helpers (not the authorization barrel) to keep server-only
 // authorization code out of this client bundle - matches BranchManager's convention.
 import { isAdmin } from '../../authorization/helpers'
@@ -221,11 +222,20 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
 
   const handleDelete = async (asset: AssetRecord) => {
     setActionError(null)
+    const failure = (detail: string) =>
+      `Couldn't remove ${asset.filename} from the library. ${detail}`
+    // The raw server message is a diagnostic, shown to admins only.
+    const generic = (serverMessage: string | undefined) =>
+      failure((isAdmin(userContext?.groups) && serverMessage) || 'Try again.')
     try {
       const result = await client.assets.delete({ key: asset.hash32 })
       if (!result.ok) {
+        // An editor sees this button only for their own upload, and the endpoint answers a
+        // missing file with the same 403 as someone else's, so their 403 means it is gone.
+        const alreadyGone =
+          result.status === 403 && !isNonApiResponse(result) && !isAdmin(userContext?.groups)
         setActionError(
-          `Couldn't remove ${asset.filename} from the library. ${result.error || 'Try again.'}`,
+          alreadyGone ? failure('It may have been removed already.') : generic(result.error),
         )
         return
       }
@@ -236,7 +246,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
       }))
       focusAfterRemove.current = true
     } catch (err) {
-      setActionError(`Couldn't remove ${asset.filename} from the library. ${getErrorMessage(err)}`)
+      setActionError(generic(getErrorMessage(err)))
     }
   }
 

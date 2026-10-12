@@ -9,7 +9,7 @@
  * applied to the branches list.
  */
 
-import useSWR, { useSWRConfig, type ScopedMutator, type SWRResponse } from 'swr'
+import useSWR, { useSWRConfig, type Cache, type ScopedMutator, type SWRResponse } from 'swr'
 import type { ApiClient } from '../context'
 import type { CommentThread } from '../../comment-store'
 import type { UserProfile } from '../../auth/types'
@@ -48,11 +48,11 @@ async function fetchComments(
  */
 export async function fetchCommentsSeedingUsers(
   apiClient: Pick<ApiClient, 'comments'>,
-  mutate: ScopedMutator,
+  swr: { cache: Cache; mutate: ScopedMutator },
   branch: string,
 ): Promise<CommentsData> {
   const data = await fetchComments(apiClient, branch)
-  await seedUserProfiles(mutate, data.users)
+  await seedUserProfiles(swr, data.users)
   return data
 }
 
@@ -64,8 +64,8 @@ export function useCommentsData(
   apiClient: Pick<ApiClient, 'comments'>,
   branch: string,
 ): SWRResponse<CommentsData, never> {
-  const { mutate } = useSWRConfig()
+  const { cache, mutate } = useSWRConfig()
   return useSWR(branch ? commentsKey(branch) : null, () =>
-    fetchCommentsSeedingUsers(apiClient, mutate, branch),
+    fetchCommentsSeedingUsers(apiClient, { cache, mutate }, branch),
   )
 }

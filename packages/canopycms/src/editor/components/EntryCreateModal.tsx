@@ -43,9 +43,7 @@ export interface EntryCreateModalProps {
   /**
    * Slugs already taken in the target collection (from the already-loaded
    * entries list). Lets the client flag an obvious collision early with a
-   * clear message; the server is still the authority, and without this
-   * check an entry type with no required fields would silently succeed via
-   * an update path instead of erroring.
+   * clear message; the server is still the authority.
    */
   existingSlugs?: Set<string>
   /** The URL path the entry will be served at, shown under the slug; undefined when it has no page. */

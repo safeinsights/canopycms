@@ -73,7 +73,7 @@ export const THREAD_NOT_RESOLVED = "Couldn't resolve the thread. Try again."
  */
 export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSystemReturn {
   const apiClient = useApiClient()
-  const { mutate: globalMutate } = useSWRConfig()
+  const { cache, mutate: globalMutate } = useSWRConfig()
   const [focusedFieldPath, setFocusedFieldPath] = useState<string | undefined>(undefined)
   const [highlightThreadId, setHighlightThreadId] = useState<string | undefined>(undefined)
   const [commentsPanelOpen, setCommentsPanelOpen] = useState(false)
@@ -106,7 +106,11 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // bound hook (and the effect above) pick it up.
   const loadComments = async (branch: string) => {
     if (!branch) return
-    const fresh = await fetchCommentsSeedingUsers(apiClient, globalMutate, branch)
+    const fresh = await fetchCommentsSeedingUsers(
+      apiClient,
+      { cache, mutate: globalMutate },
+      branch,
+    )
     await globalMutate(commentsKey(branch), fresh, { revalidate: false })
   }
 

@@ -341,6 +341,31 @@ describe('QuickOpenPalette', () => {
     expect(onSelect).not.toHaveBeenCalled()
   })
 
+  it('focuses returnFocusTo once it has closed, for an opener the caller unmounted', async () => {
+    const target = document.createElement('button')
+    document.body.appendChild(target)
+    const { rerenderWith } = renderPalette({ returnFocusTo: () => target })
+    expect(document.activeElement).not.toBe(target)
+
+    rerenderWith({ opened: false })
+
+    await waitFor(() => expect(document.activeElement).toBe(target))
+  })
+
+  it('leaves focus where the user moved it before the palette finished closing', async () => {
+    const target = document.createElement('button')
+    const elsewhere = document.createElement('button')
+    document.body.append(target, elsewhere)
+    const { rerenderWith } = renderPalette({ returnFocusTo: () => target })
+    await waitFor(() => expect(document.activeElement).toBe(input()))
+
+    rerenderWith({ opened: false })
+    elsewhere.focus()
+
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(document.activeElement).toBe(elsewhere)
+  })
+
   it('starts empty each time it opens', async () => {
     const user = userEvent.setup()
     const { rerenderWith } = renderPalette()

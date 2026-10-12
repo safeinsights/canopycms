@@ -14,7 +14,7 @@
  * `mutate()` to revalidate.
  */
 
-import useSWR, { useSWRConfig, type ScopedMutator, type SWRResponse } from 'swr'
+import useSWR, { useSWRConfig, type Cache, type ScopedMutator, type SWRResponse } from 'swr'
 import type { ApiClient } from '../context'
 import type { BranchListItem } from '../../api/branch'
 import { isNonApiResponse } from '../../api/client'
@@ -41,7 +41,7 @@ export interface BranchesData {
  */
 export async function fetchBranches(
   apiClient: Pick<ApiClient, 'branches'>,
-  mutate: ScopedMutator,
+  swr: { cache: Cache; mutate: ScopedMutator },
 ): Promise<BranchesData> {
   const result = await apiClient.branches.list()
   if (result.status === 404 && !isNonApiResponse(result)) {
@@ -53,7 +53,7 @@ export async function fetchBranches(
   if (!result.ok) {
     throw new Error(result.error ?? `Failed to load branches: ${result.status}`)
   }
-  await seedUserProfiles(mutate, result.data?.users ?? [])
+  await seedUserProfiles(swr, result.data?.users ?? [])
   return {
     branches: result.data?.branches ?? [],
     defaultBranch: result.data?.defaultBranch,
@@ -97,8 +97,8 @@ export function hasInFlightBranch(data: BranchesData | undefined): boolean {
 export function useBranchesData(
   apiClient: Pick<ApiClient, 'branches'>,
 ): SWRResponse<BranchesData, Error> {
-  const { mutate } = useSWRConfig()
-  return useSWR(BRANCHES_KEY, () => fetchBranches(apiClient, mutate), {
+  const { cache, mutate } = useSWRConfig()
+  return useSWR(BRANCHES_KEY, () => fetchBranches(apiClient, { cache, mutate }), {
     refreshInterval: (data: BranchesData | undefined) =>
       hasInFlightBranch(data) ? IN_FLIGHT_POLL_MS : 0,
   })

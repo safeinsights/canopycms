@@ -23,6 +23,17 @@ const otherOverlayOpen = () =>
     (dialog) => !dialog.closest(`[${QUICK_OPEN_REPLACES_ATTR}]`),
   )
 
+/**
+ * Focuses `target` unless the user has moved focus on: nothing is focused, or focus is inside an
+ * overlay `QUICK_OPEN_REPLACES_ATTR` marks, as a closing one is until after its exit callback.
+ */
+export function focusIfIdle(target: HTMLElement | null): void {
+  const active = document.activeElement
+  if (!active || active === document.body || active.closest(`[${QUICK_OPEN_REPLACES_ATTR}]`)) {
+    target?.focus({ preventScroll: true })
+  }
+}
+
 /** Options rendered at once; the rest are reached by typing more. */
 const MAX_OPTIONS = 50
 
@@ -43,6 +54,8 @@ export interface QuickOpenPaletteProps {
   /** Display name for a collection heading; the collection's own name when absent, none when ''. */
   collectionLabel?: (collectionPath: string) => string | undefined
   onSelect: (path: string) => void
+  /** Names the element that takes focus after the palette closes, for a caller that unmounted the opener. */
+  returnFocusTo?: () => HTMLElement | null
 }
 
 export function QuickOpenPalette({
@@ -52,6 +65,7 @@ export function QuickOpenPalette({
   entries,
   collectionLabel,
   onSelect,
+  returnFocusTo,
 }: QuickOpenPaletteProps) {
   // `[]` ignores no tags and `true` fires from contenteditable, so the shortcut works from inside
   // a text field or the MDX editor.
@@ -111,6 +125,8 @@ export function QuickOpenPalette({
       title="Open entry"
       size="lg"
       yOffset="10vh"
+      returnFocus={!returnFocusTo}
+      onExitTransitionEnd={() => returnFocusTo && focusIfIdle(returnFocusTo())}
       // Its own dialog lingers through the close transition; Mod+P may reopen it meanwhile.
       {...{ [QUICK_OPEN_REPLACES_ATTR]: true }}
     >

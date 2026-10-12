@@ -54,7 +54,7 @@ describe('fetchBranches', () => {
       status: 404,
       error: 'Not found',
     }))
-    expect(await fetchBranches(client, vi.fn())).toEqual({
+    expect(await fetchBranches(client, { cache: new Map(), mutate: vi.fn() })).toEqual({
       branches: [],
       receivedAt: expect.any(Number),
     })
@@ -63,7 +63,7 @@ describe('fetchBranches', () => {
   // A proxy's 404 page means the API was never reached: a wrong base path, say.
   it('throws when a 404 came from in front of the API', async () => {
     const client = clientAnswering(404, () => Promise.reject(new SyntaxError('<html>')))
-    await expect(fetchBranches(client, vi.fn())).rejects.toThrow(
+    await expect(fetchBranches(client, { cache: new Map(), mutate: vi.fn() })).rejects.toThrow(
       'Unexpected response from server (HTTP 404)',
     )
   })
@@ -83,12 +83,19 @@ describe('fetchBranches', () => {
     })
     const mutate = vi.fn().mockResolvedValue(undefined)
 
-    const data = await fetchBranches(client, mutate as unknown as ScopedMutator)
+    const data = await fetchBranches(client, {
+      cache: new Map(),
+      mutate: mutate as unknown as ScopedMutator,
+    })
 
     expect(data.branches.map((b) => b.name)).toEqual(['b0'])
-    expect(mutate).toHaveBeenCalledTimes(1)
-    const [key, update] = mutate.mock.calls[0] as [string, (current: unknown) => unknown]
-    expect(key).toBe('canopy:user:owner1')
-    expect(update(undefined)).toEqual({ ...owner, email: '' })
+    expect(mutate).toHaveBeenNthCalledWith(
+      1,
+      'canopy:user:owner1',
+      { ...owner, email: '' },
+      { revalidate: false },
+    )
+    // Detached, once the writes have settled.
+    expect(mutate).toHaveBeenNthCalledWith(2, 'canopy:user:owner1')
   })
 })

@@ -302,7 +302,7 @@ export interface UseBranchManagerReturn {
  */
 export function useBranchManager(options: UseBranchManagerOptions): UseBranchManagerReturn {
   const apiClient = useApiClient()
-  const { mutate: globalMutate } = useSWRConfig()
+  const { cache, mutate: globalMutate } = useSWRConfig()
   const [branchName, setBranchName] = useState<string>(options.initialBranch)
   const {
     data: branchesData,
@@ -453,7 +453,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const reloadBranches = async (): Promise<BranchesData | undefined> => {
     options.setBusy(true)
     try {
-      const fresh = await fetchBranches(apiClient, globalMutate)
+      const fresh = await fetchBranches(apiClient, { cache, mutate: globalMutate })
       await globalMutate(BRANCHES_KEY, fresh, { revalidate: false })
       return fresh
     } catch (err) {

@@ -105,6 +105,17 @@ export class EditorPage {
   }
 
   /**
+   * Open the content navigator from the header's breadcrumb, which shows once an entry is selected.
+   */
+  async openContentNavigatorFromBreadcrumb(): Promise<void> {
+    await this.page.getByTestId('breadcrumb-segment').first().click()
+    await this.contentNavigator.waitFor({
+      state: 'visible',
+      timeout: STANDARD_TIMEOUT,
+    })
+  }
+
+  /**
    * Close the content navigator so the form pane is interactive.
    */
   async closeContentNavigator(): Promise<void> {
