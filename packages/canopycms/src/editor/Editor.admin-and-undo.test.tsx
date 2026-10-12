@@ -6,7 +6,7 @@ import React from 'react'
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import { MantineProvider } from '@mantine/core'
@@ -17,6 +17,7 @@ import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { RESERVED_GROUPS } from '../authorization'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
+import { mockConsole, type MockConsole } from '../test-utils/console-spy'
 
 vi.mock('@mantine/modals', () => ({
   ModalsProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -317,6 +318,172 @@ describe('dialogs opened from the navigator', () => {
     // A closing drawer stays mounted through its exit transition, so look after it would be gone.
     await new Promise((resolve) => setTimeout(resolve, 600))
     expect(screen.getByTestId('entry-nav-filter')).toBeTruthy()
+  })
+})
+
+describe('saving collection details', () => {
+  // The hook logs each failed write.
+  let consoleSpy: MockConsole
+  beforeEach(() => {
+    consoleSpy = mockConsole()
+  })
+  afterEach(() => consoleSpy.restore())
+
+  /** Answers every collection PATCH with `response`; everything else as `stubApi` does. */
+  const stubCollectionPatch = (response: () => Response) => {
+    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+    const answerOthers = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((input, init) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      return init?.method === 'PATCH' && url.includes('/schema/collection/')
+        ? Promise.resolve(response())
+        : answerOthers(input, init)
+    })
+    return fetchMock
+  }
+
+  const entryListReads = (fetchMock: ReturnType<typeof stubApi>) =>
+    fetchMock.mock.calls.filter(([url]) => String(url).includes('/entries')).length
+
+  const saveNewLabel = async () => {
+    await openNavigator()
+    fireEvent.click(screen.getByTestId('collection-menu-posts'))
+    fireEvent.click(await screen.findByText('Edit collection…'))
+    const dialog = await screen.findByRole('dialog', { name: /^Edit collection:/ })
+    fireEvent.change(within(dialog).getByLabelText(/^Label/), { target: { value: 'Articles' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save collection details' }))
+  }
+
+  it("closes the dialog and refreshes the content tree when a gateway's 5xx page answers", async () => {
+    const fetchMock = stubCollectionPatch(
+      () =>
+        new Response('<html>Gateway Time-out</html>', {
+          status: 504,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+    )
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const readsBefore = entryListReads(fetchMock)
+
+    await saveNewLabel()
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: /^Edit collection:/ })).toBeNull(),
+    )
+    await waitFor(() => expect(entryListReads(fetchMock)).toBeGreaterThan(readsBefore))
+    expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'canopy-schema-outcome-unknown', color: 'yellow' }),
+    )
+  })
+
+  it("closes the create dialog and points at the content tree when a gateway's 5xx page answers", async () => {
+    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+    const answerOthers = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((input, init) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      return init?.method === 'POST' && url.endsWith('/schema/collections')
+        ? Promise.resolve(
+            new Response('<html>Gateway Time-out</html>', {
+              status: 504,
+              headers: { 'Content-Type': 'text/html' },
+            }),
+          )
+        : answerOthers(input, init)
+    })
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const user = userEvent.setup()
+    fireEvent.click(screen.getByTestId('collection-menu-posts'))
+    fireEvent.click(await screen.findByText('Add sub-collection…'))
+    const dialog = await screen.findByRole('dialog', { name: 'Create collection' })
+    await user.type(within(dialog).getByLabelText(/^Name/), 'notes')
+    await user.click(within(dialog).getByRole('button', { name: 'Add entry type…' }))
+    const addDialog = await screen.findByRole('dialog', { name: 'Add entry type' })
+    await user.type(within(addDialog).getByLabelText(/^Name/), 'note')
+    await user.click(within(addDialog).getByRole('button', { name: 'Add entry type' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add entry type' })).toBeNull())
+
+    await user.click(within(dialog).getByRole('button', { name: 'Create collection' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Create collection' })).toBeNull(),
+    )
+    expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'canopy-schema-outcome-unknown', color: 'yellow' }),
+    )
+  })
+
+  it('keeps the dialog open with the error when the API refuses the save', async () => {
+    const fetchMock = stubCollectionPatch(
+      () =>
+        new Response(JSON.stringify({ ok: false, status: 400, error: 'Name already taken' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    )
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const readsBefore = entryListReads(fetchMock)
+
+    await saveNewLabel()
+
+    const dialog = await screen.findByRole('dialog', { name: /^Edit collection:/ })
+    expect(await within(dialog).findByText('Name already taken')).toBeTruthy()
+    expect(entryListReads(fetchMock)).toBe(readsBefore)
+    expect(vi.mocked(notifications.show)).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'canopy-schema-outcome-unknown' }),
+    )
+  })
+
+  it('shows what the branch has when adding an entry type goes unanswered', async () => {
+    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+    const answerOthers = fetchMock.getMockImplementation()!
+    // The add reaches the server and lands, but its answer never comes back.
+    let landed = false
+    const postType = { name: 'post', format: 'json', schemaRef: 'postSchema', usageCount: 0 }
+    fetchMock.mockImplementation((input, init) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (init?.method === 'POST' && url.includes('/schema/entry-types/')) {
+        landed = true
+        return Promise.resolve(
+          new Response('<html>Gateway Time-out</html>', {
+            status: 504,
+            headers: { 'Content-Type': 'text/html' },
+          }),
+        )
+      }
+      if (!url.includes('/schema/collection/')) return answerOthers(input, init)
+      return Promise.resolve(
+        okJson({
+          collection: { name: 'posts' },
+          entryTypesWithUsage: landed ? [postType, { ...postType, name: 'article' }] : [postType],
+        }),
+      )
+    })
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    fireEvent.click(screen.getByTestId('collection-menu-posts'))
+    fireEvent.click(await screen.findByText('Edit collection…'))
+    const dialog = await screen.findByRole('dialog', { name: /^Edit collection:/ })
+    const user = userEvent.setup()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Add entry type…' }))
+    const addDialog = await screen.findByRole('dialog', { name: 'Add entry type' })
+    await user.type(within(addDialog).getByLabelText(/^Name/), 'article')
+    await user.click(within(addDialog).getByRole('button', { name: 'Add entry type' }))
+
+    expect(
+      await within(dialog).findByText(/may already have been added\. The list below shows/),
+    ).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Actions for article' })).toBeTruthy()
   })
 })
 

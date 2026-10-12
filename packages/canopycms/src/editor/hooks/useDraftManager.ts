@@ -16,6 +16,10 @@ import { isUnanswered } from '../unanswered'
 export const SAVE_TIMED_OUT_MESSAGE =
   "Save didn't finish, and may not have gone through. Your changes are still here, so save again."
 
+/** @internal Exported for tests. Shown when a save may already have landed, until a reload. */
+export const SAVE_MAY_HAVE_LANDED_MESSAGE =
+  'Your last save may already have been recorded. Reload this entry before saving again (your unsaved edits will be lost).'
+
 const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
 
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
@@ -677,9 +681,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     if (currentId in reloadRequiredRef.current) {
       if (reloadRequiredRef.current[currentId] === options.getEntryVersion?.(currentId)) {
-        showConflictNotification(
-          'Your last save may already have been recorded. Reload this entry before saving again (your unsaved edits will be lost).',
-        )
+        showConflictNotification(SAVE_MAY_HAVE_LANDED_MESSAGE)
         return
       }
       delete reloadRequiredRef.current[currentId]
@@ -782,10 +784,20 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         setErrorState({ entryId: currentId, errors: toFieldErrorMap(err.fieldErrors) })
       }
       if (isConflict) {
-        if (err.code === 'WRITE_OUTCOME_UNKNOWN') {
+        // A version conflict on the retry of a save that went unanswered is most likely that
+        // save having landed, which a reload settles just as for WRITE_OUTCOME_UNKNOWN.
+        const ownSaveLanded =
+          err.serverMessage === ENTRY_CHANGED_MESSAGE && timedOutSavesRef.current.has(currentId)
+        if (err.code === 'WRITE_OUTCOME_UNKNOWN' || ownSaveLanded) {
           reloadRequiredRef.current[currentId] = options.getEntryVersion?.(currentId)
         }
-        showConflictNotification(err.serverMessage || undefined)
+        if (ownSaveLanded) {
+          timedOutSavesRef.current.delete(currentId)
+          notifications.hide(saveTimedOutToastId(currentId))
+        }
+        showConflictNotification(
+          ownSaveLanded ? SAVE_MAY_HAVE_LANDED_MESSAGE : err.serverMessage || undefined,
+        )
       } else if (isUnanswered(err)) {
         // A save that did land moved the file's version, so the server refuses the retry as a
         // conflict; a file since deleted or moved is the exception (`ContentStore.write`).

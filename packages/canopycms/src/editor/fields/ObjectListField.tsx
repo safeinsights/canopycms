@@ -95,6 +95,7 @@ export const ObjectListField: React.FC<ObjectListFieldProps> = ({
           hasErrors={hasErrors}
           focusAfterRenderRef={focusAfterRenderRef}
           onMove={(from, to) => {
+            if (from === to || to < 0 || to >= items.length) return
             const next = [...items]
             const [moved] = next.splice(from, 1)
             next.splice(to, 0, moved)

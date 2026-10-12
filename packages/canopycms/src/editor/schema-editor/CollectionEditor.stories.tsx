@@ -1,7 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react'
 
-import { CollectionEditor, type ExistingCollection } from './CollectionEditor'
+import {
+  CollectionEditor,
+  type ExistingCollection,
+  type ExistingEntryType,
+} from './CollectionEditor'
 import type { SchemaOpResult } from '../hooks/useSchemaManager'
+import { WRITE_TIMED_OUT_MESSAGE } from '../../api/client'
 import { unsafeAsLogicalPath } from '../../paths/test-utils'
 
 const meta: Meta<typeof CollectionEditor> = {
@@ -41,6 +46,12 @@ const savesAfterAPause = async (): Promise<SchemaOpResult> => {
   return { ok: true }
 }
 
+// Ends as a write a gateway gave up on: unanswered, so it may have landed.
+const goesUnanswered = async (): Promise<SchemaOpResult> => {
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  return { ok: false, error: WRITE_TIMED_OUT_MESSAGE, unanswered: true }
+}
+
 export const Create: Story = {
   args: { editingCollection: null },
 }
@@ -60,5 +71,20 @@ export const EditWithError: Story = {
   args: {
     editingCollection: collection,
     error: 'Could not save the collection: the branch changed. Reload and try again.',
+  },
+}
+
+// Every entry-type action goes unanswered. The re-read list has "featured" gone and "page"
+// added, as if a remove of one and an add of the other had landed.
+export const EditUnanswered: Story = {
+  args: {
+    editingCollection: collection,
+    onAddEntryType: goesUnanswered,
+    onUpdateEntryType: goesUnanswered,
+    onRemoveEntryType: goesUnanswered,
+    onReloadEntryTypes: async () => [
+      collection.entries[0] as ExistingEntryType,
+      { name: 'page', label: 'Page', format: 'json', schema: 'pageSchema', usageCount: 0 },
+    ],
   },
 }

@@ -10,7 +10,8 @@
  * details", but every entry-type add, update and remove saves to the branch
  * at once. The footer's dismiss button says what leaving does: "Discard
  * changes" while details are staged, "Close" once an entry-type change has
- * saved, else "Cancel" (which would promise a revert it cannot do after one).
+ * saved or may have, else "Cancel" (which would promise a revert it cannot do
+ * after one).
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react'
@@ -104,6 +105,11 @@ export interface CollectionEditorProps {
     collectionPath: LogicalPath,
     entryTypeName: string,
   ) => Promise<SchemaOpResult>
+  /**
+   * Re-reads the entry types from the branch (edit mode only), after an action the server never
+   * answered; resolves to null when the read fails.
+   */
+  onReloadEntryTypes?: (collectionPath: LogicalPath) => Promise<ExistingEntryType[] | null>
   onClose: () => void
   isSaving?: boolean
   error?: string | null
@@ -129,6 +135,7 @@ export function CollectionEditor({
   onAddEntryType,
   onUpdateEntryType,
   onRemoveEntryType,
+  onReloadEntryTypes,
   onClose,
   isSaving = false,
   error = null,
@@ -158,9 +165,11 @@ export function CollectionEditor({
   const [entryTypes, setEntryTypes] = useState<ExistingEntryType[]>(
     () => editingCollection?.entries ?? [],
   )
-  // True once an immediate entry-type change has saved in this opening of the dialog.
+  // True once an immediate entry-type change has saved, or may have, in this opening of the dialog.
   const [entryTypeChanged, setEntryTypeChanged] = useState(false)
   const [entryTypeStatus, setEntryTypeStatus] = useState('')
+  // What an entry-type action the server never answered may have done, and where to check it.
+  const [entryTypeUnanswered, setEntryTypeUnanswered] = useState<string | null>(null)
   const [removeFailure, setRemoveFailure] = useState<{ name: string; message: string } | null>(null)
   const [removing, setRemoving] = useState(false)
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null)
@@ -199,6 +208,7 @@ export function CollectionEditor({
       setValidationError(null)
       setEntryTypeChanged(false)
       setEntryTypeStatus('')
+      setEntryTypeUnanswered(null)
       setRemoveFailure(null)
     } else {
       // The parent closes this dialog (and nulls `editingCollection`) when details save, so a
@@ -311,6 +321,36 @@ export function CollectionEditor({
     setEntryTypeChanged(true)
   }, [])
 
+  /**
+   * After an entry-type action the server never answered, which may have landed: re-reads the
+   * list so the user can check it, and treats the action as a possible change (the footer reads
+   * "Close"). Resolves to the names now listed.
+   */
+  const settleUnanswered = useCallback(
+    async (
+      collectionPath: LogicalPath,
+      name: string,
+      outcome: 'added' | 'updated' | 'removed',
+    ): Promise<string[]> => {
+      const reloaded = await (onReloadEntryTypes?.(collectionPath) ?? Promise.resolve(null)).catch(
+        (err: unknown) => {
+          console.error(err)
+          return null
+        },
+      )
+      if (reloaded) setEntryTypes(reloaded)
+      setEntryTypeChanged(true)
+      setEntryTypeUnanswered(
+        `The server didn't answer, so entry type "${name}" may already have been ${outcome}. ` +
+          (reloaded
+            ? 'The list below shows what the branch has now. Check it before trying again.'
+            : 'Close and reopen this collection to check before trying again.'),
+      )
+      return (reloaded ?? entryTypes).map((et) => et.name)
+    },
+    [onReloadEntryTypes, entryTypes],
+  )
+
   const closeEntryTypeEditor = useCallback(() => {
     setEntryTypeEditorOpen(false)
     setEditingEntryType(null)
@@ -349,6 +389,7 @@ export function CollectionEditor({
         setEntryTypeSaving(true)
         setEntryTypeError(null)
         setEntryTypeStatus('')
+        setEntryTypeUnanswered(null)
         setRemoveFailure(null)
         try {
           // An absent callback leaves `result` undefined: nothing was saved, so nothing is
@@ -370,6 +411,21 @@ export function CollectionEditor({
               )
               announceEntryTypeChange(`Entry type "${name}" updated`)
             }
+          }
+          if (result && !result.ok && result.unanswered) {
+            // The list behind this dialog is where to check, so it closes; focus goes to the
+            // entry type's row if the branch has it.
+            const name = isNew ? data.name : editingEntryType?.name
+            const listed = name
+              ? await settleUnanswered(
+                  editingCollection.logicalPath,
+                  name,
+                  isNew ? 'added' : 'updated',
+                )
+              : []
+            closeEntryTypeEditor()
+            setFocusRequest({ row: name && listed.includes(name) ? name : null })
+            return
           }
           if (result && !result.ok) {
             setEntryTypeError(result.error)
@@ -409,6 +465,7 @@ export function CollectionEditor({
       onAddEntryType,
       onUpdateEntryType,
       announceEntryTypeChange,
+      settleUnanswered,
       closeEntryTypeEditor,
     ],
   )
@@ -447,6 +504,7 @@ export function CollectionEditor({
         if (!onRemoveEntryType) return
         setRemoving(true)
         setEntryTypeStatus('')
+        setEntryTypeUnanswered(null)
         try {
           const result = await onRemoveEntryType(editingCollection.logicalPath, name)
           if (result.ok) {
@@ -454,6 +512,16 @@ export function CollectionEditor({
             setRemoveFailure(null)
             announceEntryTypeChange(`Entry type "${name}" removed`)
             setFocusRequest({ row: neighbour })
+          } else if (result.unanswered) {
+            setRemoveFailure(null)
+            const listed = await settleUnanswered(editingCollection.logicalPath, name, 'removed')
+            setFocusRequest({
+              row: listed.includes(name)
+                ? name
+                : neighbour && listed.includes(neighbour)
+                  ? neighbour
+                  : null,
+            })
           } else {
             setRemoveFailure({ name, message: result.error })
             setFocusRequest({ row: name })
@@ -472,7 +540,14 @@ export function CollectionEditor({
         setFocusRequest({ row: neighbour })
       }
     },
-    [displayEntryTypes, isEditMode, editingCollection, onRemoveEntryType, announceEntryTypeChange],
+    [
+      displayEntryTypes,
+      isEditMode,
+      editingCollection,
+      onRemoveEntryType,
+      announceEntryTypeChange,
+      settleUnanswered,
+    ],
   )
 
   const confirmRemoveEntryType = useCallback(async () => {
@@ -645,6 +720,18 @@ export function CollectionEditor({
             </>
           )}
         </Group>
+      )}
+
+      {entryTypeUnanswered && (
+        <Alert
+          icon={<IconAlertCircle size={16} />}
+          color="yellow"
+          title="No answer from the server"
+          withCloseButton
+          onClose={() => setEntryTypeUnanswered(null)}
+        >
+          {entryTypeUnanswered}
+        </Alert>
       )}
 
       {removeFailure && (

@@ -1068,6 +1068,295 @@ describe('CollectionEditor', () => {
       })
     })
 
+    describe('an entry type action the server never answered', () => {
+      const unanswered: SchemaOpResult = {
+        ok: false,
+        error: "The server didn't answer",
+        unanswered: true,
+      }
+      const article: ExistingCollection['entries'][number] = {
+        name: 'article',
+        label: 'Article',
+        format: 'json',
+        schema: 'postSchema',
+      }
+      const trigger = (rowName: string) =>
+        screen.queryByRole('button', { name: `Actions for ${rowName}` })
+      const expectFocusOn = (rowName: string) =>
+        waitFor(() => expect(document.activeElement).toBe(trigger(rowName)))
+      const noEntryTypeDialog = () =>
+        waitFor(() => expect(screen.queryByRole('dialog', { name: /entry type/ })).toBeNull())
+      const alertText = (name: string, outcome: string) =>
+        `The server didn't answer, so entry type "${name}" may already have been ${outcome}. ` +
+        'The list below shows what the branch has now. Check it before trying again.'
+
+      it('add: shows the row the branch has, says to check it, closes the dialog and focuses the row', async () => {
+        const user = userEvent.setup()
+        const onReloadEntryTypes = vi.fn().mockResolvedValue([...collection.entries, article])
+        renderCollectionEditor({
+          ...editProps(),
+          onAddEntryType: vi.fn().mockResolvedValue(unanswered),
+          onReloadEntryTypes,
+        })
+
+        await addEntryTypeViaUi(user, 'article')
+
+        expect(await screen.findByText(alertText('article', 'added'))).toBeTruthy()
+        expect(screen.getByText('No answer from the server')).toBeTruthy()
+        expect(onReloadEntryTypes).toHaveBeenCalledWith('posts')
+        expect(trigger('article')).toBeTruthy()
+        expect(dismissLabel()).toEqual(['Close'])
+        await noEntryTypeDialog()
+        await expectFocusOn('article')
+      })
+
+      it('add: when the branch lacks the entry type, lists nothing new and focuses the heading', async () => {
+        const user = userEvent.setup()
+        renderCollectionEditor({
+          ...editProps(),
+          onAddEntryType: vi.fn().mockResolvedValue(unanswered),
+          onReloadEntryTypes: vi.fn().mockResolvedValue(collection.entries),
+        })
+
+        await addEntryTypeViaUi(user, 'article')
+
+        expect(await screen.findByText(alertText('article', 'added'))).toBeTruthy()
+        expect(trigger('article')).toBeNull()
+        await noEntryTypeDialog()
+        await waitFor(() =>
+          expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Entry types' })),
+        )
+      })
+
+      it('add: shows no error in the entry type dialog', async () => {
+        const user = userEvent.setup()
+        renderCollectionEditor({
+          ...editProps(),
+          onAddEntryType: vi.fn().mockResolvedValue(unanswered),
+          onReloadEntryTypes: vi.fn().mockResolvedValue(collection.entries),
+        })
+
+        await addEntryTypeViaUi(user, 'article')
+
+        await noEntryTypeDialog()
+        expect(screen.queryByText("The server didn't answer")).toBeNull()
+      })
+
+      it('update: shows the reloaded entry type, says it may have been updated and focuses its row', async () => {
+        const user = userEvent.setup()
+        const onUpdateEntryType = vi.fn().mockResolvedValue(unanswered)
+        renderCollectionEditor({
+          ...editProps(),
+          onUpdateEntryType,
+          onReloadEntryTypes: vi
+            .fn()
+            .mockResolvedValue([
+              { ...collection.entries[0], label: 'Article' },
+              collection.entries[1],
+            ]),
+        })
+
+        await editEntryTypeLabelViaUi(user, 'post', 'Article')
+
+        expect(await screen.findByText(alertText('post', 'updated'))).toBeTruthy()
+        expect(onUpdateEntryType).toHaveBeenCalledWith('posts', 'post', { label: 'Article' })
+        expect(screen.getByText(/"Article"/)).toBeTruthy()
+        expect(dismissLabel()).toEqual(['Close'])
+        await noEntryTypeDialog()
+        await expectFocusOn('post')
+      })
+
+      it('remove, gone from the branch: drops the row without a failure alert or Retry and focuses the neighbour', async () => {
+        const user = userEvent.setup()
+        renderCollectionEditor({
+          ...editProps(),
+          onRemoveEntryType: vi.fn().mockResolvedValue(unanswered),
+          onReloadEntryTypes: vi.fn().mockResolvedValue([collection.entries[0]]),
+        })
+
+        await removeEntryTypeViaUi(user, 'featured')
+
+        expect(await screen.findByText(alertText('featured', 'removed'))).toBeTruthy()
+        expect(trigger('featured')).toBeNull()
+        expect(screen.queryByText("Couldn't remove entry type")).toBeNull()
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+        expect(screen.queryByText("The server didn't answer")).toBeNull()
+        expect(dismissLabel()).toEqual(['Close'])
+        await waitFor(() => expect(screen.queryByTestId('confirm-delete-modal')).toBeNull())
+        await expectFocusOn('post')
+      })
+
+      it('remove, still on the branch: keeps the row, without a failure alert or Retry, and focuses it', async () => {
+        const user = userEvent.setup()
+        renderCollectionEditor({
+          ...editProps(),
+          onRemoveEntryType: vi.fn().mockResolvedValue(unanswered),
+          onReloadEntryTypes: vi.fn().mockResolvedValue(collection.entries),
+        })
+
+        await removeEntryTypeViaUi(user, 'featured')
+
+        expect(await screen.findByText(alertText('featured', 'removed'))).toBeTruthy()
+        expect(trigger('featured')).toBeTruthy()
+        expect(screen.queryByText("Couldn't remove entry type")).toBeNull()
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+        await expectFocusOn('featured')
+      })
+
+      it('remove retried after a plain failure: replaces the failure alert and Retry with the unanswered alert', async () => {
+        const user = userEvent.setup()
+        renderCollectionEditor({
+          ...editProps(),
+          onRemoveEntryType: vi
+            .fn()
+            .mockResolvedValueOnce({ ok: false, error: 'locked by branch' })
+            .mockResolvedValueOnce(unanswered),
+          onReloadEntryTypes: vi.fn().mockResolvedValue(collection.entries),
+        })
+        await removeEntryTypeViaUi(user, 'featured')
+        await screen.findByText('locked by branch')
+
+        await user.click(screen.getByRole('button', { name: 'Retry' }))
+
+        expect(await screen.findByText(alertText('featured', 'removed'))).toBeTruthy()
+        expect(screen.queryByText('locked by branch')).toBeNull()
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+      })
+
+      it('remove, gone and no neighbour left: focuses the heading', async () => {
+        const user = userEvent.setup()
+        renderCollectionEditor({
+          ...editProps(),
+          onRemoveEntryType: vi.fn().mockResolvedValue(unanswered),
+          onReloadEntryTypes: vi.fn().mockResolvedValue([article]),
+        })
+
+        await removeEntryTypeViaUi(user, 'featured')
+
+        expect(await screen.findByText(alertText('featured', 'removed'))).toBeTruthy()
+        await waitFor(() =>
+          expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Entry types' })),
+        )
+      })
+
+      it.each([
+        ['resolves null', { onReloadEntryTypes: vi.fn().mockResolvedValue(null) }],
+        ['rejects', { onReloadEntryTypes: vi.fn().mockRejectedValue(new Error('offline')) }],
+        ['is not provided', {}],
+      ])(
+        'keeps the old list and says to reopen the collection when the reload %s',
+        async (_label, reloadProps) => {
+          vi.spyOn(console, 'error').mockImplementation(() => {})
+          const user = userEvent.setup()
+          renderCollectionEditor({
+            ...editProps(),
+            onRemoveEntryType: vi.fn().mockResolvedValue(unanswered),
+            ...reloadProps,
+          })
+
+          await removeEntryTypeViaUi(user, 'featured')
+
+          expect(
+            await screen.findByText(
+              'The server didn\'t answer, so entry type "featured" may already have been removed. ' +
+                'Close and reopen this collection to check before trying again.',
+            ),
+          ).toBeTruthy()
+          expect(trigger('post')).toBeTruthy()
+          expect(trigger('featured')).toBeTruthy()
+          expect(dismissLabel()).toEqual(['Close'])
+        },
+      )
+
+      it('keeps Discard changes while collection details are edited', async () => {
+        const user = userEvent.setup()
+        renderCollectionEditor({
+          ...editProps(),
+          onAddEntryType: vi.fn().mockResolvedValue(unanswered),
+          onReloadEntryTypes: vi.fn().mockResolvedValue(collection.entries),
+        })
+        await user.type(screen.getByLabelText(/^Label/), 's')
+
+        await addEntryTypeViaUi(user, 'article')
+
+        await screen.findByText(alertText('article', 'added'))
+        expect(dismissLabel()).toEqual(['Discard changes'])
+      })
+
+      it('clears the alert when the next entry type action starts', async () => {
+        const user = userEvent.setup()
+        renderCollectionEditor({
+          ...editProps(),
+          onAddEntryType: vi.fn().mockResolvedValue(unanswered),
+          onReloadEntryTypes: vi.fn().mockResolvedValue(collection.entries),
+        })
+        await addEntryTypeViaUi(user, 'article')
+        await screen.findByText(alertText('article', 'added'))
+        await noEntryTypeDialog()
+
+        await removeEntryTypeViaUi(user, 'featured')
+
+        await waitFor(() => expect(screen.queryByText(alertText('article', 'added'))).toBeNull())
+        expect(screen.getByRole('status').textContent).toBe('Entry type "featured" removed')
+      })
+
+      it('clears the alert when a later entry type edit starts', async () => {
+        const user = userEvent.setup()
+        renderCollectionEditor({
+          ...editProps(),
+          onAddEntryType: vi.fn().mockResolvedValue(unanswered),
+          onReloadEntryTypes: vi.fn().mockResolvedValue(collection.entries),
+        })
+        await addEntryTypeViaUi(user, 'article')
+        await screen.findByText(alertText('article', 'added'))
+        await noEntryTypeDialog()
+
+        await editEntryTypeLabelViaUi(user, 'post', 'Article')
+
+        await waitFor(() => expect(screen.queryByText(alertText('article', 'added'))).toBeNull())
+        expect(screen.getByRole('status').textContent).toBe('Entry type "post" updated')
+      })
+
+      it('lets the alert be dismissed', async () => {
+        const user = userEvent.setup()
+        renderCollectionEditor({
+          ...editProps(),
+          onAddEntryType: vi.fn().mockResolvedValue(unanswered),
+          onReloadEntryTypes: vi.fn().mockResolvedValue(collection.entries),
+        })
+        await addEntryTypeViaUi(user, 'article')
+        const text = await screen.findByText(alertText('article', 'added'))
+
+        const alert = text.closest('[role="alert"]') as HTMLElement
+        await user.click(within(alert).getByRole('button'))
+
+        expect(screen.queryByText(alertText('article', 'added'))).toBeNull()
+      })
+
+      it('clears the alert when the dialog reopens', async () => {
+        const user = userEvent.setup()
+        const { rerender, props } = renderCollectionEditor({
+          ...editProps(),
+          onAddEntryType: vi.fn().mockResolvedValue(unanswered),
+          onReloadEntryTypes: vi.fn().mockResolvedValue(collection.entries),
+        })
+        await addEntryTypeViaUi(user, 'article')
+        await screen.findByText(alertText('article', 'added'))
+        const rerenderWith = (isOpen: boolean) =>
+          rerender(
+            <CanopyCMSProvider>
+              <CollectionEditor {...props} isOpen={isOpen} editingCollection={collection} />
+            </CanopyCMSProvider>,
+          )
+
+        rerenderWith(false)
+        rerenderWith(true)
+
+        await waitFor(() => expect(screen.queryByText(alertText('article', 'added'))).toBeNull())
+        expect(dismissLabel()).toEqual(['Cancel'])
+      })
+    })
+
     describe('layout and wording', () => {
       it('titles the dialogs by label, falling back to the name', async () => {
         const user = userEvent.setup()
