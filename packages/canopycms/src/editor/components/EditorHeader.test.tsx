@@ -147,7 +147,7 @@ describe('EditorHeader - review lock', () => {
     // a bare absence check would pass against a tooltip that never mounted.
     // Not withdrawable with an unknown status, so it renders as the submit side.
     await userEvent.hover(screen.getByTestId('submit-button'))
-    expect(await screen.findByText(/Branch data could not be loaded/i)).toBeTruthy()
+    expect(await screen.findByText(/Branch details could not be loaded/i)).toBeTruthy()
     expect(screen.queryByText(/is undefined/)).toBeNull()
   })
 
@@ -421,10 +421,42 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
     expect(save.hasAttribute('disabled')).toBe(false)
     act(() => save.focus())
     expect(document.activeElement).toBe(save)
-    expect(await screen.findByText('No changes to save')).toBeTruthy()
+    expect(await screen.findByText('No changes to save.')).toBeTruthy()
 
     await userEvent.click(save)
     expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('says on focus why Save is blocked with no entry open, and names the reason for the button', async () => {
+    renderHeader({ currentEntry: undefined, hasUnsavedChanges: false })
+    const save = screen.getByTestId('save-button')
+
+    act(() => save.focus())
+    const reason = await screen.findByText('Open an entry to save it.')
+    expect(save.getAttribute('aria-describedby')).toBe(reason.closest('[role="tooltip"]')?.id)
+  })
+
+  it('shows no Save reason while a save is in flight', async () => {
+    renderHeader({ busy: true })
+    act(() => screen.getByTestId('save-button').focus())
+
+    expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
+    expect(screen.queryByRole('tooltip')).toBeNull()
+  })
+
+  it('gives the base-branch and in-review Save reasons a way forward', async () => {
+    const { unmount } = renderHeader({ branchReadOnly: true })
+    act(() => screen.getByTestId('save-button').focus())
+    expect(
+      await screen.findByText('The base branch is read-only. Create a branch to make changes.'),
+    ).toBeTruthy()
+    unmount()
+
+    renderHeader({ branchStatus: 'submitted', branchWriteBlocked: true })
+    act(() => screen.getByTestId('save-button').focus())
+    expect(
+      await screen.findByText('This branch is in review. Withdraw it to make changes.'),
+    ).toBeTruthy()
   })
 
   it('keeps a Submit for review the user may not use focusable, explains it on focus, and ignores its click', async () => {
@@ -458,10 +490,10 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
     renderHeader({ currentEntry: undefined, onFileReload })
     await userEvent.click(screen.getByTestId('file-dropdown-button'))
 
-    const reload = await screen.findByRole('menuitem', { name: /^Reload File/ })
+    const reload = await screen.findByRole('menuitem', { name: /^Reload entry/ })
     expect(reload.getAttribute('aria-disabled')).toBe('true')
     expect(reload.hasAttribute('disabled')).toBe(false)
-    expect(within(reload).getByText('Open an entry first')).toBeTruthy()
+    expect(within(reload).getByText('Open an entry first.')).toBeTruthy()
 
     // Arrow keys reach the blocked item: the menu does not skip it.
     await userEvent.keyboard('{ArrowDown}')
@@ -469,7 +501,17 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
     await userEvent.keyboard('{Enter}')
     expect(onFileReload).not.toHaveBeenCalled()
     // The menu stays open, since nothing happened.
-    expect(screen.queryByRole('menuitem', { name: /^Reload File/ })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: /^Reload entry/ })).toBeTruthy()
+  })
+
+  it('speaks of the entry, not a file, in the entry menu', async () => {
+    renderHeader({ currentEntry: undefined })
+    const trigger = screen.getByTestId('file-dropdown-button')
+    expect(trigger.textContent).toBe('No entry selected')
+    await userEvent.click(trigger)
+
+    expect(await screen.findByRole('menuitem', { name: /^Reload entry/ })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /^Discard changes/ })).toBeTruthy()
   })
 
   it('runs the same menu item once it can act', async () => {
@@ -477,7 +519,7 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
     renderHeader({ onFileReload })
     await userEvent.click(screen.getByTestId('file-dropdown-button'))
 
-    const reload = await screen.findByRole('menuitem', { name: 'Reload File' })
+    const reload = await screen.findByRole('menuitem', { name: 'Reload entry' })
     expect(reload.getAttribute('aria-disabled')).toBeNull()
     await userEvent.click(reload)
 

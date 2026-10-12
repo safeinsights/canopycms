@@ -945,8 +945,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       return
     }
     openConfirm({
-      title: 'Reload file',
-      children: 'Reload this file from the server? Unsaved changes for this file will be lost.',
+      title: 'Reload entry',
+      children: 'Reload this entry from the server? Unsaved changes to this entry will be lost.',
       labels: { confirm: 'Reload', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {

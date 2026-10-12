@@ -255,6 +255,22 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   // keyboard focus and touch as well as hover; the click does nothing.
   const saveBlocked =
     !branchName || !currentEntry || busy || !hasUnsavedChanges || branchReadOnly || statusLocked
+  // Why Save is blocked, with the way forward; none while a save is in flight.
+  const saveBlockedReason = branchReadOnly
+    ? 'The base branch is read-only. Create a branch to make changes.'
+    : branchDataUnavailable
+      ? 'Branch details are still loading. Saving is available once they arrive.'
+      : statusLocked
+        ? branchStatus === 'submitted'
+          ? 'This branch is in review. Withdraw it to make changes.'
+          : `This branch is ${branchStatus}. Its content is read-only.`
+        : !branchName
+          ? 'Open a branch first.'
+          : !currentEntry
+            ? 'Open an entry to save it.'
+            : !hasUnsavedChanges
+              ? 'No changes to save.'
+              : ''
 
   const statusPresentation = branchStatusPresentation(branchStatus, branchIsProtected)
   const unresolvedCount = comments.filter((t) => !t.resolved).length
@@ -307,7 +323,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     leftSection={<IconFolderOpen size={16} />}
                     rightSection={<IconChevronDown size={14} />}
                   >
-                    {currentEntry?.label ?? 'No file selected'}
+                    {currentEntry?.label ?? 'No entry selected'}
                   </Button>
                 </Menu.Target>
                 <Menu.Dropdown>
@@ -315,20 +331,20 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     onClick={onFileReload}
                     blockedReason={
                       !branchName
-                        ? 'Open a branch first'
+                        ? 'Open a branch first.'
                         : !currentEntry
-                          ? 'Open an entry first'
+                          ? 'Open an entry first.'
                           : undefined
                     }
                   >
-                    Reload File
+                    Reload entry
                   </ReasonedMenuItem>
                   <ReasonedMenuItem
                     data-testid="discard-file-draft-menu-item"
                     onClick={onFileDiscardDraft}
-                    blockedReason={currentEntry ? undefined : 'Open an entry first'}
+                    blockedReason={currentEntry ? undefined : 'Open an entry first.'}
                   >
-                    Discard File Draft
+                    Discard changes
                   </ReasonedMenuItem>
                   <Menu.Divider />
                   <Menu.Item data-testid="all-files-menu-item" onClick={onNavigatorOpen}>
@@ -384,14 +400,14 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 <Menu.Dropdown data-testid="branch-menu">
                   <ReasonedMenuItem
                     onClick={onBranchReloadData}
-                    blockedReason={branchName ? undefined : 'Open a branch first'}
+                    blockedReason={branchName ? undefined : 'Open a branch first.'}
                   >
                     Reload all entries
                   </ReasonedMenuItem>
                   <ReasonedMenuItem
                     data-testid="discard-all-drafts-menu-item"
                     onClick={onBranchDiscardDrafts}
-                    blockedReason={branchName ? undefined : 'Open a branch first'}
+                    blockedReason={branchName ? undefined : 'Open a branch first.'}
                   >
                     Discard all changes
                   </ReasonedMenuItem>
@@ -483,20 +499,8 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               )}
             </Box>
             <Tooltip
-              label={
-                branchReadOnly
-                  ? 'The base branch is read-only'
-                  : branchDataUnavailable
-                    ? 'Branch details are still loading — saving is disabled until they arrive'
-                    : statusLocked
-                      ? branchStatus === 'submitted'
-                        ? 'This branch is submitted for review — withdraw it from review to make changes'
-                        : `This branch is ${branchStatus} — content is read-only`
-                      : !hasUnsavedChanges && currentEntry
-                        ? 'No changes to save'
-                        : ''
-              }
-              disabled={!branchReadOnly && !statusLocked && (hasUnsavedChanges || !currentEntry)}
+              label={saveBlockedReason}
+              disabled={!saveBlocked || busy}
               events={{ hover: true, focus: true, touch: true }}
               multiline
               maw={280}
@@ -565,11 +569,11 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     // today only as a side effect of `branchIsProtected`'s `?? true`
                     // default -- not a guarantee this arm stays unreachable.
                     branchStatus === undefined
-                      ? 'Branch data could not be loaded, so you cannot submit it for review or withdraw it from review'
+                      ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
                       : !statusHasAction
-                        ? `This branch is ${branchStatus}, so it cannot be submitted for review or withdrawn from review`
+                        ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
                         : !userHasPermission
-                          ? 'You do not have permission to submit this branch for review or withdraw it from review'
+                          ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
                           : ''
                   }
                   disabled={canPerformAction}

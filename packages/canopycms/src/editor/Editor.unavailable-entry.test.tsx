@@ -423,7 +423,7 @@ describe('Editor: an entry of an unavailable type', () => {
 
     widgetResponse = () => okJson({ ok: true, status: 200, data: { size: 'large', version: 1 } })
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    fireEvent.click(await screen.findByText('Reload File'))
+    fireEvent.click(await screen.findByText('Reload entry'))
 
     await waitFor(() => {
       const el = screen.queryByRole('textbox', {

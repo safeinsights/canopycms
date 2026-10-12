@@ -53,6 +53,7 @@ const LABEL_ELEMENTS = new Set([
   'Menu.Label',
   'Modal.Title',
   'NavLink',
+  'ReasonedMenuItem',
   'Tabs.Tab',
   'Title',
   'UnstyledButton',

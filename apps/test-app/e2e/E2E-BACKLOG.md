@@ -135,8 +135,8 @@ Use existing fixtures:
 **Status:** Done — `draft-behavior.spec.ts` › "discard file draft reverts field to last-saved state", "unsaved draft survives a page reload"
 **Spec file:** `draft-behavior.spec.ts` (new file)
 **Scenario:** Make edits to an entry. Verify the save button is enabled and a "discard" or "revert" action is available. Click discard. Verify the field values revert to their last-saved state without a page reload.
-**data-testids added:** `data-testid="discard-file-draft-menu-item"` on the "Discard File Draft" `<Menu.Item>` in `EditorHeader.tsx`.
-**Notes:** No confirmation dialog — discard immediately clears the draft from state and localStorage, shows "Draft cleared for file" (blue Mantine notification). Save button is `disabled` when no unsaved changes (`!hasUnsavedChanges`), so can use `toBeDisabled()` to verify clean state before and after. "Discard File Draft" is inside the file dropdown menu (same menu as "All Files" / `file-dropdown-button`).
+**data-testids added:** `data-testid="discard-file-draft-menu-item"` on the "Discard changes" `<Menu.Item>` in `EditorHeader.tsx`.
+**Notes:** No confirmation dialog — discard immediately clears the draft from state and localStorage, shows "Draft cleared for file" (blue Mantine notification). Save button is `disabled` when no unsaved changes (`!hasUnsavedChanges`), so can use `toBeDisabled()` to verify clean state before and after. "Discard changes" is inside the file dropdown menu (same menu as "All Files" / `file-dropdown-button`).
 
 ---
 
