@@ -4,8 +4,9 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Box } from '@mantine/core'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
-import { CommentThreadsPopover } from './CommentThreadsPopover'
+import { CommentThreadsPopover, type OpenRequest } from './CommentThreadsPopover'
 import { FieldCommentContext } from './field-comment-context'
+import { useFormComments } from './form-comments'
 
 export interface FieldWrapperProps {
   /** Child form field element */
@@ -53,7 +54,7 @@ const FIELD_SCOPE_ATTR = 'data-field-comments'
 /**
  * Gives a form field its comment control. The control shows while the pointer or focus is on
  * this field and not on a field nested inside it, so a group never shows a second icon for its
- * children; a field with threads always shows it.
+ * children; a field with open threads always shows it.
  */
 export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   children,
@@ -74,6 +75,20 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [pointerOn, setPointerOn] = useState(false)
   const [focusOn, setFocusOn] = useState(false)
+  const [anchor, setAnchor] = useState<HTMLDivElement | null>(null)
+  const [openRequest, setOpenRequest] = useState<OpenRequest | undefined>(undefined)
+  const formComments = useFormComments()
+
+  useEffect(
+    () =>
+      formComments?.register(canopyPath, {
+        subject: fieldLabel,
+        // A new object per request, so asking again while it is open still counts.
+        open: (returnFocusTo) => setOpenRequest({ returnFocusTo }),
+        element: () => wrapperRef.current,
+      }),
+    [formComments, canopyPath, fieldLabel],
+  )
 
   useEffect(() => {
     if (autoFocus) {
@@ -98,6 +113,8 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
       subject={fieldLabel}
       variant="field"
       revealed={pointerOn || focusOn}
+      anchor={anchor}
+      openRequest={openRequest}
       currentUserId={currentUserId}
       canResolve={canResolve}
       onAddComment={(text, threadId) =>
@@ -119,7 +136,11 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
       style={{ width: '100%' }}
       onMouseOver={(event: React.MouseEvent) => setPointerOn(ownsTarget(event.target))}
       onMouseLeave={() => setPointerOn(false)}
-      onFocus={(event: React.FocusEvent) => setFocusOn(ownsTarget(event.target))}
+      onFocus={(event: React.FocusEvent) => {
+        const owned = ownsTarget(event.target)
+        setFocusOn(owned)
+        if (owned) formComments?.noteFocus(canopyPath)
+      }}
       onBlur={(event: React.FocusEvent<HTMLDivElement>) => {
         const next = event.relatedTarget
         if (!(next instanceof Node && event.currentTarget.contains(next))) setFocusOn(false)
@@ -137,6 +158,8 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
           {children}
         </Box>
       </FieldCommentContext.Provider>
+      {/* The comment popover opens beneath this, below the field's input. */}
+      <div ref={setAnchor} data-comment-anchor />
       {controlPlacement === 'corner' && (
         <Box pos="absolute" top={4} right={4} style={{ zIndex: 1 }}>
           {control}

@@ -268,6 +268,7 @@ const CommentingForm: React.FC<{ readOnly?: boolean; fieldErrors?: Record<string
     storyThread('t2', 'field', 'title', 'Check capitalisation.'),
     storyThread('t3', 'field', 'blocks[0].headline', 'Shorter, please.'),
     storyThread('t4', 'entry', undefined, 'Ready for review once the hero is final.'),
+    storyThread('t5', 'field', 'seo.description', 'Under 160 characters now.', true),
   ])
   return (
     <FormRenderer
@@ -313,8 +314,9 @@ const CommentingForm: React.FC<{ readOnly?: boolean; fieldErrors?: Record<string
 }
 
 /**
- * Comments on: "Comment on this entry" at the top, a count badge on fields with open threads,
- * and an icon after the label of any other field while it is hovered or focused.
+ * Comments on: "Comments in this form" (⌘⌥M or Ctrl+Alt+M), which lists every field with threads,
+ * resolved ones included, and "Comment on this entry" at the top; a count badge on fields with
+ * open threads, and an icon after the label of any other field while it is hovered or focused.
  */
 export const WithComments: Story = {
   render: () => <CommentingForm />,

@@ -122,10 +122,11 @@ describe('field comment control', () => {
     expect(isRevealed(control('title'))).toBe(true)
     act(() => screen.getByLabelText('Title').blur())
     expect(isRevealed(control('title'))).toBe(false)
-    // The hidden control is still in the tab order: Shift+Tab from the input reaches it.
+    // Idle, the control is out of the tab order: Shift+Tab from the input passes it.
+    expect(control('title').getAttribute('tabindex')).toBe('-1')
     act(() => screen.getByLabelText('Title').focus())
     await user.tab({ shift: true })
-    expect(document.activeElement).toBe(control('title'))
+    expect(document.activeElement).not.toBe(control('title'))
     act(() => screen.getByLabelText('Title').blur())
     act(() => control('title').focus())
     expect(isRevealed(control('title'))).toBe(true)
@@ -171,7 +172,8 @@ describe('field comment control', () => {
     expect(row && within(row as HTMLElement).queryByText('Meta text')).toBeTruthy()
   })
 
-  it('shows a persistent badge counting open threads, and a plain icon for resolved-only ones', () => {
+  it('shows a persistent, tabbable badge counting open threads, and hides resolved-only ones until hovered', async () => {
+    const user = userEvent.setup()
     renderForm({
       comments: [
         thread('t1', 'title'),
@@ -184,8 +186,12 @@ describe('field comment control', () => {
     expect(badge.textContent).toBe('2')
     expect(badge.getAttribute('aria-label')).toBe('Comment on Title (2 open threads)')
     expect(isRevealed(badge)).toBe(true)
+    expect(badge.hasAttribute('tabindex')).toBe(false)
     expect(control('meta.summary').textContent).toBe('')
     expect(control('meta.summary').getAttribute('aria-label')).toBe('Comment on Meta › Summary')
+    expect(isRevealed(control('meta.summary'))).toBe(false)
+    expect(control('meta.summary').getAttribute('tabindex')).toBe('-1')
+    await user.hover(screen.getByLabelText('Summary'))
     expect(isRevealed(control('meta.summary'))).toBe(true)
     expect(isRevealed(control('meta'))).toBe(false)
   })
@@ -697,5 +703,161 @@ describe('comment writes the popover can no longer show', () => {
     await user.click(within(popover).getByTestId('submit-reply-button'))
     expect(await within(popover).findByText("Couldn't add the comment. Try again.")).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(box))
+  })
+})
+
+describe('the form keyboard route to field comments', () => {
+  const pressShortcut = (user: ReturnType<typeof userEvent.setup>) =>
+    user.keyboard('{Control>}{Alt>}m{/Alt}{/Control}')
+  const menuButton = () => screen.getByTestId('form-comments-menu-button')
+
+  it("opens the focused field's popover on Mod+Alt+M, and Escape returns focus to the input", async () => {
+    const user = userEvent.setup()
+    renderForm({ comments: [thread('t1', 'meta.summary')] })
+    const input = screen.getByLabelText('Summary')
+    act(() => input.focus())
+    await pressShortcut(user)
+    const popover = await screen.findByTestId('field-comment-meta.summary-popover')
+    expect(within(popover).getByText('Comment in t1')).toBeTruthy()
+    expect(screen.queryByTestId('form-comments-menu')).toBeNull()
+    await user.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByTestId('field-comment-meta.summary-popover')).toBeNull(),
+    )
+    await waitFor(() => expect(document.activeElement).toBe(input))
+  })
+
+  it('opens the menu on Mod+Alt+M when focus is outside every field', async () => {
+    const user = userEvent.setup()
+    renderForm()
+    await pressShortcut(user)
+    expect(await screen.findByTestId('form-comments-menu')).toBeTruthy()
+    expect(screen.queryByTestId('field-comment-title-popover')).toBeNull()
+  })
+
+  it('leaves Mod+Alt+M alone while a modal dialog is open', async () => {
+    const user = userEvent.setup()
+    renderForm()
+    const modal = document.createElement('div')
+    modal.setAttribute('role', 'dialog')
+    modal.setAttribute('aria-modal', 'true')
+    document.body.appendChild(modal)
+    try {
+      await pressShortcut(user)
+      await expect(
+        screen.findByTestId('form-comments-menu', {}, { timeout: 300 }),
+      ).rejects.toThrow()
+    } finally {
+      modal.remove()
+    }
+  })
+
+  it('lists the fields with threads in form order, resolved ones included, and opens the chosen one', async () => {
+    const user = userEvent.setup()
+    renderForm({
+      comments: [
+        thread('t1', 'links[0].href', { resolved: true }),
+        thread('t2', 'title'),
+        thread('t3', 'title'),
+        thread('e1', undefined, { type: 'entry' }),
+      ],
+    })
+    expect(menuButton().getAttribute('aria-label')).toBe(
+      'Comments in this form (2 open threads on fields)',
+    )
+    expect(menuButton().getAttribute('aria-haspopup')).toBe('menu')
+    await user.click(menuButton())
+    const menu = await screen.findByTestId('form-comments-menu')
+    expect(menuButton().getAttribute('aria-expanded')).toBe('true')
+    const items = within(menu).getAllByRole('menuitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Title2 open threads',
+      'Links › /a › HrefResolved',
+      expect.stringContaining('Comment on a field'),
+    ])
+    await user.click(items[1])
+    const popover = await screen.findByTestId('field-comment-links[0].href-popover')
+    expect(within(popover).getByText('Comment in t1')).toBeTruthy()
+  })
+
+  it('returns focus to the menu button when a popover opened from the menu closes', async () => {
+    const user = userEvent.setup()
+    renderForm({ comments: [thread('t1', 'title')] })
+    await user.click(menuButton())
+    await user.click(await screen.findByTestId('form-comments-field-title'))
+    await screen.findByTestId('field-comment-title-popover')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(menuButton()))
+  })
+
+  it('starts a thread on the field last focused', async () => {
+    const user = userEvent.setup()
+    const { onAddComment } = renderForm()
+    act(() => screen.getByLabelText('Summary').focus())
+    await user.click(menuButton())
+    const item = await screen.findByTestId('form-comments-comment-on-field')
+    expect(item.textContent).toContain('Comment on Meta › Summary')
+    await user.click(item)
+    const popover = await screen.findByTestId('field-comment-meta.summary-popover')
+    await user.type(within(popover).getByTestId('new-thread-textarea'), 'Tighten this')
+    await user.click(within(popover).getByTestId('create-thread-button'))
+    expect(onAddComment).toHaveBeenCalledWith(
+      'Tighten this',
+      'field',
+      ENTRY,
+      'meta.summary',
+      undefined,
+    )
+  })
+
+  it('says why it cannot comment on a field before one is focused, and stays focusable', async () => {
+    const user = userEvent.setup()
+    renderForm()
+    await user.click(menuButton())
+    const item = await screen.findByTestId('form-comments-comment-on-field')
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.hasAttribute('disabled')).toBe(false)
+    expect(item.textContent).toContain('Focus a field first, or press Ctrl+Alt+M in it.')
+    await user.click(item)
+    expect(screen.queryByTestId('field-comment-title-popover')).toBeNull()
+  })
+
+  it("names the shortcut in the controls' tooltips and aria-keyshortcuts", async () => {
+    const user = userEvent.setup()
+    renderForm()
+    expect(control('title').getAttribute('aria-keyshortcuts')).toBe('Control+Alt+M')
+    expect(menuButton().getAttribute('aria-keyshortcuts')).toBe('Control+Alt+M')
+    await user.hover(control('title'))
+    expect(await screen.findByText('Comment on Title (Ctrl+Alt+M)')).toBeTruthy()
+    await user.hover(menuButton())
+    expect(await screen.findByText('Comments in this form (Ctrl+Alt+M)')).toBeTruthy()
+  })
+})
+
+describe('field comment popover placement', () => {
+  it('opens below the field, beneath its input, and toggles from its control', async () => {
+    const user = userEvent.setup()
+    renderForm()
+    await user.click(control('title'))
+    const popover = await screen.findByTestId('field-comment-title-popover')
+    expect(popover.getAttribute('data-position')).toBe('bottom-start')
+    expect(popover.getAttribute('role')).toBe('dialog')
+    expect(control('title').getAttribute('aria-controls')).toBe(popover.id)
+    // Its position reference sits in the field's wrapper, after the input.
+    const wrapper = screen.getByLabelText('Title').closest('[data-field-comments]')
+    const anchor = wrapper?.querySelector(':scope > [data-comment-anchor]') ?? null
+    expect(anchor?.firstElementChild).toBeTruthy()
+    expect(
+      screen.getByLabelText('Title').compareDocumentPosition(anchor as Node) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    // A second click on the control closes it rather than reopening it.
+    await user.click(control('title'))
+    await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+    await user.click(control('title'))
+    await screen.findByTestId('field-comment-title-popover')
+    await user.click(screen.getByLabelText('Summary'))
+    await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
   })
 })

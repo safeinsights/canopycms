@@ -110,21 +110,22 @@ inline and in a summary of labelled breadcrumbs that focus the field.
 
 The comment control hides until its field is hovered or focused, unless the field has open
 threads: then it shows their count, never a zero badge. Idle, it is not a Tab stop
-(`tabIndex={-1}`); one keyboard route per form, a shortcut or menu, reaches comments instead.
-Until that route exists, the control stays in the tab order.
+(`tabIndex={-1}`): Mod+Alt+M on the focused field, or the "Comments in this form" menu
+(`comments/form-comments.tsx`), reaches comments instead.
 
 ## Keyboard
 
 - Bind shortcuts with Mantine's `useHotkeys` as `mod+…`, which is ⌘ on macOS and Ctrl
   elsewhere, scoped to the editor root. A shortcut that must work while typing, such as Save,
   passes `[]` as `tagsToIgnore` and `true` as `triggerOnContentEditable`.
-- Taken: Mod+S save, Mod+P quick open, Mod+. content panel, Mod+Shift+L layout, Esc closes the
+- Taken: Mod+S save, Mod+P quick open, Mod+Alt+M comments, Mod+. content panel, Mod+Shift+L layout, Esc closes the
   topmost panel. Never bind Mod+K (MDXEditor's link), the formatting keys, or the browser's own
   (Mod+W, T, R, L, F).
 - Tooltips and the shortcut sheet show the platform's modifier.
 - Every action is reachable by keyboard, focus follows visual order, and closing an overlay
-  returns focus to the control that opened it. If that control is gone or hidden, focus goes to
-  the nearest list heading or search field.
+  returns focus to the control that opened it. A menu item is gone once it acts, so its menu's
+  trigger stands in. If the opener is otherwise gone or hidden, focus goes to the nearest list
+  heading or search field.
 
 ## Accessibility
 

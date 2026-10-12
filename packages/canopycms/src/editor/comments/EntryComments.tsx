@@ -5,6 +5,7 @@ import { Group } from '@mantine/core'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { CommentThreadsPopover } from './CommentThreadsPopover'
+import { FormCommentsMenu } from './form-comments'
 
 export interface EntryCommentsProps {
   /** All comments (will be filtered for entry-level) */
@@ -33,7 +34,10 @@ export interface EntryCommentsProps {
   resetKey: string
 }
 
-/** The "Comment on this entry" action at the top of the form, with the entry's threads. */
+/**
+ * The top of the form's comment actions: the "Comments in this form" menu, the keyboard route to
+ * field comments, and "Comment on this entry" with the entry's threads.
+ */
 export const EntryComments: React.FC<EntryCommentsProps> = ({
   comments,
   entryPath,
@@ -51,7 +55,8 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
   )
 
   return (
-    <Group justify="flex-end">
+    <Group justify="flex-end" gap="xs">
+      <FormCommentsMenu comments={comments} entryPath={entryPath} />
       <CommentThreadsPopover
         key={resetKey}
         threads={entryThreads}
