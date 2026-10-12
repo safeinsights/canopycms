@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup, within } from '@testing-library/react'
+import { act, render, screen, cleanup, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
@@ -63,7 +63,7 @@ describe('EditorHeader - review lock', () => {
       branchCreatedBy: 'u1',
     })
 
-    expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
     expect(screen.getByTestId('status-locked-banner')).toBeTruthy()
     expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
     expect(screen.getByTestId('withdraw-button').textContent).toBe('Withdraw from review')
@@ -72,7 +72,7 @@ describe('EditorHeader - review lock', () => {
   it('enables Save and shows no lock banner when editing with unsaved changes', () => {
     renderHeader({ branchStatus: 'editing', branchWriteBlocked: false, hasUnsavedChanges: true })
 
-    expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(false)
+    expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBeNull()
     expect(screen.queryByTestId('status-locked-banner')).toBeNull()
     expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
   })
@@ -89,7 +89,7 @@ describe('EditorHeader - review lock', () => {
 
     expect(screen.getByTestId('protected-branch-banner')).toBeTruthy()
     expect(screen.queryByTestId('status-locked-banner')).toBeNull()
-    expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
   })
 
   it('shows only the protected-branch banner for a submitted base branch', () => {
@@ -120,7 +120,7 @@ describe('EditorHeader - review lock', () => {
     const banner = screen.getByTestId('status-locked-banner')
     expect(banner.textContent).not.toMatch(/undefined/)
     expect(banner.textContent).toMatch(/could not be loaded/i)
-    expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
   })
 
   it('never interpolates an unknown status into the submit/withdraw tooltip either', async () => {
@@ -404,5 +404,83 @@ describe('EditorHeader - vocabulary', () => {
     expect(screen.getByTestId('status-locked-banner').textContent).toContain(
       'Use Switch branch… to retry.',
     )
+  })
+})
+
+describe('EditorHeader - blocked controls say why on focus and ignore their click', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('keeps a blocked Save focusable, explains it on keyboard focus, and does not save', async () => {
+    const onSave = vi.fn()
+    renderHeader({ hasUnsavedChanges: false, onSave })
+    const save = screen.getByTestId('save-button')
+
+    expect(save.getAttribute('aria-disabled')).toBe('true')
+    expect(save.hasAttribute('disabled')).toBe(false)
+    act(() => save.focus())
+    expect(document.activeElement).toBe(save)
+    expect(await screen.findByText('No changes to save')).toBeTruthy()
+
+    await userEvent.click(save)
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('keeps a Submit for review the user may not use focusable, explains it on focus, and ignores its click', async () => {
+    const onSubmit = vi.fn()
+    renderHeader({
+      userContext: { userId: 'someone-else' },
+      branchCreatedBy: 'u1',
+      onSubmit,
+    })
+    const submit = screen.getByTestId('submit-button')
+
+    expect(submit.getAttribute('aria-disabled')).toBe('true')
+    expect(submit.hasAttribute('disabled')).toBe(false)
+    act(() => submit.focus())
+    expect(await screen.findByText(/do not have permission to submit/)).toBeTruthy()
+    await userEvent.click(submit)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('saves from an enabled Save', async () => {
+    const onSave = vi.fn()
+    renderHeader({ hasUnsavedChanges: true, onSave })
+
+    await userEvent.click(screen.getByTestId('save-button'))
+
+    expect(onSave).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows why a menu item is blocked, keeps it in keyboard order, and does not run it', async () => {
+    const onFileReload = vi.fn()
+    renderHeader({ currentEntry: undefined, onFileReload })
+    await userEvent.click(screen.getByTestId('file-dropdown-button'))
+
+    const reload = await screen.findByRole('menuitem', { name: /^Reload File/ })
+    expect(reload.getAttribute('aria-disabled')).toBe('true')
+    expect(reload.hasAttribute('disabled')).toBe(false)
+    expect(within(reload).getByText('Open an entry first')).toBeTruthy()
+
+    // Arrow keys reach the blocked item: the menu does not skip it.
+    await userEvent.keyboard('{ArrowDown}')
+    expect(document.activeElement).toBe(reload)
+    await userEvent.keyboard('{Enter}')
+    expect(onFileReload).not.toHaveBeenCalled()
+    // The menu stays open, since nothing happened.
+    expect(screen.queryByRole('menuitem', { name: /^Reload File/ })).toBeTruthy()
+  })
+
+  it('runs the same menu item once it can act', async () => {
+    const onFileReload = vi.fn()
+    renderHeader({ onFileReload })
+    await userEvent.click(screen.getByTestId('file-dropdown-button'))
+
+    const reload = await screen.findByRole('menuitem', { name: 'Reload File' })
+    expect(reload.getAttribute('aria-disabled')).toBeNull()
+    await userEvent.click(reload)
+
+    expect(onFileReload).toHaveBeenCalledTimes(1)
   })
 })

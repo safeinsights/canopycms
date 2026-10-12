@@ -24,6 +24,7 @@ import { isAdmin, isReviewer } from '../../authorization/helpers'
 import { branchStatusPresentation } from '../branch-status'
 import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
+import { ReasonedMenuItem } from './ReasonedMenuItem'
 
 export interface EditorHeaderProps {
   /**
@@ -250,6 +251,11 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   const branchDataUnavailable =
     statusLocked && (branchStatus === undefined || branchStatus === 'editing')
 
+  // Save stays focusable while blocked (`aria-disabled`, not `disabled`), so its reason opens on
+  // keyboard focus and touch as well as hover; the click does nothing.
+  const saveBlocked =
+    !branchName || !currentEntry || busy || !hasUnsavedChanges || branchReadOnly || statusLocked
+
   const statusPresentation = branchStatusPresentation(branchStatus, branchIsProtected)
   const unresolvedCount = comments.filter((t) => !t.resolved).length
 
@@ -305,16 +311,25 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   </Button>
                 </Menu.Target>
                 <Menu.Dropdown>
-                  <Menu.Item onClick={onFileReload} disabled={!branchName || !currentEntry}>
+                  <ReasonedMenuItem
+                    onClick={onFileReload}
+                    blockedReason={
+                      !branchName
+                        ? 'Open a branch first'
+                        : !currentEntry
+                          ? 'Open an entry first'
+                          : undefined
+                    }
+                  >
                     Reload File
-                  </Menu.Item>
-                  <Menu.Item
+                  </ReasonedMenuItem>
+                  <ReasonedMenuItem
                     data-testid="discard-file-draft-menu-item"
                     onClick={onFileDiscardDraft}
-                    disabled={!currentEntry}
+                    blockedReason={currentEntry ? undefined : 'Open an entry first'}
                   >
                     Discard File Draft
-                  </Menu.Item>
+                  </ReasonedMenuItem>
                   <Menu.Divider />
                   <Menu.Item data-testid="all-files-menu-item" onClick={onNavigatorOpen}>
                     All Files
@@ -367,16 +382,19 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   </Button>
                 </Menu.Target>
                 <Menu.Dropdown data-testid="branch-menu">
-                  <Menu.Item onClick={onBranchReloadData} disabled={!branchName}>
+                  <ReasonedMenuItem
+                    onClick={onBranchReloadData}
+                    blockedReason={branchName ? undefined : 'Open a branch first'}
+                  >
                     Reload all entries
-                  </Menu.Item>
-                  <Menu.Item
+                  </ReasonedMenuItem>
+                  <ReasonedMenuItem
                     data-testid="discard-all-drafts-menu-item"
                     onClick={onBranchDiscardDrafts}
-                    disabled={!branchName}
+                    blockedReason={branchName ? undefined : 'Open a branch first'}
                   >
                     Discard all changes
-                  </Menu.Item>
+                  </ReasonedMenuItem>
                   <Menu.Divider />
                   <Menu.Item onClick={onBranchManagerOpen} data-testid="manage-branches-menu-item">
                     {`${EDITOR_ACTIONS.switchBranch}…`}
@@ -449,7 +467,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Text
                     size="xs"
                     lh={1.2}
-                    c={draftStorageFailed ? 'red.9' : 'gray.7'}
+                    c={draftStorageFailed ? 'red.9' : 'dimmed'}
                     data-testid="unsaved-indicator"
                   >
                     {draftStorageFailed
@@ -479,20 +497,19 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                         : ''
               }
               disabled={!branchReadOnly && !statusLocked && (hasUnsavedChanges || !currentEntry)}
+              events={{ hover: true, focus: true, touch: true }}
+              multiline
+              maw={280}
             >
               <Button
                 data-testid="save-button"
                 variant="light"
                 size="sm"
-                onClick={onSave}
-                disabled={
-                  !branchName ||
-                  !currentEntry ||
-                  busy ||
-                  !hasUnsavedChanges ||
-                  branchReadOnly ||
-                  statusLocked
-                }
+                onClick={() => {
+                  if (!saveBlocked) onSave()
+                }}
+                data-disabled={saveBlocked ? true : undefined}
+                aria-disabled={saveBlocked ? true : undefined}
               >
                 {EDITOR_ACTIONS.save}
               </Button>
@@ -536,6 +553,8 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               // sent people to an admin to fix a non-permissions problem.
               const statusHasAction = isEditing || isWithdrawable
               const canPerformAction = userHasPermission && statusHasAction
+              // Blocked, it stays focusable (`aria-disabled`), so its reason opens on focus.
+              const actionBlocked = !branchName || busy || !canPerformAction
 
               return (
                 <Tooltip
@@ -554,12 +573,20 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                           : ''
                   }
                   disabled={canPerformAction}
+                  events={{ hover: true, focus: true, touch: true }}
+                  multiline
+                  maw={320}
                 >
                   <Button
                     size="sm"
                     color={isWithdrawable ? 'orange' : 'brand'}
-                    onClick={isWithdrawable ? onWithdraw : onSubmit}
-                    disabled={!branchName || busy || !canPerformAction}
+                    onClick={() => {
+                      if (actionBlocked) return
+                      if (isWithdrawable) onWithdraw()
+                      else onSubmit()
+                    }}
+                    data-disabled={actionBlocked ? true : undefined}
+                    aria-disabled={actionBlocked ? true : undefined}
                     data-testid={isWithdrawable ? 'withdraw-button' : 'submit-button'}
                   >
                     {isWithdrawable
