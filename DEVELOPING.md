@@ -949,6 +949,8 @@ The TypeScript API client is generated from the route registry, which keeps endp
 3. **Map the namespace** in `namespaceToModule()` if the namespace does not match the filename.
 4. **Generate:** `pnpm run generate:client`, which writes typed methods into `src/api/client.ts` and mock helpers into `src/api/__test__/mock-client.ts`.
 
+Each generated method runs under a deadline (`src/api/request-deadline.ts`): `read` for GET, `write` otherwise. An endpoint that legitimately runs longer declares `clientTimeout: 'long'`.
+
 ### Integration Testing with Framework Adapters
 
 Mock `next/headers` to return the headers the adapter should read, then assert on the extracted user. For per-request caching, wrap `coreContext.getContext` in React's `cache()`, call it twice, and assert the injected `extractUser` spy ran once.
