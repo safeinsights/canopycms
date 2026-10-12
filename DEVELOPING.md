@@ -1147,9 +1147,10 @@ Push replaces the workspace's content directory from the working tree, auto-comm
 Both channels publish all five packages at one version, and both enter through `publish.yml`:
 
 - **Stable** (`latest`): a push to `main` that CI passes, when a changeset other than an empty
-  one is pending. `release-commit` runs `scripts/release-stable.mjs --prepare`, then commits, tags `vX.Y.Z` and
-  pushes both atomically as the release bot. `publish`, holding npm's id-token and no write token,
-  builds that commit and publishes. Nothing pending publishes nothing.
+  one is pending. `release-commit` runs `scripts/release-stable.mjs --prepare`, then commits, tags
+  `vX.Y.Z` and pushes both atomically as the release bot. The tag's push runs `publish`, which holds
+  npm's id-token and no write token, so provenance names the release commit. Nothing pending
+  publishes nothing.
 - **int**: dispatch _Publish to npm_ on any other branch. The version is `<next>-int.<run number>`,
   where `<next>` is what the branch's pending changesets would release (`changeset status`), and
   never less than main's version patch-bumped. Nothing is committed; the `tag-prerelease` job tags the
@@ -1164,9 +1165,8 @@ why.
 
 **Changesets.** A PR that changes a published package adds a `.changeset/` file
 ([.changeset/README.md](.changeset/README.md)); CI's `changesets` job enforces it.
-`scripts/migration-notes.mjs --ship` assembles them into the `CHANGELOG.md` an int build ships,
-labelling each entry with the first `v*-int.N` tag whose tree holds its file, and writes what is new
-since the previous int to the run summary; `pnpm changelog:preview` shows the same locally. A
+`scripts/migration-notes.mjs --ship` assembles them into the `CHANGELOG.md` a build ships;
+`pnpm changelog:preview` shows it locally. A
 stable release's `--promote` moves them under `## Released`, marking each
 `<!-- changeset: <slug> -->`, and `changeset version` deletes them. CI's `release-dry-run` job
 rehearses all of it on every PR into `main` and on any PR touching the release path.
@@ -1176,9 +1176,10 @@ rehearses all of it on every PR into `main` and on any PR touching the release p
 
 **A stable release that stops part-way.** The release is committed and tagged before anything is
 published, so main and npm never disagree about a version. If `publish` fails, use "Re-run failed
-jobs": it skips each package already on npm from the release commit (its provenance says so) and
-publishes the rest. If the push itself is refused because `main` moved, nothing was published, and
-the next push to `main` releases.
+jobs", or dispatch _Publish to npm_ on the tag: it skips each package already on npm from the
+release commit and publishes the rest, under the `superseded` dist-tag if a
+newer release is already out. If the push itself is refused because `main` moved, nothing was
+published, and the next push to `main` releases.
 
 ## Dependency Overrides (`pnpm.overrides`)
 
