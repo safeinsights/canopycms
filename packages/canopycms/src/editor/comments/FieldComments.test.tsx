@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import React from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@mdxeditor/editor'
 
 import type { CommentThread } from '../../comment-store'
@@ -781,6 +781,25 @@ describe('the form keyboard route to field comments', () => {
     }
   })
 
+  it('matches Ctrl+Alt+M by key position on a layout whose letters are not Latin', async () => {
+    renderForm()
+    const input = screen.getByLabelText('Title')
+    act(() => input.focus())
+    const event = new KeyboardEvent('keydown', {
+      key: 'ь',
+      code: 'KeyM',
+      ctrlKey: true,
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    act(() => {
+      input.dispatchEvent(event)
+    })
+    expect(event.defaultPrevented).toBe(true)
+    expect(await screen.findByTestId('field-comment-title-popover')).toBeTruthy()
+  })
+
   it('leaves Mod+Alt+M alone while a modal dialog is open', async () => {
     const user = userEvent.setup()
     renderForm()
@@ -872,6 +891,24 @@ describe('the form keyboard route to field comments', () => {
     await waitFor(() => expect(document.activeElement).toBe(control('title')))
   })
 
+  it('leaves focus where a click put it when a popover opened from the menu closes', async () => {
+    const user = userEvent.setup()
+    renderForm({ comments: [thread('t1', 'title')] })
+    await user.click(menuButton())
+    await user.click(await screen.findByTestId('form-comments-field-title'))
+    await screen.findByTestId('field-comment-title-popover')
+    const scrollButton = vi.fn()
+    menuButton().scrollIntoView = scrollButton
+    // A click on a blank part of the form, which takes no focus.
+    const form = document.querySelector<HTMLElement>('[data-form-renderer]')
+    if (!form) throw new Error('no form')
+    await user.click(form)
+    await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    expect(document.activeElement).not.toBe(menuButton())
+    expect(scrollButton).not.toHaveBeenCalled()
+  })
+
   it('starts a thread on the field last focused', async () => {
     const user = userEvent.setup()
     const { onAddComment } = renderForm()
@@ -881,6 +918,8 @@ describe('the form keyboard route to field comments', () => {
     const item = within(menu).getByTestId('form-comments-comment-on-focused')
     expect(item.textContent).toBe('Comment on Meta › Summary')
     expect(within(menu).getByText('Comment on another field')).toBeTruthy()
+    // It isn't offered twice.
+    expect(within(menu).queryByTestId('form-comments-any-field-meta.summary')).toBeNull()
     await user.click(item)
     const popover = await screen.findByTestId('field-comment-meta.summary-popover')
     await user.type(within(popover).getByTestId('new-thread-textarea'), 'Tighten this')
@@ -979,6 +1018,15 @@ describe('field comment popover placement', () => {
     }
   })
 
+  it('opens a group below when only below has room', async () => {
+    const user = userEvent.setup()
+    renderForm()
+    layOut('meta', 40, 160)
+    await user.click(control('meta'))
+    const popover = await screen.findByTestId('field-comment-meta-popover')
+    expect(popover.getAttribute('data-position')).toBe('bottom-start')
+  })
+
   it('scrolls a field into the middle when neither side has room', async () => {
     const user = userEvent.setup()
     renderForm()
@@ -993,5 +1041,76 @@ describe('field comment popover placement', () => {
     await screen.findByTestId('field-comment-title-popover')
     // 600px tall is a tall field: it prefers above its label row, and scrolls that into view.
     expect(scrollAbove).toHaveBeenCalledWith({ block: 'center' })
+  })
+})
+
+describe('field comment popover placement, when a highlight opens it', () => {
+  /** Lays every field's anchors out by path, before render, and records anchor scrolls. */
+  const stubLayout = (rects: Record<string, [number, number]>) => {
+    const anchorRect = (el: Element): [number, number] | undefined => {
+      const side = el.getAttribute('data-comment-anchor')
+      const path = el.parentElement?.getAttribute('data-canopy-field')
+      const rect = path ? rects[path] : undefined
+      if (!side || !rect) return undefined
+      return [side === 'above' ? rect[0] : rect[1], side === 'above' ? rect[0] : rect[1]]
+    }
+    const original = Element.prototype.getBoundingClientRect
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element,
+    ) {
+      const y = anchorRect(this)
+      if (!y) return original.call(this)
+      return { top: y[0], bottom: y[1], left: 0, right: 600, width: 600, height: 0 } as DOMRect
+    })
+    const scrolled: Array<{ anchor: string | null; field: string | null | undefined }> = []
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push({
+        anchor: this.getAttribute('data-comment-anchor'),
+        field: this.parentElement?.getAttribute('data-canopy-field'),
+      })
+    })
+    return scrolled
+  }
+  /** Renders the form with props that can change, as the editor re-renders it. */
+  const renderStateless = (props: Partial<FormRendererProps>) => {
+    const ui = (next: Partial<FormRendererProps>) => (
+      <CanopyCMSProvider>
+        <FormRenderer
+          fields={fields}
+          value={{ title: 'Hello', meta: { summary: 'S' }, links: [{ href: '/a' }] }}
+          onChange={() => {}}
+          currentEntryPath={ENTRY}
+          currentUserId="alice"
+          canResolve
+          onAddComment={async () => {}}
+          onResolveThread={async () => {}}
+          {...next}
+        />
+      </CanopyCMSProvider>
+    )
+    const result = render(ui(props))
+    return { rerender: (next: Partial<FormRendererProps>) => result.rerender(ui(next)) }
+  }
+  beforeEach(() => {
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('places and scrolls a field that mounts already highlighted', async () => {
+    const scrolled = stubLayout({ title: [2000, 2060] })
+    renderForm({ comments: [thread('t1', 'title')], highlightThreadId: 't1' })
+    await screen.findByTestId('field-comment-title-popover')
+    expect(scrolled).toContainEqual({ anchor: 'below', field: 'title' })
+  })
+
+  it("scrolls a highlighted field even when it fits, overriding a jump's smooth scroll", async () => {
+    const scrolled = stubLayout({ title: [100, 160] })
+    const props = { comments: [thread('t1', 'title')] }
+    const { rerender } = renderStateless(props)
+    rerender({ ...props, highlightThreadId: 't1' })
+    await screen.findByTestId('field-comment-title-popover')
+    expect(scrolled).toContainEqual({ anchor: 'below', field: 'title' })
   })
 })

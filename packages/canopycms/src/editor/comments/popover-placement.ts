@@ -23,12 +23,16 @@ const scrollBounds = (el: HTMLElement): { top: number; bottom: number } => {
 }
 
 /**
- * Picks the side a field's popover opens on, scrolling the field when neither has room. A short
- * field prefers below its input; a group or a field taller than 40% of its scroll area prefers
- * above its label row, since below is far from the control. Room is measured in the field's
- * scroll container.
+ * Picks the side a field's popover opens on. A short field prefers below its input; a group or a
+ * field taller than 40% of its scroll area prefers above its label row, since below is far from
+ * the control. Either takes the other side when only that one has room. When neither does, or
+ * when `scroll` asks, the preferred side scrolls to the middle first. Room is measured in the
+ * field's scroll container.
  */
-export const choosePopoverSide = ({ above, below }: FieldAnchors): PopoverSide => {
+export const choosePopoverSide = (
+  { above, below }: FieldAnchors,
+  { scroll = false }: { scroll?: boolean } = {},
+): PopoverSide => {
   if (!above || !below) return 'below'
   const measure = () => {
     const bounds = scrollBounds(above)
@@ -46,15 +50,14 @@ export const choosePopoverSide = ({ above, below }: FieldAnchors): PopoverSide =
   const group = below.parentElement?.querySelector('[data-field-comments]') != null
   let room = measure()
   const preferred: PopoverSide = group || room.tall ? 'above' : 'below'
-  const fits = (side: PopoverSide) =>
-    side === 'above' ? room.above : !(group || room.tall) && room.below
   const other: PopoverSide = preferred === 'above' ? 'below' : 'above'
-  if (fits(preferred)) return preferred
-  if (fits(other)) return other
+  if (!scroll) {
+    if (room[preferred]) return preferred
+    if (room[other]) return other
+  }
   ;(preferred === 'above' ? above : below).scrollIntoView?.({ block: 'center' })
   room = measure()
-  if (fits(preferred)) return preferred
-  if (fits(other)) return other
-  if (preferred === 'above') return 'above'
+  if (room[preferred]) return preferred
+  if (room[other]) return other
   return room.roomBelow >= room.roomAbove ? 'below' : 'above'
 }

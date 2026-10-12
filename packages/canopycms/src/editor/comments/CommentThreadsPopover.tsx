@@ -112,8 +112,14 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   // Mantine's own return stays off through the close.
   const [returnFocusTo, setReturnFocusTo] = useState<OpenRequest['returnFocusTo']>(undefined)
   const [side, setSide] = useState<PopoverSide>('below')
-  const open = () => {
+  // A highlight opens the popover after a jump has started scrolling, so its placement scrolls too.
+  const [scrollOnOpen, setScrollOnOpen] = useState(false)
+  const placedRef = useRef(false)
+  // A click elsewhere chose where focus goes, so a stand-in never takes it.
+  const pointerClosedRef = useRef(false)
+  const open = ({ scroll = false }: { scroll?: boolean } = {}) => {
     setReturnFocusTo(undefined)
+    setScrollOnOpen(scroll)
     setOpened(true)
   }
 
@@ -128,7 +134,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   if (highlightThreadId !== seenHighlight && (!highlightThreadId || highlightHere)) {
     setSeenHighlight(highlightThreadId)
     if (highlightHere) {
-      open()
+      open({ scroll: true })
       setFlashThreadId(highlightThreadId)
     }
   }
@@ -138,19 +144,29 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
     setSeenOpenRequest(openRequest)
     if (openRequest) {
       setOpened(true)
+      setScrollOnOpen(false)
       setReturnFocusTo(() => openRequest.returnFocusTo)
     }
   }
 
-  // Before paint, so the popover first appears on the side it stays on.
+  // Once per open, before paint, as soon as both anchors exist: a field that mounts already
+  // highlighted gets them a commit after the popover opens.
   useIsomorphicEffect(() => {
-    if (opened && anchors) setSide(choosePopoverSide(anchors))
-  }, [opened])
+    if (!opened) {
+      placedRef.current = false
+      return
+    }
+    pointerClosedRef.current = false
+    if (placedRef.current || !anchors?.above || !anchors.below) return
+    placedRef.current = true
+    setSide(choosePopoverSide(anchors, { scroll: scrollOnOpen }))
+  }, [opened, anchors])
 
   useDidUpdate(() => {
     if (opened || !returnFocusTo) return
     // Focus left in the fading dropdown, on a detached or closing menu item, or nowhere, hasn't
     // been moved on by the user.
+    if (pointerClosedRef.current) return
     const closing = dropdownNode
     const timer = window.setTimeout(() => {
       const active = document.activeElement
@@ -211,7 +227,15 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       : `Comment on ${subject} (${commentsShortcutLabel()})`
 
   // Anchored, the control is outside the popover's target, so clicks on it count as inside here.
-  useClickOutside(() => anchored && opened && close(), null, [controlNode, dropdownNode])
+  useClickOutside(
+    () => {
+      if (!anchored || !opened || inFlight > 0) return
+      pointerClosedRef.current = true
+      close()
+    },
+    null,
+    [controlNode, dropdownNode],
+  )
 
   const target =
     variant === 'entry' ? (

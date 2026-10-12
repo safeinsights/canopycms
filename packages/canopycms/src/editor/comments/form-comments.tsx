@@ -95,6 +95,9 @@ export const commentsAriaKeyShortcuts = (): string =>
 
 const FIELD_SCOPE_SELECTOR = '[data-field-comments]'
 
+/** One letter of a script other than Latin; AltGr symbols such as "µ" are Common, not letters of one. */
+const NON_LATIN_LETTER = /^(?![\p{Script=Latin}\p{Script=Common}])\p{L}$/u
+
 /** Focus is in an overlay other than one holding this form, so the shortcut leaves it be. */
 const inOtherOverlay = (active: Element | null, form: Element): boolean => {
   const dialog = active?.closest('[role="dialog"]')
@@ -176,6 +179,14 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
         },
         { preventDefault: false },
       ],
+      [
+        'mod+alt+M',
+        (event) => {
+          // A layout whose letters aren't Latin, such as Cyrillic or Greek, matches by position.
+          if (modKeyLabel() !== '⌘' && NON_LATIN_LETTER.test(event.key)) onShortcut(event)
+        },
+        { preventDefault: false, usePhysicalKeys: true },
+      ],
     ],
     // `[]` ignores no tags and `true` fires from contenteditable, so it works while typing.
     [],
@@ -184,14 +195,11 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
 
   if (!formComments) return null
 
-  const allFields = formComments.fields()
-  const withThreads = allFields.flatMap((field) => {
-    const count = counts.get(field.canopyPath)
-    return count ? [{ field, ...count }] : []
-  })
-  const openCount = withThreads.reduce((sum, { open }) => sum + open, 0)
-  const lastFocusedPath = formComments.lastFocused()
-  const lastFocused = lastFocusedPath ? formComments.get(lastFocusedPath) : undefined
+  // Counts only fields mounted now, which the menu can open.
+  const openCount = [...counts].reduce(
+    (sum, [path, { open }]) => (formComments.get(path) ? sum + open : sum),
+    0,
+  )
   // The menu item is gone once the popover opens, so its trigger stands in as the opener.
   const openField = (opener: FieldCommentOpener) => opener.open(() => triggerRef.current)
 
@@ -232,54 +240,75 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
         mah="min(480px, 70vh)"
         style={{ overflowY: 'auto' }}
       >
-        <Menu.Label>Fields with comments</Menu.Label>
-        {withThreads.length === 0 ? (
-          <Text size="xs" c="dimmed" px="sm" pb="xs">
-            No field has comments yet.
-          </Text>
-        ) : (
-          withThreads.map(({ field, open }) => (
-            <Menu.Item
-              key={field.canopyPath}
-              onClick={() => openField(field)}
-              data-testid={`form-comments-field-${field.canopyPath}`}
-            >
-              <Text size="sm" lineClamp={2}>
-                {field.subject}
-              </Text>
-              <Text size="xs" c="dimmed">
-                {open > 0 ? openThreadsText(open) : 'Resolved'}
-              </Text>
-            </Menu.Item>
-          ))
-        )}
-        <Menu.Divider />
-        {lastFocused && (
-          <Menu.Item
-            onClick={() => openField(lastFocused)}
-            data-testid="form-comments-comment-on-focused"
-          >
-            <Text size="sm" lineClamp={2}>
-              Comment on {lastFocused.subject}
-            </Text>
-          </Menu.Item>
-        )}
-        {/* Every field, so one with nothing focusable of its own, such as a read-only toggle or
-            a group, is still reachable. */}
-        <Menu.Label>{lastFocused ? 'Comment on another field' : 'Comment on a field'}</Menu.Label>
-        {allFields.map((field) => (
+        <MenuItems formComments={formComments} counts={counts} openField={openField} />
+      </Menu.Dropdown>
+    </Menu>
+  )
+}
+
+/** The menu's items, built only while its dropdown is mounted: every field, in form order. */
+const MenuItems: React.FC<{
+  formComments: FormComments
+  counts: Map<string, { open: number; total: number }>
+  openField: (opener: FieldCommentOpener) => void
+}> = ({ formComments, counts, openField }) => {
+  const allFields = formComments.fields()
+  const withThreads = allFields.flatMap((field) => {
+    const count = counts.get(field.canopyPath)
+    return count ? [{ field, ...count }] : []
+  })
+  const lastFocusedPath = formComments.lastFocused()
+  const lastFocused = lastFocusedPath ? formComments.get(lastFocusedPath) : undefined
+  const otherFields = allFields.filter((field) => field.canopyPath !== lastFocusedPath)
+  return (
+    <>
+      <Menu.Label>Fields with comments</Menu.Label>
+      {withThreads.length === 0 ? (
+        <Text size="xs" c="dimmed" px="sm" pb="xs">
+          No field has comments yet.
+        </Text>
+      ) : (
+        withThreads.map(({ field, open }) => (
           <Menu.Item
             key={field.canopyPath}
             onClick={() => openField(field)}
-            data-testid={`form-comments-any-field-${field.canopyPath}`}
+            data-testid={`form-comments-field-${field.canopyPath}`}
           >
             <Text size="sm" lineClamp={2}>
               {field.subject}
             </Text>
+            <Text size="xs" c="dimmed">
+              {open > 0 ? openThreadsText(open) : 'Resolved'}
+            </Text>
           </Menu.Item>
-        ))}
-      </Menu.Dropdown>
-    </Menu>
+        ))
+      )}
+      <Menu.Divider />
+      {lastFocused && (
+        <Menu.Item
+          onClick={() => openField(lastFocused)}
+          data-testid="form-comments-comment-on-focused"
+        >
+          <Text size="sm" lineClamp={2}>
+            Comment on {lastFocused.subject}
+          </Text>
+        </Menu.Item>
+      )}
+      {/* Every field, so one with nothing focusable of its own, such as a read-only toggle or
+        a group, is still reachable. */}
+      <Menu.Label>{lastFocused ? 'Comment on another field' : 'Comment on a field'}</Menu.Label>
+      {otherFields.map((field) => (
+        <Menu.Item
+          key={field.canopyPath}
+          onClick={() => openField(field)}
+          data-testid={`form-comments-any-field-${field.canopyPath}`}
+        >
+          <Text size="sm" lineClamp={2}>
+            {field.subject}
+          </Text>
+        </Menu.Item>
+      ))}
+    </>
   )
 }
 
