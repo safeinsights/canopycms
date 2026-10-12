@@ -2,7 +2,7 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  docs/ux-guidelines.md Keyboard sends focus to the nearest list heading or search field when an overlay's opener is gone. The navigator drawer opened from the file dropdown's "All Files" menu item (which unmounts on click) instead returns focus to that dropdown, the menu's own trigger, as does a quick-open palette that replaced the drawer. Rule on whether a menu item's trigger is the opener for this purpose.
+  RESOLVED (2026-10-11): ruled yes. docs/ux-guidelines.md Keyboard says a menu item's trigger stands in as the opener once the item is gone. The navigator drawer returns focus to the file dropdown, and a field comment popover opened from "Field comments" returns it to that menu's button on a keyboard close.
 ---
 
 # Focus fallback for an overlay opened from a menu item

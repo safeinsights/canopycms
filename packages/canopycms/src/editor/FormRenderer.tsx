@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 import { Alert, Stack, Text } from '@mantine/core'
 import { IconInfoCircle } from '@tabler/icons-react'
@@ -39,6 +39,7 @@ import { listItemTitle } from './fields/list-item-title'
 import { InlineGroupField } from './fields/InlineGroupField'
 import { formatCanopyPath, normalizeCanopyPath } from './canopy-path'
 import { FieldWrapper } from './comments/FieldWrapper'
+import { FormCommentsContext, createFormComments } from './comments/form-comments'
 import { EntryComments } from './comments/EntryComments'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
@@ -224,6 +225,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   const bodyName = format === 'md' || format === 'mdx' ? findBodyFieldName(fields) : undefined
 
   const keysForList = useListItemKeys()
+  const [formComments] = useState(createFormComments)
+  // The field last focused on one entry is never offered on the next.
+  useEffect(() => formComments.noteFocus(undefined), [formComments, boundaryResetKey])
 
   // Wraps the rendered control in an error boundary, and with an inline validation message
   // when this field has an active error (keyed by canonical canopy path, so errors land on
@@ -657,65 +661,67 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   }
 
   return (
-    <Stack gap="md" data-form-renderer className={readOnly ? READ_ONLY_FORM_CLASS : undefined}>
-      {readOnly && <ReadOnlyFormStyles />}
-      {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
-        <EntryComments
-          comments={comments}
-          entryPath={currentEntryPath}
-          currentUserId={currentUserId}
-          canResolve={canResolve}
-          onAddComment={onAddComment}
-          onResolveThread={onResolveThread}
-          highlightThreadId={highlightThreadId}
-          onGetUserMetadata={onGetUserMetadata}
-          resetKey={boundaryResetKey}
-        />
-      )}
+    <FormCommentsContext.Provider value={formComments}>
+      <Stack gap="md" data-form-renderer className={readOnly ? READ_ONLY_FORM_CLASS : undefined}>
+        {readOnly && <ReadOnlyFormStyles />}
+        {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
+          <EntryComments
+            comments={comments}
+            entryPath={currentEntryPath}
+            currentUserId={currentUserId}
+            canResolve={canResolve}
+            onAddComment={onAddComment}
+            onResolveThread={onResolveThread}
+            highlightThreadId={highlightThreadId}
+            onGetUserMetadata={onGetUserMetadata}
+            resetKey={boundaryResetKey}
+          />
+        )}
 
-      {conflictNotice && (
-        <Alert
-          icon={<IconInfoCircle size={16} />}
-          color="orange"
-          variant="light"
-          title="Page updated since your draft started"
-          data-testid="conflict-alert"
-        >
-          {readOnly
-            ? 'Someone else has recently changed this page.'
-            : 'Someone else has recently changed this page. You can keep editing — a reviewer will reconcile your changes when you submit.'}
-        </Alert>
-      )}
+        {conflictNotice && (
+          <Alert
+            icon={<IconInfoCircle size={16} />}
+            color="orange"
+            variant="light"
+            title="Page updated since your draft started"
+            data-testid="conflict-alert"
+          >
+            {readOnly
+              ? 'Someone else has recently changed this page.'
+              : 'Someone else has recently changed this page. You can keep editing — a reviewer will reconcile your changes when you submit.'}
+          </Alert>
+        )}
 
-      {fieldErrors && <ValidationSummary fields={fields} value={value} errors={fieldErrors} />}
+        {fieldErrors && <ValidationSummary fields={fields} value={value} errors={fieldErrors} />}
 
-      {fields.map((field) => {
-        // Inline groups are transparent to the value — render them directly with parent value/onChange
-        if (field.type === 'group') {
-          const groupField = field as InlineGroupFieldConfig
+        {fields.map((field) => {
+          // Inline groups are transparent to the value — render them directly with parent value/onChange
+          if (field.type === 'group') {
+            const groupField = field as InlineGroupFieldConfig
+            return (
+              <div key={`group-${groupField.name}`}>
+                <InlineGroupField
+                  label={groupField.label}
+                  description={groupField.description}
+                  fields={groupField.fields}
+                  value={value}
+                  onChange={emit}
+                  renderField={renderField}
+                  path={[]}
+                />
+              </div>
+            )
+          }
+
+          const val = value[field.name]
+          const path = [field.name]
           return (
-            <div key={`group-${groupField.name}`}>
-              <InlineGroupField
-                label={groupField.label}
-                description={groupField.description}
-                fields={groupField.fields}
-                value={value}
-                onChange={emit}
-                renderField={renderField}
-                path={[]}
-              />
+            <div key={fieldKey(path)}>
+              {renderField(field, val, (next) => emit({ ...value, [field.name]: next }), path)}
             </div>
           )
-        }
-
-        const val = value[field.name]
-        const path = [field.name]
-        return (
-          <div key={fieldKey(path)}>
-            {renderField(field, val, (next) => emit({ ...value, [field.name]: next }), path)}
-          </div>
-        )
-      })}
-    </Stack>
+        })}
+      </Stack>
+    </FormCommentsContext.Provider>
   )
 }

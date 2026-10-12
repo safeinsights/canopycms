@@ -1,6 +1,7 @@
 'use client'
 
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Badge,
   Button,
@@ -12,7 +13,13 @@ import {
   Textarea,
   Tooltip,
 } from '@mantine/core'
-import { useMediaQuery } from '@mantine/hooks'
+import {
+  useClickOutside,
+  useDidUpdate,
+  useId,
+  useIsomorphicEffect,
+  useMediaQuery,
+} from '@mantine/hooks'
 import { IconMessage, IconMessagePlus, IconPlus } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
@@ -20,6 +27,8 @@ import { getErrorMessage } from '../../utils/error'
 import { InlineCommentThread } from './InlineCommentThread'
 import { useTrackedWrites } from './use-tracked-writes'
 import { useRefocusAfterSubmit } from './ThreadReplyControls'
+import { commentsAriaKeyShortcuts, commentsShortcutLabel } from './form-comments'
+import { choosePopoverSide, type FieldAnchors, type PopoverSide } from './popover-placement'
 
 export interface CommentThreadsPopoverProps {
   /** The threads on this field or entry. */
@@ -27,12 +36,16 @@ export interface CommentThreadsPopoverProps {
   /** What the comments are about, as a reader names it: a field's breadcrumb, or "this entry". */
   subject: string
   /**
-   * `field`: an icon that shows while `revealed` or any thread exists, as a count while one is open.
+   * `field`: an icon that shows while `revealed`, and as a count while a thread is open.
    * `entry`: a labelled "Comment on this entry" button that is always shown.
    */
   variant: 'field' | 'entry'
   /** For `field`: the pointer or focus is on the field, so the idle icon shows. */
   revealed?: boolean
+  /** For `field`: where the popover may open, above the label row or below the input. */
+  anchors?: FieldAnchors
+  /** For `field`: each new request opens the popover, as the form's keyboard route asks. */
+  openRequest?: OpenRequest
   currentUserId: string
   canResolve: boolean
   /** Starts a thread, or replies to `threadId`. */
@@ -42,6 +55,11 @@ export interface CommentThreadsPopoverProps {
   /** A thread here with this id opens the popover and is highlighted in it. */
   highlightThreadId?: string
   testId: string
+}
+
+export interface OpenRequest {
+  /** Takes focus in place of the opener, such as a menu item gone by close, unless a click closes the popover. */
+  returnFocusTo?: () => HTMLElement | null
 }
 
 const HIGHLIGHT_MS = 2000
@@ -65,6 +83,8 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   subject,
   variant,
   revealed = false,
+  anchors,
+  openRequest,
   currentUserId,
   canResolve,
   onAddComment,
@@ -85,6 +105,31 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   const focusNewThreadRef = useRef(false)
   // Touch screens have no hover, so the field icon stays visible there.
   const noHover = useMediaQuery('(hover: none)')
+  const popoverId = useId()
+  const [controlNode, setControlNode] = useState<HTMLButtonElement | null>(null)
+  // Read when focus returns: a popover that mounts open has no `controlNode` state as it opens.
+  const controlRef = useRef<HTMLButtonElement | null>(null)
+  const setControl = useCallback((el: HTMLButtonElement | null) => {
+    controlRef.current = el
+    setControlNode(el)
+  }, [])
+  const [dropdownNode, setDropdownNode] = useState<HTMLDivElement | null>(null)
+  // Set by a menu item's open, whose item is gone by close: its menu's trigger stands in.
+  const [returnFocusTo, setReturnFocusTo] = useState<OpenRequest['returnFocusTo']>(undefined)
+  // Where focus returns on close, recorded as the popover opens, before its focus trap runs.
+  const openerRef = useRef<{ target: () => HTMLElement | null; standIn: boolean } | null>(null)
+  const [side, setSide] = useState<PopoverSide>('below')
+  // A highlight's open always scrolls its field into place, even when it fits, and so overrides
+  // the smooth scroll `handleJumpToField` (`hooks/useCommentSystem.ts`) starts.
+  const [scrollOnOpen, setScrollOnOpen] = useState(false)
+  const placedRef = useRef(false)
+  // A click chose where focus goes, so a stand-in never takes it.
+  const pointerClosedRef = useRef(false)
+  const open = ({ scroll = false }: { scroll?: boolean } = {}) => {
+    setReturnFocusTo(undefined)
+    setScrollOnOpen(scroll)
+    setOpened(true)
+  }
 
   const sortedThreads = useMemo(() => sortThreads(threads), [threads])
   const openCount = useMemo(() => threads.filter((t) => !t.resolved).length, [threads])
@@ -97,10 +142,73 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   if (highlightThreadId !== seenHighlight && (!highlightThreadId || highlightHere)) {
     setSeenHighlight(highlightThreadId)
     if (highlightHere) {
-      setOpened(true)
+      open({ scroll: true })
       setFlashThreadId(highlightThreadId)
     }
   }
+
+  const [seenOpenRequest, setSeenOpenRequest] = useState(openRequest)
+  if (openRequest !== seenOpenRequest) {
+    setSeenOpenRequest(openRequest)
+    if (openRequest) {
+      setOpened(true)
+      setScrollOnOpen(false)
+      setReturnFocusTo(() => openRequest.returnFocusTo)
+    }
+  }
+
+  // Once per open, before paint, as soon as both anchors exist: a field that mounts already
+  // highlighted gets them a commit after the popover opens.
+  useIsomorphicEffect(() => {
+    if (!opened) {
+      placedRef.current = false
+      return
+    }
+    if (placedRef.current || !anchors?.above || !anchors.below) return
+    placedRef.current = true
+    setSide(choosePopoverSide(anchors, { scroll: scrollOnOpen }))
+  }, [opened, anchors])
+
+  useIsomorphicEffect(() => {
+    if (!opened) return
+    pointerClosedRef.current = false
+    const active = document.activeElement
+    openerRef.current = returnFocusTo
+      ? { target: returnFocusTo, standIn: true }
+      : {
+          // A popover that opened with nothing focused, as on a highlight, returns to its control.
+          target: () =>
+            active instanceof HTMLElement && active !== document.body && active.isConnected
+              ? active
+              : controlRef.current,
+          standIn: false,
+        }
+  }, [opened])
+
+  // Focus returns here rather than through Mantine, which refocuses the opener even after a click
+  // has put focus on another control.
+  useDidUpdate(() => {
+    const opener = openerRef.current
+    if (opened || !opener) return
+    if (pointerClosedRef.current && opener.standIn) return
+    const closing = dropdownNode
+    const timer = window.setTimeout(() => {
+      const active = document.activeElement
+      // Focus left in the fading dropdown, on a detached or closing menu item, or nowhere, hasn't
+      // been moved on by the user.
+      const unmoved =
+        !active ||
+        active === document.body ||
+        !active.isConnected ||
+        closing?.contains(active) ||
+        active.closest('[data-menu-dropdown]')
+      if (!unmoved) return
+      const target = opener.target()
+      target?.focus({ preventScroll: true })
+      if (opener.standIn) target?.scrollIntoView?.({ block: 'nearest' })
+    }, 20)
+    return () => window.clearTimeout(timer)
+  }, [opened])
 
   useEffect(() => {
     if (!flashThreadId) return
@@ -132,9 +240,24 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       ? `Comment on ${subject} (${openThreadsLabel(openCount)})`
       : `Comment on ${subject}`
 
-  // Any thread keeps the control in view: a count while one is open, else a plain icon, so a
-  // field's resolved history is findable.
-  const shown = revealed || opened || noHover || threads.length > 0
+  // Open threads keep the control in view as a count; resolved ones are listed by the form's
+  // "Field comments" menu.
+  const shown = revealed || opened || noHover || openCount > 0
+  // Idle, the control leaves the tab order: the form's menu and shortcut reach comments instead.
+  const idle = !opened && openCount === 0
+  const anchored = variant === 'field' && anchors !== undefined
+  const controlTooltip =
+    openCount > 0
+      ? `Comment on ${subject} (${openThreadsLabel(openCount)}, ${commentsShortcutLabel()})`
+      : `Comment on ${subject} (${commentsShortcutLabel()})`
+
+  const closeByPointer = () => {
+    if (inFlight > 0) return
+    pointerClosedRef.current = true
+    close()
+  }
+  // Anchored, the control is outside the popover's target, so clicks on it count as inside here.
+  useClickOutside(() => anchored && opened && closeByPointer(), null, [controlNode, dropdownNode])
 
   const target =
     variant === 'entry' ? (
@@ -151,32 +274,36 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
             </Badge>
           ) : undefined
         }
+        ref={setControl}
         aria-label={controlLabel}
         aria-expanded={opened}
         aria-haspopup="dialog"
-        onClick={() => (opened ? close() : setOpened(true))}
+        onClick={(event) => (!opened ? open() : event.detail > 0 ? closeByPointer() : close())}
         data-testid={testId}
       >
         Comment on this entry
       </Button>
     ) : (
-      // One element for every state, so the popover's anchor and returnFocus target survive a
-      // count change.
+      // One element for every state, so a count change never remounts the control focus returns to.
       <Button
         variant={openCount > 0 ? 'light' : 'subtle'}
         color={openCount > 0 ? 'orange' : 'gray'}
         c={openCount > 0 ? 'dark.7' : undefined}
         size="compact-xs"
         px={4}
+        ref={setControl}
+        tabIndex={idle ? -1 : undefined}
         aria-label={controlLabel}
         aria-expanded={opened}
         aria-haspopup="dialog"
-        onClick={() => (opened ? close() : setOpened(true))}
+        aria-controls={anchored && opened ? `${popoverId}-dropdown` : undefined}
+        aria-keyshortcuts={commentsAriaKeyShortcuts()}
+        onClick={(event) => (!opened ? open() : event.detail > 0 ? closeByPointer() : close())}
         data-testid={testId}
         data-comment-control
         data-revealed={shown ? '' : undefined}
         style={{
-          // Hidden by opacity, not display, so it stays in the tab order and shows on focus.
+          // Hidden by opacity, not display, so a pointer or focus on the field shows it in place.
           opacity: shown ? 1 : 0,
           transition: 'opacity 120ms ease',
         }}
@@ -196,31 +323,45 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       </Button>
     )
 
-  return (
+  const tooltipTarget =
+    variant === 'entry' ? (
+      target
+    ) : (
+      <Tooltip label={controlTooltip} withinPortal disabled={opened}>
+        {target}
+      </Tooltip>
+    )
+
+  const popover = (
     <Popover
+      id={popoverId}
       opened={opened}
-      onChange={(next) => (next ? setOpened(true) : close())}
+      onChange={(next) => (next ? open() : close())}
       onClose={close}
-      // Above the label row where there is room, so the input it is about stays in view.
-      position="top-start"
+      // Never over the field's input; the entry's button sits above the form.
+      position={anchored && side === 'below' ? 'bottom-start' : 'top-start'}
+      // Clamped to the room on its side, scrolling inside, since it never flips over the input.
+      middlewares={anchored ? { flip: false, shift: true, size: { padding: 8 } } : undefined}
       width={380}
       shadow="md"
-      withArrow
+      withArrow={!anchored}
       trapFocus
-      returnFocus
-      closeOnEscape
+      returnFocus={false}
+      // Off while a write is in flight, when `close` refuses anyway, so Mantine's Escape handler
+      // doesn't run its focus return on a popover that stays open.
+      closeOnEscape={inFlight === 0}
+      closeOnClickOutside={!anchored}
+      // Anchored, the target is an empty element, so the control and dropdown carry the roles.
+      withRoles={!anchored}
     >
       <Popover.Target>
-        {variant === 'entry' ? (
-          target
-        ) : (
-          <Tooltip label={controlLabel} withinPortal disabled={opened}>
-            {target}
-          </Tooltip>
-        )}
+        {anchored ? <AnchorTarget node={anchors?.[side]} /> : tooltipTarget}
       </Popover.Target>
       <Popover.Dropdown
+        ref={setDropdownNode}
         aria-label={`Comments on ${subject}`}
+        {...(anchored ? { role: 'dialog', id: `${popoverId}-dropdown`, tabIndex: -1 } : {})}
+        style={anchored ? { overflowY: 'auto' } : undefined}
         data-testid={`${testId}-popover`}
         p="sm"
       >
@@ -314,7 +455,23 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       </Popover.Dropdown>
     </Popover>
   )
+
+  return anchored ? (
+    <>
+      {tooltipTarget}
+      {popover}
+    </>
+  ) : (
+    popover
+  )
 }
+
+/** An empty element placed in `node`, as the popover's position reference. */
+const AnchorTarget = React.forwardRef<HTMLDivElement, { node: HTMLElement | null | undefined }>(
+  function AnchorTarget({ node }, ref) {
+    return node ? createPortal(<div ref={ref} aria-hidden />, node) : null
+  },
+)
 
 const NewThreadComposer: React.FC<{
   text: string

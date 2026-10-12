@@ -85,6 +85,40 @@ describe('CommentsPanel', () => {
   const renderPanel = (overrides: Partial<React.ComponentProps<typeof CommentsPanel>> = {}) =>
     render(<CommentsPanel {...panelProps(overrides)} />, { wrapper: Wrapper })
 
+  it('returns no focus to its opener on a jump, which hands focus to the target', async () => {
+    const fieldThread: CommentThread = {
+      ...branchThread,
+      id: 'thread-field-1',
+      type: 'field',
+      entryPath: 'content/pages/home',
+      canopyPath: 'title',
+    }
+    const Harness = () => {
+      const [opened, setOpened] = useState(false)
+      return (
+        <>
+          <button onClick={() => setOpened(true)}>Open comments</button>
+          <CommentsPanel
+            {...panelProps({
+              opened,
+              comments: [fieldThread],
+              onJumpToField: vi.fn(),
+              onClose: () => setOpened(false),
+            })}
+          />
+        </>
+      )
+    }
+    const user = userEvent.setup()
+    render(<Harness />, { wrapper: Wrapper })
+    const opener = screen.getByRole('button', { name: 'Open comments' })
+    await user.click(opener)
+    await user.click(await screen.findByRole('button', { name: 'Jump to field' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Jump to field' })).toBeNull())
+    await act(() => new Promise((resolve) => setTimeout(resolve, 60)))
+    expect(document.activeElement).not.toBe(opener)
+  })
+
   it('shows a composer hint describing branch-level scope', () => {
     renderPanel()
 
