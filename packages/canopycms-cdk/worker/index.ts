@@ -10,6 +10,9 @@
  *   supplying a different `refreshAuthCache`.
  * - `gateway`: the GitHub gateway process, which holds the credential and the Clerk key and
  *   serves the worker over a unix socket.
+ * - `self-check`: the worker's boot self-checks alone, printed, exiting 1 if any fails.
+ *   `canopy-inspect`'s `inspect-checks` (src/constructs/worker-units.ts) runs them before an
+ *   operator's command.
  *
  * Only the real side effects live here; the boot sequences are in run.ts and gateway-run.ts so
  * tests can drive them.
@@ -27,6 +30,7 @@ import {
   workerSelfChecks,
 } from 'canopycms/worker/cms-worker'
 import { writeAuthSnapshot } from 'canopycms/auth/cache'
+import { getErrorMessage } from 'canopycms/utils/error'
 
 import { getSecret } from './secrets'
 import { completeTerminationLifecycleAction, watchForTermination } from './termination-watch'
@@ -68,16 +72,29 @@ if (role === undefined) {
     onSignal: (signal, handler) => {
       process.on(signal, handler)
     },
-    gatewaySelfChecks: () => gatewaySelfChecks(),
+    gatewaySelfChecks: (listen) => gatewaySelfChecks('fd' in listen ? { listenFd: listen.fd } : {}),
     createGateway: createLocalGitHubGateway,
     serve: serveGitHubGateway,
     watchForTermination,
     completeTerminationLifecycleAction: () => completeTerminationLifecycleAction(),
   })
+} else if (role === 'self-check') {
+  void workerSelfChecks().then(
+    (results) => {
+      for (const { check, ok, detail } of results) {
+        process.stdout.write(`${ok ? 'ok    ' : 'FAILED'} ${check}: ${detail}\n`)
+      }
+      process.exit(results.every((result) => result.ok) ? 0 : 1)
+    },
+    (err: unknown) => {
+      workerLogError('The self-checks could not run:', getErrorMessage(err))
+      process.exit(1)
+    },
+  )
 } else {
   // A mistyped ExecStart must not start as the worker.
   workerLogError(
-    `Unknown role ${JSON.stringify(role)}; expected no argument (the worker) or "gateway"`,
+    `Unknown role ${JSON.stringify(role)}; expected no argument (the worker), "gateway" or "self-check"`,
   )
   process.exit(1)
 }

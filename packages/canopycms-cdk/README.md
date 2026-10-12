@@ -31,11 +31,12 @@ Use `CanopyCmsDistribution` when the CMS gets its own domain. To serve the edito
 
 ### EC2 Worker
 
-The `worker/` directory contains the EC2 worker entrypoint for AWS deployments. It:
+The `worker/` directory contains the EC2 instance's entrypoint for AWS deployments, run as two services:
 
-- Reads secrets from AWS Secrets Manager
-- Wires up the Clerk-specific auth cache refresher
-- Starts the `CmsWorker` daemon from `canopycms` core
+- the worker, with no network and no secret, starts the `CmsWorker` daemon from `canopycms` core and writes the Clerk auth cache;
+- the GitHub gateway (`index.js gateway`) reads the secrets from AWS Secrets Manager and does everything the worker needs from GitHub, Clerk and AWS.
+
+`worker/` also holds the three systemd units and `gateway.env.example`, for an install without the construct ([Installing the units by hand](../../docs/deploying-to-aws.md#installing-the-units-by-hand)).
 
 The `CmsWorker` class itself lives in `canopycms/worker/cms-worker` and is cloud-agnostic. This package re-exports it for convenience.
 
@@ -68,10 +69,12 @@ const cmsDist = new CanopyCmsDistribution(this, 'CmsDist', {
 ```
 CloudFront → Lambda Function URL → Lambda (VPC, no internet)
                                         ↕ EFS
-                                   EC2 Worker (internet) → GitHub
+                                   EC2 worker (no network)
+                                        ↕ unix socket
+                                   GitHub gateway (internet) → GitHub
 ```
 
-Lambda handles all CMS operations using local EFS storage. The EC2 worker handles internet-requiring operations (GitHub push/PR, auth cache refresh). They communicate via the shared EFS filesystem.
+Lambda handles all CMS operations using local EFS storage. The EC2 worker handles the operations that need GitHub or Clerk (GitHub push/PR, auth cache refresh), through the GitHub gateway beside it on the instance, which holds every secret and cannot see EFS. The Lambda and the worker communicate via the shared EFS filesystem.
 
 See [ARCHITECTURE.md](../../ARCHITECTURE.md#deployment-architecture) for details.
 

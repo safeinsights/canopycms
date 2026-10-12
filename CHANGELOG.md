@@ -85,11 +85,15 @@ it, and a stable release moves this whole section under **Released**.
 | 112 | Worker   | [Bundle states the template it needs](#canopycms-cdk-a-worker-bundle-states-the-template-it-needs--template-first-for-the-gate-only)                                                        | Template first               |
 | 112 | Worker   | [Poisoned `remote.git` re-clones](#a-poisoned-remotegit-re-clones-itself)                                                                                                                   | None                         |
 | 112 | Worker   | [Nano worker boots reliably](#canopycms-cdk-a-t4gnano-worker-boots-reliably--behaviour-change-a-deploy-replaces-the-worker)                                                                 | Deploy                       |
-| 112 | Worker   | [Worker never pushes base or default branch](#the-worker-never-pushes-the-base-or-default-branch--security-fix)                                                                             | Protect base on GitHub       |
+| 112 | Worker   | [Worker never pushes base or default branch](#the-worker-never-pushes-the-base-or-default-branch--security-fix) (114)                                                                       | Protect base on GitHub       |
 | 112 | Worker   | [Worker log is root-owned](#canopycms-cdk-the-workers-log-is-root-owned--security-fix)                                                                                                      | Deploy; hand-installed units |
 | 113 | Worker   | [Push logs say whether GitHub moved](#the-workers-push-logs-say-whether-github-moved)                                                                                                       | None                         |
 | 113 | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
 | 113 | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
+| 114 | Worker   | [GitHub objects cross as bundles](#the-worker-moves-objects-between-github-and-remotegit-as-bundles)                                                                                        | None                         |
+| 114 | AI       | [`noindex` entries leave AI content](#ai-content-leaves-out-noindex-entries--behaviour-change-for-ai-output)                                                                                | `exclude.noindex: false`     |
+| 114 | Worker   | [Worker follows a rebased or deleted branch](#the-worker-follows-a-rebased-or-deleted-github-branch)                                                                                        | None                         |
+| 114 | Worker   | [Worker holds no secret (contract 2)](#canopycms-cdk-the-worker-holds-no-secret--security-fix-template-first-contract-2)                                                                    | Template first               |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -221,6 +225,22 @@ where: (entry) => (entry.data.author as AIReferenceValue | undefined)?.id === AL
 matching: search your AI config for each reference field's name.
 
 **Now deletable.** A `fieldTransforms` entry that looked up a reference id to print its title.
+
+### AI content leaves out `noindex` entries — **behaviour change for `/ai` output**
+
+**What changed.** (int.114) AI content leaves out entries marked `noindex`, both from
+`generate-ai-content` and from the `/ai` route, using the same predicate as the sitemap and robots
+metadata. An inline body `entry:` link to an entry the export leaves out (by `exclude`, `noindex`
+or a failed render) renders as its plain text, with no URL; any other form of the link points at
+`#`.
+
+**To adopt.** To keep exporting `noindex` entries, set `exclude: { noindex: false }`. If your SEO
+fields are nested or renamed, pass the AI config's `seo` the same object you pass
+`createNextCanopyContext({ seo })`, so the sitemap and AI content read the flag from the same
+place. A field that links to a hidden section by plain URL needs a field transform; the README
+shows [the recipe](README.md#ai-content-configuration).
+
+**Now deletable.** An `exclude.where` that re-read the `noindex` flag by hand.
 
 ### Deleting a referenced entry asks first — **behaviour change on the delete API**
 
@@ -538,6 +558,10 @@ contract is unchanged. A hand-installed unit needs the same change:
 branch or GitHub's default branch, whatever a task asks, and fails the task permanently.
 CanopyCMS never queues such a push, but a compromised CMS Lambda can write the task queue.
 
+(int.114) It protects what the construct's `protectedBranches` prop lists (at most 1024, no settings
+branch), never deletes or opens a pull request from a protected or settings branch, and re-reads
+GitHub's default branch every 10 minutes.
+
 **To adopt.** Upgrade, and roll the worker. Protect your base branch on GitHub with a rule or
 ruleset CanopyCMS's credential cannot bypass. A repository admin's classic token often can: check
 its bypass list. Set `CANOPYCMS_BASE_BRANCH` (the construct's `baseBranch`) explicitly: without
@@ -561,6 +585,25 @@ stops applying and no keychain credential is tried.
 **To adopt.** Nothing in production. In dev, move a global-config proxy or CA to `HTTPS_PROXY` or
 `GIT_SSL_CAINFO`.
 
+### The worker moves objects between GitHub and `remote.git` as bundles
+
+**What changed.** (int.114) The worker moves objects between GitHub and
+`remote.git` as git bundles. A new instance's first sync fetches the whole repository from GitHub,
+and operations may reuse GitHub fetches under 30 seconds old.
+
+**To adopt.** Nothing. Seeding `remote.git` stages a copy of the repository beside the gateway's
+mirror, so the root volume needs room for two
+([details](docs/deploying-to-aws.md#the-worker-instance)).
+
+### The worker follows a rebased or deleted GitHub branch
+
+**What changed.** (int.114) When a branch is rebased and force-pushed on GitHub, or deleted there, the
+worker now updates or deletes its own copy of it instead of warning about it on every sync. A rebased
+branch's copy that holds editor work is left as it is: the worker warns once, and System
+health lists it with what to do.
+
+**To adopt.** Nothing.
+
 ### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
 
 **What changed.** (int.112) The worker unit carries a contract version
@@ -577,6 +620,20 @@ bundle-only roll is safe.
 copies its `Environment=CANOPYCMS_WORKER_CONTRACT=` line from `worker/canopy-worker.service`.
 
 **Now deletable.** Deciding from the template diff whether a bundle-only roll is safe.
+
+### `canopycms-cdk`: the worker holds no secret — **security fix; template first (contract 2)**
+
+**What changed.** (int.114) The worker runs with no network and no secret. `canopy-github`, a gateway
+service under its own user with no view of EFS, holds the GitHub credential and the Clerk key, and
+is the only CanopyCMS process that can reach the instance's AWS role. Core dumps are off. User data picks the
+units from the bundle's contract: 2 gets the split, an older bundle the single unit.
+
+**To adopt.** Default `workerCode`: one `cdk deploy` does both. Parameter mode: `cdk deploy` the
+template, then roll the bundle; on an older template it stops with `template too old for this
+bundle`. Inspect EFS only through `sudo /opt/canopy-worker/canopy-inspect <command>`, never from a root shell. A hand install
+takes `worker/`'s three units and `gateway.env.example`
+([steps](docs/deploying-to-aws.md#installing-the-units-by-hand)). After the first deploy, run the
+[checklist](docs/deploying-to-aws.md#first-deploy-checklist).
 
 ### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS**
 

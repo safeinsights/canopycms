@@ -1,0 +1,16 @@
+[Unit]
+Description=CanopyCMS GitHub gateway socket
+
+[Socket]
+ListenStream=/run/canopy-github/gateway.sock
+# Only the worker user (and root) can connect. The gateway refuses to
+# run as this socket's owner, or with group or other access to it.
+SocketUser=ec2-user
+SocketGroup=ec2-user
+SocketMode=0600
+# Root-owned: systemd chowns the socket by name, following symlinks,
+# which is safe only in a directory nobody else can write.
+DirectoryMode=0755
+
+[Install]
+WantedBy=sockets.target

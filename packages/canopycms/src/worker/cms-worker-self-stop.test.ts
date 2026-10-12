@@ -370,6 +370,32 @@ describe('recordWorkerStartupFailure', () => {
     }
   })
 
+  it('replaces an accepted fatal error that a later worker carried forward, since it got past it', async () => {
+    await recordWorkerStartupFailure({
+      workspacePath: tmpDir,
+      error: new Error('The GitHub gateway could not start: App authentication failed'),
+      lockStaleMs: LOCK_STALE_MS,
+    })
+    // A later worker started, carrying the record forward in its own snapshot.
+    const statusFile = path.join(taskDir, WORKER_STATUS_FILE)
+    const carried: WorkerStatusReport = JSON.parse(await fs.readFile(statusFile, 'utf-8'))
+    const laterStart = new Date(Date.parse(carried.startedAt) + 60_000).toISOString()
+    await fs.writeFile(
+      statusFile,
+      JSON.stringify({ ...carried, startedAt: laterStart, updatedAt: laterStart }),
+    )
+
+    await recordWorkerStartupFailure({
+      workspacePath: tmpDir,
+      error: new Error('Could not reach the GitHub gateway'),
+      lockStaleMs: LOCK_STALE_MS,
+      keepRecordedFatal: (recorded) => recorded.message.includes('could not start'),
+    })
+
+    const status: WorkerStatusReport = JSON.parse(await fs.readFile(statusFile, 'utf-8'))
+    expect(status.lastFatalError?.message).toContain('Could not reach the GitHub gateway')
+  })
+
   it('replaces a recorded fatal error the caller does not accept', async () => {
     await recordWorkerStartupFailure({
       workspacePath: tmpDir,

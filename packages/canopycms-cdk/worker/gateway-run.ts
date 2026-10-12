@@ -2,16 +2,20 @@
  * The GitHub gateway process's boot sequence and lifecycle (`index.ts gateway`), with every side
  * effect injected so tests can drive it. It holds the GitHub credential and the Clerk key, serves
  * `GitHubGateway` on a socket for the worker (run.ts, split mode), and runs under its own user
- * (the unit's `User=`, which nothing here checks) with no view of the shared workspace (its
- * `efs-unreadable` self-check).
+ * (the unit's `User=`; under socket activation its `socket-access` self-check refuses the socket
+ * owner's uid) with no view of the shared workspace (its `efs-unreadable` self-check).
  *
  * A boot that cannot produce the real gateway still serves a stand-in that answers `health` with
  * the cause, so the worker records it as its `lastFatalError` where an operator reads it. Without
- * it the worker would see only an unreachable socket.
+ * it the worker would see only an unreachable socket. The stand-in also serves the instance
+ * operations, which need only the instance role, so a terminating instance whose gateway cannot
+ * boot still completes its lifecycle action after the worker drains, rather than waiting out the
+ * lifecycle heartbeat.
  */
 
 import {
   DEFAULT_TASK_TIMEOUT,
+  GatewayInstance,
   assertSelfChecks,
   gatewayLog,
   gatewayLogError,
@@ -25,6 +29,7 @@ import {
   type GitHubGatewayListen,
   type GitHubGatewayServer,
   type LocalGitHubGatewayOptions,
+  type GatewayInstanceOptions,
   type SelfCheckResult,
 } from 'canopycms/worker/cms-worker'
 import { getErrorMessage } from 'canopycms/utils/error'
@@ -66,8 +71,8 @@ export interface RunGatewayDeps {
   getSecret: (secretArn: string, options?: GetSecretOptions) => Promise<string>
   exit: (code: number) => void
   onSignal: (signal: 'SIGTERM' | 'SIGINT', handler: () => void) => void
-  /** Core's `gatewaySelfChecks`. */
-  gatewaySelfChecks: () => Promise<SelfCheckResult[]>
+  /** Core's `gatewaySelfChecks`, told where the gateway listens. */
+  gatewaySelfChecks: (listen: GitHubGatewayListen) => Promise<SelfCheckResult[]>
   createGateway: (options: LocalGitHubGatewayOptions) => GitHubGateway
   serve: (
     gateway: GitHubGateway,
@@ -127,8 +132,20 @@ function scrubbed(secret: ReactiveSecret): ReactiveSecret {
   }
 }
 
+/** The termination watch and the lifecycle completion, which need no secret. */
+function instanceOptions(deps: RunGatewayDeps): GatewayInstanceOptions {
+  return {
+    watchTermination: () =>
+      deps.watchForTermination({ watchSpot: deps.env[WORKER_CAPACITY_ENV] === 'spot' }),
+    completeLifecycle: () => deps.completeTerminationLifecycleAction(),
+  }
+}
+
 /** Boot to a gateway that has not yet been served; throws what stops it. */
-async function buildGateway(deps: RunGatewayDeps): Promise<GitHubGateway> {
+async function buildGateway(
+  deps: RunGatewayDeps,
+  listen: GitHubGatewayListen,
+): Promise<GitHubGateway> {
   const { env } = deps
 
   // The gateway unit carries the same contract stamp as the worker's.
@@ -137,7 +154,7 @@ async function buildGateway(deps: RunGatewayDeps): Promise<GitHubGateway> {
 
   // Fatal, and before any secret is read: a sandbox layer that did not take effect leaves a
   // process holding the credential that the worker's user could reach.
-  assertSelfChecks(await deps.gatewaySelfChecks())
+  assertSelfChecks(await deps.gatewaySelfChecks(listen))
 
   const { githubOwner, githubRepo, stateDirectory } = readRepoEnv(
     env,
@@ -179,20 +196,22 @@ async function buildGateway(deps: RunGatewayDeps): Promise<GitHubGateway> {
       secret: clerkSecret,
       log: { warn: gatewayLogWarn, error: gatewayLogError },
     }),
-    watchTermination: () =>
-      deps.watchForTermination({ watchSpot: env[WORKER_CAPACITY_ENV] === 'spot' }),
-    completeLifecycle: () => deps.completeTerminationLifecycleAction(),
+    ...instanceOptions(deps),
   })
 }
 
 /**
- * The gateway a failed boot serves: `health` answers the cause, and every other operation,
- * `prepare` included, rejects with it as a plain error. A status-less rejection is transient to
- * the worker's task runner, so nothing is marked permanently failed and nothing answers as if it
- * had succeeded. `message` is already scrubbed.
+ * The gateway a failed boot serves: `health` answers the cause, `termination` and
+ * `completeLifecycle` are `instance`'s, under the same guards as the real gateway's, and every
+ * other operation, `prepare` included, rejects with the cause as a plain error. A status-less
+ * rejection is transient to the worker's task runner, so nothing is marked permanently failed and
+ * nothing answers as if it had succeeded. `message` is already scrubbed.
  * @internal Exported for tests.
  */
-export function failedGateway(message: string): GitHubGateway {
+export function failedGateway(
+  message: string,
+  instance: Pick<GitHubGateway, 'termination' | 'completeLifecycle'>,
+): GitHubGateway {
   const refuse = async (): Promise<never> => {
     throw Object.assign(new Error(message), { name: 'GitHubGatewayNotStartedError' })
   }
@@ -217,8 +236,8 @@ export function failedGateway(message: string): GitHubGateway {
     convertPullRequestToDraft: refuse,
     deleteBranch: refuse,
     authSnapshot: refuse,
-    termination: refuse,
-    completeLifecycle: refuse,
+    termination: (signal) => instance.termination(signal),
+    completeLifecycle: (signal) => instance.completeLifecycle(signal),
   }
 }
 
@@ -282,7 +301,7 @@ export async function runGateway(deps: RunGatewayDeps): Promise<void> {
   let gateway: GitHubGateway
   let server: Pick<GitHubGatewayServer, 'drain'>
   try {
-    gateway = await buildGateway(deps)
+    gateway = await buildGateway(deps, listen)
     server = await deps.serve(gateway, listen)
   } catch (err) {
     gatewayLogError('Fatal error:', getErrorMessage(err))
@@ -313,7 +332,13 @@ async function serveFailedBoot(
 ): Promise<void> {
   let server: Pick<GitHubGatewayServer, 'drain'>
   try {
-    server = await deps.serve(failedGateway(redactEgress(getErrorMessage(cause))), listen)
+    server = await deps.serve(
+      failedGateway(
+        redactEgress(getErrorMessage(cause)),
+        new GatewayInstance(instanceOptions(deps)),
+      ),
+      listen,
+    )
   } catch (err) {
     gatewayLogError('Could not serve the failed boot to the worker either:', getErrorMessage(err))
     deps.exit(1)

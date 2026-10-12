@@ -48,5 +48,5 @@ moves to `resolved/`.
 
 ## Related
 
-- [worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md), whose plan
+- [worker-shared-repo-git-process-split.md](resolved/worker-shared-repo-git-process-split.md), whose plan
   found the gap and whose gateway enforces the protected set in the package.
