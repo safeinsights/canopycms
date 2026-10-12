@@ -705,6 +705,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         return
       }
       delete reloadRequiredRef.current[currentId]
+      notifications.hide(saveMayHaveLandedToastId(currentId))
     }
 
     // Conflict check first: a stale-based draft must not be schema-validated

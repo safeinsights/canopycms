@@ -123,7 +123,7 @@ function slugOf(logicalPath: LogicalPath): string {
   return lastPart?.split('.')[0] || ''
 }
 
-/** Whether a listed entry type already holds every field of an update. */
+/** Whether a listed entry type holds every field an add or update sent. */
 function showsFields(entryType: ExistingEntryType, fields: Partial<CreateEntryTypeInput>): boolean {
   return Object.entries(fields).every(([key, value]) =>
     key === 'default'
@@ -424,7 +424,7 @@ export function CollectionEditor({
             const name = isNew ? (data as CreateEntryTypeInput).name : editingEntryType?.name
             const reloaded = await reloadEntryTypes(editingCollection.logicalPath)
             const now = reloaded?.find((et) => et.name === name)
-            if (name && now && (isNew || showsFields(now, stored))) {
+            if (name && now && showsFields(now, stored)) {
               announceEntryTypeChange(`Entry type "${name}" ${isNew ? 'added' : 'updated'}`)
               closeEntryTypeEditor()
               setFocusRequest({ row: name })

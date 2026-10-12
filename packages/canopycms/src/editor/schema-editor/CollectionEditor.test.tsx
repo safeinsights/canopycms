@@ -1165,6 +1165,25 @@ describe('CollectionEditor', () => {
           expect(screen.getByRole('dialog', { name: 'Add entry type' })).toBe(dialog)
         })
 
+        it('keeps the dialog open when the re-read lists the name with other fields, as when someone else added it', async () => {
+          const user = userEvent.setup()
+          renderCollectionEditor({
+            ...editProps(),
+            onAddEntryType: vi.fn().mockResolvedValue(unanswered),
+            onReloadEntryTypes: vi
+              .fn()
+              .mockResolvedValue([...collection.entries, { ...article, label: 'Theirs' }]),
+          })
+
+          const dialog = await addWithLabelViaUi(user, 'article', 'Article')
+
+          expect(await within(dialog).findByText(notAdded('article'))).toBeTruthy()
+          expect((within(dialog).getByLabelText(/^Label/) as HTMLInputElement).value).toBe(
+            'Article',
+          )
+          expect(screen.getByRole('status').textContent).toBe('')
+        })
+
         it('replaces the list with the re-read when the name is missing from it', async () => {
           const user = userEvent.setup()
           renderCollectionEditor({

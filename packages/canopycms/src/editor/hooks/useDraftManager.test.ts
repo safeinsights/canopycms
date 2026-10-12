@@ -706,17 +706,19 @@ describe('useDraftManager', () => {
       it('stops holding once the entry was re-read, leaving the draft to the stale-base check', async () => {
         const { result } = await renderAfterUnknownOutcome()
         mockGetEntryVersion.mockReturnValue(200)
+        const { notifications } = await import('@mantine/notifications')
+        vi.mocked(notifications.hide).mockClear()
 
         await act(async () => {
           await result.current.handleSave()
         })
 
-        const { notifications } = await import('@mantine/notifications')
         expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
           message:
             'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).',
         })
         expect(mockSaveEntry).toHaveBeenCalledTimes(1)
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-save-may-have-landed:abc123def456')
       })
 
       it('lets the save through after Reload, even if the version did not move', async () => {
