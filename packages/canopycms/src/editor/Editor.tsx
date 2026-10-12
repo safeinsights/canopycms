@@ -503,7 +503,10 @@ const EditorContent: React.FC<EditorProps> = ({
     currentUser: commentUserId,
     canResolveComments: canResolveAnyComment,
     setSelectedPath,
-    setBranchManagerOpen,
+    setBranchManagerOpen: (open) => {
+      if (open) branchOpenerRef.current = rememberOpener()
+      setBranchManagerOpen(open)
+    },
     onCommentsChange: setCommentsForBranchSummaries,
   })
 

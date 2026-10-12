@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useReducer, useRef } from 'react'
 import { Badge, Button, Drawer, Fieldset, Group, Text, Title } from '@mantine/core'
 import { openConfirm } from '../utils/confirm-modal'
-import { focusReturnProps } from '../utils/focus-return'
+import { FOCUS_RETURN_ATTR, focusReturnProps } from '../utils/focus-return'
 
 export interface StagedChangesDrawerProps {
   opened: boolean
@@ -94,6 +94,8 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
       children: <Text size="sm">Closing now drops the changes you have not saved.</Text>,
       labels: { confirm: 'Discard', cancel: 'Keep editing' },
       confirmProps: { color: 'red' },
+      // Marked with the drawer: with reduced motion both exits end together, while it still holds focus.
+      ...(returnFocusTo ? { [FOCUS_RETURN_ATTR]: true } : {}),
       onConfirm: () => {
         onDiscard()
         onClose()
@@ -103,7 +105,7 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
         confirmOpenRef.current = false
       },
     })
-  }, [isDirty, isSaving, onClose, onDiscard])
+  }, [isDirty, isSaving, onClose, onDiscard, returnFocusTo])
 
   const { onExitTransitionEnd: returnFocus, ...focusReturn } = focusReturnProps(returnFocusTo)
 

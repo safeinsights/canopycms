@@ -17,6 +17,9 @@ import { ApiClientProvider } from './context'
 import { RESERVED_GROUPS } from '../authorization'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 
+// A highlighted branch thread's carousel scrolls itself; jsdom has no Element.scrollTo.
+Object.defineProperty(Element.prototype, 'scrollTo', { value: () => {}, configurable: true })
+
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
@@ -44,15 +47,15 @@ const okJson = (data: unknown) =>
     headers: { 'Content-Type': 'application/json' },
   })
 
-const stubApi = (options: { groups?: string[]; locked?: boolean } = {}) => {
-  const { groups = [], locked = false } = options
+const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unknown[] } = {}) => {
+  const { groups = [], locked = false, threads = [] } = options
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups }))
-      if (url.endsWith('/main/comments')) return Promise.resolve(okJson({ threads: [], users: [] }))
+      if (url.endsWith('/main/comments')) return Promise.resolve(okJson({ threads, users: [] }))
       if (url.endsWith('/api/canopycms/branches')) {
         return Promise.resolve(
           okJson({
@@ -331,6 +334,53 @@ describe('Switch branch… (branch menu)', () => {
       expect(screen.queryByText('Manage access, status, and lifecycle')).toBeNull(),
     )
     await waitFor(() => expect(document.activeElement).toBe(opener))
+  })
+
+  it('returns focus to the branch menu button after "Open branch discussion", not to an earlier opener', async () => {
+    stubApi({
+      locked: true,
+      threads: [
+        {
+          id: 'thread-1',
+          type: 'branch',
+          resolved: false,
+          authorId: 'user-1',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          comments: [
+            {
+              id: 'c1',
+              threadId: 'thread-1',
+              userId: 'user-1',
+              timestamp: '2024-01-01T00:00:00.000Z',
+              text: 'Branch note',
+            },
+          ],
+        },
+      ],
+    })
+    renderEditor()
+    await loaded()
+    const banner = await screen.findByTestId('status-locked-banner')
+    const bannerOpener = banner.querySelector('button')
+    if (!bannerOpener) throw new Error('no banner button')
+
+    focusEl(bannerOpener)
+    await userEvent.keyboard('{Enter}')
+    await screen.findByText('Manage access, status, and lifecycle')
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByText('Manage access, status, and lifecycle')).toBeNull(),
+    )
+
+    await userEvent.click(screen.getByTestId('comments-button'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Open branch discussion' }))
+    await screen.findByText('Manage access, status, and lifecycle')
+    await userEvent.keyboard('{Escape}')
+
+    await waitFor(() =>
+      expect(screen.queryByText('Manage access, status, and lifecycle')).toBeNull(),
+    )
+    await waitFor(() => expect(document.activeElement).toBe(branchTrigger()))
   })
 })
 
