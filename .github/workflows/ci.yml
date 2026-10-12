@@ -402,28 +402,42 @@ jobs:
             exit 0
           fi
           base=$(git merge-base "origin/$BASE_REF" HEAD)
-          # A changed file identical to main's copy came from main, typically a
-          # stable release's version bumps merged back into an int branch, and
-          # needs no changeset here. Captured, not piped into `grep -q`: under
-          # pipefail an early-exiting grep can SIGPIPE git and turn a match into
-          # a silent pass.
+          # A changed file that main changed too, and that now matches main's
+          # copy, came from main: typically a stable release's version bumps
+          # merged back into an int branch. It needs no changeset here. Without
+          # renames, so moving a file out of a package still counts as changing
+          # it. Captured, not piped into `grep -q`: under pipefail an
+          # early-exiting grep can SIGPIPE git and turn a match into a silent pass.
+          mainbase=$(git merge-base "origin/$BASE_REF" origin/main)
           own=""
           while IFS= read -r f; do
             [ -n "$f" ] || continue
-            git diff --quiet origin/main HEAD -- "$f" || own+="$f"$'\n'
-          done <<<"$(git diff --name-only "$base" HEAD)"
+            if git diff --quiet origin/main HEAD -- "$f" && ! git diff --quiet "$mainbase" origin/main -- "$f"; then
+              continue
+            fi
+            own+="$f"$'\n'
+          done <<<"$(git diff --no-renames --name-only "$base" HEAD)"
+          added=$(git diff --name-only --diff-filter=d "$base" HEAD -- '.changeset/*.md')
+          # Not changesets, by @changesets/read's rule: README in any case, the
+          # agent files by exact case, and dotfiles. .changeset/pre/, the one
+          # subdirectory it reads, is left out too: the lint refuses it.
+          real=$(printf '%s\n' "$added" | grep -E '^\.changeset/[^/.][^/]*\.md$' |
+            grep -viE '^\.changeset/readme\.md$' |
+            grep -vE '^\.changeset/(AGENTS|CLAUDE|GEMINI)\.md$' | grep -c . || true)
           if ! pnpm exec changeset status --since="origin/$BASE_REF"; then
             if grep -q '^packages/' <<<"$own"; then exit 1; fi
-            echo "Every changed package file matches main's copy; no changeset needed."
+            echo "Every changed package file came from main; no changeset needed."
+          fi
+          # `changeset status` sees a renamed file only at its new path, so a
+          # file moved out of a package (tests, fixtures and AGENTS.md aside)
+          # needs a changeset too.
+          gone=$(git diff --no-renames --name-only --diff-filter=D "$base" HEAD -- 'packages/' |
+            grep -vE '\.test\.tsx?$|/__fixtures__/|/AGENTS\.md$' || true)
+          if [ -n "$gone" ] && grep -qxF -f <(printf '%s\n' "$gone") <<<"$own" && [ "$real" -eq 0 ]; then
+            echo "::error::This PR removes or moves files out of a published package but adds no changeset."
+            exit 1
           fi
           if grep -qxE 'pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|scripts/add-js-extensions\.mjs' <<<"$own"; then
-            added=$(git diff --name-only --diff-filter=d "$base" HEAD -- '.changeset/*.md')
-            # Not changesets, by @changesets/read's rule: README in any case, the
-            # agent files by exact case, and dotfiles. .changeset/pre/, the one
-            # subdirectory it reads, is left out too: the lint refuses it.
-            real=$(printf '%s\n' "$added" | grep -E '^\.changeset/[^/.][^/]*\.md$' |
-              grep -viE '^\.changeset/readme\.md$' |
-              grep -vE '^\.changeset/(AGENTS|CLAUDE|GEMINI)\.md$' | grep -c . || true)
             if [ "$real" -eq 0 ]; then
               echo "::error::This PR changes what the packages ship (lockfile, workspace overrides, tsconfig.base.json or add-js-extensions) but adds no changeset. Add one, or 'pnpm exec changeset add --empty' if adopters see no difference."
               exit 1

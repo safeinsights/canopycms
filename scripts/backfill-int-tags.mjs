@@ -79,10 +79,12 @@ function existingTag(version) {
 const versions = JSON.parse(run('npm', ['view', 'canopycms', 'versions', '--json'])).filter((v) =>
   INT_VERSION_RE.test(v),
 )
-// --push writes to `origin`, while every check above reads safeinsights/canopycms.
+// --push writes to `origin`'s push URL, while every check above reads safeinsights/canopycms.
 if (
   push &&
-  !/[/:]safeinsights\/canopycms(\.git)?$/.test(run('git', ['remote', 'get-url', 'origin']).trim())
+  !/^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)safeinsights\/canopycms(?:\.git)?$/.test(
+    run('git', ['remote', 'get-url', '--push', 'origin']).trim(),
+  )
 ) {
   console.error(`origin is not ${REPO}; run --push from a clone of it`)
   process.exit(1)

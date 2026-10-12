@@ -22,7 +22,8 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  # A stable tag's push run and a manual run on it share a group.
+  group: ${{ github.workflow }}-${{ github.ref }}${{ !startsWith(github.ref, 'refs/tags/') && format('-{0}', github.event_name) || '' }}
   # NEVER cancel a publish, on either channel. Queue instead.
   #
   # A run killed part-way through the five publishes moves the dist-tag for
@@ -30,8 +31,9 @@ concurrency:
   # peer dependencies between these packages are EXACT pins, so a mismatch is
   # an install-time ERESOLVE, not a subtle incompatibility.
   #
-  # On the stable channel a run cancelled mid-publish is resumable ("Re-run
-  # failed jobs" on `publish`), but a queued run never needs resuming.
+  # Each stable tag publishes in its own group, so two releases can publish at
+  # once; `publish` decides each package's dist-tag just before publishing
+  # it, so neither moves `latest` back.
   cancel-in-progress: false
 
 jobs:
@@ -45,6 +47,9 @@ jobs:
     name: Release commit
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      # `pnpm install`'s `prepare: husky` installs no hooks here.
+      HUSKY: '0'
     permissions:
       # The release-bot app token below does the writing.
       contents: read
@@ -186,11 +191,10 @@ jobs:
       # releases from there, with the changesets still pending. The commit
       # carries no [skip ci]: its own run on main finds nothing pending and
       # stops, and the tag's push starts `publish`.
-      - name: Commit, tag and push the release
+      - name: Commit and tag the release
         if: steps.prepare.outputs.release == 'true'
         env:
           VERSION: ${{ steps.prepare.outputs.version }}
-          TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -203,15 +207,35 @@ jobs:
             echo "::error::the release changed files outside the version and changelog set"
             exit 1
           fi
-          git commit -m "chore: release v$VERSION"
+          # No hooks: `pnpm install` set husky's hooksPath, and the release
+          # lints already ran in --prepare.
+          git -c core.hooksPath=/dev/null commit --no-verify -m "chore: release v$VERSION"
           git tag "v$VERSION"
-          # The token travels in a header, never in a URL or on disk; its
-          # base64 form is not masked automatically.
+
+      # Dependency lifecycle scripts ran in this workspace and could have
+      # written its git config or hooks, so the push happens from a fresh
+      # repository, ignoring global and system config, with hooks off, and the
+      # release-bot token only in this step. The token travels in a header,
+      # never in a URL or on disk; its base64 form is not masked automatically.
+      - name: Push the release
+        if: steps.prepare.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+          TOKEN: ${{ steps.app-token.outputs.token }}
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: '1'
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          pusher=$(mktemp -d)
+          git init -q "$pusher"
+          git -C "$pusher" -c core.hooksPath=/dev/null fetch -q "$GITHUB_WORKSPACE" \
+            "+$sha:refs/heads/release" "+refs/tags/v$VERSION:refs/tags/v$VERSION"
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
-          git -c http.extraheader="AUTHORIZATION: basic $auth" \
-            push --atomic "https://github.com/$GITHUB_REPOSITORY" HEAD:main "refs/tags/v$VERSION"
-          echo "Released v$VERSION at $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          git -C "$pusher" -c core.hooksPath=/dev/null -c http.extraheader="AUTHORIZATION: basic $auth" \
+            push --no-verify --atomic "https://github.com/$GITHUB_REPOSITORY" release:main "refs/tags/v$VERSION"
+          echo "Released v$VERSION at $sha" >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Build & Publish
@@ -339,15 +363,15 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          # A release published after a newer one (a late re-run or manual run)
-          # must not move `latest` back, so it goes out under `superseded`.
-          latest=$(npm view canopycms dist-tags.latest)
-          tag=latest
-          if node -e 'const [a, b] = process.argv.slice(1).map((v) => v.split(".").map(Number))
-            process.exit((a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) < 0 ? 0 : 1)' "$VERSION" "$latest"; then
-            tag=superseded
-            echo "::warning::npm latest is $latest, newer than $VERSION; publishing under dist-tag superseded"
-          fi
+          # A release published after a newer one (a late re-run, a manual run,
+          # or two releases publishing at once) must not move `latest` back, so
+          # it goes out under `superseded`. Decided per package, just before its
+          # publish, against both npm and the stable tags on main.
+          newer() {
+            node -e 'const [a, b] = process.argv.slice(1).map((v) => v.split(".").map(Number))
+              process.exit((a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) > 0 ? 0 : 1)' "$1" "$2"
+          }
+          git fetch -q --tags origin
           for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
             attested=$(node scripts/npm-attested-commit.mjs "$pkg" "$VERSION")
             if [ "$attested" = "$SHA" ]; then
@@ -357,6 +381,14 @@ jobs:
             if [ -n "$attested" ]; then
               echo "::error::$pkg@$VERSION is on npm from $attested, not this release ($SHA)"
               exit 1
+            fi
+            tag=latest
+            latest=$(npm view "$pkg" dist-tags.latest)
+            [[ "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$pkg's latest is '$latest', not a release"; exit 1; }
+            newest=$(git tag --list 'v*' --merged origin/main --sort=-v:refname | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sed -n 1p || true)
+            if newer "$latest" "$VERSION" || { [ -n "$newest" ] && newer "${newest#v}" "$VERSION"; }; then
+              tag=superseded
+              echo "::warning::$pkg: a release newer than $VERSION exists; publishing under dist-tag superseded"
             fi
             (cd "packages/$pkg" && pnpm dlx npm@11.19.0 publish "$pkg"-*.tgz --access public --provenance --tag "$tag")
           done
