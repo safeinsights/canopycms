@@ -2,14 +2,19 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  Four places where `docs/ux-guidelines.md` is silent, found by the WS4a UX review (PR 517): whether an empty-input submit button needs a disabled reason, popover placement over its own field, the field comment control's behaviour, and the colour of count badges. Proposed wording below; the doc is word-budgeted (`pnpm lint:docs`), so each addition needs a trim or a budget ruling.
+  Code only: docs/ux-guidelines.md now rules on the field comment control and on popovers over their own field. The comment popover can still cover its field's input, and the comment control's visibility and tab order don't yet match the rule.
 ---
+# Field comment control: code left after the WS4a guideline rulings
 
-# Guideline gaps found by the WS4a UX review
+The rules are in [docs/ux-guidelines.md](../../docs/ux-guidelines.md): Fields for the comment
+control, Choosing a surface for popovers.
 
-Proposed wording, for a decision rather than to apply as-is:
-
-- **Disabled says why.** "A submit button that waits only on its own visible input may be disabled without a tooltip; any other disabled control says why." Comment and Reply are disabled until their box has text, with no tooltip.
-- **Choosing a surface.** "A popover anchored to a field never covers that field's input." WS4a opens the field comment popover above the label row for this reason, but it flips below, over the input, when there is no room above; meeting the rule fully needs an anchor below the input.
-- **Fields.** "The comment control follows the label: hidden until the field is hovered or focused, still in the tab order, and a persistent count while open threads exist."
-- **Colour.** "Counts use the text colour on a tinted background and meet 4.5:1." The guidelines give colour meanings (green, blue, yellow, red) but say nothing of orange count badges.
+1. **Popover over its own field.** `packages/canopycms/src/editor/comments/CommentThreadsPopover.tsx`
+   opens above the label row, but flips below, over the input, when there is no room above.
+   Anchor it below the input.
+2. **Visibility.** The control stays in view whenever the field has any thread, resolved ones
+   included (`shown` in `CommentThreadsPopover.tsx`). The rule shows it unhovered only while
+   threads are open.
+3. **Tab stop.** The idle control is to leave the tab order (`tabIndex={-1}`) once one
+   per-form keyboard route to comments exists, a shortcut or menu. Build that route first,
+   then drop the Tab stop.

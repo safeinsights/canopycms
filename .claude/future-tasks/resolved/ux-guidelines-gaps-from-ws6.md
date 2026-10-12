@@ -2,7 +2,7 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  docs/ux-guidelines.md is silent on six things the WS6-lite review had to decide: which primary action a card shows when one card serves both editor and reviewer; that a disabled control's reason Tooltip must also open on focus (Mantine's default is hover only); whether disabled menu items stay focusable with the reason inline; whether a command that only opens a confirm takes "…"; how "Create branch" (a form's confirm) and a card's "Open" fit the vocabulary table; and where focus goes when an action removes the focused item from a list.
+  RESOLVED (2026-10-11) — JP's rulings, written into docs/ux-guidelines.md: a card's primary action by role (Copy), disabled reasons on focus and touch and `aria-disabled` menu items (Disabled controls), "…" only for commands that ask for more input (Copy), a form's confirm may name its noun (Copy), and focus falling back to the nearest list heading or search field (Keyboard). Omitted on purpose: moving focus only when the user has not moved it since Resolve stays a code-level rule.
 ---
 
 # UX guideline gaps surfaced by WS6-lite
