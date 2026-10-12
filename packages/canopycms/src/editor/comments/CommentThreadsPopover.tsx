@@ -58,7 +58,7 @@ export interface CommentThreadsPopoverProps {
 }
 
 export interface OpenRequest {
-  /** Focus goes here when the popover closes, when what opened it is gone. */
+  /** Takes focus in place of the opener, such as a menu item gone by close, unless a click closes the popover. */
   returnFocusTo?: () => HTMLElement | null
 }
 
@@ -107,7 +107,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   const noHover = useMediaQuery('(hover: none)')
   const popoverId = useId()
   const [controlNode, setControlNode] = useState<HTMLButtonElement | null>(null)
-  // Read when focus returns: a popover that mounts open has no control yet when it opens.
+  // Read when focus returns: a popover that mounts open has no `controlNode` state as it opens.
   const controlRef = useRef<HTMLButtonElement | null>(null)
   const setControl = useCallback((el: HTMLButtonElement | null) => {
     controlRef.current = el
@@ -119,7 +119,8 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   // Where focus returns on close, recorded as the popover opens, before its focus trap runs.
   const openerRef = useRef<{ target: () => HTMLElement | null; standIn: boolean } | null>(null)
   const [side, setSide] = useState<PopoverSide>('below')
-  // A highlight opens the popover after a jump has started scrolling, so its placement scrolls too.
+  // A highlight's open always scrolls its field into place, even when it fits, and so overrides
+  // the smooth scroll `handleJumpToField` (`hooks/useCommentSystem.ts`) starts.
   const [scrollOnOpen, setScrollOnOpen] = useState(false)
   const placedRef = useRef(false)
   // A click chose where focus goes, so a stand-in never takes it.
@@ -283,8 +284,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
         Comment on this entry
       </Button>
     ) : (
-      // One element for every state, so the popover's returnFocus target survives a
-      // count change.
+      // One element for every state, so a count change never remounts the control focus returns to.
       <Button
         variant={openCount > 0 ? 'light' : 'subtle'}
         color={openCount > 0 ? 'orange' : 'gray'}
@@ -347,7 +347,6 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       withArrow={!anchored}
       trapFocus
       returnFocus={false}
-      // Refused while a write is in flight; Mantine would still return focus to the opener.
       // Off while a write is in flight, when `close` refuses anyway, so Mantine's Escape handler
       // doesn't run its focus return on a popover that stays open.
       closeOnEscape={inFlight === 0}

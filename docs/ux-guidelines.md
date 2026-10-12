@@ -56,8 +56,8 @@ Branch status labels and colours come from `packages/canopycms/src/editor/branch
 | A branch's lasting state: read-only, protected, conflict               | Banner                |
 | One entry's lasting state, such as a read-only draft                   | Notice above its form |
 
-Never open a modal from a modal. A popover anchored to a field opens below its input, never
-over it. Don't toast what is already visible: a saved entry shows "Saved" inline, a new comment
+Never open a modal from a modal. A popover anchored to a field never covers its input; a short field's opens below it
+(`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible: a saved entry shows "Saved" inline, a new comment
 appears in its thread. Toasts go in the corner opposite the rail (`Notifications` in
 `packages/canopycms/src/editor/theme.tsx`); one with an action pauses while hovered or focused
 (`UndoToastMessage`). An error that needs action stays until dismissed.
@@ -110,16 +110,16 @@ inline and in a summary of labelled breadcrumbs that focus the field.
 
 The comment control hides until its field is hovered or focused, unless the field has open
 threads: then it shows their count, never a zero badge. Idle, it is not a Tab stop
-(`tabIndex={-1}`): Mod+Alt+M on the focused field, or the "Comments in this form" menu
-(`comments/form-comments.tsx`), reaches comments instead.
+(`tabIndex={-1}`): Mod+Alt+M on the focused field, or the "Field comments" menu listing every
+field (`comments/form-comments.tsx`), reaches comments instead.
 
 ## Keyboard
 
 - Bind shortcuts with Mantine's `useHotkeys` as `mod+…`, which is ⌘ on macOS and Ctrl
   elsewhere, scoped to the editor root. A shortcut that must work while typing, such as Save,
   passes `[]` as `tagsToIgnore` and `true` as `triggerOnContentEditable`.
-- Taken: Mod+S save, Mod+P quick open, Mod+Alt+M comments, Mod+. content panel, Mod+Shift+L layout, Esc closes the
-  topmost panel. Never bind Mod+K (MDXEditor's link), the formatting keys, or the browser's own
+- Taken: Mod+P quick open, Mod+Alt+M comments, Esc closes the topmost panel. Planned for WS8:
+  Mod+S save, Mod+. content panel, Mod+Shift+L layout. Never bind Mod+K (MDXEditor's link), the formatting keys, or the browser's own
   (Mod+W, T, R, L, F).
 - Tooltips and the shortcut sheet show the platform's modifier.
 - Every action is reachable by keyboard, focus follows visual order, and closing an overlay
@@ -136,7 +136,7 @@ threads: then it shows their count, never a zero badge. Idle, it is not a Tab st
 - Focus rings stay visible; never set `outline: none`.
 - `autoFocus` only on the first field of a dialog the user just opened.
 - A detail shown only in a tooltip, such as an email or an absolute date, also needs a
-  focusable route: a focusable trigger, or visually hidden text via `aria-describedby`.
+  focusable route: a focusable trigger, or visually hidden text in it or via `aria-describedby`.
 - A live region announces background progress when its phase changes (started, finished,
   result count), never page by page.
 

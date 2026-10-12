@@ -18,7 +18,7 @@ import { modKeyLabel } from '../platform'
 interface FieldCommentOpener {
   /** The field's breadcrumb, as its control names it. */
   subject: string
-  /** Opens the popover; `returnFocusTo` takes focus when it closes, in place of its opener. */
+  /** Opens the popover; `returnFocusTo` stands in for its opener unless a click closes it. */
   open: (returnFocusTo?: () => HTMLElement | null) => void
   /** The field's wrapper, which orders the menu as the form reads. */
   element: () => HTMLElement | null
@@ -33,7 +33,7 @@ export interface FormComments {
   /** Records the field that last took focus, which "Comment on …" names; `undefined` forgets it. */
   noteFocus: (canopyPath: string | undefined) => void
   lastFocused: () => string | undefined
-  /** Changes with every registration and focus, for `useSyncExternalStore`. */
+  /** Bumped whenever the fields or the field last focused change, for `useSyncExternalStore`. */
   version: () => number
   subscribe: (listener: () => void) => () => void
 }
@@ -98,7 +98,7 @@ const FIELD_SCOPE_SELECTOR = '[data-field-comments]'
 /** One letter of a script other than Latin; AltGr symbols such as "µ" are Common, not letters of one. */
 const NON_LATIN_LETTER = /^(?![\p{Script=Latin}\p{Script=Common}])\p{L}$/u
 
-/** Focus is in an overlay other than one holding this form, so the shortcut leaves it be. */
+/** Focus is in another overlay, or a modal not holding this form is open, so the shortcut leaves it be. */
 const inOtherOverlay = (active: Element | null, form: Element): boolean => {
   const dialog = active?.closest('[role="dialog"]')
   if (dialog && !dialog.contains(form)) return true

@@ -35,7 +35,7 @@ export interface EntryCommentsProps {
 }
 
 /**
- * The top of the form's comment actions: the "Comments in this form" menu, the keyboard route to
+ * The top of the form's comment actions: the "Field comments" menu, the keyboard route to
  * field comments, and "Comment on this entry" with the entry's threads.
  */
 export const EntryComments: React.FC<EntryCommentsProps> = ({

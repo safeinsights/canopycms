@@ -2,7 +2,7 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  RESOLVED (2026-10-11): the field comment popover opens below its field's input and never flips over it; the idle control shows unhovered only while the field has open threads and is out of the tab order; and the form's one keyboard route reaches comments instead: Mod+Alt+M on the focused field, or the "Comments in this form" menu (`editor/comments/form-comments.tsx`), which lists the fields with threads, resolved ones included, and can start one on the field last focused.
+  RESOLVED (2026-10-11): the field comment popover never covers its field's input: it opens below a short field, above the label row of a group or tall field, and on the other side when only that has room (`editor/comments/popover-placement.ts`). The idle control shows unhovered only while the field has open threads and is out of the tab order. The form's one keyboard route reaches comments instead: Mod+Alt+M on the focused field, or the "Field comments" menu (`editor/comments/form-comments.tsx`), which lists the fields with threads, resolved ones included, and every field.
 ---
 # Field comment control: code left after the WS4a guideline rulings
 

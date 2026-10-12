@@ -800,6 +800,25 @@ describe('the form keyboard route to field comments', () => {
     expect(await screen.findByTestId('field-comment-title-popover')).toBeTruthy()
   })
 
+  it('leaves AltGr alone on a layout whose letters are not Latin', async () => {
+    renderForm()
+    const input = screen.getByLabelText('Title')
+    act(() => input.focus())
+    const event = new KeyboardEvent('keydown', {
+      key: 'ь',
+      code: 'KeyM',
+      ctrlKey: true,
+      altKey: true,
+      modifierAltGraph: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    act(() => {
+      input.dispatchEvent(event)
+    })
+    expect(event.defaultPrevented).toBe(false)
+  })
+
   it('leaves Mod+Alt+M alone while a modal dialog is open', async () => {
     const user = userEvent.setup()
     renderForm()
@@ -945,6 +964,30 @@ describe('the form keyboard route to field comments', () => {
     expect(scrollButton).not.toHaveBeenCalled()
   })
 
+  it('forgets the field last focused when another entry opens', async () => {
+    const user = userEvent.setup()
+    const form = (entryPath: string) => (
+      <CanopyCMSProvider>
+        <FormRenderer
+          fields={fields}
+          value={{ title: 'Hello', meta: { summary: 'S' }, links: [{ href: '/a' }] }}
+          onChange={() => {}}
+          currentEntryPath={entryPath}
+          currentUserId="alice"
+          onAddComment={async () => {}}
+          onResolveThread={async () => {}}
+        />
+      </CanopyCMSProvider>
+    )
+    const { rerender } = render(form('content/a'))
+    act(() => screen.getByLabelText('Summary').focus())
+    act(() => screen.getByLabelText('Summary').blur())
+    rerender(form('content/b'))
+    await user.click(menuButton())
+    const menu = await screen.findByTestId('form-comments-menu')
+    expect(within(menu).queryByTestId('form-comments-comment-on-focused')).toBeNull()
+  })
+
   it('starts a thread on the field last focused', async () => {
     const user = userEvent.setup()
     const { onAddComment } = renderForm()
@@ -1049,6 +1092,7 @@ describe('field comment popover placement', () => {
         highlightThreadId: 't1',
       })
       expect(scroll).not.toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
+      expect(scroll).toHaveBeenCalledWith({ block: 'center', behavior: 'instant' })
     } finally {
       scroll.mockRestore()
     }
@@ -1061,6 +1105,19 @@ describe('field comment popover placement', () => {
     await user.click(control('meta'))
     const popover = await screen.findByTestId('field-comment-meta-popover')
     expect(popover.getAttribute('data-position')).toBe('bottom-start')
+  })
+
+  it('takes the larger side when neither has room even after scrolling', async () => {
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(300)
+    const user = userEvent.setup()
+    renderForm()
+    const { above, below } = layOut('title', 150, 190)
+    above.scrollIntoView = vi.fn()
+    below.scrollIntoView = vi.fn()
+    await user.click(control('title'))
+    const popover = await screen.findByTestId('field-comment-title-popover')
+    // 150px above, 110px below: neither reaches the room it needs, so the larger one.
+    expect(popover.getAttribute('data-position')).toBe('top-start')
   })
 
   it('scrolls a field into the middle when neither side has room', async () => {
@@ -1156,7 +1213,7 @@ describe('field comment popover placement, when a highlight opens it', () => {
     await waitFor(() => expect(document.activeElement).toBe(control('title')))
   })
 
-  it("scrolls a highlighted field even when it fits, overriding a jump's smooth scroll", async () => {
+  it('scrolls a field highlighted after it mounts into place, even when it fits', async () => {
     const scrolled = stubLayout({ title: [100, 160] })
     const props = { comments: [thread('t1', 'title')] }
     const { rerender } = renderStateless(props)

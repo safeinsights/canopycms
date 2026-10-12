@@ -2,7 +2,7 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  RESOLVED (2026-10-11): ruled yes. docs/ux-guidelines.md Keyboard now says a menu item's trigger stands in as the opener once the item is gone. The navigator drawer already returns focus to the file dropdown, and a field comment popover opened from "Comments in this form" returns it to that menu's button.
+  RESOLVED (2026-10-11): ruled yes. docs/ux-guidelines.md Keyboard says a menu item's trigger stands in as the opener once the item is gone. The navigator drawer returns focus to the file dropdown, and a field comment popover opened from "Field comments" returns it to that menu's button on a keyboard close.
 ---
 
 # Focus fallback for an overlay opened from a menu item
