@@ -70,6 +70,8 @@ export { workerLog, workerLogWarn, workerLogError, installWorkerLogger } from '.
 // see github-auth.ts) and needs the shape to inject and the key normalizer to
 // apply.
 export {
+  // The gateway process resolves its credential from its own config.
+  resolveWorkerGitHubAuth,
   normalizeGitHubAppPrivateKey,
   DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS,
   DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS,
@@ -94,6 +96,19 @@ export {
   type GitHubGatewayServerOptions,
 } from './github-gateway-http'
 export { GitHubGatewayUnreachableError } from './github-gateway-wire'
+// A gateway that failed to boot still serves the instance operations.
+export { GatewayInstance, type GatewayInstanceOptions } from './gateway-instance'
+// The gateway process's scrubbed log lines, and the exact scrubs for the secrets it holds that
+// are not GitHub tokens (the auth provider's key, the App's private key). `redactEgress` scrubs
+// the cause a failed boot hands the worker.
+export {
+  gatewayLog,
+  gatewayLogWarn,
+  gatewayLogError,
+  registerSecretText,
+  registerPrivateKey,
+  redactEgress,
+} from './gateway-egress'
 // The boot self-checks the split entrypoint runs in each role (.claude/future-tasks/
 // worker-shared-repo-git-process-split.md §5).
 export {
@@ -129,6 +144,13 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
    * write to it.
    */
   stateDirectory?: string
+  /**
+   * A GitHub gateway to use instead of building the in-process one: a client of a gateway another
+   * process serves (`connectGitHubGateway`), which holds the credential, the protected set and the
+   * mirror. Exclusive with `githubToken`, `githubAppAuth`, `refreshGitHubToken` and
+   * `protectedBranches`, which configure the in-process one.
+   */
+  githubGateway?: GitHubGateway
   /** GitHub owner (e.g., 'acme') */
   githubOwner: string
   /** GitHub repo name (e.g., 'site') */
@@ -238,7 +260,11 @@ function sameRefs(a: Map<string, string>, b: Map<string, string>): boolean {
   return a.size === b.size && [...a].every(([ref, id]) => b.get(ref) === id)
 }
 
-const DEFAULT_TASK_TIMEOUT = 60_000
+/**
+ * The default `taskTimeoutMs`. Exported because a split worker's gateway client passes it as its
+ * `fetchInactivityMs` and the gateway uses it as its `timeoutMs`, as the in-process gateway does.
+ */
+export const DEFAULT_TASK_TIMEOUT = 60_000
 const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_LOCK_STALE_MS = 60_000
 /**
@@ -343,6 +369,14 @@ export async function recordWorkerStartupFailure(options: {
   workspacePath: string
   error: unknown
   lockStaleMs?: number
+  /**
+   * Write nothing when the file is a failed start's own record (its `lastFatalError` was written
+   * by the worker that wrote the file) and this accepts that record: for a failure that only says
+   * the recorded cause is still in the way (the GitHub gateway unreachable while it restarts after
+   * its own fatal error), which must not replace that cause. A record a later worker carried
+   * forward is never kept: that worker got past it.
+   */
+  keepRecordedFatal?: (recorded: NonNullable<WorkerStatusReport['lastFatalError']>) => boolean
 }): Promise<void> {
   const taskDir = path.join(options.workspacePath, '.tasks')
   let release: (() => Promise<void>) | undefined
@@ -355,7 +389,15 @@ export async function recordWorkerStartupFailure(options: {
         workerLogError('Worker lock lost while recording a startup failure:', getErrorMessage(err)),
     })
     const now = new Date().toISOString()
-    const { lastShutdown, baseHold } = await readCarriedFields(taskDir)
+    const { lastFatalError, lastShutdown, baseHold } = await readCarriedFields(taskDir)
+    if (
+      lastFatalError &&
+      options.keepRecordedFatal &&
+      lastFatalError.workerStartedAt === (await readWorkerStatusStartedAt(taskDir)) &&
+      options.keepRecordedFatal(lastFatalError)
+    ) {
+      return
+    }
     await writeWorkerStatus(taskDir, {
       version: 1,
       workerVersion: CANOPYCMS_VERSION,
@@ -426,6 +468,7 @@ export class CmsWorker {
   // Normally initialized at the top of start(); see ensureStatusReport() for
   // the lazy-init fallback.
   private statusReport?: WorkerStatusReport
+  private warnedDivergences = new Map<string, string>()
   // Set by a lock compromise that starts the stop, so the drain records it; see selfStopped.
   private lockLostMessage?: string
   // Who wrote worker-status.json when this worker took the lock: until its own first write
@@ -546,6 +589,7 @@ export class CmsWorker {
       shutdownSignal: () => this.shutdownController.signal,
       ensureStatusReport: () => this.ensureStatusReport(),
       ensureSettingsBranch: () => this.ensureSettingsBranch(),
+      warnedDivergences: () => this.warnedDivergences,
       afterConflictDetectedForTesting: () => this.afterConflictDetectedForTesting(),
       afterRebaseCompletedForTesting: () => this.afterRebaseCompletedForTesting(),
     }
@@ -1110,8 +1154,8 @@ export class CmsWorker {
    * `git clone https://x-access-token:<token>@github.com/...` records that URL
    * verbatim as `remote.origin.url`, and for `remote.git` that config lives on
    * shared EFS. The security model in docs/deploying-to-aws.md -- a compromised
-   * Lambda can read/write EFS content but cannot push to GitHub, secrets stay
-   * on the worker -- is false while that string is there: the Lambda could read
+   * Lambda can read/write EFS content but cannot reach the GitHub credential,
+   * which stays off EFS -- is false while that string is there: the Lambda could read
    * the token off EFS and, with no egress of its own, exfiltrate it by writing
    * it into branch content the worker then pushes to GitHub.
    *
@@ -1460,7 +1504,24 @@ export class CmsWorker {
    * test installed.
    */
   private github(): GitHubGateway {
-    this.gateway ??= createLocalGitHubGateway(this.localGitHubGatewayOptions())
+    if (this.gateway !== undefined) return this.gateway
+    const { githubGateway } = this.config
+    if (githubGateway === undefined) {
+      this.gateway = createLocalGitHubGateway(this.localGitHubGatewayOptions())
+      return this.gateway
+    }
+    const conflicting: string[] = []
+    if (this.config.githubToken) conflicting.push('githubToken')
+    if (this.config.githubAppAuth !== undefined) conflicting.push('githubAppAuth')
+    if (this.config.refreshGitHubToken !== undefined) conflicting.push('refreshGitHubToken')
+    if ((this.config.protectedBranches?.length ?? 0) > 0) conflicting.push('protectedBranches')
+    if (conflicting.length > 0) {
+      throw new Error(
+        `CmsWorker: githubGateway is exclusive with ${conflicting.join(', ')}, which configure the ` +
+          'in-process gateway; the gateway it is given holds the credential and the protected set',
+      )
+    }
+    this.gateway = githubGateway
     return this.gateway
   }
 

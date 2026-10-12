@@ -215,7 +215,8 @@ export interface WorkerStatusReport {
     baseRefresh?: BaseRefreshReport
     /**
      * Outcome of reconciling remote.git's `refs/heads/*` against GitHub's fetched
-     * tips, non-destructively (worker/git-sync.ts's `reconcileTrackedBranches`).
+     * tips, never moving a head the worker finds editor work in (worker/git-sync.ts's
+     * `reconcileTrackedBranches`, worker/stale-mirror.ts).
      * Optional: a status file written by a worker without that reconcile has no
      * such key, and readers must tolerate its absence rather than assume every
      * status file has it.
@@ -231,6 +232,13 @@ export interface WorkerStatusReport {
        * queued -- expected and self-resolving, unlike `diverged`.
        */
       rewritten?: string[]
+      /**
+       * Optional for the same reason. Heads that diverged while holding no editor
+       * work, moved to GitHub's tip, and heads of branches GitHub no longer has,
+       * deleted (worker/stale-mirror.ts).
+       */
+      repointed?: string[]
+      pruned?: string[]
     }
   }
   lastFatalError?: {

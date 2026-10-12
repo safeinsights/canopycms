@@ -19,6 +19,9 @@
     "dist",
     "worker/dist",
     "worker/canopy-worker.service",
+    "worker/canopy-github.service",
+    "worker/canopy-github.socket",
+    "worker/gateway.env.example",
     "lambda/asset-transform/dist"
   ],
   "publishConfig": {
@@ -33,7 +36,7 @@
   "scripts": {
     "prepack": "pnpm run build && pnpm run build:worker && pnpm run build:worker-metadata && pnpm run build:lambda",
     "build": "rm -rf dist && tsc && node ../../scripts/add-js-extensions.mjs dist",
-    "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=worker/dist/index.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "build:worker": "node --import tsx worker/build.ts",
     "build:worker-metadata": "node --import tsx worker/write-bundle-metadata.ts",
     "build:lambda": "node lambda/asset-transform/build.mjs",
     "build:test-fixtures": "pnpm run build:worker && pnpm run build:worker-metadata && node lambda/asset-transform/build.mjs --skip-native",

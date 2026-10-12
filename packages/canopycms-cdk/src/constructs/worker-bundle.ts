@@ -32,6 +32,16 @@ const WORKER_BUNDLE_PATH = path.join(__dirname, '../../worker/dist/index.js')
 /** Where user data downloads the bundle to and checks it, before installing it. */
 export const WORKER_BUNDLE_DOWNLOAD_PATH = '/tmp/canopy-worker.js'
 
+/**
+ * The instance's units and scripts (`worker-units.ts` `instanceFilesScript`), which `build:worker`
+ * writes beside the bundle. Always the template's own asset, whichever `workerCode`: what the
+ * template provides to a bundle is the template's.
+ */
+const INSTANCE_FILES_PATH = path.join(__dirname, '../../worker/dist/instance-files.sh')
+
+/** Where user data downloads the instance files to and checks them. */
+export const INSTANCE_FILES_DOWNLOAD_PATH = '/tmp/canopy-instance-files.sh'
+
 /** Where `workerCode: { source: 'parameter' }` expects bundles in its bucket: `<prefix><sha256>.js`. */
 const WORKER_BUNDLE_KEY_PREFIX = 'canopy-worker/'
 
@@ -53,11 +63,16 @@ function sha256OfFile(file: string): string {
  */
 export type WorkerCode = { source: 'asset' } | { source: 'parameter' }
 
-interface WorkerBundleSource {
-  /** S3 location and expected sha256, as tokens for user data. */
+/** An S3 object user data downloads, and the sha256 it must have, as tokens for user data. */
+interface CheckedObject {
   readonly bucketName: string
   readonly objectKey: string
   readonly sha256: string
+}
+
+interface WorkerBundleSource extends CheckedObject {
+  /** The instance files (see {@link INSTANCE_FILES_PATH}). */
+  readonly instanceFiles: CheckedObject
   /** Parameter mode only. */
   readonly bundleBucket?: s3.Bucket
   readonly sha256Parameter?: CfnParameter
@@ -74,16 +89,30 @@ export function workerBundleSource(
 ): WorkerBundleSource {
   const asset = new s3assets.Asset(scope, 'WorkerCode', { path: WORKER_BUNDLE_PATH })
   const assetSha256 = sha256OfFile(WORKER_BUNDLE_PATH)
-  // This one object, not `asset.grantRead`'s whole bootstrap bucket. No KMS
+  const filesAsset = new s3assets.Asset(scope, 'WorkerInstanceFiles', { path: INSTANCE_FILES_PATH })
+  const instanceFiles: CheckedObject = {
+    bucketName: filesAsset.s3BucketName,
+    objectKey: filesAsset.s3ObjectKey,
+    sha256: sha256OfFile(INSTANCE_FILES_PATH),
+  }
+  // These objects, not `asset.grantRead`'s whole bootstrap bucket. No KMS
   // grant: the bootstrap bucket's key (aws/s3, or the key bootstrap creates)
   // lets any principal in the account decrypt through S3.
-  const readable = [asset.bucket.arnForObjects(asset.s3ObjectKey)]
+  const readable = [
+    asset.bucket.arnForObjects(asset.s3ObjectKey),
+    filesAsset.bucket.arnForObjects(filesAsset.s3ObjectKey),
+  ]
 
   if (workerCode.source === 'asset') {
     workerRole.addToPrincipalPolicy(
       new iam.PolicyStatement({ actions: ['s3:GetObject'], resources: readable }),
     )
-    return { bucketName: asset.s3BucketName, objectKey: asset.s3ObjectKey, sha256: assetSha256 }
+    return {
+      bucketName: asset.s3BucketName,
+      objectKey: asset.s3ObjectKey,
+      sha256: assetSha256,
+      instanceFiles,
+    }
   }
 
   const bundleBucket = new s3.Bucket(scope, 'WorkerBundleBucket', {
@@ -151,6 +180,7 @@ export function workerBundleSource(
       asset.s3ObjectKey,
     ),
     sha256: pick(sha256Parameter.valueAsString, assetSha256),
+    instanceFiles,
     bundleBucket,
     sha256Parameter,
   }

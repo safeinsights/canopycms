@@ -34,7 +34,7 @@ import {
   type GitHubGateway,
   type LocalGitHubGatewayOptions,
 } from './github-gateway'
-import { RefusedPushError, parsePushStatus } from './github-mirror'
+import { GitHubMirror, RefusedPushError, parsePushStatus } from './github-mirror'
 import {
   fetchGitHubIntoRemoteGit,
   pushToGitHub,
@@ -391,7 +391,7 @@ describe('health', () => {
     const github = gateway({
       baseBranch: 'production',
       protectedBranches: ['release/*'],
-      clerkConfigured: true,
+      authSnapshot: async () => ({ users: [], groups: [], memberships: {} }),
       prefetch: false,
     })
     await github.prepare()
@@ -405,6 +405,13 @@ describe('health', () => {
     })
   })
 
+  it('reports Clerk as not configured without an auth provider', async () => {
+    const github = gateway({ prefetch: false })
+    await github.prepare()
+
+    expect((await github.health()).clerkConfigured).toBe(false)
+  })
+
   it("reports prepare()'s failure as the fatal error, scrubbed", async () => {
     const github = gateway({
       stateDirectory: path.join(root, 'workspace', 'state'),
@@ -416,6 +423,52 @@ describe('health', () => {
 
     expect(health.ready).toBe(false)
     expect(health.fatalError).toMatch(/inside its shared workspace/)
+  })
+})
+
+describe('prepare', () => {
+  it('stays ready when the mirror cannot be created yet, warning that the next operation tries again', async () => {
+    const ensure = vi
+      .spyOn(GitHubMirror.prototype, 'ensure')
+      .mockRejectedValue(new Error('ENOSPC: no space left on device'))
+    const github = gateway({ prefetch: false })
+
+    await expect(github.prepare()).resolves.toBeUndefined()
+
+    expect((await github.health()).ready).toBe(true)
+    expect(ensure).toHaveBeenCalledTimes(1)
+    expect(consoleSpy.all().warn.join('\n')).toMatch(
+      /Could not create the GitHub mirror at startup \(ENOSPC: no space left on device\); the next operation tries again/,
+    )
+    ensure.mockRestore()
+    // The mirror comes up with the next operation.
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    expect((await github.fetch({ have: [] })).refs.has('main')).toBe(true)
+  })
+
+  it('refuses a state directory other users can write, naming it', async () => {
+    const stateDirectory = path.join(root, 'open-state')
+    await fs.mkdir(stateDirectory, { mode: 0o755 })
+    await fs.chmod(stateDirectory, 0o777)
+    const github = gateway({ stateDirectory, prefetch: false })
+
+    await expect(github.prepare()).rejects.toThrow(stateDirectory)
+    const health = await github.health()
+
+    expect(health.ready).toBe(false)
+    expect(health.fatalError).toContain(stateDirectory)
+  })
+
+  it('checks the state directory against the workspace only when it is given one', async () => {
+    const github = gateway({
+      stateDirectory: path.join(root, 'workspace', 'state'),
+      workspacePath: undefined,
+      prefetch: false,
+    })
+
+    await expect(github.prepare()).resolves.toBeUndefined()
+
+    expect((await github.health()).ready).toBe(true)
   })
 })
 

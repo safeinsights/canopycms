@@ -2,14 +2,14 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  No doc anywhere describes how CanopyCMS is released, and there are now two channels (stable `latest` on push to main; `int` prereleases on manual dispatch) — confirmed absent from README, DEVELOPING, ARCHITECTURE and AGENTS. The trap worth writing down: npm allows one trusted publisher per package bound to a workflow filename, so any new publish workflow must route through `publish.yml` or fail auth opaquely
+  RESOLVED 2026-10-11 by the changesets PR A: DEVELOPING.md's Releasing section covers both channels, the one-trusted-publisher-per-workflow-filename trap, int pinning, changesets, tags and the --min recovery; packages/canopycms/README.md points int adopters at the shipped CHANGELOG.md
 ---
 # Document the release process (two channels, one non-obvious constraint)
 
 **Priority:** P2 · **Size:** S
 
 Found while shipping the prerelease channel
-([resolved/program-a-release-path.md](resolved/program-a-release-path.md), 2026-07-30).
+([resolved/program-a-release-path.md](program-a-release-path.md), 2026-07-30).
 
 ## Problem
 
@@ -49,8 +49,8 @@ A short release section in `DEVELOPING.md` (maintainer-facing: both channels, th
 trusted-publisher constraint, the version scripts) and a note in `README.md` for
 adopters on when they might be asked to use `@int` and how to pin it. The
 material already exists in
-[resolved/program-a-release-path.md](resolved/program-a-release-path.md) and
-[program-log.md](program-log.md) — this is mostly relocation into docs an
+[resolved/program-a-release-path.md](program-a-release-path.md) and
+[program-log.md](../program-log.md) — this is mostly relocation into docs an
 adopter or a new maintainer would actually find.
 
 ## Partly done: the adopter half, 2026-10-01
@@ -72,7 +72,7 @@ version scripts. Also still true that `int` consumers must pin exactly.
 
 ## Related
 
-- [adopter-migration-unreleased-is-stale.md](resolved/adopter-migration-unreleased-is-stale.md) —
+- [adopter-migration-unreleased-is-stale.md](adopter-migration-unreleased-is-stale.md) —
   the other half the same adopter hit, resolved 2026-10-01 in the same pass.
 - Consider `npm deprecate`-ing superseded `int` versions to keep
   `npm view canopycms versions` readable; the prerelease list is the only real

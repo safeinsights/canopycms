@@ -279,7 +279,7 @@ export type AuthorContent = EntryTypes['author']
 
 The string in `.collection.json`'s `entry.schema` is a lookup key into the registry. Keying by the **entry-type name** removes a level of indirection (`entry.name` and `entry.schema` are then the same string), makes errors clearer (`Available schemas: post, author, home`), and lets `EntryTypesFromRegistry` derive the typed entry-type map for you. Keying by schema-variable name instead (`{ postSchema, authorSchema }`) still works, but you then declare that map by hand as an interface of `TypeFromEntrySchema<typeof xSchema>` members and pass it to `buildContentTree<NavFields, MyEntries>`. That is the right choice when several entry types share one schema (`partner-v1` and `partner-v2` both pointing at `partnerSchema`), since name-keying would hold the same schema twice.
 
-To move an existing project onto the entry-type-name convention, see [the migration entry](docs/adopter-migration.md#the-registry-is-keyed-by-entry-type-name-0042). Nothing about content files, frontmatter or `.canopy-meta/` caches changes, and in dev mode editing a `.collection.json` invalidates the schema cache so the next read picks up the new strings.
+To move an existing project onto the entry-type-name convention, see [the migration entry](CHANGELOG.md#the-registry-is-keyed-by-entry-type-name-0042). Nothing about content files, frontmatter or `.canopy-meta/` caches changes, and in dev mode editing a `.collection.json` invalidates the schema cache so the next read picks up the new strings.
 
 ### Creating .collection.json Meta Files
 
@@ -991,7 +991,7 @@ export const generateStaticParams = () =>
 
 ### Sitemap and SEO Metadata
 
-These ship together because of the `noindex` flag: it has to suppress a page in **both** surfaces — `robots: { index: false }` on the page and absence from the sitemap. Both read it through the same core predicate, so they cannot disagree about which pages are advertised.
+These ship together because of the `noindex` flag: it has to suppress a page in **both** surfaces — `robots: { index: false }` on the page and absence from the sitemap. Both read it through the same core predicate, as [AI content](#ai-ready-content) does, so they cannot disagree about which pages are advertised.
 
 #### The recommended SEO field group
 
@@ -1211,7 +1211,7 @@ import { assetUrl, assetSrcSet } from 'canopycms'
 
 > **The asset store is site-wide, not branch-scoped.** Assets are content-addressed and shared (which is what lets a branch merge avoid moving files), so branch and path ACLs do **not** apply to them: any authenticated editor can list and fetch every asset in the site, including images uploaded on branches they cannot otherwise access. Treat "uploaded to CanopyCMS" as visible to your whole editorial team — confidential material does not belong in the asset store.
 
-**Infrastructure** — `canopycms-cdk` ships an `AssetSupport` construct that provisions the bucket (or attaches to one) and serves `/assets/*` from S3 alone, failing over to an optional `replicaBucket` on a 5xx; an unmaterialized URL is a 403. `lazyPublicTransforms: true` instead transforms misses in a Lambda, for releases without [the two steps below](#storing-a-builds-images-before-it-is-released). Pass it to `CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront read behaviors (`/assets/*` and `/assets/t/*`) in the only safe order. For another distribution, use `assetBehaviors()` or `attachTo(distribution)`; a hand-wired `additionalBehaviors` in the wrong order fails `cdk synth`. `uploadBehavior()` is the opt-in write path and belongs on its own distribution, below. See [the AWS guide](docs/deploying-to-aws.md#media-the-public-image-path) and [migration entry](docs/adopter-migration.md#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking).
+**Infrastructure** — `canopycms-cdk` ships an `AssetSupport` construct that provisions the bucket (or attaches to one) and serves `/assets/*` from S3 alone, failing over to an optional `replicaBucket` on a 5xx; an unmaterialized URL is a 403. `lazyPublicTransforms: true` instead transforms misses in a Lambda, for releases without [the two steps below](#storing-a-builds-images-before-it-is-released). Pass it to `CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront read behaviors (`/assets/*` and `/assets/t/*`) in the only safe order. For another distribution, use `assetBehaviors()` or `attachTo(distribution)`; a hand-wired `additionalBehaviors` in the wrong order fails `cdk synth`. `uploadBehavior()` is the opt-in write path and belongs on its own distribution, below. See [the AWS guide](docs/deploying-to-aws.md#media-the-public-image-path) and [migration entry](CHANGELOG.md#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking).
 
 **Routing uploads through your own CDN**
 
@@ -1670,9 +1670,9 @@ post: previewView({
 
 CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools, documentation chatbots): schema-driven JSON/MD/MDX entries converted into well-structured markdown with a discovery manifest, needing no authentication, since the output is read-only.
 
-All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
+All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. An entry marked `noindex` is left out too, read through [the same predicate the sitemap uses](#sitemap-and-seo-metadata). Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
 
-A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one that `exclude` leaves out as `(unavailable entry <id>)`, with no title. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
+A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one the export leaves out as `(unavailable entry <id>)`, with no title. An inline `entry:` link to a left-out entry renders as its plain text. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
 
 ### Option 1: Route Handler (Runtime)
 
@@ -1716,6 +1716,10 @@ await generateAIContentFiles({
 ```typescript
 import { defineAIContentConfig } from 'canopycms/ai'
 
+// Where the noindex flag lives, if not flat. Pass this one object to
+// createNextCanopyContext({ seo }) too, so the sitemap and AI content agree.
+const seo = { group: 'seo' }
+
 const aiConfig = defineAIContentConfig({
   // Where these files are served, site-relative (default '/ai'); a reference links its
   // target's markdown copy beneath it
@@ -1726,7 +1730,10 @@ const aiConfig = defineAIContentConfig({
     collections: ['drafts'],
     entryTypes: ['internal-note'],
     where: (entry) => entry.data.hidden === true,
+    noindex: false, // export noindex entries, left out by default
   },
+
+  seo,
 
   // Custom bundles: filtered subsets as single files
   bundles: [{ name: 'research-guides', filter: { collections: ['docs'], entryTypes: ['guide'] } }],
@@ -1755,6 +1762,22 @@ const aiConfig = defineAIContentConfig({
   },
 })
 ```
+
+**A link into a hidden section by plain URL.** A field holding a plain URL, such as a site settings entry's navigation list, names no entry, so the export can't tell that it points at a `noindex` section. Filter it with a field transform, which replaces the field's whole output:
+
+```typescript
+fieldTransforms: {
+  settings: {
+    navLinks: (links) =>
+      (links as { label: string; href: string }[])
+        .filter((link) => !link.href.startsWith('/stubs'))
+        .map((link) => `- ${link.label}: ${link.href}`)
+        .join('\n'),
+  },
+},
+```
+
+Return `''` from the transform to drop the field entirely, or use `exclude.where` to drop the whole entry.
 
 **Transform pipeline** for MD/MDX entries, in order: `stripMdxImports` removes import statements automatically; `componentTransforms` match JSX components by PascalCase name and replace them with the transform's output (keeping the JSX as-is when it returns `undefined`); then `bodyTransforms` passes the full body string through the entry-type-specific transform for final cleanup. `componentTransforms` are keyed by component name and apply across all entry types, since MDX components are project-wide; `bodyTransforms` are keyed by entry type, for stripping entry-type-specific syntax that does not belong in AI output.
 
@@ -1918,9 +1941,9 @@ CLERK_JWT_KEY=...           # Public JWKS PEM. Optional locally; load-bearing on
 CLERK_AUTHORIZED_PARTIES=... # Optional: comma-separated domains
 ```
 
-`CLERK_SECRET_KEY` is resolved lazily, the first time the plugin calls Clerk's backend API — not at build or startup — so a zero-editor static build (`deployedAs: 'static'`, no auth plugin exercised) never needs it. It is needed only where that API is called: the worker daemon's auth-cache refresh, and in dev mode the dev server's lazy refresh. A deployed CMS server verifies tokens with `CLERK_JWT_KEY` alone, unless it also runs `clerkMiddleware`, which needs the secret wherever it runs (see [Security Model](docs/deploying-to-aws.md#security-model)).
+`CLERK_SECRET_KEY` is resolved lazily, the first time the plugin calls Clerk's backend API — not at build or startup — so a zero-editor static build (`deployedAs: 'static'`, no auth plugin exercised) never needs it. It is needed only where that API is called: the worker's or GitHub gateway's auth-cache refresh, and in dev mode the dev server's lazy refresh. A deployed CMS server verifies tokens with `CLERK_JWT_KEY` alone, unless it also runs `clerkMiddleware`, which needs the secret wherever it runs (see [Security Model](docs/deploying-to-aws.md#security-model)).
 
-For GitHub integration in production mode, the worker authenticates with either a personal access token (the default) or a GitHub App:
+For GitHub integration in production mode, the worker (on AWS, its GitHub gateway) authenticates with either a personal access token (the default) or a GitHub App:
 
 ```env
 GITHUB_BOT_TOKEN=ghp_...    # Bot token for PR creation
@@ -1938,5 +1961,5 @@ npx canopycms init-github-app create -- <a command that reads the key from stdin
 
 - [DEVELOPING.md](DEVELOPING.md) — contributor guidelines (the monorepo uses **pnpm** workspaces)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — internal architecture
-- [docs/adopter-migration.md](docs/adopter-migration.md) — what changed between versions
+- [CHANGELOG.md](CHANGELOG.md) — what changed between versions
 - [docs/deploying-to-aws.md](docs/deploying-to-aws.md) — deploying to AWS

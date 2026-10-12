@@ -11,7 +11,7 @@ summary: >-
 height={image.height}` on the `<img>` reserves a box with the original's aspect, not the crop's,
 so a cropped image shifts layout or stretches.
 
-The README and `docs/adopter-migration.md` tell adopters to scale by `crop.w` and `crop.h`. Every
+The README and `CHANGELOG.md` tell adopters to scale by `crop.w` and `crop.h`. Every
 adopter will write that multiply by hand.
 
 ## Fix direction

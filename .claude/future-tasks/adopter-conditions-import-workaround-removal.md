@@ -43,7 +43,7 @@ condition would keep working in that one repo and fail for everyone else.
 
 1. Wait for a release containing the fix (anything after `0.0.65`; confirm against the
    installed tarball's `package.json`, not against main — see
-   [the note on `pnpm pack` vs `npm pack`](../../docs/adopter-migration.md)).
+   [the note on `pnpm pack` vs `npm pack`](../../CHANGELOG.md)).
 2. In the adopter repo, remove `NODE_OPTIONS=--conditions=import` from `cdk.json`'s `app`
    command and run `cdk synth`. It should succeed unchanged; diff the synthesized
    templates against the previous output to confirm nothing else moved.

@@ -30,6 +30,7 @@ export type SelfCheckName =
   | 'efs-unreadable'
   | 'core-pattern'
   | 'core-limit'
+  | 'socket-access'
 
 /**
  * How a TCP connect ended: it connected, it failed with an errno code, or it timed out.
@@ -46,6 +47,12 @@ export interface SelfCheckEnvironment {
   uid?: number
   /** Test seam: the TCP connect the IMDS check makes. */
   connect?: (host: string, port: number, timeoutMs: number) => Promise<ConnectOutcome>
+  /**
+   * The gateway's listening descriptor when systemd passed it (socket activation), which the
+   * `socket-access` check reads. Unset, that check is skipped: a gateway that binds its own path
+   * owns the socket by construction (development).
+   */
+  listenFd?: number
 }
 
 /** The instance metadata service's IPv4 address; the launch template sets no IPv6 endpoint. */
@@ -57,8 +64,28 @@ const IMDS_CONNECT_TIMEOUT_MS = 1_000
 /** Connect failures that prove no route: no network, or no IPv4 sockets at all. */
 const NO_ROUTE_CODES = new Set(['ENETUNREACH', 'EAFNOSUPPORT'])
 
-/** The variables that hold a secret, or name one (ARNs, JSON fields), and belong to the gateway. */
+/**
+ * The variables that hold a secret, or name one (ARNs, JSON fields), and belong to the gateway:
+ * CanopyCMS's GitHub and Clerk settings.
+ */
 const SECRET_ENV_PATTERN = /^(?:CANOPYCMS_GITHUB_TOKEN|CANOPYCMS_GITHUB_APP_|CLERK_SECRET_KEY)/
+
+/**
+ * The conventional credential variables: GitHub tokens (`GITHUB_BOT_TOKEN` is canopycms's default
+ * `githubTokenEnvVar`) and the AWS SDK's static credentials. The worker's git reads none (its
+ * environment is git-manager.ts's allowlist), but code that becomes the worker reads its
+ * environment. Exact names, so a look-alike such as `GITHUB_TOKEN_PATH` passes.
+ * `CLERK_JWT_KEY` is not here: it is a public verification key.
+ */
+const AMBIENT_CREDENTIAL_ENV_NAMES = new Set([
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GITHUB_BOT_TOKEN',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'AWS_SECURITY_TOKEN',
+])
 
 /** The worker unit's checks, in the plan's order. */
 export async function workerSelfChecks(
@@ -81,6 +108,7 @@ export async function gatewaySelfChecks(
     await efsUnreadable(environment),
     await corePatternNotPiped(environment),
     await coreLimitZero(environment),
+    ...(environment.listenFd === undefined ? [] : [await socketAccessIsOthers(environment)]),
   ]
 }
 
@@ -220,13 +248,18 @@ export async function homeIsEmpty(
 
 /**
  * No GitHub or Clerk secret, nor the ARN or JSON field naming one, is in the worker's environment:
- * they belong to the gateway's env file. Names only are reported.
+ * they belong to the gateway's env file. Nor is a conventional credential variable (a GitHub token,
+ * the AWS SDK's static credentials). Names only are reported.
  * @internal Exported for tests.
  */
 export function noSecretsInEnv(environment: SelfCheckEnvironment = {}): SelfCheckResult {
   const env = environment.env ?? process.env
   const found = Object.keys(env)
-    .filter((key) => env[key] !== undefined && SECRET_ENV_PATTERN.test(key))
+    .filter(
+      (key) =>
+        env[key] !== undefined &&
+        (SECRET_ENV_PATTERN.test(key) || AMBIENT_CREDENTIAL_ENV_NAMES.has(key)),
+    )
     .sort()
   const ok = found.length === 0
   return {
@@ -234,7 +267,7 @@ export function noSecretsInEnv(environment: SelfCheckEnvironment = {}): SelfChec
     ok,
     detail: ok
       ? 'none'
-      : `the worker unit's environment holds ${found.join(', ')}, which belong to the GitHub gateway only`,
+      : `the worker unit's environment holds ${found.join(', ')}, which the worker must not hold`,
   }
 }
 
@@ -322,6 +355,60 @@ export async function coreLimitZero(
       ? 'zero'
       : `the core file size limit is ${soft ?? '?'} (soft) and ${hard ?? '?'} (hard), not zero`,
   }
+}
+
+/**
+ * The socket systemd passed is one only another user (and root) can connect to: its node is not
+ * this process's uid, and grants no group or other access. Whoever owns it is the worker, so a
+ * gateway running as that user (a unit without `User=canopy-github`) would hand the worker its
+ * own environment and memory. A socket's own descriptor reports the creating process (systemd,
+ * root), not the node's owner, so the node is found by the socket's inode in
+ * `/proc/self/net/unix`.
+ * @internal Exported for tests.
+ */
+export async function socketAccessIsOthers(
+  environment: SelfCheckEnvironment = {},
+): Promise<SelfCheckResult> {
+  const fail = (detail: string): SelfCheckResult => ({ check: 'socket-access', ok: false, detail })
+  const uid = environment.uid ?? process.getuid?.()
+  if (uid === undefined) return fail('this platform has no process uid to compare')
+  const fd = environment.listenFd ?? 3
+  const proc = path.join(rootOf(environment), 'proc', 'self')
+  let socketPath: string | undefined
+  try {
+    const inode = (await fs.stat(path.join(proc, 'fd', String(fd)))).ino
+    const table = await fs.readFile(path.join(proc, 'net', 'unix'), 'utf8')
+    // Num RefCount Protocol Flags Type St Inode Path; the path is absent for an unbound socket.
+    for (const line of table.split('\n').slice(1)) {
+      const fields = line.trim().split(/\s+/)
+      if (fields[6] === String(inode) && fields.length > 7) socketPath = fields.slice(7).join(' ')
+    }
+  } catch (err) {
+    return fail(`cannot find the socket on descriptor ${fd}: ${getErrorMessage(err)}`)
+  }
+  if (socketPath === undefined || !path.isAbsolute(socketPath)) {
+    return fail(`the socket on descriptor ${fd} is not bound to a path`)
+  }
+  let node: Awaited<ReturnType<typeof fs.lstat>>
+  try {
+    node = await fs.lstat(socketPath)
+  } catch (err) {
+    return fail(`cannot read ${socketPath}: ${getErrorMessage(err)}`)
+  }
+  if (!node.isSocket()) return fail(`${socketPath} is not a socket`)
+  if (node.uid === uid) {
+    return fail(
+      `the GitHub gateway runs as uid ${uid}, which owns its socket ${socketPath} and so is the ` +
+        "worker's user: give the gateway unit User=canopy-github",
+    )
+  }
+  if ((node.mode & 0o077) !== 0) {
+    return fail(
+      `${socketPath} has mode ${(node.mode & 0o777).toString(8)}, so users besides its owner can ` +
+        'reach the gateway: give the socket unit SocketMode=0600',
+    )
+  }
+  return { check: 'socket-access', ok: true, detail: `${socketPath} is uid ${node.uid}'s alone` }
 }
 
 function rootOf(environment: SelfCheckEnvironment): string {

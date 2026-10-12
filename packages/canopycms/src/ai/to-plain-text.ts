@@ -290,7 +290,7 @@ function collapseWhitespace(text: string): string {
  * Output preserves paragraph breaks (blank lines) but is not further
  * chunked, weighted, or field-selected — composing that into a search
  * document is left to the caller, since that logic is where adopter search
- * indexes genuinely diverge (see docs/adopter-migration.md).
+ * indexes genuinely diverge (see CHANGELOG.md).
  */
 export function toPlainText(markdown: string): string {
   // Destructures `content` only: never touches `.data` (so the shared-instance

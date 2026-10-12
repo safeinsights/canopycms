@@ -42,6 +42,11 @@ import {
   VALID_DEPLOYMENT_NAMES,
   INVALID_DEPLOYMENT_NAMES,
 } from '../../../canopycms/src/operating-mode/deployment-name-fixtures'
+import {
+  shippedInstanceFile,
+  shippedInstanceFiles,
+  shippedWorkerUnits,
+} from '../../test-support/instance-files'
 import { newTestApp } from '../../test-support/test-synth'
 import { readFileSync } from 'node:fs'
 
@@ -1519,7 +1524,8 @@ describe('CanopyCmsService: EFS mount survives instance reboots', () => {
     const template = synth()
     const all = workerUserDataBlobs(template)
     expect(all).toContain('>> /etc/fstab')
-    expect(all).toContain('RequiresMountsFor=/mnt/efs')
+    for (const [, unit] of shippedWorkerUnits())
+      expect(unit).toContain('RequiresMountsFor=/mnt/efs')
   })
 })
 
@@ -1542,12 +1548,16 @@ describe('CanopyCmsService: worker boot cannot fail silently', () => {
   })
 
   it('runs the worker from the version-pinned node binary, not the alternatives symlink', () => {
-    const all = workerUserDataBlobs(synth())
     // AL2023 installs /usr/bin/node-22 and points /usr/bin/node at some
     // installed version via `alternatives`, whose selection AWS documents as
     // able to change at any time.
-    expect(all).toContain('ExecStart=/usr/bin/node-22 index.js')
-    expect(all).not.toContain('ExecStart=/usr/bin/node index.js')
+    for (const [, unit] of shippedWorkerUnits()) {
+      expect(unit).toContain('ExecStart=/usr/bin/node-22 index.js')
+      expect(unit).not.toContain('ExecStart=/usr/bin/node index.js')
+    }
+    expect(shippedInstanceFile('canopy-github.service')).toContain(
+      'ExecStart=/usr/bin/node-22 index.js gateway',
+    )
   })
 
   it('shuts the instance down when user-data fails, so the ASG replaces it', () => {
@@ -2142,7 +2152,7 @@ describe('CanopyCmsService: githubApp* props -> worker .env', () => {
 
   describe('which credential is decided before whether each is well formed', () => {
     it('an App alongside a leftover token JSON field names the real problem', () => {
-      // The exact state docs/adopter-migration.md step 2 leads to when an
+      // The exact state CHANGELOG.md step 2 leads to when an
       // adopter removes githubTokenSecretArn and overlooks its JSON field.
       // Reversed, assertSecretPropPair answers first with "Set
       // githubTokenSecretArn, or drop githubTokenSecretJsonField" -- pointing
@@ -2570,6 +2580,7 @@ describe('CanopyCmsService: protectedBranches', () => {
     ['a leading refs/', 'refs/heads/main', /refs\//],
     ['a leading heads/', 'heads/main', /heads\//],
     ['a glob only settings branches could match', 'canopycms-settings-*', /match nothing/],
+    ['an exact settings branch', 'canopycms-settings-prod', /settings reaching GitHub/],
     ['a leading tags/', 'tags/*', /tags\//],
     ['a leading remotes/ in another case', 'Remotes/x', /remotes\//],
     ['a percent sign', 'a%2fb', /%/],
@@ -2581,6 +2592,15 @@ describe('CanopyCmsService: protectedBranches', () => {
       /invalid protectedBranches entry/,
     )
     expect(() => synth(false, { protectedBranches: [entry] })).toThrow(why)
+  })
+
+  it('takes 1024 entries and refuses 1025', () => {
+    // Short names: 1024 longer ones would outgrow the worker's user data first.
+    const entries = (count: number) => Array.from({ length: count }, (_, i) => `r${i}`)
+    expect(() => synth(false, { protectedBranches: entries(1024) })).not.toThrow()
+    expect(() => synth(false, { protectedBranches: entries(1025) })).toThrow(
+      /protectedBranches has 1025 entries; the most it takes is 1024/,
+    )
   })
 
   it('names a refused glob as written, not with its wildcards replaced', () => {
@@ -2693,8 +2713,15 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
     const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
     const all = blobs + ltBlobs
-    expect(all).toContain('StandardOutput=append:/var/log/canopy-worker/worker.log')
-    expect(all).not.toContain('StandardOutput=journal')
+    for (const [, unit] of shippedWorkerUnits()) {
+      expect(unit).toContain('StandardOutput=append:/var/log/canopy-worker/worker.log')
+    }
+    expect(shippedInstanceFile('canopy-github.service')).toContain(
+      'StandardOutput=append:/var/log/canopy-github/gateway.log',
+    )
+    expect([...shippedInstanceFiles().values()].flat().join('\n')).not.toContain(
+      'StandardOutput=journal',
+    )
     expect(all).toContain('/etc/logrotate.d/canopy-worker')
   })
 
@@ -2724,13 +2751,11 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
   })
 
   it('keeps the worker log root-owned: no LogsDirectory=, no chown of it to the worker user', () => {
-    // systemd opens append: targets as root, following symlinks, before it
-    // drops to User=; a worker owning the directory could swap worker.log for
-    // a symlink and have its output appended to any file on the host.
+    // See LOG_RULE in worker-units.ts.
     const all = workerUserDataBlobs(synth())
-    // As a directive at the start of a unit line (the blob is JSON, so `\n` is
-    // literal); the unit's comment names it.
-    expect(all).not.toMatch(/\\nLogsDirectory=/)
+    for (const unit of shippedInstanceFiles().values()) {
+      expect(unit.filter((line) => line.startsWith('LogsDirectory'))).toEqual([])
+    }
     // User-data has no legitimate chown or chmod of the log path at all.
     expect(all).not.toMatch(/\\n\s*ch(own|mod)[^\\]*\/var\/log\/canopy-worker/)
     expect(all).toContain('install -d -o root -g root -m 0755 /var/log/canopy-worker')
@@ -2749,11 +2774,8 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     ]
     expect(blobs.length).toBeGreaterThan(0)
     for (const blob of blobs) {
-      // systemd opens StandardOutput=append: targets before the unit runs:
-      // if the directory is created after the first `systemctl start
-      // canopy-worker`, every fresh instance fails exec with 209/STDOUT and
-      // Restart=always crash-loops forever -- the worker silently down while
-      // the ASG sees a healthy box.
+      // See LOG_RULE in worker-units.ts: without the directory every start
+      // fails with 209/STDOUT.
       const dirIdx = blob.indexOf('install -d -o root -g root -m 0755 /var/log/canopy-worker')
       const fileIdx = blob.indexOf('/dev/null /var/log/canopy-worker/worker.log')
       const startIdx = blob.indexOf('systemctl start canopy-worker')

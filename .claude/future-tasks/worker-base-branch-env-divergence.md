@@ -26,7 +26,7 @@ divergences are now closed** (2026-09-08, adopter request #39):
   crash-loop consequence of a wrong `baseBranch` (`verifyBaseBranchExists`
   throwing forever under systemd's `Restart=always`).
 
-See `docs/adopter-migration.md`'s `## Unreleased` entry (#39) for the adopter-facing
+See `CHANGELOG.md`'s `## Unreleased` entry (#39) for the adopter-facing
 description, and `packages/canopycms-cdk/src/constructs/cms-service.ts`'s
 `assertValidGitRefComponent`/`baseBranch`/`settingsBranch` doc comments for the
 mechanism.

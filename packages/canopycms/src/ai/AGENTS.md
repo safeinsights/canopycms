@@ -12,7 +12,9 @@ AI-ready content generation (markdown converter, engine, route handler); transfo
 `to-plain-text.ts`'s `toPlainText` (exported from `canopycms/ai`) is a _different_ transform from `strip-mdx.ts`'s `stripMdxImports` (which it uses internally as one pipeline step) — it strips ALL markup down to prose for a search index, rather than preserving JSX for AI/RAG consumption, and specifically keeps a paired custom component's inner text while dropping only its tags. `toPlainText` also strips HTML/MDX comments and their contents; that strip is an `indexOf` scan, NOT a lazy `<!--[\s\S]*?-->`, which would reintroduce the same polynomial-ReDoS shape `TAG_RE` and the fence scanner are hand-rolled to avoid, and an unterminated `<!--` is deliberately left as literal text rather than swallowing the rest of the document. `json-to-markdown.ts` emits Prettier-stable markdown (`_…_` emphasis, no bare `key: ` with a trailing space), so a regenerated bundle stays diff-free under an adopter's own formatting pass
 
 `references.ts` resolves, masks and titles reference fields; `generateAIContent`'s doc says why it
-reads every entry before rendering any.
+reads every entry before rendering any. AI content is an advertising surface, so `generate.ts` drops `noindex`
+entries through `static/seo.ts`'s `isNoindexEntry`, and resolves body `entry:` links for output
+only against the settled export set (`entry-link-resolver.ts`'s `isLinkable`).
 
 `generateAIContent` is shared by the runtime route handler and the static build, so it takes its
 manifest stamp (`generatedAt`, `buildId`) as ARGUMENTS and reads no environment itself: **the

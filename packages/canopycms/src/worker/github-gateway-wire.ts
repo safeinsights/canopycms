@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { GatewayRefusalError } from './branch-policy'
+import { GatewayRefusalError, MAX_PROTECTED_BRANCHES } from './branch-policy'
 import { GitHubPushError, MAX_FETCH_HAVE } from './github-gateway'
 import { GitHubTransientError, RefusedPushError } from './github-mirror'
 import { redactEgress } from './gateway-egress'
@@ -90,6 +90,9 @@ export const requests = {
     .strict(),
   convertPullRequestToDraft: z.object({ number: prNumber }).strict(),
   deleteBranch: z.object({ branch: name }).strict(),
+  authSnapshot: z.object({}).strict(),
+  termination: z.object({}).strict(),
+  completeLifecycle: z.object({}).strict(),
 } as const
 
 const empty = z.object({}).strict()
@@ -104,7 +107,10 @@ export const answers = {
       preflight: z.enum(['not-an-app', 'verified', 'unverified', 'pending']),
       clerkConfigured: z.boolean(),
       protectedBranches: z
-        .object({ configured: z.array(name).max(1024), githubDefault: name.nullable() })
+        .object({
+          configured: z.array(name).max(MAX_PROTECTED_BRANCHES + 1),
+          githubDefault: name.nullable(),
+        })
         .strict(),
     })
     .strict(),
@@ -123,6 +129,44 @@ export const answers = {
   createOrUpdatePullRequest: pullRequestRef.extend({ created: z.boolean() }).strict(),
   convertPullRequestToDraft: empty,
   deleteBranch: empty,
+  authSnapshot: z
+    .object({
+      users: z
+        .array(
+          z
+            .object({
+              id: name,
+              name,
+              email: name,
+              avatarUrl: z.string().max(65536).optional(),
+            })
+            .strict(),
+        )
+        .max(1_000_000),
+      groups: z
+        .array(
+          z
+            .object({
+              id: name,
+              name,
+              description: name.optional(),
+              memberCount: z.number().int().nonnegative().optional(),
+            })
+            .strict(),
+        )
+        .max(1_000_000),
+      memberships: z.record(z.array(name).max(100_000)),
+    })
+    .strict(),
+  termination: z
+    .object({
+      notice: z
+        .object({ kind: z.enum(['auto-scaling', 'spot']), reason: z.string().max(4096) })
+        .strict()
+        .nullable(),
+    })
+    .strict(),
+  completeLifecycle: empty,
 } as const
 
 export type JsonOperation = keyof typeof requests
@@ -139,6 +183,9 @@ export const JSON_ROUTES: Readonly<Record<JsonOperation, string>> = {
   createOrUpdatePullRequest: `${WIRE_PREFIX}/pull-request/create-or-update`,
   convertPullRequestToDraft: `${WIRE_PREFIX}/pull-request/convert-to-draft`,
   deleteBranch: `${WIRE_PREFIX}/branch/delete`,
+  authSnapshot: `${WIRE_PREFIX}/auth-snapshot`,
+  termination: `${WIRE_PREFIX}/termination`,
+  completeLifecycle: `${WIRE_PREFIX}/complete-lifecycle`,
 }
 
 export const FETCH_ROUTE = `${WIRE_PREFIX}/fetch`

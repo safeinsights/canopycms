@@ -3,16 +3,26 @@ name: Publish to npm
 on:
   push:
     branches: [main]
-  # Manual runs publish a PRERELEASE from the selected branch, never a stable
-  # release. Pick a non-main branch in the Actions UI. This trigger lives here
-  # rather than on publish-prerelease.yml because npm allows one trusted
+    # A stable tag, pushed by `release-commit`, runs `publish` at that tag,
+    # so npm's provenance names the release commit itself.
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  # A manual run on a branch publishes a PRERELEASE from it; pick a non-main
+  # branch in the Actions UI. A manual run on a stable tag (`vX.Y.Z`) re-runs
+  # `publish` for that release, completing one that stopped part-way. This
+  # trigger lives here rather than on publish-prerelease.yml because npm allows one trusted
   # publisher per package, bound to a workflow filename, and validates the
   # *calling* workflow for `workflow_call` — so every publish must enter
   # through this file. See publish-prerelease.yml for the full explanation.
   workflow_dispatch:
+    inputs:
+      allow_stale_base:
+        description: Publish even though this branch lacks the latest stable release (an older line)
+        type: boolean
+        default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  # A stable tag's push run and a manual run on it share a group.
+  group: ${{ github.workflow }}-${{ github.ref }}${{ !startsWith(github.ref, 'refs/tags/') && format('-{0}', github.event_name) || '' }}
   # NEVER cancel a publish, on either channel. Queue instead.
   #
   # A run killed part-way through the five publishes moves the dist-tag for
@@ -20,23 +30,28 @@ concurrency:
   # peer dependencies between these packages are EXACT pins, so a mismatch is
   # an install-time ERESOLVE, not a subtle incompatibility.
   #
-  # On the stable channel it is worse than a mismatched set. The version-bump
-  # commit lands only AFTER all five publishes, so a cancellation leaves npm
-  # holding a version main does not know about; every later run then re-derives
-  # that same version and dies on "cannot publish over previously published
-  # version", wedging the release train until a human intervenes. (The bump is
-  # now registry-floored as well, so that specific wedge self-heals -- but not
-  # cancelling is what stops it happening in the first place.)
+  # Each stable tag publishes in its own group, so two releases can publish at
+  # once; `publish` decides each package's dist-tag just before publishing
+  # it, and fails the run if `latest` ends up split across the five.
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Build & Publish
+  # A stable release is two jobs, so no job holds both a token that writes to
+  # the repository and npm's id-token: `release-commit`, on a push to main,
+  # commits and tags the release; `publish`, on that tag's push, publishes it.
+  # npm never holds a version main lacks: either nothing was pushed and
+  # the next push to main starts over, or the tag exists and `publish` can be
+  # re-run against it, by "Re-run failed jobs" or a manual run on the tag.
+  release-commit:
+    name: Release commit
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      # `pnpm install`'s `prepare: husky` installs no hooks here.
+      HUSKY: '0'
     permissions:
-      contents: write
-      id-token: write
+      # The release-bot app token below does the writing.
+      contents: read
       # List this commit's CI workflow runs, for the gate below. That is the
       # `actions` scope, not `checks` -- workflow runs and check runs are
       # different APIs, and `checks: read` would not authorize it.
@@ -109,21 +124,14 @@ jobs:
             sleep 15
           done
 
-      # Mint a short-lived token for the dedicated release app. Its bypass of the
-      # "changes must go through a PR" rule is gated by RELEASE_BOT_PRIVATE_KEY,
-      # which only exists in this repo — unlike the generic GITHUB_TOKEN, which
-      # cannot be granted bypass at all. The client ID is a public identifier,
-      # hence a variable rather than a secret; v3.1.0 deprecated `app-id` for it.
-      - name: Generate release-bot app token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-
+      # Full history and tags: the release plan counts changesets since the
+      # latest stable tag, and the changelog labels entries from int tags. No
+      # credentials persist: dependency scripts run below, and the release-bot
+      # token is minted only for the push.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
@@ -140,29 +148,155 @@ jobs:
         run: pnpm run generate:client
         working-directory: packages/canopycms
 
-      # Floored on the REGISTRY, not just the committed version. The bump
-      # commit lands only after all five publishes, so an interrupted run
-      # leaves npm ahead of main -- after which bumping from the committed
-      # value re-derives an already-published version and every subsequent run
-      # dies on "cannot publish over previously published version", forever.
-      # Taking max(committed, registry) makes that state self-healing.
-      #
-      # `|| true` plus the empty check: a brand-new package that has never been
-      # published has no registry version, which is not an error.
-      - name: Bump version
-        id: bump
+      # Promotes CHANGELOG.md's Unreleased entries under the new version,
+      # consumes the changesets and sets every version field; see
+      # scripts/release-stable.mjs. Nothing release-worthy pending (no
+      # changesets, or only empty ones) publishes nothing.
+      - name: Prepare the release
+        id: prepare
         run: |
           set -euo pipefail
-          PUBLISHED=$(npm view canopycms version 2>/dev/null || true)
-          if [ -n "$PUBLISHED" ]; then
-            echo "Registry has canopycms@$PUBLISHED"
-            NEW_VERSION=$(node scripts/bump-version.mjs --min "$PUBLISHED")
+          result=$(node scripts/release-stable.mjs --prepare)
+          echo "$result"
+          release=$(node -pe 'JSON.parse(process.argv[1]).release === true' "$result")
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          if [ "$release" = "true" ]; then
+            version=$(node -pe 'JSON.parse(process.argv[1]).version' "$result")
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a release version: '$version'"; exit 1; }
+            echo "version=$version" >> "$GITHUB_OUTPUT"
           else
-            echo "No published canopycms version found; bumping from the repo"
-            NEW_VERSION=$(node scripts/bump-version.mjs)
+            reason=$(node -pe 'JSON.parse(process.argv[1]).reason' "$result")
+            echo "Nothing to release: $reason" >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Bumped to $NEW_VERSION"
+
+      # Mint a short-lived token for the dedicated release app. Its bypass of the
+      # "changes must go through a PR" rule is gated by RELEASE_BOT_PRIVATE_KEY,
+      # which only exists in this repo — unlike the generic GITHUB_TOKEN, which
+      # cannot be granted bypass at all. The client ID is a public identifier,
+      # hence a variable rather than a secret; v3.1.0 deprecated `app-id` for it.
+      - name: Generate release-bot app token
+        id: app-token
+        if: steps.prepare.outputs.release == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      # The prepared tree is the release commit. Anything else changed means a
+      # step did more than it should, so the job stops before pushing.
+      #
+      # `--atomic` lands the commit and its tag together or not at all. A push
+      # refused because main moved publishes nothing; the next push to main
+      # releases from there, with the changesets still pending. The commit
+      # carries no [skip ci]: its own run on main waits for CI on it, finds nothing pending and
+      # stops, and the tag's push starts `publish`.
+      - name: Commit and tag the release
+        if: steps.prepare.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A -- CHANGELOG.md .changeset package.json 'packages/*/package.json' \
+            packages/canopycms/src/version.ts '*.md'
+          # Staged is the release; anything left unstaged or untracked is not.
+          if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            git status --short
+            echo "::error::the release changed files outside the version and changelog set"
+            exit 1
+          fi
+          # Bounded by content too, since dependency code ran in this tree: the
+          # manifests change only their versions, and docs other than the
+          # changelog only have `.changeset/` links rewritten to CHANGELOG.md.
+          if git diff --cached -U0 -- package.json 'packages/*/package.json' |
+            grep -E '^[+-][^+-]' | grep -vqE '^[+-]\s*"version": '; then
+            echo "::error::the release changes a manifest beyond its version"
+            exit 1
+          fi
+          docs=$(git diff --cached -U0 -- '*.md' ':!CHANGELOG.md' ':!.changeset/' | grep -E '^[+-][^+-]' || true)
+          if grep -E '^\+' <<<"$docs" | grep -vq 'CHANGELOG\.md#' ||
+            grep -E '^-' <<<"$docs" | grep -vq '\.changeset/'; then
+            echo "::error::the release changes a doc beyond rewriting .changeset/ links"
+            exit 1
+          fi
+          # No hooks: dependency scripts may have written some, and the release
+          # lints already ran in --prepare.
+          git -c core.hooksPath=/dev/null commit --no-verify -m "chore: release v$VERSION"
+          git tag "v$VERSION"
+
+      # Dependency lifecycle scripts ran in this workspace and could have
+      # written its git config or hooks, so the push happens from a fresh
+      # repository, ignoring global and system config, with hooks off, and the
+      # release-bot token only in this step. The token travels in a header,
+      # never in a URL or on disk, and its base64 credential is masked too.
+      - name: Push the release
+        if: steps.prepare.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+          TOKEN: ${{ steps.app-token.outputs.token }}
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: '1'
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          pusher=$(mktemp -d)
+          git init -q "$pusher"
+          git -C "$pusher" -c core.hooksPath=/dev/null fetch -q "$GITHUB_WORKSPACE" \
+            "+$sha:refs/heads/release" "+refs/tags/v$VERSION:refs/tags/v$VERSION"
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git -C "$pusher" -c core.hooksPath=/dev/null -c http.extraheader="AUTHORIZATION: basic $auth" \
+            push --no-verify --atomic "https://github.com/$GITHUB_REPOSITORY" release:main "refs/tags/v$VERSION"
+          echo "Released v$VERSION at $sha" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Build & Publish
+    # A stable tag's push, or a manual run on one. The tag is the release
+    # commit, so GITHUB_SHA, which npm's provenance records, is that commit.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SHA: ${{ github.sha }}
+
+    steps:
+      # With history and tags for the changelog's labels.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Only a release commit on main publishes: a stable tag placed anywhere
+      # else, or an int tag dispatched by hand, stops here.
+      - name: Check the tag is a release on main
+        id: release
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$tag is not a stable release tag"; exit 1; }
+          version="${tag#v}"
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$tag is not on main"; exit 1; }
+          manifest=$(node -p "require('./packages/canopycms/package.json').version")
+          [ "$manifest" = "$version" ] || { echo "::error::$tag holds canopycms $manifest"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate API clients
+        run: pnpm run generate:client
+        working-directory: packages/canopycms
 
       - name: Build publishable packages
         run: |
@@ -173,6 +307,13 @@ jobs:
           pnpm --filter canopycms-cdk run build
           pnpm --filter canopycms-cdk run build:worker
           pnpm --filter canopycms-cdk run build:lambda
+
+      - name: Assemble the shipped changelog
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: >-
+          node scripts/migration-notes.mjs --ship --version "$VERSION" --sha "$SHA"
+          --out packages/canopycms/CHANGELOG.md --summary "$GITHUB_STEP_SUMMARY"
 
       # pnpm pack resolves workspace: protocol refs to real versions.
       #
@@ -191,12 +332,10 @@ jobs:
       #      resolves and runs -- no separate "install -g npm@11" step that
       #      re-resolves a floating major after the fact.
       #
-      # This also sidesteps Node's bundled npm entirely, which as of this
-      # writing has a broken module tree on the pinned Node version (missing
-      # promise-retry -- a known npm self-install/packaging defect, see
-      # npm/cli#9526) that would break a plain `npm publish`. It is not a
-      # provenance-support version requirement -- provenance has worked since
-      # npm 9.5, well below what Node 22 bundles.
+      # This also sidesteps Node's bundled npm, which on the pinned Node 22 is
+      # 10.x, below the OIDC floor described next, so a plain `npm publish`
+      # cannot authenticate; plain `npm view`, which needs no auth, is fine.
+      # Provenance itself has worked since npm 9.5.
       #
       # There IS a version floor, and it is a different one: OIDC trusted
       # publishing requires npm >= 11.5.0. This is worth spelling out because
@@ -210,55 +349,161 @@ jobs:
       # 11.19.0 is what `npm@11` resolves to today, i.e. exactly what those
       # working releases used -- now pinned rather than floated. When bumping,
       # stay >= 11.5.0.
-      - name: Publish canopycms
+      #
+      # Packed first, all five, so a build or pack failure stops the release
+      # before any package is on npm; only a registry-side failure can land
+      # mid-sequence, and "Report a partial release" names what got through.
+      #
+      # Each publish is idempotent, so "Re-run failed jobs" resumes a release
+      # that stopped part-way: a version already on npm built from this release
+      # commit (its provenance says so) is skipped, and one built from any other
+      # commit fails the job rather than being published over.
+      - name: Pack the five packages
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          pnpm pack
-          pnpm dlx npm@11.19.0 publish canopycms-*.tgz --access public --provenance
-        working-directory: packages/canopycms
+          set -euo pipefail
+          for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
+            (cd "packages/$pkg" && pnpm pack)
+          done
+          # Peer dependencies between the five are exact pins resolved at pack
+          # time, so every tarball must carry this version for itself and them.
+          for tgz in packages/*/canopycms*.tgz; do
+            node -e 'const m = JSON.parse(require("fs").readFileSync(0, "utf8")); const v = process.argv[1]
+              const pins = Object.entries(m.peerDependencies ?? {}).filter(([n]) => n.startsWith("canopycms"))
+              if (m.version !== v || pins.some(([, r]) => r !== v)) { console.error(m.name, m.version, pins); process.exit(1) }' \
+              "$VERSION" < <(tar -xzOf "$tgz" package/package.json)
+          done
+          # `files` lists CHANGELOG.md, and pack omits a listed file that is
+          # missing without a word.
+          contents=$(tar -tzf packages/canopycms/canopycms-*.tgz)
+          grep -qx 'package/CHANGELOG.md' <<<"$contents" || { echo "::error::the tarball has no CHANGELOG.md"; exit 1; }
 
-      - name: Publish canopycms-next
+      - name: Publish the five packages
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          pnpm pack
-          pnpm dlx npm@11.19.0 publish canopycms-next-*.tgz --access public --provenance
-        working-directory: packages/canopycms-next
+          set -euo pipefail
+          # A release published after a newer one (a late re-run, a manual run,
+          # or two releases publishing at once) must not move `latest` back, so
+          # it goes out under `superseded`. Decided per package, just before its
+          # publish, against both npm and the stable tags on main.
+          newer() {
+            node -e 'const [a, b] = process.argv.slice(1).map((v) => v.split(".").map(Number))
+              process.exit((a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) > 0 ? 0 : 1)' "$1" "$2"
+          }
+          for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
+            git fetch -q --tags origin
+            attested=$(node scripts/npm-attested-commit.mjs "$pkg" "$VERSION")
+            if [ "$attested" = "$SHA" ]; then
+              echo "$pkg@$VERSION is already published from $SHA"
+              continue
+            fi
+            if [ -n "$attested" ]; then
+              echo "::error::$pkg@$VERSION is on npm from $attested, not this release ($SHA)"
+              exit 1
+            fi
+            tag=latest
+            latest=$(npm view "$pkg" dist-tags.latest)
+            [[ "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$pkg's latest is '$latest', not a release"; exit 1; }
+            newest=$(git tag --list 'v*' --merged origin/main --sort=-v:refname | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sed -n 1p || true)
+            if newer "$latest" "$VERSION" || { [ -n "$newest" ] && newer "${newest#v}" "$VERSION"; }; then
+              tag=superseded
+              echo "::warning::$pkg: a release newer than $VERSION exists; publishing under dist-tag superseded"
+            fi
+            (cd "packages/$pkg" && pnpm dlx npm@11.19.0 publish "$pkg"-*.tgz --access public --provenance --tag "$tag")
+          done
+          # Two releases publishing within seconds can still interleave; a
+          # `latest` that still disagrees across the five after the registry has
+          # had a few minutes to catch up fails the run, so it shows.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            latests=$(for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
+              npm view "$pkg" dist-tags.latest
+            done | sort -u)
+            [ "$(grep -c . <<<"$latests")" -eq 1 ] && break
+            [ "$attempt" -lt 10 ] && sleep 30
+          done
+          if [ "$(grep -c . <<<"$latests")" -ne 1 ]; then
+            echo "::error::npm latest differs across the five packages: $(tr '\n' ' ' <<<"$latests")"
+            exit 1
+          fi
 
-      - name: Publish canopycms-auth-clerk
+      # Until a re-run completes the set, an install mixing these versions fails
+      # on the packages' exact peer pins, so the summary says which are out.
+      - name: Report a partial release
+        if: failure() && steps.release.outputs.version != ''
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          pnpm pack
-          pnpm dlx npm@11.19.0 publish canopycms-auth-clerk-*.tgz --access public --provenance
-        working-directory: packages/canopycms-auth-clerk
+          {
+            echo "### Release v$VERSION stopped part-way"
+            echo
+            for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
+              attested=$(node scripts/npm-attested-commit.mjs "$pkg" "$VERSION" 2>&1 || true)
+              if [ "$attested" = "$SHA" ]; then echo "- $pkg: published"; else echo "- $pkg: not published (${attested:-absent})"; fi
+            done
+            echo
+            echo 'Use "Re-run failed jobs" on this run: it publishes only the missing packages.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish canopycms-auth-dev
-        run: |
-          pnpm pack
-          pnpm dlx npm@11.19.0 publish canopycms-auth-dev-*.tgz --access public --provenance
-        working-directory: packages/canopycms-auth-dev
-
-      - name: Publish canopycms-cdk
-        run: |
-          pnpm pack
-          pnpm dlx npm@11.19.0 publish canopycms-cdk-*.tgz --access public --provenance
-        working-directory: packages/canopycms-cdk
-
-      - name: Commit version bump
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A '*/package.json' package.json packages/canopycms/src/version.ts
-          # [skip ci] is required: app-token pushes DO re-trigger workflows
-          # (GITHUB_TOKEN pushes don't), so without it this push would re-run
-          # publish.yml and loop forever bumping the version.
-          git commit -m "chore: release v${{ steps.bump.outputs.version }} [skip ci]"
-          git tag "v${{ steps.bump.outputs.version }}"
-          git push
-          git push --tags
-
-  # Manual dispatch routes here instead: publish the selected branch under the
+  # A manual run on a branch routes here instead: publish the selected branch under the
   # `int` dist-tag, without bumping or committing any version field.
   prerelease:
     name: Prerelease
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
     uses: ./.github/workflows/publish-prerelease.yml
+    with:
+      allow_stale_base: ${{ inputs.allow_stale_base }}
     permissions:
       contents: read
       id-token: write
+
+  # Tags each int at the commit it was built from (`v0.0.68-int.114`), which is
+  # how the shipped changelog labels entries and how adopters browse a build's
+  # docs. The only writer on the prerelease path, so it checks out nothing and
+  # runs no repository code: an API lookup, then a fetch of that commit's history and
+  # a push of the tag, with validated inputs. The push goes through git because
+  # the REST API refuses to create refs to many existing commits. The
+  # `release-tags-immutable` ruleset stops this token moving or deleting any
+  # `v*` tag, and `stable-tags-release-bot-only` stops it creating a stable one.
+  tag-prerelease:
+    name: Tag prerelease
+    needs: prerelease
+    # Also after a later package failed: once canopycms is on npm, the next
+    # build's changelog counts from this version, so it needs its tag.
+    if: always() && needs.prerelease.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Tag the published commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prerelease.outputs.version }}
+          SHA: ${{ needs.prerelease.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-int\.[0-9]+$ ]] || { echo "::error::not an int version: '$VERSION'"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::not a commit: '$SHA'"; exit 1; }
+          # A re-run finds its own tag; anything else at that name is an error.
+          # matching-refs answers 200 with no match when the tag is absent, so a
+          # failed request fails the step instead of reading as "absent".
+          existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v$VERSION" \
+            --jq "[.[] | select(.ref == \"refs/tags/v$VERSION\") | .object.sha][0] // empty")
+          if [ -n "$existing" ]; then
+            [ "$existing" = "$SHA" ] && { echo "v$VERSION already tags $SHA"; exit 0; }
+            echo "::error::v$VERSION already tags $existing, not $SHA"
+            exit 1
+          fi
+          # The token travels in a header, never in a URL, and its base64
+          # credential is masked too.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git init -q tagger
+          cd tagger
+          remote="https://github.com/$GITHUB_REPOSITORY"
+          # Full history, not --depth=1: pushing from a shallow clone is refused
+          # when no branch on the server still reaches the commit.
+          git -c http.extraheader="AUTHORIZATION: basic $auth" fetch -q "$remote" "$SHA"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push -q "$remote" "$SHA:refs/tags/v$VERSION"
+          echo "Tagged $SHA as v$VERSION"

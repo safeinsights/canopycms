@@ -3,15 +3,19 @@
  * logs goes through here, `github-service.ts`'s and Octokit's lines for it included (they are
  * given {@link gatewayLogWarn} and {@link gatewayLogError}), except `openBundle`'s errors, which
  * hold no secret. Each is scrubbed of every live token the gateway has resolved, in every form
- * git's extraheader gives it, as exact strings. Errors and log lines are then scrubbed by
+ * git's extraheader gives it, and of the auth provider's key and the App's private key, as exact
+ * strings. Errors and log lines are then scrubbed by
  * `redactCredentials`'s patterns too; answers are not, because they are data the worker acts on,
  * and a pattern would rewrite a GitHub branch named `chore/github_pat_rotation`. The
  * exact scrub comes first and cannot be left to the patterns: one can stop part-way through a
  * form beside another (at the `%` of a URL-encoded one) and leave its tail unmatchable. Each log
  * line also has its non-printable characters escaped, since request fields (branch names, pull
- * request text) and git's output (commit subjects) are attacker-chosen.
+ * request text) and git's output (commit subjects) are attacker-chosen. The gateway process's own
+ * modules (secret reads, the termination watch) and `@octokit/auth-app` log through `workerLog`
+ * or the console, unscrubbed: none of their lines carries a secret's value.
  */
 import { getErrorMessage, redactCredentials } from '../utils/error'
+import { escapeForLog } from '../utils/escape-text'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 
 /** How many tokens are scrubbed: the current one and those it replaced. */
@@ -42,12 +46,68 @@ export function registerLiveSecret(token: string): void {
   }
 }
 
-/** `text` without any live token in any registered form. */
+/**
+ * Scrub `value` from everything that leaves the gateway from now on, raw and URL-encoded: a secret
+ * that is not a GitHub token (the auth provider's key). It shares {@link registerLiveSecret}'s
+ * store and cap, so a rotated key's predecessor stays scrubbed until the cap drops it, as a
+ * token's does.
+ */
+export function registerSecretText(value: string): void {
+  if (value.length < MIN_SECRET_LENGTH) return
+  liveSecrets.delete(value)
+  liveSecrets.set(
+    value,
+    [...new Set([value, encodeURIComponent(value)])].sort((a, b) => b.length - a.length),
+  )
+  for (const oldest of liveSecrets.keys()) {
+    if (liveSecrets.size <= MAX_LIVE_SECRETS) break
+    liveSecrets.delete(oldest)
+  }
+}
+
+/** How many private-key lines are scrubbed; the oldest are dropped past it. */
+const MAX_PRIVATE_KEY_LINES = 1024
+
+/**
+ * The lines of every registered private key, in their own set: a PEM is about 27 lines and the
+ * token store holds {@link MAX_LIVE_SECRETS}, so sharing it would evict live tokens.
+ */
+const privateKeyLines = new Set<string>()
+
+/** `privateKeyLines`, longest first; rebuilt when a key is registered. */
+let privateKeyLinesLongestFirst: string[] = []
+
+/**
+ * Scrub each line of a PEM key's body from everything that leaves the gateway from now on, so the
+ * scrub survives JSON or log escaping, which split a PEM at its newlines. Lines split on real
+ * line breaks and on the literal `\n`, `\r\n` or `\r` (a key pasted into a single-line config
+ * field); the BEGIN/END lines and lines shorter than the secret floor are skipped. A key given as
+ * one base64 line (a base64-wrapped PEM) is one entry, and the PEM it wraps is registered too.
+ */
+export function registerPrivateKey(pem: string): void {
+  for (const raw of pem.split(/\r?\n|\r|(?:\\r)?\\n|\\r/)) {
+    const line = raw.trim()
+    if (line.length < MIN_SECRET_LENGTH || line.startsWith('-----')) continue
+    privateKeyLines.delete(line)
+    privateKeyLines.add(line)
+    // A base64-wrapped PEM: the key inside it is the one a decoding consumer holds.
+    const decoded = Buffer.from(line, 'base64').toString('utf8')
+    if (decoded.includes('-----BEGIN')) registerPrivateKey(decoded)
+  }
+  for (const oldest of privateKeyLines) {
+    if (privateKeyLines.size <= MAX_PRIVATE_KEY_LINES) break
+    privateKeyLines.delete(oldest)
+  }
+  privateKeyLinesLongestFirst = [...privateKeyLines].sort((a, b) => b.length - a.length)
+}
+
+/** `text` without any live token or registered secret in any registered form. */
 function redactLiveSecrets(text: string): string {
   let result = text
   for (const forms of liveSecrets.values()) {
     for (const form of forms) result = result.split(form).join('***')
   }
+  for (const line of privateKeyLinesLongestFirst) result = result.split(line).join('***')
   return result
 }
 
@@ -135,27 +195,6 @@ export function redactError(err: unknown, depth = 0): unknown {
     replacement.name = err.name
     return replacement
   }
-}
-
-/**
- * `text` on one line, every character outside printable ASCII escaped (`\n`, `\t`, `\r`, `\xHH`,
- * `\u{H}`), and `\` doubled so an escape cannot be forged. Bidi controls and zero-width characters
- * are outside printable ASCII too, so a branch name cannot reorder or hide part of a line.
- * @internal Exported for tests.
- */
-export function escapeForLog(text: string): string {
-  let out = ''
-  for (const char of text) {
-    const code = char.codePointAt(0) ?? 0
-    if (char === '\\') out += '\\\\'
-    else if (code >= 0x20 && code <= 0x7e) out += char
-    else if (char === '\n') out += '\\n'
-    else if (char === '\t') out += '\\t'
-    else if (char === '\r') out += '\\r'
-    else if (code <= 0xff) out += `\\x${code.toString(16).padStart(2, '0')}`
-    else out += `\\u{${code.toString(16)}}`
-  }
-  return out
 }
 
 function logLine(args: unknown[]): string {

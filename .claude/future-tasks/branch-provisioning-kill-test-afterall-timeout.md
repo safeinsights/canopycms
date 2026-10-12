@@ -31,4 +31,4 @@ default hook timeout.
 
 - Give that `afterAll` an explicit timeout, sized to the tree it removes.
 - Or remove each test's own directory in an `afterEach`, so no single hook deletes everything.
-- Or leave removal to the run-owned temp root (`vitest.tmpdir.ts` deletes it at teardown).
+- Or leave removal to the run-owned temp root (the repo root's `vitest.tmpdir.ts` deletes it at teardown).

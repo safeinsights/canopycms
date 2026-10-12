@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { Readable } from 'node:stream'
 import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
 
+import type { AuthCacheSnapshot } from '../auth/cache'
 import {
   createCanopyOctokit,
   createOrUpdatePullRequest,
@@ -32,6 +33,7 @@ import {
   redactValue,
   registerLiveSecret,
 } from './gateway-egress'
+import { GatewayInstance, untilAborted, type GatewayInstanceOptions } from './gateway-instance'
 
 /** What a {@link GitHubGateway.fetch} brought back. */
 export interface GitHubFetchResult {
@@ -69,6 +71,12 @@ interface GitHubFetchJob {
   /** Set when it succeeded. */
   snapshot: FetchSnapshot | null
 }
+
+/**
+ * How long a fetched auth snapshot is answered again. Well under the default 15-minute auth-cache
+ * refresh interval, and a worker asking in a loop starts no fetch within it of a success.
+ */
+const AUTH_SNAPSHOT_REUSE_MS = 60_000
 
 /**
  * The longest an operation waits for a credential re-read in flight before it goes on with the
@@ -157,8 +165,10 @@ export type GitHubCreateOrUpdatePullRequest = Omit<
 export interface GitHubGateway {
   /**
    * At startup, before anything uses the credential: prove a GitHub App credential works, refuse
-   * a state directory the Lambda could write, and create the mirror. Runs once; every later call
-   * answers the first one's outcome, a failure being the gateway's fatal error.
+   * a state directory the Lambda could write or this process cannot own outright, and try to
+   * create the mirror. Runs once; every later call answers the first one's outcome. Fatal: an App
+   * credential that fails for a lasting reason, and either state-directory refusal. Not fatal:
+   * creating the mirror, which the next operation retries.
    */
   prepare(): Promise<void>
   /**
@@ -218,6 +228,31 @@ export interface GitHubGateway {
   ): Promise<{ number: number; url: string; created: boolean }>
   convertPullRequestToDraft(number: number, signal?: AbortSignal): Promise<void>
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void>
+  /**
+   * The auth provider's users, groups and memberships, which the worker writes to the auth cache:
+   * the gateway holds the provider's key. Throws when none is configured.
+   */
+  authSnapshot(signal?: AbortSignal): Promise<AuthCacheSnapshot>
+  /**
+   * A notice once this instance is being terminated; null when none arrived within one poll's
+   * wait. Once a notice has arrived every call answers it again.
+   */
+  termination(signal?: AbortSignal): Promise<GatewayTerminationNotice | null>
+  /**
+   * Tell the instance's Auto Scaling group the drain is done, so termination proceeds. Refused
+   * (a plain Error) until THIS gateway's own termination watch has seen an Auto Scaling notice,
+   * so a hostile worker cannot shorten the instance's life; the provider runs at most once, and
+   * a later call answers the first one's outcome. Takes no identifier: the gateway's own config
+   * and the instance's metadata say which lifecycle action.
+   */
+  completeLifecycle(signal?: AbortSignal): Promise<void>
+}
+
+/** The instance's termination, as the gateway's watcher saw it. */
+export interface GatewayTerminationNotice {
+  kind: 'auto-scaling' | 'spot'
+  /** What `CmsWorker.stop()` records. */
+  reason: string
 }
 
 /** What {@link GitHubGateway.health} reports. */
@@ -238,7 +273,8 @@ export interface GitHubGatewayHealth {
   protectedBranches: { configured: string[]; githubDefault: string | null }
 }
 
-export interface LocalGitHubGatewayOptions {
+/** `GatewayInstanceOptions` carries the termination watch and the lifecycle completion. */
+export interface LocalGitHubGatewayOptions extends GatewayInstanceOptions {
   githubOwner: string
   githubRepo: string
   auth: ResolvedGitHubAuth
@@ -246,7 +282,11 @@ export interface LocalGitHubGatewayOptions {
   githubApp: boolean
   /** Holds the mirror; see `CmsWorkerConfig.stateDirectory`. */
   stateDirectory: string
-  workspacePath: string
+  /**
+   * The shared workspace. Absent in a gateway run as its own process, which cannot see the
+   * workspace; its `efs-unreadable` self-check stands in for the state-directory check below.
+   */
+  workspacePath?: string
   /** simple-git's inactivity timeout, and the bound on a credential re-read. */
   timeoutMs: number
   /**
@@ -260,8 +300,13 @@ export interface LocalGitHubGatewayOptions {
   baseBranch?: string
   /** Further branches it protects alike: names and `*` globs (worker/branch-policy.ts). */
   protectedBranches?: readonly string[]
-  /** Whether a Clerk secret key is configured, for `health()`. Default false. */
-  clerkConfigured?: boolean
+  /**
+   * Fetches the auth provider's snapshot with the provider's key; its presence is
+   * `health().clerkConfigured`. Without it, `authSnapshot()` throws.
+   */
+  authSnapshot?: () => Promise<AuthCacheSnapshot>
+  /** Test seam: how long a fetched snapshot is answered again (default {@link AUTH_SNAPSHOT_REUSE_MS}). */
+  authSnapshotReuseMs?: number
   /** The largest pushed bundle taken in, in bytes. Default 1 GiB. */
   maxBundleBytes?: number
   /**
@@ -302,16 +347,29 @@ class LocalGitHubGateway implements GitHubGateway {
   /** Pushes about to run and branch deletions settled at GitHub: each ends reuse of an earlier fetch. */
   private pushes = 0
   private preparing: Promise<void> | null = null
+  /** `termination` and `completeLifecycle`, which need only the instance role. */
+  private readonly instance: GatewayInstance
+  /** The auth snapshot being fetched, which every concurrent caller joins. */
+  private snapshotFetch: Promise<AuthCacheSnapshot> | null = null
+  /** The last snapshot fetched, and when (`performance.now()`). */
+  private lastSnapshot: { snapshot: AuthCacheSnapshot; at: number } | null = null
   private preflight: GitHubGatewayHealth['preflight'] = 'pending'
 
   constructor(private readonly options: LocalGitHubGatewayOptions) {
     this.mirror = new GitHubMirror(options.stateDirectory, options.timeoutMs)
+    this.instance = new GatewayInstance(options)
     this.octokit =
       options.octokit ??
-      createCanopyOctokit(options.auth.octokitAuth, {
-        warn: gatewayLogWarn,
-        error: gatewayLogError,
-      })
+      createCanopyOctokit(
+        options.auth.octokitAuth,
+        { warn: gatewayLogWarn, error: gatewayLogError },
+        // A token the credential provider rotated or an App minted is scrubbed from the first
+        // request that carries it, before any `credential()` call has registered it.
+        {
+          onAuthorization: (value) =>
+            registerLiveSecret(value.replace(/^(?:token|bearer)\s+/i, '')),
+        },
+      )
     this.policy = new BranchPolicy({
       baseBranch: options.baseBranch,
       protectedBranches: options.protectedBranches,
@@ -542,6 +600,48 @@ class LocalGitHubGateway implements GitHubGateway {
     return (this.preparing ??= this.prepareOnce())
   }
 
+  /**
+   * One fetch serves every caller: concurrent callers join it, and its result is answered again
+   * for {@link AUTH_SNAPSHOT_REUSE_MS}. A fetch is a request per user, so a worker asking in a loop
+   * would otherwise hold the provider's API at its rate limit. The fetch runs apart from every
+   * caller's signal, which ends only that caller's wait, so a retry after a timed-out wait joins it.
+   */
+  async authSnapshot(signal?: AbortSignal): Promise<AuthCacheSnapshot> {
+    const provider = this.options.authSnapshot
+    if (provider === undefined) {
+      throw new Error('The GitHub gateway has no auth provider key configured')
+    }
+    // Before a fetch starts: one no caller waits on would leave its failure unhandled.
+    signal?.throwIfAborted()
+    const reuseMs = this.options.authSnapshotReuseMs ?? AUTH_SNAPSHOT_REUSE_MS
+    const last = this.lastSnapshot
+    if (last !== null && performance.now() - last.at < reuseMs) return last.snapshot
+    // Not `credentialed()`: this never touches GitHub, and a provider failure must not arm the
+    // GitHub credential re-read (the provider's own 401/403 re-read lives with the provider).
+    const fetching = (this.snapshotFetch ??= (async () => provider())()
+      .then((snapshot) => {
+        const scrubbed = redactValue(snapshot)
+        this.lastSnapshot = { snapshot: scrubbed, at: performance.now() }
+        return scrubbed
+      })
+      .finally(() => {
+        this.snapshotFetch = null
+      }))
+    try {
+      return await untilAborted(fetching, signal)
+    } catch (err) {
+      throw redactError(err)
+    }
+  }
+
+  termination(signal?: AbortSignal): Promise<GatewayTerminationNotice | null> {
+    return this.instance.termination(signal)
+  }
+
+  completeLifecycle(signal?: AbortSignal): Promise<void> {
+    return this.instance.completeLifecycle(signal)
+  }
+
   async health(signal?: AbortSignal): Promise<GitHubGatewayHealth> {
     let ready = false
     let fatalError: string | null = null
@@ -558,19 +658,36 @@ class LocalGitHubGateway implements GitHubGateway {
       ready,
       fatalError,
       preflight: this.preflight,
-      clerkConfigured: this.options.clerkConfigured ?? false,
+      clerkConfigured: this.options.authSnapshot !== undefined,
       protectedBranches: this.policy.describe(),
     }
   }
 
+  /**
+   * Fatal: a failed App preflight (unless it looks transient), a state directory inside the
+   * workspace, and one this process cannot create or does not own outright, since no later session
+   * could clear those and the credential is used in the mirror. Not fatal: creating the mirror,
+   * which every session retries ({@link GitHubMirror.exclusive}) while a failure memoized here
+   * would outlast a transient cause (a full disk, a failed git spawn) until the process restarted.
+   */
   private async prepareOnce(): Promise<void> {
     try {
       // Before the mirror's first fetch, whose failure would otherwise blame the repository.
       await this.preflightGitHubAppAuth()
-      await this.ensureStateDirectoryIsPrivate()
-      await this.mirror.ensure()
+      if (this.options.workspacePath !== undefined) {
+        await this.ensureStateDirectoryIsPrivate(this.options.workspacePath)
+      }
+      await this.mirror.assertStateDirectory()
     } catch (err) {
       throw redactError(err)
+    }
+    try {
+      await this.mirror.ensure()
+    } catch (err) {
+      gatewayLogWarn(
+        `Could not create the GitHub mirror at startup (${redactEgress(getErrorMessage(err))}); ` +
+          'the next operation tries again',
+      )
     }
     // The first GitHub fetch starts now, detached, so the first operation that needs one joins
     // it under way. Its failure surfaces to whoever joins it.
@@ -622,14 +739,14 @@ class LocalGitHubGateway implements GitHubGateway {
    * Refuse a state directory on the shared filesystem: the mirror there would be as writable by
    * the Lambda as remote.git is.
    */
-  private async ensureStateDirectoryIsPrivate(): Promise<void> {
-    const workspace = await realpathOfNearest(this.options.workspacePath)
+  private async ensureStateDirectoryIsPrivate(workspacePath: string): Promise<void> {
+    const workspace = await realpathOfNearest(workspacePath)
     const state = await realpathOfNearest(this.options.stateDirectory)
     const relative = path.relative(workspace, state)
     if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
       throw new Error(
         `The worker's state directory (${this.options.stateDirectory}) is inside its shared workspace ` +
-          `(${this.options.workspacePath}). It holds the repository the GitHub credential is used ` +
+          `(${workspacePath}). It holds the repository the GitHub credential is used ` +
           `in, so it must be somewhere the CMS Lambda cannot write.`,
       )
     }
@@ -991,6 +1108,9 @@ class LocalGitHubGateway implements GitHubGateway {
     })
     try {
       await Promise.race([this.options.auth.refreshCredential(), timedOut])
+      // The token path's rotated token is scrubbed before any operation uses it. On the App path
+      // the re-read is a no-op, so there is nothing new to scrub.
+      if (!this.options.githubApp) registerLiveSecret(await this.options.auth.resolveGitToken())
     } catch (err) {
       logFailedCredentialRefresh(err)
     } finally {
@@ -1005,22 +1125,6 @@ function logFailedCredentialRefresh(err: unknown): void {
     'Failed to re-read the GitHub credential after a failure:',
     redactEgress(getErrorMessage(err)),
   )
-}
-
-/** `promise`, unless `signal` aborts first, which ends only this wait. */
-async function untilAborted<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (signal === undefined) return promise
-  signal.throwIfAborted()
-  let onAbort = (): void => undefined
-  const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(signal.reason)
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
-  try {
-    return await Promise.race([promise, aborted])
-  } finally {
-    signal.removeEventListener('abort', onAbort)
-  }
 }
 
 /** Refuse anything but a full object ID, before it can reach git. */

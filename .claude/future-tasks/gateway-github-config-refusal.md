@@ -8,7 +8,7 @@ summary: >-
 # [P2] Refuse new `.github/` content on the worker's pushes
 
 **Found:** 2026-10-10, planning
-[worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md) (its D10).
+[worker-shared-repo-git-process-split.md](resolved/worker-shared-repo-git-process-split.md) (its D10).
 
 ## Why it was taken out of the split
 

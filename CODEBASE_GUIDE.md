@@ -25,8 +25,11 @@ Repo-level tooling, under `scripts/`:
 
 - `scripts/add-js-extensions.mjs` — rewrites a built `dist/`'s extensionless relative imports to explicit `.js`
 - `scripts/check-esm-imports.mjs` — imports every published `exports` subpath under plain Node ESM; see [DEVELOPING.md](DEVELOPING.md#published-package-esm-import-check)
-- `scripts/bump-version.mjs` — sets the version across all five publishable packages in lockstep
+- `scripts/bump-version.mjs` — writes one explicit version to all five publishable packages in lockstep
 - `scripts/prerelease-version.mjs` — computes an integration publish's `X.Y.Z-int.N` version
+- `scripts/release-stable.mjs` — `--prepare` turns pending changesets into a stable release's changes
+- `scripts/npm-attested-commit.mjs` — the commit a published version's provenance names
+- `scripts/migration-notes.mjs` — assembles `CHANGELOG.md` from `.changeset/`
 - `scripts/check-docs.mjs` — doc word budgets, list-item length, backticked-path and link resolution
 - `scripts/check-comment-budget.mjs` — source-comment volume ratchet, budgets in `scripts/comment-budget.json`
 - `scripts/check-future-tasks.mjs` — task frontmatter and link integrity; see [DEVELOPING.md](DEVELOPING.md#future-tasks-backlog-check)
@@ -35,6 +38,7 @@ Repo-level tooling, under `scripts/`:
 - `scripts/diff-comments-only.mjs` — proves a git range changed only comments in TypeScript files
 - `scripts/wait-for-pr-checks.mjs` — polls a PR's checks to a definite verdict; see [DEVELOPING.md](DEVELOPING.md#waiting-on-pr-checks)
 - `scripts/docs-budgets.json` — the per-doc ceilings `check-docs.mjs` enforces
+- `.changeset/` — changelog entries, see its `README.md`
 - `scripts/smoke/standalone-image.mjs` — builds and boots the generated CMS image against packed tarballs; see [DEVELOPING.md](DEVELOPING.md#standalone-cms-image-smoke-test-standalone-image-ci-job)
 
 ## Source Code Organization
@@ -228,12 +232,14 @@ direction, and every invariant.
 - `remote-git-maintenance.ts` — `maintainRemoteGit`: the logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
 - `sparse-cone.ts` — `reapplySparseCones`: re-cones sparse clones after a content-root change
 - `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks
+- `stale-mirror.ts` — `settleStaleMirror`: a `remote.git` head without editor work follows GitHub
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
 - `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts`, `github-gateway-http.ts` its policy, scrubbing, socket
 - `github-mirror.ts`, `github-mirror-upkeep.ts`, `shared-repo-git.ts` — isolated git
 - `github-transfer.ts`, `bundle-header.ts`, `git-process.ts` — bundle transfer; `self-checks.ts` — boot checks
+- `gateway-instance.ts` — `GatewayInstance`: the gateway's termination and lifecycle operations
 - `history-rewrite.ts` — force-push leasing on a pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
 - `github-auth.ts` — credential selection and installation-token minting
 - `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, timestamped replacements for `console.*`
@@ -295,12 +301,15 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `lambda/asset-transform/handler.ts` — the transform Lambda behind `/assets/t/*` S3 misses, via `storeTransform`
 - `lambda/asset-transform/build.mjs` — builds that Lambda's code asset without Docker; see [DEVELOPING.md](DEVELOPING.md#building-the-transform-lambda-no-docker)
 - `src/constructs/worker-lifecycle.ts` — names the construct and bundle share, incl. `WORKER_CONTRACT_VERSION`
-- `worker/index.ts` — EC2 worker entrypoint; boots through `worker/run.ts`'s injectable `runWorker`
+- `src/constructs/worker-units.ts` — the worker instance's systemd units and `canopy-inspect`, packed by `build:worker` into `worker/dist/instance-files.sh` for user data to install; `worker/` holds copies of the split's three units
+- `worker/build.ts` — `build:worker`, which writes the contract banner user data reads, and `worker/dist/instance-files.sh`
+- `worker/index.ts` — EC2 entrypoint: the worker (`worker/run.ts`'s `runWorker`), `gateway`, or `self-check`
+- `worker/gateway-run.ts` — `runGateway`, the GitHub gateway process
 - `worker/termination-watch.ts` — instance-termination watch
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction
 - `worker/credential-refresh.ts` — `createReactiveSecret`, re-reads a secret on failure behind a five-minute floor
 - `worker/github-app-auth.ts` — `buildGitHubAppAuth`, the App credential from a key read once at boot
-- `worker/clerk-refresh.ts` — `createClerkAuthCacheRefresher`, re-reads the key and retries once on a Clerk 401/403
+- `worker/clerk-refresh.ts` — `createClerkAuthCacheRefresher`, `createClerkSnapshotFetcher`: one retry on a re-read key after a Clerk 401/403
 - `canary/bin/canary.ts` — sandbox proving ground for `AssetSupport`; see [DEVELOPING.md](DEVELOPING.md#cdk-asset-verification-the-canary-stack)
 - `test-support/test-synth.ts` — `newTestApp`, test-owned synth output; see [DEVELOPING.md](DEVELOPING.md#test-owned-cdk-synth-output-newtestapp)
 - `test-support/synth-leak-guard.ts` — fails a suite that leaves `cdk.out` directories behind in the temp dir
@@ -805,7 +814,7 @@ Cross-cutting feature linking between entries with `entry:CONTENT_ID` in markdow
 - `src/config/types.ts` — the `entryLinkUrl?: EntryLinkUrlResolver` callback for custom URL mapping
 - `src/content-reader.ts` — resolves links in the body at read time, default on
 - `src/api/content.ts` — validates on write, folding broken-link warnings into `validationWarnings`
-- `src/ai/generate.ts` — resolves links before AI content generation
+- `src/ai/generate.ts` — resolves links against the export set (`isLinkable`), so a link to an entry the export leaves out shows no URL
 - `src/editor/hooks/useEntryLinkResolution.ts` — client-side resolution for preview data
 - `src/editor/fields/entry-link/` — the MDXEditor toolbar button, picker modal and context
 

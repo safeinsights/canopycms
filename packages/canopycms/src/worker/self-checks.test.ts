@@ -15,6 +15,7 @@ import {
   noSecretsInEnv,
   onlyLoopback,
   procShowsOnlyOwnProcesses,
+  socketAccessIsOthers,
   tcpConnect,
   workerSelfChecks,
   type ConnectOutcome,
@@ -184,6 +185,29 @@ describe('the secrets check', () => {
     expect(result.detail).not.toContain('v4lue-never-shown')
   })
 
+  it.each([
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'GITHUB_BOT_TOKEN',
+    'AWS_ACCESS_KEY_ID',
+    'AWS_SECRET_ACCESS_KEY',
+    'AWS_SESSION_TOKEN',
+    'AWS_SECURITY_TOKEN',
+  ])('refuses the ambient credential %s, naming it and never its value', (name) => {
+    const result = noSecretsInEnv({ env: { PATH: '/usr/bin', [name]: 'v4lue-never-shown' } })
+
+    expect(result.ok).toBe(false)
+    expect(result.detail).toContain(name)
+    expect(result.detail).not.toContain('v4lue-never-shown')
+  })
+
+  it.each(['GITHUB_TOKEN_PATH', 'MY_GH_TOKEN', 'AWS_REGION', 'CLERK_JWT_KEY'])(
+    'passes the lookalike %s',
+    (name) => {
+      expect(noSecretsInEnv({ env: { PATH: '/usr/bin', [name]: 'value' } }).ok).toBe(true)
+    },
+  )
+
   it('passes with none, and ignores lookalikes', () => {
     expect(
       noSecretsInEnv({ env: { PATH: '/usr/bin', CANOPYCMS_GITHUB_GATEWAY_SOCKET: '/run/x' } }).ok,
@@ -233,6 +257,108 @@ describe('the gateway checks', () => {
     await put('proc/self/limits', LIMITS(soft, hard))
 
     expect((await coreLimitZero({ root })).ok).toBe(false)
+  })
+})
+
+describe('the gateway socket check', () => {
+  const NET_UNIX_HEADER = 'Num       RefCount Protocol Flags    Type St Inode Path\n'
+  let server: net.Server | undefined
+  // Short: macOS caps a socket path at 104 bytes.
+  let socketDir: string
+
+  beforeEach(async () => {
+    socketDir = await fs.mkdtemp(path.join(os.tmpdir(), 's-'))
+  })
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()))
+    server = undefined
+    await fs.rm(socketDir, { recursive: true, force: true })
+  })
+
+  /** A listening socket, as descriptor 3 sees it, listed in `net/unix` at `listed`. */
+  async function passedSocket(mode: number, listed?: (socketPath: string) => string) {
+    const socketPath = path.join(socketDir, 'gw')
+    server = net.createServer()
+    await new Promise<void>((resolve) => server?.listen(socketPath, resolve))
+    await fs.chmod(socketPath, mode)
+    await fs.mkdir(path.join(root, 'proc', 'self', 'fd'), { recursive: true })
+    await fs.symlink(socketPath, path.join(root, 'proc', 'self', 'fd', '3'))
+    const inode = (await fs.stat(socketPath)).ino
+    await put(
+      'proc/self/net/unix',
+      NET_UNIX_HEADER +
+        '0000000000000000: 00000002 00000000 00000000 0001 01 1 \n' +
+        `0000000000000000: 00000002 00000000 00010000 0001 01 ${inode} ${listed ? listed(socketPath) : socketPath}\n`,
+    )
+    return socketPath
+  }
+
+  it("passes on a 0600 socket another user owns, and runs among the gateway's checks", async () => {
+    await healthyTree()
+    await fs.mkdir(path.join(root, 'mnt', 'efs'), { recursive: true })
+    await fs.chmod(path.join(root, 'mnt', 'efs'), 0o000)
+    await passedSocket(0o600)
+
+    const results = await gatewaySelfChecks({ root, uid: uid + 1, listenFd: 3 })
+
+    expect(results.map((result) => [result.check, result.ok])).toEqual([
+      ['efs-unreadable', true],
+      ['core-pattern', true],
+      ['core-limit', true],
+      ['socket-access', true],
+    ])
+  })
+
+  it("refuses a gateway that runs as the socket's owner, the worker's user", async () => {
+    await passedSocket(0o600)
+
+    const result = await socketAccessIsOthers({ root, uid, listenFd: 3 })
+
+    expect(result.ok).toBe(false)
+    expect(result.detail).toMatch(/User=canopy-github/)
+  })
+
+  it('refuses a socket other users can reach', async () => {
+    await passedSocket(0o660)
+
+    const result = await socketAccessIsOthers({ root, uid: uid + 1, listenFd: 3 })
+
+    expect(result.ok).toBe(false)
+    expect(result.detail).toMatch(/mode 660/)
+  })
+
+  it('refuses a descriptor it cannot find bound to a path', async () => {
+    await passedSocket(0o600, () => '@abstract')
+
+    const abstract = await socketAccessIsOthers({ root, uid: uid + 1, listenFd: 3 })
+    const missing = await socketAccessIsOthers({ root, uid: uid + 1, listenFd: 4 })
+
+    expect(abstract).toMatchObject({
+      ok: false,
+      detail: expect.stringMatching(/not bound to a path/),
+    })
+    expect(missing).toMatchObject({ ok: false, detail: expect.stringMatching(/descriptor 4/) })
+  })
+
+  it('refuses a listed path that is not a socket', async () => {
+    const plain = path.join(root, 'plain')
+    await fs.writeFile(plain, '')
+    await fs.chmod(plain, 0o600)
+    await passedSocket(0o600, () => plain)
+
+    const result = await socketAccessIsOthers({ root, uid: uid + 1, listenFd: 3 })
+
+    expect(result.ok).toBe(false)
+    expect(result.detail).toMatch(/not a socket/)
+  })
+
+  it('is not run without a passed descriptor', async () => {
+    await healthyTree()
+
+    const results = await gatewaySelfChecks({ root })
+
+    expect(results.map((result) => result.check)).not.toContain('socket-access')
   })
 })
 

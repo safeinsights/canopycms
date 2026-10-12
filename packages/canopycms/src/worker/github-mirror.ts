@@ -153,6 +153,15 @@ export class GitHubMirror {
     for (const listener of this.activityListeners) listener()
   }
 
+  /**
+   * Create the state directory if it is missing, and refuse one this process does not own outright
+   * or another user can write: the gateway's boot check, whose failure no later session could clear.
+   */
+  async assertStateDirectory(): Promise<void> {
+    await fs.mkdir(this.stateDirectory, { recursive: true, mode: 0o700 })
+    await assertOwnDirectory(this.stateDirectory)
+  }
+
   /** Create the mirror now rather than at its first use. */
   ensure(): Promise<void> {
     return this.exclusive(async () => undefined)

@@ -12,11 +12,12 @@ import {
   sweepProvisioningLeftovers,
 } from '../branch-provisioning'
 import { invalidateBranchContentCaches } from '../content-index-generation'
-import { GITHUB_TRACKING_REF_PREFIX, ensureGitExcludePattern } from '../git-manager'
+import { ensureGitExcludePattern } from '../git-manager'
 import { RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
+import { escapeForLog } from '../utils/escape-text'
 import { CANOPY_META_DIR, isCanopyInternalPath, isNonFastForwardRejection } from '../utils/git'
 import type { BaseRefreshReport, BaseSchemaHold } from '../types'
 import {
@@ -46,6 +47,13 @@ import {
   sharedRepoGit,
 } from './shared-repo-git'
 import { reapplySparseCones } from './sparse-cone'
+import {
+  readEditorWork,
+  settleStaleMirror,
+  type EditorState,
+  type EditorWorkSnapshot,
+  type MirrorSettlement,
+} from './stale-mirror'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -57,9 +65,10 @@ import type { WorkerContext } from './worker-context'
  * the branches root (`repairBranchDirResidue`), move sparse clones to a changed
  * content root's cone (sparse-cone.ts), repack `remote.git` when it needs it
  * (remote-git-maintenance.ts), fetch every GitHub branch into the tracking namespace,
- * bring `refs/heads/*` toward it non-destructively (`reconcileTrackedBranches`,
- * which holds the base branch while schema-gate.ts says the serving editor lacks
- * a schema the incoming content names), push this deployment's own settings
+ * bring `refs/heads/*` toward GitHub's branches without touching editor work
+ * (`reconcileTrackedBranches`, which holds the base branch while schema-gate.ts
+ * says the serving editor lacks a schema the incoming content names), push this
+ * deployment's own settings
  * branch, fast-forward the base branch's workspace, rebase every branch that is
  * behind it (rebase.ts), then sweep old tasks and expired trashed branch
  * directories.
@@ -67,10 +76,10 @@ import type { WorkerContext } from './worker-context'
  * One ordering is load-bearing and nothing enforces it: `runRebaseCycle` MUST
  * follow `reconcileTrackedBranches`. Branch clones fetch the base tip from
  * `remote.git`, and `reconcileTrackedBranches` is what advances
- * `remote.git`'s `refs/heads/*` toward what the fetch above put in the tracking
- * namespace; reorder them and every branch rebases onto the PREVIOUS cycle's
+ * `remote.git`'s `refs/heads/*` toward the tips the fetch above reported;
+ * reorder them and every branch rebases onto the PREVIOUS cycle's
  * base tip -- not corrupting, but silently a cycle behind.
- * (`pushSettingsBranches` consuming `trackedTips` is a DATA dependency its
+ * (`pushSettingsBranches` consuming the fetch's tips is a DATA dependency its
  * signature already enforces; `refreshBaseBranchWorkspace` and the two sweeps
  * are order-independent.)
  *
@@ -90,6 +99,7 @@ export type GitSyncContext = Pick<
   | 'github'
   | 'ensureSettingsBranch'
   | 'ensureStatusReport'
+  | 'warnedDivergences'
   | 'isRunning'
   | 'isDraining'
   | 'shutdownSignal'
@@ -119,11 +129,16 @@ interface TrackedBranchSummary {
   ahead: string[]
   /**
    * Local heads that diverged from GitHub's tip (neither side is an ancestor of
-   * the other) -- left untouched and logged. A real collision (e.g. another
-   * deployment moved the same branch name); the next push attempt is rejected
-   * non-fast-forward, which is the correct, visible outcome.
+   * the other) while holding editor work here (stale-mirror.ts's `EditorState`)
+   * -- left untouched and warned about once per pair of tips. A real collision
+   * (e.g. another deployment moved the same branch name); the next push attempt
+   * is rejected non-fast-forward, which is the correct, visible outcome.
    */
   diverged: string[]
+  /** Diverged heads holding no editor work: stale copies, moved to GitHub's tip. */
+  repointed: string[]
+  /** Heads of branches GitHub no longer has, holding no editor work: deleted. */
+  pruned: string[]
   /**
    * Local heads that diverged because THIS worker's rebase loop rewrote them
    * and published the rewrite into `remote.git`, with the GitHub push still
@@ -258,39 +273,38 @@ export async function pushSettingsBranches(
 }
 
 /**
- * Bring `refs/heads/*` in `remote.git` toward what was just fetched into
- * `GITHUB_TRACKING_REF_PREFIX` -- WITHOUT ever force-rewinding or deleting a
- * local head (see that constant's doc comment for the two failure modes a
- * `+refs/heads/*:refs/heads/*` fetch refspec causes).
+ * Bring `refs/heads/*` in `remote.git` toward GitHub's branches as this cycle's fetch reported them
+ * (`githubTips`), WITHOUT ever rewinding or deleting a head in which stale-mirror.ts finds editor
+ * work (`EditorState`; see git-manager.ts's `GITHUB_TRACKING_REF_PREFIX` for the two failure modes
+ * a `+refs/heads/*:refs/heads/*` fetch refspec causes).
  *
- * Per tracked branch: no local `refs/heads/<name>` -> create it at the tracked
- * commit; local behind -> fast-forward; equal -> nothing to do; local AHEAD ->
- * LEAVE IT ALONE, since that is unpushed editor/settings work the queued push
- * task (or pushSettingsBranches) ships; diverged -> LEAVE IT ALONE, count and
- * log it. Divergence is a real collision (another deployment moved the same
- * branch name on GitHub) and the next push is rejected non-fast-forward, the
- * correct visible outcome -- this must never silently pick a winner. The one
- * benign form, our own rebase loop having published a rewrite with the GitHub
- * push still queued, is split into `rewritten` so that warning stays meaningful.
+ * Per GitHub branch: no local `refs/heads/<name>` -> create it at GitHub's tip; local behind ->
+ * fast-forward; equal -> nothing to do; local AHEAD -> LEAVE IT ALONE, since that is unpushed
+ * editor/settings work the queued push task (or pushSettingsBranches) ships; diverged -> our own
+ * rebase loop's published rewrite with the GitHub push still queued goes to `rewritten`, and
+ * anything else to stale-mirror.ts's `settleStaleMirror`. A head holding no editor work there is a
+ * stale copy of a branch rebased and force-pushed on GitHub, and is moved to GitHub's tip
+ * (`repointed`); one holding editor work is a real collision (another deployment moved the same
+ * branch name, or GitHub's branch was rewritten under an editor's work), never resolved by picking
+ * a winner: it stays `diverged`, and the next push is rejected non-fast-forward.
  *
- * Never deletes a local head: a branch removed on GitHub simply stops being
- * tracked here; the local ref persists until removed through its own explicit
- * path, which the sync loop must not be.
+ * A head GitHub has no branch for is deleted through the same function when it holds no editor work
+ * and shares history with the base (`pruned`), and only when GitHub's answer names the base branch:
+ * an answer without it is not GitHub's branch list. A held `packed-refs.lock`, which every deletion
+ * needs, ends that cycle's deletions at the first.
  *
- * Concurrency: `remote.git` is bare and on EFS, and the Lambda pushes into it
- * while this runs. Every `update-ref` below passes the expected old value (the
- * all-zeros OID for "must not exist yet" on creation, the just-read SHA for a
- * fast-forward), so a concurrent Lambda write landing between the read and the
- * write loses the ref update instead of silently clobbering it -- that branch
- * is simply revisited next cycle.
+ * Concurrency: `remote.git` is bare and on EFS, and the Lambda pushes into it while this runs.
+ * Every `update-ref` below passes the expected old value (the all-zeros OID for "must not exist
+ * yet" on creation, the just-read SHA otherwise), so a concurrent Lambda write landing between the
+ * read and the write loses the ref update instead of silently clobbering it -- that branch is
+ * simply revisited next cycle.
  */
 async function reconcileTrackedBranches(
   ctx: GitSyncContext,
   git: ReturnType<typeof simpleGit>,
+  githubTips: ReadonlyMap<string, string>,
 ): Promise<{
   summary: TrackedBranchSummary
-  /** GitHub's tip per branch, as this cycle's fetch left it in the tracking namespace. */
-  trackedTips: ReadonlyMap<string, string>
   /**
    * The schema gate's state for the base branch, or undefined when this cycle could not classify
    * the base and the previous state stands.
@@ -301,34 +315,67 @@ async function reconcileTrackedBranches(
   const created: string[] = []
   const fastForwarded: string[] = []
   const ahead: string[] = []
-  const diverged: string[] = []
+  const diverged: DivergedHead[] = []
+  const uncheckedOrphans: { name: string; error: string }[] = []
+  const repointed: string[] = []
+  const pruned: string[] = []
   const rewritten: string[] = []
   let baseHold: { hold: BaseSchemaHold | undefined } | undefined
 
-  // One invocation enumerates both namespaces: refs/heads/<name> (what the
-  // Lambda pushes into and branch clones read from) and
-  // GITHUB_TRACKING_REF_PREFIX<name> (GitHub's tip).
+  // A symbolic ref under refs/heads/ is none CanopyCMS writes. One for-each-ref lists is left out
+  // of `heads` and never written, since an update through it would move the ref it points at;
+  // one whose target is missing is not listed at all, and every update below passes
+  // `--no-deref`, so writing its name replaces the symbolic ref itself, never its target.
   const raw = await git.raw([
     'for-each-ref',
-    '--format=%(refname) %(objectname)',
+    '--format=%(refname) %(objectname) %(symref)',
     'refs/heads/',
-    GITHUB_TRACKING_REF_PREFIX,
   ])
-
   const heads = new Map<string, string>()
-  const tracked = new Map<string, string>()
+  const symbolicHeads = new Set<string>()
   for (const line of raw.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const [refname, sha] = trimmed.split(' ')
-    if (refname.startsWith('refs/heads/')) {
-      heads.set(refname.slice('refs/heads/'.length), sha)
-    } else if (refname.startsWith(GITHUB_TRACKING_REF_PREFIX)) {
-      tracked.set(refname.slice(GITHUB_TRACKING_REF_PREFIX.length), sha)
-    }
+    const [refname, sha, symref] = line.split(' ')
+    if (!refname || !sha) continue
+    const name = refname.slice('refs/heads/'.length)
+    if (symref) symbolicHeads.add(name)
+    else heads.set(name, sha)
   }
 
-  for (const [name, trackedSha] of tracked) {
+  // Undefined when this deployment's settings branch cannot be named (pushSettingsBranches
+  // reports why): any head may then be it, so every head is kept.
+  let ownSettingsBranch: string | undefined
+  try {
+    ownSettingsBranch = ctx.ensureSettingsBranch()
+  } catch {
+    ownSettingsBranch = undefined
+  }
+  let editorWork: Promise<EditorWorkSnapshot> | undefined
+  const settle = async (
+    name: string,
+    from: string,
+    to: string | null,
+  ): Promise<MirrorSettlement> => {
+    if (ownSettingsBranch === undefined) return { kind: 'kept', state: 'unresolved-settings' }
+    try {
+      return await settleStaleMirror(
+        ctx,
+        git,
+        { name, from, to },
+        ownSettingsBranch,
+        () => (editorWork ??= readEditorWork(ctx)),
+        githubTips.get(ctx.baseBranch) ?? '',
+      )
+    } catch (err) {
+      return { kind: 'kept', state: 'unchecked', error: getErrorMessage(err) }
+    }
+  }
+  const reportMovedMeanwhile = (name: string, error: string) =>
+    workerLogWarn(
+      `  Tracked-branch reconcile: ${escapeForLog(name)} was moved or locked while it was checked, so it was left as it is until the next cycle: ${escapeForLog(error.trim())}`,
+    )
+
+  for (const [name, trackedSha] of githubTips) {
+    if (symbolicHeads.has(name)) continue
     const localSha = heads.get(name)
     const localRef = `refs/heads/${name}`
 
@@ -337,11 +384,11 @@ async function reconcileTrackedBranches(
         // The zero old-value asserts the ref does not already exist, guarding
         // against a concurrent Lambda push creating this exact branch name
         // between the for-each-ref read above and this update.
-        await git.raw(['update-ref', localRef, trackedSha, GIT_ZERO_OID])
+        await git.raw(['update-ref', '--no-deref', localRef, trackedSha, GIT_ZERO_OID])
         created.push(name)
       } catch (err) {
         workerLogWarn(
-          `  Tracked-branch reconcile: failed to create local ref for ${name} (concurrent update?): ${getErrorMessage(err)}`,
+          `  Tracked-branch reconcile: failed to create local ref for ${escapeForLog(name)} (concurrent update?): ${escapeForLog(getErrorMessage(err))}`,
         )
       }
       continue
@@ -376,7 +423,7 @@ async function reconcileTrackedBranches(
         // NaN, which fails both comparisons) would warn operators about a
         // cross-deployment collision that never happened.
         workerLogWarn(
-          `  Tracked-branch reconcile: skipping ${name}: unparseable rev-list output ${JSON.stringify(counts)}`,
+          `  Tracked-branch reconcile: skipping ${escapeForLog(name)}: unparseable rev-list output ${escapeForLog(JSON.stringify(counts))}`,
         )
         continue
       }
@@ -403,13 +450,13 @@ async function reconcileTrackedBranches(
           }
         }
         try {
-          await git.raw(['update-ref', localRef, trackedSha, localSha])
+          await git.raw(['update-ref', '--no-deref', localRef, trackedSha, localSha])
           fastForwarded.push(name)
         } catch (err) {
           // Concurrent Lambda push moved the ref since the read above --
           // the guard did its job; this branch is simply revisited next cycle.
           workerLogWarn(
-            `  Tracked-branch reconcile: failed to fast-forward ${name} (concurrent update?): ${getErrorMessage(err)}`,
+            `  Tracked-branch reconcile: failed to fast-forward ${escapeForLog(name)} (concurrent update?): ${escapeForLog(getErrorMessage(err))}`,
           )
         }
       } else if (localBehindCount === 0 && localAheadCount > 0) {
@@ -424,39 +471,131 @@ async function reconcileTrackedBranches(
         rewritten.push(name)
         if (name === ctx.baseBranch) baseHold = { hold: undefined }
       } else {
-        // Neither side is an ancestor of the other. Leave both alone.
-        diverged.push(name)
         if (name === ctx.baseBranch) baseHold = { hold: undefined }
+        const outcome = await settle(name, localSha, trackedSha)
+        if (outcome.kind === 'settled') repointed.push(name)
+        else if (outcome.kind === 'kept') {
+          diverged.push({ name, local: localSha, github: trackedSha, ...outcome })
+        } else {
+          // `packed-refs-locked` belongs to deletions; a move is not expected to meet it.
+          reportMovedMeanwhile(
+            name,
+            outcome.kind === 'moved-meanwhile' ? outcome.error : 'packed-refs.lock is held',
+          )
+        }
       }
     } catch (err) {
       workerLogWarn(
-        `  Tracked-branch reconcile: skipping ${name} (unreadable ref or object?): ${getErrorMessage(err)}`,
+        `  Tracked-branch reconcile: skipping ${escapeForLog(name)} (unreadable ref or object?): ${escapeForLog(getErrorMessage(err))}`,
       )
       continue
     }
   }
 
-  if (diverged.length > 0) {
-    workerLogWarn(
-      `  Tracked-branch reconcile: ${diverged.length} branch(es) diverged from GitHub and were left untouched: ${diverged.join(', ')}`,
+  if (githubTips.has(ctx.baseBranch)) {
+    for (const [name, localSha] of heads) {
+      if (githubTips.has(name)) continue
+      const outcome = await settle(name, localSha, null)
+      if (outcome.kind === 'settled') pruned.push(name)
+      else if (outcome.kind === 'moved-meanwhile') reportMovedMeanwhile(name, outcome.error)
+      // Every later deletion would wait for the same lock and fail the same way.
+      else if (outcome.kind === 'packed-refs-locked') break
+      else if (outcome.error !== undefined) uncheckedOrphans.push({ name, error: outcome.error })
+    }
+  }
+
+  warnOnce(ctx.warnedDivergences(), [
+    ...diverged.map(divergedWarning),
+    ...uncheckedOrphans.map(({ name, error }) => ({
+      // ':' cannot appear in a ref name, so this key never collides with a branch's.
+      key: `orphan:${name}`,
+      said: error,
+      line:
+        `  Tracked-branch reconcile: ${escapeForLog(name)}, which GitHub no longer has, was ` +
+        `kept because it could not be checked: ${escapeForLog(error)}`,
+    })),
+  ])
+  if (repointed.length > 0) {
+    workerLog(
+      `  Tracked-branch reconcile: moved ${repointed.length} stale branch copy(ies) to GitHub's rewritten tip: ${repointed.map(escapeForLog).join(', ')}`,
+    )
+  }
+  if (pruned.length > 0) {
+    workerLog(
+      `  Tracked-branch reconcile: deleted ${pruned.length} branch copy(ies) GitHub no longer has: ${pruned.map(escapeForLog).join(', ')}`,
     )
   }
   if (rewritten.length > 0) {
     workerLog(
-      `  Tracked-branch reconcile: ${rewritten.length} branch(es) rebased locally with the GitHub push still pending: ${rewritten.join(', ')}`,
+      `  Tracked-branch reconcile: ${rewritten.length} branch(es) rebased locally with the GitHub push still pending: ${rewritten.map(escapeForLog).join(', ')}`,
     )
   }
 
-  // trackedTips is returned alongside the summary rather than folded into it:
-  // it is a working set for pushSettingsBranches, and
-  // listing every branch on GitHub would bloat worker-status.json for no reader.
   // A base GitHub no longer has can be held for nothing.
-  if (!tracked.has(ctx.baseBranch)) baseHold = { hold: undefined }
+  if (!githubTips.has(ctx.baseBranch)) baseHold = { hold: undefined }
 
   return {
-    summary: { created, fastForwarded, ahead, diverged, rewritten },
-    trackedTips: tracked,
+    summary: {
+      created,
+      fastForwarded,
+      ahead,
+      diverged: diverged.map((entry) => entry.name),
+      repointed,
+      pruned,
+      rewritten,
+    },
     baseHold,
+  }
+}
+
+const EDITOR_STATE_WORDS: Record<EditorState, string> = {
+  base: 'it is the base branch',
+  settings: 'it is a settings branch',
+  workspace: 'it has a branch workspace',
+  'queued-push': 'a push of it is queued',
+  busy: 'its workspace is being created, repaired or purged',
+  'unrelated-history': 'it shares no history with the base branch',
+  'unresolved-settings': "this deployment's settings branch cannot be named",
+  unchecked: 'it could not be checked',
+}
+
+interface DivergedHead {
+  name: string
+  local: string
+  github: string
+  state: EditorState
+  error?: string
+}
+
+function divergedWarning({ name, local, github, state, error }: DivergedHead) {
+  return {
+    key: name,
+    // The reason is part of what was said, so a head first kept as `busy` is reported again with
+    // the reason that keeps it.
+    said: `${local} ${github} ${state}`,
+    line:
+      `  Tracked-branch reconcile: ${escapeForLog(name)} diverged from GitHub and was left untouched, ` +
+      `because ${EDITOR_STATE_WORDS[state]}${error === undefined ? '' : ` (${escapeForLog(error)})`} ` +
+      `(here ${local}, GitHub ${github}). Publishing it fails until the two are reconciled; ` +
+      `System health lists it.`,
+  }
+}
+
+/**
+ * Warn each line once while what it says stays the same: a diverged head's tips and reason, an
+ * unchecked orphan's error. `warned` is this worker's memory of what it has said, by key, and
+ * forgets a key once its line is no longer due.
+ */
+function warnOnce(
+  warned: Map<string, string>,
+  lines: readonly { key: string; said: string; line: string }[],
+): void {
+  const current = new Set(lines.map((entry) => entry.key))
+  for (const key of warned.keys()) if (!current.has(key)) warned.delete(key)
+  for (const { key, said, line } of lines) {
+    if (warned.get(key) === said) continue
+    warned.set(key, said)
+    workerLogWarn(line)
   }
 }
 
@@ -511,15 +650,18 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // deadline: the wait for the gateway's GitHub fetch, which runs on detached, then the gateway's
     // bundle, the unbundle and the ref update; a killed ref update leaves each ref as it was or
     // fully moved.
-    const { needsOperator } = await fetchGitHubIntoRemoteGit(ctx, ctx.shutdownSignal())
+    const { refs: githubTips, needsOperator } = await fetchGitHubIntoRemoteGit(
+      ctx,
+      ctx.shutdownSignal(),
+    )
     workerLog('Fetched from GitHub')
     if (needsOperator !== null) workerLogError(needsOperator)
 
-    const {
-      summary: trackedSummary,
-      trackedTips,
-      baseHold,
-    } = await reconcileTrackedBranches(ctx, git)
+    const { summary: trackedSummary, baseHold } = await reconcileTrackedBranches(
+      ctx,
+      git,
+      githubTips,
+    )
     // Recorded at once, so a step below that throws still persists the hold through the catch.
     if (baseHold) {
       const report = ctx.ensureStatusReport()
@@ -529,8 +671,8 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
 
     // Push settings branches to GitHub (belt-and-suspenders for task queue).
     // Ensures settings reach GitHub even if a task queue entry is lost. After
-    // the fetch, whose tips (`trackedTips`) let it skip a branch GitHub holds.
-    await pushSettingsBranches(ctx, git, trackedTips)
+    // the fetch, whose tips (`githubTips`) let it skip a branch GitHub holds.
+    await pushSettingsBranches(ctx, git, githubTips)
 
     if (stoppedForDrain(ctx, 'the base-branch refresh')) return
     const baseRefresh = await refreshBaseBranchWorkspace(ctx)
