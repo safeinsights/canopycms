@@ -9,6 +9,8 @@ import React from 'react'
 import { vi, type Mock } from 'vitest'
 import { SWRConfig } from 'swr'
 import { createMockApiClient, type MockApiClient } from '../../../api/__test__/mock-client'
+import { CanopyApiClient } from '../../../api/client'
+import type { ApiResponse } from '../../../api/types'
 import { ApiClientProvider } from '../../context'
 
 /**
@@ -29,6 +31,24 @@ import { ApiClientProvider } from '../../context'
  * })
  * ```
  */
+/**
+ * The response the real client returns for a body no CanopyCMS handler wrote: here a gateway's
+ * HTML error page with `status`. Typed for any endpoint, since mocks resolve it for any method.
+ */
+export async function gatewayPage<T = never>(status: number): Promise<ApiResponse<T>> {
+  const client = new CanopyApiClient({
+    fetch: vi.fn().mockResolvedValue({
+      ok: false,
+      status,
+      headers: new Headers(),
+      json: async () => {
+        throw new SyntaxError('Unexpected token <')
+      },
+    }),
+  })
+  return (await client.branches.list()) as ApiResponse<T>
+}
+
 export async function setupMockApiClient(): Promise<MockApiClient> {
   const { createApiClient } = await import('../../../api')
   const mockClient = createMockApiClient()

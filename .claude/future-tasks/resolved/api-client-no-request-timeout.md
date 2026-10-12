@@ -2,10 +2,12 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  `api/client.ts` sets no timeout or abort signal on its fetches, so a stalled request (network drop, laptop sleep) never settles. In the field comment popover (`editor/comments/CommentThreadsPopover.tsx`) a post or Resolve in flight holds the popover open with its focus trap, so a keyboard user cannot leave it until the browser gives up. Give editor writes a bounded timeout that rejects with a plain-words error, which the popover then shows and releases.
+  RESOLVED (2026-10-12) — every generated client call runs under a deadline (`api/request-deadline.ts`): 75 s, 180 s for endpoints declared `clientTimeout: 'long'`, and a per-call `timeoutMs`/`signal` through `RequestOptions`. Past it the call rejects with `ApiTimeoutError`; a gateway's 5xx page counts the same at every outcome-unknown site (`editor/unanswered.ts`). A timed-out save keeps the draft for saving again (the server's version check refuses a retry of a save that landed); a timed-out comment post says it may have been posted and reloads the threads; a timed-out branch action names itself, says it may have gone through and reloads the list, and a timed-out delete settles from the list; the content and branch load toasts offer Retry.
 ---
 
 # Editor API requests have no timeout
+
+## Status: RESOLVED 2026-10-12 — request deadlines in the generated client
 
 ## What is known
 

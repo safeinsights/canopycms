@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ApiTimeoutError } from '../../api/request-deadline'
 import { renderHook, act } from '@testing-library/react'
 import { useSchemaManager } from './useSchemaManager'
 import type { MockApiClient } from '../../api/__test__/mock-client'
-import { setupMockApiClient, createApiClientWrapper } from './__test__/test-utils'
+import { setupMockApiClient, createApiClientWrapper, gatewayPage } from './__test__/test-utils'
 import { mockSuccess, mockError } from '../../api/__test__/mock-client'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 import { mockConsole } from '../../test-utils/console-spy'
@@ -22,6 +23,7 @@ vi.mock('../../api', async () => {
 vi.mock('@mantine/notifications', () => ({
   notifications: {
     show: vi.fn(),
+    hide: vi.fn(),
   },
 }))
 
@@ -94,6 +96,13 @@ describe('useSchemaManager', () => {
       })
 
       expect(createResult).toEqual({ ok: false, error: 'Collection already exists' })
+      expect(notifications.show).toHaveBeenCalledTimes(1)
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          color: 'red',
+          message: 'Failed to create collection: Collection already exists',
+        }),
+      )
     })
   })
 
@@ -213,6 +222,25 @@ describe('useSchemaManager', () => {
         { name: 'featured', format: 'mdx', schema: 'postSchema' },
       )
       expect(onSchemaChange).toHaveBeenCalled()
+      expect(notifications.show).not.toHaveBeenCalled()
+    })
+
+    it('returns a failure result without a toast', async () => {
+      mockClient.schema.addEntryType.mockResolvedValueOnce(mockError(400, 'Name already used'))
+
+      const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
+
+      let addResult: Awaited<ReturnType<typeof result.current.addEntryType>> = { ok: true }
+      await act(async () => {
+        addResult = await result.current.addEntryType(unsafeAsLogicalPath('posts'), {
+          name: 'featured',
+          format: 'mdx',
+          schema: 'postSchema',
+        })
+      })
+
+      expect(addResult).toEqual({ ok: false, error: 'Name already used' })
+      expect(notifications.show).not.toHaveBeenCalled()
     })
   })
 
@@ -238,6 +266,23 @@ describe('useSchemaManager', () => {
         { branch: 'main', collectionPath: 'posts', entryTypeName: 'post' },
         { label: 'Blog Post', maxItems: 100 },
       )
+      expect(notifications.show).not.toHaveBeenCalled()
+    })
+
+    it('returns a failure result without a toast', async () => {
+      mockClient.schema.updateEntryType.mockResolvedValueOnce(mockError(400, 'Schema is locked'))
+
+      const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
+
+      let updateResult: Awaited<ReturnType<typeof result.current.updateEntryType>> = { ok: true }
+      await act(async () => {
+        updateResult = await result.current.updateEntryType(unsafeAsLogicalPath('posts'), 'post', {
+          label: 'Blog Post',
+        })
+      })
+
+      expect(updateResult).toEqual({ ok: false, error: 'Schema is locked' })
+      expect(notifications.show).not.toHaveBeenCalled()
     })
   })
 
@@ -264,6 +309,7 @@ describe('useSchemaManager', () => {
         collectionPath: 'posts',
         entryTypeName: 'featured',
       })
+      expect(notifications.show).not.toHaveBeenCalled()
     })
 
     it('returns a failure result when removing the last entry type', async () => {
@@ -279,6 +325,7 @@ describe('useSchemaManager', () => {
       })
 
       expect(removeResult).toEqual({ ok: false, error: 'Cannot remove last entry type' })
+      expect(notifications.show).not.toHaveBeenCalled()
     })
   })
 
@@ -336,6 +383,40 @@ describe('useSchemaManager', () => {
         branch: 'main',
         entryPath: 'posts/hello-world',
       })
+      expect(onSchemaChange).toHaveBeenCalled()
+    })
+
+    it('refreshes the content tree after a timed-out delete, which may have landed', async () => {
+      mockClient.entries.delete.mockRejectedValueOnce(
+        new ApiTimeoutError('DELETE', '/main/entries/posts/a', 75_000),
+      )
+      const onSchemaChange = vi.fn()
+      const { result } = renderHook(
+        () => useSchemaManager({ branchName: 'main', onSchemaChange }),
+        { wrapper },
+      )
+
+      let deleteResult: Awaited<ReturnType<typeof result.current.deleteEntry>> = { ok: true }
+      await act(async () => {
+        deleteResult = await result.current.deleteEntry(unsafeAsLogicalPath('posts/a'))
+      })
+
+      expect(deleteResult.ok).toBe(false)
+      expect(onSchemaChange).toHaveBeenCalled()
+    })
+
+    it("refreshes the content tree after a delete answered by a gateway's 5xx page", async () => {
+      mockClient.entries.delete.mockResolvedValueOnce(await gatewayPage(504))
+      const onSchemaChange = vi.fn(() => Promise.reject(new Error('still down')))
+      const { result } = renderHook(
+        () => useSchemaManager({ branchName: 'main', onSchemaChange }),
+        { wrapper },
+      )
+
+      await act(async () => {
+        await result.current.deleteEntry(unsafeAsLogicalPath('posts/a'))
+      })
+
       expect(onSchemaChange).toHaveBeenCalled()
     })
 

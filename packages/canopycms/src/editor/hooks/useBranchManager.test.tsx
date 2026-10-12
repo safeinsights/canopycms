@@ -1,8 +1,12 @@
 import type React from 'react'
+import { ApiTimeoutError } from '../../api/request-deadline'
+import { CanopyApiClient } from '../../api/client'
+import type { RetryToastMessageProps } from '../components/RetryToastMessage'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useSWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  branchActionOutcomeUnknown,
   CREATED_BRANCH_GRACE_MS,
   useBranchManager,
   UseBranchManagerOptions,
@@ -214,6 +218,35 @@ describe('useBranchManager', () => {
     restore()
   })
 
+  it('offers Retry on the sticky error toast, which reloads the branch list', async () => {
+    const { restore } = setupMockConsole(['error'])
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.branches.list
+      .mockRejectedValueOnce(new ApiTimeoutError('GET', '/branches', 30_000))
+      .mockResolvedValue({ ok: true, status: 200, data: { branches: mockBranches, users: [] } })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+
+    let toast: { message?: unknown } | undefined
+    await waitFor(() => {
+      toast = vi
+        .mocked(notifications.show)
+        .mock.calls.map(([n]) => n)
+        .find((n) => n.id === 'canopy-branches-load-failed')
+      expect(toast).toBeDefined()
+    })
+    expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
+    expect(toast).toMatchObject({ title: 'Could not load branches' })
+
+    await act(async () =>
+      (toast?.message as React.ReactElement<RetryToastMessageProps>).props.onRetry(),
+    )
+
+    await waitFor(() => expect(result.current.branches).toEqual(mockBranches))
+    expect(mockClient.branches.list).toHaveBeenCalledTimes(2)
+    restore()
+  })
+
   it('handles branch load returning 404 gracefully', async () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: false,
@@ -259,7 +292,11 @@ describe('useBranchManager', () => {
     await waitFor(() => {
       expect(notifications.show).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: "Branch workspace provisioning failed for 'main': clone failed",
+          message: expect.objectContaining({
+            props: expect.objectContaining({
+              message: "Branch workspace provisioning failed for 'main': clone failed",
+            }),
+          }),
           color: 'red',
         }),
       )
@@ -998,6 +1035,183 @@ describe('useBranchManager', () => {
 
     expect(mockSetBusy).toHaveBeenCalledWith(false)
     restore()
+  })
+
+  it('ends a timed-out submit, says it may have gone through, and reloads the list to show it', async () => {
+    const { restore } = setupMockConsole(['error'])
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: editingFeature, users: [] },
+    })
+    mockClient.workflow.submit.mockRejectedValueOnce(
+      new ApiTimeoutError('POST', '/feature/submit', 180_000),
+    )
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    await waitFor(() => expect(result.current.branches).toHaveLength(2))
+    let finishReload: () => void = () => {}
+    mockClient.branches.list.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishReload = () =>
+            resolve({ ok: true, status: 200, data: { branches: editingFeature, users: [] } })
+        }),
+    )
+
+    let settled = false
+    await act(async () => {
+      void result.current
+        .handleSubmit('feature')
+        .catch(() => {})
+        .finally(() => (settled = true))
+    })
+
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: branchActionOutcomeUnknown('Submit for review'),
+        color: 'yellow',
+        autoClose: false,
+      }),
+    )
+    // The reload runs inside the action's busy window: still busy until the list answers.
+    expect(settled).toBe(false)
+    expect(mockSetBusy).toHaveBeenLastCalledWith(true)
+    await act(async () => finishReload())
+    await waitFor(() => expect(settled).toBe(true))
+    expect(mockSetBusy).toHaveBeenLastCalledWith(false)
+    restore()
+  })
+
+  describe('a delete that times out', () => {
+    const deleteTimesOut = async (listedAfter: BranchMetadata[]) => {
+      mockClient.branches.list
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { branches: editingFeature, users: [] },
+        })
+        .mockResolvedValue({ ok: true, status: 200, data: { branches: listedAfter, users: [] } })
+      mockClient.branches.delete.mockRejectedValueOnce(
+        new ApiTimeoutError('DELETE', '/feature', 75_000),
+      )
+      const hook = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(hook.result.current.branches).toHaveLength(2))
+      act(() => hook.result.current.setBranchName('feature'))
+      await act(async () => {
+        await hook.result.current.handleDelete('feature')
+      })
+      return hook
+    }
+
+    it('reports it deleted, and leaves it, when the reloaded list no longer has it', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const remaining = editingFeature.filter((b) => b.name !== 'feature')
+      const { result } = await deleteTimesOut(remaining)
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Branch deleted' }),
+      )
+      expect(result.current.branchName).not.toBe('feature')
+    })
+
+    it('does not report a just-created branch deleted when only the listing lacks it', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const created = { ...mockBranches[1], name: 'brand-new', status: 'editing' as const }
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: editingFeature, users: [] },
+      })
+      mockClient.branches.delete.mockRejectedValueOnce(
+        new ApiTimeoutError('DELETE', '/brand-new', 75_000),
+      )
+      const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+      act(() => result.current.addCreatedBranch(created as unknown as BranchListItem))
+      act(() => result.current.setBranchName('brand-new'))
+
+      await act(async () => {
+        await result.current.handleDelete('brand-new')
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: branchActionOutcomeUnknown('Delete branch') }),
+      )
+      expect(result.current.branchName).toBe('brand-new')
+    })
+
+    it("takes the API's 404 as an earlier delete having gone through, and leaves the branch", async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const remaining = editingFeature.filter((b) => b.name !== 'feature')
+      mockClient.branches.list
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { branches: editingFeature, users: [] },
+        })
+        .mockResolvedValue({ ok: true, status: 200, data: { branches: remaining, users: [] } })
+      mockClient.branches.delete.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        error: 'Branch not found',
+      })
+      const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+      act(() => result.current.setBranchName('feature'))
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Branch deleted' }),
+      )
+      expect(result.current.branchName).not.toBe('feature')
+    })
+
+    it('treats a gateway error page like no answer', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const gateway = new CanopyApiClient({
+        fetch: vi.fn().mockResolvedValue({
+          ok: false,
+          status: 504,
+          headers: new Headers(),
+          json: async () => {
+            throw new SyntaxError('Unexpected token <')
+          },
+        }),
+      })
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: editingFeature, users: [] },
+      })
+      mockClient.workflow.submit.mockResolvedValueOnce(
+        await gateway.workflow.submit({ branch: 'feature' }),
+      )
+      const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+
+      await act(async () => {
+        await result.current.handleSubmit('feature').catch(() => {})
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: branchActionOutcomeUnknown('Submit for review') }),
+      )
+    })
+
+    it('says it may have gone through when the branch is still listed', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const { result } = await deleteTimesOut(editingFeature)
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: branchActionOutcomeUnknown('Delete branch') }),
+      )
+      expect(result.current.branchName).toBe('feature')
+    })
   })
 
   it('withdraws branch successfully', async () => {

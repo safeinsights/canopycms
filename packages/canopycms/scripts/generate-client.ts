@@ -74,14 +74,19 @@ const HAND_WRITTEN_METHODS: Record<string, (route: RouteMetadata) => string> = {
   'assets.uploadProxied': (
     route,
   ) => `    /** ${route.method} ${route.path}: multipart upload, hand-written because the generic template only knows JSON bodies. */
-    ${route.name}: (file: File, options?: { filename?: string }): Promise<${route.responseTypeName}> => {
+    ${route.name}: (file: File, options?: { filename?: string } & RequestOptions): Promise<${route.responseTypeName}> => {
       const formData = new FormData()
       formData.append('file', file)
       if (options?.filename) {
         formData.append('filename', options.filename)
       }
-      return this.request('${route.method}', '${route.path}', formData)
+      return this.request('${route.method}', '${route.path}', formData, ${timeoutClassLiteral(route)}, options)
     }`,
+}
+
+/** The endpoint's timeout class: its declared `clientTimeout`, else `standard`. */
+function timeoutClassLiteral(route: RouteMetadata): string {
+  return `'${route.clientTimeout ?? 'standard'}'`
 }
 
 /**
@@ -106,19 +111,11 @@ function generateClientMethod(route: RouteMetadata): string {
     bodyType = route.bodyTypeName ? `body: ${route.bodyTypeName}` : 'body: unknown'
   }
 
-  const args = [paramType, bodyType].filter(Boolean).join(', ')
+  const args = [paramType, bodyType, 'options?: RequestOptions'].filter(Boolean).join(', ')
 
-  // Determine the request call
-  let requestCall = ''
-  if (hasParams && hasBody) {
-    requestCall = `this.request('${route.method}', this.buildPath('${route.path}', params), body)`
-  } else if (hasParams) {
-    requestCall = `this.request('${route.method}', this.buildPath('${route.path}', params))`
-  } else if (hasBody) {
-    requestCall = `this.request('${route.method}', '${route.path}', body)`
-  } else {
-    requestCall = `this.request('${route.method}', '${route.path}')`
-  }
+  const pathExpr = hasParams ? `this.buildPath('${route.path}', params)` : `'${route.path}'`
+  const bodyExpr = hasBody ? 'body' : 'undefined'
+  const requestCall = `this.request('${route.method}', ${pathExpr}, ${bodyExpr}, ${timeoutClassLiteral(route)}, options)`
 
   return `    /** ${route.method} ${route.path} */
     ${route.name}: (${args}): Promise<${route.responseTypeName}> => {
@@ -258,6 +255,8 @@ function generateClientCode(namespaces: NamespaceRoutes[]): string {
  */
 
 import { computeContentSha256Hex } from './request-body-hash'
+import { resolveTimeoutMs, runWithDeadline, type RequestOptions, type RequestTimeoutClass } from './request-deadline'
+export { isApiTimeoutError, WRITE_TIMED_OUT_MESSAGE, type RequestOptions } from './request-deadline'
 import type { ApiResponse } from './types'
 import { readTrailingSlashEnv, withTrailingSlash } from '../utils/url-prefix'
 import { EDITOR_MODE_HEADER, EDITOR_MODE_MISMATCH_STATUS } from '../operating-mode/editor-mode-check'
@@ -299,7 +298,8 @@ export interface ApiClientOptions {
 
 /**
  * Typed client for the CanopyCMS API: one method per endpoint, grouped by namespace, each
- * returning that endpoint's ApiResponse.
+ * returning that endpoint's ApiResponse. Every method takes {@link RequestOptions} last; a call
+ * that outlives its deadline rejects with an \`ApiTimeoutError\` (request-deadline.ts).
  *
  * @example
  * \`\`\`ts
@@ -359,17 +359,26 @@ ${namespacesCode}
     return result
   }
 
-  private async request<T = unknown>(
+  /** One API call, 429 resends included, under the deadline \`timeout\` and \`options\` give it. */
+  private request<T = unknown>(
     method: string,
     path: string,
-    body?: unknown,
-    headers: Record<string, string> = {}
+    body: unknown,
+    timeout: RequestTimeoutClass,
+    options?: RequestOptions
   ): Promise<T> {
+    return runWithDeadline((signal) => this.send<T>(method, path, body, signal), {
+      method,
+      path,
+      timeoutMs: resolveTimeoutMs(timeout, options),
+      signal: options?.signal,
+    })
+  }
+
+  private async send<T>(method: string, path: string, body: unknown, signal: AbortSignal): Promise<T> {
     const url = \`\${this.baseUrl}\${this.trailingSlash ? withTrailingSlash(path) : path}\`
 
-    const requestHeaders: Record<string, string> = {
-      ...headers,
-    }
+    const requestHeaders: Record<string, string> = {}
     if (this.editorMode) requestHeaders[EDITOR_MODE_HEADER] = this.editorMode
 
     let requestBody: BodyInit | undefined
@@ -398,12 +407,15 @@ ${namespacesCode}
     const init: RequestInit = {
       method,
       headers: requestHeaders,
+      signal,
     }
 
     if (requestBody !== undefined) {
       init.body = requestBody
     }
 
+    // Hashing the body is async, so the deadline may already have passed: send nothing then.
+    signal.throwIfAborted()
     let response = await this.fetchFn(url, init)
     // A body from in front of the API (a proxy or CDN error page) may be empty, not JSON, or
     // not an ApiResponse; every such body becomes an \`ok: false\` ApiResponse, never a throw.
@@ -415,6 +427,7 @@ ${namespacesCode}
       const delay = throttleRetryDelayMs(response, attempt)
       if (delay === undefined) break
       await sleep(delay)
+      signal.throwIfAborted()
       response = await this.fetchFn(url, init)
       parsed = await response.json().catch(() => undefined)
     }

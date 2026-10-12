@@ -69,12 +69,6 @@
     },
     "packages/canopycms/src/editor/permission-manager/UserSelector.tsx": {
       "ellipsis": 1
-    },
-    "packages/canopycms/src/editor/schema-editor/CollectionEditor.tsx": {
-      "title-case": 7
-    },
-    "packages/canopycms/src/editor/schema-editor/EntryTypeEditor.tsx": {
-      "title-case": 4
     }
   }
 }

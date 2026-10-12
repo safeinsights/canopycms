@@ -10,6 +10,7 @@ import type {
 import type { EntryReferencedBy } from '../../api/entries'
 import type { LogicalPath, ContentId } from '../../paths/types'
 import { getErrorMessage } from '../../utils/error'
+import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 
 export interface UseSchemaManagerOptions {
   branchName: string
@@ -83,19 +84,26 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   const apiClient = useApiClient()
   const [isLoading, setIsLoading] = useState(false)
 
-  // Toasts on every failure (relied on by fire-and-forget callers that ignore
-  // the returned result) and returns the underlying message so callers that
-  // do inspect the result can also surface it inline (e.g. in a modal).
-  const handleError = useCallback((message: string, error: unknown): string => {
-    console.error(message, error)
-    const errorMessage = getErrorMessage(error)
-    notifications.show({
-      title: 'Error',
-      message: `${message}: ${errorMessage}`,
-      color: 'red',
-    })
-    return errorMessage
-  }, [])
+  // Collection, order and entry operations toast each failure that reaches here
+  // (relied on by fire-and-forget callers that ignore the returned result).
+  // Entry-type operations pass `toast: false`: their only caller,
+  // CollectionEditor, shows each result inline. Both return the underlying
+  // message for callers that surface it themselves.
+  const handleError = useCallback(
+    (message: string, error: unknown, { toast = true }: { toast?: boolean } = {}): string => {
+      console.error(message, error)
+      const errorMessage = getErrorMessage(error)
+      if (toast) {
+        notifications.show({
+          title: 'Error',
+          message: `${message}: ${errorMessage}`,
+          color: 'red',
+        })
+      }
+      return errorMessage
+    },
+    [],
+  )
 
   const createCollection = useCallback(
     async (input: CreateCollectionInput): Promise<CreateCollectionResult> => {
@@ -192,14 +200,13 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         if (!result.ok) {
           throw new Error(result.error || 'Failed to add entry type')
         }
-        notifications.show({
-          message: `Entry type "${entryType.name}" added`,
-          color: 'green',
-        })
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
-        return { ok: false, error: handleError('Failed to add entry type', error) }
+        return {
+          ok: false,
+          error: handleError('Failed to add entry type', error, { toast: false }),
+        }
       } finally {
         setIsLoading(false)
       }
@@ -222,14 +229,13 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         if (!result.ok) {
           throw new Error(result.error || 'Failed to update entry type')
         }
-        notifications.show({
-          message: 'Entry type updated',
-          color: 'green',
-        })
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
-        return { ok: false, error: handleError('Failed to update entry type', error) }
+        return {
+          ok: false,
+          error: handleError('Failed to update entry type', error, { toast: false }),
+        }
       } finally {
         setIsLoading(false)
       }
@@ -249,14 +255,13 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         if (!result.ok) {
           throw new Error(result.error || 'Failed to remove entry type')
         }
-        notifications.show({
-          message: `Entry type "${entryTypeName}" removed`,
-          color: 'green',
-        })
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
-        return { ok: false, error: handleError('Failed to remove entry type', error) }
+        return {
+          ok: false,
+          error: handleError('Failed to remove entry type', error, { toast: false }),
+        }
       } finally {
         setIsLoading(false)
       }
@@ -303,6 +308,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         if (!result.ok && referencedBy) {
           return { ok: false, error: result.error ?? 'Entry is referenced', referencedBy }
         }
+        if (isGatewayFailure(result)) throw new UnansweredError()
         if (!result.ok) {
           throw new Error(result.error || 'Failed to delete entry')
         }
@@ -313,6 +319,9 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
+        // An unanswered delete may have landed; the content tree then drops the entry.
+        if (isUnanswered(error))
+          void Promise.resolve(options.onSchemaChange?.()).catch(console.error)
         return { ok: false, error: handleError('Failed to delete entry', error) }
       } finally {
         setIsLoading(false)

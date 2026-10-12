@@ -1,6 +1,6 @@
 import type { BranchListItem, CreateBranchBody } from '../../api/branch'
 import { isCreatorsRecentBranch } from '../../api/branch-create-window'
-import { isNonApiResponse, type CanopyApiClient } from '../../api/client'
+import { isApiTimeoutError, isNonApiResponse, type CanopyApiClient } from '../../api/client'
 import { sanitizeBranchName } from '../../paths/branch-name'
 
 /** @internal Exported for tests. Past the 60 s a Lambda behind CloudFront gets, so its 504 lands first. */
@@ -14,8 +14,6 @@ export type CreateBranchOutcome =
   | { kind: 'created'; branch: BranchListItem | undefined }
   | { kind: 'failed'; message: string }
 
-const DEADLINE = Symbol('deadline')
-
 /**
  * Create a branch. Past the deadline, after an error page from in front of the API, or after a
  * busy 503 the branch may exist anyway, so the branch list decides; retrying is safe because a
@@ -28,15 +26,16 @@ export async function requestBranchCreate(
   userId: string | undefined,
   deadlineMs = CREATE_BRANCH_DEADLINE_MS,
 ): Promise<CreateBranchOutcome> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const deadline = new Promise<typeof DEADLINE>((resolve) => {
-    timer = setTimeout(() => resolve(DEADLINE), deadlineMs)
-  })
-  const result = await Promise.race([apiClient.branches.create(body), deadline]).finally(() =>
-    clearTimeout(timer),
-  )
+  let result: Awaited<ReturnType<CanopyApiClient['branches']['create']>>
+  try {
+    result = await apiClient.branches.create(body, { timeoutMs: deadlineMs })
+  } catch (err) {
+    if (isApiTimeoutError(err)) {
+      return settle(apiClient, body.branch, userId, CREATE_TIMED_OUT_MESSAGE)
+    }
+    throw err
+  }
 
-  if (result === DEADLINE) return settle(apiClient, body.branch, userId, CREATE_TIMED_OUT_MESSAGE)
   if (result.ok) return { kind: 'created', branch: result.data?.branch }
   if (isNonApiResponse(result))
     return settle(apiClient, body.branch, userId, CREATE_TIMED_OUT_MESSAGE)

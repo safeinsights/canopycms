@@ -93,6 +93,7 @@ replaces each `next` with its number.
 | next | Editing  | [Editor contrast; blocked buttons stay focusable](#editor-contrast-and-blocked-buttons-stay-focusable)                                                                                      | Browser tests                |
 | next | Editing  | [List items and blocks collapse](#list-items-and-blocks-collapse-and-reorder-from-one-menu)                                                                                                 | Editor UI tests              |
 | next | Editing  | [Date picker, form header, wrapping toolbar](#a-date-picker-a-form-header-and-a-toolbar-that-wraps)                                                                                         | Editor UI tests              |
+| next | Editing  | [Editor requests time out](#editor-requests-time-out-instead-of-hanging)                                                                                                                    | Slow-API browser tests       |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -342,6 +343,18 @@ A `list: true` object takes an optional `itemLabel` ("team member") naming its i
 block up" or the "Add block..." select use the row's "Actions for <title>" menu or "Add section".
 
 **Now deletable.** Template labels that repeated the template's description.
+
+### Editor requests time out instead of hanging
+
+**What changed.** (next) Every editor API request has a deadline: 75 s, 90 s for branch create, and
+180 s for submit, admin branch scans and repairs, and the proxied upload. Past it the editor says
+so. A save keeps your changes. A write with no answer, or a gateway's error page, may still have
+gone through, so the editor says that rather than inviting a blind retry, and reloads what it can.
+The content and branch-list load failures offer Retry. A comments panel or popover held open by a
+write in flight says why.
+
+**To adopt.** Nothing, unless browser tests hold an API response for longer than a deadline to
+observe a busy state; keep such holds under it.
 
 ### Field editing: descriptions, list-card titles, and `public/` images
 

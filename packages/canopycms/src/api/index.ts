@@ -81,3 +81,5 @@ export { USER_ROUTES } from './user'
 // Export client
 export { CanopyApiClient, createApiClient } from './client'
 export type { ApiClientOptions } from './client'
+export { ApiTimeoutError, isApiTimeoutError } from './request-deadline'
+export type { RequestOptions } from './request-deadline'

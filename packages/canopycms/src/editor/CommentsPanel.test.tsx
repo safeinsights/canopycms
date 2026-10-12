@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { CLOSE_WAITS_FOR_WRITE } from './comments/use-tracked-writes'
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -415,9 +416,12 @@ describe('CommentsPanel', () => {
       await userEvent.click(within(card('a')).getByTestId('reply-thread-button'))
       await userEvent.type(screen.getByLabelText('Reply to this thread'), 'Wait for me')
       await userEvent.click(screen.getByTestId('submit-reply-button'))
+      expect(screen.queryByText(CLOSE_WAITS_FOR_WRITE)).toBeNull()
       await userEvent.keyboard('{Escape}')
 
       expect(onClose).not.toHaveBeenCalled()
+      // A refused close says why.
+      expect(screen.getByRole('status').textContent).toBe(CLOSE_WAITS_FOR_WRITE)
       expect(
         (within(card('a')).getByRole('button', { name: 'Jump to field' }) as HTMLButtonElement)
           .disabled,
@@ -426,6 +430,7 @@ describe('CommentsPanel', () => {
       await act(async () => {
         finish()
       })
+      expect(screen.getByRole('status').textContent).toBe('')
       await userEvent.keyboard('{Escape}')
       expect(onClose).toHaveBeenCalledTimes(1)
     })

@@ -921,6 +921,7 @@ const listBranches = defineEndpoint({
 const createBranch = defineEndpoint({
   namespace: 'branches',
   name: 'create',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/branches',
   body: createBranchBodySchema,

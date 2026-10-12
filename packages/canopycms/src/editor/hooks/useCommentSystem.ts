@@ -5,6 +5,7 @@ import type { UserSearchResult } from '../../auth/types'
 import type { EditorEntry } from '../Editor'
 import { findFieldTarget, whenRevealed } from '../field-target'
 import { useApiClient } from '../context'
+import { isGatewayFailure, isUnanswered } from '../unanswered'
 import { resolveMessageOrigin } from '../preview-bridge'
 import { isSamePreviewPath } from '../preview-path'
 import { commentsKey, fetchCommentsSeedingUsers, useCommentsData } from './useCommentsData'
@@ -66,6 +67,9 @@ export interface UseCommentSystemReturn {
 /** @internal Exported for tests. */
 export const COMMENT_NOT_ADDED = "Couldn't add the comment. Try again."
 /** @internal Exported for tests. */
+export const COMMENT_MAY_BE_ADDED =
+  "The server didn't answer, so your comment may have been posted. Check the comments above before sending it again."
+/** @internal Exported for tests. */
 export const THREAD_NOT_RESOLVED = "Couldn't resolve the thread. Try again."
 
 /**
@@ -87,7 +91,10 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // Mode's double effect invoke collapses to a single request). Switching
   // branches re-keys automatically, so no manual branch-change effect is
   // needed.
-  const { data: commentsData } = useCommentsData(apiClient, options.branchName)
+  const { data: commentsData, error: commentsError } = useCommentsData(
+    apiClient,
+    options.branchName,
+  )
   const comments = commentsData?.threads ?? []
   const getCommentUser = useSeededUserResolver()
 
@@ -95,22 +102,27 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // stable setState passthrough, and this file is plain .ts (not .tsx), so
   // the react-hooks/exhaustive-deps rule isn't active here anyway --
   // including it would refire this on every Editor.tsx render regardless.
+  // A branch whose comments never loaded reports none, not the previous branch's.
   useEffect(() => {
     if (commentsData) options.onCommentsChange?.(commentsData.threads)
-  }, [commentsData])
+    else if (commentsError) options.onCommentsChange?.([])
+  }, [commentsData, commentsError])
 
   // Explicit reload: always issues a fresh, independent fetch (raw call, not
   // SWR's `mutate()` revalidate path) so a caller requesting a reload right
   // after mount isn't coalesced against the still-in-flight automatic load
   // -- then writes the result into the shared cache so useCommentsData's
   // bound hook (and the effect above) pick it up.
+  // A failed reload logs and keeps the threads already shown.
   const loadComments = async (branch: string) => {
     if (!branch) return
-    const fresh = await fetchCommentsSeedingUsers(
-      apiClient,
-      { cache, mutate: globalMutate },
-      branch,
-    )
+    let fresh: Awaited<ReturnType<typeof fetchCommentsSeedingUsers>>
+    try {
+      fresh = await fetchCommentsSeedingUsers(apiClient, { cache, mutate: globalMutate }, branch)
+    } catch (err) {
+      console.error('Failed to load comments:', err)
+      return
+    }
     await globalMutate(commentsKey(branch), fresh, { revalidate: false })
   }
 
@@ -123,12 +135,18 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
     canopyPath?: string,
     threadId?: string,
   ) => {
-    if (!options.branchName) return
+    const branch = options.branchName
+    if (!branch) return
     const result = await apiClient.comments
-      .add({ branch: options.branchName }, { text, threadId, type, entryPath, canopyPath })
-      .catch(() => null)
+      .add({ branch }, { text, threadId, type, entryPath, canopyPath })
+      .catch((err: unknown) => (isUnanswered(err) ? 'unanswered' : null))
+    if (result === 'unanswered' || (result && isGatewayFailure(result))) {
+      // An unanswered post may have landed: reload so the thread shows it if it did.
+      void loadComments(branch)
+      throw new Error(COMMENT_MAY_BE_ADDED)
+    }
     if (!result?.ok) throw new Error(COMMENT_NOT_ADDED)
-    await loadComments(options.branchName)
+    await loadComments(branch)
   }
 
   const handleResolveThread = async (threadId: string) => {

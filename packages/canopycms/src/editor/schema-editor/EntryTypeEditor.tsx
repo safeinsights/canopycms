@@ -52,6 +52,8 @@ export interface EntryTypeEditorProps {
   availableSchemas: string[]
   /** Existing entry type names in the collection (for duplicate validation) */
   existingEntryTypeNames?: string[]
+  /** The caller holds an edit until its own save, so confirming it updates rather than saves. */
+  staged?: boolean
   onSave: (data: CreateEntryTypeInput | UpdateEntryTypeInput, isNew: boolean) => void
   onClose: () => void
   isSaving?: boolean
@@ -70,6 +72,7 @@ export function EntryTypeEditor({
   editingEntryType,
   availableSchemas,
   existingEntryTypeNames = [],
+  staged = false,
   onSave,
   onClose,
   isSaving = false,
@@ -90,6 +93,10 @@ export function EntryTypeEditor({
 
   const [validationError, setValidationError] = useState<string | null>(null)
 
+  // A refresh hands over a new `availableSchemas` array after every schema change; keying the reset
+  // on its first value rather than its identity keeps what the user is typing.
+  const defaultSchema = availableSchemas[0] || ''
+
   /* eslint-disable react-hooks/set-state-in-effect -- intentional: sync form state from props on open */
   useEffect(() => {
     if (isOpen) {
@@ -107,14 +114,14 @@ export function EntryTypeEditor({
           name: '',
           label: '',
           format: 'json',
-          schema: availableSchemas[0] || '',
+          schema: defaultSchema,
           default: false,
           maxItems: undefined,
         })
       }
       setValidationError(null)
     }
-  }, [isOpen, editingEntryType, availableSchemas])
+  }, [isOpen, editingEntryType, defaultSchema])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const updateField = useCallback(
@@ -202,7 +209,11 @@ export function EntryTypeEditor({
     <Modal
       opened={isOpen}
       onClose={onClose}
-      title={isEditMode ? `Edit Entry Type: ${editingEntryType?.name}` : 'Add Entry Type'}
+      title={
+        isEditMode
+          ? `Edit entry type: ${editingEntryType?.label || editingEntryType?.name}`
+          : 'Add entry type'
+      }
       size="md"
     >
       <Stack gap="md">
@@ -298,7 +309,7 @@ export function EntryTypeEditor({
         />
 
         <NumberInput
-          label="Max Items"
+          label="Max items"
           description="Limit number of items (leave empty for unlimited, use 1 for singleton-like behavior)"
           placeholder="Unlimited"
           value={formData.maxItems ?? ''}
@@ -321,7 +332,7 @@ export function EntryTypeEditor({
             Cancel
           </Button>
           <Button size="sm" onClick={handleSave} loading={isSaving}>
-            {isEditMode ? 'Save Changes' : 'Add Entry Type'}
+            {isEditMode ? (staged ? 'Update entry type' : 'Save entry type') : 'Add entry type'}
           </Button>
         </Group>
       </Stack>

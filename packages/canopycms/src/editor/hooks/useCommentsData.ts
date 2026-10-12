@@ -24,22 +24,17 @@ export interface CommentsData {
   users: UserProfile[]
 }
 
-/** A branch's comment threads. Never throws: a failed load has no error UI, so it logs and is empty. */
+/**
+ * A branch's comment threads. Rejects when they can't be read, so a failed reload leaves the
+ * threads already shown in place rather than emptying them.
+ */
 async function fetchComments(
   apiClient: Pick<ApiClient, 'comments'>,
   branch: string,
 ): Promise<CommentsData> {
-  try {
-    const result = await apiClient.comments.list({ branch })
-    if (!result.ok) {
-      console.error('Failed to load comments:', result.status)
-      return { threads: [], users: [] }
-    }
-    return { threads: result.data?.threads ?? [], users: result.data?.users ?? [] }
-  } catch (err) {
-    console.error('Failed to load comments:', err)
-    return { threads: [], users: [] }
-  }
+  const result = await apiClient.comments.list({ branch })
+  if (!result.ok) throw new Error(`Failed to load comments (HTTP ${result.status})`)
+  return { threads: result.data?.threads ?? [], users: result.data?.users ?? [] }
 }
 
 /**
@@ -63,9 +58,11 @@ export async function fetchCommentsSeedingUsers(
 export function useCommentsData(
   apiClient: Pick<ApiClient, 'comments'>,
   branch: string,
-): SWRResponse<CommentsData, never> {
+): SWRResponse<CommentsData, unknown> {
   const { cache, mutate } = useSWRConfig()
-  return useSWR(branch ? commentsKey(branch) : null, () =>
-    fetchCommentsSeedingUsers(apiClient, { cache, mutate }, branch),
+  return useSWR(
+    branch ? commentsKey(branch) : null,
+    () => fetchCommentsSeedingUsers(apiClient, { cache, mutate }, branch),
+    { onError: (err: unknown) => console.error('Failed to load comments:', err) },
   )
 }
