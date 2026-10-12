@@ -9,6 +9,7 @@ import {
   MantineProvider,
   getDefaultZIndex,
   mergeThemeOverrides,
+  type CSSVariablesResolver,
   type MantineColorScheme,
   type MantineColorsTuple,
   type MantineThemeOverride,
@@ -75,8 +76,30 @@ const toScale = (
 }
 
 // The editor's default control sizes; a per-call `size` is only for a deliberate exception.
+// Filled red is red.8 under white; filled orange is orange.6 under black, since no orange shade
+// reaches 4.5:1 under white. Callers pass a plain `color`.
 const canopyComponents = {
-  Button: Button.extend({ defaultProps: { size: 'xs' } }),
+  Button: Button.extend({
+    defaultProps: { size: 'xs' },
+    vars: (theme, props) => {
+      if ((props.variant ?? 'filled') !== 'filled') return { root: {} }
+      if (props.color === 'red') {
+        return {
+          root: { '--button-bg': theme.colors.red[8], '--button-hover': theme.colors.red[9] },
+        }
+      }
+      if (props.color === 'orange') {
+        return {
+          root: {
+            '--button-bg': theme.colors.orange[6],
+            '--button-hover': theme.colors.orange[7],
+            '--button-color': theme.black,
+          },
+        }
+      }
+      return { root: {} }
+    },
+  }),
   ActionIcon: ActionIcon.extend({ defaultProps: { size: 'sm' } }),
 }
 
@@ -101,6 +124,14 @@ export const createCanopyTheme = (
   return mergeThemeOverrides(base, themeOverride ?? {})
 }
 
+// Mantine's dimmed gray.6 is 3.32:1 on white and dark.2 is 3.53:1 on dark.6 panels; gray.7 and
+// dark.1 reach at least 6.85:1 on every editor background.
+const canopyCssVariablesResolver: CSSVariablesResolver = () => ({
+  variables: {},
+  light: { '--mantine-color-dimmed': 'var(--mantine-color-gray-7)' },
+  dark: { '--mantine-color-dimmed': 'var(--mantine-color-dark-1)' },
+})
+
 export interface CanopyCMSProviderProps extends CanopyThemeOptions {
   children: React.ReactNode
 }
@@ -115,7 +146,11 @@ export const CanopyCMSProvider: React.FC<CanopyCMSProviderProps> = ({
   const theme = useMemo(() => createCanopyTheme({ colors, themeOverride }), [colors, themeOverride])
 
   return (
-    <MantineProvider theme={theme} defaultColorScheme={colorScheme}>
+    <MantineProvider
+      theme={theme}
+      defaultColorScheme={colorScheme}
+      cssVariablesResolver={canopyCssVariablesResolver}
+    >
       {/* Confirms open from inside Drawers (level 'modal'), so sit a level above; notifications stay higher. */}
       <ModalsProvider modalProps={{ zIndex: getDefaultZIndex('popover') }}>
         {withNotifications ? <Notifications position="bottom-left" /> : null}
