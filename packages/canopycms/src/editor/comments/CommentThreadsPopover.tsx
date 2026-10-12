@@ -347,7 +347,10 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       withArrow={!anchored}
       trapFocus
       returnFocus={false}
-      closeOnEscape
+      // Refused while a write is in flight; Mantine would still return focus to the opener.
+      // Off while a write is in flight, when `close` refuses anyway, so Mantine's Escape handler
+      // doesn't run its focus return on a popover that stays open.
+      closeOnEscape={inFlight === 0}
       closeOnClickOutside={!anchored}
       // Anchored, the target is an empty element, so the control and dropdown carry the roles.
       withRoles={!anchored}
