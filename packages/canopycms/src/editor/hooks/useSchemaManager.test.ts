@@ -134,6 +134,34 @@ describe('useSchemaManager', () => {
       expect(onSchemaChange).toHaveBeenCalled()
     })
 
+    it('reports a landed save as saved when the content tree refresh fails', async () => {
+      mockClient.schema.updateCollection.mockResolvedValueOnce(mockSuccess({ success: true }))
+      const onSchemaChange = vi.fn(() =>
+        Promise.reject(new ApiTimeoutError('GET', '/main/schema', 75_000)),
+      )
+      const { result } = renderHook(
+        () => useSchemaManager({ branchName: 'main', onSchemaChange }),
+        { wrapper },
+      )
+
+      let updateResult: Awaited<ReturnType<typeof result.current.updateCollection>> = {
+        ok: false,
+        error: 'not called',
+      }
+      await act(async () => {
+        updateResult = await result.current.updateCollection(unsafeAsLogicalPath('posts'), {
+          label: 'Blog Posts',
+        })
+      })
+
+      expect(updateResult).toEqual({ ok: true })
+      expect(onSchemaChange).toHaveBeenCalledTimes(1)
+      expect(notifications.show).toHaveBeenCalledTimes(1)
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Collection updated', color: 'green' }),
+      )
+    })
+
     it('returns a failure result with the underlying error message', async () => {
       mockClient.schema.updateCollection.mockResolvedValueOnce(
         mockError(404, 'Collection not found'),

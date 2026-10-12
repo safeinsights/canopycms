@@ -342,6 +342,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // another's.
       draftBaseVersionsRef.current = {}
       reloadRequiredRef.current = {}
+      // A timed-out save belongs to the branch it was sent to; content ids repeat across branches.
+      for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
+      timedOutSavesRef.current.clear()
       reconciledDraftIdsRef.current = new Set()
     }
     prevBranchRef.current = options.branchName

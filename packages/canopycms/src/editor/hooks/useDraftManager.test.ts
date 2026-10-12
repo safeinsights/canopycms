@@ -778,6 +778,38 @@ describe('useDraftManager', () => {
           })
         })
 
+        it('forgets a timed-out save on switching branch, where the same entry id is another file', async () => {
+          mockGetEntryVersion.mockReturnValue(100)
+          mockSaveEntry.mockRejectedValueOnce(
+            new ApiTimeoutError('PUT', '/main/content/posts/a', 75_000),
+          )
+          const { result, rerender } = renderHook((props) => useDraftManager(props), {
+            initialProps: versionedOptions,
+          })
+          act(() => {
+            result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+          })
+          await act(async () => {
+            await result.current.handleSave()
+          })
+          const { notifications } = await import('@mantine/notifications')
+          expect(notifications.hide).not.toHaveBeenCalled()
+
+          rerender({ ...versionedOptions, branchName: 'feature' })
+          expect(notifications.hide).toHaveBeenCalledWith('canopy-save-timed-out:abc123def456')
+          act(() => {
+            result.current.setDrafts({ abc123def456: { title: 'Other branch' } })
+          })
+          mockSaveEntry.mockRejectedValueOnce(new SaveApiError(409, ENTRY_CHANGED_MESSAGE))
+          await act(async () => {
+            await result.current.handleSave()
+          })
+
+          expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
+            message: ENTRY_CHANGED_MESSAGE,
+          })
+        })
+
         it('keeps the server message for a conflict that is not the entry having changed', async () => {
           const busy =
             'This branch is busy syncing or saving another change, so your change was not saved. Try again in a moment.'

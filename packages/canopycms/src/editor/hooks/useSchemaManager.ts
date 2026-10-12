@@ -193,7 +193,8 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           message: 'Collection updated',
           color: 'green',
         })
-        await options.onSchemaChange?.()
+        // The write landed, so a failed refresh is logged rather than reported as its failure.
+        await Promise.resolve(options.onSchemaChange?.()).catch(console.error)
         return { ok: true }
       } catch (error) {
         return fail(error, 'Failed to update collection', {
