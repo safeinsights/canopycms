@@ -3,8 +3,9 @@
 /**
  * Prints the commit a published package version was built from, read from its
  * npm SLSA provenance attestation, or nothing when that version is not on npm.
- * Any other answer (no provenance, a malformed one, a registry error) exits 1:
- * a caller deciding whether to publish must not read "unknown" as "absent".
+ * Any other answer (published without provenance or not yet attested, a
+ * malformed attestation, a registry error) exits 1: a caller deciding whether
+ * to publish must not read "unknown" as "absent".
  *
  * Usage: node scripts/npm-attested-commit.mjs <package> <version>
  */
@@ -18,7 +19,16 @@ export async function attestedCommit(name, version) {
   const res = await fetch(
     `https://registry.npmjs.org/-/npm/v1/attestations/${encodeURIComponent(name)}@${encodeURIComponent(version)}`,
   )
-  if (res.status === 404) return null
+  if (res.status === 404) {
+    // The attestations endpoint also 404s for a version that exists without
+    // one (or before the registry has attested it), so ask for the version.
+    const existing = await fetch(
+      `https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
+    )
+    if (existing.status === 404) return null
+    if (!existing.ok) throw new Error(`${name}@${version}: registry answered ${existing.status}`)
+    throw new Error(`${name}@${version}: published without provenance, or not yet attested`)
+  }
   if (!res.ok) throw new Error(`${name}@${version}: registry answered ${res.status}`)
   const body = await res.json()
   const slsa = body.attestations?.find((a) => a.predicateType === 'https://slsa.dev/provenance/v1')

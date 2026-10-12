@@ -3,8 +3,13 @@ name: Publish to npm
 on:
   push:
     branches: [main]
-  # Manual runs publish a PRERELEASE from the selected branch, never a stable
-  # release. Pick a non-main branch in the Actions UI. This trigger lives here
+    # A stable tag, pushed by `release-commit`, runs `publish` at that tag,
+    # so npm's provenance names the release commit itself.
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  # A manual run on a branch publishes a PRERELEASE from it; pick a non-main
+  # branch in the Actions UI. A manual run on a stable tag (`vX.Y.Z`) re-runs
+  # `publish` for that release, completing one that stopped part-way. This
+  # trigger lives here
   # rather than on publish-prerelease.yml because npm allows one trusted
   # publisher per package, bound to a workflow filename, and validates the
   # *calling* workflow for `workflow_call` — so every publish must enter
@@ -31,15 +36,15 @@ concurrency:
 
 jobs:
   # A stable release is two jobs, so no job holds both a token that writes to
-  # the repository and npm's id-token: `release-commit` writes, `publish`
-  # publishes. The release is committed and tagged BEFORE anything is
-  # published, so main and npm never disagree about a version: either nothing
-  # was pushed and the next push to main starts over, or the tag exists and
-  # `publish` resumes with "Re-run failed jobs".
+  # the repository and npm's id-token: `release-commit`, on a push to main,
+  # commits and tags the release; `publish`, on that tag's push, publishes it.
+  # Main and npm never disagree about a version: either nothing was pushed and
+  # the next push to main starts over, or the tag exists and `publish` can be
+  # re-run against it, by "Re-run failed jobs" or a manual run on the tag.
   release-commit:
     name: Release commit
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       # The release-bot app token below does the writing.
       contents: read
@@ -47,10 +52,6 @@ jobs:
       # `actions` scope, not `checks` -- workflow runs and check runs are
       # different APIs, and `checks: read` would not authorize it.
       actions: read
-    outputs:
-      release: ${{ steps.prepare.outputs.release }}
-      version: ${{ steps.prepare.outputs.version }}
-      sha: ${{ steps.commit.outputs.sha }}
 
     steps:
       # THE CI GATE.
@@ -119,24 +120,14 @@ jobs:
             sleep 15
           done
 
-      # Mint a short-lived token for the dedicated release app. Its bypass of the
-      # "changes must go through a PR" rule is gated by RELEASE_BOT_PRIVATE_KEY,
-      # which only exists in this repo — unlike the generic GITHUB_TOKEN, which
-      # cannot be granted bypass at all. The client ID is a public identifier,
-      # hence a variable rather than a secret; v3.1.0 deprecated `app-id` for it.
-      - name: Generate release-bot app token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-
       # Full history and tags: the release plan counts changesets since the
-      # latest stable tag, and the changelog labels entries from int tags.
+      # latest stable tag, and the changelog labels entries from int tags. No
+      # credentials persist: dependency scripts run below, and the release-bot
+      # token is minted only for the push.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
@@ -174,17 +165,32 @@ jobs:
             echo "Nothing to release: $reason" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # Mint a short-lived token for the dedicated release app. Its bypass of the
+      # "changes must go through a PR" rule is gated by RELEASE_BOT_PRIVATE_KEY,
+      # which only exists in this repo — unlike the generic GITHUB_TOKEN, which
+      # cannot be granted bypass at all. The client ID is a public identifier,
+      # hence a variable rather than a secret; v3.1.0 deprecated `app-id` for it.
+      - name: Generate release-bot app token
+        id: app-token
+        if: steps.prepare.outputs.release == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
       # The prepared tree is the release commit. Anything else changed means a
       # step did more than it should, so the job stops before pushing.
       #
       # `--atomic` lands the commit and its tag together or not at all. A push
       # refused because main moved publishes nothing; the next push to main
-      # releases from there, with the changesets still pending.
+      # releases from there, with the changesets still pending. The commit
+      # carries no [skip ci]: its own run on main finds nothing pending and
+      # stops, and the tag's push starts `publish`.
       - name: Commit, tag and push the release
-        id: commit
         if: steps.prepare.outputs.release == 'true'
         env:
           VERSION: ${{ steps.prepare.outputs.version }}
+          TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -197,30 +203,48 @@ jobs:
             echo "::error::the release changed files outside the version and changelog set"
             exit 1
           fi
-          # [skip ci] is required: app-token pushes DO re-trigger workflows
-          # (GITHUB_TOKEN pushes don't), so without it this push would re-run
-          # publish.yml on its own release commit.
-          git commit -m "chore: release v$VERSION [skip ci]"
+          git commit -m "chore: release v$VERSION"
           git tag "v$VERSION"
-          git push --atomic origin HEAD:main "refs/tags/v$VERSION"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # The token travels in a header, never in a URL or on disk; its
+          # base64 form is not masked automatically.
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" \
+            push --atomic "https://github.com/$GITHUB_REPOSITORY" HEAD:main "refs/tags/v$VERSION"
           echo "Released v$VERSION at $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Build & Publish
-    needs: release-commit
-    if: needs.release-commit.outputs.release == 'true'
+    # A stable tag's push, or a manual run on one. The tag is the release
+    # commit, so GITHUB_SHA, which npm's provenance records, is that commit.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
+    env:
+      SHA: ${{ github.sha }}
 
     steps:
-      # The release commit, with history and tags for the changelog's labels.
+      # With history and tags for the changelog's labels.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.release-commit.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      # Only a release commit on main publishes: a stable tag placed anywhere
+      # else, or an int tag dispatched by hand, stops here.
+      - name: Check the tag is a release on main
+        id: release
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$tag is not a stable release tag"; exit 1; }
+          version="${tag#v}"
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$tag is not on main"; exit 1; }
+          manifest=$(node -p "require('./packages/canopycms/package.json').version")
+          [ "$manifest" = "$version" ] || { echo "::error::$tag holds canopycms $manifest"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
@@ -249,8 +273,7 @@ jobs:
 
       - name: Assemble the shipped changelog
         env:
-          VERSION: ${{ needs.release-commit.outputs.version }}
-          SHA: ${{ needs.release-commit.outputs.sha }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: >-
           node scripts/migration-notes.mjs --ship --version "$VERSION" --sha "$SHA"
           --out packages/canopycms/CHANGELOG.md --summary "$GITHUB_STEP_SUMMARY"
@@ -313,8 +336,7 @@ jobs:
 
       - name: Publish the five packages
         env:
-          VERSION: ${{ needs.release-commit.outputs.version }}
-          SHA: ${{ needs.release-commit.outputs.sha }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
           for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
@@ -335,8 +357,7 @@ jobs:
       - name: Report a partial release
         if: failure()
         env:
-          VERSION: ${{ needs.release-commit.outputs.version }}
-          SHA: ${{ needs.release-commit.outputs.sha }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           {
             echo "### Release v$VERSION stopped part-way"
@@ -353,7 +374,7 @@ jobs:
   # `int` dist-tag, without bumping or committing any version field.
   prerelease:
     name: Prerelease
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
     uses: ./.github/workflows/publish-prerelease.yml
     with:
       allow_stale_base: ${{ inputs.allow_stale_base }}
@@ -405,6 +426,8 @@ jobs:
           git init -q tagger
           cd tagger
           remote="https://github.com/$GITHUB_REPOSITORY"
-          git -c http.extraheader="AUTHORIZATION: basic $auth" fetch -q --depth=1 "$remote" "$SHA"
+          # Full history, not --depth=1: pushing from a shallow clone is refused
+          # when no branch on the server still reaches the commit.
+          git -c http.extraheader="AUTHORIZATION: basic $auth" fetch -q "$remote" "$SHA"
           git -c http.extraheader="AUTHORIZATION: basic $auth" push -q "$remote" "$SHA:refs/tags/v$VERSION"
           echo "Tagged $SHA as v$VERSION"

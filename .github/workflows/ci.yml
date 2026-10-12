@@ -422,9 +422,11 @@ jobs:
 
   # Rehearses the stable release without committing, pushing or publishing:
   # scripts/release-stable.mjs --prepare, the shipped changelog and the
-  # canopycms tarball, exactly as publish.yml's release jobs run them. Every PR
-  # into main gets it, since that merge is the release; any other PR gets it
-  # when it touches the release path. It always runs and gates per step, so
+  # canopycms tarball, as publish.yml's release jobs run them, plus the release
+  # commit's staging check. Every PR into main gets it, since that merge is the
+  # release; any other PR gets it when it changes the release machinery itself,
+  # not just a changeset, so an int branch behind the latest stable release
+  # does not fail it on every PR. It always runs and gates per step, so
   # `validate` never sees it skipped.
   release-dry-run:
     name: Release dry run
@@ -448,8 +450,7 @@ jobs:
               - 'scripts/migration-notes.mjs'
               - 'scripts/bump-version.mjs'
               - 'scripts/npm-attested-commit.mjs'
-              - '.changeset/**'
-              - 'CHANGELOG.md'
+              - '.changeset/config.json'
 
       - name: Decide
         id: gate
@@ -475,9 +476,20 @@ jobs:
           release=$(node -pe 'JSON.parse(process.argv[1]).release === true' "$result")
           echo "release=$release" >> "$GITHUB_OUTPUT"
           if [ "$release" = "true" ]; then
-            echo "version=$(node -pe 'JSON.parse(process.argv[1]).version' "$result")" >> "$GITHUB_OUTPUT"
+            version=$(node -pe 'JSON.parse(process.argv[1]).version' "$result")
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            # release-commit's staging and refusal, without the commit.
+            git add -A -- CHANGELOG.md .changeset package.json 'packages/*/package.json' \
+              packages/canopycms/src/version.ts '*.md'
+            if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+              git status --short
+              echo "::error::the release changes files outside the version and changelog set"
+              exit 1
+            fi
+            git status --short
+            attested=$(node scripts/npm-attested-commit.mjs canopycms "$version")
+            [ -z "$attested" ] || { echo "::error::canopycms@$version is already on npm"; exit 1; }
           fi
-          git status --short
 
       - name: Ship and pack canopycms
         if: steps.prepare.outputs.release == 'true'
