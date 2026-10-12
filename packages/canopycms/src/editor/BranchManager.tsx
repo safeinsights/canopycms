@@ -74,12 +74,10 @@ export interface UserContext {
 }
 
 /**
- * Compute what actions the current user can perform on a branch.
- * Uses the same hybrid permission model as the backend:
- * - Creator can always submit/withdraw
- * - Users in branch ACL can submit/withdraw
- * - System branches can be submitted/withdrawn by anyone with access
- * - Admins/Reviewers always have access
+ * What the current user can do to a branch, by the backend's hybrid model. Workflow access
+ * (`hasWorkflowAccess`) goes to the creator, the users and groups on the branch's access list,
+ * anyone on a system branch other than the protected base, and reviewers and admins. Submit also
+ * needs the server's `submitBlocked` to be false; Withdraw needs the branch submitted or approved.
  * @internal Exported for tests.
  */
 export const getBranchPermissions = (

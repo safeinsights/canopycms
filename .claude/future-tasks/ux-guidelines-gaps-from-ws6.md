@@ -17,7 +17,8 @@ summary: >-
   "New branch…", "Switch branch…" and "Reply…" ask for more and do.
 - A branch card's button says "Open"; the create form's confirm says "Create branch".
 - Resolving a thread that leaves a list moves focus to the list's count heading; one that stays
-  moves focus to its own heading.
+  moves focus to its own heading; either only when the user hasn't moved focus since clicking
+  Resolve.
 
 ## Done when
 

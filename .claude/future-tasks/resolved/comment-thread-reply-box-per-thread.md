@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  RESOLVED (2026-10-11) — in WS6-lite. An open thread in the comment popover, ThreadCarousel and the Comments panel shows a "Reply" button that expands its own reply box in place, keeping any draft; Resolve tracks loading per thread. The duplicated branch-reply error was already gone: `ThreadCarousel.handleAddReply` passes failures straight to `InlineCommentThread`, which shows them once.
+  RESOLVED (2026-10-11) — in WS6-lite. An open thread in the comment popover, ThreadCarousel and the Comments panel shows a "Reply…" button that expands its own reply box in place, keeping any draft; Resolve tracks loading per thread. The duplicated branch-reply error is gone: ThreadCarousel passes a failed reply straight through, and `ThreadReplyControls` shows it once.
 ---
 
 # One reply box per open thread in the comment popover

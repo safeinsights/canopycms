@@ -28,7 +28,8 @@ export interface CommentsPanelProps {
   /**
    * Whether the drawer is open. The panel stays mounted while closed, so the composer text and
    * reply drafts survive a close; key it by branch to reset them for another one. It refuses to
-   * close while a write is in flight, since its busy state and any error go with the drawer.
+   * close while a write is in flight, since the drawer unmounts its contents on close, and each
+   * thread's busy state and error with them.
    */
   opened: boolean
   branchName: string

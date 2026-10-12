@@ -6,8 +6,9 @@ import { getErrorMessage } from '../../utils/error'
 
 /**
  * Wraps a surface's comment writes: `inFlight` counts the unsettled ones, and a write that fails
- * after the surface unmounted (its drawer closed, its entry changed) still reports, as a toast,
- * since nothing is left on screen to show the error. A wrapped write still rejects for its caller.
+ * after the surface unmounted (the Branches drawer closed under the branch discussion, another
+ * entry or branch opened) still reports, as a toast, since nothing is left on screen to show the
+ * error. A wrapped write still rejects for its caller.
  */
 export function useTrackedWrites(): {
   inFlight: number
