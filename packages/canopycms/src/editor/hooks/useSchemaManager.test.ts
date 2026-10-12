@@ -94,6 +94,13 @@ describe('useSchemaManager', () => {
       })
 
       expect(createResult).toEqual({ ok: false, error: 'Collection already exists' })
+      expect(notifications.show).toHaveBeenCalledTimes(1)
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          color: 'red',
+          message: 'Failed to create collection: Collection already exists',
+        }),
+      )
     })
   })
 
@@ -213,6 +220,25 @@ describe('useSchemaManager', () => {
         { name: 'featured', format: 'mdx', schema: 'postSchema' },
       )
       expect(onSchemaChange).toHaveBeenCalled()
+      expect(notifications.show).not.toHaveBeenCalled()
+    })
+
+    it('returns a failure result without a toast', async () => {
+      mockClient.schema.addEntryType.mockResolvedValueOnce(mockError(400, 'Name already used'))
+
+      const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
+
+      let addResult: Awaited<ReturnType<typeof result.current.addEntryType>> = { ok: true }
+      await act(async () => {
+        addResult = await result.current.addEntryType(unsafeAsLogicalPath('posts'), {
+          name: 'featured',
+          format: 'mdx',
+          schema: 'postSchema',
+        })
+      })
+
+      expect(addResult).toEqual({ ok: false, error: 'Name already used' })
+      expect(notifications.show).not.toHaveBeenCalled()
     })
   })
 
@@ -238,6 +264,23 @@ describe('useSchemaManager', () => {
         { branch: 'main', collectionPath: 'posts', entryTypeName: 'post' },
         { label: 'Blog Post', maxItems: 100 },
       )
+      expect(notifications.show).not.toHaveBeenCalled()
+    })
+
+    it('returns a failure result without a toast', async () => {
+      mockClient.schema.updateEntryType.mockResolvedValueOnce(mockError(400, 'Schema is locked'))
+
+      const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
+
+      let updateResult: Awaited<ReturnType<typeof result.current.updateEntryType>> = { ok: true }
+      await act(async () => {
+        updateResult = await result.current.updateEntryType(unsafeAsLogicalPath('posts'), 'post', {
+          label: 'Blog Post',
+        })
+      })
+
+      expect(updateResult).toEqual({ ok: false, error: 'Schema is locked' })
+      expect(notifications.show).not.toHaveBeenCalled()
     })
   })
 
@@ -264,6 +307,7 @@ describe('useSchemaManager', () => {
         collectionPath: 'posts',
         entryTypeName: 'featured',
       })
+      expect(notifications.show).not.toHaveBeenCalled()
     })
 
     it('returns a failure result when removing the last entry type', async () => {
@@ -279,6 +323,7 @@ describe('useSchemaManager', () => {
       })
 
       expect(removeResult).toEqual({ ok: false, error: 'Cannot remove last entry type' })
+      expect(notifications.show).not.toHaveBeenCalled()
     })
   })
 

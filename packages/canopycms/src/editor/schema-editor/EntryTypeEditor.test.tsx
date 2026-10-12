@@ -69,7 +69,7 @@ describe('EntryTypeEditor', () => {
       renderEntryTypeEditor()
 
       // Use getAllByText since "Add Entry Type" appears in both title and button
-      const addEntryTypeElements = screen.getAllByText('Add Entry Type')
+      const addEntryTypeElements = screen.getAllByText('Add entry type')
       expect(addEntryTypeElements.length).toBeGreaterThan(0)
       expect(screen.getByLabelText(/^Name/)).toBeTruthy()
       expect(screen.getByLabelText(/^Label/)).toBeTruthy()
@@ -80,7 +80,7 @@ describe('EntryTypeEditor', () => {
       const { props } = renderEntryTypeEditor()
 
       // Click the submit button (use getAllBy since title and button have same text)
-      const buttons = screen.getAllByRole('button', { name: /Add Entry Type/i })
+      const buttons = screen.getAllByRole('button', { name: /Add entry type/i })
       await user.click(buttons[0])
 
       expect(screen.getByText(/Name is required/i)).toBeTruthy()
@@ -92,7 +92,7 @@ describe('EntryTypeEditor', () => {
       const { props } = renderEntryTypeEditor()
 
       await user.type(screen.getByLabelText(/^Name/), 'Invalid Name!')
-      const buttons = screen.getAllByRole('button', { name: /Add Entry Type/i })
+      const buttons = screen.getAllByRole('button', { name: /Add entry type/i })
       await user.click(buttons[0])
 
       expect(screen.getByText(/must start with a letter/i)).toBeTruthy()
@@ -115,7 +115,7 @@ describe('EntryTypeEditor', () => {
       })
 
       await user.type(screen.getByLabelText(/^Name/), 'post') // Duplicate name
-      const buttons = screen.getAllByRole('button', { name: /Add Entry Type/i })
+      const buttons = screen.getAllByRole('button', { name: /Add entry type/i })
       await user.click(buttons[0])
 
       expect(screen.getByText(/already exists in this collection/i)).toBeTruthy()
@@ -129,7 +129,7 @@ describe('EntryTypeEditor', () => {
       })
 
       await user.type(screen.getByLabelText(/^Name/), 'article') // Not a duplicate
-      const buttons = screen.getAllByRole('button', { name: /Add Entry Type/i })
+      const buttons = screen.getAllByRole('button', { name: /Add entry type/i })
       await user.click(buttons[0])
 
       expect(props.onSave).toHaveBeenCalled()
@@ -149,7 +149,7 @@ describe('EntryTypeEditor', () => {
     it('renders edit modal with existing data', () => {
       renderEntryTypeEditor({ editingEntryType: existingEntryType })
 
-      expect(screen.getByText(/Edit Entry Type: post/)).toBeTruthy()
+      expect(screen.getByText(/Edit entry type: post/)).toBeTruthy()
       const nameInput = screen.getByLabelText(/^Name/) as HTMLInputElement
       expect(nameInput.value).toBe('post')
       expect(nameInput.disabled).toBe(true)
@@ -168,7 +168,7 @@ describe('EntryTypeEditor', () => {
       await user.clear(labelInput)
       await user.type(labelInput, 'Updated Post')
 
-      await user.click(screen.getByRole('button', { name: /Save Changes/i }))
+      await user.click(screen.getByRole('button', { name: /Save entry type/i }))
 
       expect(props.onSave).toHaveBeenCalledWith({ label: 'Updated Post' }, false)
     })
@@ -185,7 +185,7 @@ describe('EntryTypeEditor', () => {
       renderEntryTypeEditor({ isSaving: true })
 
       const saveButtons = screen.getAllByRole('button', {
-        name: /Add Entry Type/i,
+        name: /Add entry type/i,
       })
       expect(saveButtons[0].getAttribute('data-loading')).toBe('true')
     })

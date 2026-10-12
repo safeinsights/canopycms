@@ -5,8 +5,11 @@
  *
  * A collection has a name (machine-readable id), label (display name), and
  * entries (entry types defining what content can be created). Create mode
- * requires at least one entry type; edit mode only allows changing name and
- * label (entry types are managed separately).
+ * stages everything locally and sends it with "Create collection"; Cancel
+ * discards it. Edit mode stages name, label and slug until "Save collection
+ * details", but every entry-type add, update and remove saves to the branch
+ * at once, so the footer reads "Close" once one has succeeded: Cancel would
+ * promise a revert it cannot do.
  */
 
 import { useState, useCallback, useEffect } from 'react'
@@ -23,9 +26,11 @@ import {
   Menu,
   Divider,
   Badge,
+  Tooltip,
 } from '@mantine/core'
 import {
   IconAlertCircle,
+  IconCheck,
   IconPlus,
   IconDotsVertical,
   IconTrash,
@@ -93,11 +98,11 @@ export interface CollectionEditorProps {
     entryTypeName: string,
     updates: Partial<CreateEntryTypeInput>,
   ) => Promise<SchemaOpResult>
-  /** Called when an entry type is removed (edit mode only) */
+  /** Called when an entry type is removed (edit mode only); resolves to the save result */
   onRemoveEntryType?: (
     collectionPath: LogicalPath,
     entryTypeName: string,
-  ) => Promise<SchemaOpResult> | void
+  ) => Promise<SchemaOpResult>
   onClose: () => void
   isSaving?: boolean
   error?: string | null
@@ -135,6 +140,18 @@ export function CollectionEditor({
   const [entryTypeSaving, setEntryTypeSaving] = useState(false)
   const [entryTypeError, setEntryTypeError] = useState<string | null>(null)
 
+  // Edit mode renders this list rather than `editingCollection.entries`, a snapshot taken when
+  // the dialog opened that the parent never refreshes. Each immediate action patches it.
+  const [entryTypes, setEntryTypes] = useState<ExistingEntryType[]>(
+    () => editingCollection?.entries ?? [],
+  )
+  // True once an immediate entry-type change has saved in this opening of the dialog.
+  const [entryTypeChanged, setEntryTypeChanged] = useState(false)
+  const [entryTypeStatus, setEntryTypeStatus] = useState('')
+  const [removeError, setRemoveError] = useState<string | null>(null)
+  const [removing, setRemoving] = useState(false)
+  const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null)
+
   const [deleteEntryTypeModalOpen, setDeleteEntryTypeModalOpen] = useState(false)
   const [deletingEntryType, setDeletingEntryType] = useState<{
     entryType: ExistingEntryType | CreateEntryTypeInput
@@ -147,8 +164,9 @@ export function CollectionEditor({
         setFormData({
           name: editingCollection.name,
           label: editingCollection.label || '',
-          entries: [], // Entry types are managed separately in edit mode
+          entries: [], // Edit mode keeps its entry types in `entryTypes`
         })
+        setEntryTypes(editingCollection.entries)
         // Slug is the logical path's last segment before its embedded id (e.g. "posts.abc123" -> "posts").
         const pathParts = editingCollection.logicalPath.split('/')
         const lastPart = pathParts[pathParts.length - 1]
@@ -161,8 +179,12 @@ export function CollectionEditor({
           entries: [],
         })
         setSlug('')
+        setEntryTypes([])
       }
       setValidationError(null)
+      setEntryTypeChanged(false)
+      setEntryTypeStatus('')
+      setRemoveError(null)
     }
   }, [isOpen, editingCollection])
 
@@ -245,23 +267,44 @@ export function CollectionEditor({
     setEntryTypeEditorOpen(true)
   }, [])
 
+  const announceEntryTypeChange = useCallback((message: string) => {
+    setEntryTypeStatus(message)
+    setEntryTypeChanged(true)
+  }, [])
+
   const handleEntryTypeSave = useCallback(
     async (data: CreateEntryTypeInput | Partial<CreateEntryTypeInput>, isNew: boolean) => {
       if (isEditMode && editingCollection) {
         setEntryTypeSaving(true)
         setEntryTypeError(null)
+        setEntryTypeStatus('')
+        setRemoveError(null)
         try {
-          // Absent props (optional chaining short-circuits to `undefined`) are
-          // treated as success — there's nothing to report back for them.
-          const result = isNew
-            ? await onAddEntryType?.(editingCollection.logicalPath, data as CreateEntryTypeInput)
-            : editingEntryType
-              ? await onUpdateEntryType?.(
-                  editingCollection.logicalPath,
-                  editingEntryType.name,
-                  data,
-                )
-              : undefined
+          // An absent callback leaves `result` undefined: nothing was saved, so nothing is
+          // applied locally or announced.
+          let result: SchemaOpResult | undefined
+          if (isNew) {
+            const entryType = data as CreateEntryTypeInput
+            result = await onAddEntryType?.(editingCollection.logicalPath, entryType)
+            if (result?.ok) {
+              setEntryTypes((prev) => [...prev, { ...entryType, usageCount: 0 }])
+              announceEntryTypeChange(`Entry type "${entryType.name}" added`)
+            }
+          } else if (editingEntryType) {
+            const name = editingEntryType.name
+            result = await onUpdateEntryType?.(editingCollection.logicalPath, name, data)
+            if (result?.ok) {
+              // The server skips undefined fields, so a cleared label or max items keeps its
+              // stored value; the list shows what was stored.
+              const stored = Object.fromEntries(
+                Object.entries(data).filter(([, value]) => value !== undefined),
+              )
+              setEntryTypes((prev) =>
+                prev.map((et) => (et.name === name ? { ...et, ...stored } : et)),
+              )
+              announceEntryTypeChange(`Entry type "${name}" updated`)
+            }
+          }
           if (result && !result.ok) {
             setEntryTypeError(result.error)
             return
@@ -301,6 +344,7 @@ export function CollectionEditor({
       editingEntryTypeIndex,
       onAddEntryType,
       onUpdateEntryType,
+      announceEntryTypeChange,
     ],
   )
 
@@ -312,13 +356,35 @@ export function CollectionEditor({
     [],
   )
 
-  const confirmRemoveEntryType = useCallback(() => {
+  const closeRemoveConfirm = useCallback(() => {
+    setDeleteEntryTypeModalOpen(false)
+    setDeletingEntryType(null)
+  }, [])
+
+  const confirmRemoveEntryType = useCallback(async () => {
     if (!deletingEntryType) return
 
     const { entryType, index } = deletingEntryType
 
     if (isEditMode && editingCollection) {
-      onRemoveEntryType?.(editingCollection.logicalPath, entryType.name)
+      if (onRemoveEntryType) {
+        setRemoving(true)
+        setRemoveError(null)
+        setEntryTypeStatus('')
+        try {
+          const result = await onRemoveEntryType(editingCollection.logicalPath, entryType.name)
+          if (result.ok) {
+            setEntryTypes((prev) => prev.filter((et) => et.name !== entryType.name))
+            announceEntryTypeChange(`Entry type "${entryType.name}" removed`)
+          } else {
+            setRemoveError(result.error)
+          }
+        } catch (err) {
+          setRemoveError(getErrorMessage(err))
+        } finally {
+          setRemoving(false)
+        }
+      }
     } else {
       setFormData((prev) => ({
         ...prev,
@@ -326,22 +392,170 @@ export function CollectionEditor({
       }))
     }
 
-    setDeleteEntryTypeModalOpen(false)
-    setDeletingEntryType(null)
-  }, [deletingEntryType, isEditMode, editingCollection, onRemoveEntryType])
+    closeRemoveConfirm()
+  }, [
+    deletingEntryType,
+    isEditMode,
+    editingCollection,
+    onRemoveEntryType,
+    announceEntryTypeChange,
+    closeRemoveConfirm,
+  ])
+
+  const removeMessage = (() => {
+    if (!deletingEntryType) return ''
+    const { name } = deletingEntryType.entryType
+    if (!isEditMode) return `Remove "${name}" from this new collection?`
+    const usageCount =
+      'usageCount' in deletingEntryType.entryType
+        ? (deletingEntryType.entryType.usageCount ?? 0)
+        : 0
+    return usageCount > 0
+      ? `"${name}" is used by ${usageCount} ${usageCount === 1 ? 'entry' : 'entries'}. Removing it saves immediately and stops those entries from being edited.`
+      : `Remove "${name}"? This saves immediately and cannot be undone.`
+  })()
 
   const displayEntryTypes: (ExistingEntryType | CreateEntryTypeInput)[] = isEditMode
-    ? editingCollection?.entries || []
+    ? entryTypes
     : formData.entries
 
+  // The hook's single `isLoading` flag drives `isSaving`, so it is also true while an
+  // entry-type action runs; the footer must not spin or close over that action's result.
+  const entryTypeBusy = entryTypeSaving || removing
+
   const displayError = error || validationError
+
+  const entryTypesSection = (
+    <Stack gap="md">
+      <Divider label="Entry types" labelPosition="left" />
+
+      {isEditMode && (
+        <Text size="sm" c="dimmed">
+          Changes here save to the branch immediately.
+        </Text>
+      )}
+
+      {displayEntryTypes.length === 0 ? (
+        <Paper p="md" withBorder>
+          <Text c="dimmed" ta="center" size="sm">
+            No entry types yet. Add at least one to choose what kinds of entries this collection can
+            hold.
+          </Text>
+        </Paper>
+      ) : (
+        <Stack gap="xs">
+          {displayEntryTypes.map((entryType, index) => (
+            <Paper key={entryType.name} p="sm" withBorder>
+              <Group justify="space-between" wrap="nowrap">
+                <Group gap="sm">
+                  <div>
+                    <Group gap="xs">
+                      <Text fw={500} size="sm">
+                        {entryType.name}
+                      </Text>
+                      {entryType.default && (
+                        <Badge size="xs" color="blue" leftSection={<IconStar size={10} />}>
+                          Default
+                        </Badge>
+                      )}
+                      {entryType.maxItems === 1 && (
+                        <Badge size="xs" color="gray">
+                          Singleton
+                        </Badge>
+                      )}
+                    </Group>
+                    <Text size="xs" c="dimmed">
+                      {entryType.format.toUpperCase()} · {entryType.schema}
+                      {entryType.label && ` · "${entryType.label}"`}
+                    </Text>
+                  </div>
+                </Group>
+                <Menu
+                  position="bottom-end"
+                  withinPortal
+                  onChange={(opened) => setMenuOpenFor(opened ? entryType.name : null)}
+                >
+                  <Tooltip
+                    label={`Actions for ${entryType.name}`}
+                    disabled={menuOpenFor === entryType.name}
+                  >
+                    <Menu.Target>
+                      <ActionIcon variant="subtle" aria-label={`Actions for ${entryType.name}`}>
+                        <IconDotsVertical size={16} aria-hidden />
+                      </ActionIcon>
+                    </Menu.Target>
+                  </Tooltip>
+                  <Menu.Dropdown>
+                    <Menu.Item
+                      leftSection={<IconEdit size={14} />}
+                      onClick={() => handleOpenEditEntryType(entryType as ExistingEntryType, index)}
+                    >
+                      Edit…
+                    </Menu.Item>
+                    <Menu.Divider />
+                    <ReasonedMenuItem
+                      leftSection={<IconTrash size={14} />}
+                      color="red"
+                      onClick={() => handleRemoveEntryType(entryType, index)}
+                      blockedReason={
+                        displayEntryTypes.length === 1
+                          ? 'A collection needs at least one entry type. Add another before removing this one.'
+                          : undefined
+                      }
+                    >
+                      Remove
+                    </ReasonedMenuItem>
+                  </Menu.Dropdown>
+                </Menu>
+              </Group>
+            </Paper>
+          ))}
+        </Stack>
+      )}
+
+      {isEditMode && (
+        // Stays mounted while empty so screen readers announce each change.
+        <Group gap={6} wrap="nowrap" role="status">
+          {entryTypeStatus && (
+            <>
+              <IconCheck size={14} aria-hidden />
+              <Text size="sm" c="green.8">
+                {entryTypeStatus}
+              </Text>
+            </>
+          )}
+        </Group>
+      )}
+
+      {removeError && (
+        <Alert
+          icon={<IconAlertCircle size={16} />}
+          color="red"
+          title="Couldn't remove entry type"
+          withCloseButton
+          onClose={() => setRemoveError(null)}
+        >
+          {removeError}
+        </Alert>
+      )}
+
+      <Button
+        size="sm"
+        variant="light"
+        leftSection={<IconPlus size={16} />}
+        onClick={handleOpenAddEntryType}
+      >
+        Add entry type…
+      </Button>
+    </Stack>
+  )
 
   return (
     <>
       <Modal
         opened={isOpen}
-        onClose={onClose}
-        title={isEditMode ? `Edit Collection: ${editingCollection?.name}` : 'Create Collection'}
+        onClose={entryTypeBusy ? () => {} : onClose}
+        title={isEditMode ? `Edit collection: ${editingCollection?.name}` : 'Create collection'}
         size="lg"
       >
         <Stack gap="md">
@@ -355,6 +569,15 @@ export function CollectionEditor({
             >
               {displayError}
             </Alert>
+          )}
+
+          {isEditMode && (
+            <div>
+              <Text fw={500}>Collection details</Text>
+              <Text size="sm" c="dimmed">
+                Saved when you select &quot;Save collection details&quot;.
+              </Text>
+            </div>
           )}
 
           {/* Name is metadata in .collection.json, independent of the directory slug */}
@@ -394,94 +617,30 @@ export function CollectionEditor({
             </Text>
           )}
 
-          <Divider label="Entry Types" labelPosition="left" mt="md" />
-
-          {displayEntryTypes.length === 0 ? (
-            <Paper p="md" withBorder>
-              <Text c="dimmed" ta="center" size="sm">
-                No entry types defined. Add at least one entry type to define what content can be
-                created in this collection.
-              </Text>
+          {isEditMode ? (
+            <Paper withBorder p="md">
+              {entryTypesSection}
             </Paper>
           ) : (
-            <Stack gap="xs">
-              {displayEntryTypes.map((entryType, index) => (
-                <Paper key={entryType.name} p="sm" withBorder>
-                  <Group justify="space-between" wrap="nowrap">
-                    <Group gap="sm">
-                      <div>
-                        <Group gap="xs">
-                          <Text fw={500} size="sm">
-                            {entryType.name}
-                          </Text>
-                          {entryType.default && (
-                            <Badge size="xs" color="blue" leftSection={<IconStar size={10} />}>
-                              Default
-                            </Badge>
-                          )}
-                          {entryType.maxItems === 1 && (
-                            <Badge size="xs" color="gray">
-                              Singleton
-                            </Badge>
-                          )}
-                        </Group>
-                        <Text size="xs" c="dimmed">
-                          {entryType.format.toUpperCase()} · {entryType.schema}
-                          {entryType.label && ` · "${entryType.label}"`}
-                        </Text>
-                      </div>
-                    </Group>
-                    <Menu position="bottom-end" withinPortal>
-                      <Menu.Target>
-                        <ActionIcon variant="subtle">
-                          <IconDotsVertical size={16} />
-                        </ActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown>
-                        <Menu.Item
-                          leftSection={<IconEdit size={14} />}
-                          onClick={() =>
-                            handleOpenEditEntryType(entryType as ExistingEntryType, index)
-                          }
-                        >
-                          Edit
-                        </Menu.Item>
-                        <Menu.Divider />
-                        <ReasonedMenuItem
-                          leftSection={<IconTrash size={14} />}
-                          color="red"
-                          onClick={() => handleRemoveEntryType(entryType, index)}
-                          blockedReason={
-                            displayEntryTypes.length === 1
-                              ? 'A collection needs at least one entry type. Add another before removing this one.'
-                              : undefined
-                          }
-                        >
-                          Remove
-                        </ReasonedMenuItem>
-                      </Menu.Dropdown>
-                    </Menu>
-                  </Group>
-                </Paper>
-              ))}
-            </Stack>
+            entryTypesSection
           )}
 
-          <Button
-            size="sm"
-            variant="light"
-            leftSection={<IconPlus size={16} />}
-            onClick={handleOpenAddEntryType}
-          >
-            Add Entry Type
-          </Button>
-
-          <Group justify="flex-end" gap="sm" mt="md">
-            <Button size="sm" variant="subtle" onClick={onClose} disabled={isSaving}>
-              Cancel
+          <Group justify="flex-end" gap="sm" mt="md" data-testid="collection-editor-footer">
+            <Button
+              size="sm"
+              variant="subtle"
+              onClick={onClose}
+              disabled={isSaving || entryTypeBusy}
+            >
+              {entryTypeChanged ? 'Close' : 'Cancel'}
             </Button>
-            <Button size="sm" onClick={handleSave} loading={isSaving}>
-              {isEditMode ? 'Save Changes' : 'Create Collection'}
+            <Button
+              size="sm"
+              onClick={handleSave}
+              loading={isSaving && !entryTypeBusy}
+              disabled={entryTypeBusy}
+            >
+              {isEditMode ? 'Save collection details' : 'Create collection'}
             </Button>
           </Group>
         </Stack>
@@ -505,20 +664,12 @@ export function CollectionEditor({
 
       <ConfirmDeleteModal
         isOpen={deleteEntryTypeModalOpen}
-        title="Remove Entry Type"
-        message={
-          deletingEntryType &&
-          'usageCount' in deletingEntryType.entryType &&
-          deletingEntryType.entryType.usageCount
-            ? `This entry type is used by ${deletingEntryType.entryType.usageCount} ${deletingEntryType.entryType.usageCount === 1 ? 'entry' : 'entries'}. Removing it will prevent editing those entries. Are you sure you want to remove this entry type?`
-            : 'Are you sure you want to remove this entry type? This cannot be undone.'
-        }
-        confirmLabel="Remove Entry Type"
+        title="Remove entry type"
+        message={removeMessage}
+        confirmLabel="Remove entry type"
         onConfirm={confirmRemoveEntryType}
-        onClose={() => {
-          setDeleteEntryTypeModalOpen(false)
-          setDeletingEntryType(null)
-        }}
+        onClose={removing ? () => {} : closeRemoveConfirm}
+        loading={removing}
       />
     </>
   )

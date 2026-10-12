@@ -202,7 +202,7 @@ export function EntryTypeEditor({
     <Modal
       opened={isOpen}
       onClose={onClose}
-      title={isEditMode ? `Edit Entry Type: ${editingEntryType?.name}` : 'Add Entry Type'}
+      title={isEditMode ? `Edit entry type: ${editingEntryType?.name}` : 'Add entry type'}
       size="md"
     >
       <Stack gap="md">
@@ -298,7 +298,7 @@ export function EntryTypeEditor({
         />
 
         <NumberInput
-          label="Max Items"
+          label="Max items"
           description="Limit number of items (leave empty for unlimited, use 1 for singleton-like behavior)"
           placeholder="Unlimited"
           value={formData.maxItems ?? ''}
@@ -321,7 +321,7 @@ export function EntryTypeEditor({
             Cancel
           </Button>
           <Button size="sm" onClick={handleSave} loading={isSaving}>
-            {isEditMode ? 'Save Changes' : 'Add Entry Type'}
+            {isEditMode ? 'Save entry type' : 'Add entry type'}
           </Button>
         </Group>
       </Stack>
