@@ -123,8 +123,9 @@ export async function lookupUserProfiles(
   const found = await lookupUsersMetadata(plugin, [...wanted])
   const profiles: UserProfile[] = []
   // Built field by field: a provider's user record carries an email, which a profile never does.
-  for (const user of found.values()) {
-    if (user === null) continue
+  for (const [id, user] of found) {
+    // A record for some other id (a provider resolving an alias) names someone nobody asked about.
+    if (user === null || user.id !== id) continue
     profiles.push(
       user.avatarUrl === undefined
         ? { id: user.id, name: user.name }

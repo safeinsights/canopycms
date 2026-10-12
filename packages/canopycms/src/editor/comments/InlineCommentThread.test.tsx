@@ -303,6 +303,43 @@ describe('InlineCommentThread', () => {
       })
     })
 
+    it('posts a draft before resolving, so Resolve never drops it', async () => {
+      const calls: string[] = []
+      const onAddReply = vi.fn(async (text: string) => {
+        calls.push(`reply:${text}`)
+      })
+      const onResolve = vi.fn(async () => {
+        calls.push('resolve')
+      })
+      const user = userEvent.setup()
+      renderThread({ onAddReply, onResolve })
+
+      expect(screen.getByTestId('resolve-thread-button').textContent).toBe('Resolve')
+      await user.click(screen.getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'Last word')
+      expect(screen.getByTestId('resolve-thread-button').textContent).toBe('Reply and resolve')
+      await user.click(screen.getByTestId('resolve-thread-button'))
+
+      await waitFor(() => expect(calls).toEqual(['reply:Last word', 'resolve']))
+    })
+
+    it('does not resolve, and keeps the draft, when the reply before it fails', async () => {
+      const onAddReply = vi.fn().mockRejectedValue(new Error("Couldn't add the comment."))
+      const onResolve = vi.fn().mockResolvedValue(undefined)
+      const user = userEvent.setup()
+      renderThread({ onAddReply, onResolve })
+
+      await user.click(screen.getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'Keep me')
+      await user.click(screen.getByTestId('resolve-thread-button'))
+
+      expect(await screen.findByText("Couldn't add the comment.")).toBeTruthy()
+      expect(onResolve).not.toHaveBeenCalled()
+      expect((screen.getByLabelText('Reply to this thread') as HTMLTextAreaElement).value).toBe(
+        'Keep me',
+      )
+    })
+
     it('disables the submit button until there is text', async () => {
       const user = userEvent.setup()
       renderThread()

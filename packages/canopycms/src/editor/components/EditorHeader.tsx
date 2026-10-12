@@ -372,9 +372,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     {`${EDITOR_ACTIONS.switchBranch}…`}
                   </Menu.Item>
                   <Menu.Divider />
-                  <Menu.Label>{`${modifiedCount} file${modifiedCount === 1 ? '' : 's'} modified`}</Menu.Label>
+                  <Menu.Label>{`${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'} modified`}</Menu.Label>
                   {editedFiles.length === 0 ? (
-                    <Menu.Item disabled>No edited files yet</Menu.Item>
+                    <Menu.Item disabled>No edited entries yet</Menu.Item>
                   ) : (
                     editedFiles.map((file) => (
                       <Menu.Item
@@ -574,7 +574,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 {`You are viewing the protected base branch "${branchName}". Content is read-only — create a branch to make changes.`}
               </Text>
               <Button variant="default" onClick={onBranchManagerOpen}>
-                Create a branch
+                {`${EDITOR_ACTIONS.newBranch}…`}
               </Button>
             </Group>
           </Alert>
@@ -590,13 +590,13 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
             <Group justify="space-between" align="center" gap="sm" wrap="wrap">
               <Text size="sm">
                 {branchDataUnavailable
-                  ? `Branch details for "${branchName}" could not be loaded, so content is locked until they arrive. Open Branches to retry.`
+                  ? `Branch details for "${branchName}" could not be loaded, so content is locked until they arrive. Use Switch branch… to retry.`
                   : branchStatus === 'submitted'
                     ? `Branch "${branchName}" is submitted for review and locked for edits. Withdraw it from review to make changes.`
                     : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
               </Text>
               <Button variant="default" onClick={onBranchManagerOpen}>
-                Branches
+                {`${EDITOR_ACTIONS.switchBranch}…`}
               </Button>
             </Group>
           </Alert>

@@ -5,6 +5,7 @@
 import React from 'react'
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
@@ -80,7 +81,12 @@ const okJson = (data: unknown) =>
     headers: { 'Content-Type': 'application/json' },
   })
 
-const stubApi = (groups: string[], threads: unknown[] = [], branchOwner = 'user-1') => {
+const stubApi = (
+  groups: string[],
+  threads: unknown[] = [],
+  branchOwner = 'user-1',
+  listedName = 'main',
+) => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -98,7 +104,7 @@ const stubApi = (groups: string[], threads: unknown[] = [], branchOwner = 'user-
         okJson({
           branches: [
             {
-              name: 'main',
+              name: listedName,
               status: 'editing',
               access: {},
               createdBy: branchOwner,
@@ -572,6 +578,23 @@ describe('comments panel', () => {
     expect(within(cardOf('Comment in mine')).getByTestId('resolve-thread-button')).toBeTruthy()
   })
 
+  it('keeps a half-written reply when the panel is closed and opened again', async () => {
+    await openPanel([])
+    fireEvent.click(within(cardOf('Comment in theirs')).getByTestId('reply-thread-button'))
+    fireEvent.change(within(cardOf('Comment in theirs')).getByRole('textbox'), {
+      target: { value: 'Not sent yet' },
+    })
+
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByText('Comment in theirs')).toBeNull())
+    fireEvent.click(screen.getByTestId('comments-button'))
+    await screen.findByText('Comment in theirs')
+
+    expect(
+      (within(cardOf('Comment in theirs')).getByRole('textbox') as HTMLTextAreaElement).value,
+    ).toBe('Not sent yet')
+  })
+
   it('names each thread by its entry and field labels, not their paths', async () => {
     await openPanel([])
 
@@ -611,5 +634,17 @@ describe('branches drawer', () => {
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input).includes('/users/')),
     ).toHaveLength(0)
+  })
+
+  it('marks the open branch as current when its name only matches once sanitized', async () => {
+    stubApi([], [], 'user-1', 'feature-x')
+    renderEditor({ branchName: 'feature/x' })
+    await loaded()
+
+    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+
+    expect(await screen.findByTestId('branch-current-badge-feature-x')).toBeTruthy()
+    expect(screen.queryByTestId('switch-to-branch-button-feature-x')).toBeNull()
   })
 })

@@ -144,6 +144,17 @@ describe('branch list names the owners of the branches it lists', () => {
     expect(userIds(res)).not.toContain('unknown-user')
   })
 
+  it('drops a record the provider returns for an id other than the one asked for', async () => {
+    ctx = buildContext({
+      ...createAuthPlugin(undefined),
+      getUserMetadata: async (id) => directoryUser(id === 'user-sharer' ? 'alias-target' : id),
+    })
+
+    const res = await list(editor)
+
+    expect(userIds(res)).toEqual(['editor1', 'group-sharer'])
+  })
+
   it('still lists the branches when the lookup fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     getUsersMetadata.mockRejectedValue(new Error('directory down'))

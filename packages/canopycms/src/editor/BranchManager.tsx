@@ -213,8 +213,8 @@ export interface BranchManagerProps {
   onGetCommentUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
-const noAccessReason = (verb: 'submit' | 'withdraw') =>
-  `You don't have access to ${verb} this branch. Its creator, people given access to it, reviewers and admins can.`
+const CLOSED_PULL_REQUEST_REASON =
+  'The pull request was closed on GitHub. Withdraw the branch from review, then submit it again to open a new one.'
 
 interface BranchWorkflowAction {
   label: string
@@ -228,7 +228,8 @@ interface BranchWorkflowAction {
 /**
  * The workflow action a branch's status calls for, or undefined when none applies: Submit for
  * an unprotected branch in editing, Withdraw once it is in review. 'approved' withdraws too, as
- * its only non-destructive exit.
+ * its only non-destructive exit. A user without workflow access is offered neither, since it
+ * would never apply to them; a reason is given only for a block that depends on the branch's state.
  */
 const workflowAction = (
   b: BranchSummary,
@@ -236,13 +237,13 @@ const workflowAction = (
   onSubmit: ((name: string) => void) | undefined,
   onWithdraw: ((name: string) => void) | undefined,
 ): BranchWorkflowAction | undefined => {
+  if (!perms.hasWorkflowAccess) return undefined
   if (b.status === 'submitted' || b.status === 'approved') {
     return {
       label: EDITOR_ACTIONS.withdrawFromReview,
       color: 'orange',
       testId: `withdraw-branch-button-${b.name}`,
       run: () => onWithdraw?.(b.name),
-      blockedReason: perms.canWithdraw ? undefined : noAccessReason('withdraw'),
     }
   }
   if (b.status === 'editing' && !b.isProtected) {
@@ -251,17 +252,27 @@ const workflowAction = (
       color: 'brand',
       testId: `submit-branch-button-${b.name}`,
       run: () => onSubmit?.(b.name),
-      blockedReason: perms.canSubmit
-        ? undefined
-        : perms.hasWorkflowAccess
-          ? "This branch can't be submitted right now."
-          : noAccessReason('submit'),
+      blockedReason: perms.canSubmit ? undefined : "This branch can't be submitted right now.",
     }
   }
   return undefined
 }
 
-/** A menu item that stays visible when it cannot act, with its reason beneath the label. */
+/** Whether `user` reviews `b` rather than owns it: a reviewer or admin who neither made it nor was given access. */
+const isReviewerOfOthersSubmission = (b: BranchSummary, user: UserContext | undefined): boolean =>
+  !!user &&
+  isReviewer(user.groups) &&
+  b.status === 'submitted' &&
+  b.createdBy !== user.userId &&
+  !b.access?.users?.includes(user.userId) &&
+  !user.groups?.some((g) => b.access?.groups?.includes(g))
+
+/**
+ * A menu item that stays visible when it cannot act, with its reason beneath the label.
+ * Mantine's Menu drops an item carrying `disabled` or `data-disabled` from its arrow-key order,
+ * which would hide the reason from a keyboard user; a blocked item is `aria-disabled` instead,
+ * stays focusable, and ignores its click without closing the menu.
+ */
 const BranchMenuItem: React.FC<{
   label: string
   testId: string
@@ -269,10 +280,20 @@ const BranchMenuItem: React.FC<{
   blockedReason?: string
   onClick: () => void
 }> = ({ label, testId, color, blockedReason, onClick }) => (
-  <Menu.Item color={color} disabled={!!blockedReason} onClick={onClick} data-testid={testId}>
+  <Menu.Item
+    color={blockedReason ? undefined : color}
+    c={blockedReason ? 'gray.7' : undefined}
+    aria-disabled={blockedReason ? true : undefined}
+    closeMenuOnClick={blockedReason ? false : undefined}
+    style={blockedReason ? { cursor: 'not-allowed' } : undefined}
+    onClick={() => {
+      if (!blockedReason) onClick()
+    }}
+    data-testid={testId}
+  >
     {label}
     {blockedReason && (
-      <Text size="xs" c="dimmed" component="span" display="block" style={{ whiteSpace: 'normal' }}>
+      <Text size="xs" c="gray.7" component="span" display="block" style={{ whiteSpace: 'normal' }}>
         {blockedReason}
       </Text>
     )}
@@ -294,7 +315,8 @@ interface BranchCardProps {
 
 /**
  * One branch: its state, and one primary action, with the rest in a "…" menu. The current branch
- * shows its workflow action, the others Open, which the current one never needs.
+ * shows its workflow action, or Request changes to a reviewer looking at someone else's
+ * submission; the others show Open, which the current one never needs. No action is shown twice.
  */
 const BranchCard: React.FC<BranchCardProps> = ({
   branch: b,
@@ -313,11 +335,27 @@ const BranchCard: React.FC<BranchCardProps> = ({
   const workflow = workflowAction(b, perms, onSubmit, onWithdraw)
   const userIsAdmin = isAdmin(user?.groups)
 
-  const showWorkflowInMenu = !isCurrent && !!workflow
-  const showRequestChanges = isReviewer(user?.groups) && b.status === 'submitted'
+  const requestChanges: BranchWorkflowAction | undefined =
+    isReviewer(user?.groups) && b.status === 'submitted'
+      ? {
+          label: EDITOR_ACTIONS.requestChanges,
+          color: 'orange',
+          testId: `request-changes-branch-button-${b.name}`,
+          run: () => onRequestChanges?.(b.name),
+          blockedReason: b.pullRequestState === 'closed' ? CLOSED_PULL_REQUEST_REASON : undefined,
+        }
+      : undefined
+  const primary = !isCurrent
+    ? undefined
+    : isReviewerOfOthersSubmission(b, user)
+      ? requestChanges
+      : workflow
+  const menuActions = [workflow, requestChanges].filter(
+    (a): a is BranchWorkflowAction => !!a && a !== primary,
+  )
   const showViewPullRequest = !!b.pullRequestUrl
   const showDelete = !b.isProtected && (userIsAdmin || (!!user && b.createdBy === user.userId))
-  const hasMenu = showWorkflowInMenu || showRequestChanges || showViewPullRequest || showDelete
+  const hasMenu = menuActions.length > 0 || showViewPullRequest || showDelete
   const menuLabel = `More actions for ${b.name}`
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -414,30 +452,32 @@ const BranchCard: React.FC<BranchCardProps> = ({
               <RelativeTime iso={b.updatedAt} prefix="Updated " size="xs" c="dimmed" />
             )}
             {b.createdBy && (
-              <>
+              <Group gap="xs" align="center" wrap="nowrap">
                 <Text size="xs" c="dimmed">
                   •
                 </Text>
-                <Text size="xs" c="dimmed">
-                  Owner:
-                </Text>
-                {onGetOwnerMetadata ? (
-                  <UserBadge
-                    userId={b.createdBy}
-                    getUserMetadata={onGetOwnerMetadata}
-                    variant="avatar-name"
-                    size="xs"
-                    showEmailTooltip={true}
-                    showBadge={true}
-                    badgeVariant="light"
-                    color="gray"
-                  />
-                ) : (
+                <Group gap={4} align="center" wrap="nowrap">
                   <Text size="xs" c="dimmed">
-                    {userIdLabel(b.createdBy)}
+                    Owner:
                   </Text>
-                )}
-              </>
+                  {onGetOwnerMetadata ? (
+                    <UserBadge
+                      userId={b.createdBy}
+                      getUserMetadata={onGetOwnerMetadata}
+                      variant="avatar-name"
+                      size="xs"
+                      showEmailTooltip={true}
+                      showBadge={true}
+                      badgeVariant="light"
+                      color="gray"
+                    />
+                  ) : (
+                    <Text size="xs" c="dimmed">
+                      {userIdLabel(b.createdBy)}
+                    </Text>
+                  )}
+                </Group>
+              </Group>
             )}
           </Group>
           {b.access && (
@@ -476,24 +516,25 @@ const BranchCard: React.FC<BranchCardProps> = ({
               Open
             </Button>
           )}
-          {isCurrent && workflow && (
+          {primary && (
             <Tooltip
-              label={workflow.blockedReason}
-              disabled={!workflow.blockedReason}
+              label={primary.blockedReason}
+              disabled={!primary.blockedReason}
+              events={{ hover: true, focus: true, touch: true }}
               multiline
               maw={280}
             >
               <Button
                 variant="light"
-                color={workflow.color}
+                color={primary.color}
                 onClick={() => {
-                  if (!workflow.blockedReason) workflow.run()
+                  if (!primary.blockedReason) primary.run()
                 }}
-                data-disabled={workflow.blockedReason ? true : undefined}
-                aria-disabled={workflow.blockedReason ? true : undefined}
-                data-testid={workflow.testId}
+                data-disabled={primary.blockedReason ? true : undefined}
+                aria-disabled={primary.blockedReason ? true : undefined}
+                data-testid={primary.testId}
               >
-                {workflow.label}
+                {primary.label}
               </Button>
             </Tooltip>
           )}
@@ -512,26 +553,15 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 </Menu.Target>
               </Tooltip>
               <Menu.Dropdown>
-                {showWorkflowInMenu && workflow && (
+                {menuActions.map((action) => (
                   <BranchMenuItem
-                    label={workflow.label}
-                    testId={workflow.testId}
-                    blockedReason={workflow.blockedReason}
-                    onClick={workflow.run}
+                    key={action.testId}
+                    label={action.label}
+                    testId={action.testId}
+                    blockedReason={action.blockedReason}
+                    onClick={action.run}
                   />
-                )}
-                {showRequestChanges && (
-                  <BranchMenuItem
-                    label={EDITOR_ACTIONS.requestChanges}
-                    testId={`request-changes-branch-button-${b.name}`}
-                    blockedReason={
-                      b.pullRequestState === 'closed'
-                        ? 'The pull request was closed on GitHub without merging.'
-                        : undefined
-                    }
-                    onClick={() => onRequestChanges?.(b.name)}
-                  />
-                )}
+                ))}
                 {showViewPullRequest && (
                   <Menu.Item
                     component="a"
@@ -548,9 +578,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 )}
                 {showDelete && (
                   <>
-                    {(showWorkflowInMenu || showRequestChanges || showViewPullRequest) && (
-                      <Menu.Divider />
-                    )}
+                    {(menuActions.length > 0 || showViewPullRequest) && <Menu.Divider />}
                     <BranchMenuItem
                       label="Delete branch"
                       color="red"

@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  The header's branch menu says "Discard all changes", but the confirm dialogs it and the per-entry discard open (`editor/hooks/useDraftManager.ts`) are still titled "Discard drafts" / "Discard draft". docs/ux-guidelines.md's vocabulary says "Discard changes". Rename the dialog titles and confirm buttons, and update the e2e page object that finds the dialogs by name.
+  RESOLVED (2026-10-11) — in WS6-lite's review fixes. The discard dialogs read "Discard all changes" and "Discard changes", count entries, and carry `confirm-discard-all` / `confirm-discard-entry` test ids, which the e2e page object uses.
 ---
 
 # Discard dialogs still say "drafts"

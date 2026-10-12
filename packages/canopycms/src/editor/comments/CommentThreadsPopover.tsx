@@ -13,12 +13,12 @@ import {
   Tooltip,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
-import { notifications } from '@mantine/notifications'
 import { IconMessage, IconMessagePlus, IconPlus } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { getErrorMessage } from '../../utils/error'
 import { InlineCommentThread } from './InlineCommentThread'
+import { useTrackedWrites } from './use-tracked-writes'
 import { useRefocusAfterSubmit } from './ThreadReplyControls'
 
 export interface CommentThreadsPopoverProps {
@@ -115,31 +115,8 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   }, [flashThreadId])
 
   // While a post or Resolve is in flight the popover stays open, so its busy state and any error
-  // stay in view and a reopened composer can't send the same text twice. A write still fails
-  // visibly after the popover is gone (another entry opened, the field removed): as a toast.
-  const [inFlight, setInFlight] = useState(0)
-  const mountedRef = useRef(true)
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
-  const track =
-    <A extends unknown[]>(write: (...args: A) => Promise<void>) =>
-    async (...args: A): Promise<void> => {
-      setInFlight((n) => n + 1)
-      try {
-        await write(...args)
-      } catch (err) {
-        if (!mountedRef.current) {
-          notifications.show({ color: 'red', message: getErrorMessage(err), autoClose: false })
-        }
-        throw err
-      } finally {
-        setInFlight((n) => n - 1)
-      }
-    }
+  // stay in view and a reopened composer can't send the same text twice.
+  const { inFlight, track } = useTrackedWrites()
   const addComment = track(onAddComment)
   const resolveThread = track(onResolveThread)
 

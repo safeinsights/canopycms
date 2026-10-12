@@ -121,6 +121,24 @@ describe('ThreadCarousel', () => {
     expect(await screen.findAllByText("Couldn't add the comment. Try again.")).toHaveLength(1)
   })
 
+  it('moves focus to its heading once a thread is resolved', async () => {
+    const user = userEvent.setup()
+    render(
+      <ThreadCarousel
+        threads={[mockThreads[0]]}
+        label="Branch discussion"
+        contextType="branch"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn().mockResolvedValue(undefined)}
+      />,
+      { wrapper: Wrapper },
+    )
+    await user.click(screen.getByTestId('resolve-thread-button'))
+    await waitFor(() => expect(document.activeElement?.textContent).toMatch(/^Branch discussion/))
+  })
+
   it('labels the previous and next thread buttons', () => {
     render(
       <ThreadCarousel

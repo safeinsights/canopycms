@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useId, useRef, useState } from 'react'
 import {
   Alert,
   Badge,
@@ -21,9 +21,15 @@ import { UserBadge } from './components/UserBadge'
 import { userIdLabel } from './user-display'
 import { RelativeTime } from './components/RelativeTime'
 import { ThreadReplyControls } from './comments/ThreadReplyControls'
+import { useTrackedWrites } from './comments/use-tracked-writes'
 import { getErrorMessage } from '../utils/error'
 
 export interface CommentsPanelProps {
+  /**
+   * Whether the drawer is open. The panel stays mounted while closed, so the composer text and
+   * reply drafts survive a close; key it by branch to reset them for another one.
+   */
+  opened: boolean
   branchName: string
   comments: CommentThread[]
   /** Whether the user may resolve any thread; a thread's own author always may resolve it. */
@@ -56,6 +62,7 @@ export interface CommentsPanelProps {
 const THREAD_KIND_LABELS = { field: 'Field', entry: 'Entry', branch: 'Branch' } as const
 
 export const CommentsPanel: React.FC<CommentsPanelProps> = ({
+  opened,
   branchName,
   comments,
   canResolve,
@@ -75,6 +82,15 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   const [showResolved, setShowResolved] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { track } = useTrackedWrites()
+  const addReply = track(onAddComment)
+  const resolveThread = track(onResolveThread)
+  // A resolved thread's card leaves the list with the focused button, so focus lands here.
+  const threadCountRef = useRef<HTMLParagraphElement>(null)
+  // With resolved threads shown, the card stays and its heading takes the focus instead.
+  const headingRefs = useRef(new Map<string, HTMLParagraphElement>())
+  const idPrefix = useId()
+  const headingId = (threadId: string) => `${idPrefix}-heading-${threadId}`
 
   const filteredThreads = showResolved ? comments : comments.filter((t) => !t.resolved)
 
@@ -105,7 +121,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
 
   return (
     <Drawer
-      opened
+      opened={opened}
       onClose={onClose}
       position="right"
       size={420}
@@ -152,7 +168,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
         </Paper>
 
         <Group justify="space-between">
-          <Text size="sm" fw={500}>
+          <Text ref={threadCountRef} size="sm" fw={500} tabIndex={-1}>
             {filteredThreads.length} {filteredThreads.length === 1 ? 'thread' : 'threads'}
           </Text>
           <Switch
@@ -175,12 +191,24 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                   key={thread.id}
                   withBorder
                   p="md"
+                  component="article"
+                  aria-labelledby={headingId(thread.id)}
                   bg={thread.resolved ? 'gray.0' : undefined}
                   data-testid="comment-thread"
                 >
                   <Stack gap="xs">
                     <Group gap="xs">
-                      <Text size="xs" fw={600} data-testid="comment-thread-heading">
+                      <Text
+                        id={headingId(thread.id)}
+                        ref={(node: HTMLParagraphElement | null) => {
+                          if (node) headingRefs.current.set(thread.id, node)
+                          else headingRefs.current.delete(thread.id)
+                        }}
+                        size="xs"
+                        fw={600}
+                        tabIndex={-1}
+                        data-testid="comment-thread-heading"
+                      >
                         {threadHeading(thread)}
                       </Text>
                       {thread.resolved && (
@@ -270,7 +298,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                       <ThreadReplyControls
                         thread={thread}
                         onAddReply={(text) =>
-                          onAddComment(
+                          addReply(
                             text,
                             thread.type,
                             thread.entryPath,
@@ -278,7 +306,13 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                             thread.id,
                           )
                         }
-                        onResolve={() => onResolveThread(thread.id)}
+                        onResolve={async () => {
+                          await resolveThread(thread.id)
+                          ;(showResolved
+                            ? headingRefs.current.get(thread.id)
+                            : threadCountRef.current
+                          )?.focus()
+                        }}
                         currentUserId={currentUserId}
                         canResolve={canResolve}
                         replyText={replyDrafts[thread.id] ?? ''}

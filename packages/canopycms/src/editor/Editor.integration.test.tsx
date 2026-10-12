@@ -1483,7 +1483,7 @@ describe('Editor integration', () => {
       expect(screen.getByTestId('protected-branch-banner')).toBeDefined()
     })
     expect(screen.getByText(/protected base branch "main"/i)).toBeDefined()
-    expect(screen.getByRole('button', { name: /create a branch/i })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'New branch…' })).toBeDefined()
 
     // Submit is hidden entirely (not just disabled) on the protected branch.
     expect(screen.queryByTestId('submit-button')).toBeNull()

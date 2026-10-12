@@ -821,10 +821,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       return
     }
     openConfirm({
-      title: 'Discard drafts',
-      children: `Discard drafts for ${modifiedCount} ${modifiedCount === 1 ? 'file' : 'files'}? Unsaved changes will be lost.`,
-      labels: { confirm: 'Discard', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
+      title: 'Discard all changes',
+      children: `Discard unsaved changes for ${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'}? They will be lost.`,
+      labels: { confirm: 'Discard all changes', cancel: 'Cancel' },
+      confirmProps: { color: 'red', 'data-testid': 'confirm-discard-all' },
       onConfirm: performDiscardDrafts,
     })
   }
@@ -876,10 +876,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       return
     }
     openConfirm({
-      title: 'Discard draft',
-      children: 'Discard unsaved changes for this file?',
-      labels: { confirm: 'Discard', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
+      title: 'Discard changes',
+      children: 'Discard unsaved changes for this entry?',
+      labels: { confirm: 'Discard changes', cancel: 'Cancel' },
+      confirmProps: { color: 'red', 'data-testid': 'confirm-discard-entry' },
       onConfirm: performDiscardFileDraft,
     })
   }

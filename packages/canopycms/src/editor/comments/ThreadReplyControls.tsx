@@ -91,10 +91,17 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
     }
   }
 
+  // Resolving closes the thread and unmounts this box, so a draft in it is posted first, never lost.
+  const hasDraft = replyText.trim().length > 0
+
   const handleResolve = async () => {
     setResolving(true)
     setError(null)
     try {
+      if (hasDraft) {
+        await onAddReply(replyText)
+        setReplyText('')
+      }
       await onResolve()
     } catch (err) {
       setError(getErrorMessage(err))
@@ -113,7 +120,7 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
       disabled={replying}
       data-testid="resolve-thread-button"
     >
-      Resolve
+      {hasDraft ? 'Reply and resolve' : 'Resolve'}
     </Button>
   )
 
@@ -165,7 +172,7 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
             disabled={resolving}
             data-testid="reply-thread-button"
           >
-            Reply
+            Reply…
           </Button>
           {resolveButton}
         </Group>

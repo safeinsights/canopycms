@@ -5,6 +5,13 @@ import { MantineProvider } from '@mantine/core'
 import { CommentsPanel } from './CommentsPanel'
 import type { CommentThread } from '../comment-store'
 
+const showNotification = vi.hoisted(() => vi.fn())
+vi.mock('@mantine/notifications', async () => {
+  const actual =
+    await vi.importActual<typeof import('@mantine/notifications')>('@mantine/notifications')
+  return { ...actual, notifications: { ...actual.notifications, show: showNotification } }
+})
+
 afterEach(() => {
   cleanup()
 })
@@ -59,21 +66,23 @@ describe('CommentsPanel', () => {
     ],
   }
 
+  const panelProps = (
+    overrides: Partial<React.ComponentProps<typeof CommentsPanel>> = {},
+  ): React.ComponentProps<typeof CommentsPanel> => ({
+    opened: true,
+    branchName: 'feature/my-branch',
+    comments: [branchThread],
+    canResolve: true,
+    currentUserId: 'alice',
+    onAddComment: vi.fn(),
+    onResolveThread: vi.fn(),
+    onClose: vi.fn(),
+    onJumpToBranch: vi.fn(),
+    ...overrides,
+  })
+
   const renderPanel = (overrides: Partial<React.ComponentProps<typeof CommentsPanel>> = {}) =>
-    render(
-      <CommentsPanel
-        branchName="feature/my-branch"
-        comments={[branchThread]}
-        canResolve={true}
-        currentUserId="alice"
-        onAddComment={vi.fn()}
-        onResolveThread={vi.fn()}
-        onClose={vi.fn()}
-        onJumpToBranch={vi.fn()}
-        {...overrides}
-      />,
-      { wrapper: Wrapper },
-    )
+    render(<CommentsPanel {...panelProps(overrides)} />, { wrapper: Wrapper })
 
   it('shows a composer hint describing branch-level scope', () => {
     renderPanel()
@@ -151,6 +160,55 @@ describe('CommentsPanel', () => {
         undefined,
         undefined,
         undefined,
+      )
+    })
+  })
+
+  describe('as a list of threads', () => {
+    it('labels each thread card as an article named by its heading', () => {
+      renderPanel({
+        comments: [fieldThread('t1'), fieldThread('t2', { canopyPath: 'meta.summary' })],
+      })
+
+      const articles = screen.getAllByRole('article')
+      expect(articles).toHaveLength(2)
+      for (const article of articles) {
+        const heading = within(article).getByTestId('comment-thread-heading')
+        expect(article.getAttribute('aria-labelledby')).toBe(heading.id)
+        expect(heading.id).not.toBe('')
+      }
+      expect(
+        screen.getByRole('article', { name: 'Field · posts/hello › meta.summary' }),
+      ).toBeTruthy()
+    })
+
+    it('words the collapsed reply control "Reply…" and the submit "Reply"', async () => {
+      renderPanel({ comments: [fieldThread('t1')] })
+
+      const expander = within(card('t1')).getByTestId('reply-thread-button')
+      expect(expander.textContent).toBe('Reply…')
+      await userEvent.click(expander)
+      expect(within(card('t1')).getByTestId('submit-reply-button').textContent).toBe('Reply')
+    })
+  })
+
+  describe('closing and reopening', () => {
+    it('keeps the composer text and a reply draft across a close', async () => {
+      const { rerender } = renderPanel({ comments: [fieldThread('t1')] })
+      await userEvent.type(screen.getByTestId('comment-textarea'), 'Half a comment')
+      await userEvent.click(within(card('t1')).getByTestId('reply-thread-button'))
+      await userEvent.type(within(card('t1')).getByRole('textbox'), 'Half a reply')
+
+      rerender(<CommentsPanel {...panelProps({ comments: [fieldThread('t1')], opened: false })} />)
+      await waitFor(() => expect(screen.queryByTestId('comment-textarea')).toBeNull())
+      rerender(<CommentsPanel {...panelProps({ comments: [fieldThread('t1')], opened: true })} />)
+
+      expect(((await screen.findByTestId('comment-textarea')) as HTMLTextAreaElement).value).toBe(
+        'Half a comment',
+      )
+      // The reply box reopens by itself because it holds a draft.
+      expect((within(card('t1')).getByRole('textbox') as HTMLTextAreaElement).value).toBe(
+        'Half a reply',
       )
     })
   })
@@ -253,6 +311,53 @@ describe('CommentsPanel', () => {
         expect(
           within(card('a')).getByTestId('resolve-thread-button').hasAttribute('data-loading'),
         ).toBe(false),
+      )
+    })
+
+    it('moves focus to the thread count once a resolved thread leaves the list', async () => {
+      const onResolveThread = vi.fn().mockResolvedValue(undefined)
+      renderPanel({ comments: [fieldThread('a'), fieldThread('b')], onResolveThread })
+
+      await userEvent.click(within(card('a')).getByTestId('resolve-thread-button'))
+
+      await waitFor(() => expect(document.activeElement?.textContent).toBe('2 threads'))
+    })
+
+    it('moves focus to the resolved thread heading when resolved threads stay in the list', async () => {
+      const onResolveThread = vi.fn().mockResolvedValue(undefined)
+      renderPanel({ comments: [fieldThread('a'), fieldThread('b')], onResolveThread })
+      await userEvent.click(screen.getByLabelText('Show resolved'))
+
+      await userEvent.click(within(card('a')).getByTestId('resolve-thread-button'))
+
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          within(card('a')).getByTestId('comment-thread-heading'),
+        ),
+      )
+    })
+
+    it('reports a reply that fails after the panel closed, as a toast', async () => {
+      showNotification.mockClear()
+      let fail: (err: Error) => void = () => {}
+      const onAddComment = vi.fn(
+        () =>
+          new Promise<void>((_, reject) => {
+            fail = reject
+          }),
+      )
+      const { unmount } = renderPanel({ comments: [fieldThread('a')], onAddComment })
+
+      await userEvent.click(within(card('a')).getByTestId('reply-thread-button'))
+      await userEvent.type(screen.getByLabelText('Reply to this thread'), 'Too late')
+      await userEvent.click(screen.getByTestId('submit-reply-button'))
+      unmount()
+      await act(async () => {
+        fail(new Error("Couldn't add the comment. Try again."))
+      })
+
+      expect(showNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'red', message: "Couldn't add the comment. Try again." }),
       )
     })
 

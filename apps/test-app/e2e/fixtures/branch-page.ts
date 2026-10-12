@@ -275,6 +275,15 @@ export class BranchPage {
     if (!(await trigger.isVisible())) return { locator: primary, menuOpened: false }
 
     await trigger.click()
+    // An item missing from a menu that never opened must not read as an action that is not offered.
+    await this.page
+      .locator('[role="menu"]')
+      .waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+      .catch(() => {
+        throw new Error(
+          `The actions menu for branch ${branchName} did not open, so whether ${action} is offered is unknown.`,
+        )
+      })
     const item = this.page.locator(`[role="menu"] [data-testid="${testId}"]`)
     await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT }).catch(() => undefined)
     return { locator: item, menuOpened: true }
@@ -287,7 +296,8 @@ export class BranchPage {
   }
 
   /**
-   * Whether a branch's action is offered, and if so whether it can be used now.
+   * Whether a branch's action is offered, and if so whether it can be used now. A blocked
+   * action is `aria-disabled`, which Playwright's `isDisabled()` reads on buttons and menu items.
    *
    * @param branchName - The name of the branch
    * @param action - The action

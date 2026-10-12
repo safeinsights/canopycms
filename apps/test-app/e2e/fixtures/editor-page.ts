@@ -304,7 +304,7 @@ export class EditorPage {
     const item = this.page.locator('[data-testid="discard-file-draft-menu-item"]')
     await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
     await item.click()
-    return this.page.getByRole('dialog', { name: 'Discard draft' })
+    return this.discardDialog('confirm-discard-entry')
   }
 
   /**
@@ -314,14 +314,23 @@ export class EditorPage {
   async discardAllDrafts(): Promise<Locator> {
     await new BranchPage(this.page).openBranchMenu()
     await this.page.locator('[data-testid="discard-all-drafts-menu-item"]').click()
-    return this.page.getByRole('dialog', { name: 'Discard drafts' })
+    return this.discardDialog('confirm-discard-all')
+  }
+
+  /** The confirm dialog holding the given confirm button, found by test id rather than by its wording. */
+  private discardDialog(confirmTestId: string): Locator {
+    return this.page
+      .getByRole('dialog')
+      .filter({ has: this.page.locator(`[data-testid="${confirmTestId}"]`) })
   }
 
   /**
    * Confirm a discard dialog returned by {@link discardEntryDraft} or {@link discardAllDrafts}.
    */
   async confirmDiscard(dialog: Locator): Promise<void> {
-    await dialog.getByRole('button', { name: 'Discard', exact: true }).click()
+    await dialog
+      .locator('[data-testid="confirm-discard-entry"], [data-testid="confirm-discard-all"]')
+      .click()
   }
 
   /**

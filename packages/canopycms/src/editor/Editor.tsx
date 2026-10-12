@@ -1660,7 +1660,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branches={branchSummaries}
               mode={operatingMode}
               user={userContext}
-              currentBranchName={branchNameState}
+              currentBranchName={currentBranch?.name ?? branchNameState}
               onSelect={async (name) => {
                 try {
                   await handleBranchChange(name)
@@ -1696,8 +1696,10 @@ const EditorContent: React.FC<EditorProps> = ({
               onGetCommentUserMetadata={getCommentUserMetadata}
             />
           </BranchesDrawer>
-          {commentsPanelOpen && branchNameState && (
+          {branchNameState && (
             <CommentsPanel
+              key={branchNameState}
+              opened={commentsPanelOpen}
               branchName={branchNameState}
               comments={comments}
               canResolve={canResolveAnyComment}

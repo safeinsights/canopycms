@@ -16,6 +16,7 @@ import { IconChevronLeft, IconChevronRight, IconAlertCircle } from '@tabler/icon
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { InlineCommentThread } from './InlineCommentThread'
+import { useTrackedWrites } from './use-tracked-writes'
 
 /**
  * ## Purpose
@@ -202,8 +203,11 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
     }
   }
 
-  // InlineCommentThread shows a failed reply's error itself.
-  const handleAddReply = (threadId: string, text: string) => onAddComment(text, threadId)
+  const { track } = useTrackedWrites()
+  const addComment = track(onAddComment)
+  const resolveThread = track(onResolveThread)
+  // A resolved thread's controls unmount with the focused button, so focus lands here.
+  const labelRef = useRef<HTMLParagraphElement>(null)
 
   const handleCreateNewThread = async () => {
     if (!newThreadText.trim()) return
@@ -211,7 +215,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
     setIsSubmitting(true)
     setError(null)
     try {
-      await onAddComment(newThreadText)
+      await addComment(newThreadText)
       setNewThreadText('')
       setShowNewThreadBox(false)
     } catch (err) {
@@ -228,7 +232,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
       <Stack gap="xs">
         <Group justify="space-between" align="center">
           <Group gap="xs">
-            <Text size="sm" fw={600}>
+            <Text ref={labelRef} size="sm" fw={600} tabIndex={-1}>
               {label}
               {sortedThreads.length > 0 && ` (${sortedThreads.length})`}
             </Text>
@@ -371,8 +375,11 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                   >
                     <InlineCommentThread
                       thread={thread}
-                      onAddReply={(text) => handleAddReply(thread.id, text)}
-                      onResolve={() => onResolveThread(thread.id)}
+                      onAddReply={(text) => addComment(text, thread.id)}
+                      onResolve={async () => {
+                        await resolveThread(thread.id)
+                        labelRef.current?.focus()
+                      }}
                       currentUserId={currentUserId}
                       canResolve={canResolve}
                       onGetUserMetadata={onGetUserMetadata}

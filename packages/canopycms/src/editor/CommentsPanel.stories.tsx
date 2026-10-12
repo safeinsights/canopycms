@@ -5,6 +5,7 @@ import type { CommentThread } from '../comment-store'
 const meta: Meta<typeof CommentsPanel> = {
   title: 'Editor/CommentsPanel',
   component: CommentsPanel,
+  args: { opened: true },
   parameters: {
     layout: 'fullscreen',
   },
@@ -85,6 +86,17 @@ const sampleThreads: CommentThread[] = [
   },
 ]
 
+const entryLabels: Record<string, string> = {
+  'blog/intro': 'Getting started',
+  'pages/about': 'About us',
+  'products/widget': 'Widget',
+}
+const fieldLabels: Record<string, string> = {
+  title: 'Title',
+  'hero.image': 'Page sections › Hero › Image',
+  'pricing.monthly': 'Pricing › Monthly price',
+}
+
 export const Default: Story = {
   args: {
     branchName: 'feature/new-content',
@@ -100,6 +112,8 @@ export const Default: Story = {
       await new Promise((resolve) => setTimeout(resolve, 500))
     },
     onClose: () => console.log('Close panel'),
+    entryLabel: (entryPath) => entryLabels[entryPath],
+    fieldLabel: (_entryPath, canopyPath) => fieldLabels[canopyPath],
   },
 }
 
@@ -200,17 +214,6 @@ export const ManyComments: Story = {
     },
     onClose: () => console.log('Close panel'),
   },
-}
-
-const entryLabels: Record<string, string> = {
-  'blog/intro': 'Getting started',
-  'pages/about': 'About us',
-  'products/widget': 'Widget',
-}
-const fieldLabels: Record<string, string> = {
-  title: 'Title',
-  'hero.image': 'Page sections › Hero › Image',
-  'pricing.monthly': 'Pricing › Monthly price',
 }
 
 /** Threads named by entry and field titles instead of their paths. */

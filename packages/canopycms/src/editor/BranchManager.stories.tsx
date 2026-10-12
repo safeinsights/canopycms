@@ -13,20 +13,24 @@ const meta: Meta<typeof BranchManager> = {
 export default meta
 type Story = StoryObj<typeof BranchManager>
 
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
+const HOUR = 3600 * 1000
+const DAY = 24 * HOUR
+
 export const Default: Story = {
   args: {
     branches: [
       {
         name: 'main',
         status: 'editing',
-        updatedAt: 'today',
+        updatedAt: ago(HOUR),
         access: {},
         isProtected: true,
       },
       {
         name: 'feature/landing',
         status: 'editing',
-        updatedAt: 'today',
+        updatedAt: ago(HOUR),
         createdBy: 'alice',
         access: { users: ['alice'], groups: ['team-marketing'] },
         commentCount: 3,
@@ -35,7 +39,7 @@ export const Default: Story = {
       {
         name: 'feature/docs',
         status: 'submitted',
-        updatedAt: 'yesterday',
+        updatedAt: ago(DAY),
         createdBy: 'bob',
         access: { users: ['bob'] },
         pullRequestUrl: 'https://github.com/owner/repo/pull/42',
@@ -59,7 +63,7 @@ export const WithPullRequests: Story = {
       {
         name: 'feature/new-homepage',
         status: 'editing',
-        updatedAt: '2 hours ago',
+        updatedAt: ago(2 * HOUR),
         createdBy: 'alice',
         access: { users: ['alice'] },
         submitBlocked: false,
@@ -67,7 +71,7 @@ export const WithPullRequests: Story = {
       {
         name: 'feature/dark-mode',
         status: 'submitted',
-        updatedAt: '1 day ago',
+        updatedAt: ago(DAY),
         createdBy: 'bob',
         access: { users: ['bob'] },
         pullRequestUrl: 'https://github.com/owner/repo/pull/123',
@@ -77,7 +81,7 @@ export const WithPullRequests: Story = {
       {
         name: 'fix/navigation-bug',
         status: 'submitted',
-        updatedAt: '3 days ago',
+        updatedAt: ago(3 * DAY),
         createdBy: 'charlie',
         access: { users: ['charlie'] },
         pullRequestUrl: 'https://github.com/owner/repo/pull/118',
@@ -102,14 +106,14 @@ export const WithBotOwner: Story = {
       {
         name: 'feature/auto',
         status: 'editing',
-        updatedAt: 'today',
+        updatedAt: ago(HOUR),
         access: {},
         createdBy: 'canopycms-system',
       },
       {
         name: 'feature/landing',
         status: 'editing',
-        updatedAt: 'today',
+        updatedAt: ago(HOUR),
         access: {},
         createdBy: 'alice',
         submitBlocked: false,
@@ -121,10 +125,6 @@ export const WithBotOwner: Story = {
         : null,
   },
 }
-
-const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
-const HOUR = 3600 * 1000
-const DAY = 24 * HOUR
 
 const reviewBranches: BranchSummary[] = [
   {
@@ -202,8 +202,28 @@ export const CurrentBranchAndMenu: Story = {
   },
 }
 
-/** A reviewer with a branch in review open: Withdraw from review on the card, Request changes in the menu. */
-export const ReviewerView: Story = {
+/** The server blocks submitting the open branch for a permitted user: the primary action stays, with its reason on hover or focus. */
+export const CurrentBranchBlocked: Story = {
+  args: {
+    ...logged,
+    branches: [
+      {
+        name: 'feature/landing',
+        status: 'editing',
+        updatedAt: ago(2 * HOUR),
+        createdBy: 'alice',
+        access: { users: ['alice'] },
+        submitBlocked: true,
+      },
+      ...reviewBranches.filter((b) => b.name === 'feature/docs'),
+    ],
+    currentBranchName: 'feature/landing',
+    user: { userId: 'alice', groups: [] },
+  },
+}
+
+/** A reviewer with someone else's submission open: Request changes leads, and Withdraw from review sits in the menu. */
+export const ReviewerOnSubmittedBranch: Story = {
   args: {
     ...logged,
     branches: reviewBranches,
