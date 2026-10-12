@@ -8,9 +8,14 @@
 // full history. Needs git, @changesets/parse, github-slugger and
 // mdast-util-from-markdown (root devDependencies).
 //
+// A stable release runs `--promote X.Y.Z` before `changeset version` consumes
+// the files: it moves the legacy block and the assembled entries into
+// `### X.Y.Z` under `## Released`.
+//
 // Usage: node scripts/migration-notes.mjs --check
 //        node scripts/migration-notes.mjs --preview
 //        node scripts/migration-notes.mjs --ship --version <v> --sha <40-hex> --out <path> [--summary <path>]
+//        node scripts/migration-notes.mjs --promote <X.Y.Z>
 //        node scripts/migration-notes.mjs --self-test
 
 import {
@@ -72,6 +77,8 @@ const HANDOFF =
 
 /** Anchors the shipped `## This build` section takes, so no other heading may. */
 const RESERVED_ANCHOR_RE = /^(?:this-build|(?:new|revised)-since-int\d+)$/
+const PLAIN_VERSION_RE = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/
+const LEGACY_MARKER_RE = /^<!--\s*legacy:(start|end)\s*-->$/
 
 const problem = (file, line, message, severity = 'error') => ({ file, line, message, severity })
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
@@ -494,6 +501,56 @@ function isDelimiterRow(line) {
 const tableCells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|')
 
 /**
+ * The legacy block: the span of `## Unreleased` from `<!-- legacy:start -->` to
+ * `<!-- legacy:end -->`, each a top-level comment on its own. `entriesAt` is
+ * its first `###`; what comes before it (a paragraph and the table) only
+ * repeats the labels the entries carry, so `--promote` drops it. Null when
+ * there are no markers.
+ */
+function readLegacyBlock(tops, unrel, problems) {
+  const markers = tops
+    .map((node, index) => ({
+      node,
+      index,
+      m: node.type === 'html' && LEGACY_MARKER_RE.exec(node.value.trim()),
+    }))
+    .filter((x) => x.m)
+  if (markers.length === 0) return null
+  const fail = (line, message) => {
+    problems.push(problem(CHANGELOG, line, message))
+    return null
+  }
+  const [start, end] = markers
+  if (markers.length !== 2 || start.m[1] !== 'start' || end.m[1] !== 'end') {
+    return fail(
+      markers[0].node.position.start.line,
+      'needs one `<!-- legacy:start -->` followed by one `<!-- legacy:end -->`',
+    )
+  }
+  if (start.index <= unrel.index || end.index >= unrel.nextIndex) {
+    return fail(start.node.position.start.line, 'the legacy markers belong in `## Unreleased`')
+  }
+  const inside = tops.slice(start.index + 1, end.index)
+  const first = inside.find((n) => n.type === 'heading' && n.depth === 3)
+  const lead = inside.find(
+    (n) =>
+      n.type === 'heading' && (!first || n.position.start.offset < first.position.start.offset),
+  )
+  if (lead) {
+    return fail(
+      lead.position.start.line,
+      'only paragraphs and a table may precede the first `###` in the legacy block',
+    )
+  }
+  return {
+    start: start.node.position.start.offset,
+    end: end.node.position.end.offset,
+    endMarkerAt: end.node.position.start.offset,
+    entriesAt: first ? first.position.start.offset : null,
+  }
+}
+
+/**
  * The parts of CHANGELOG.md the assembly needs: its headings with their
  * as-written anchors, the Unreleased and Released ranges, the first table in
  * Unreleased (parsed as CommonMark, a GFM table is a paragraph whose second
@@ -533,6 +590,8 @@ function readBase(root, problems) {
   const released = sectionRange(tops, 'Released')
   const base = { text, headings, links: [], unreleased: range(unrel) }
   base.released = released ? range(released) : null
+  base.releasedAt = released ? tops[released.index].position.start.offset : null
+  base.legacy = readLegacyBlock(tops, unrel, problems)
   base.firstH2 = tops.find((n) => n.type === 'heading' && n.depth === 2).position.start.offset
   // Every relative link becomes absolute in the shipped copy, so each must be
   // rewritable; checking here makes --check refuse what --ship would.
@@ -914,7 +973,14 @@ function renderThisBuild(L, anchorOf) {
     '',
     `Version \`${version}\`, built from [\`${sha.slice(0, 7)}\`](${REPO_URL}/tree/${sha}).`,
   ]
-  if (M) {
+  if (L.ship.stable) {
+    // A stable release's entries are its own `### X.Y.Z`; "new since" an int
+    // means nothing to an adopter on the stable channel.
+    lines.push(
+      '',
+      `Its entries are [${version}](#${anchorOf(L.ship.releaseKey)}), under **Released**.`,
+    )
+  } else if (M) {
     lines.push('', `### New since int.${M.n}`, '')
     headings.push({ key: 'build:new', text: `New since int.${M.n}`, origin: 'This build' })
     if (fresh.length > 0) lines.push(...fresh.map((r) => handoffItem(r, anchorOf)))
@@ -1020,6 +1086,26 @@ function analyze(root, { fallbackLabel, ship = null }) {
     fail(r, `is a second legacy owner; ${owners[0].file} is one already`)
   }
   if (!base) return { problems, notes }
+  if (ship?.stable) {
+    const own = base.headings.find(
+      (h) =>
+        base.released &&
+        h.depth === 3 &&
+        h.text === ship.version &&
+        h.offset >= base.released.start &&
+        h.offset < base.released.end,
+    )
+    if (own) ship.releaseKey = own.key
+    else {
+      problems.push(
+        problem(
+          CHANGELOG,
+          null,
+          `a stable --ship needs \`### ${ship.version}\` under \`## Released\`; run --promote ${ship.version} first`,
+        ),
+      )
+    }
+  }
 
   const entries = records.filter((r) => r.kind === 'entry' && !r.broken)
   for (const e of entries) e.parts = []
@@ -1237,7 +1323,7 @@ function analyze(root, { fallbackLabel, ship = null }) {
       ),
     )
   }
-  return { problems, notes, text: final.text, ship }
+  return { problems, notes, text: final.text, ship, records, shippable, L, anchors }
 }
 
 // ---------------------------------------------------------------------------
@@ -1265,15 +1351,201 @@ function ship(root, { version, sha, out, summary }) {
   }
   const result = analyze(root, {
     fallbackLabel: v.int !== null ? String(v.int) : version,
-    ship: { version, sha },
+    ship: { version, sha, stable: v.int === null },
   })
   if (result.problems.some((p) => p.severity === 'error')) return result
   writeFileSync(out, result.text)
   if (summary) {
-    const fence = ['```sh', `node scripts/canopy-deps.mjs int ${version}`, '```'].join('\n')
-    appendFileSync(summary, `\n${thisBuildSummary(result.text)}\n\n${fence}\n`)
+    // The pin command is for int builds; a stable release is the npm `latest`.
+    const fence =
+      v.int === null
+        ? ''
+        : `\n\n${['```sh', `node scripts/canopy-deps.mjs int ${version}`, '```'].join('\n')}`
+    appendFileSync(summary, `\n${thisBuildSummary(result.text)}${fence}\n`)
   }
   return result
+}
+
+/**
+ * Demotes every heading in a fragment one level; `######` stays. Both sources
+ * hold ATX headings only: setext makes H1 and H2, which neither may contain.
+ */
+function demoteHeadings(text) {
+  const edits = []
+  for (const h of headingsOf(fromMarkdown(text))) {
+    const at = h.position.start.offset
+    if (text[at] !== '#') return { error: `"${plainText(h).trim()}" is not an ATX heading` }
+    if (h.depth < 6) edits.push({ start: at, end: at, text: '#' })
+  }
+  return { text: applyEdits(text, edits) }
+}
+
+/** Tracked markdown that may link to a changeset: everything outside `.changeset/` and `.claude/`. */
+function trackedMarkdown(root) {
+  return runGit(root, ['ls-files', '-z', '--', '*.md'])
+    .split('\0')
+    .filter(
+      (f) =>
+        f &&
+        f !== CHANGELOG &&
+        !f.startsWith('.changeset/') &&
+        !f.startsWith('.claude/') &&
+        existsSync(join(root, f)),
+    )
+}
+
+/**
+ * Points one file's links to `.changeset/<slug>.md` at the promoted entry,
+ * `CHANGELOG.md#<anchor>` relative to the file, since `changeset version`
+ * deletes the target.
+ */
+function rewriteInbound(file, text, anchorOfSlug, problems) {
+  if (!text.includes('.changeset')) return text
+  const src = text.replace(/^\uFEFF/, '')
+  const dir = posix.dirname(file)
+  const edits = []
+  walk(fromMarkdown(src), (node) => {
+    if (node.type !== 'link' && node.type !== 'definition') return
+    const url = node.url
+    if (!url || url.startsWith('#') || isAbsoluteUrl(url)) return
+    const { path } = splitUrl(url)
+    const repoPath = path.startsWith('/')
+      ? posix.normalize(path.replace(/^\/+/, '') || '.')
+      : posix.normalize(posix.join(dir, path))
+    if (!repoPath.startsWith('.changeset/')) return
+    const name = decode(repoPath.slice('.changeset/'.length))
+    if (name.includes('/') || !isChangesetName(name)) return
+    const line = node.position.start.line
+    const anchor = anchorOfSlug(name.slice(0, -3))
+    const range = urlRange(src, node)
+    if (anchor === undefined) {
+      problems.push(problem(file, line, `links to .changeset/${name}, which renders no entry`))
+    } else if (!range || src.slice(range.start, range.end) !== url) {
+      problems.push(problem(file, line, `write the link "${url}" without escapes, so it can move`))
+    } else {
+      const target = file === CHANGELOG ? '' : posix.relative(dir, CHANGELOG)
+      edits.push({ ...range, text: `${target}#${anchor}` })
+    }
+  })
+  return text.slice(0, text.length - src.length) + applyEdits(src, edits)
+}
+
+/**
+ * Writes `### <version>` as the first heading under `## Released`: the legacy
+ * entries, then the assembled ones, every heading one level down, with a
+ * `<!-- changeset: <slug> -->` marker for every changeset the release
+ * consumes (an entry carries its own), so `--check` lets them leave the tree.
+ * Unreleased keeps only what sits outside the legacy markers. Links to a
+ * changeset file anywhere else become links to its entry. Every anchor the
+ * assembled document had stays put, so links into a shipped copy still land.
+ * Writes nothing unless every check passes.
+ */
+function promote(root, version) {
+  const refuse = (message) => ({ problems: [problem(CHANGELOG, null, message)], notes: [] })
+  if (!PLAIN_VERSION_RE.test(version)) {
+    return refuse(`--promote takes a plain X.Y.Z version, not "${version}"`)
+  }
+  const git = readGitState(root)
+  if (git.notRepo) return refuse('--promote needs a git repository')
+  if (git.shallow) return refuse('--promote refuses a shallow clone; labels need every int tag')
+  const existing = readBase(root, [])
+  if (existing?.headings.some((h) => h.depth === 3 && h.text === version)) {
+    return refuse(`already has \`### ${version}\`; a version is promoted once`)
+  }
+  const result = analyze(root, { fallbackLabel: version })
+  const { problems, notes } = result
+  if (problems.some((p) => p.severity === 'error') || !result.L) return { problems, notes }
+  const { L, anchors, records, shippable } = result
+  const { base } = L
+  if (!base.released) return refuse('has no `## Released` section to promote into')
+
+  const legacy = base.legacy
+  const legacyText =
+    legacy?.entriesAt != null ? base.text.slice(legacy.entriesAt, legacy.endMarkerAt).trim() : ''
+  const blocks = L.items.map((rec) => renderItem(rec, L, (key) => anchors.get(key)))
+  const demoted = demoteHeadings(
+    [legacyText, ...blocks.map((b) => b.text)].filter(Boolean).join('\n\n'),
+  )
+  if (demoted.error) return refuse(`cannot demote ${demoted.error}`)
+  const rendered = new Set(shippable.map((r) => r.slug))
+  const markers = records
+    .filter((r) => !rendered.has(r.slug))
+    .map((r) => `<!-- changeset: ${r.slug} -->`)
+  const section = [`### ${version}`, markers.join('\n'), demoted.text || 'No entries.']
+    .filter(Boolean)
+    .join('\n\n')
+
+  const first = base.headings.find(
+    (h) => h.offset >= base.released.start && h.offset < base.released.end,
+  )
+  const insertAt = first ? first.offset : base.released.end
+  const inLegacy = (h) => legacy !== null && h.offset >= legacy.start && h.offset < legacy.end
+  const moved = [
+    { key: 'release', text: version, origin: `### ${version}` },
+    ...base.headings.filter(inLegacy),
+    ...blocks.flatMap((b) => b.headings),
+  ]
+  const model = []
+  let placed = false
+  for (const h of base.headings) {
+    if (inLegacy(h)) continue
+    if (!placed && h.offset >= insertAt) {
+      model.push(...moved)
+      placed = true
+    }
+    model.push(h)
+  }
+  if (!placed) model.push(...moved)
+
+  const slugger = new GithubSlugger()
+  const promoted = new Map(model.map((h) => [h.key, slugger.slug(h.text)]))
+  const byKey = new Map(model.map((h) => [h.key, h]))
+  for (const [key, anchor] of anchors) {
+    if (key.startsWith('build:') || promoted.get(key) === anchor) continue
+    const h = byKey.get(key)
+    problems.push(
+      problem(
+        h?.origin ?? CHANGELOG,
+        null,
+        `promoting moves "${h?.text ?? key}" from #${anchor} to #${promoted.get(key) ?? '(nothing)'}; retitle it`,
+      ),
+    )
+  }
+  const clash = model.filter((h) => h.key !== 'release' && baseSlug(h.text) === baseSlug(version))
+  if (clash.length > 0) {
+    const list = clash.map((h) => `"${h.text}" (${h.origin})`).join(', ')
+    problems.push(problem(CHANGELOG, null, `\`### ${version}\` shares its anchor with ${list}`))
+  }
+
+  let cut = legacy ? legacy.end : 0
+  while (legacy && base.text[cut] === '\n') cut++
+  const edits = [{ start: insertAt, end: insertAt, text: padBlock(base.text, insertAt, section) }]
+  if (legacy) edits.push({ start: legacy.start, end: cut, text: '' })
+  const text = applyEdits(base.text, edits)
+  const parsed = headingsOf(fromMarkdown(text)).map((h) => plainText(h).trim())
+  const diverge = model.findIndex((h, i) => parsed[i] !== h.text)
+  if (diverge !== -1 || parsed.length !== model.length) {
+    const at = model[diverge] ?? model.at(-1)
+    problems.push(
+      problem(at.origin, null, `the promoted ${CHANGELOG} loses its headings from "${at.text}" on`),
+    )
+  }
+
+  const anchorOfSlug = (slug) => (rendered.has(slug) ? promoted.get(`cs:${slug}`) : undefined)
+  const writes = new Map([[CHANGELOG, rewriteInbound(CHANGELOG, text, anchorOfSlug, problems)]])
+  for (const file of trackedMarkdown(root)) {
+    const before = readFileSync(join(root, file), 'utf8')
+    const after = rewriteInbound(file, before, anchorOfSlug, problems)
+    if (after !== before) writes.set(file, after)
+  }
+  if (problems.some((p) => p.severity === 'error')) return { problems, notes }
+  for (const [file, content] of writes) writeFileSync(join(root, file), content)
+  const moves = [...writes.keys()].filter((f) => f !== CHANGELOG)
+  notes.push(
+    `promoted ${base.headings.filter((h) => inLegacy(h) && h.depth === 3).length} legacy and ${L.items.length} changeset entries into ### ${version}` +
+      (moves.length > 0 ? `; repointed links in ${moves.join(', ')}` : ''),
+  )
+  return { problems, notes }
 }
 
 function parseVersion(v) {
@@ -1305,7 +1577,7 @@ function resolveOutput(root, p) {
 const MODES = ['--check', '--preview', '--ship', '--self-test']
 const VALUE_FLAGS = ['--version', '--sha', '--out', '--summary']
 const USAGE =
-  'usage: migration-notes.mjs --check | --preview | --self-test | --ship --version <v> --sha <40-hex> --out <path> [--summary <path>]'
+  'usage: migration-notes.mjs --check | --preview | --self-test | --promote <X.Y.Z> | --ship --version <v> --sha <40-hex> --out <path> [--summary <path>]'
 
 /** Parses the command line, or returns `{ error }`. */
 function parseArgs(argv, root) {
@@ -1314,9 +1586,17 @@ function parseArgs(argv, root) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--') continue // pnpm passes `pnpm <script> -- <args>` through verbatim
-    if (MODES.includes(a)) {
-      if (mode) return { error: `give one mode, not ${mode} and ${a}` }
+    if (MODES.includes(a) || a === '--promote') {
+      if (mode) return { error: `give one mode, not --${mode} and ${a}` }
       mode = a.slice(2)
+      if (a === '--promote') {
+        const value = argv[++i]
+        if (value === undefined || value.startsWith('--')) return { error: `${a} takes a version` }
+        if (!PLAIN_VERSION_RE.test(value)) {
+          return { error: `--promote takes a plain X.Y.Z version, not "${value}"` }
+        }
+        opts.promote = value
+      }
     } else if (VALUE_FLAGS.includes(a)) {
       const value = argv[++i]
       if (value === undefined || value.startsWith('--')) return { error: `${a} takes a value` }
@@ -1328,9 +1608,8 @@ function parseArgs(argv, root) {
   }
   if (!mode) return { error: USAGE }
   if (mode !== 'ship') {
-    return Object.keys(opts).length > 0
-      ? { error: `--${Object.keys(opts)[0]} goes with --ship` }
-      : { mode }
+    const stray = Object.keys(opts).find((k) => k !== 'promote')
+    return stray ? { error: `--${stray} goes with --ship` } : { mode, ...opts }
   }
   for (const key of ['version', 'sha', 'out'])
     if (!opts[key]) return { error: `--ship needs --${key}` }
@@ -2147,14 +2426,38 @@ function selfTest() {
         'ship: an int build with no int tags fails closed',
         s.problems.some((p) => /no int tags/.test(p.message)) && !existsSync(join(tmp, 'y.md')),
       )
+      const unpromoted = join(tmp, 'unpromoted.md')
+      const u = ship(vrepo, { version: '0.1.0', sha: SHA, out: unpromoted })
+      expect(
+        'ship: a stable build without its ### section fails closed',
+        u.problems.some((p) => /needs `### 0\.1\.0` under `## Released`/.test(p.message)) &&
+          !existsSync(unpromoted),
+      )
+      run(
+        { 'an-entry.md': entry() },
+        BASE.replace('### 0.0.67', '### 0.1.0\n\n#### Now out\n\nBody.\n\n### 0.0.67'),
+      )
       const stable = join(tmp, 'stable.md')
-      ship(vrepo, { version: '0.1.0', sha: SHA, out: stable })
+      const stableSummary = join(tmp, 'stable-summary.md')
+      ship(vrepo, { version: '0.1.0', sha: SHA, out: stable, summary: stableSummary })
       const text = existsSync(stable) ? readFileSync(stable, 'utf8') : ''
       expect(
         'ship: a stable build with no int tags labels with its version',
         text.includes('| 0.1.0 | Worker | [A row](#a-title) | Required |') &&
-          text.includes('_First in 0.1.0._') &&
-          text.includes("No earlier int is in this build's history"),
+          text.includes('_First in 0.1.0._'),
+      )
+      expect(
+        'ship: a stable build links its own section and lists nothing new since an int',
+        text.includes(
+          `Version \`0.1.0\`, built from [\`aaaaaaa\`](${REPO_URL}/tree/${SHA}).\n\nIts entries are [0.1.0](#010), under **Released**.\n\n${HANDOFF}\n`,
+        ) &&
+          !text.includes('New since') &&
+          !text.includes('No earlier int'),
+      )
+      const stableSum = existsSync(stableSummary) ? readFileSync(stableSummary, 'utf8') : ''
+      expect(
+        'ship: a stable summary has the section and no int pin command',
+        stableSum.startsWith('\n## This build\n') && !stableSum.includes('canopy-deps'),
       )
       run({ 'an-entry.md': entry({ title: 'Legacy thing!' }) })
       const bad = join(tmp, 'bad.md')
@@ -2371,6 +2674,314 @@ function selfTest() {
       )
     }
 
+    // legacy markers
+    const LBASE = BASE.replace(
+      'Intro paragraph.\n',
+      'Intro paragraph.\n\n<!-- legacy:start -->\n',
+    ).replace('Body.\n\n---\n\n## Released', 'Body.\n\n<!-- legacy:end -->\n\n---\n\n## Released')
+    clean('legacy: a marked block checks cleanly', { 'an-entry.md': entry() }, LBASE)
+    refused(
+      'legacy: a start marker without an end',
+      {},
+      /CHANGELOG\.md:15 needs one `<!-- legacy:start -->` followed by one `<!-- legacy:end -->`/,
+      LBASE.replace('<!-- legacy:end -->', ''),
+    )
+    refused(
+      'legacy: markers outside Unreleased',
+      {},
+      /the legacy markers belong in `## Unreleased`/,
+      LBASE.replace(
+        '<!-- legacy:end -->\n\n---\n\n## Released\n',
+        '---\n\n## Released\n\n<!-- legacy:end -->\n',
+      ),
+    )
+    refused(
+      'legacy: a heading before the first ### in the block',
+      {},
+      /only paragraphs and a table may precede the first `###`/,
+      LBASE.replace('<!-- legacy:start -->\n', '<!-- legacy:start -->\n\n#### Lead\n'),
+    )
+
+    // promote
+    {
+      const prepo = join(tmp, 'p')
+      mkdirSync(prepo)
+      g(prepo, 'init', '-q')
+      write(prepo, 'README.md', '# Readme\n')
+      write(prepo, 'docs/logo.png', 'png')
+      write(prepo, CHANGELOG, LBASE)
+      write(prepo, '.changeset/legacy-owner.md', fm('minor') + metaBlock({ legacy: 'true' }) + '\n')
+      write(
+        prepo,
+        '.changeset/alpha.md',
+        entry({
+          title: 'Alpha entry',
+          body: [
+            WHAT,
+            ADOPT,
+            'See [r](../README.md#top), [b](./beta.md) and ![i](/docs/logo.png).',
+            '#### Sub',
+            '> ###### Deep',
+          ],
+        }),
+      )
+      write(prepo, '.changeset/quiet.md', fm(null))
+      g(prepo, 'add', '-A')
+      g(prepo, 'commit', '-qm', 'int 3')
+      g(prepo, 'tag', 'v0.0.68-int.3')
+      write(
+        prepo,
+        '.changeset/beta.md',
+        entry({ title: 'Beta entry', bump: 'patch', meta: { action: 'None' }, body: [WHAT] }),
+      )
+      write(prepo, '.changeset/alpha-more.md', part('alpha'))
+      write(prepo, '.changeset/legacy-more.md', part('legacy#legacy-thing'))
+      write(
+        prepo,
+        '.changeset/rel-more.md',
+        part('released#released-thing', { meta: { area: 'Ops' } }),
+      )
+      const inbound =
+        '# Readme\n\n[a](.changeset/alpha.md), [m](./.changeset/alpha-more.md#frag), [g](.changeset/README.md) and [x][d].\n\n[d]: /.changeset/beta.md\n'
+      write(prepo, 'README.md', inbound)
+      write(prepo, 'docs/guide.md', '# Guide\n\n[a](../.changeset/alpha.md)\n')
+      write(prepo, '.claude/notes.md', '[a](../.changeset/alpha.md)\n')
+      write(prepo, '.changeset/README.md', '[a](./alpha.md)\n')
+      g(prepo, 'add', '-A')
+      g(prepo, 'commit', '-qm', 'more')
+      write(prepo, 'notes/untracked.md', '[a](../.changeset/alpha.md)\n')
+      const before = analyze(prepo, { fallbackLabel: '0.1.0' })
+      const r = promote(prepo, '0.1.0')
+      const text = readFileSync(join(prepo, CHANGELOG), 'utf8')
+      expect(
+        `promote: a mixed set promotes, got ${JSON.stringify(r.problems)}`,
+        r.problems.length === 0,
+      )
+      expect(
+        `promote: ### 0.1.0 is the first heading under Released, everything one level down, got ${JSON.stringify(text.slice(text.indexOf('## Released')))}`,
+        text.includes(
+          [
+            '## Released',
+            '',
+            '### 0.1.0',
+            '',
+            '<!-- changeset: legacy-owner -->',
+            '<!-- changeset: quiet -->',
+            '',
+            '#### Legacy thing',
+            '',
+            '**What changed.** Old.',
+            '',
+            '#### Other legacy',
+            '',
+            'Body.',
+            '',
+            '#### Alpha entry',
+            '',
+            '<!-- changeset: alpha -->',
+            '',
+            '_First in int.3._',
+            '',
+            WHAT,
+            '',
+            ADOPT,
+            '',
+            'See [r](README.md#top), [b](#beta-entry) and ![i](docs/logo.png).',
+            '',
+            '##### Sub',
+            '',
+            '> ###### Deep',
+            '',
+            '##### Added in 0.1.0',
+            '',
+            '<!-- changeset: alpha-more -->',
+            '',
+            WHAT,
+            '',
+            '#### Released thing, continued',
+            '',
+            '<!-- changeset: rel-more -->',
+            '',
+            '_First in 0.1.0._',
+            '',
+            'Continues [Released thing](#released-thing).',
+            '',
+            WHAT,
+            '',
+            '#### Beta entry',
+            '',
+            '<!-- changeset: beta -->',
+            '',
+            '_First in 0.1.0._',
+            '',
+            WHAT,
+            '',
+            '#### Legacy thing, continued',
+            '',
+            '<!-- changeset: legacy-more -->',
+            '',
+            '_First in 0.1.0._',
+            '',
+            'Continues [Legacy thing](#legacy-thing).',
+            '',
+            WHAT,
+            '',
+            '### 0.0.67',
+            '',
+          ].join('\n'),
+        ),
+      )
+      expect(
+        'promote: Unreleased keeps only what sits outside the legacy markers',
+        text.includes('## Unreleased\n\nIntro paragraph.\n\n---\n\n## Released\n') &&
+          text.startsWith(BASE.slice(0, BASE.indexOf('## Unreleased'))),
+      )
+      expect(
+        'promote: tracked links to a changeset point at its entry, relative to the file',
+        readFileSync(join(prepo, 'README.md'), 'utf8') ===
+          '# Readme\n\n[a](CHANGELOG.md#alpha-entry), [m](CHANGELOG.md#added-in-010), [g](.changeset/README.md) and [x][d].\n\n[d]: CHANGELOG.md#beta-entry\n' &&
+          readFileSync(join(prepo, 'docs/guide.md'), 'utf8') ===
+            '# Guide\n\n[a](../CHANGELOG.md#alpha-entry)\n',
+      )
+      expect(
+        'promote: .claude/, .changeset/ and untracked files keep their links',
+        readFileSync(join(prepo, '.claude/notes.md'), 'utf8') === '[a](../.changeset/alpha.md)\n' &&
+          readFileSync(join(prepo, '.changeset/README.md'), 'utf8') === '[a](./alpha.md)\n' &&
+          readFileSync(join(prepo, 'notes/untracked.md'), 'utf8') ===
+            '[a](../.changeset/alpha.md)\n',
+      )
+      expect(
+        'promote: the changeset files stay for changeset version',
+        ['legacy-owner', 'alpha', 'quiet', 'beta', 'alpha-more', 'legacy-more', 'rel-more'].every(
+          (s) => existsSync(join(prepo, `.changeset/${s}.md`)),
+        ),
+      )
+      const anchorPairs = (doc) => {
+        const slugger = new GithubSlugger()
+        return headingsOf(fromMarkdown(doc))
+          .map((h) => plainText(h).trim())
+          .map((t) => `${t} -> #${slugger.slug(t)}`)
+      }
+      const was = anchorPairs(before.text ?? '').sort()
+      const now = anchorPairs(text).sort()
+      expect(
+        `promote: every anchor the assembled document had is unchanged, plus #010, got ${now.filter((p) => !was.includes(p))}`,
+        now.length === was.length + 1 &&
+          was.every((p) => now.includes(p)) &&
+          now.includes('0.1.0 -> #010'),
+      )
+      expect(
+        'promote: twice is refused',
+        promote(prepo, '0.1.0').problems.some((p) =>
+          /already has `### 0\.1\.0`; a version is promoted once/.test(p.message),
+        ) && readFileSync(join(prepo, CHANGELOG), 'utf8') === text,
+      )
+      for (const name of readdirSync(join(prepo, '.changeset'))) {
+        if (isChangesetName(name)) rmSync(join(prepo, '.changeset', name))
+      }
+      const after = check(prepo)
+      expect(
+        `promote: once changeset version consumes the files, --check passes, got ${JSON.stringify(after.problems)}`,
+        after.problems.filter((p) => p.severity === 'error').length === 0 &&
+          after.notes.length === 0,
+      )
+      const out = join(tmp, 'ship-promoted.md')
+      const s = ship(prepo, { version: '0.1.0', sha: SHA, out })
+      const shipped = existsSync(out) ? readFileSync(out, 'utf8') : ''
+      expect(
+        `ship: after promote, a stable build links its section, got ${JSON.stringify(s.problems)}`,
+        shipped.includes('Its entries are [0.1.0](#010), under **Released**.') &&
+          !shipped.includes('New since'),
+      )
+    }
+    {
+      // A fresh repo per case, so promote's git checks see a real history.
+      let n = 0
+      const promoteIn = (files, base, version = '0.1.0') => {
+        const dir = join(tmp, `promote-${n++}`)
+        mkdirSync(dir)
+        g(dir, 'init', '-q')
+        write(dir, 'README.md', '# Readme\n')
+        write(dir, CHANGELOG, base)
+        for (const [name, content] of Object.entries(files)) write(dir, name, content)
+        g(dir, 'add', '-A')
+        g(dir, 'commit', '-qm', 'base')
+        const result = promote(dir, version)
+        result.text = readFileSync(join(dir, CHANGELOG), 'utf8')
+        return result
+      }
+      const refusedPromote = (label, files, pattern, base = LBASE, version) => {
+        const r = promoteIn(files, base, version)
+        expect(
+          `${label}: expected a problem matching ${pattern}, got ${JSON.stringify(r.problems)}`,
+          r.problems.some((p) => pattern.test(`${p.file} ${p.message}`)) && r.text === base,
+        )
+      }
+      refusedPromote(
+        'promote: a heading the move would renumber',
+        {},
+        /promoting moves "Released" from #released to #released-1/,
+        LBASE.replace('### Other legacy', '### Released'),
+      )
+      refusedPromote(
+        'promote: a heading sharing the version anchor',
+        {},
+        /`### 0\.1\.0` shares its anchor with "0\.1\.0\." \(CHANGELOG\.md:\d+\)/,
+        LBASE.replace('### Other legacy', '### 0.1.0.'),
+      )
+      refusedPromote(
+        'promote: a failing check writes nothing',
+        { '.changeset/an-entry.md': entry({ title: 'Legacy thing!' }) },
+        /same anchor/,
+      )
+      refusedPromote(
+        'promote: a link to a changeset that renders nothing',
+        { '.changeset/quiet.md': fm(null), 'docs/a.md': '[q](../.changeset/quiet.md)\n' },
+        /docs\/a\.md links to \.changeset\/quiet\.md, which renders no entry/,
+      )
+      refusedPromote(
+        'promote: an escaped inbound link',
+        { '.changeset/an-entry.md': entry(), 'docs/a.md': '[q](../.changeset/an\\-entry.md)\n' },
+        /docs\/a\.md write the link "\.\.\/\.changeset\/an-entry\.md" without escapes/,
+      )
+      refusedPromote(
+        'promote: only a plain version',
+        { '.changeset/an-entry.md': entry() },
+        /plain X\.Y\.Z version, not "0\.1\.0-int\.3"/,
+        LBASE,
+        '0.1.0-int.3',
+      )
+      {
+        const plain = BASE.replace(/\| int[^]*?\n---\n\n## Released/, '---\n\n## Released')
+        const r = promoteIn({ '.changeset/an-entry.md': entry() }, plain)
+        expect(
+          `promote: without legacy markers only the changesets move, got ${JSON.stringify(r.problems)}`,
+          r.problems.length === 0 &&
+            r.text.includes(
+              '## Unreleased\n\nIntro paragraph.\n\n---\n\n## Released\n\n### 0.1.0\n\n#### A title\n\n<!-- changeset: an-entry -->\n\n_First in 0.1.0._\n\n',
+            ),
+        )
+      }
+      {
+        const r = promoteIn(
+          {},
+          LBASE.replace('\n## Released\n', '\n## Released\n\nOlder releases.\n'),
+        )
+        expect(
+          'promote: the section goes before the first heading under Released, after its prose',
+          r.text.includes('## Released\n\nOlder releases.\n\n### 0.1.0\n\n#### Legacy thing\n'),
+        )
+      }
+      {
+        const shallow = join(tmp, 'promote-shallow')
+        g(tmp, 'clone', '-q', '--depth', '1', `file://${join(tmp, 'promote-0')}`, shallow)
+        expect(
+          'promote: a shallow clone is refused',
+          promote(shallow, '0.1.0').problems.some((p) => /shallow clone/.test(p.message)),
+        )
+      }
+    }
+
     // args
     const ok = (argv) => parseArgs(argv, tmp)
     expect('args: --check', ok(['--check']).mode === 'check')
@@ -2393,6 +3004,14 @@ function selfTest() {
       expect(`args: version ${bad} is refused`, ok(shipArgs.with(2, bad)).error)
     }
     expect('args: --out may not leave the repo', ok(shipArgs.with(6, '../x.md')).error)
+    expect('args: --promote', ok(['--promote', '0.1.0']).promote === '0.1.0')
+    for (const bad of [['--promote'], ['--promote', '01.0.0'], ['--promote', '0.1.0-int.2']]) {
+      expect(`args: ${bad.join(' ')} is refused`, ok(bad).error)
+    }
+    expect(
+      'args: --version goes with --ship, not --promote',
+      ok(['--promote', '0.1.0', '--version', '0.1.0']).error,
+    )
     expect(
       'args: an absolute --summary is taken as given',
       ok([...shipArgs, '--summary', '/tmp/s.md']).summary === '/tmp/s.md',
@@ -2428,9 +3047,13 @@ if (args.mode === 'check') {
 if (args.mode === 'preview') {
   const result = check(repoRoot)
   if (result.text) process.stdout.write(result.text)
-  process.exit(report(result))
+  // exitCode, not exit(): a pipe takes the document asynchronously, and exit() cuts it off.
+  process.exitCode = report(result)
+} else if (args.mode === 'promote') {
+  process.exit(report(promote(repoRoot, args.promote)))
+} else {
+  const result = ship(repoRoot, args)
+  const code = report(result)
+  if (code === 0) console.info(`wrote ${args.out}`)
+  process.exit(code)
 }
-const result = ship(repoRoot, args)
-const code = report(result)
-if (code === 0) console.info(`wrote ${args.out}`)
-process.exit(code)

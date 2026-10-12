@@ -20,7 +20,7 @@
     "tasks:index": "node scripts/check-future-tasks.mjs --index",
     "lint:account-ids": "node scripts/check-account-ids.mjs --self-test && node scripts/check-account-ids.mjs",
     "lint:docs": "node scripts/check-docs.mjs --self-test && node scripts/check-docs.mjs",
-    "lint:changesets": "node scripts/migration-notes.mjs --self-test && node scripts/migration-notes.mjs --check",
+    "lint:changesets": "node scripts/migration-notes.mjs --self-test && node scripts/release-stable.mjs --self-test && node scripts/migration-notes.mjs --check",
     "changelog:preview": "node scripts/migration-notes.mjs --preview",
     "lint:comments": "node scripts/check-comment-budget.mjs",
     "lint:ux-copy": "node scripts/check-ux-copy.mjs --self-test && node scripts/check-ux-copy.mjs",
