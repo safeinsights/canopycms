@@ -21,9 +21,6 @@ made names on comment surfaces visible to every editor.
    sees their own comment as an id. `useUserContext` knows the current user; seeding their
    profile into the `canopy:user:` cache (`seedUserProfiles`) would name them with no request,
    if whoami returns a name.
-3. **Batcher answers failure with `null`.** `editor/hooks/user-metadata-batcher.ts` resolves every
-   id to `null` when `/users/batch` fails, so SWR replaces a good cached record with `null` and
-   the badge drops to an id. Rejecting instead would keep the last good record.
 
 ## Guideline gaps
 

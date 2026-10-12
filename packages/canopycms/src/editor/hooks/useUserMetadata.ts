@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import useSWR, { useSWRConfig, type ScopedMutator } from 'swr'
+import useSWR, { useSWRConfig, type Cache, type ScopedMutator } from 'swr'
 import type { UserProfile, UserSearchResult } from '../../auth/types'
 import type { CanopyUserId } from '../../types'
 import { isSystemUserId } from '../../system-users'
@@ -22,25 +22,6 @@ const systemUser = (userId: string): UserSearchResult => ({
 
 const userMetadataKey = (userId: string): string => `canopy:user:${userId}`
 
-/**
- * Caches profiles a response carried, keeping a cached record's email. A record left without one
- * is refetched: SWR discards a lookup the seed overtook, and with it that lookup's email.
- */
-export async function seedUserProfiles(
-  mutate: ScopedMutator,
-  users: readonly UserProfile[],
-): Promise<void> {
-  await Promise.all(
-    users.map((user) =>
-      mutate<UserSearchResult | null>(
-        userMetadataKey(user.id),
-        (current) => ({ email: '', ...current, ...user }),
-        { revalidate: (merged) => !merged?.email },
-      ),
-    ),
-  )
-}
-
 const isUserRecord = (value: unknown): value is UserSearchResult =>
   typeof value === 'object' &&
   value !== null &&
@@ -49,13 +30,42 @@ const isUserRecord = (value: unknown): value is UserSearchResult =>
   'name' in value &&
   typeof value.name === 'string'
 
+const cachedRecord = (cache: Cache, key: string): UserSearchResult | null => {
+  const data: unknown = cache.get(key)?.data
+  return isUserRecord(data) ? data : null
+}
+
+/**
+ * Caches profiles a response carried, keeping a cached record's email. A profile matching the
+ * cached record is not written: any write makes SWR discard a lookup in flight, email included. A
+ * user with no record yet is refetched once the writes settle, since the seed may have overtaken
+ * a lookup; that refetch is detached, so the caller never waits on the directory.
+ */
+export async function seedUserProfiles(
+  swr: { cache: Cache; mutate: ScopedMutator },
+  users: readonly UserProfile[],
+): Promise<void> {
+  const { cache, mutate } = swr
+  const firstSeen = new Set<string>()
+  await Promise.all(
+    users.map(async (user) => {
+      const key = userMetadataKey(user.id)
+      const record = cachedRecord(cache, key)
+      if (record && record.name === user.name && record.avatarUrl === user.avatarUrl) return
+      if (!record) firstSeen.add(key)
+      await mutate<UserSearchResult>(key, { email: '', ...record, ...user }, { revalidate: false })
+    }),
+  )
+  for (const key of firstSeen) void mutate(key)
+}
+
 /** Answers from the cache with no request and no email, for a reader who may not look users up. */
 export function useSeededUserResolver(): (userId: string) => Promise<UserSearchResult | null> {
   const { cache } = useSWRConfig()
   return useCallback(
     (userId: string) => {
-      const data: unknown = cache.get(userMetadataKey(userId))?.data
-      return Promise.resolve(isUserRecord(data) ? { ...data, email: '' } : null)
+      const record = cachedRecord(cache, userMetadataKey(userId))
+      return Promise.resolve(record ? { ...record, email: '' } : null)
     },
     [cache],
   )
@@ -68,9 +78,12 @@ export function useUserMetadata(
   cachedUser?: UserSearchResult,
 ): UseUserMetadataResult {
   const skip = cachedUser !== undefined || userId === 'anonymous' || isSystemUserId(userId)
+  const { cache } = useSWRConfig()
+  const key = userMetadataKey(userId)
   const { data, error, isLoading } = useSWR<UserSearchResult | null, unknown>(
-    skip ? null : userMetadataKey(userId),
-    () => getUserMetadata(userId),
+    skip ? null : key,
+    // An answer of null never replaces a record a seed wrote while the lookup was in flight.
+    async () => (await getUserMetadata(userId)) ?? cachedRecord(cache, key),
   )
 
   if (cachedUser) return { userMetadata: cachedUser, isLoading: false, error: null }
@@ -82,8 +95,9 @@ export function useUserMetadata(
     userMetadata: data ?? null,
     // A seed can land while the lookup is in flight; SWR still reports that lookup as loading.
     isLoading: isLoading && data === undefined,
+    // A record to show outranks a failed lookup, so a seeded name survives it.
     error:
-      error === undefined
+      error === undefined || data
         ? null
         : error instanceof Error
           ? error

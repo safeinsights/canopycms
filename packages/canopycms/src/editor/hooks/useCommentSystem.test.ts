@@ -2,6 +2,8 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { COMMENT_NOT_ADDED, THREAD_NOT_RESOLVED, useCommentSystem } from './useCommentSystem'
 import { useUserMetadata } from './useUserMetadata'
+import { createUserMetadataBatcher } from './user-metadata-batcher'
+import type { ApiClient } from '../context'
 import type { UserSearchResult } from '../../auth/types'
 import type { EditorEntry } from '../Editor'
 import type { CommentThread } from '../../comment-store'
@@ -862,6 +864,50 @@ describe('useCommentSystem', () => {
       )
 
       await waitFor(() => expect(result.current.badge.userMetadata?.name).toBe('Ada Lovelace'))
+    })
+
+    it('posts a reply without waiting on a directory lookup that never answers', async () => {
+      // A privileged viewer's badges look users up through the real batcher.
+      mockClient.permissions.batchGetUserMetadata.mockReturnValue(new Promise(() => {}))
+      const lookup = createUserMetadataBatcher(mockClient as unknown as ApiClient)
+      mockClient.comments.add.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { threadId: 'thread1', commentId: 'c9' },
+      })
+      const { result } = renderHook(
+        () => ({
+          system: useCommentSystem(defaultOptions),
+          badge: useUserMetadata('user1', lookup),
+        }),
+        { wrapper },
+      )
+      await waitFor(() => expect(result.current.system.comments).toHaveLength(3))
+      await waitFor(() => expect(mockClient.permissions.batchGetUserMetadata).toHaveBeenCalled())
+      mockClient.comments.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: {
+          threads: [mockComments[0]],
+          users: [{ id: 'user1', name: 'Ada King' }],
+        },
+      })
+
+      let outcome: 'posted' | 'waiting-on-lookup' | undefined
+      await act(async () => {
+        outcome = await Promise.race([
+          result.current.system
+            .handleAddComment('Reply', 'field', 'entry1', 'title', 'thread1')
+            .then(() => 'posted' as const),
+          new Promise<'waiting-on-lookup'>((resolve) =>
+            setTimeout(() => resolve('waiting-on-lookup'), 500),
+          ),
+        ])
+      })
+
+      expect(outcome).toBe('posted')
+      expect(result.current.system.comments).toHaveLength(1)
+      expect(result.current.badge.userMetadata?.name).toBe('Ada King')
     })
 
     it('keeps a user named by an earlier response when a reload names no one', async () => {
