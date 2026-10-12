@@ -339,6 +339,15 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
+          # A release published after a newer one (a late re-run or manual run)
+          # must not move `latest` back, so it goes out under `superseded`.
+          latest=$(npm view canopycms dist-tags.latest)
+          tag=latest
+          if node -e 'const [a, b] = process.argv.slice(1).map((v) => v.split(".").map(Number))
+            process.exit((a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) < 0 ? 0 : 1)' "$VERSION" "$latest"; then
+            tag=superseded
+            echo "::warning::npm latest is $latest, newer than $VERSION; publishing under dist-tag superseded"
+          fi
           for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
             attested=$(node scripts/npm-attested-commit.mjs "$pkg" "$VERSION")
             if [ "$attested" = "$SHA" ]; then
@@ -349,7 +358,7 @@ jobs:
               echo "::error::$pkg@$VERSION is on npm from $attested, not this release ($SHA)"
               exit 1
             fi
-            (cd "packages/$pkg" && pnpm dlx npm@11.19.0 publish "$pkg"-*.tgz --access public --provenance)
+            (cd "packages/$pkg" && pnpm dlx npm@11.19.0 publish "$pkg"-*.tgz --access public --provenance --tag "$tag")
           done
 
       # Until a re-run completes the set, an install mixing these versions fails

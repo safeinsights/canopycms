@@ -401,12 +401,22 @@ jobs:
             echo "Opened before $BASE_REF required changesets; not checked."
             exit 0
           fi
-          pnpm exec changeset status --since="origin/$BASE_REF"
           base=$(git merge-base "origin/$BASE_REF" HEAD)
-          # Captured, not piped into `grep -q`: under pipefail an early-exiting
-          # grep can SIGPIPE git and turn a match into a silent pass.
-          changed=$(git diff --name-only "$base" HEAD)
-          if grep -qxE 'pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|scripts/add-js-extensions\.mjs' <<<"$changed"; then
+          # A changed file identical to main's copy came from main, typically a
+          # stable release's version bumps merged back into an int branch, and
+          # needs no changeset here. Captured, not piped into `grep -q`: under
+          # pipefail an early-exiting grep can SIGPIPE git and turn a match into
+          # a silent pass.
+          own=""
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            git diff --quiet origin/main HEAD -- "$f" || own+="$f"$'\n'
+          done <<<"$(git diff --name-only "$base" HEAD)"
+          if ! pnpm exec changeset status --since="origin/$BASE_REF"; then
+            if grep -q '^packages/' <<<"$own"; then exit 1; fi
+            echo "Every changed package file matches main's copy; no changeset needed."
+          fi
+          if grep -qxE 'pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|scripts/add-js-extensions\.mjs' <<<"$own"; then
             added=$(git diff --name-only --diff-filter=d "$base" HEAD -- '.changeset/*.md')
             # Not changesets, by @changesets/read's rule: README in any case, the
             # agent files by exact case, and dotfiles. .changeset/pre/, the one
