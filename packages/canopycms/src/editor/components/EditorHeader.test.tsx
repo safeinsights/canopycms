@@ -512,9 +512,12 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
     expect(reload.hasAttribute('disabled')).toBe(false)
     expect(within(reload).getByText('Open an entry first.')).toBeTruthy()
 
-    // Arrow keys reach the blocked item: the menu does not skip it.
+    // Arrow keys move between blocked items: the menu skips neither.
     await userEvent.keyboard('{ArrowDown}')
     expect(document.activeElement).toBe(reload)
+    await userEvent.keyboard('{ArrowDown}')
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: /^Discard changes/ }))
+    await userEvent.keyboard('{ArrowUp}')
     await userEvent.keyboard('{Enter}')
     expect(onFileReload).not.toHaveBeenCalled()
     // The menu stays open, since nothing happened.

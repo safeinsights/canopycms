@@ -144,7 +144,10 @@ const anchorsHold = (
         sameContent(anchor.siblings, now[i].siblings),
     ))
 
-/** The canopy path `restoreRemoval` puts the removal back at: a list item lands at the list's end if it shrank. */
+/**
+ * The canopy path `restoreRemoval` puts a removal back at: a list item returns to its old index,
+ * or to the list's end when the list is now shorter than that.
+ */
 export function restoredFieldPath(
   fields: readonly FieldConfig[],
   value: Record<string, unknown>,

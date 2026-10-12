@@ -79,15 +79,14 @@ const toScale = (
   return fallbackScale
 }
 
-// The editor's default control sizes; a per-call `size` is only for a deliberate exception.
+// Icon-only close buttons are named "Close". Every Modal and Drawer one keeps it under a caller's
+// `closeButtonProps` unless that sets `aria-label`; a toast's or Alert's is replaced whole.
+const CLOSE_BUTTON_PROPS = { 'aria-label': 'Close' }
 // Filled red is red.8 under white; filled orange is orange.6 under black, since no orange shade
 // reaches 4.5:1 under white. Callers pass a plain `color`.
-// An icon-only close button has no other name, so modals, drawers (whole, or built from
-// `Drawer.Root` with its own `CloseButton`), toasts and dismissible alerts name it here. Mantine
-// replaces `closeButtonProps` whole, so a caller that passes its own repeats the `aria-label`.
-const CLOSE_BUTTON_PROPS = { 'aria-label': 'Close' }
 const canopyComponents = {
   Button: Button.extend({
+    // The editor's default control size; a per-call `size` is only for a deliberate exception.
     defaultProps: { size: 'xs' },
     vars: (theme, props) => {
       if ((props.variant ?? 'filled') !== 'filled') return { root: {} }
@@ -109,8 +108,6 @@ const canopyComponents = {
     },
   }),
   ActionIcon: ActionIcon.extend({ defaultProps: { size: 'sm' } }),
-  Modal: Modal.extend({ defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS } }),
-  Drawer: Drawer.extend({ defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS } }),
   ModalCloseButton: Modal.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
   DrawerCloseButton: Drawer.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
   Notification: Notification.extend({ defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS } }),
@@ -138,8 +135,8 @@ export const createCanopyTheme = (
   return mergeThemeOverrides(base, themeOverride ?? {})
 }
 
-// Mantine's dimmed gray.6 is 3.32:1 on white and dark.2 is 3.53:1 on dark.6 panels; gray.7 and
-// dark.1 reach at least 6.85:1 on every editor background.
+// Mantine's dimmed gray.6 is 3.32:1 on white and dark.2 is 3.53:1 on dark.6. gray.7 is 8.18:1 on
+// white and 7.76:1 on gray.0; dark.1 is 7.83:1 on the dark body (dark.7) and 5.65:1 on dark.5.
 const canopyCssVariablesResolver: CSSVariablesResolver = () => ({
   variables: {},
   light: { '--mantine-color-dimmed': 'var(--mantine-color-gray-7)' },

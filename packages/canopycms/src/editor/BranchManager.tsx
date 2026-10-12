@@ -204,15 +204,15 @@ export interface BranchManagerProps {
   ) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
   highlightThreadId?: string
-  /** Names owners and access users when `onGetOwnerMetadata` is absent; without either they show as unnamed */
+  /** Names people without `onGetOwnerMetadata`; with neither, access users are unnamed, owners ids */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
-  /** Names branch owners and the people with access; the branch listing seeds them for every editor */
+  /** Names branch owners and access users; the branch listing seeds owners only */
   onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Names the people in branch comments; without it they show as ids */
   onGetCommentUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
-/** The lookup of a card given none: its people show as unnamed. */
+/** The access-list lookup when a card has none: its access users show as unnamed. */
 const noUserLookup = async (): Promise<UserSearchResult | null> => null
 
 const CLOSED_PULL_REQUEST_REASON =

@@ -2,15 +2,15 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  For an editor who isn't an admin or reviewer, a branch card's access list is N identical "Name unavailable" avatars: the server never seeds names for a branch's ACL users, by design. Decide whether non-privileged viewers see a count, the resolvable names only, or no list.
+  For an editor who isn't an admin or reviewer, a branch card's access list is mostly identical "Name unavailable" avatars: the server never seeds names for a branch's ACL users, by design. Decide whether non-privileged viewers see a count, the resolvable names only, or no list.
 ---
 
 # Branch card access list for non-privileged viewers
 
 `packages/canopycms/src/editor/BranchManager.tsx` renders each access user through `UserBadge`
 with the owner line's lookup. For non-privileged viewers that lookup is the seeded resolver, and
-the server keeps ACL users behind the privileged lookup, so every access user falls back to
-"Name unavailable". Before PR 532 the list showed raw ids, which the People rule forbids.
+the server keeps ACL users behind the privileged lookup, so an access user falls back to
+"Name unavailable" unless they also own a listed branch or wrote a loaded comment. Before PR 532 the list showed raw ids, which the People rule forbids.
 
 Raised by the round-2 review of PR 532.
 

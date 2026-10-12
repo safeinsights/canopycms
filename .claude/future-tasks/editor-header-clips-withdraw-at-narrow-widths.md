@@ -12,6 +12,6 @@ workflow button overflow, so the workflow button's label is clipped and the grou
 
 This belongs with the shell redesign tracked in
 [ux-guidelines-entry-state-and-save-indicator.md](ux-guidelines-entry-state-and-save-indicator.md),
-which already makes the indicator icon-only below `lg`. Check it fixes the overlap at 390px; if
+which tracks making the indicator icon-only below `lg`. Check it fixes the overlap at 390px; if
 not, wrap the right group, or move the workflow button into the "…" menu on narrow widths.
 Verify with a Storybook screenshot at the mobile viewport.

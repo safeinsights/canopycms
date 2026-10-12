@@ -144,7 +144,8 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
   }
 
   if (error || !userMetadata) {
-    // The id only on an admin surface (`revealIdOnFallback`): it is an internal name.
+    // The id shows only where `revealIdOnFallback` is set (admin surfaces); the People rule treats
+    // an id as an internal name.
     const unavailable = error ? "Couldn't load this name" : 'Name unavailable'
     const described = revealIdOnFallback ? `${unavailable} · ${userId}` : unavailable
     // A filled badge keeps its white text; dimmed would not contrast with its fill.

@@ -17,9 +17,9 @@ Found next to code PR 532 changed, left out of it:
   entry-type rows, and the Remove `ActionIcon`s in the no-lookup `Badge` fallbacks of
   `group-manager/MemberList.tsx` and `permission-manager/PermissionEditor.tsx` (users and
   groups). Each needs an `aria-label` and a Tooltip with the same text. Those no-lookup badges
-  also print the raw id; admin surfaces may, but say so in a comment.
+  also print the raw id as visible text, which the People rule forbids even on admin surfaces.
 - **Owner line**: `BranchManager.tsx`'s owner line falls back to `userIdLabel(createdBy)`, a raw
-  id, when no owner lookup is given. `Editor.tsx` always gives one, so only a host that renders
-  `BranchManager` itself sees it.
+  id, when no owner lookup is given. `Editor.tsx` always gives one, and `BranchManager` is not exported,
+  so only tests render it without one.
 - **Two tooltips**: hovering a removable `UserBadge`'s X opens both the badge's email tooltip and
   the X's "Remove <name>" tooltip. Suppress the outer one while the pointer is on the X.

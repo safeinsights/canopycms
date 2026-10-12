@@ -224,7 +224,7 @@ describe('CanopyCMSProvider close buttons', () => {
     modals.closeAll()
   })
 
-  it("names a close button a Drawer.Root draws itself, a toast's and a dismissible alert's", async () => {
+  it("names a hand-placed Drawer.CloseButton, a toast's and a dismissible alert's", async () => {
     render(
       <CanopyCMSProvider>
         <Drawer.Root opened onClose={() => {}}>

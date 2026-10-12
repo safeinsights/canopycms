@@ -255,7 +255,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   // keyboard focus and touch as well as hover; the click does nothing.
   const saveBlocked =
     !branchName || !currentEntry || busy || !hasUnsavedChanges || branchReadOnly || statusLocked
-  // Why Save is blocked, with the way forward; none while a save is in flight.
+  // Why Save is blocked, with the way forward. The Tooltip hides it while a save is in flight.
   const saveBlockedReason = branchReadOnly
     ? 'The base branch is read-only. Create a branch to make changes.'
     : branchDataUnavailable
