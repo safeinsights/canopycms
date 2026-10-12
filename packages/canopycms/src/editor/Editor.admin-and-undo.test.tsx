@@ -86,6 +86,7 @@ const stubApi = (
   threads: unknown[] = [],
   branchOwner = 'user-1',
   listedName = 'main',
+  links = [{ href: '/a' }, { href: '/b' }],
 ) => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url =
@@ -177,9 +178,7 @@ const stubApi = (
       )
     }
     if (url.includes('/content/content/posts/') && (!init?.method || init.method === 'GET')) {
-      return Promise.resolve(
-        okJson({ title: 'Loaded title', links: [{ href: '/a' }, { href: '/b' }], version: 100 }),
-      )
+      return Promise.resolve(okJson({ title: 'Loaded title', links, version: 100 }))
     }
     return Promise.resolve(okJson({}))
   })
@@ -373,6 +372,26 @@ describe('Undo after Remove', () => {
     const restored = await screen.findByRole('group', { name: '/b' })
     await waitFor(() => expect(restored.contains(document.activeElement)).toBe(true))
     expect(document.activeElement).not.toBe(restored)
+  })
+
+  it('moves focus to the row that came back, when the list shrank below its old index', async () => {
+    stubApi([], [], 'user-1', 'main', [{ href: '/a' }, { href: '/b' }, { href: '/c' }])
+    renderEditor()
+    await loaded()
+    const remove = (name: string) =>
+      fireEvent.click(
+        within(screen.getByRole('group', { name })).getByRole('button', { name: 'Remove' }),
+      )
+
+    remove('/c')
+    remove('/a')
+    await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/b' }]))
+    const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
+    act(() => fireEvent.click(message.getByRole('button', { name: /^Undo removing / })))
+
+    const restored = await screen.findByRole('group', { name: '/c' })
+    await waitFor(() => expect(restored.contains(document.activeElement)).toBe(true))
+    expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/b' }, { href: '/c' }])
   })
 
   it('keeps focus on the named list after Remove, and holds the toast open only while it has focus', async () => {

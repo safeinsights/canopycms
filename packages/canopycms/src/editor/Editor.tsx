@@ -606,6 +606,7 @@ const EditorContent: React.FC<EditorProps> = ({
         })
         return
       }
+      const restoredPath = formatCanopyPath(restoredFieldPath(fields, now, removal))
       setDrafts((prev) => {
         const base = prev[contentId] ?? loadedValuesRef.current[contentId]
         const restored = base ? restoreRemoval(fields, base, anchored) : undefined
@@ -613,7 +614,7 @@ const EditorContent: React.FC<EditorProps> = ({
       })
       // The toast's Undo button unmounts with it, so focus goes to the restored row once rendered.
       requestAnimationFrame(() => {
-        const target = findFieldTarget(formatCanopyPath(restoredFieldPath(removal)))
+        const target = findFieldTarget(restoredPath)
         if (target) focusFieldTarget(target.element)
       })
     }

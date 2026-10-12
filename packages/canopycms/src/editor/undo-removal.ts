@@ -144,9 +144,17 @@ const anchorsHold = (
         sameContent(anchor.siblings, now[i].siblings),
     ))
 
-/** The path of the row or field Undo puts back; past the list's end, `findFieldTarget` finds the list. */
-export const restoredFieldPath = (removal: FieldRemoval): CanopyPathSegment[] =>
-  removal.kind === 'list-item' ? [...removal.listPath, removal.index] : removal.path
+/** The canopy path `restoreRemoval` puts the removal back at: a list item lands at the list's end if it shrank. */
+export function restoredFieldPath(
+  fields: readonly FieldConfig[],
+  value: Record<string, unknown>,
+  removal: FieldRemoval,
+): CanopyPathSegment[] {
+  if (removal.kind !== 'list-item') return removal.path
+  const resolved = resolvePath(fields, value, removal.listPath)
+  const list = resolved ? getAt(value, resolved.path) : undefined
+  return [...removal.listPath, Math.min(removal.index, Array.isArray(list) ? list.length : 0)]
+}
 
 /** The enclosing lists of a removal in `value`, taken before the removal applies; see `anchors`. */
 export function removalAnchors(
