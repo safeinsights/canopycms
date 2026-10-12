@@ -81,4 +81,59 @@ test.describe('Navigator search', () => {
       await expect(page.getByTestId('file-dropdown-button')).toBeFocused({ timeout: SHORT_TIMEOUT })
     })
   }
+
+  test('closing the palette opened from a breadcrumb-opened drawer returns focus to that breadcrumb and keeps it there', async ({
+    page,
+  }) => {
+    await editorPage.openContentNavigator()
+    await editorPage.selectEntry('Home Page')
+    await editorPage.openContentNavigatorFromBreadcrumb()
+    const breadcrumb = page.getByTestId('breadcrumb-segment').first()
+
+    await page.getByTestId('quick-open-button').click()
+    await expect(page.getByTestId('quick-open-input')).toBeVisible({ timeout: STANDARD_TIMEOUT })
+    // Until the drawer has unmounted, its own focus return would answer for the palette's.
+    await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+
+    await expect(page.getByTestId('quick-open-input')).not.toBeVisible({
+      timeout: STANDARD_TIMEOUT,
+    })
+    await expect(breadcrumb).toBeFocused({ timeout: SHORT_TIMEOUT })
+    // A second, late focus move would land after Mantine's own timers have run.
+    await page.waitForTimeout(800)
+    await expect(breadcrumb).toBeFocused()
+  })
+
+  test('picking an entry in the palette opened from the menu-opened drawer returns focus to the navigator toggle', async ({
+    page,
+  }) => {
+    await editorPage.openContentNavigator()
+    await page.keyboard.press('ControlOrMeta+P')
+    const input = page.getByTestId('quick-open-input')
+    await expect(input).toBeVisible({ timeout: STANDARD_TIMEOUT })
+    // Until the drawer has unmounted, its own focus return would answer for the palette's.
+    await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
+
+    await input.fill('Test Site')
+    await expect(page.getByTestId('quick-open-option').first()).toBeVisible({
+      timeout: STANDARD_TIMEOUT,
+    })
+    await input.press('Enter')
+
+    await expect(editorPage.currentEntryLabel()).toContainText('Test Site', {
+      timeout: STANDARD_TIMEOUT,
+    })
+    await expect(page.getByTestId('file-dropdown-button')).toBeFocused({ timeout: SHORT_TIMEOUT })
+  })
+
+  test('closing the menu-opened drawer with Escape returns focus to the navigator toggle', async ({
+    page,
+  }) => {
+    await editorPage.openContentNavigator()
+
+    await editorPage.closeContentNavigator()
+
+    await expect(page.getByTestId('file-dropdown-button')).toBeFocused({ timeout: SHORT_TIMEOUT })
+  })
 })

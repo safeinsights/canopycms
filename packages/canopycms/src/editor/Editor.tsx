@@ -74,7 +74,11 @@ import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
-import { QUICK_OPEN_REPLACES_ATTR, QuickOpenPalette } from './components/QuickOpenPalette'
+import {
+  QUICK_OPEN_REPLACES_ATTR,
+  QuickOpenPalette,
+  focusIfIdle,
+} from './components/QuickOpenPalette'
 import { modKeyLabel } from './platform'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
@@ -250,9 +254,14 @@ const EditorContent: React.FC<EditorProps> = ({
   const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
 
   const [quickOpenOpen, setQuickOpenOpen] = useState(false)
-  // A palette opened from the drawer returns focus to the header's toggle; the drawer unmounts its opener.
   const [quickOpenFromDrawer, setQuickOpenFromDrawer] = useState(false)
   const navigatorToggleRef = useRef<HTMLButtonElement>(null)
+  // Null when a menu item opened the drawer: it unmounts on click.
+  const navigatorOpenerRef = useRef<HTMLElement | null>(null)
+  const quickOpenOpenRef = useRef(false)
+  useEffect(() => {
+    quickOpenOpenRef.current = quickOpenOpen
+  }, [quickOpenOpen])
 
   const [renameModalOpen, setRenameModalOpen] = useState(false)
   const [renamingEntry, setRenamingEntry] = useState<EditorEntry | null>(null)
@@ -1129,6 +1138,20 @@ const EditorContent: React.FC<EditorProps> = ({
   ])
 
   const quickOpenShortcut = modKeyLabel() === '⌘' ? '⌘P' : 'Ctrl+P'
+  const openNavigator = () => {
+    const active = document.activeElement
+    navigatorOpenerRef.current =
+      active instanceof HTMLElement &&
+      active !== document.body &&
+      !active.closest('[role="menuitem"]')
+        ? active
+        : null
+    setNavigatorOpen(true)
+  }
+  const navigatorReturnTarget = () => {
+    const opener = navigatorOpenerRef.current
+    return opener?.isConnected ? opener : navigatorToggleRef.current
+  }
   const openQuickOpen = () => {
     if (!quickOpenOpen) setQuickOpenFromDrawer(navigatorOpen)
     setNavigatorOpen(false)
@@ -1341,7 +1364,7 @@ const EditorContent: React.FC<EditorProps> = ({
             branchIsProtected={currentBranch?.isProtected ?? true}
             branchReadOnly={currentBranch?.readOnly}
             branchWriteBlocked={branchContentLocked}
-            onNavigatorOpen={() => setNavigatorOpen(true)}
+            onNavigatorOpen={openNavigator}
             navigatorToggleRef={navigatorToggleRef}
             onFileReload={handleReload}
             onFileDiscardDraft={handleDiscardFileDraft}
@@ -1523,8 +1546,10 @@ const EditorContent: React.FC<EditorProps> = ({
           <Drawer.Root
             opened={navigatorOpen}
             onClose={() => setNavigatorOpen(false)}
-            // Its focus return would otherwise run after the palette took focus, on a timer.
-            returnFocus={!quickOpenOpen}
+            returnFocus={false}
+            onExitTransitionEnd={() => {
+              if (!quickOpenOpenRef.current) focusIfIdle(navigatorReturnTarget())
+            }}
             // Mantine closes every open overlay on one Escape, so the drawer leaves it to a dialog
             // opened from it.
             closeOnEscape={
@@ -1649,7 +1674,7 @@ const EditorContent: React.FC<EditorProps> = ({
             opened={quickOpenOpen}
             onOpen={openQuickOpen}
             onClose={() => setQuickOpenOpen(false)}
-            returnFocusTo={quickOpenFromDrawer ? navigatorToggleRef : undefined}
+            returnFocusTo={quickOpenFromDrawer ? navigatorReturnTarget : undefined}
             entries={entriesState}
             // The hidden root's entries sit at the top of the tree, so they get no heading here either.
             collectionLabel={(path) => (path === hiddenRootPath ? '' : collectionLabels.get(path))}

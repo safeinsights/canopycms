@@ -341,7 +341,12 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                         /
                       </Text>
                     )}
-                    <Button variant="subtle" px="xs" onClick={onNavigatorOpen}>
+                    <Button
+                      variant="subtle"
+                      px="xs"
+                      onClick={onNavigatorOpen}
+                      data-testid="breadcrumb-segment"
+                    >
                       {segment}
                     </Button>
                   </Group>

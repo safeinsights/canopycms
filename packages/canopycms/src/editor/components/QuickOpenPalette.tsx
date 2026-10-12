@@ -2,7 +2,7 @@
 
 /** Mod+P palette: type part of an entry's title or slug, pick it with the keyboard or mouse. */
 
-import { useEffect, useMemo, useState, type RefObject } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Combobox, Highlight, Modal, ScrollArea, Text, TextInput, useCombobox } from '@mantine/core'
 import { useHotkeys } from '@mantine/hooks'
 import { IconSearch } from '@tabler/icons-react'
@@ -22,6 +22,17 @@ const otherOverlayOpen = () =>
   Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).some(
     (dialog) => !dialog.closest(`[${QUICK_OPEN_REPLACES_ATTR}]`),
   )
+
+/**
+ * Focuses `target` unless the user has moved focus on: nothing is focused, or focus is still inside
+ * the overlay that is closing, which stays mounted until after its exit callback.
+ */
+export function focusIfIdle(target: HTMLElement | null): void {
+  const active = document.activeElement
+  if (!active || active === document.body || active.closest(`[${QUICK_OPEN_REPLACES_ATTR}]`)) {
+    target?.focus({ preventScroll: true })
+  }
+}
 
 /** Options rendered at once; the rest are reached by typing more. */
 const MAX_OPTIONS = 50
@@ -43,8 +54,8 @@ export interface QuickOpenPaletteProps {
   /** Display name for a collection heading; the collection's own name when absent, none when ''. */
   collectionLabel?: (collectionPath: string) => string | undefined
   onSelect: (path: string) => void
-  /** Takes focus after the palette closes, for a caller that unmounts the element focused at opening. */
-  returnFocusTo?: RefObject<HTMLElement | null>
+  /** Names the element that takes focus after the palette closes, for a caller that unmounted the opener. */
+  returnFocusTo?: () => HTMLElement | null
 }
 
 export function QuickOpenPalette({
@@ -115,7 +126,7 @@ export function QuickOpenPalette({
       size="lg"
       yOffset="10vh"
       returnFocus={!returnFocusTo}
-      onExitTransitionEnd={() => returnFocusTo?.current?.focus()}
+      onExitTransitionEnd={() => returnFocusTo && focusIfIdle(returnFocusTo())}
       // Its own dialog lingers through the close transition; Mod+P may reopen it meanwhile.
       {...{ [QUICK_OPEN_REPLACES_ATTR]: true }}
     >
