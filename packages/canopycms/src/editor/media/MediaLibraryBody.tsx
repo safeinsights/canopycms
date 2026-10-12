@@ -33,6 +33,7 @@ import {
 
 import type { AssetRecord } from '../../api'
 import { getErrorMessage } from '../../utils/error'
+import { isNonApiResponse } from '../../api/client'
 // Import directly from helpers (not the authorization barrel) to keep server-only
 // authorization code out of this client bundle - matches BranchManager's convention.
 import { isAdmin } from '../../authorization/helpers'
@@ -229,11 +230,12 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     try {
       const result = await client.assets.delete({ key: asset.hash32 })
       if (!result.ok) {
-        // A refusal is permanent and says what to do, so it replaces "Try again." for everyone.
+        // An editor sees this button only for their own upload, and the endpoint answers a
+        // missing file with the same 403 as someone else's, so their 403 means it is gone.
+        const alreadyGone =
+          result.status === 403 && !isNonApiResponse(result) && !isAdmin(userContext?.groups)
         setActionError(
-          result.status === 403
-            ? failure('You can remove only files you uploaded.')
-            : generic(result.error),
+          alreadyGone ? failure('It may have been removed already.') : generic(result.error),
         )
         return
       }

@@ -1589,6 +1589,18 @@ describe('MediaLibraryBody', () => {
     expect(screen.getByText('cat.png')).toBeTruthy()
   })
 
+  it("shows an admin a refusal's raw message, since the ownership check never refuses them", async () => {
+    asAdmin()
+    mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
+    mockClient.assets.delete.mockResolvedValueOnce({ ok: false, status: 403, error: 'Forbidden' })
+
+    renderBody()
+    fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
+
+    const alert = await screen.findByTestId('media-library-action-error')
+    expect(alert.textContent).toBe("Couldn't remove cat.png from the library. Forbidden")
+  })
+
   describe('a failed removal by an editor who is not an admin', () => {
     const asUploader = () => {
       mockClient.user.whoami.mockResolvedValue({
@@ -1614,7 +1626,7 @@ describe('MediaLibraryBody', () => {
       expect(alert.textContent).toBe("Couldn't remove cat.png from the library. Try again.")
     })
 
-    it('says the file can be removed only by its uploader when the server refuses', async () => {
+    it('says the file may be gone when the server refuses its uploader', async () => {
       asUploader()
       mockClient.assets.delete.mockResolvedValueOnce({
         ok: false,
@@ -1627,7 +1639,7 @@ describe('MediaLibraryBody', () => {
 
       const alert = await screen.findByTestId('media-library-action-error')
       expect(alert.textContent).toBe(
-        "Couldn't remove cat.png from the library. You can remove only files you uploaded.",
+        "Couldn't remove cat.png from the library. It may have been removed already.",
       )
     })
 
