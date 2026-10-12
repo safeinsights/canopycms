@@ -10,6 +10,7 @@ import { CanopyCMSProvider } from '../theme'
 import { MediaLibrary } from './MediaLibrary'
 import { MediaLibraryBody } from './MediaLibraryBody'
 import type { AssetRecord } from '../../api'
+import { ApiTimeoutError, REQUEST_TIMED_OUT_MESSAGE } from '../../api/request-deadline'
 import { mockConsole } from '../../test-utils/console-spy'
 import { MEDIA_LIBRARY_PREFS_KEY } from './media-library-prefs'
 import { uploadAsset } from './upload-asset'
@@ -437,6 +438,18 @@ describe('MediaLibraryBody', () => {
     await waitFor(() => expect(screen.getByTestId('media-library-error')).toBeTruthy())
     expect(await screen.findByText('Internal error')).toBeTruthy()
     expect(screen.getByText("Couldn't load the media library.")).toBeTruthy()
+  })
+
+  it('ends loading on a timed-out list with the plain message and a Retry', async () => {
+    asAdmin()
+    mockClient.assets.list.mockRejectedValueOnce(new ApiTimeoutError('GET', '/assets', 30_000))
+
+    renderBody()
+
+    await waitFor(() => expect(screen.getByTestId('media-library-error')).toBeTruthy())
+    expect(screen.getByText(REQUEST_TIMED_OUT_MESSAGE)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+    expect(mockClient.assets.list).toHaveBeenCalledTimes(1)
   })
 
   it('reloads from page 1 when the first page failed and Retry is pressed', async () => {

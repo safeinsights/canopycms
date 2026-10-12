@@ -1,6 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useDraftManager } from './useDraftManager'
+import { SAVE_TIMED_OUT_MESSAGE, useDraftManager } from './useDraftManager'
+import { ApiTimeoutError } from '../../api/request-deadline'
+import { UnansweredError } from '../unanswered'
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import type { EditorEntry } from '../Editor'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
@@ -9,6 +11,7 @@ import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 vi.mock('@mantine/notifications', () => ({
   notifications: {
     show: vi.fn(),
+    hide: vi.fn(),
   },
 }))
 
@@ -637,6 +640,75 @@ describe('useDraftManager', () => {
         })
 
         expect(mockSaveEntry).toHaveBeenCalledTimes(2)
+      })
+    })
+
+    describe('a save that times out', () => {
+      const mockGetEntryVersion = vi.fn<(contentId: string) => number | undefined>()
+      const versionedOptions = { ...defaultOptions, getEntryVersion: mockGetEntryVersion }
+
+      let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+      beforeEach(() => {
+        mockGetEntryVersion.mockReset()
+        consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      })
+      afterEach(() => {
+        consoleErrorSpy.mockRestore()
+      })
+
+      it('ends the save, keeps the draft, says so until dismissed, and lets the next save go out', async () => {
+        mockGetEntryVersion.mockReturnValue(100)
+        mockSaveEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PUT', '/main/content/posts/a', 75_000),
+        )
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        act(() => {
+          result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+        })
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: SAVE_TIMED_OUT_MESSAGE,
+            color: 'yellow',
+            autoClose: false,
+          }),
+        )
+        expect(mockSetBusy).toHaveBeenLastCalledWith(false)
+        expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft' })
+
+        // The server's version check, not a forced reload, guards a save that did land.
+        await act(async () => {
+          await result.current.handleSave()
+        })
+        expect(mockSaveEntry).toHaveBeenCalledTimes(2)
+        // The next save that lands takes the warning down.
+        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
+          message: 'Saved',
+        })
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-save-timed-out:abc123def456')
+      })
+
+      it("treats a gateway's 5xx page the same, and takes the warning down on discard", async () => {
+        mockGetEntryVersion.mockReturnValue(100)
+        mockSaveEntry.mockRejectedValueOnce(new UnansweredError())
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        act(() => {
+          result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+        })
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({ message: SAVE_TIMED_OUT_MESSAGE, color: 'yellow' }),
+        )
+        act(() => result.current.handleDiscardDrafts())
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-save-timed-out:abc123def456')
       })
     })
 

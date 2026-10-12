@@ -22,6 +22,7 @@ import { userIdLabel } from './user-display'
 import { RelativeTime } from './components/RelativeTime'
 import { ThreadReplyControls } from './comments/ThreadReplyControls'
 import { useTrackedWrites } from './comments/use-tracked-writes'
+import { CloseRefusedNotice } from './comments/CloseRefusedNotice'
 import { getErrorMessage } from '../utils/error'
 
 export interface CommentsPanelProps {
@@ -84,11 +85,11 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   const [showResolved, setShowResolved] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const { inFlight, track } = useTrackedWrites()
+  const { inFlight, track, holdOpen, closeRefused } = useTrackedWrites()
   const addComment = track(onAddComment)
   const resolveThread = track(onResolveThread)
   const close = () => {
-    if (inFlight === 0) onClose()
+    if (!holdOpen()) onClose()
   }
   // A jump hands focus to its target, the field's or entry's comment popover, so the drawer
   // returns none: its return would land after the popover took focus.
@@ -150,6 +151,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
       }
     >
       <Stack gap="md" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
+        <CloseRefusedNotice refused={closeRefused} />
         <Paper withBorder p="md">
           <Stack gap="sm">
             <Text size="xs" c="dimmed">
@@ -170,6 +172,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                 {error}
               </Alert>
             )}
+
             <Button
               onClick={handleAddComment}
               size="sm"

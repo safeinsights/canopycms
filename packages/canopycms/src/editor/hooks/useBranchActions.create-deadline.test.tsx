@@ -9,6 +9,7 @@ import { notifications } from '@mantine/notifications'
 
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { CanopyApiClient } from '../../api/client'
+import { ApiTimeoutError } from '../../api/request-deadline'
 import { CREATE_BRANCH_DEADLINE_MS, CREATE_TIMED_OUT_MESSAGE } from './create-branch-request'
 import { useBranchActions } from './useBranchActions'
 import {
@@ -60,6 +61,18 @@ describe('useBranchActions create past the deadline', () => {
     vi.clearAllMocks()
   })
 
+  /** A create the server never answers, rejecting as the client does once the given deadline passes. */
+  function stallUntilDeadline() {
+    mockClient.branches.create.mockImplementation(
+      (_body, requestOptions) =>
+        new Promise((_, reject) => {
+          const timeoutMs = requestOptions?.timeoutMs
+          if (typeof timeoutMs !== 'number') return
+          setTimeout(() => reject(new ApiTimeoutError('POST', '/branches', timeoutMs)), timeoutMs)
+        }),
+    )
+  }
+
   async function createAfterDeadline(): Promise<boolean | undefined> {
     const { result } = renderHook(() => useBranchActions(options), {
       wrapper: createApiClientWrapper(mockClient),
@@ -74,7 +87,7 @@ describe('useBranchActions create past the deadline', () => {
   }
 
   it('switches to the branch when the list shows it was created', async () => {
-    mockClient.branches.create.mockReturnValue(new Promise(() => {}))
+    stallUntilDeadline()
     mockClient.branches.list.mockResolvedValue({
       ok: true,
       status: 200,
@@ -88,7 +101,7 @@ describe('useBranchActions create past the deadline', () => {
   })
 
   it("stays put and reports a conflict when the listed branch is another user's", async () => {
-    mockClient.branches.create.mockReturnValue(new Promise(() => {}))
+    stallUntilDeadline()
     mockClient.branches.list.mockResolvedValue({
       ok: true,
       status: 200,
@@ -106,7 +119,7 @@ describe('useBranchActions create past the deadline', () => {
   })
 
   it('says the create did not finish when the branch is not there', async () => {
-    mockClient.branches.create.mockReturnValue(new Promise(() => {}))
+    stallUntilDeadline()
     mockClient.branches.list.mockResolvedValue({
       ok: true,
       status: 200,

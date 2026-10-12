@@ -10,6 +10,13 @@ import { validateEntryFormValue, type EntryFieldError } from '../../validation/e
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
+import { isUnanswered } from '../unanswered'
+
+/** @internal Exported for tests. */
+export const SAVE_TIMED_OUT_MESSAGE =
+  "Save didn't finish, and may not have gone through. Your changes are still here, so save again."
+
+const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
 
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
 const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
@@ -206,6 +213,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN. That save may have
   // landed, so re-sending the token would bounce off the user's own write; held until re-read.
   const reloadRequiredRef = useRef<Record<string, number | undefined>>({})
+  // Entries whose timed-out save toast is up, taken down once a save, reload or discard ends it.
+  const timedOutSavesRef = useRef(new Set<string>())
   // The draft ids the reconcile effect below has already accounted for. It
   // prunes on an observed present -> absent TRANSITION rather than on "not
   // currently in drafts": the restore effect stamps base versions for ids
@@ -733,6 +742,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         return next
       })
       setLoadedValues((prev) => ({ ...prev, [currentId]: saved }))
+      if (timedOutSavesRef.current.delete(currentId)) {
+        notifications.hide(saveTimedOutToastId(currentId))
+      }
       notifications.show({
         message: 'Saved',
         color: 'green',
@@ -774,6 +786,17 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           reloadRequiredRef.current[currentId] = options.getEntryVersion?.(currentId)
         }
         showConflictNotification(err.serverMessage || undefined)
+      } else if (isUnanswered(err)) {
+        // A save that did land moved the file's version, so the server refuses the retry as a
+        // conflict; a file since deleted or moved is the exception (`ContentStore.write`).
+        timedOutSavesRef.current.add(currentId)
+        notifications.show({
+          id: saveTimedOutToastId(currentId),
+          message: SAVE_TIMED_OUT_MESSAGE,
+          color: 'yellow',
+          autoClose: false,
+          withCloseButton: true,
+        })
       } else {
         const explained = isValidation || isForbidden || isUnavailable
         notifications.show({
@@ -793,6 +816,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   const performDiscardDrafts = () => {
+    for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
+    timedOutSavesRef.current.clear()
     options.onDraftsReset?.()
     setDrafts({})
     setErrorState(null)
@@ -891,6 +916,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       const loaded = await options.loadEntry(options.currentEntry)
       options.onDraftsReset?.(currentId)
       delete reloadRequiredRef.current[currentId]
+      if (timedOutSavesRef.current.delete(currentId)) {
+        notifications.hide(saveTimedOutToastId(currentId))
+      }
       setLoadedValues((prev) => ({ ...prev, [currentId]: loaded }))
       // Drop the draft rather than seeding it with `loaded`. `effectiveValue`
       // falls back to `loadedValues`, so the rendered value is identical --

@@ -19,6 +19,7 @@ import {
   useId,
   useIsomorphicEffect,
   useMediaQuery,
+  useWindowEvent,
 } from '@mantine/hooks'
 import { IconMessage, IconMessagePlus, IconPlus } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
@@ -26,6 +27,7 @@ import type { UserSearchResult } from '../../auth/types'
 import { getErrorMessage } from '../../utils/error'
 import { InlineCommentThread } from './InlineCommentThread'
 import { useTrackedWrites } from './use-tracked-writes'
+import { CloseRefusedNotice } from './CloseRefusedNotice'
 import { useRefocusAfterSubmit } from './ThreadReplyControls'
 import { commentsAriaKeyShortcuts, commentsShortcutLabel } from './form-comments'
 import { choosePopoverSide, type FieldAnchors, type PopoverSide } from './popover-placement'
@@ -224,12 +226,12 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
 
   // While a post or Resolve is in flight the popover stays open, so its busy state and any error
   // stay in view and a reopened composer can't send the same text twice.
-  const { inFlight, track } = useTrackedWrites()
+  const { inFlight, track, holdOpen, closeRefused } = useTrackedWrites()
   const addComment = track(onAddComment)
   const resolveThread = track(onResolveThread)
 
   const close = () => {
-    if (inFlight > 0) return
+    if (holdOpen()) return
     setOpened(false)
     setComposing(false)
     focusNewThreadRef.current = false
@@ -251,8 +253,13 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       ? `Comment on ${subject} (${openThreadsLabel(openCount)}, ${commentsShortcutLabel()})`
       : `Comment on ${subject} (${commentsShortcutLabel()})`
 
+  // Mantine's Escape is off in flight; on the window, as a disabled composer drops focus.
+  useWindowEvent('keydown', (event) => {
+    if (event.key === 'Escape' && opened) holdOpen()
+  })
+
   const closeByPointer = () => {
-    if (inFlight > 0) return
+    if (holdOpen()) return
     pointerClosedRef.current = true
     close()
   }
@@ -451,6 +458,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
               </Button>
             </Group>
           )}
+          <CloseRefusedNotice refused={closeRefused} />
         </Stack>
       </Popover.Dropdown>
     </Popover>

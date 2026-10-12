@@ -137,6 +137,7 @@ Support files:
 - `settings-helpers.ts` — settings-branch context resolution and commit helpers
 - `entries-constants.ts`, `branch-create-window.ts`, `users-constants.ts` — entries pagination caps, `ENTRY_CHANGED_MESSAGE`; the idempotent branch-create window; `MAX_USER_METADATA_BATCH`. Dependency-free so the editor bundle can import them
 - `request-body-hash.ts` — computes the `x-amz-content-sha256` CloudFront OAC requires on a body-carrying request
+- `request-deadline.ts` — every client call's deadline and `ApiTimeoutError`; an endpoint's `clientTimeout` picks its class
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
 - `client.ts` — generated API client; `ApiClientOptions.onUnauthorized` reports every 401, `trailingSlash` shapes request URLs
@@ -576,6 +577,7 @@ Components, in `editor/components/`:
 - `UserBadge.tsx` — user avatar and name
 - `ReasonedMenuItem.tsx` — a blocked menu item and why
 - `UndoToastMessage.tsx` — a form Remove's undo toast
+- `RetryToastMessage.tsx` — a failed load's toast body with Retry
 - `ValidationSummary.tsx` — pre-save issues alert with breadcrumb buttons
 - `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`
 - `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the editor crash screen

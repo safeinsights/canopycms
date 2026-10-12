@@ -10,6 +10,10 @@ import type { EditorEntry, EditorCollection } from '../Editor'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import type { ContentId } from '../../paths/types'
 import { notifications } from '@mantine/notifications'
+import { UnansweredError } from '../unanswered'
+import type React from 'react'
+import { ApiTimeoutError, WRITE_TIMED_OUT_MESSAGE } from '../../api/request-deadline'
+import type { RetryToastMessageProps } from '../components/RetryToastMessage'
 import {
   setupMockApiClient,
   setupMockLocation,
@@ -17,6 +21,7 @@ import {
   setupMockConsole,
   createApiClientWrapper,
   createStrictModeApiClientWrapper,
+  gatewayPage,
 } from './__test__/test-utils'
 import {
   unsafeAsLogicalPath,
@@ -38,6 +43,7 @@ vi.mock('../../api', async () => {
 vi.mock('@mantine/notifications', () => ({
   notifications: {
     show: vi.fn(),
+    hide: vi.fn(),
   },
 }))
 
@@ -165,6 +171,70 @@ describe('useEntryManager', () => {
     expect(result.current.selectedPath).toBe('entry1')
   })
 
+  describe('a create or rename that times out', () => {
+    let restoreConsole: () => void
+    beforeEach(() => {
+      restoreConsole = setupMockConsole(['error']).restore
+    })
+    afterEach(() => restoreConsole())
+
+    it('keeps the create form open with the error, and reloads the content tree', async () => {
+      mockClient.content.write.mockRejectedValueOnce(
+        new ApiTimeoutError('PUT', '/main/content/content/posts/new-post', 75_000),
+      )
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await act(async () => {
+        await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
+      })
+      const listCalls = mockClient.entries.list.mock.calls.length
+
+      await act(async () => {
+        await result.current.handleCreateModalSubmit('new-post', 'post')
+      })
+
+      expect(result.current.createModalOpen).toBe(true)
+      expect(result.current.createModalError).toBe(WRITE_TIMED_OUT_MESSAGE)
+      await waitFor(() =>
+        expect(mockClient.entries.list.mock.calls.length).toBeGreaterThan(listCalls),
+      )
+    })
+
+    it("treats a gateway's 5xx page on create the same way", async () => {
+      mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await act(async () => {
+        await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
+      })
+      const listCalls = mockClient.entries.list.mock.calls.length
+
+      await act(async () => {
+        await result.current.handleCreateModalSubmit('new-post', 'post')
+      })
+
+      expect(result.current.createModalError).toBe(WRITE_TIMED_OUT_MESSAGE)
+      await waitFor(() =>
+        expect(mockClient.entries.list.mock.calls.length).toBeGreaterThan(listCalls),
+      )
+    })
+
+    it('reloads the content tree after a timed-out rename', async () => {
+      mockClient.content.renameEntry.mockRejectedValueOnce(
+        new ApiTimeoutError('PATCH', '/main/rename-entry/content/posts/a', 75_000),
+      )
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(mockClient.entries.list).toHaveBeenCalled())
+      const listCalls = mockClient.entries.list.mock.calls.length
+
+      await act(async () => {
+        await result.current.renameEntry('content/posts/a', 'b').catch(() => {})
+      })
+
+      await waitFor(() =>
+        expect(mockClient.entries.list.mock.calls.length).toBeGreaterThan(listCalls),
+      )
+    })
+  })
+
   it('builds collectionByPath map correctly', () => {
     const { result } = renderHook(() => useEntryManager(defaultOptions), {
       wrapper,
@@ -275,6 +345,16 @@ describe('useEntryManager', () => {
 
     await expect(result.current.loadEntry(mockEntry)).rejects.toBeInstanceOf(
       EntrySchemaUnavailableError,
+    )
+  })
+
+  it("rejects a save answered by a gateway's 5xx page as unanswered, not as the server's refusal", async () => {
+    mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    await loadForSave(result)
+
+    await expect(result.current.saveEntry(mockEntry, { title: 'T' })).rejects.toBeInstanceOf(
+      UnansweredError,
     )
   })
 
@@ -1521,6 +1601,87 @@ describe('useEntryManager', () => {
         expect.objectContaining({ color: 'red' }),
       )
       restore()
+    })
+
+    it("hides the load-failure toast once the branch shown loads, and replaces another branch's", async () => {
+      const { restore } = setupMockConsole(['error'])
+      try {
+        const succeeded = mockClient.schema.get.getMockImplementation()
+        mockClient.schema.get.mockImplementation((params: Record<string, string>) =>
+          params.branch === 'branch-ok'
+            ? (succeeded?.(params) ?? Promise.reject(new Error('no default')))
+            : Promise.reject(new ApiTimeoutError('GET', `/${params.branch}/schema`, 75_000)),
+        )
+        const failureToasts = () =>
+          vi
+            .mocked(notifications.show)
+            .mock.calls.map(([n]) => n)
+            .filter((n) => n.id === 'canopy-entries-load-failed')
+
+        const { rerender } = renderHook((props) => useEntryManager(props), {
+          wrapper,
+          initialProps: optionsFor('branch-a'),
+        })
+        await waitFor(() => expect(failureToasts()).toHaveLength(1))
+
+        // Another failing branch: its own toast, after the first is taken down.
+        vi.mocked(notifications.hide).mockClear()
+        rerender(optionsFor('branch-b'))
+        await waitFor(() => expect(failureToasts()).toHaveLength(2))
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-entries-load-failed')
+
+        // Back to a branch whose failure is cached: no error-free render takes the toast down.
+        vi.mocked(notifications.hide).mockClear()
+        rerender(optionsFor('branch-a'))
+        await waitFor(() => expect(failureToasts()).toHaveLength(3))
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-entries-load-failed')
+
+        // A branch that loads: the toast goes, with no Retry pressed.
+        vi.mocked(notifications.hide).mockClear()
+        rerender(optionsFor('branch-ok'))
+        await waitFor(() =>
+          expect(notifications.hide).toHaveBeenCalledWith('canopy-entries-load-failed'),
+        )
+        expect(failureToasts()).toHaveLength(3)
+      } finally {
+        restore()
+      }
+    })
+
+    it('a timed-out load settles, fetches once, and its toast stays with a Retry that reloads it', async () => {
+      const { restore } = setupMockConsole(['error'])
+      try {
+        const succeeded = mockClient.schema.get.getMockImplementation()
+        mockClient.schema.get.mockRejectedValueOnce(
+          new ApiTimeoutError('GET', '/branch-a/schema', 30_000),
+        )
+
+        const { result } = renderHook((props) => useEntryManager(props), {
+          wrapper,
+          initialProps: optionsFor('branch-a'),
+        })
+
+        await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+        const toast = vi
+          .mocked(notifications.show)
+          .mock.calls.map(([n]) => n)
+          .find((n) => n.id === 'canopy-entries-load-failed')
+        expect(toast).toMatchObject({ color: 'red', autoClose: false })
+        // No retry loop behind the toast's back.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(mockClient.schema.get).toHaveBeenCalledTimes(1)
+
+        if (succeeded) mockClient.schema.get.mockImplementation(succeeded)
+        const message = toast?.message as React.ReactElement<RetryToastMessageProps>
+        await act(async () => message.props.onRetry())
+
+        await waitFor(() => expect(mockClient.schema.get).toHaveBeenCalledTimes(2))
+        await waitFor(() =>
+          expect(vi.mocked(notifications.hide)).toHaveBeenCalledWith('canopy-entries-load-failed'),
+        )
+      } finally {
+        restore()
+      }
     })
 
     it('a failed load after switching branches settles to the empty state and reports, rather than loading forever', async () => {

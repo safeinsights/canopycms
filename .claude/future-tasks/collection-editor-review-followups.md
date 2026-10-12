@@ -35,7 +35,7 @@ summary: >-
   sub-dialog's exit transition.
 - **A hung request locks the dialog.** The collection dialog and its entry-type dialog can't be
   dismissed while a request is in flight, so a request that never settles leaves both open until a
-  reload, which loses staged details. [api-client-no-request-timeout.md](api-client-no-request-timeout.md)
+  reload, which loses staged details. [api-client-no-request-timeout.md](resolved/api-client-no-request-timeout.md)
   bounds every request; check the dialog releases once it lands.
 - **Stale collection fetch.** `Editor.tsx`'s `handleOpenCollectionEditor` awaits `getCollection`
   without dropping a stale response. Two quick opens could let a late response replace
