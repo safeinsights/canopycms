@@ -221,13 +221,20 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
 
   const handleDelete = async (asset: AssetRecord) => {
     setActionError(null)
+    const failure = (detail: string) =>
+      `Couldn't remove ${asset.filename} from the library. ${detail}`
     // The raw server message is a diagnostic, shown to admins only.
-    const failure = (serverMessage: string | undefined) =>
-      `Couldn't remove ${asset.filename} from the library. ${(isAdmin(userContext?.groups) && serverMessage) || 'Try again.'}`
+    const generic = (serverMessage: string | undefined) =>
+      failure((isAdmin(userContext?.groups) && serverMessage) || 'Try again.')
     try {
       const result = await client.assets.delete({ key: asset.hash32 })
       if (!result.ok) {
-        setActionError(failure(result.error))
+        // A refusal is permanent and says what to do, so it replaces "Try again." for everyone.
+        setActionError(
+          result.status === 403
+            ? failure('You can remove only files you uploaded.')
+            : generic(result.error),
+        )
         return
       }
       library.remove(asset.hash32)
@@ -237,7 +244,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
       }))
       focusAfterRemove.current = true
     } catch (err) {
-      setActionError(failure(getErrorMessage(err)))
+      setActionError(generic(getErrorMessage(err)))
     }
   }
 

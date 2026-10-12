@@ -1578,14 +1578,14 @@ describe('MediaLibraryBody', () => {
   it('reports a failed removal in plain words and keeps the asset', async () => {
     asAdmin()
     mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
-    mockClient.assets.delete.mockResolvedValueOnce({ ok: false, status: 403, error: 'Forbidden' })
+    mockClient.assets.delete.mockResolvedValueOnce({ ok: false, status: 500, error: 'Disk full' })
 
     renderBody()
     fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
 
     const alert = await screen.findByTestId('media-library-action-error')
     expect(alert.textContent).toContain("Couldn't remove cat.png from the library.")
-    expect(alert.textContent).toContain('Forbidden')
+    expect(alert.textContent).toContain('Disk full')
     expect(screen.getByText('cat.png')).toBeTruthy()
   })
 
@@ -1612,6 +1612,23 @@ describe('MediaLibraryBody', () => {
 
       const alert = await screen.findByTestId('media-library-action-error')
       expect(alert.textContent).toBe("Couldn't remove cat.png from the library. Try again.")
+    })
+
+    it('says the file can be removed only by its uploader when the server refuses', async () => {
+      asUploader()
+      mockClient.assets.delete.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        error: 'You can only delete assets you uploaded',
+      })
+
+      renderBody()
+      fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
+
+      const alert = await screen.findByTestId('media-library-action-error')
+      expect(alert.textContent).toBe(
+        "Couldn't remove cat.png from the library. You can remove only files you uploaded.",
+      )
     })
 
     it('hides the message of a request that threw', async () => {
