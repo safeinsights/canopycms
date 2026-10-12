@@ -100,10 +100,13 @@ const noop = (): void => {}
 const FENCE_STYLE: React.CSSProperties = { border: 0, padding: 0, margin: 0, minWidth: 0 }
 const READ_ONLY_FORM_CLASS = 'canopy-read-only-form'
 
-/** Read-only inputs look disabled but stay focusable, so a reviewer can select and copy them. */
+/**
+ * Read-only inputs look disabled but stay focusable, so a reviewer can select and copy them. A
+ * picker's trigger is a button, which Mantine marks `data-read-only` instead.
+ */
 const ReadOnlyFormStyles: React.FC = () => (
   <style>{`
-    .${READ_ONLY_FORM_CLASS} .mantine-Input-input:is([readonly], :has(input[readonly])) {
+    .${READ_ONLY_FORM_CLASS} .mantine-Input-input:is([readonly], [data-read-only], :has(input[readonly])) {
       background-color: var(--input-disabled-bg);
     }
     .${READ_ONLY_FORM_CLASS} .canopy-mdx-content {

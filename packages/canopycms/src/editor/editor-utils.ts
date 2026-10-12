@@ -241,13 +241,16 @@ export const buildCollectionLabels = (collections?: EditorCollection[]): Map<str
   return map
 }
 
-/** A schema name read as words in sentence case: `blogPost` and `blog-post` are "Blog post". */
+/** A schema name read as words in sentence case: `blogPost` is "Blog post", `HTMLPage` "HTML page". */
 const humanizeName = (name: string): string => {
   const words = name
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[-_\s]+/g, ' ')
-    .trim()
-    .toLowerCase()
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    // An acronym ("HTML") keeps its capitals.
+    .map((word) => (/^[A-Z0-9]{2,}$/.test(word) ? word : word.toLowerCase()))
+    .join(' ')
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 

@@ -1402,6 +1402,8 @@ describe('entryTypeLabel', () => {
       ['teamMemberProfile', 'Team member profile'],
       ['release-notes_v2', 'Release notes v2'],
       ['a--b', 'A b'],
+      ['HTMLPage', 'HTML page'],
+      ['seoFAQ', 'Seo FAQ'],
     ])('%s is %s', (name, expected) => {
       expect(entryTypeLabel(collections, entry('content/blog', name))).toBe(expected)
     })

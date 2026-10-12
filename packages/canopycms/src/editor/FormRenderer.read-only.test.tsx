@@ -156,6 +156,20 @@ describe('FormRenderer readOnly', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it('datetime: the read-only rule greys the picker trigger like every other input', () => {
+    const { container } = renderReadOnly(
+      [{ name: 'publishedAt', type: 'datetime', label: 'Published' }],
+      { publishedAt: '2024-01-02T03:04:05.000Z' },
+    )
+    const picker = screen.getByRole('button', { name: /^Published, / })
+    const rule = [...container.querySelectorAll('style')]
+      .map((style) => style.textContent ?? '')
+      .join('\n')
+      .match(/^\s*(\.canopy-read-only-form \.mantine-Input-input[^{]*)\{\s*background-color/m)
+    expect(rule).not.toBeNull()
+    expect(picker.matches(rule![1].trim())).toBe(true)
+  })
+
   it('markdown: MDXEditor mounts read-only, offers no source toggle, and emits nothing', async () => {
     const { onChange, container } = renderReadOnly(
       [{ name: 'body', type: 'markdown', label: 'Body' }],
