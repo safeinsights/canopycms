@@ -72,7 +72,7 @@ describe('InlineCommentThread', () => {
     resolvedAt: new Date('2024-01-01T12:00:00Z').toISOString(),
   }
 
-  it('draws the divider between comments with the scheme-aware border token', () => {
+  it('draws its card and the divider between comments with scheme-aware tokens', () => {
     const { container } = render(
       <InlineCommentThread
         thread={mockThread}
@@ -86,6 +86,9 @@ describe('InlineCommentThread', () => {
 
     const divider = container.querySelector<HTMLElement>('div[style*="border-top"]')
     expect(divider?.style.borderTop).toBe('1px solid var(--mantine-color-default-border)')
+    expect(screen.getByTestId('inline-comment-thread').style.background).toBe(
+      'var(--mantine-color-body)',
+    )
   })
 
   it('renders all comments in thread', () => {

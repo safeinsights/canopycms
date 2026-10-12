@@ -298,7 +298,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
         )}
 
         {showNewThreadBox && (
-          <Paper withBorder p="sm" bg="white">
+          <Paper withBorder p="sm" bg="var(--mantine-color-body)">
             <Stack gap="xs">
               <Textarea
                 placeholder="Start a new thread..."

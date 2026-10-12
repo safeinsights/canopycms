@@ -13,7 +13,7 @@ import {
 } from '@tabler/icons-react'
 import type { PaneLayout } from '../EditorPanes'
 import type { InexactMark } from '../preview-marks'
-import { focusIfDropped } from '../utils/focus-return'
+import { useMenuItemFocusReturn } from '../utils/focus-return'
 
 const ICON_TOOLTIP_EVENTS = { hover: true, focus: true, touch: true } as const
 
@@ -133,6 +133,7 @@ export function EditorSidebar({
   const [settingsOpened, setSettingsOpened] = useState(false)
   const settingsToggle = useRef<HTMLButtonElement>(null)
   const settingsMergedRef = useMergedRef(settingsToggle, settingsToggleRef)
+  const settingsMenuFocus = useMenuItemFocusReturn(settingsToggle)
 
   return (
     <Paper
@@ -219,7 +220,7 @@ export function EditorSidebar({
           position="left"
           opened={settingsOpened}
           onChange={setSettingsOpened}
-          onExitTransitionEnd={() => focusIfDropped(settingsToggle.current)}
+          {...settingsMenuFocus.menu}
         >
           <Tooltip
             label="Settings"
@@ -240,7 +241,7 @@ export function EditorSidebar({
               </ActionIcon>
             </Menu.Target>
           </Tooltip>
-          <Menu.Dropdown data-testid="settings-menu">
+          <Menu.Dropdown data-testid="settings-menu" {...settingsMenuFocus.dropdown}>
             <Menu.Label>Settings</Menu.Label>
             {onPermissionManagerOpen && (
               <Menu.Item data-testid="settings-menu-permissions" onClick={onPermissionManagerOpen}>

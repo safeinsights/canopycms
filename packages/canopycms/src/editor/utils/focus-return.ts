@@ -1,3 +1,5 @@
+import { useRef, type MouseEvent, type RefObject } from 'react'
+
 /**
  * Mantine's own `returnFocus` records the focused element at open, and a menu item has unmounted
  * with its menu by close, so an overlay opened from one returns focus here instead.
@@ -21,12 +23,39 @@ export function focusIfIdle(target: HTMLElement | null): void {
  * that opened no overlay has unmounted and dropped focus to the page. Mantine calls it just before
  * unmounting the items, hence the frame's wait; `returnFocus` would instead steal focus from an
  * overlay the item opened, which holds it by then.
+ * @internal Exported for tests.
  */
 export function focusIfDropped(target: HTMLElement | null): void {
   requestAnimationFrame(() => {
     const active = document.activeElement
     if (!active || active === document.body) target?.focus({ preventScroll: true })
   })
+}
+
+/**
+ * Props for a Mantine `Menu` and its `Menu.Dropdown` that run `focusIfDropped` on `trigger` after an
+ * item acted. A menu dismissed by a press elsewhere keeps focus where that press left it.
+ */
+export function useMenuItemFocusReturn(trigger: RefObject<HTMLElement | null>) {
+  const acted = useRef(false)
+  return {
+    menu: {
+      onExitTransitionEnd: () => {
+        if (acted.current) focusIfDropped(trigger.current)
+        acted.current = false
+      },
+    },
+    dropdown: {
+      onClickCapture: (event: MouseEvent) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest('[role="menuitem"]:not([aria-disabled="true"])')
+        ) {
+          acted.current = true
+        }
+      },
+    },
+  }
 }
 
 /** The focused control to hand focus back to, or null when it is a menu item (gone once it acts) or the page. */

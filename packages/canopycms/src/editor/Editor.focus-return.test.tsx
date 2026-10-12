@@ -437,6 +437,35 @@ describe('Menu items that act without opening an overlay', () => {
     expect(document.activeElement).not.toBe(branchTrigger())
     expect(document.activeElement?.closest('[role="dialog"]')).not.toBeNull()
   })
+
+  it('leaves focus in the drawer that Media library opened', async () => {
+    stubApi()
+    renderEditor()
+    await loaded()
+
+    await activateByKeyboard(settingsTrigger(), byTestId('settings-menu-media-library'))
+    await screen.findByRole('dialog')
+    await waitFor(() => expect(screen.queryByTestId('settings-menu')).toBeNull())
+    await settled()
+
+    expect(document.activeElement).not.toBe(settingsTrigger())
+    expect(document.activeElement?.closest('[role="dialog"]')).not.toBeNull()
+  })
+
+  it('a menu dismissed by a press outside it leaves focus where the press left it', async () => {
+    stubApi()
+    renderEditor()
+    await loaded()
+
+    focusEl(branchTrigger())
+    await userEvent.keyboard('{Enter}')
+    await screen.findByTestId('branch-menu')
+    await userEvent.click(document.body)
+    await waitFor(() => expect(screen.queryByTestId('branch-menu')).toBeNull())
+    await settled()
+
+    expect(document.activeElement).toBe(document.body)
+  })
 })
 
 describe('Settings menu', () => {

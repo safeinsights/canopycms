@@ -26,7 +26,7 @@ import { branchStatusPresentation } from '../branch-status'
 import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
-import { focusIfDropped } from '../utils/focus-return'
+import { useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
   /**
@@ -261,6 +261,8 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   const fileToggleRef = useMergedRef(fileToggle, navigatorToggleRef)
   const branchToggle = useRef<HTMLButtonElement>(null)
   const branchToggleMergedRef = useMergedRef(branchToggle, branchToggleRef)
+  const fileMenuFocus = useMenuItemFocusReturn(fileToggle)
+  const branchMenuFocus = useMenuItemFocusReturn(branchToggle)
 
   // Save stays focusable while blocked (`aria-disabled`, not `disabled`), so its reason opens on
   // keyboard focus and touch as well as hover; the click does nothing.
@@ -326,11 +328,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               align="center"
               style={{ minWidth: 0, justifyContent: 'center' }}
             >
-              <Menu
-                withinPortal
-                shadow="sm"
-                onExitTransitionEnd={() => focusIfDropped(fileToggle.current)}
-              >
+              <Menu withinPortal shadow="sm" {...fileMenuFocus.menu}>
                 <Menu.Target>
                   <Button
                     ref={fileToggleRef}
@@ -343,7 +341,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     {currentEntry?.label ?? 'No entry selected'}
                   </Button>
                 </Menu.Target>
-                <Menu.Dropdown>
+                <Menu.Dropdown {...fileMenuFocus.dropdown}>
                   <ReasonedMenuItem
                     onClick={onFileReload}
                     blockedReason={
@@ -403,11 +401,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 ))}
               </Group>
 
-              <Menu
-                withinPortal
-                shadow="sm"
-                onExitTransitionEnd={() => focusIfDropped(branchToggle.current)}
-              >
+              <Menu withinPortal shadow="sm" {...branchMenuFocus.menu}>
                 <Menu.Target>
                   <Button
                     ref={branchToggleMergedRef}
@@ -421,7 +415,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     {branchName || (busy ? 'Loading branches…' : 'No branch selected')}
                   </Button>
                 </Menu.Target>
-                <Menu.Dropdown data-testid="branch-menu">
+                <Menu.Dropdown data-testid="branch-menu" {...branchMenuFocus.dropdown}>
                   <ReasonedMenuItem
                     onClick={onBranchReloadData}
                     blockedReason={branchName ? undefined : 'Open a branch first.'}
