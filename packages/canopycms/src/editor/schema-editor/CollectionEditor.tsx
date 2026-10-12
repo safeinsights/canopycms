@@ -662,6 +662,7 @@ export function CollectionEditor({
               variant="light"
               color="red"
               loading={removing}
+              disabled={requestBusy}
               onClick={() => void removeEntryType(removeFailure.name, 0)}
             >
               Retry

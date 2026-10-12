@@ -875,6 +875,24 @@ describe('CollectionEditor', () => {
         await waitFor(() => expect(screen.queryByTestId('confirm-delete-modal')).toBeNull())
       })
 
+      it('disables Retry while collection details save', async () => {
+        const user = userEvent.setup()
+        const onRemoveEntryType = vi
+          .fn()
+          .mockResolvedValue({ ok: false, error: 'locked by branch' })
+        const { rerender, props } = renderCollectionEditor({ ...editProps(), onRemoveEntryType })
+        await removeEntryTypeViaUi(user, 'featured')
+        await screen.findByText('locked by branch')
+
+        rerender(
+          <CanopyCMSProvider>
+            <CollectionEditor {...props} isSaving />
+          </CanopyCMSProvider>,
+        )
+
+        expect(screen.getByRole('button', { name: 'Retry' }).hasAttribute('disabled')).toBe(true)
+      })
+
       it('ignores Escape on the collection dialog while a retried remove is in flight', async () => {
         const user = userEvent.setup()
         let finish: (r: SchemaOpResult) => void = () => {}
