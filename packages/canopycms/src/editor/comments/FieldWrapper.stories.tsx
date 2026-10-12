@@ -122,7 +122,10 @@ export const WithResolvedThreads: Story = {
   args: { threads: resolvedThreads },
 }
 
-/** The popover open on a thread, as "Jump to field" from the Comments panel opens it. */
+/**
+ * The popover open on a thread, as "Jump to field" from the Comments panel opens it. Each open
+ * thread shows a Reply button, not a reply box.
+ */
 export const PopoverOpen: Story = {
   args: { threads: [...sampleThreads, ...resolvedThreads], highlightThreadId: 'thread-1' },
   decorators: [

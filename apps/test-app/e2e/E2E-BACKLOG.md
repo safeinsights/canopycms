@@ -166,7 +166,7 @@ Use existing fixtures:
 **Status:** Done — `comments.spec.ts` › "add a branch-level comment and verify persistence"
 **Spec file:** `comments.spec.ts` (new file)
 **Scenario:** Open the comments panel. Add a branch-level comment. Verify it appears in the thread list. Reload and verify persistence.
-**data-testids added:** `data-testid="comments-button"` on the Comments button in `EditorHeader.tsx`; `data-testid="comment-textarea"` on the Textarea, `data-testid="comment-submit"` on the Add Comment button, `data-testid="comment-thread"` on each thread Paper (all in `CommentsPanel.tsx`).
+**data-testids added:** `data-testid="comments-button"` on the Comments button in `EditorHeader.tsx`; `data-testid="comment-textarea"` on the Textarea, `data-testid="comment-submit"` on the Comment button, `data-testid="comment-thread"` on each thread Paper (all in `CommentsPanel.tsx`).
 **Notes:** Comments work on the `main` branch in `dev` mode (no feature branch needed). The Comments button only renders when `supportsComments()` is true AND a branch is selected. After submit the textarea clears. Close panel with Escape before reload.
 
 ### 12. ✅ Add and resolve a field-level comment thread

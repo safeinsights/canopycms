@@ -13,6 +13,7 @@ import type { AssetRecord } from '../../api'
 import { mockConsole } from '../../test-utils/console-spy'
 import { MEDIA_LIBRARY_PREFS_KEY } from './media-library-prefs'
 import { uploadAsset } from './upload-asset'
+import { formatRelativeTime } from '../relative-time'
 
 // Mock the API client module - both useApiClient() (context, used directly by
 // MediaLibraryBody) and useUserContext()'s internal createApiClient() call
@@ -874,7 +875,7 @@ describe('MediaLibraryBody', () => {
       width: undefined,
       height: undefined,
     })
-    const uploadedDate = (asset: AssetRecord) => new Date(asset.uploadedAt).toLocaleDateString()
+    const uploadedDate = (asset: AssetRecord) => formatRelativeTime(asset.uploadedAt)
 
     it('lists a row per asset with dimensions, size and date', async () => {
       mockClient.assets.list.mockResolvedValueOnce(page([photo, doc]))

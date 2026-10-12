@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useId, useRef, useState } from 'react'
 import {
   Alert,
   Badge,
@@ -19,13 +19,25 @@ import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { UserBadge } from './components/UserBadge'
 import { userIdLabel } from './user-display'
-import { formatRelativeTime } from './relative-time'
+import { RelativeTime } from './components/RelativeTime'
+import { ThreadReplyControls } from './comments/ThreadReplyControls'
+import { useTrackedWrites } from './comments/use-tracked-writes'
 import { getErrorMessage } from '../utils/error'
 
 export interface CommentsPanelProps {
+  /**
+   * Whether the drawer is open. The panel stays mounted while closed, so the composer text and
+   * reply drafts survive a close; key it by branch to reset them for another one. It refuses to
+   * close while a write is in flight, since the drawer unmounts its contents on close, and each
+   * thread's busy state and error with them.
+   */
+  opened: boolean
   branchName: string
   comments: CommentThread[]
+  /** Whether the user may resolve any thread; a thread's own author always may resolve it. */
   canResolve: boolean
+  /** The user the panel is for, to tell which threads they started. */
+  currentUserId: string
   onAddComment: (
     text: string,
     type: 'field' | 'entry' | 'branch',
@@ -43,12 +55,20 @@ export interface CommentsPanelProps {
   onJumpToBranch?: (threadId: string) => void
   /** Optional function to fetch user metadata for displaying user badges */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** An entry's title for a thread's heading; without an answer the heading shows its path. */
+  entryLabel?: (entryPath: string) => string | undefined
+  /** A field's breadcrumb for a thread's heading; without an answer the heading shows its path. */
+  fieldLabel?: (entryPath: string, canopyPath: string) => string | undefined
 }
 
+const THREAD_KIND_LABELS = { field: 'Field', entry: 'Entry', branch: 'Branch' } as const
+
 export const CommentsPanel: React.FC<CommentsPanelProps> = ({
+  opened,
   branchName,
   comments,
   canResolve,
+  currentUserId,
   onAddComment,
   onResolveThread,
   onClose,
@@ -56,12 +76,26 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   onJumpToEntry,
   onJumpToBranch,
   onGetUserMetadata,
+  entryLabel,
+  fieldLabel,
 }) => {
   const [newCommentText, setNewCommentText] = useState('')
-  const [replyTo, setReplyTo] = useState<string | null>(null)
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({})
   const [showResolved, setShowResolved] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { inFlight, track } = useTrackedWrites()
+  const addComment = track(onAddComment)
+  const resolveThread = track(onResolveThread)
+  const close = () => {
+    if (inFlight === 0) onClose()
+  }
+  // A resolved thread's card leaves the list with the focused button, so focus lands here.
+  const threadCountRef = useRef<HTMLParagraphElement>(null)
+  // With resolved threads shown, the card stays and its heading takes the focus instead.
+  const headingRefs = useRef(new Map<string, HTMLParagraphElement>())
+  const idPrefix = useId()
+  const headingId = (threadId: string) => `${idPrefix}-heading-${threadId}`
 
   const filteredThreads = showResolved ? comments : comments.filter((t) => !t.resolved)
 
@@ -71,22 +105,8 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     setIsSubmitting(true)
     setError(null)
     try {
-      if (replyTo) {
-        const thread = comments.find((t) => t.id === replyTo)
-        if (thread) {
-          await onAddComment(
-            newCommentText,
-            thread.type,
-            thread.entryPath,
-            thread.canopyPath,
-            replyTo,
-          )
-        }
-      } else {
-        await onAddComment(newCommentText, 'branch', undefined, undefined, undefined)
-      }
+      await addComment(newCommentText, 'branch', undefined, undefined, undefined)
       setNewCommentText('')
-      setReplyTo(null)
     } catch (err) {
       setError(getErrorMessage(err))
     } finally {
@@ -94,22 +114,20 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     }
   }
 
-  const handleResolve = async (threadId: string) => {
-    setIsSubmitting(true)
-    setError(null)
-    try {
-      await onResolveThread(threadId)
-    } catch (err) {
-      setError(getErrorMessage(err))
-    } finally {
-      setIsSubmitting(false)
-    }
+  const threadHeading = (thread: CommentThread): string => {
+    const kind = THREAD_KIND_LABELS[thread.type]
+    if (!thread.entryPath) return kind
+    const entry = entryLabel?.(thread.entryPath) ?? thread.entryPath
+    const field = thread.canopyPath
+      ? (fieldLabel?.(thread.entryPath, thread.canopyPath) ?? thread.canopyPath)
+      : undefined
+    return `${kind} · ${field ? `${entry} › ${field}` : entry}`
   }
 
   return (
     <Drawer
-      opened
-      onClose={onClose}
+      opened={opened}
+      onClose={close}
       position="right"
       size={420}
       title={
@@ -124,24 +142,13 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
       <Stack gap="md" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
         <Paper withBorder p="md">
           <Stack gap="sm">
-            {replyTo && (
-              <Group justify="space-between">
-                <Text size="xs" c="dimmed">
-                  Replying to thread
-                </Text>
-                <Button variant="subtle" onClick={() => setReplyTo(null)}>
-                  Cancel
-                </Button>
-              </Group>
-            )}
-            {!replyTo && (
-              <Text size="xs" c="dimmed">
-                Posts a branch-level comment on &quot;{branchName}&quot;. To comment on a field, use
-                its comment icon.
-              </Text>
-            )}
+            <Text size="xs" c="dimmed">
+              Posts a branch-level comment on &quot;{branchName}&quot;. To comment on a field, use
+              its comment icon.
+            </Text>
             <Textarea
-              placeholder={replyTo ? 'Write a reply...' : 'Write a comment...'}
+              placeholder="Add a comment…"
+              aria-label="New branch comment"
               value={newCommentText}
               onChange={(e) => setNewCommentText(e.target.value)}
               minRows={3}
@@ -160,13 +167,13 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
               disabled={!newCommentText.trim()}
               data-testid="comment-submit"
             >
-              {replyTo ? 'Reply' : 'Add Comment'}
+              Comment
             </Button>
           </Stack>
         </Paper>
 
         <Group justify="space-between">
-          <Text size="sm" fw={500}>
+          <Text ref={threadCountRef} size="sm" fw={500} tabIndex={-1}>
             {filteredThreads.length} {filteredThreads.length === 1 ? 'thread' : 'threads'}
           </Text>
           <Switch
@@ -189,53 +196,31 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                   key={thread.id}
                   withBorder
                   p="md"
+                  component="article"
+                  aria-labelledby={headingId(thread.id)}
                   bg={thread.resolved ? 'gray.0' : undefined}
                   data-testid="comment-thread"
                 >
                   <Stack gap="xs">
-                    <Group justify="space-between" align="flex-start">
-                      <Group gap="xs">
-                        <Badge
-                          size="xs"
-                          variant="outline"
-                          color={
-                            thread.type === 'field'
-                              ? 'blue'
-                              : thread.type === 'entry'
-                                ? 'grape'
-                                : 'gray'
-                          }
-                        >
-                          {thread.type}
+                    <Group gap="xs">
+                      <Text
+                        id={headingId(thread.id)}
+                        ref={(node: HTMLParagraphElement | null) => {
+                          if (node) headingRefs.current.set(thread.id, node)
+                          else headingRefs.current.delete(thread.id)
+                        }}
+                        size="xs"
+                        fw={600}
+                        tabIndex={-1}
+                        data-testid="comment-thread-heading"
+                      >
+                        {threadHeading(thread)}
+                      </Text>
+                      {thread.resolved && (
+                        <Badge size="xs" color="green" variant="light">
+                          Resolved
                         </Badge>
-                        {thread.entryPath && (
-                          <Badge size="xs" variant="light">
-                            {thread.entryPath}
-                          </Badge>
-                        )}
-                        {thread.canopyPath && (
-                          <Badge size="xs" variant="dot">
-                            {thread.canopyPath}
-                          </Badge>
-                        )}
-                        {thread.resolved && (
-                          <Badge size="xs" color="green" variant="light">
-                            Resolved
-                          </Badge>
-                        )}
-                      </Group>
-                      <Group gap="xs">
-                        {canResolve && !thread.resolved && (
-                          <Button
-                            variant="subtle"
-                            color="green"
-                            onClick={() => handleResolve(thread.id)}
-                            loading={isSubmitting}
-                          >
-                            Resolve
-                          </Button>
-                        )}
-                      </Group>
+                      )}
                     </Group>
 
                     <Group gap="xs">
@@ -245,6 +230,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         onJumpToField && (
                           <Button
                             variant="light"
+                            disabled={inFlight > 0}
                             onClick={() => {
                               onJumpToField(thread.entryPath!, thread.canopyPath!, thread.id)
                               onClose()
@@ -256,6 +242,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                       {thread.type === 'entry' && thread.entryPath && onJumpToEntry && (
                         <Button
                           variant="light"
+                          disabled={inFlight > 0}
                           onClick={() => {
                             onJumpToEntry(thread.entryPath!, thread.id)
                             onClose()
@@ -267,6 +254,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                       {thread.type === 'branch' && onJumpToBranch && (
                         <Button
                           variant="light"
+                          disabled={inFlight > 0}
                           onClick={() => {
                             onJumpToBranch(thread.id)
                             onClose()
@@ -305,13 +293,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                                 {userIdLabel(comment.userId)}
                               </Text>
                             )}
-                            <Text
-                              size="xs"
-                              c="dimmed"
-                              title={new Date(comment.timestamp).toLocaleString()}
-                            >
-                              {formatRelativeTime(comment.timestamp)}
-                            </Text>
+                            <RelativeTime iso={comment.timestamp} size="xs" c="dimmed" />
                           </Group>
                           <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                             {comment.text}
@@ -321,16 +303,28 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                     ))}
 
                     {!thread.resolved && (
-                      <Button
-                        variant="subtle"
-                        onClick={() => {
-                          setReplyTo(thread.id)
-                          setNewCommentText('')
-                        }}
-                        mt="xs"
-                      >
-                        Reply
-                      </Button>
+                      <ThreadReplyControls
+                        thread={thread}
+                        onAddReply={(text) =>
+                          addComment(
+                            text,
+                            thread.type,
+                            thread.entryPath,
+                            thread.canopyPath,
+                            thread.id,
+                          )
+                        }
+                        onResolve={() => resolveThread(thread.id)}
+                        focusAfterResolve={() =>
+                          showResolved ? headingRefs.current.get(thread.id) : threadCountRef.current
+                        }
+                        currentUserId={currentUserId}
+                        canResolve={canResolve}
+                        replyText={replyDrafts[thread.id] ?? ''}
+                        onReplyTextChange={(text) =>
+                          setReplyDrafts((prev) => ({ ...prev, [thread.id]: text }))
+                        }
+                      />
                     )}
                   </Stack>
                 </Paper>

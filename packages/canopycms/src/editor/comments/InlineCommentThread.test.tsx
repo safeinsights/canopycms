@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest'
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { InlineCommentThread } from './InlineCommentThread'
@@ -139,80 +139,240 @@ describe('InlineCommentThread', () => {
     expect(text).toMatch(/Resolved by.*alice/)
   })
 
-  // TODO: Fix async interaction with Mantine Button component in tests
-  // The mock handler isn't being called despite various approaches (userEvent, fireEvent, act)
-  // This functionality works in the real app, but has issues in the test environment
-  it.skip('allows adding a reply', async () => {
-    const onAddReply = vi.fn().mockResolvedValue(undefined)
-
+  const renderThread = (props: Partial<React.ComponentProps<typeof InlineCommentThread>> = {}) =>
     render(
       <InlineCommentThread
         thread={mockThread}
-        onAddReply={onAddReply}
-        onResolve={vi.fn()}
+        onAddReply={vi.fn().mockResolvedValue(undefined)}
+        onResolve={vi.fn().mockResolvedValue(undefined)}
         currentUserId="charlie"
         canResolve={true}
+        {...props}
       />,
       { wrapper: Wrapper },
     )
 
-    const textareas = screen.getAllByPlaceholderText('Write a reply…') as HTMLTextAreaElement[]
-    const textarea = textareas[0]
+  describe('reply', () => {
+    it('shows a Reply button and no reply box until Reply is clicked', async () => {
+      const user = userEvent.setup()
+      renderThread()
 
-    // Use act to ensure state updates are flushed
-    await act(async () => {
-      fireEvent.change(textarea, { target: { value: 'My reply' } })
+      expect(screen.getByTestId('reply-thread-button')).toBeTruthy()
+      expect(screen.queryByLabelText('Reply to this thread')).toBeNull()
+      expect(screen.queryByTestId('submit-reply-button')).toBeNull()
+
+      await user.click(screen.getByTestId('reply-thread-button'))
+
+      const box = screen.getByLabelText('Reply to this thread')
+      expect(document.activeElement).toBe(box)
+      expect(screen.getByTestId('submit-reply-button')).toBeTruthy()
+      expect(screen.queryByTestId('reply-thread-button')).toBeNull()
     })
 
-    // Wait for the text to be in the textarea
-    await waitFor(() => {
-      expect(textarea.value).toBe('My reply')
+    it('Cancel collapses the box and keeps the draft for the next Reply', async () => {
+      const user = userEvent.setup()
+      renderThread()
+
+      await user.click(screen.getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'Half a thought')
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+      expect(screen.queryByLabelText('Reply to this thread')).toBeNull()
+      expect(document.activeElement).toBe(screen.getByTestId('reply-thread-button'))
+
+      await user.click(screen.getByTestId('reply-thread-button'))
+      expect((screen.getByLabelText('Reply to this thread') as HTMLTextAreaElement).value).toBe(
+        'Half a thought',
+      )
     })
 
-    const replyButtons = screen.getAllByRole('button', { name: /reply/i })
+    it('starts expanded when the caller already holds a draft', () => {
+      renderThread({ replyText: 'Unsent', onReplyTextChange: vi.fn() })
 
-    // Wait for button to be enabled
-    await waitFor(() => {
-      expect(replyButtons[0].getAttribute('disabled')).toBeNull()
+      expect((screen.getByLabelText('Reply to this thread') as HTMLTextAreaElement).value).toBe(
+        'Unsent',
+      )
+      expect(screen.queryByTestId('reply-thread-button')).toBeNull()
     })
 
-    await act(async () => {
-      fireEvent.click(replyButtons[0])
+    it('posts the text, then collapses and returns focus to Reply', async () => {
+      const onAddReply = vi.fn().mockResolvedValue(undefined)
+      const user = userEvent.setup()
+      renderThread({ onAddReply })
+
+      await user.click(screen.getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'My reply')
+      await user.click(screen.getByTestId('submit-reply-button'))
+
+      await waitFor(() => expect(screen.queryByLabelText('Reply to this thread')).toBeNull())
+      expect(onAddReply).toHaveBeenCalledWith('My reply')
+      expect(document.activeElement).toBe(screen.getByTestId('reply-thread-button'))
+      await user.click(screen.getByTestId('reply-thread-button'))
+      expect((screen.getByLabelText('Reply to this thread') as HTMLTextAreaElement).value).toBe('')
     })
 
-    await waitFor(
-      () => {
-        expect(onAddReply).toHaveBeenCalledWith('My reply')
-      },
-      { timeout: 3000 },
-    )
-  })
+    it('keeps the box open with the text, and shows one error, when the reply fails', async () => {
+      const onAddReply = vi.fn().mockRejectedValue(new Error("Couldn't add the comment."))
+      const user = userEvent.setup()
+      renderThread({ onAddReply })
 
-  it('clears reply text after successful submission', async () => {
-    const onAddReply = vi.fn().mockResolvedValue(undefined)
-    const user = userEvent.setup()
+      await user.click(screen.getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'Keep me')
+      await user.click(screen.getByTestId('submit-reply-button'))
 
-    render(
-      <InlineCommentThread
-        thread={mockThread}
-        onAddReply={onAddReply}
-        onResolve={vi.fn()}
-        currentUserId="charlie"
-        canResolve={true}
-      />,
-      { wrapper: Wrapper },
-    )
+      expect(await screen.findAllByText("Couldn't add the comment.")).toHaveLength(1)
+      const box = screen.getByLabelText('Reply to this thread') as HTMLTextAreaElement
+      expect(box.value).toBe('Keep me')
+      await waitFor(() => expect(document.activeElement).toBe(box))
+    })
 
-    const textareas = screen.getAllByPlaceholderText('Write a reply…') as HTMLTextAreaElement[]
-    const textarea = textareas[0]
-    await user.type(textarea, 'My reply')
-    expect(textarea.value).toBe('My reply')
+    it('shows progress on Reply only, and disables Resolve, while a reply is in flight', async () => {
+      let finish: () => void = () => {}
+      const onAddReply = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          }),
+      )
+      const user = userEvent.setup()
+      renderThread({ onAddReply })
 
-    const replyButtons = screen.getAllByRole('button', { name: /reply/i })
-    await user.click(replyButtons[0])
+      await user.click(screen.getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'Slow reply')
+      await user.click(screen.getByTestId('submit-reply-button'))
 
-    await waitFor(() => {
-      expect(textarea.value).toBe('')
+      const resolve = screen.getByTestId('resolve-thread-button') as HTMLButtonElement
+      expect(screen.getByTestId('submit-reply-button').hasAttribute('data-loading')).toBe(true)
+      expect(resolve.disabled).toBe(true)
+      expect(resolve.hasAttribute('data-loading')).toBe(false)
+
+      await act(async () => {
+        finish()
+      })
+      await waitFor(() => expect(screen.queryByTestId('submit-reply-button')).toBeNull())
+    })
+
+    it('shows progress on Resolve only, and disables Reply, while a resolve is in flight', async () => {
+      let finish: () => void = () => {}
+      const onResolve = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          }),
+      )
+      const user = userEvent.setup()
+      renderThread({ onResolve })
+
+      await user.click(screen.getByTestId('resolve-thread-button'))
+
+      expect(screen.getByTestId('resolve-thread-button').hasAttribute('data-loading')).toBe(true)
+      expect((screen.getByTestId('reply-thread-button') as HTMLButtonElement).disabled).toBe(true)
+
+      await act(async () => {
+        finish()
+      })
+      await waitFor(() =>
+        expect(screen.getByTestId('resolve-thread-button').hasAttribute('data-loading')).toBe(
+          false,
+        ),
+      )
+    })
+
+    it('does not show a resolve in flight as progress on the open reply box', async () => {
+      let finish: () => void = () => {}
+      const onResolve = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          }),
+      )
+      const user = userEvent.setup()
+      renderThread({ onResolve })
+
+      await user.click(screen.getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'A draft')
+      await user.click(screen.getByTestId('resolve-thread-button'))
+
+      const submit = screen.getByTestId('submit-reply-button') as HTMLButtonElement
+      expect(screen.getByTestId('resolve-thread-button').hasAttribute('data-loading')).toBe(true)
+      expect(submit.hasAttribute('data-loading')).toBe(false)
+      expect(submit.disabled).toBe(true)
+
+      await act(async () => {
+        finish()
+      })
+    })
+
+    it('posts a draft before resolving, so Resolve never drops it', async () => {
+      const calls: string[] = []
+      const onAddReply = vi.fn(async (text: string) => {
+        calls.push(`reply:${text}`)
+      })
+      const onResolve = vi.fn(async () => {
+        calls.push('resolve')
+      })
+      const user = userEvent.setup()
+      renderThread({ onAddReply, onResolve })
+
+      expect(screen.getByTestId('resolve-thread-button').textContent).toBe('Resolve')
+      await user.click(screen.getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'Last word')
+      expect(screen.getByTestId('resolve-thread-button').textContent).toBe('Reply and resolve')
+      await user.click(screen.getByTestId('resolve-thread-button'))
+
+      await waitFor(() => expect(calls).toEqual(['reply:Last word', 'resolve']))
+    })
+
+    it('locks the reply box while Reply and resolve is in flight', async () => {
+      let finish: () => void = () => {}
+      const onAddReply = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          }),
+      )
+      const user = userEvent.setup()
+      renderThread({ onAddReply })
+
+      await user.click(screen.getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'first')
+      await user.click(screen.getByTestId('resolve-thread-button'))
+
+      expect((screen.getByLabelText('Reply to this thread') as HTMLTextAreaElement).disabled).toBe(
+        true,
+      )
+      await act(async () => {
+        finish()
+      })
+    })
+
+    it('does not resolve, and keeps the draft, when the reply before it fails', async () => {
+      const onAddReply = vi.fn().mockRejectedValue(new Error("Couldn't add the comment."))
+      const onResolve = vi.fn().mockResolvedValue(undefined)
+      const user = userEvent.setup()
+      renderThread({ onAddReply, onResolve })
+
+      await user.click(screen.getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'Keep me')
+      await user.click(screen.getByTestId('resolve-thread-button'))
+
+      expect(await screen.findByText("Couldn't add the comment.")).toBeTruthy()
+      expect(onResolve).not.toHaveBeenCalled()
+      expect((screen.getByLabelText('Reply to this thread') as HTMLTextAreaElement).value).toBe(
+        'Keep me',
+      )
+    })
+
+    it('disables the submit button until there is text', async () => {
+      const user = userEvent.setup()
+      renderThread()
+
+      await user.click(screen.getByTestId('reply-thread-button'))
+      const submit = screen.getByTestId('submit-reply-button') as HTMLButtonElement
+      expect(submit.disabled).toBe(true)
+
+      await user.type(screen.getByLabelText('Reply to this thread'), 'Some text')
+      expect(submit.disabled).toBe(false)
     })
   })
 
@@ -232,22 +392,17 @@ describe('InlineCommentThread', () => {
     expect(resolveButtons.length).toBeGreaterThan(0)
   })
 
-  it('hides resolve button when user cannot resolve', () => {
-    const { container } = render(
-      <InlineCommentThread
-        thread={mockThread}
-        onAddReply={vi.fn()}
-        onResolve={vi.fn()}
-        currentUserId="alice"
-        canResolve={false}
-      />,
-      { wrapper: Wrapper },
-    )
+  it('hides Resolve from a user who cannot resolve any thread and did not start this one', () => {
+    renderThread({ canResolve: false })
 
-    // Check that there's no button with exactly "Resolve" text
-    const buttons = Array.from(container.querySelectorAll('button'))
-    const resolveButton = buttons.find((btn) => btn.textContent === 'Resolve')
-    expect(resolveButton).toBeUndefined()
+    expect(screen.getByTestId('reply-thread-button')).toBeTruthy()
+    expect(screen.queryByTestId('resolve-thread-button')).toBeNull()
+  })
+
+  it('shows Resolve to the thread author even without the right to resolve any thread', () => {
+    renderThread({ canResolve: false, currentUserId: 'alice' })
+
+    expect(screen.getByTestId('resolve-thread-button')).toBeTruthy()
   })
 
   it('hides resolve button when thread is already resolved', () => {
@@ -268,70 +423,15 @@ describe('InlineCommentThread', () => {
     expect(resolveButton).toBeUndefined()
   })
 
-  // TODO: Fix async interaction with Mantine Button component in tests
-  it.skip('calls onResolve when resolve button is clicked', async () => {
-    const onResolve = vi.fn().mockResolvedValue(undefined)
-
-    render(
-      <InlineCommentThread
-        thread={mockThread}
-        onAddReply={vi.fn()}
-        onResolve={onResolve}
-        currentUserId="alice"
-        canResolve={true}
-      />,
-      { wrapper: Wrapper },
-    )
-
-    const resolveButtons = screen.getAllByRole('button', { name: /resolve/i })
-
-    // Use fireEvent with act for more reliable interaction
-    await act(async () => {
-      fireEvent.click(resolveButtons[0])
-    })
-
-    await waitFor(() => {
-      expect(onResolve).toHaveBeenCalled()
-    })
-  })
-
-  it('disables reply button when text is empty', () => {
-    render(
-      <InlineCommentThread
-        thread={mockThread}
-        onAddReply={vi.fn()}
-        onResolve={vi.fn()}
-        currentUserId="alice"
-        canResolve={true}
-      />,
-      { wrapper: Wrapper },
-    )
-
-    const replyButtons = screen.getAllByRole('button', { name: /reply/i })
-    expect(replyButtons[0].hasAttribute('disabled')).toBe(true)
-  })
-
-  it('enables reply button when text is entered', async () => {
+  it('calls onResolve when Resolve is clicked, and shows its failure once', async () => {
+    const onResolve = vi.fn().mockRejectedValue(new Error('Could not resolve.'))
     const user = userEvent.setup()
+    renderThread({ onResolve })
 
-    render(
-      <InlineCommentThread
-        thread={mockThread}
-        onAddReply={vi.fn()}
-        onResolve={vi.fn()}
-        currentUserId="alice"
-        canResolve={true}
-      />,
-      { wrapper: Wrapper },
-    )
+    await user.click(screen.getByTestId('resolve-thread-button'))
 
-    const replyButtons = screen.getAllByRole('button', { name: /reply/i })
-    expect(replyButtons[0].hasAttribute('disabled')).toBe(true)
-
-    const textareas = screen.getAllByPlaceholderText('Write a reply…')
-    await user.type(textareas[0], 'Some text')
-
-    expect(replyButtons[0].hasAttribute('disabled')).toBe(false)
+    expect(onResolve).toHaveBeenCalledTimes(1)
+    expect(await screen.findAllByText('Could not resolve.')).toHaveLength(1)
   })
 
   it('formats timestamps correctly', () => {

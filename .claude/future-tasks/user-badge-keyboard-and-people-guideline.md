@@ -34,5 +34,6 @@ made names on comment surfaces visible to every editor.
 - alt text for decorative images such as avatars;
 - information that lives only in a tooltip on an element keyboard users cannot focus.
 
-A short "People" section would settle these, and the deliberate split where branch owners stay
-ids for editors ([branch-owner-names-for-editors.md](branch-owner-names-for-editors.md)).
+A short "People" section would settle these, and the deliberate split where a branch's access
+users stay ids for editors while its owner is named
+([branch-owner-names-for-editors.md](resolved/branch-owner-names-for-editors.md)).

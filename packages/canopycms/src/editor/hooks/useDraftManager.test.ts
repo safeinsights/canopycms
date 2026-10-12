@@ -849,6 +849,49 @@ describe('useDraftManager', () => {
       expect(result.current.drafts).toEqual({})
     })
 
+    it('words the discard-all dialog by entries, and names its confirm button', async () => {
+      const { modals } = await import('@mantine/modals')
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+      act(() => {
+        result.current.setLoadedValues({ abc123def456: { title: 'Original' } })
+        result.current.setDrafts({ abc123def456: { title: 'Edited' } })
+      })
+      act(() => {
+        result.current.handleDiscardDrafts()
+      })
+
+      expect(modals.openConfirmModal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Discard all changes',
+          children: 'Discard unsaved changes for 1 entry? They will be lost.',
+          labels: expect.objectContaining({ confirm: 'Discard all changes' }),
+          confirmProps: expect.objectContaining({ 'data-testid': 'confirm-discard-all' }),
+        }),
+      )
+    })
+
+    it('words the single-entry discard dialog, and names its confirm button', async () => {
+      const { modals } = await import('@mantine/modals')
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+      act(() => {
+        result.current.setLoadedValues({ abc123def456: { title: 'Original' } })
+        result.current.setDrafts({ abc123def456: { title: 'Edited' } })
+      })
+      act(() => {
+        result.current.handleDiscardFileDraft()
+      })
+
+      expect(modals.openConfirmModal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Discard changes',
+          labels: expect.objectContaining({ confirm: 'Discard changes' }),
+          confirmProps: expect.objectContaining({ 'data-testid': 'confirm-discard-entry' }),
+        }),
+      )
+    })
+
     it('keeps all drafts when the user cancels the discard-all confirmation', async () => {
       const { modals } = await import('@mantine/modals')
       vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {

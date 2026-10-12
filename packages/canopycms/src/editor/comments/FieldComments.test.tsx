@@ -259,12 +259,31 @@ describe('field comment control', () => {
       expect.stringContaining('Comment in old'),
     ])
 
+    await user.click(within(threads[0]).getByTestId('reply-thread-button'))
     await user.type(within(threads[0]).getByRole('textbox'), 'Fixed it')
-    await user.click(within(threads[0]).getByRole('button', { name: 'Reply' }))
+    await user.click(within(threads[0]).getByTestId('submit-reply-button'))
     expect(onAddComment).toHaveBeenCalledWith('Fixed it', 'field', ENTRY, 'title', 'open')
 
     await user.click(within(threads[0]).getByTestId('resolve-thread-button'))
     expect(onResolveThread).toHaveBeenCalledWith('open')
+  })
+
+  it('shows a Reply button per open thread rather than a reply box each', async () => {
+    const user = userEvent.setup()
+    renderForm({
+      comments: [
+        thread('a', 'title'),
+        thread('b', 'title'),
+        thread('c', 'title', { resolved: true }),
+      ],
+    })
+    await user.click(control('title'))
+    const popover = await screen.findByTestId('field-comment-title-popover')
+
+    expect(within(popover).getAllByTestId('reply-thread-button')).toHaveLength(2)
+    expect(
+      within(popover).queryAllByRole('textbox', { name: 'Reply to this thread' }),
+    ).toHaveLength(0)
   })
 
   it('starts a thread from the popover of a field without one', async () => {
@@ -471,6 +490,7 @@ describe('field comment popover, keyboard and drafts', () => {
     render(<Stateful initial={[thread('t1', 'title')]} />)
     await user.click(control('title'))
     let popover = await screen.findByTestId('field-comment-title-popover')
+    await user.click(within(popover).getByTestId('reply-thread-button'))
     await user.type(
       within(popover).getByRole('textbox', { name: 'Reply to this thread' }),
       'Half a reply',
@@ -671,9 +691,10 @@ describe('comment writes the popover can no longer show', () => {
     )
     await user.click(control('title'))
     const popover = await screen.findByTestId('field-comment-title-popover')
+    await user.click(within(popover).getByTestId('reply-thread-button'))
     const box = within(popover).getByRole('textbox', { name: 'Reply to this thread' })
     await user.type(box, 'Nope')
-    await user.click(within(popover).getByRole('button', { name: 'Reply' }))
+    await user.click(within(popover).getByTestId('submit-reply-button'))
     expect(await within(popover).findByText("Couldn't add the comment. Try again.")).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(box))
   })

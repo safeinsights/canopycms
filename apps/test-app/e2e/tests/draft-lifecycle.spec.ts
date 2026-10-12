@@ -12,7 +12,7 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT } from '../fixtures/timeouts'
  * draft must not prevent the entry's real server value from loading.
  *
  * `draft-behavior.spec.ts` already covers discarding a SINGLE file's draft
- * (the singular "Discard draft" dialog) and an unsaved draft surviving a
+ * (the singular "Discard changes" dialog) and an unsaved draft surviving a
  * reload — this file deliberately does not repeat either.
  */
 test.describe('Draft Lifecycle', () => {
@@ -85,10 +85,10 @@ test.describe('Draft Lifecycle', () => {
       await expect(editorPage.saveButton).toBeEnabled({ timeout: SHORT_TIMEOUT })
     })
 
-    await test.step('open discard-all and assert the PLURAL dialog naming 2 files', async () => {
+    await test.step('open discard-all and assert the PLURAL dialog naming 2 entries', async () => {
       const dialog = await editorPage.discardAllDrafts()
       await expect(dialog).toBeVisible({ timeout: SHORT_TIMEOUT })
-      await expect(dialog).toContainText('Discard drafts for 2 files?')
+      await expect(dialog).toContainText('Discard unsaved changes for 2 entries?')
       await editorPage.confirmDiscard(dialog)
       await expect(dialog).toBeHidden({ timeout: SHORT_TIMEOUT })
     })
@@ -106,17 +106,17 @@ test.describe('Draft Lifecycle', () => {
       await expect(editorPage.saveButton).toBeDisabled({ timeout: STANDARD_TIMEOUT })
     })
 
-    await test.step('repeat with exactly ONE dirty file — assert the SINGULAR "file" wording', async () => {
+    await test.step('repeat with exactly ONE dirty file — assert the SINGULAR "entry" wording', async () => {
       const secondDraftTitle = `E4-Single-${Date.now()}`
       await editorPage.fillTextField('title', secondDraftTitle)
       await expect(editorPage.saveButton).toBeEnabled({ timeout: SHORT_TIMEOUT })
 
       const dialog = await editorPage.discardAllDrafts()
       await expect(dialog).toBeVisible({ timeout: SHORT_TIMEOUT })
-      await expect(dialog).toContainText('Discard drafts for 1 file?')
+      await expect(dialog).toContainText('Discard unsaved changes for 1 entry?')
       // Guard against a regression back to "1 files" — toContainText above
       // would still pass against "1 files" since it's a substring match.
-      await expect(dialog).not.toContainText('1 files')
+      await expect(dialog).not.toContainText('1 entries')
       await editorPage.confirmDiscard(dialog)
       await expect(dialog).toBeHidden({ timeout: SHORT_TIMEOUT })
     })

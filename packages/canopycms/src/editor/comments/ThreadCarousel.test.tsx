@@ -115,9 +115,77 @@ describe('ThreadCarousel', () => {
       />,
       { wrapper: Wrapper },
     )
+    await user.click(screen.getByTestId('reply-thread-button'))
     await user.type(screen.getByPlaceholderText('Write a reply…'), 'A reply')
-    await user.click(screen.getByRole('button', { name: 'Reply' }))
+    await user.click(screen.getByTestId('submit-reply-button'))
     expect(await screen.findAllByText("Couldn't add the comment. Try again.")).toHaveLength(1)
+  })
+
+  it('moves focus to its heading once a thread is resolved', async () => {
+    const user = userEvent.setup()
+    render(
+      <ThreadCarousel
+        threads={[mockThreads[0]]}
+        label="Branch discussion"
+        contextType="branch"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn().mockResolvedValue(undefined)}
+      />,
+      { wrapper: Wrapper },
+    )
+    await user.click(screen.getByTestId('resolve-thread-button'))
+    await waitFor(() => expect(document.activeElement?.textContent).toMatch(/^Branch discussion/))
+  })
+
+  it('leaves focus the user moved while a resolve was in flight', async () => {
+    let finish: () => void = () => {}
+    const user = userEvent.setup()
+    render(
+      <ThreadCarousel
+        threads={[mockThreads[0]]}
+        label="Branch discussion"
+        contextType="branch"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              finish = resolve
+            }),
+        )}
+      />,
+      { wrapper: Wrapper },
+    )
+    await user.click(screen.getByTestId('resolve-thread-button'))
+    const elsewhere = document.createElement('input')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+    await act(async () => {
+      finish()
+    })
+
+    expect(document.activeElement).toBe(elsewhere)
+    elsewhere.remove()
+  })
+
+  it('labels the previous and next thread buttons', () => {
+    render(
+      <ThreadCarousel
+        threads={mockThreads}
+        contextType="field"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    )
+
+    expect(screen.getByRole('button', { name: 'Previous thread' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Next thread' })).toBeTruthy()
   })
 
   it('renders with no threads', () => {

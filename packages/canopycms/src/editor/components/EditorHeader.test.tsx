@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
@@ -66,7 +66,7 @@ describe('EditorHeader - review lock', () => {
     expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
     expect(screen.getByTestId('status-locked-banner')).toBeTruthy()
     expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
-    expect(screen.getByTestId('withdraw-button').textContent).toBe('Withdraw Branch...')
+    expect(screen.getByTestId('withdraw-button').textContent).toBe('Withdraw from review')
   })
 
   it('enables Save and shows no lock banner when editing with unsaved changes', () => {
@@ -184,20 +184,35 @@ describe('EditorHeader - branch menu file count', () => {
     cleanup()
   })
 
-  it('singularizes the count for exactly one modified file', async () => {
+  it('singularizes the count for exactly one modified entry', async () => {
     renderHeader({ modifiedCount: 1 })
 
     await userEvent.click(screen.getByTestId('branch-dropdown-button'))
 
-    expect(await screen.findByText('1 file modified')).toBeTruthy()
+    expect(await screen.findByText('1 entry modified')).toBeTruthy()
   })
 
-  it('pluralizes the count for more than one modified file', async () => {
+  it('pluralizes the count for more than one modified entry', async () => {
     renderHeader({ modifiedCount: 2 })
 
     await userEvent.click(screen.getByTestId('branch-dropdown-button'))
 
-    expect(await screen.findByText('2 files modified')).toBeTruthy()
+    expect(await screen.findByText('2 entries modified')).toBeTruthy()
+  })
+})
+
+describe('EditorHeader - branch menu with no edits', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('says no entries have been edited yet', async () => {
+    renderHeader({ modifiedCount: 0, editedFiles: [] })
+
+    await userEvent.click(screen.getByTestId('branch-dropdown-button'))
+
+    expect(await screen.findByText('0 entries modified')).toBeTruthy()
+    expect(screen.getByText('No edited entries yet')).toBeTruthy()
   })
 })
 
@@ -328,5 +343,66 @@ describe('EditorHeader - modified-file menus only select', () => {
 
     expect(onEntrySelect).toHaveBeenCalledWith('posts/draft')
     expect(onNavigatorOpen).not.toHaveBeenCalled()
+  })
+})
+
+describe('EditorHeader - vocabulary', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('labels Save, and Submit for review with no ellipsis, with the shared verbs', () => {
+    renderHeader({ userContext: { userId: 'u1' }, branchCreatedBy: 'u1' })
+
+    expect(screen.getByTestId('save-button').textContent).toBe('Save')
+    expect(screen.getByTestId('submit-button').textContent).toBe('Submit for review')
+  })
+
+  it('names the branch menu items with the shared vocabulary', async () => {
+    renderHeader({ onBranchManagerOpen: vi.fn() })
+    await userEvent.click(screen.getByTestId('branch-dropdown-button'))
+
+    const menu = await screen.findByTestId('branch-menu')
+    expect(menu.textContent).toContain('Reload all entries')
+    expect(menu.textContent).toContain('Discard all changes')
+    expect(screen.getByTestId('manage-branches-menu-item').textContent).toBe('Switch branch…')
+    expect(menu.textContent).not.toContain('Manage Branches')
+  })
+
+  it('points the review-lock banner at Withdraw from review and the Switch branch… action', async () => {
+    const onBranchManagerOpen = vi.fn()
+    renderHeader({
+      branchStatus: 'submitted',
+      branchWriteBlocked: true,
+      onBranchManagerOpen,
+    })
+
+    const banner = screen.getByTestId('status-locked-banner')
+    expect(banner.textContent).toContain('Withdraw it from review to make changes.')
+    await userEvent.click(within(banner).getByRole('button', { name: 'Switch branch…' }))
+    expect(onBranchManagerOpen).toHaveBeenCalled()
+  })
+
+  it('offers the protected-branch banner the shared New branch… verb', async () => {
+    const onBranchManagerOpen = vi.fn()
+    renderHeader({
+      branchStatus: 'editing',
+      branchReadOnly: true,
+      branchWriteBlocked: true,
+      branchIsProtected: true,
+      onBranchManagerOpen,
+    })
+
+    const banner = screen.getByTestId('protected-branch-banner')
+    await userEvent.click(within(banner).getByRole('button', { name: 'New branch…' }))
+    expect(onBranchManagerOpen).toHaveBeenCalled()
+  })
+
+  it('points the unavailable-data banner at Switch branch… to retry', () => {
+    renderHeader({ branchStatus: undefined, branchWriteBlocked: true })
+
+    expect(screen.getByTestId('status-locked-banner').textContent).toContain(
+      'Use Switch branch… to retry.',
+    )
   })
 })

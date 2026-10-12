@@ -78,7 +78,7 @@ describe('useBranchActions create past the deadline', () => {
     mockClient.branches.list.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { branches: [listedBranch] },
+      data: { branches: [listedBranch], users: [] },
     })
 
     expect(await createAfterDeadline()).toBe(true)
@@ -92,7 +92,7 @@ describe('useBranchActions create past the deadline', () => {
     mockClient.branches.list.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { branches: [{ ...listedBranch, createdBy: 'someone-else' }] },
+      data: { branches: [{ ...listedBranch, createdBy: 'someone-else' }], users: [] },
     })
 
     expect(await createAfterDeadline()).toBe(false)
@@ -107,7 +107,11 @@ describe('useBranchActions create past the deadline', () => {
 
   it('says the create did not finish when the branch is not there', async () => {
     mockClient.branches.create.mockReturnValue(new Promise(() => {}))
-    mockClient.branches.list.mockResolvedValue({ ok: true, status: 200, data: { branches: [] } })
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: [], users: [] },
+    })
 
     expect(await createAfterDeadline()).toBe(false)
     expect(notifications.show).toHaveBeenCalledWith({
@@ -134,7 +138,7 @@ describe('useBranchActions create past the deadline', () => {
     mockClient.branches.list.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { branches: [listedBranch] },
+      data: { branches: [listedBranch], users: [] },
     })
 
     expect(await createAfterDeadline()).toBe(true)

@@ -6,6 +6,7 @@ import { MantineProvider } from '@mantine/core'
 
 import type { AssetRecord } from '../../api'
 import { AssetCard } from './AssetCard'
+import { formatRelativeTime } from '../relative-time'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
   <MantineProvider>{children}</MantineProvider>
@@ -54,7 +55,7 @@ describe('AssetCard', () => {
     fireEvent.error(screen.getByRole('img'))
 
     expect(screen.getByText('cat.png')).toBeTruthy()
-    expect(screen.getByText(new Date(catAsset.uploadedAt).toLocaleDateString())).toBeTruthy()
+    expect(screen.getByText(formatRelativeTime(catAsset.uploadedAt))).toBeTruthy()
   })
 
   it('resets the error state when the asset src changes', () => {
@@ -115,7 +116,7 @@ describe('AssetCard', () => {
 
   it('drops the date line and shrinks the thumbnail in the compact density', () => {
     const { rerender } = render(<AssetCard asset={catAsset} />, { wrapper: Wrapper })
-    const date = new Date(catAsset.uploadedAt).toLocaleDateString()
+    const date = formatRelativeTime(catAsset.uploadedAt)
     expect(screen.getByText(date)).toBeTruthy()
     expect(screen.getByRole('img').style.height).toBe('100px')
 

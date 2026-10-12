@@ -14,10 +14,11 @@
  * `mutate()` to revalidate.
  */
 
-import useSWR, { type SWRResponse } from 'swr'
+import useSWR, { useSWRConfig, type ScopedMutator, type SWRResponse } from 'swr'
 import type { ApiClient } from '../context'
 import type { BranchListItem } from '../../api/branch'
 import { isNonApiResponse } from '../../api/client'
+import { seedUserProfiles } from './useUserMetadata'
 
 /** Cache key for the branches list. */
 export const BRANCHES_KEY = 'canopy:branches'
@@ -34,10 +35,14 @@ export interface BranchesData {
 }
 
 /**
- * Fetch the branches list. Exported for direct testing and for the
- * imperative reload path.
+ * Fetch the branches list, writing the owners it names into the user-metadata cache before the
+ * listing lands, so owner badges render named. Exported for direct testing and for the imperative
+ * reload path.
  */
-export async function fetchBranches(apiClient: Pick<ApiClient, 'branches'>): Promise<BranchesData> {
+export async function fetchBranches(
+  apiClient: Pick<ApiClient, 'branches'>,
+  mutate: ScopedMutator,
+): Promise<BranchesData> {
   const result = await apiClient.branches.list()
   if (result.status === 404 && !isNonApiResponse(result)) {
     // No branch endpoint available; stay branchless rather than erroring --
@@ -48,6 +53,7 @@ export async function fetchBranches(apiClient: Pick<ApiClient, 'branches'>): Pro
   if (!result.ok) {
     throw new Error(result.error ?? `Failed to load branches: ${result.status}`)
   }
+  await seedUserProfiles(mutate, result.data?.users ?? [])
   return {
     branches: result.data?.branches ?? [],
     defaultBranch: result.data?.defaultBranch,
@@ -91,7 +97,8 @@ export function hasInFlightBranch(data: BranchesData | undefined): boolean {
 export function useBranchesData(
   apiClient: Pick<ApiClient, 'branches'>,
 ): SWRResponse<BranchesData, Error> {
-  return useSWR(BRANCHES_KEY, () => fetchBranches(apiClient), {
+  const { mutate } = useSWRConfig()
+  return useSWR(BRANCHES_KEY, () => fetchBranches(apiClient, mutate), {
     refreshInterval: (data: BranchesData | undefined) =>
       hasInFlightBranch(data) ? IN_FLIGHT_POLL_MS : 0,
   })

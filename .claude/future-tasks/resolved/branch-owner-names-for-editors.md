@@ -2,13 +2,13 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Scope pending JP. Editors see branch owners in the branch list as raw ids, because name lookups take the `privileged` guard. Recommended: GET /branches returns the owner's name and avatar, never email, for the branches the requester can see, using the same pattern as the comments API
+  RESOLVED (2026-10-11) — in WS6-lite, approved by JP. `GET /branches` returns `users`: the name and avatar, never email, of each listed branch's creator, through `lookupUserProfiles` (`auth/user-metadata-lookup.ts`), which the comments API shares. `fetchBranches` seeds the `canopy:user:` cache from it, and `BranchManager` names owners through `onGetOwnerMetadata`; access users stay on the privileged lookup.
 ---
 # Branch owner names for editors
 
-**Status: scope pending JP** (whether to build it in the editor UI epic's phase 2 lite).
+**Status: resolved** in WS6-lite.
 
-Split from [comment-author-names-for-editors.md](resolved/comment-author-names-for-editors.md)
+Split from [comment-author-names-for-editors.md](comment-author-names-for-editors.md)
 (its step 3). The comments API now returns `users: UserProfile[]` (`auth/types.ts`). The editor
 seeds the `canopy:user:` SWR cache from it through `seedUserProfiles` (`hooks/useUserMetadata.ts`),
 so every editor sees names on comment surfaces. The branch list (`BranchManager.tsx`) still shows

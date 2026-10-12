@@ -6,6 +6,7 @@ export interface BranchStatusPresentation {
   variant: 'light' | 'outline'
 }
 
+/** @internal Exported for tests. */
 export const PROTECTED_BRANCH_PRESENTATION: BranchStatusPresentation = {
   label: 'Protected',
   color: 'neutral',

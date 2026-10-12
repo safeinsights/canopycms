@@ -5,6 +5,7 @@
 import React from 'react'
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
@@ -80,15 +81,18 @@ const okJson = (data: unknown) =>
     headers: { 'Content-Type': 'application/json' },
   })
 
-const stubApi = (groups: string[]) => {
+const stubApi = (
+  groups: string[],
+  threads: unknown[] = [],
+  branchOwner = 'user-1',
+  listedName = 'main',
+) => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     if (url.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups }))
     if (url.endsWith('/main/comments')) {
-      return Promise.resolve(
-        okJson({ threads: [], users: [{ id: 'author-1', name: 'Ada Lovelace' }] }),
-      )
+      return Promise.resolve(okJson({ threads, users: [{ id: 'author-1', name: 'Ada Lovelace' }] }))
     }
     if (url.endsWith('/users/batch')) {
       return Promise.resolve(
@@ -100,10 +104,10 @@ const stubApi = (groups: string[]) => {
         okJson({
           branches: [
             {
-              name: 'main',
+              name: listedName,
               status: 'editing',
               access: {},
-              createdBy: 'user-1',
+              createdBy: branchOwner,
               createdAt: '2024-01-01',
               updatedAt: '2024-01-01',
               isProtected: false,
@@ -113,6 +117,7 @@ const stubApi = (groups: string[]) => {
             },
           ],
           defaultBranch: 'main',
+          users: [{ id: 'owner-9', name: 'Olive Owner' }],
         }),
       )
     }
@@ -522,5 +527,124 @@ describe('comment author names', () => {
       }),
     )
     expect(lookupRequests(fetchMock).length).toBeGreaterThan(0)
+  })
+})
+
+describe('comments panel', () => {
+  const thread = (id: string, entryPath: string, canopyPath: string, authorId: string) => ({
+    id,
+    type: 'field',
+    entryPath,
+    canopyPath,
+    authorId,
+    createdAt: '2024-01-01T00:00:00.000Z',
+    resolved: false,
+    comments: [
+      {
+        id: `${id}-c1`,
+        threadId: id,
+        userId: authorId,
+        timestamp: '2024-01-01T00:00:00.000Z',
+        text: `Comment in ${id}`,
+      },
+    ],
+  })
+  const threads = [
+    thread('theirs', 'content/posts/other', 'title', 'author-1'),
+    thread('mine', 'content/posts/hello', 'links[0].href', 'user-1'),
+  ]
+  const openPanel = async (groups: string[]) => {
+    stubApi(groups, threads)
+    renderEditor()
+    await loaded()
+    fireEvent.click(screen.getByTestId('comments-button'))
+    await screen.findByText('Comment in theirs')
+  }
+  const cardOf = (text: string) =>
+    screen.getByText(text).closest('[data-testid="comment-thread"]') as HTMLElement
+
+  it('lets an editor resolve only the threads they started', async () => {
+    await openPanel([])
+
+    expect(within(cardOf('Comment in theirs')).getByTestId('reply-thread-button')).toBeTruthy()
+    expect(within(cardOf('Comment in theirs')).queryByTestId('resolve-thread-button')).toBeNull()
+    expect(within(cardOf('Comment in mine')).getByTestId('resolve-thread-button')).toBeTruthy()
+  })
+
+  it('lets a reviewer resolve any thread', async () => {
+    await openPanel([RESERVED_GROUPS.REVIEWERS])
+
+    expect(within(cardOf('Comment in theirs')).getByTestId('resolve-thread-button')).toBeTruthy()
+    expect(within(cardOf('Comment in mine')).getByTestId('resolve-thread-button')).toBeTruthy()
+  })
+
+  it('keeps a half-written reply when the panel is closed and opened again', async () => {
+    await openPanel([])
+    fireEvent.click(within(cardOf('Comment in theirs')).getByTestId('reply-thread-button'))
+    fireEvent.change(within(cardOf('Comment in theirs')).getByRole('textbox'), {
+      target: { value: 'Not sent yet' },
+    })
+
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByText('Comment in theirs')).toBeNull())
+    fireEvent.click(screen.getByTestId('comments-button'))
+    await screen.findByText('Comment in theirs')
+
+    expect(
+      (within(cardOf('Comment in theirs')).getByRole('textbox') as HTMLTextAreaElement).value,
+    ).toBe('Not sent yet')
+  })
+
+  it('names each thread by its entry and field labels, not their paths', async () => {
+    await openPanel([])
+
+    const headingOf = (text: string) =>
+      within(cardOf(text)).getByTestId('comment-thread-heading').textContent
+    expect(headingOf('Comment in theirs')).toBe('Field · Other › Title')
+    // The open entry's value names the list item, as its own row does.
+    expect(headingOf('Comment in mine')).toBe('Field · Hello › Links › /a › Href')
+  })
+})
+
+describe('branches drawer', () => {
+  it('marks the open branch as current and offers its workflow action rather than Open', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+
+    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+
+    expect((await screen.findByTestId('branch-current-badge-main')).textContent).toBe('Current')
+    expect(screen.queryByTestId('switch-to-branch-button-main')).toBeNull()
+    expect(screen.getByTestId('submit-branch-button-main').textContent).toBe('Submit for review')
+  })
+
+  it("names the branch's owner for an editor from the branches response, sending no lookup", async () => {
+    const fetchMock = stubApi([], [], 'owner-9')
+    renderEditor()
+    await loaded()
+
+    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+
+    expect(
+      await within(await screen.findByTestId('branch-list-item-main')).findByText('Olive Owner'),
+    ).toBeTruthy()
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).includes('/users/')),
+    ).toHaveLength(0)
+  })
+
+  it('marks the open branch as current when its name only matches once sanitized', async () => {
+    stubApi([], [], 'user-1', 'feature-x')
+    renderEditor({ branchName: 'feature/x' })
+    await loaded()
+
+    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+
+    expect(await screen.findByTestId('branch-current-badge-feature-x')).toBeTruthy()
+    expect(screen.queryByTestId('switch-to-branch-button-feature-x')).toBeNull()
   })
 })

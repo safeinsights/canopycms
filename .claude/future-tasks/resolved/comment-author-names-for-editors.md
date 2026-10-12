@@ -9,7 +9,7 @@ summary: >-
 ## Status: RESOLVED 2026-10-11
 
 Plan steps 1 and 2 shipped on `feat/comment-author-names`. Step 3 is a scope question for JP,
-filed as [branch-owner-names-for-editors.md](../branch-owner-names-for-editors.md).
+filed as [branch-owner-names-for-editors.md](branch-owner-names-for-editors.md).
 
 **Decision (JP, 2026-10-10):** the comments API returns each author's display name and avatar,
 with no email, for threads the requester can read. It is a follow-up chip after the launch
