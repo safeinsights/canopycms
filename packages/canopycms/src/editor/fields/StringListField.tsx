@@ -15,6 +15,13 @@ export interface StringListFieldProps {
   readOnly?: boolean
 }
 
+/** The field's description, ended as a sentence, then the hint that Enter adds. */
+const withEnterHint = (description: string | undefined): string => {
+  const own = description?.trim()
+  if (!own) return 'Press Enter to add.'
+  return `${/[.!?]$/.test(own) ? own : `${own}.`} Press Enter to add.`
+}
+
 /**
  * Editor for `type: 'string', list: true` fields.
  *
@@ -39,9 +46,7 @@ export const StringListField: React.FC<StringListFieldProps> = ({
       <TagsInput
         id={inputId}
         // TagsInput gives no sign that Enter adds a typed item.
-        description={
-          readOnly ? description : [description, 'Press Enter to add.'].filter(Boolean).join(' ')
-        }
+        description={readOnly ? description : withEnterHint(description)}
         value={value}
         size="sm"
         readOnly={readOnly}

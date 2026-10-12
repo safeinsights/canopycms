@@ -48,6 +48,17 @@ export const DateTime: StoryObj = {
   },
 }
 
+export const DateTimeReadOnly: StoryObj = {
+  render: () => (
+    <DateTimeField
+      label="Published at"
+      value="2026-10-12T14:30:00.000Z"
+      onChange={() => {}}
+      readOnly
+    />
+  ),
+}
+
 export const StringList: StoryObj = {
   render: () => {
     const [value, setValue] = useState(['typed', 'fast'])

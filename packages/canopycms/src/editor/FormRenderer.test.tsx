@@ -679,7 +679,7 @@ describe('FormRenderer', () => {
   describe("'datetime' field type", () => {
     /** Picks 20 March 2024 at 14:05:09 local, from an empty field, through the picker's own UI. */
     const pickMarch20 = async (): Promise<number> => {
-      const picker = screen.getByRole('button', { name: 'Published At' })
+      const picker = screen.getByRole('button', { name: /^Published At, / })
       fireEvent.click(picker)
       const dropdown = await waitFor(() => {
         const el = document.querySelector<HTMLElement>('[data-dates-dropdown]')
@@ -999,7 +999,7 @@ describe('FormRenderer', () => {
      */
     const expectDescribed = (
       kind: 'input' | 'picker' | 'group',
-      text: string = DESCRIPTION,
+      text: string | RegExp = DESCRIPTION,
     ): HTMLElement => {
       const node = screen.getByText(text)
       expect(node.id).toMatch(/-description$/)
@@ -1028,7 +1028,7 @@ describe('FormRenderer', () => {
     it('string list', () => {
       renderFields(described({ name: 'tags', type: 'string', label: 'Tags', list: true }))
       // An editable list adds the Enter hint after the description.
-      expectDescribed('input', `${DESCRIPTION} Press Enter to add.`)
+      expectDescribed('input', `${DESCRIPTION}. Press Enter to add.`)
     })
 
     it('boolean', () => {
@@ -1048,7 +1048,10 @@ describe('FormRenderer', () => {
 
     it('datetime', () => {
       renderFields(described({ name: 'publishedAt', type: 'datetime', label: 'Published At' }))
-      expect(expectDescribed('picker')).toBe(screen.getByLabelText('Published At'))
+      // The picker adds the zone its times are shown in.
+      expect(
+        expectDescribed('picker', /^Guidance for the editor In your time zone \(.+\)\.$/),
+      ).toBe(screen.getByLabelText('Published At', { exact: false }))
     })
 
     it('markdown', () => {

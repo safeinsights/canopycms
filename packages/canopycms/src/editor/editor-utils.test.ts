@@ -1376,19 +1376,48 @@ describe('entryTypeLabel', () => {
     expect(entryTypeLabel(collections, entry('content/docs/guides', 'guide'))).toBe('Guide')
   })
 
-  it('falls back to the type name when the type has no label', () => {
-    expect(entryTypeLabel(collections, entry('content/docs', 'faq'))).toBe('faq')
+  it('reads the type name as words when the type has no label', () => {
+    expect(entryTypeLabel(collections, entry('content/docs', 'faq'))).toBe('Faq')
   })
 
-  it('falls back to the type name when the collection does not list that type', () => {
-    expect(entryTypeLabel(collections, entry('content/docs', 'retired'))).toBe('retired')
-    expect(entryTypeLabel(collections, entry('content/blog', 'post'))).toBe('post')
+  it('reads the type name as words when the collection does not list that type', () => {
+    expect(entryTypeLabel(collections, entry('content/docs', 'retired'))).toBe('Retired')
+    expect(entryTypeLabel(collections, entry('content/blog', 'post'))).toBe('Post')
   })
 
-  it('falls back to the type name when the collection is unknown, or no collections are given', () => {
-    expect(entryTypeLabel(collections, entry('elsewhere', 'page'))).toBe('page')
-    expect(entryTypeLabel(undefined, entry('content', 'page'))).toBe('page')
-    expect(entryTypeLabel([], entry('content', 'page'))).toBe('page')
+  it('reads the type name as words when the collection is unknown, or no collections are given', () => {
+    expect(entryTypeLabel(collections, entry('elsewhere', 'page'))).toBe('Page')
+    expect(entryTypeLabel(undefined, entry('content', 'page'))).toBe('Page')
+    expect(entryTypeLabel([], entry('content', 'page'))).toBe('Page')
+  })
+
+  describe('humanizes an unlabelled type name into sentence case', () => {
+    it.each([
+      ['blogPost', 'Blog post'],
+      ['blog-post', 'Blog post'],
+      ['blog_post', 'Blog post'],
+      ['BlogPost', 'Blog post'],
+      ['landing page', 'Landing page'],
+      ['faq', 'Faq'],
+      ['teamMemberProfile', 'Team member profile'],
+      ['release-notes_v2', 'Release notes v2'],
+      ['a--b', 'A b'],
+    ])('%s is %s', (name, expected) => {
+      expect(entryTypeLabel(collections, entry('content/blog', name))).toBe(expected)
+    })
+  })
+
+  it('does not humanize a label the collection gives', () => {
+    const labelled: EditorCollection[] = [
+      {
+        path: unsafeAsLogicalPath('posts'),
+        name: 'posts',
+        type: 'collection',
+        format: 'mdx',
+        entryTypes: [{ name: 'blogPost', label: 'blogPost (legacy)', format: 'mdx' }],
+      },
+    ]
+    expect(entryTypeLabel(labelled, entry('posts', 'blogPost'))).toBe('blogPost (legacy)')
   })
 
   it('is undefined for an entry with no entry type', () => {

@@ -206,6 +206,8 @@ export interface FormRendererProps {
    * or block fields, Expand all and Collapse all.
    */
   header?: { title: string; typeLabel?: string }
+  /** An entry-wide notice, shown first under the header. */
+  notice?: React.ReactNode
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -229,9 +231,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   onRemoved,
   onGetUserMetadata,
   header,
+  notice,
 }) => {
   const emit = readOnly ? noop : onChange
   const formRef = useRef<HTMLDivElement>(null)
+  const customTypes = new Set(Object.keys(customRenderers ?? {}))
   const [expansionCommand, setExpansionCommand] = useState<FormExpansionCommand | undefined>()
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
   const siteMdxAllow = useSiteMdxAllow()
@@ -700,19 +704,20 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             <FormHeader
               title={header.title}
               typeLabel={header.typeLabel}
-              outline={buildFormOutline(fields, value)}
+              outline={buildFormOutline(fields, value, customTypes)}
               onSelect={(path) => {
                 const target = formRef.current ? findFieldTarget(path, formRef.current) : undefined
                 if (target) focusFieldTarget(target.element)
               }}
               onExpandAll={
-                hasCollapsibleList(fields)
+                hasCollapsibleList(fields, customTypes)
                   ? (expanded) =>
                       setExpansionCommand((prev) => ({ seq: (prev?.seq ?? 0) + 1, expanded }))
                   : undefined
               }
             />
           )}
+          {notice}
           {readOnly && <ReadOnlyFormStyles />}
           {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
             <EntryComments

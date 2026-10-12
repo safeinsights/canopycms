@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 import {
   ActionIcon,
@@ -19,21 +19,36 @@ import { IconChevronsDown, IconChevronsUp, IconListTree } from '@tabler/icons-re
 /** The padding of the scroller the form sits in, set by `EditorPanes`; none elsewhere. */
 const PANE_PADDING = 'var(--canopy-form-pane-padding, 0px)'
 
-/** One line of the outline: a field, or a row of a list or block field, one level down. */
-export interface OutlineItem {
+/** Icon-only controls name themselves on keyboard focus and touch too, not on hover alone. */
+const TOOLTIP_EVENTS = { hover: true, focus: true, touch: true }
+
+/** Space kept between the header and a field scrolled up to it. */
+const SCROLL_GAP = 8
+
+/** The nearest ancestor that scrolls vertically, which the header sticks within. */
+const scrollerOf = (element: HTMLElement): HTMLElement | undefined => {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node)
+    if (overflowY === 'auto' || overflowY === 'scroll') return node
+  }
+  return undefined
+}
+
+/** A field in the outline, holding its rows, or an inline group holding its fields. */
+export interface OutlineNode {
   label: string
-  /** The canopy path to focus; absent for a group heading, which is not a field. */
+  /** The canopy path to focus; absent for an inline group, which is not a field. */
   path?: string
   /** A row's second value, shown dimmed beside its label. */
   secondary?: string
-  depth: 0 | 1
+  children?: OutlineNode[]
 }
 
 export interface FormHeaderProps {
   title: string
   /** The entry type's label, shown as a badge. */
   typeLabel?: string
-  outline: OutlineItem[]
+  outline: OutlineNode[]
   /** Scrolls to and focuses the field at `path`. */
   onSelect: (path: string) => void
   /** Set when the form has a list or block field, so expanding and collapsing has a target. */
@@ -44,6 +59,63 @@ export interface FormHeaderProps {
  * The form's sticky header: which entry this is, an outline of its fields to jump to, and
  * Expand all / Collapse all for every list and block field in it.
  */
+/**
+ * One level of the outline as a list. A row's name leads with its field's label ("Page sections ›
+ * Hero, Welcome"), so rows of two lists are told apart by ear.
+ */
+const OutlineList: React.FC<{
+  nodes: OutlineNode[]
+  /** The field these nodes are rows of. */
+  field?: string
+  nested?: boolean
+  onChoose: (path: string) => void
+}> = ({ nodes, field, nested = false, onChoose }) => (
+  <ul style={{ listStyle: 'none', margin: 0, paddingLeft: nested ? 16 : 0 }}>
+    {nodes.map((node, idx) => {
+      const name = node.secondary ? `${node.label}, ${node.secondary}` : node.label
+      return (
+        <li key={node.path ?? `group-${idx}`}>
+          {node.path === undefined ? (
+            <Text size="xs" fw={600} c="dimmed" px="xs" pt={6} pb={2}>
+              {node.label}
+            </Text>
+          ) : (
+            <UnstyledButton
+              onClick={() => onChoose(node.path as string)}
+              aria-label={field ? `${field} › ${name}` : undefined}
+              display="block"
+              w="100%"
+              py={4}
+              px="xs"
+              style={{ borderRadius: 'var(--mantine-radius-sm)' }}
+              className="canopy-outline-item"
+              data-testid="form-outline-item"
+            >
+              <Text size="sm" truncate="end" fw={field ? undefined : 500}>
+                {node.label}
+                {node.secondary && (
+                  <Text span c="dimmed" size="sm">
+                    {' '}
+                    {node.secondary}
+                  </Text>
+                )}
+              </Text>
+            </UnstyledButton>
+          )}
+          {node.children && node.children.length > 0 && (
+            <OutlineList
+              nodes={node.children}
+              field={node.path === undefined ? undefined : node.label}
+              nested
+              onChoose={onChoose}
+            />
+          )}
+        </li>
+      )
+    })}
+  </ul>
+)
+
 export const FormHeader: React.FC<FormHeaderProps> = ({
   title,
   typeLabel,
@@ -52,9 +124,30 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
   onExpandAll,
 }) => {
   const [outlineOpen, setOutlineOpen] = useState(false)
+  const headerRef = useRef<HTMLDivElement>(null)
+
+  // Its scroller pads its scroll edge by the header's height, so a field scrolled to the top, as
+  // `scrollIntoView` does, lands below the header rather than under it.
+  useEffect(() => {
+    const header = headerRef.current
+    const scroller = header ? scrollerOf(header) : undefined
+    if (!header || !scroller) return
+    const previous = scroller.style.scrollPaddingTop
+    const pad = () => {
+      scroller.style.scrollPaddingTop = `${header.offsetHeight + SCROLL_GAP}px`
+    }
+    pad()
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(pad) : undefined
+    observer?.observe(header)
+    return () => {
+      observer?.disconnect()
+      scroller.style.scrollPaddingTop = previous
+    }
+  }, [])
 
   return (
     <Box
+      ref={headerRef}
       data-testid="form-header"
       style={{
         // Bleeds over the form pane's padding, so it spans the pane and sticks to its very top.
@@ -78,7 +171,8 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
             c="gray.8"
             size="sm"
             tt="none"
-            style={{ flexShrink: 0 }}
+            // Gives way before the title in a narrow pane.
+            style={{ flexShrink: 2, minWidth: 0 }}
           >
             {typeLabel}
           </Badge>
@@ -112,57 +206,24 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
             <Popover.Dropdown p={4}>
               <ScrollArea.Autosize mah={400} type="auto">
                 <nav aria-label="Outline" data-testid="form-outline">
-                  {outline.map((item, idx) =>
-                    item.path === undefined ? (
-                      <Text
-                        key={`heading-${idx}`}
-                        size="xs"
-                        fw={600}
-                        c="dimmed"
-                        px="xs"
-                        pt={6}
-                        pb={2}
-                      >
-                        {item.label}
-                      </Text>
-                    ) : (
-                      <UnstyledButton
-                        key={item.path}
-                        onClick={() => {
-                          setOutlineOpen(false)
-                          onSelect(item.path as string)
-                        }}
-                        display="block"
-                        w="100%"
-                        py={4}
-                        pr="xs"
-                        pl={item.depth === 1 ? 28 : 'xs'}
-                        style={{ borderRadius: 'var(--mantine-radius-sm)' }}
-                        className="canopy-outline-item"
-                        data-testid="form-outline-item"
-                      >
-                        <Text size="sm" truncate="end" fw={item.depth === 0 ? 500 : undefined}>
-                          {item.label}
-                          {item.secondary && (
-                            <Text span c="dimmed" size="sm">
-                              {' '}
-                              {item.secondary}
-                            </Text>
-                          )}
-                        </Text>
-                      </UnstyledButton>
-                    ),
-                  )}
+                  <OutlineList
+                    nodes={outline}
+                    onChoose={(path) => {
+                      setOutlineOpen(false)
+                      onSelect(path)
+                    }}
+                  />
                 </nav>
               </ScrollArea.Autosize>
             </Popover.Dropdown>
           </Popover>
           {onExpandAll && (
             <>
-              <Tooltip label="Expand all lists">
+              <Tooltip label="Expand all lists" events={TOOLTIP_EVENTS}>
                 <ActionIcon
                   variant="subtle"
                   color="gray"
+                  c="gray.7"
                   aria-label="Expand all lists"
                   onClick={() => onExpandAll(true)}
                   data-testid="form-expand-all"
@@ -170,10 +231,11 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
                   <IconChevronsDown size={16} aria-hidden />
                 </ActionIcon>
               </Tooltip>
-              <Tooltip label="Collapse all lists">
+              <Tooltip label="Collapse all lists" events={TOOLTIP_EVENTS}>
                 <ActionIcon
                   variant="subtle"
                   color="gray"
+                  c="gray.7"
                   aria-label="Collapse all lists"
                   onClick={() => onExpandAll(false)}
                   data-testid="form-collapse-all"

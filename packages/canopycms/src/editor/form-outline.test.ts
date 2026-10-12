@@ -37,10 +37,10 @@ const team: FieldConfig = {
 }
 
 describe('buildFormOutline', () => {
-  it('lists each top-level field, labelled or by name, with its path, at depth 0', () => {
+  it('has one node per top-level field, labelled or by name, with its path and no children', () => {
     expect(buildFormOutline([title, summary], {})).toEqual([
-      { label: 'Title', path: 'title', depth: 0 },
-      { label: 'summary', path: 'summary', depth: 0 },
+      { label: 'Title', path: 'title' },
+      { label: 'summary', path: 'summary' },
     ])
   })
 
@@ -48,7 +48,7 @@ describe('buildFormOutline', () => {
     expect(buildFormOutline([], {})).toEqual([])
   })
 
-  it('makes an inline group a heading with no path, followed by its fields in order', () => {
+  it('makes an inline group a node with no path that holds its fields in order', () => {
     const fields: FieldConfig[] = [
       title,
       {
@@ -62,17 +62,22 @@ describe('buildFormOutline', () => {
       },
       summary,
     ]
-    expect(buildFormOutline(fields, {})).toEqual([
-      { label: 'Title', path: 'title', depth: 0 },
-      { label: 'Search', depth: 0 },
-      { label: 'Meta title', path: 'metaTitle', depth: 0 },
-      { label: 'metaText', path: 'metaText', depth: 0 },
-      { label: 'summary', path: 'summary', depth: 0 },
+    const outline = buildFormOutline(fields, {})
+    expect(outline).toEqual([
+      { label: 'Title', path: 'title' },
+      {
+        label: 'Search',
+        children: [
+          { label: 'Meta title', path: 'metaTitle' },
+          { label: 'metaText', path: 'metaText' },
+        ],
+      },
+      { label: 'summary', path: 'summary' },
     ])
-    expect(buildFormOutline(fields, {})[1]).not.toHaveProperty('path')
+    expect(outline[1]).not.toHaveProperty('path')
   })
 
-  it('names an unlabelled group by its name, and flattens a group inside a group', () => {
+  it('names an unlabelled group by its name, and nests a group inside a group', () => {
     const fields: FieldConfig[] = [
       {
         type: 'group',
@@ -81,13 +86,14 @@ describe('buildFormOutline', () => {
       },
     ]
     expect(buildFormOutline(fields, {})).toEqual([
-      { label: 'outer', depth: 0 },
-      { label: 'Inner', depth: 0 },
-      { label: 'summary', path: 'summary', depth: 0 },
+      {
+        label: 'outer',
+        children: [{ label: 'Inner', children: [{ label: 'summary', path: 'summary' }] }],
+      },
     ])
   })
 
-  it('puts each block row one level down, labelled by its template, with the first text as secondary', () => {
+  it('holds each block row as a child of its field, labelled by its template, with the first text as secondary', () => {
     const value = {
       sections: [
         { template: 'hero', value: { headline: 'Welcome', kicker: 'New' } },
@@ -96,10 +102,15 @@ describe('buildFormOutline', () => {
       ],
     }
     expect(buildFormOutline([blocks], value)).toEqual([
-      { label: 'Sections', path: 'sections', depth: 0 },
-      { label: 'Hero banner', secondary: 'Welcome', path: 'sections[0]', depth: 1 },
-      { label: 'quote', secondary: 'To be', path: 'sections[1]', depth: 1 },
-      { label: 'Hero banner', secondary: undefined, path: 'sections[2]', depth: 1 },
+      {
+        label: 'Sections',
+        path: 'sections',
+        children: [
+          { label: 'Hero banner', secondary: 'Welcome', path: 'sections[0]' },
+          { label: 'quote', secondary: 'To be', path: 'sections[1]' },
+          { label: 'Hero banner', secondary: undefined, path: 'sections[2]' },
+        ],
+      },
     ])
   })
 
@@ -110,36 +121,28 @@ describe('buildFormOutline', () => {
         { template: 'quote', value: { text: 'b' } },
       ],
     }
-    expect(buildFormOutline([blocks], value).map((item) => item.path)).toEqual([
-      'sections',
-      'sections[0]',
-      'sections[1]',
-    ])
+    const [node] = buildFormOutline([blocks], value)
+    expect(node.children?.map((row) => row.path)).toEqual(['sections[0]', 'sections[1]'])
   })
 
   it('names a block of an unknown template by the template name, with no secondary', () => {
-    const items = buildFormOutline([blocks], {
+    const [node] = buildFormOutline([blocks], {
       sections: [{ template: 'retired', value: { text: 'x' } }],
     })
-    expect(items[1]).toEqual({
-      label: 'retired',
-      secondary: undefined,
-      path: 'sections[0]',
-      depth: 1,
-    })
+    expect(node.children).toEqual([{ label: 'retired', secondary: undefined, path: 'sections[0]' }])
   })
 
   it('calls a block row with no usable template "Unknown block"', () => {
-    const items = buildFormOutline([blocks], {
+    const [node] = buildFormOutline([blocks], {
       sections: [{ value: {} }, 'junk', null, { template: 7 }],
     })
-    expect(items.slice(1).map((item) => item.label)).toEqual([
+    expect(node.children?.map((row) => row.label)).toEqual([
       'Unknown block',
       'Unknown block',
       'Unknown block',
       'Unknown block',
     ])
-    expect(items.slice(1).map((item) => item.path)).toEqual([
+    expect(node.children?.map((row) => row.path)).toEqual([
       'sections[0]',
       'sections[1]',
       'sections[2]',
@@ -147,27 +150,32 @@ describe('buildFormOutline', () => {
     ])
   })
 
-  it('puts each row of an object list one level down, titled by its itemTitleField, else by position', () => {
+  it('holds each row of an object list as a child, titled by its itemTitleField, else by position', () => {
     const value = {
       team: [{ name: 'Ada', role: 'Engineer' }, { name: '', role: '' }, 'junk'],
     }
     expect(buildFormOutline([team], value)).toEqual([
-      { label: 'Team', path: 'team', depth: 0 },
-      { label: 'Ada', secondary: 'Engineer', path: 'team[0]', depth: 1 },
-      // Nothing to title a row by: the positional heading from the field's itemLabel, 1-based.
-      { label: 'Team member 2', secondary: undefined, path: 'team[1]', depth: 1 },
-      { label: 'Team member 3', secondary: undefined, path: 'team[2]', depth: 1 },
+      {
+        label: 'Team',
+        path: 'team',
+        children: [
+          { label: 'Ada', secondary: 'Engineer', path: 'team[0]' },
+          // Nothing to title a row by: the positional heading from the field's itemLabel, 1-based.
+          { label: 'Team member 2', secondary: undefined, path: 'team[1]' },
+          { label: 'Team member 3', secondary: undefined, path: 'team[2]' },
+        ],
+      },
     ])
   })
 
-  it('lists a list field that is not a list of objects, and a single object, without rows', () => {
+  it('gives a list field that is not a list of objects, and a single object, no children', () => {
     const fields: FieldConfig[] = [
       { name: 'tags', type: 'string', list: true },
       { name: 'author', type: 'object', fields: [{ name: 'name', type: 'string' }] },
     ]
     expect(buildFormOutline(fields, { tags: ['a', 'b'], author: { name: 'Ada' } })).toEqual([
-      { label: 'tags', path: 'tags', depth: 0 },
-      { label: 'author', path: 'author', depth: 0 },
+      { label: 'tags', path: 'tags' },
+      { label: 'author', path: 'author' },
     ])
   })
 
@@ -178,7 +186,7 @@ describe('buildFormOutline', () => {
       fields: [{ name: 'name', type: 'string' }],
     }
     expect(buildFormOutline([author], { author: [{ name: 'Ada' }] })).toEqual([
-      { label: 'author', path: 'author', depth: 0 },
+      { label: 'author', path: 'author' },
     ])
   })
 
@@ -190,22 +198,61 @@ describe('buildFormOutline', () => {
   ])('has no rows for a block or list field whose value is %s', (_name, stored) => {
     const value = { sections: stored, team: stored }
     expect(buildFormOutline([blocks, team], value)).toEqual([
-      { label: 'Sections', path: 'sections', depth: 0 },
-      { label: 'Team', path: 'team', depth: 0 },
+      { label: 'Sections', path: 'sections' },
+      { label: 'Team', path: 'team' },
     ])
   })
 
   it('has no rows for an empty list', () => {
-    expect(buildFormOutline([blocks, team], { sections: [], team: [] })).toHaveLength(2)
+    const outline = buildFormOutline([blocks, team], { sections: [], team: [] })
+    expect(outline).toHaveLength(2)
+    expect(outline.every((node) => !node.children || node.children.length === 0)).toBe(true)
   })
 
-  it('lists the rows of a block or list field that sits inside a group', () => {
+  it('holds the rows of a block or list field that sits inside a group under that field', () => {
     const fields: FieldConfig[] = [{ type: 'group', name: 'g', label: 'Page', fields: [team] }]
-    expect(buildFormOutline(fields, { team: [{ name: 'Ada' }] }).map((i) => i.path)).toEqual([
-      undefined,
-      'team',
-      'team[0]',
+    expect(buildFormOutline(fields, { team: [{ name: 'Ada' }] })).toEqual([
+      {
+        label: 'Page',
+        children: [
+          {
+            label: 'Team',
+            path: 'team',
+            children: [{ label: 'Ada', secondary: undefined, path: 'team[0]' }],
+          },
+        ],
+      },
     ])
+  })
+
+  describe('with custom renderers', () => {
+    const value = {
+      sections: [{ template: 'quote', value: { text: 'a' } }],
+      team: [{ name: 'Ada' }],
+    }
+
+    it('lists no rows for a field type that has a custom renderer', () => {
+      expect(buildFormOutline([blocks, team], value, new Set(['block']))).toEqual([
+        { label: 'Sections', path: 'sections' },
+        {
+          label: 'Team',
+          path: 'team',
+          children: [{ label: 'Ada', secondary: undefined, path: 'team[0]' }],
+        },
+      ])
+      const [, teamNode] = buildFormOutline([blocks, team], value, new Set(['block']))
+      expect(teamNode.children).toHaveLength(1)
+    })
+
+    it('still lists the field itself, and rows of types without a custom renderer', () => {
+      const outline = buildFormOutline([blocks, team], value, new Set(['object']))
+      expect(outline[0].children).toHaveLength(1)
+      expect(outline[1]).toEqual({ label: 'Team', path: 'team' })
+    })
+
+    it('ignores custom types that no field has', () => {
+      expect(buildFormOutline([blocks], value, new Set(['callout']))[0].children).toHaveLength(1)
+    })
   })
 })
 
@@ -255,5 +302,32 @@ describe('hasCollapsibleList', () => {
         },
       ]),
     ).toBe(true)
+  })
+
+  describe('with custom renderers', () => {
+    const custom = new Set(['block'])
+
+    it('does not count a block field whose type has a custom renderer', () => {
+      expect(hasCollapsibleList([title, blocks], custom)).toBe(false)
+    })
+
+    it('still counts a block field when only another type is custom', () => {
+      expect(hasCollapsibleList([title, blocks], new Set(['callout']))).toBe(true)
+    })
+
+    it('counts a list of objects when only block is custom, and the reverse', () => {
+      expect(hasCollapsibleList([blocks, team], custom)).toBe(true)
+      expect(hasCollapsibleList([blocks, team], new Set(['object']))).toBe(true)
+      expect(hasCollapsibleList([team], new Set(['object']))).toBe(false)
+    })
+
+    it('does not count a custom block inside a group or an object', () => {
+      expect(hasCollapsibleList([{ type: 'group', name: 'g', fields: [blocks] }], custom)).toBe(
+        false,
+      )
+      expect(hasCollapsibleList([{ name: 'wrap', type: 'object', fields: [blocks] }], custom)).toBe(
+        false,
+      )
+    })
   })
 })

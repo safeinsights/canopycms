@@ -220,32 +220,37 @@ export const Default: Story = {
  * In a scroller like the editor's form pane: the header stays at the top while the form scrolls,
  * "Outline" jumps to a field or row, and the chevrons expand or collapse every list.
  */
-export const WithHeader: Story = {
-  render: () => {
-    const [value, setValue] = useState<PostValue>(initialPost)
-    return (
-      <div
-        style={
-          {
-            '--canopy-form-pane-padding': '20px',
-            padding: 'var(--canopy-form-pane-padding)',
-            height: 600,
-            maxWidth: 560,
-            overflow: 'auto',
-            backgroundColor: 'var(--mantine-color-gray-1)',
-          } as React.CSSProperties
-        }
-      >
-        <FormRenderer
-          fields={postSchema}
-          value={value}
-          onChange={(next) => setValue(next as unknown as PostValue)}
-          header={{ title: value.title, typeLabel: 'Post' }}
-        />
-      </div>
-    )
-  },
+const HeaderScroller: React.FC<{ readOnly?: boolean }> = ({ readOnly = false }) => {
+  const [value, setValue] = useState<PostValue>(initialPost)
+  return (
+    <div
+      style={
+        {
+          '--canopy-form-pane-padding': '20px',
+          padding: 'var(--canopy-form-pane-padding)',
+          height: 600,
+          maxWidth: 560,
+          overflow: 'auto',
+          backgroundColor: 'var(--mantine-color-gray-1)',
+        } as React.CSSProperties
+      }
+    >
+      <FormRenderer
+        fields={postSchema}
+        value={value}
+        onChange={(next) => setValue(next as unknown as PostValue)}
+        readOnly={readOnly}
+        // The editor names the entry by its saved title, which a draft does not change.
+        header={{ title: initialPost.title, typeLabel: 'Post' }}
+      />
+    </div>
+  )
 }
+
+export const WithHeader: Story = { render: () => <HeaderScroller /> }
+
+/** Read-only: the outline and Expand or Collapse all lists still work. */
+export const WithHeaderReadOnly: Story = { render: () => <HeaderScroller readOnly /> }
 
 /** A locked branch: every field shows its value read-only, with no add, remove or reorder. */
 export const ReadOnly: Story = {
@@ -257,10 +262,13 @@ export const ReadOnly: Story = {
 /** As the editor shows a read-only entry that has a draft kept from earlier. */
 export const ReadOnlyWithKeptDraft: Story = {
   render: () => (
-    <div>
-      <ReadOnlyDraftNotice permanentlyReadOnly={false} onDiscard={() => {}} />
-      <FormRenderer fields={postSchema} value={initialPost} onChange={() => {}} readOnly />
-    </div>
+    <FormRenderer
+      fields={postSchema}
+      value={initialPost}
+      onChange={() => {}}
+      readOnly
+      notice={<ReadOnlyDraftNotice permanentlyReadOnly={false} onDiscard={() => {}} />}
+    />
   ),
 }
 

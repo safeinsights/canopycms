@@ -241,7 +241,20 @@ export const buildCollectionLabels = (collections?: EditorCollection[]): Map<str
   return map
 }
 
-/** An entry's type as its collection labels it, else the type's name; undefined when untyped. */
+/** A schema name read as words in sentence case: `blogPost` and `blog-post` are "Blog post". */
+const humanizeName = (name: string): string => {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[-_\s]+/g, ' ')
+    .trim()
+    .toLowerCase()
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/**
+ * An entry's type as its collection labels it, else its name read as words; undefined when
+ * untyped.
+ */
 export const entryTypeLabel = (
   collections: EditorCollection[] | undefined,
   entry: Pick<EditorEntry, 'collectionPath' | 'entryType'>,
@@ -257,7 +270,7 @@ export const entryTypeLabel = (
   }
   const collection = collections ? find(collections) : undefined
   const type = collection?.entryTypes?.find((t) => t.name === entry.entryType)
-  return type?.label ?? entry.entryType
+  return type?.label ?? humanizeName(entry.entryType)
 }
 
 /**

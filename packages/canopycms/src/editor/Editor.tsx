@@ -1452,16 +1452,18 @@ const EditorContent: React.FC<EditorProps> = ({
                     ) : schema.length > 0 && displayValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <SiteMdxAllowContext.Provider value={mdxAllow}>
-                          {hiddenDraftNotice && (
-                            <ReadOnlyDraftNotice
-                              permanentlyReadOnly={
-                                (currentBranch?.isProtected ?? true) ||
-                                currentBranch?.status === 'archived'
-                              }
-                              onDiscard={handleDiscardFileDraft}
-                            />
-                          )}
                           <FormRenderer
+                            notice={
+                              hiddenDraftNotice && (
+                                <ReadOnlyDraftNotice
+                                  permanentlyReadOnly={
+                                    (currentBranch?.isProtected ?? true) ||
+                                    currentBranch?.status === 'archived'
+                                  }
+                                  onDiscard={handleDiscardFileDraft}
+                                />
+                              )
+                            }
                             fields={schema}
                             value={displayValue}
                             readOnly={contentReadOnly}

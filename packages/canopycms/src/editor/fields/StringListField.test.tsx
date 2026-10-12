@@ -92,6 +92,24 @@ describe('StringListField', () => {
       expect(describedBy()).toBe('Used for search. Press Enter to add.')
     })
 
+    it.each([
+      ['Used for search', 'Used for search. Press Enter to add.'],
+      ['Used for search.', 'Used for search. Press Enter to add.'],
+      ['Really, tags!', 'Really, tags! Press Enter to add.'],
+      ['Which tags?', 'Which tags? Press Enter to add.'],
+      ['  Used for search  ', 'Used for search. Press Enter to add.'],
+      ['', 'Press Enter to add.'],
+      ['   ', 'Press Enter to add.'],
+    ])('after the description %j reads %j', (description, expected) => {
+      render(<Harness description={description} />)
+      expect(describedBy()).toBe(expected)
+    })
+
+    it('leaves a read-only description exactly as given, with no full stop added', () => {
+      render(<Harness description="Used for search" readOnly />)
+      expect(describedBy()).toBe('Used for search')
+    })
+
     it('is absent from a read-only list that has a description', () => {
       render(<Harness description="Used for search." readOnly />)
       expect(describedBy()).toBe('Used for search.')

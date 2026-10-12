@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FieldConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
-import { FormHeader, type OutlineItem } from './FormHeader'
+import { FormHeader, type OutlineNode } from './FormHeader'
 import { CanopyCMSProvider } from './theme'
 
 afterEach(() => cleanup())
@@ -113,42 +113,144 @@ describe('FormHeader', () => {
     expect(header.querySelector('.mantine-Badge-root')).toBeNull()
   })
 
-  it('lists outline items as buttons in a nav, with a group heading as plain text', async () => {
-    const outline: OutlineItem[] = [
-      { label: 'Title', path: 'title', depth: 0 },
-      { label: 'Extras', depth: 0 },
-      { label: 'People', path: 'people', depth: 0 },
-      { label: 'Ada', secondary: 'Engineer', path: 'people[0]', depth: 1 },
+  describe('outline tree', () => {
+    const outline: OutlineNode[] = [
+      { label: 'Title', path: 'title' },
+      { label: 'Extras', children: [{ label: 'Summary', path: 'summary' }] },
+      {
+        label: 'People',
+        path: 'people',
+        children: [
+          { label: 'Ada', secondary: 'Engineer', path: 'people[0]' },
+          { label: 'Brian', path: 'people[1]' },
+        ],
+      },
     ]
-    const onSelect = vi.fn()
-    const user = userEvent.setup()
-    render(
-      <CanopyCMSProvider>
-        <FormHeader title="T" outline={outline} onSelect={onSelect} />
-      </CanopyCMSProvider>,
-    )
-    const nav = await openOutline(user)
 
-    const items = within(nav).getAllByTestId('form-outline-item')
-    expect(items.map((item) => item.textContent)).toEqual(['Title', 'People', 'Ada Engineer'])
-    expect(items.every((item) => item.tagName === 'BUTTON')).toBe(true)
-    // The heading is text in the nav, not a button, so it can't be chosen.
-    expect(within(nav).getByText('Extras')).toBeTruthy()
-    expect(within(nav).queryByRole('button', { name: 'Extras' })).toBeNull()
+    const renderHeader = async (onSelect = vi.fn()) => {
+      const user = userEvent.setup()
+      render(
+        <CanopyCMSProvider>
+          <FormHeader title="T" outline={outline} onSelect={onSelect} />
+        </CanopyCMSProvider>,
+      )
+      const nav = await openOutline(user)
+      return { nav, user, onSelect }
+    }
 
-    await user.click(items[2])
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith('people[0]')
+    it('is a list inside the nav, with a nested list under each group and field that has children', async () => {
+      const { nav } = await renderHeader()
+      const top = nav.querySelector(':scope > ul')
+      expect(top).not.toBeNull()
+      const items = [...top!.children].filter((el) => el.tagName === 'LI')
+      expect(items).toHaveLength(3)
+      expect(
+        items.map((li) => [...li.children].filter((el) => el.tagName === 'UL').length),
+      ).toEqual([0, 1, 1])
+      expect(within(items[2] as HTMLElement).getAllByRole('listitem')).toHaveLength(2)
+    })
+
+    it('lists every field and row as a button, in tree order', async () => {
+      const { nav } = await renderHeader()
+      expect(
+        within(nav)
+          .getAllByTestId('form-outline-item')
+          .map((item) => item.textContent),
+      ).toEqual(['Title', 'Summary', 'People', 'Ada Engineer', 'Brian'])
+      expect(
+        within(nav)
+          .getAllByTestId('form-outline-item')
+          .every((item) => item.tagName === 'BUTTON'),
+      ).toBe(true)
+    })
+
+    it('shows a group as plain text that holds its fields', async () => {
+      const { nav } = await renderHeader()
+      const heading = within(nav).getByText('Extras')
+      expect(heading.closest('button')).toBeNull()
+      expect(within(nav).queryByRole('button', { name: 'Extras' })).toBeNull()
+      const group = heading.closest('li')!
+      expect(within(group).getByRole('button', { name: 'Summary' })).toBeTruthy()
+    })
+
+    it('names a top-level field button by its content, with no aria-label', async () => {
+      const { nav } = await renderHeader()
+      for (const name of ['Title', 'Summary', 'People']) {
+        const button = within(nav).getByRole('button', { name })
+        expect(button.hasAttribute('aria-label')).toBe(false)
+      }
+    })
+
+    it('names a row by its field label, an arrow, the row label, and its secondary value', async () => {
+      const { nav } = await renderHeader()
+      const ada = within(nav).getByRole('button', { name: 'People › Ada, Engineer' })
+      expect(ada.getAttribute('aria-label')).toBe('People › Ada, Engineer')
+      expect(ada.textContent).toBe('Ada Engineer')
+      expect(
+        within(nav).getByRole('button', { name: 'People › Brian' }).getAttribute('aria-label'),
+      ).toBe('People › Brian')
+    })
+
+    it('prefixes the rows of a field inside a group with that field, not the group', async () => {
+      const user = userEvent.setup()
+      render(
+        <CanopyCMSProvider>
+          <FormHeader
+            title="T"
+            outline={[
+              {
+                label: 'Page',
+                children: [
+                  {
+                    label: 'Team',
+                    path: 'team',
+                    children: [{ label: 'Ada', path: 'team[0]' }],
+                  },
+                ],
+              },
+            ]}
+            onSelect={vi.fn()}
+          />
+        </CanopyCMSProvider>,
+      )
+      const nav = await openOutline(user)
+      expect(within(nav).getByRole('button', { name: 'Team › Ada' })).toBeTruthy()
+      expect(within(nav).queryByRole('button', { name: /Page ›/ })).toBeNull()
+    })
+
+    it('selects the path of a chosen field or row', async () => {
+      const { nav, user, onSelect } = await renderHeader()
+      await user.click(within(nav).getByRole('button', { name: 'People › Brian' }))
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith('people[1]')
+    })
+
+    it('selects the path of a chosen field inside a group', async () => {
+      const { nav, user, onSelect } = await renderHeader()
+      await user.click(within(nav).getByRole('button', { name: 'Summary' }))
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith('summary')
+    })
+
+    it('shows a field with an empty children list without a nested list', async () => {
+      const user = userEvent.setup()
+      render(
+        <CanopyCMSProvider>
+          <FormHeader
+            title="T"
+            outline={[{ label: 'People', path: 'people', children: [] }]}
+            onSelect={vi.fn()}
+          />
+        </CanopyCMSProvider>,
+      )
+      const nav = await openOutline(user)
+      expect(nav.querySelectorAll('ul')).toHaveLength(1)
+    })
   })
 
   it('closes the outline once an item is chosen', async () => {
     const user = userEvent.setup()
     render(
       <CanopyCMSProvider>
-        <FormHeader
-          title="T"
-          outline={[{ label: 'Title', path: 'title', depth: 0 }]}
-          onSelect={vi.fn()}
-        />
+        <FormHeader title="T" outline={[{ label: 'Title', path: 'title' }]} onSelect={vi.fn()} />
       </CanopyCMSProvider>,
     )
     const nav = await openOutline(user)
@@ -183,11 +285,7 @@ describe('FormHeader', () => {
     const user = userEvent.setup()
     render(
       <CanopyCMSProvider>
-        <FormHeader
-          title="T"
-          outline={[{ label: 'Title', path: 'title', depth: 0 }]}
-          onSelect={vi.fn()}
-        />
+        <FormHeader title="T" outline={[{ label: 'Title', path: 'title' }]} onSelect={vi.fn()} />
       </CanopyCMSProvider>,
     )
     const button = screen.getByRole('button', { name: 'Outline' })
@@ -249,7 +347,7 @@ describe('FormRenderer header', () => {
     expect(rows()[5].hasAttribute('data-expanded')).toBe(false)
     const nav = await openOutline(user)
 
-    await user.click(within(nav).getByRole('button', { name: /^Fay/ }))
+    await user.click(within(nav).getByRole('button', { name: /^People › Fay/ }))
 
     await waitFor(() => expect(rows()[5].hasAttribute('data-expanded')).toBe(true))
     await waitFor(() => expect(document.activeElement).toBe(input('people[5].name')))
@@ -313,6 +411,344 @@ describe('FormRenderer header', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Expand all lists' }))
       expect(openRows()).toHaveLength(PEOPLE.length)
+    })
+  })
+})
+
+describe('FormHeader scroll padding', () => {
+  const originalHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+  let headerHeight = 40
+
+  /** jsdom lays nothing out, so the header's height is whatever the test says. */
+  const fakeHeaderHeight = () => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.dataset.testid === 'form-header' ? headerHeight : 0
+      },
+    })
+  }
+
+  afterEach(() => {
+    if (originalHeight) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', originalHeight)
+    else delete (HTMLElement.prototype as { offsetHeight?: number }).offsetHeight
+    vi.unstubAllGlobals()
+    headerHeight = 40
+  })
+
+  const header = (
+    <CanopyCMSProvider>
+      <FormHeader title="T" outline={[]} onSelect={vi.fn()} />
+    </CanopyCMSProvider>
+  )
+
+  const scrollerStyle = (el: HTMLElement): string | undefined => el.style.scrollPaddingTop
+
+  it('pads the scroll edge of its vertical scroller by the header height and a gap', () => {
+    fakeHeaderHeight()
+    const { getByTestId } = render(
+      <div data-testid="scroller" style={{ overflowY: 'auto' }}>
+        {header}
+      </div>,
+    )
+    expect(scrollerStyle(getByTestId('scroller'))).toBe('48px')
+  })
+
+  it('treats overflow-y: scroll as a scroller too', () => {
+    fakeHeaderHeight()
+    const { getByTestId } = render(
+      <div data-testid="scroller" style={{ overflowY: 'scroll' }}>
+        {header}
+      </div>,
+    )
+    expect(scrollerStyle(getByTestId('scroller'))).toBe('48px')
+  })
+
+  it('pads the nearest scroller, past ancestors that do not scroll, and leaves outer ones alone', () => {
+    fakeHeaderHeight()
+    const { getByTestId } = render(
+      <div data-testid="outer" style={{ overflowY: 'auto' }}>
+        <div data-testid="inner" style={{ overflowY: 'auto' }}>
+          <div style={{ overflowY: 'visible' }}>
+            <div style={{ overflowY: 'hidden' }}>{header}</div>
+          </div>
+        </div>
+      </div>,
+    )
+    expect(scrollerStyle(getByTestId('inner'))).toBe('48px')
+    expect(scrollerStyle(getByTestId('outer')) ?? '').toBe('')
+  })
+
+  it("restores the scroller's previous padding on unmount", () => {
+    fakeHeaderHeight()
+    const { getByTestId, rerender } = render(
+      <div data-testid="scroller" style={{ overflowY: 'auto', scrollPaddingTop: '12px' }}>
+        {header}
+      </div>,
+    )
+    const scroller = getByTestId('scroller')
+    expect(scrollerStyle(scroller)).toBe('48px')
+
+    rerender(<div data-testid="scroller" style={{ overflowY: 'auto', scrollPaddingTop: '12px' }} />)
+    expect(scrollerStyle(scroller)).toBe('12px')
+  })
+
+  it('leaves no padding behind when the scroller had none', () => {
+    fakeHeaderHeight()
+    const { getByTestId, rerender } = render(
+      <div data-testid="scroller" style={{ overflowY: 'auto' }}>
+        {header}
+      </div>,
+    )
+    const scroller = getByTestId('scroller')
+    rerender(<div data-testid="scroller" style={{ overflowY: 'auto' }} />)
+    expect(scrollerStyle(scroller) ?? '').toBe('')
+  })
+
+  it("follows the header's height through the ResizeObserver, and stops listening on unmount", () => {
+    fakeHeaderHeight()
+    const callbacks: Array<() => void> = []
+    const observed: Element[] = []
+    const disconnect = vi.fn()
+    class FakeResizeObserver {
+      constructor(callback: () => void) {
+        callbacks.push(callback)
+      }
+      observe(element: Element) {
+        observed.push(element)
+      }
+      unobserve() {}
+      disconnect = disconnect
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+
+    const { getByTestId, rerender } = render(
+      <div data-testid="scroller" style={{ overflowY: 'auto' }}>
+        {header}
+      </div>,
+    )
+    expect(observed).toEqual([getByTestId('form-header')])
+    expect(scrollerStyle(getByTestId('scroller'))).toBe('48px')
+
+    headerHeight = 72
+    callbacks.forEach((callback) => callback())
+    expect(scrollerStyle(getByTestId('scroller'))).toBe('80px')
+
+    rerender(<div data-testid="scroller" style={{ overflowY: 'auto' }} />)
+    expect(disconnect).toHaveBeenCalled()
+  })
+
+  it('still pads, once, where there is no ResizeObserver', () => {
+    fakeHeaderHeight()
+    vi.stubGlobal('ResizeObserver', undefined)
+    const { getByTestId } = render(
+      <div data-testid="scroller" style={{ overflowY: 'auto' }}>
+        {header}
+      </div>,
+    )
+    expect(scrollerStyle(getByTestId('scroller'))).toBe('48px')
+  })
+
+  it('does nothing, and does not fail, when no ancestor scrolls', () => {
+    fakeHeaderHeight()
+    const { getByTestId } = render(<div data-testid="plain">{header}</div>)
+    expect(scrollerStyle(getByTestId('plain')) ?? '').toBe('')
+  })
+
+  it('pads the scroller of a form rendered by FormRenderer with a header', () => {
+    fakeHeaderHeight()
+    headerHeight = 30
+    const { getByTestId } = render(
+      <div data-testid="scroller" style={{ overflowY: 'auto' }}>
+        <StatefulForm fields={[titleField]} initialValue={{}} header={{ title: 'T' }} />
+      </div>,
+    )
+    expect(scrollerStyle(getByTestId('scroller'))).toBe('38px')
+  })
+})
+
+describe('FormHeader icon buttons', () => {
+  it('name themselves in a tooltip on keyboard focus, not only on hover', async () => {
+    render(
+      <CanopyCMSProvider>
+        <FormHeader title="T" outline={[]} onSelect={vi.fn()} onExpandAll={vi.fn()} />
+      </CanopyCMSProvider>,
+    )
+    const user = userEvent.setup()
+    // Tab, as a keyboard user would: a tooltip opens for keyboard focus, not for a click's.
+    await user.tab()
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Expand all lists' }))
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Expand all lists')
+  })
+
+  it('name themselves in a tooltip on touch', async () => {
+    render(
+      <CanopyCMSProvider>
+        <FormHeader title="T" outline={[]} onSelect={vi.fn()} onExpandAll={vi.fn()} />
+      </CanopyCMSProvider>,
+    )
+    const button = screen.getByRole('button', { name: 'Collapse all lists' })
+    // A touch is a pointerdown of type touch, then the compatibility mouseenter. Hover alone
+    // ignores that; the touch event setting is what lets it open.
+    const down = new Event('pointerdown', { bubbles: true })
+    Object.defineProperty(down, 'pointerType', { value: 'touch' })
+    fireEvent(button, down)
+    fireEvent.mouseEnter(button)
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Collapse all lists')
+  })
+
+  it('are drawn in gray 7, dark enough to read on the header', () => {
+    render(
+      <CanopyCMSProvider>
+        <FormHeader title="T" outline={[]} onSelect={vi.fn()} onExpandAll={vi.fn()} />
+      </CanopyCMSProvider>,
+    )
+    for (const name of ['Expand all lists', 'Collapse all lists']) {
+      expect(screen.getByRole('button', { name }).style.color).toBe('var(--mantine-color-gray-7)')
+    }
+  })
+})
+
+describe('FormHeader badge', () => {
+  it('gives way before the title in a narrow pane: it may shrink, twice as fast, below its content', () => {
+    render(
+      <CanopyCMSProvider>
+        <FormHeader title="T" typeLabel="Landing page" outline={[]} onSelect={vi.fn()} />
+      </CanopyCMSProvider>,
+    )
+    const badge = document.querySelector<HTMLElement>('.mantine-Badge-root')!
+    expect(badge.style.flexShrink).toBe('2')
+    expect(badge.style.minWidth).toMatch(/^0(px)?$/)
+  })
+})
+
+describe('FormRenderer notice and custom renderers', () => {
+  it('renders the notice right under the header, before the fields', () => {
+    render(
+      <CanopyCMSProvider>
+        <FormRenderer
+          fields={[titleField]}
+          value={{}}
+          onChange={() => {}}
+          header={{ title: 'Team page' }}
+          notice={<p data-testid="notice">Read only</p>}
+        />
+      </CanopyCMSProvider>,
+    )
+    const header = screen.getByTestId('form-header')
+    const notice = screen.getByTestId('notice')
+    const field = screen.getByLabelText('Title')
+    expect(header.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(notice.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Nothing sits between the header and the notice but them.
+    expect(header.nextElementSibling).toBe(notice)
+  })
+
+  it('renders the notice before the conflict alert, the read-only styles and the fields', () => {
+    render(
+      <CanopyCMSProvider>
+        <FormRenderer
+          fields={[titleField]}
+          value={{}}
+          onChange={() => {}}
+          header={{ title: 'Team page' }}
+          notice={<p data-testid="notice">Read only</p>}
+          conflictNotice
+          readOnly
+        />
+      </CanopyCMSProvider>,
+    )
+    const notice = screen.getByTestId('notice')
+    const alert = screen.getByTestId('conflict-alert')
+    expect(notice.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByTestId('form-header').nextElementSibling).toBe(notice)
+  })
+
+  it('renders the notice first when there is no header', () => {
+    const { container } = render(
+      <CanopyCMSProvider>
+        <FormRenderer
+          fields={[titleField]}
+          value={{}}
+          onChange={() => {}}
+          notice={<p data-testid="notice">Read only</p>}
+        />
+      </CanopyCMSProvider>,
+    )
+    expect(screen.queryByTestId('form-header')).toBeNull()
+    expect(container.querySelector('[data-form-renderer]')!.firstElementChild).toBe(
+      screen.getByTestId('notice'),
+    )
+  })
+
+  it('renders nothing for no notice', () => {
+    renderForm()
+    expect(screen.getByTestId('form-header').nextElementSibling?.hasAttribute('data-testid')).toBe(
+      false,
+    )
+  })
+
+  describe('a custom renderer for block', () => {
+    const customBlock = {
+      block: () => <div data-testid="custom-block">my blocks</div>,
+    }
+    const note = (text: string) => ({ template: 'note', value: { text } })
+    const blockValue: FormValue = { title: 'x', sections: ['a', 'b', 'c', 'd', 'e'].map(note) }
+
+    const renderCustom = (fields: FieldConfig[], value: FormValue) =>
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={fields}
+            value={value}
+            onChange={() => {}}
+            header={{ title: 'T' }}
+            customRenderers={customBlock}
+          />
+        </CanopyCMSProvider>,
+      )
+
+    it('offers no Expand all or Collapse all when the block field is the only list', () => {
+      renderCustom([titleField, sectionsField], blockValue)
+      expect(screen.getByTestId('custom-block')).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Expand all lists' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Collapse all lists' })).toBeNull()
+    })
+
+    it('still offers them when another, built-in, list is in the form', () => {
+      renderCustom([sectionsField, peopleField], { ...blockValue, people: peopleValue.people })
+      expect(screen.getByRole('button', { name: 'Expand all lists' })).toBeTruthy()
+    })
+
+    it('outlines the custom block field without rows, and the built-in list with them', async () => {
+      const user = userEvent.setup()
+      renderCustom([sectionsField, peopleField], { ...blockValue, people: peopleValue.people })
+      const nav = await openOutline(user)
+      const labels = within(nav)
+        .getAllByTestId('form-outline-item')
+        .map((item) => item.textContent)
+      expect(labels[0]).toBe('Sections')
+      expect(labels).toContain('Ada Ada role')
+      expect(labels).not.toContain('Note a')
+      expect(labels.some((label) => label?.startsWith('Note'))).toBe(false)
+      expect(within(nav).queryByRole('button', { name: /^Sections ›/ })).toBeNull()
+    })
+
+    it('outlines the rows of a built-in block field as usual', async () => {
+      const user = userEvent.setup()
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={[sectionsField]}
+            value={blockValue}
+            onChange={() => {}}
+            header={{ title: 'T' }}
+          />
+        </CanopyCMSProvider>,
+      )
+      const nav = await openOutline(user)
+      expect(within(nav).getAllByRole('button', { name: /^Sections › Note/ })).toHaveLength(5)
     })
   })
 })

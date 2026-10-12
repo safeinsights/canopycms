@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CanopyCMSProvider } from '../theme'
@@ -43,12 +43,14 @@ const Harness: React.FC<{
   initial?: string
   onChange?: (v: string) => void
   readOnly?: boolean
-}> = ({ initial = '', onChange, readOnly }) => {
+  description?: string
+}> = ({ initial = '', onChange, readOnly, description }) => {
   const [value, setValue] = useState(initial)
   return (
     <CanopyCMSProvider>
       <DateTimeField
         label="Published at"
+        description={description}
         value={value}
         onChange={(next) => {
           setValue(next)
@@ -91,8 +93,24 @@ const setTime = (dropdown: HTMLElement, time: string) => {
 
 /** The check button beside the time input, which closes the dropdown. */
 const submitTime = (dropdown: HTMLElement) => {
-  const buttons = dropdown.querySelectorAll<HTMLElement>('button')
-  fireEvent.click(buttons[buttons.length - 1])
+  fireEvent.click(within(dropdown).getByRole('button', { name: 'Done' }))
+}
+
+const REMOVE = { name: 'Remove date and time' }
+
+/** The text the trigger is described by: the field's description, then the time zone note. */
+const describedBy = (): string | undefined => {
+  const ids = pickerButton().getAttribute('aria-describedby')?.split(' ') ?? []
+  const texts = ids.map((id) => document.getElementById(id)?.textContent).filter(Boolean)
+  return texts.length > 0 ? texts.join(' ') : undefined
+}
+
+/** The browser's zone as it abbreviates it, read the way a person reading a clock would. */
+const zoneAbbreviation = (): string => {
+  const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' }).formatToParts(
+    new Date(STORED),
+  )
+  return parts.find((part) => part.type === 'timeZoneName')?.value ?? ''
 }
 
 describe('DateTimeField', () => {
@@ -103,7 +121,106 @@ describe('DateTimeField', () => {
     expect(button.tagName).toBe('BUTTON')
     expect(button.getAttribute('data-dates-input')).toBe('true')
     expect(button.getAttribute('aria-haspopup')).toBe('dialog')
-    expect(screen.getByLabelText('Published at')).toBe(button)
+    expect(screen.getByLabelText('Published at', { exact: false })).toBe(button)
+  })
+
+  describe('accessible names', () => {
+    it('names the trigger by its label and the formatted value', () => {
+      render(<Harness initial={STORED} />)
+      expect(pickerButton().getAttribute('aria-label')).toBe(`Published at, ${displayed(STORED)}`)
+      expect(screen.getByRole('button', { name: `Published at, ${displayed(STORED)}` })).toBe(
+        pickerButton(),
+      )
+    })
+
+    it('names the trigger by its label and "not set" when nothing is stored or the value is unparsable', () => {
+      const { unmount } = render(<Harness />)
+      expect(pickerButton().getAttribute('aria-label')).toBe('Published at, not set')
+      unmount()
+      render(<Harness initial="next tuesday" />)
+      expect(pickerButton().getAttribute('aria-label')).toBe('Published at, not set')
+    })
+
+    it('keeps the name in step with a picked value', async () => {
+      const changes: string[] = []
+      render(<Harness initial={STORED} onChange={(v) => changes.push(v)} />)
+      const dropdown = await openPicker()
+      pickDay(dropdown, '17 June 2024')
+      expect(changes).toHaveLength(1)
+      await waitFor(() =>
+        expect(pickerButton().getAttribute('aria-label')).toBe(
+          `Published at, ${displayed(changes[0])}`,
+        ),
+      )
+    })
+
+    it('names the trigger in a read-only field too', () => {
+      render(<Harness initial={STORED} readOnly />)
+      expect(pickerButton().getAttribute('aria-label')).toBe(`Published at, ${displayed(STORED)}`)
+    })
+
+    it('labels the calendar, level by level, and the time input and Done button', async () => {
+      render(<Harness initial={STORED} />)
+      const dropdown = await openPicker()
+      const names = () =>
+        [...dropdown.querySelectorAll('button, input')]
+          .map((el) => el.getAttribute('aria-label'))
+          .filter((name): name is string => name !== null && !/^\d/.test(name))
+
+      // Month level: the day grid, the time and the submit button.
+      expect(names()).toEqual(
+        expect.arrayContaining(['Previous month', 'Next month', 'Choose a month', 'Time', 'Done']),
+      )
+
+      fireEvent.click(within(dropdown).getByRole('button', { name: 'Choose a month' }))
+      await waitFor(() =>
+        expect(names()).toEqual(
+          expect.arrayContaining(['Previous year', 'Next year', 'Choose a year']),
+        ),
+      )
+
+      fireEvent.click(within(dropdown).getByRole('button', { name: 'Choose a year' }))
+      await waitFor(() =>
+        expect(names()).toEqual(expect.arrayContaining(['Previous decade', 'Next decade'])),
+      )
+    })
+
+    it('names the time input "Time"', async () => {
+      render(<Harness initial={STORED} />)
+      const dropdown = await openPicker()
+      expect(within(dropdown).getByLabelText('Time')).toBe(
+        dropdown.querySelector('input[type="time"]'),
+      )
+    })
+
+    it('does not colour weekends differently', async () => {
+      render(<Harness initial={STORED} />)
+      const dropdown = await openPicker()
+      expect(dropdown.querySelectorAll('button[aria-label$="June 2024"]').length).toBeGreaterThan(
+        27,
+      )
+      expect(dropdown.querySelector('[data-weekend]')).toBeNull()
+    })
+  })
+
+  describe('description and time zone', () => {
+    it('is the time zone note alone when the field has no description', () => {
+      render(<Harness initial={STORED} />)
+      expect(describedBy()).toBe(`In your time zone (${zoneAbbreviation()}).`)
+    })
+
+    it('follows the field description with the time zone note', () => {
+      render(<Harness initial={STORED} description="When it goes live." />)
+      expect(describedBy()).toBe(`When it goes live. In your time zone (${zoneAbbreviation()}).`)
+    })
+
+    it('names the zone when nothing is stored, and in a read-only field', () => {
+      const { unmount } = render(<Harness />)
+      expect(describedBy()).toMatch(/^In your time zone \(.+\)\.$/)
+      unmount()
+      render(<Harness initial={STORED} readOnly />)
+      expect(describedBy()).toMatch(/^In your time zone \(.+\)\.$/)
+    })
   })
 
   it('shows a stored ISO UTC value as the local wall clock, with seconds', () => {
@@ -178,27 +295,49 @@ describe('DateTimeField', () => {
     await waitFor(() => expect(pickerButton().textContent).toBe('20 Mar 2024, 14:05:09'))
   })
 
-  it('clearing writes the empty string, which means "not set", and shows the placeholder', () => {
-    const changes: string[] = []
-    render(<Harness initial={STORED} onChange={(v) => changes.push(v)} />)
+  describe('Remove date and time', () => {
+    it('writes the empty string, which means "not set", shows the placeholder, and focuses the trigger', async () => {
+      const changes: string[] = []
+      render(<Harness initial={STORED} onChange={(v) => changes.push(v)} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear date and time' }))
+      fireEvent.click(screen.getByRole('button', REMOVE))
 
-    expect(changes).toEqual([''])
-    expect(pickerButton().textContent).toBe('Pick a date and time')
-    expect(screen.queryByRole('button', { name: 'Clear date and time' })).toBeNull()
-  })
+      expect(changes).toEqual([''])
+      expect(pickerButton().textContent).toBe('Pick a date and time')
+      await waitFor(() => expect(document.activeElement).toBe(pickerButton()))
+      // The control goes with the value.
+      expect(screen.queryByRole('button', REMOVE)).toBeNull()
+    })
 
-  it('offers no clear button when nothing is stored', () => {
-    render(<Harness />)
-    expect(screen.queryByRole('button', { name: 'Clear date and time' })).toBeNull()
+    it('has no Mantine clear button of its own', () => {
+      render(<Harness initial={STORED} />)
+      expect(screen.queryByRole('button', { name: 'Clear date and time' })).toBeNull()
+      expect(screen.getAllByRole('button', REMOVE)).toHaveLength(1)
+    })
+
+    it('is absent when nothing is stored', () => {
+      render(<Harness />)
+      expect(screen.queryByRole('button', REMOVE)).toBeNull()
+    })
+
+    it('is absent for an unparsable stored value', () => {
+      render(<Harness initial="next tuesday" />)
+      expect(screen.queryByRole('button', REMOVE)).toBeNull()
+    })
+
+    it('does not open the picker', async () => {
+      render(<Harness initial={STORED} />)
+      fireEvent.click(screen.getByRole('button', REMOVE))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(document.querySelector('[data-dates-dropdown]')).toBeNull()
+    })
   })
 
   it('renders an unparsable stored value as empty and writes nothing', async () => {
     const onChange = vi.fn()
     render(<Harness initial="next tuesday" onChange={onChange} />)
     expect(pickerButton().textContent).toBe('Pick a date and time')
-    expect(screen.queryByRole('button', { name: 'Clear date and time' })).toBeNull()
+    expect(screen.queryByRole('button', REMOVE)).toBeNull()
     const dropdown = await openPicker()
     submitTime(dropdown)
     expect(onChange).not.toHaveBeenCalled()
@@ -208,6 +347,7 @@ describe('DateTimeField', () => {
     it('shows the value with no clear button and no placeholder', () => {
       render(<Harness initial={STORED} readOnly />)
       expect(pickerButton().textContent).toBe(displayed(STORED))
+      expect(screen.queryByRole('button', REMOVE)).toBeNull()
       expect(screen.queryByRole('button', { name: 'Clear date and time' })).toBeNull()
     })
 

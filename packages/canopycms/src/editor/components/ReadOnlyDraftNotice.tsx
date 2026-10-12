@@ -19,7 +19,6 @@ export function ReadOnlyDraftNotice({ permanentlyReadOnly, onDiscard }: ReadOnly
       icon={<IconAlertTriangle size={16} />}
       color="yellow"
       variant="light"
-      mb="md"
       data-testid="read-only-draft-notice"
     >
       <Group justify="space-between" align="center" gap="sm" wrap="wrap">
