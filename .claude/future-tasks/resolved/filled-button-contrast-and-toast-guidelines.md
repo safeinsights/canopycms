@@ -2,11 +2,11 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Code only: docs/ux-guidelines.md now names `red.8` for filled destructive buttons and `orange.6` with black text for filled warning buttons, and has Undo move focus to the restored row. Callers still pass `color: 'red'` and `color: 'orange'` (white on `red.6` is 3.3:1), the Undo toast leaves focus on the list, and example1's Next.js dev badge covers toasts.
+  RESOLVED: the theme's `Button` extension draws filled `red` as `red.8` (`red.9` on hover) and filled `orange` as `orange.6` under black text, so callers still pass a plain colour; Undo moves focus to the restored row; example1's Next.js dev badge moved to the bottom-right, away from the toasts.
 ---
 # Filled confirm buttons miss contrast; Undo doesn't move focus
 
-The rules are in [docs/ux-guidelines.md](../../docs/ux-guidelines.md#colour-and-contrast)
+The rules are in [docs/ux-guidelines.md](../../../docs/ux-guidelines.md#colour-and-contrast)
 (Colour and contrast, Destructive actions).
 
 1. **Filled buttons.** `openConfirm` (`packages/canopycms/src/editor/utils/confirm-modal.ts`)

@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Code only: the guideline gaps from WS7a-1's UX review are now rules in docs/ux-guidelines.md. Left: `openConfirm`'s modal close button has no accessible name.
+  RESOLVED: `openConfirm` passes `closeButtonProps: { 'aria-label': 'Close' }`, merged under the caller's own props, so every confirm modal's close button is named.
 ---
 # Confirm modal close button has no accessible name
 

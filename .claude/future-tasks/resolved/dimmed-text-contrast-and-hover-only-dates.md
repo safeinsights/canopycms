@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Two editor-wide a11y gaps the WS6-lite UX review found. Mantine's `dimmed` colour (#868e96) on white is about 3.3:1 at 12px, under the 4.5:1 docs/ux-guidelines.md requires, and `c="dimmed"` xs text is everywhere (timestamps, "Updated …", "Owner:"). And `components/RelativeTime.tsx` puts the absolute date in a Tooltip on a non-focusable `<time>`, so keyboard and screen-reader users never get it.
+  RESOLVED: dimmed text takes the theme's `gray.7` (light) and `dark.1` (dark) via `cssVariablesResolver`, and `RelativeTime` adds the absolute date as visually hidden text inside its `<time>`, with no extra tab stop.
 ---
 
 # Dimmed text contrast, and absolute dates only on hover

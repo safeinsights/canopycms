@@ -2,26 +2,21 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Code only: docs/ux-guidelines.md now has a People section. UserBadge keeps an admin's email and "Name unavailable" in a hover-only tooltip, and shows the raw id as a fallback name; the editor could also name the signed-in user from whoami.
+  The signed-in user's own name: `GET /whoami` returns only `userId` and `groups`, so the editor can't seed their profile into the `canopy:user:` cache, and their own comment is an unnamed fallback when the comments response's lookup failed. The server's `AuthenticatedUser` has optional `name`, `email` and `avatarUrl`; whoami would have to return them.
 ---
-# UserBadge keyboard access, and a "People" rule for the UX guidelines
+# Name the signed-in user from whoami
 
-Found by the UX review of the comment-author-names work (`feat/comment-author-names`), which
-made names on comment surfaces visible to every editor.
+Left over from the UX review of the comment-author-names work (`feat/comment-author-names`).
+`UserBadge` now shows "Name unavailable" or "Couldn't load this name" instead of a raw id, and
+reads an admin's email as visually hidden text; this is the part that needed an API change.
 
-## Findings
+A comment by the signed-in user needs the comments response (or a privileged lookup) to be named.
+When that lookup failed, they see their own comment as an unnamed fallback. `useUserContext`
+knows the current user, but `GET /whoami` (`packages/canopycms/src/api/user.ts`) returns only
+`userId` and `groups`, so there is no name to put in the cache.
 
-1. **Tooltip-only details.** `editor/components/UserBadge.tsx` wraps the badge in a Mantine
-   `Tooltip` on a plain, unfocusable element. An admin's email and the fallback's
-   "Name unavailable" / "Couldn't load this name" reach mouse users only. Fix: put the detail in
-   visually hidden text tied to the badge (`aria-describedby`), or make a badge that carries a
-   tooltip focusable.
-2. **The signed-in user's own name.** A comment by the signed-in user still needs the comments
-   response (or a privileged lookup) to be named. When that response's lookup failed, a user
-   sees their own comment as an id. `useUserContext` knows the current user; seeding their
-   profile into the `canopy:user:` cache (`seedUserProfiles`) would name them with no request,
-   if whoami returns a name.
-3. **The fallback shows the raw id.** When a name can't be resolved, `UserBadge` renders the
-   `userId` as the visible text, with "Name unavailable" or "Couldn't load this name" only in the tooltip. The People rule
-   in [docs/ux-guidelines.md](../../docs/ux-guidelines.md#people) counts an id as an internal
-   name: show the fallback text instead.
+Fix: return `name` (and `avatarUrl`; `email` only if the response may carry it) from whoami when
+the auth plugin supplies them, then call `seedUserProfiles`
+(`packages/canopycms/src/editor/hooks/useUserMetadata.ts`) with the current user's profile once
+`useUserContext` resolves. A new response field is a public API addition, so it needs approval
+first.
