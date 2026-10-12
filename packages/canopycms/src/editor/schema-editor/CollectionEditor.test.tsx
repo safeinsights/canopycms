@@ -940,6 +940,13 @@ describe('CollectionEditor', () => {
         await removeEntryTypeViaUi(user, 'featured')
         await waitFor(() => expect(screen.getByRole('status').textContent).toContain('removed'))
         expect(dismissLabel()).toEqual(['Discard changes'])
+        // The remove moves focus to the neighbouring row on a timer; typing before it lands would
+        // send the keystroke there.
+        await waitFor(() =>
+          expect(document.activeElement).toBe(
+            screen.getByRole('button', { name: 'Actions for post' }),
+          ),
+        )
 
         await user.type(labelInput, '{Backspace}')
         expect(dismissLabel()).toEqual(['Close'])
