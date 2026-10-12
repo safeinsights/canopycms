@@ -44,6 +44,8 @@ export interface RouteMetadata {
   defaultMockData?: unknown
   /** Casts to apply to mock data fields for branded types */
   mockDataCasts?: MockDataCasts
+  /** See `EndpointConfigBase['clientTimeout']`. */
+  clientTimeout?: 'long' | 'none'
 }
 
 /**
@@ -147,6 +149,11 @@ interface EndpointConfigBase<
   mockDataCasts?: MockDataCasts
   /** See `RouteDefinition['bodyFormat']` above. */
   bodyFormat?: 'multipart'
+  /**
+   * The generated client's timeout for this endpoint, when not its method's default (`read` for
+   * GET, `write` otherwise); see `REQUEST_TIMEOUT_MS` in request-deadline.ts.
+   */
+  clientTimeout?: 'long' | 'none'
 }
 
 /** Config for an endpoint without guards */
@@ -206,6 +213,7 @@ export function defineEndpoint(config: any): RouteDefinition<any, any, any> {
     responseTypeName: config.responseType,
     defaultMockData: config.defaultMockData,
     mockDataCasts: config.mockDataCasts,
+    clientTimeout: config.clientTimeout,
   })
 
   // Convert path template to pattern array for router

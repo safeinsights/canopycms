@@ -222,6 +222,7 @@ const getBranchStatus = defineEndpoint({
 const submitBranchForMerge = defineEndpoint({
   namespace: 'workflow',
   name: 'submit',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/:branch/submit',
   params: branchParamSchema,
