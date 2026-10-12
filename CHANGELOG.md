@@ -22,7 +22,9 @@ moves it here.
 **Find your starting point.** From a stable pin, start at the first version under **Released**
 newer than it, and below `0.0.63` read the notes for `0.0.62 and earlier` too. From an int
 prerelease such as `0.0.68-int.101`, read only the **Unreleased** entries, or labelled parts of
-entries, carrying a higher int number (the table lists later parts in parentheses).
+entries, carrying a higher int number (the table lists later parts in parentheses). Moving from
+an int prerelease to a stable release, read that release's section the same way: its entries keep
+their int labels.
 
 **Find your target.** `npm view canopycms version` reports the `latest` dist-tag, the newest
 stable release. On the int channel, the target's own `CHANGELOG.md` is the one to read.

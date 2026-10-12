@@ -206,6 +206,20 @@ jobs:
             echo "::error::the release changed files outside the version and changelog set"
             exit 1
           fi
+          # Bounded by content too, since dependency code ran in this tree: the
+          # manifests change only their versions, and docs other than the
+          # changelog only have `.changeset/` links rewritten to CHANGELOG.md.
+          if git diff --cached -U0 -- package.json 'packages/*/package.json' |
+            grep -E '^[+-][^+-]' | grep -vqE '^[+-]\s*"version": '; then
+            echo "::error::the release changes a manifest beyond its version"
+            exit 1
+          fi
+          docs=$(git diff --cached -U0 -- '*.md' ':!CHANGELOG.md' ':!.changeset/' | grep -E '^[+-][^+-]' || true)
+          if grep -E '^\+' <<<"$docs" | grep -vq 'CHANGELOG\.md#' ||
+            grep -E '^-' <<<"$docs" | grep -vq '\.changeset/'; then
+            echo "::error::the release changes a doc beyond rewriting .changeset/ links"
+            exit 1
+          fi
           # No hooks: dependency scripts may have written some, and the release
           # lints already ran in --prepare.
           git -c core.hooksPath=/dev/null commit --no-verify -m "chore: release v$VERSION"
@@ -215,7 +229,7 @@ jobs:
       # written its git config or hooks, so the push happens from a fresh
       # repository, ignoring global and system config, with hooks off, and the
       # release-bot token only in this step. The token travels in a header,
-      # never in a URL or on disk, and the whole header value is masked too.
+      # never in a URL or on disk, and its base64 credential is masked too.
       - name: Push the release
         if: steps.prepare.outputs.release == 'true'
         env:
@@ -345,10 +359,20 @@ jobs:
       # commit (its provenance says so) is skipped, and one built from any other
       # commit fails the job rather than being published over.
       - name: Pack the five packages
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
           for pkg in canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev canopycms-cdk; do
             (cd "packages/$pkg" && pnpm pack)
+          done
+          # Peer dependencies between the five are exact pins resolved at pack
+          # time, so every tarball must carry this version for itself and them.
+          for tgz in packages/*/canopycms*.tgz; do
+            node -e 'const m = JSON.parse(require("fs").readFileSync(0, "utf8")); const v = process.argv[1]
+              const pins = Object.entries(m.peerDependencies ?? {}).filter(([n]) => n.startsWith("canopycms"))
+              if (m.version !== v || pins.some(([, r]) => r !== v)) { console.error(m.name, m.version, pins); process.exit(1) }' \
+              "$VERSION" < <(tar -xzOf "$tgz" package/package.json)
           done
           # `files` lists CHANGELOG.md, and pack omits a listed file that is
           # missing without a word.
@@ -471,8 +495,8 @@ jobs:
             echo "::error::v$VERSION already tags $existing, not $SHA"
             exit 1
           fi
-          # The token travels in a header, never in a URL, and the whole header
-          # value is masked too.
+          # The token travels in a header, never in a URL, and its base64
+          # credential is masked too.
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
           git init -q tagger

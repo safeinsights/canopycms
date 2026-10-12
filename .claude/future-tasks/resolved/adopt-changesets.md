@@ -59,6 +59,10 @@ RESOLVED. Both halves are built; their review rounds are recorded in each PR:
 - **`--promote`** marks every consumed changeset, empty ones included. After a release,
   `legacy#` parts, and parts whose parent a release consumed, resolve under Released. Generated
   "Added in …" headings may renumber. Links to a nested part land on its parent entry.
+- **`--prepare` refuses more than the spec says**: a repository with no stable tag, a HEAD that
+  lacks the latest stable tag, a pending changeset the plan leaves out (an untracked one: commit
+  or stage it), a plan that does not release all five at one plain X.Y.Z, and manifests or
+  `version.ts` that disagree after the bump.
 - **`bump-version.mjs`** writes only an explicit version.
 - **The stable publish packs all five before publishing any.** This resolves
   `publish-partial-failure-window.md`.
@@ -189,8 +193,7 @@ Its outputs are `version` and `sha` (the release commit).
    on npm.
 
 This replaces the old single job and its `--min` floor. The tripwire goes, since this path
-consumes changesets. The commit-and-tag step runs first, so main and npm can't disagree about a
-version: either nothing is pushed, or the tag exists and publishing can resume.
+consumes changesets. The commit-and-tag step runs first, so npm never holds a version main lacks: either nothing is pushed, or the tag exists and publishing can resume.
 
 **Separation of privilege.** Writes happen only where no `id-token` exists, and `id-token` only
 where no write token exists. That is stricter than today's single job, which holds both.

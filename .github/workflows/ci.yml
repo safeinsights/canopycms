@@ -457,7 +457,8 @@ jobs:
   # commit's staging check. Every PR into main gets it, since that merge is the
   # release; any other PR gets it when it changes the release machinery itself,
   # not just a changeset, so an int branch behind the latest stable release
-  # does not fail it on every PR. It always runs and gates per step, so
+  # does not fail it on every PR. Such a PR on a branch that lacks the latest
+  # stable tag fails with "merge it first": merge main, as a release requires. It always runs and gates per step, so
   # `validate` never sees it skipped.
   release-dry-run:
     name: Release dry run
