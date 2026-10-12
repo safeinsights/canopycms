@@ -9,11 +9,13 @@ summary: >-
 `schema-editor/CollectionEditor.tsx` and `EntryTypeEditor.tsx` build their updates with
 `label: formData.label || undefined` (and `maxItems: undefined` when the field is emptied).
 `undefined` never reaches the server: JSON serialisation drops it, and
-`schema/schema-store.ts` applies a field only when `updates.<field> !== undefined`. So an
-admin who clears a label or max items sees the dialog accept it, but the stored value stays.
+`schema/schema-store.ts` (`updateCollection`, `updateEntryType`) applies a field only when
+`updates.<field> !== undefined`. So clearing a collection's label saves and closes the dialog,
+but the stored label stays.
 
-`CollectionEditor` mirrors this in its local entry-type list (it skips undefined fields when
-it patches a row), so the list is honest about what is stored. The edit itself still fails silently.
+For entry types, `CollectionEditor` mirrors the store: an update with nothing the store would
+keep makes no request, and its local list skips undefined fields, so the row keeps showing the
+stored value. The list is honest, but the clear itself still does nothing and says nothing.
 
 Fix: let the update inputs carry an explicit clear, such as `null` in the zod schemas for
 `UpdateCollectionInput` and `UpdateEntryTypeInput`, with the store deleting the key on

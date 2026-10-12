@@ -217,7 +217,7 @@ export function CollectionEditor({
 
   useEffect(() => {
     if (!focusRequest) return
-    // Runs after the overlay's own focus return has had its turn.
+    // Runs after the overlay's own focus return, which Mantine's useFocusReturn delays by 10ms.
     const timer = window.setTimeout(() => {
       const target =
         focusRequest.row === null
@@ -520,8 +520,8 @@ export function CollectionEditor({
       : "Couldn't create collection"
     : undefined
 
-  // Same comparisons as handleSave, so the button says "Discard changes" exactly when Save
-  // collection details would send something.
+  // The comparisons handleSave uses to build its update, so "Discard changes" shows exactly when
+  // that update would carry a change.
   const detailsDirty =
     editingCollection !== null &&
     (formData.name !== editingCollection.name ||

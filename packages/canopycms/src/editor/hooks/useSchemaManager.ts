@@ -83,11 +83,11 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   const apiClient = useApiClient()
   const [isLoading, setIsLoading] = useState(false)
 
-  // Collection, order and entry operations toast every failure (relied on by
-  // fire-and-forget callers that ignore the returned result). Entry-type
-  // operations pass `toast: false`: their only caller, CollectionEditor, shows
-  // each result inline. Both return the underlying message for callers that
-  // surface it themselves.
+  // Collection, order and entry operations toast each failure that reaches here
+  // (relied on by fire-and-forget callers that ignore the returned result).
+  // Entry-type operations pass `toast: false`: their only caller,
+  // CollectionEditor, shows each result inline. Both return the underlying
+  // message for callers that surface it themselves.
   const handleError = useCallback(
     (message: string, error: unknown, { toast = true }: { toast?: boolean } = {}): string => {
       console.error(message, error)
