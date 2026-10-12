@@ -19,11 +19,30 @@ name: Publish prerelease to npm
 # would fail OIDC authentication.
 on:
   workflow_call:
+    inputs:
+      allow_stale_base:
+        description: Publish even though this branch lacks the latest stable release
+        type: boolean
+        default: false
+    outputs:
+      version:
+        description: The version published
+        value: ${{ jobs.prerelease.outputs.version }}
+      published:
+        description: "'true' once canopycms is on npm, even if a later package failed"
+        value: ${{ jobs.prerelease.outputs.published }}
+      sha:
+        description: The commit it was built from
+        value: ${{ jobs.prerelease.outputs.sha }}
 
 jobs:
   prerelease:
     name: Build & Publish prerelease
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+      published: ${{ steps.canopycms.outputs.published }}
     permissions:
       # Deliberately `contents: read`: this workflow must never write to the
       # branch. publish.yml's bump-and-commit stays the only writer of
@@ -47,7 +66,11 @@ jobs:
           fi
           echo "Publishing a prerelease from $GITHUB_REF"
 
+      # Full history and tags: the shipped changelog labels each entry with the
+      # first int tag carrying it, and the version step reads main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
@@ -64,18 +87,48 @@ jobs:
         run: pnpm run generate:client
         working-directory: packages/canopycms
 
+      # A stable release is to file the pending entries under its own version, so
+      # a branch without that release would ship them again as unreleased. Until
+      # that release path exists, the stable job refuses to run while any are
+      # pending.
+      # `allow_stale_base` is for an older line, such as a release branch cut
+      # before it.
+      - name: Require the latest stable release in this branch
+        if: ${{ !inputs.allow_stale_base }}
+        run: |
+          set -euo pipefail
+          tags=$(git tag --list 'v*' --sort=-v:refname)
+          latest=$(grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' <<<"$tags" | sed -n 1p || true)
+          if [ -n "$latest" ] && ! git merge-base --is-ancestor "$latest" HEAD; then
+            echo "::error::$GITHUB_REF_NAME does not contain $latest. Merge main first, or dispatch with allow_stale_base for an older line."
+            exit 1
+          fi
+
       # The base is main's version, not this branch's, so a prerelease always
       # sorts above the last stable release regardless of how far the branch has
-      # diverged. checkout fetches only the current ref, so fetch main's tip.
+      # diverged. Pending changesets raise it to what they would release, so an
+      # int carrying a minor change is versioned as that minor.
       - name: Compute prerelease version
         id: version
         run: |
-          git fetch --depth=1 origin main:refs/remotes/origin/main
+          set -euo pipefail
           BASE=$(git show origin/main:packages/canopycms/package.json |
             node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
-          VERSION=$(node scripts/prerelease-version.mjs "$BASE" "$GITHUB_RUN_NUMBER")
+          # Planned from the latest stable tag: a release never leaves a changeset
+          # pending, so every changeset since that tag is pending, including any
+          # main carries that this branch merged in.
+          SINCE=$(git tag --list 'v*' --sort=-v:refname | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sed -n 1p || true)
+          PLAN=()
+          pending=$(find .changeset -maxdepth 1 -name '*.md' ! -iname 'readme.md' ! -name 'AGENTS.md' \
+            ! -name 'CLAUDE.md' ! -name 'GEMINI.md' ! -name '.*' | grep -c . || true)
+          if [ "$pending" -gt 0 ]; then
+            pnpm exec changeset status --since="${SINCE:-origin/main}" --output="$RUNNER_TEMP/plan.json"
+            PLAN=(--plan "$RUNNER_TEMP/plan.json")
+          fi
+          VERSION=$(node scripts/prerelease-version.mjs "$BASE" "$GITHUB_RUN_NUMBER" "${PLAN[@]}")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "main is at $BASE; publishing $VERSION under dist-tag 'int'"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "main is at $BASE, $pending changeset(s) pending; publishing $VERSION under dist-tag 'int'"
 
       # Written to the working tree only. Never committed, never pushed — see
       # the `contents: read` note above.
@@ -91,6 +144,16 @@ jobs:
           pnpm --filter canopycms-cdk run build
           pnpm --filter canopycms-cdk run build:worker
           pnpm --filter canopycms-cdk run build:lambda
+
+      # The changelog this build ships, and the handoff (what is new since the
+      # previous int on this branch) in the run summary.
+      - name: Assemble the shipped changelog
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+        run: >-
+          node scripts/migration-notes.mjs --ship --version "$VERSION" --sha "$SHA"
+          --out packages/canopycms/CHANGELOG.md --summary "$GITHUB_STEP_SUMMARY"
 
       # pnpm pack resolves workspace: protocol refs to real versions, so the
       # published prereleases depend on each other's prerelease versions rather
@@ -131,10 +194,16 @@ jobs:
       # 11.19.0 is what `npm@11` resolves to today, i.e. exactly what those
       # working releases used -- now pinned rather than floated. When bumping,
       # stay >= 11.5.0.
+      # `files` lists CHANGELOG.md, and pack omits a listed file that is missing
+      # without a word, so the tarball is checked before it is published.
       - name: Publish canopycms
+        id: canopycms
         run: |
           pnpm pack
+          contents=$(tar -tzf canopycms-*.tgz)
+          grep -qx 'package/CHANGELOG.md' <<<"$contents" || { echo "::error::the tarball has no CHANGELOG.md"; exit 1; }
           pnpm dlx npm@11.19.0 publish canopycms-*.tgz --access public --provenance --tag int
+          echo "published=true" >> "$GITHUB_OUTPUT"
         working-directory: packages/canopycms
 
       - name: Publish canopycms-next
@@ -170,10 +239,4 @@ jobs:
             echo "\`$VERSION\` from \`$GITHUB_REF_NAME\`, under dist-tag \`int\`."
             echo
             echo "The \`latest\` dist-tag is untouched; normal installs are unaffected."
-            echo
-            echo "Consume it in an adopter repo with:"
-            echo
-            echo "\`\`\`"
-            echo "node scripts/canopy-deps.mjs int $VERSION"
-            echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"

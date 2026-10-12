@@ -2152,7 +2152,7 @@ describe('CanopyCmsService: githubApp* props -> worker .env', () => {
 
   describe('which credential is decided before whether each is well formed', () => {
     it('an App alongside a leftover token JSON field names the real problem', () => {
-      // The exact state docs/adopter-migration.md step 2 leads to when an
+      // The exact state CHANGELOG.md step 2 leads to when an
       // adopter removes githubTokenSecretArn and overlooks its JSON field.
       // Reversed, assertSecretPropPair answers first with "Set
       // githubTokenSecretArn, or drop githubTokenSecretJsonField" -- pointing

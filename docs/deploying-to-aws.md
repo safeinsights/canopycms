@@ -1515,7 +1515,7 @@ allow(transform, ['s3:GetObject'], objects('asset-originals', 'asset-meta'))
 allow(transform, ['s3:PutObject', 's3:PutObjectTagging'], objects('assets/t'))
 ```
 
-With `lazyPublicTransforms`, `AssetSupport` takes the same prop for its transform Lambda, as `transformRole`, which the last two statements above grant. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](adopter-migration.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
+With `lazyPublicTransforms`, `AssetSupport` takes the same prop for its transform Lambda, as `transformRole`, which the last two statements above grant. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](../CHANGELOG.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
 
 Two consequences of naming a role: the tier stack needs **`CAPABILITY_NAMED_IAM`**, and a customer-named IAM role **cannot be replaced in place** without a rename — so pick names you can live with for the life of the deployment.
 

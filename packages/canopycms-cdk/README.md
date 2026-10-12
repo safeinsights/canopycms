@@ -2,6 +2,8 @@
 
 AWS CDK constructs and EC2 worker for deploying CanopyCMS.
 
+What changed in each release, for all five CanopyCMS packages, is in `node_modules/canopycms/CHANGELOG.md`.
+
 ## What's Included
 
 ### CDK Constructs

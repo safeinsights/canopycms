@@ -51,5 +51,5 @@ landed and been CI-verified.
 
 - [editor-state-context-migration.md](editor-state-context-migration.md) — the
   natural home for #8 if the editor state work is picked up again
-- [document-release-process.md](document-release-process.md) — #5's channel is
+- [document-release-process.md](resolved/document-release-process.md) — #5's channel is
   half of what that doc needs to describe

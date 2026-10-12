@@ -1061,8 +1061,6 @@ const run = (args: string[]) =>
 
 **Derive test input from the real producer, not a literal.** The prerelease test runs `scripts/prerelease-version.mjs` and feeds its actual stdout into `bump-version.mjs`. A hard-coded `1.2.3` in a test named after the prerelease path stayed green when stricter validation was added and hid a real break of `publish-prerelease.yml`, which passes `prerelease-version.mjs`'s `X.Y.Z-int.N` output straight through. **When a test stands in for a pipeline, derive its input from the upstream stage of that pipeline** — a literal can silently drift from what the real producer emits.
 
-**`--min <version>` is the release train's self-heal, not routine.** `publish.yml` commits the version bump only after all five packages publish, so an interrupted run can leave npm holding a version main does not know about, and every later run re-derives that same already-published version and fails forever. `--min` floors the bump on `max(committed version, --min value)`. If a release wedges that way, `node scripts/bump-version.mjs --min <registry-version>` is how you re-derive a safe next version; normally CI passes it for you.
-
 ## Deployment Infrastructure
 
 The design of the prod topology is in [ARCHITECTURE.md](ARCHITECTURE.md#deployment-architecture), the operational procedures in [docs/deploying-to-aws.md](docs/deploying-to-aws.md), the worker's own invariants in [worker/AGENTS.md](packages/canopycms/src/worker/AGENTS.md), and the CLI's in [cli/AGENTS.md](packages/canopycms/src/cli/AGENTS.md). What follows is only how a contributor runs and tests this locally.
@@ -1144,6 +1142,38 @@ Templates are `.template` files under `src/cli/template-files/`, located at runt
 
 Push replaces the workspace's content directory from the working tree, auto-committing any uncommitted editor changes there first so nothing is lost, tagging the result `canopycms-sync-base` for later 3-way merges, and using a backup-rename replacement so an interruption always leaves one complete copy on disk. Pull copies back the other way, detecting uncommitted changes and untracked files that would be deleted and prompting first. `both` uses the `canopycms-sync-base` tag as the merge base, leaving the workspace in a merge state with instructions on conflict; `abort` runs `git merge --abort` there.
 
+## Releasing
+
+Both channels publish all five packages at one version, and both enter through `publish.yml`:
+
+- **Stable** (`latest`): a push to `main` that CI passes. The release bot commits the version and
+  tags `vX.Y.Z`.
+- **int**: dispatch _Publish to npm_ on any other branch. The version is `<next>-int.<run number>`,
+  where `<next>` is what the branch's pending changesets would release (`changeset status`), and
+  never less than main's version patch-bumped. Nothing is committed; the `tag-prerelease` job tags the
+  commit `v<version>`. The branch must contain the latest stable tag; `allow_stale_base` overrides
+  that for an older line. Adopters pin an int build exactly, since `^0.1.0-int.5` also matches
+  stable `0.1.0`.
+
+**One trusted publisher per package.** npm binds each package's trusted publisher to one workflow
+filename, `publish.yml`, and checks the _calling_ workflow for `workflow_call`. A new publish path
+enters through `publish.yml`, as `publish-prerelease.yml` does, or it fails OIDC auth with no hint
+why.
+
+**Changesets.** A PR that changes a published package adds a `.changeset/` file
+([.changeset/README.md](.changeset/README.md)); CI's `changesets` job enforces it.
+`scripts/migration-notes.mjs --ship` assembles them into the `CHANGELOG.md` an int build ships,
+labelling each entry with the first `v*-int.N` tag whose tree holds its file, and writes what is new
+since the previous int to the run summary; `pnpm changelog:preview` shows the same locally. **The
+stable job does not consume changesets yet**: it refuses to publish while any are pending, so an
+integration branch carrying them reaches `main` only after the changesets release path lands
+([adopt-changesets.md](.claude/future-tasks/adopt-changesets.md)).
+
+**Tags.** Rulesets make every `v*` tag immutable, and only the release bot creates a stable one.
+`scripts/backfill-int-tags.mjs` tags any int published without one, at its attested commit.
+
+**A wedged stable release.** `publish.yml` commits the version bump only after all five packages publish, so an interrupted run can leave npm holding a version main does not know about, and every later run re-derives that same already-published version and fails forever. `--min` floors the bump on `max(committed version, --min value)`. If a release wedges that way, `node scripts/bump-version.mjs --min <registry-version>` is how you re-derive a safe next version; normally CI passes it for you.
+
 ## Dependency Overrides (`pnpm.overrides`)
 
 Root `package.json` pins several transitive dependencies to force in a security fix ahead of whatever the dependency tree would otherwise resolve. JSON carries no comments, so the rationale for each pin lives here — check this list before removing or loosening one, and re-check that `pnpm why <pkg>` still resolves to a non-vulnerable version if you do.
@@ -1214,7 +1244,7 @@ Both packages are at **zero cycles**, so any violation is one you just introduce
 Both budgets run in CI and in the pre-commit hook. Each script's header comment carries its rules.
 
 - `pnpm lint:comments` — [scripts/check-comment-budget.mjs](scripts/check-comment-budget.mjs) against `scripts/comment-budget.json`: history markers in source comments, comment run length and comment/code ratio. `--report` prints per-file, per-directory and per-package tables; `--markers` lists marker lines.
-- `pnpm lint:docs` — [scripts/check-docs.mjs](scripts/check-docs.mjs) against `scripts/docs-budgets.json`: paths, links and package imports must resolve, plus word ceilings per file and per H2 section, history markers, and list-item and table-cell length in `CODEBASE_GUIDE.md` and module `AGENTS.md`. `docs/adopter-migration.md` is a changelog, so instead each `###` entry under `## Unreleased` is capped at its `maxEntryWords`: that caps verbosity per change, and the file shrinks at release consolidation. `--report`, `--report --sections <file>` and `--list-long-items` print the numbers.
+- `pnpm lint:docs` — [scripts/check-docs.mjs](scripts/check-docs.mjs) against `scripts/docs-budgets.json`: paths, links and package imports must resolve, plus word ceilings per file and per H2 section, history markers, and list-item and table-cell length in `CODEBASE_GUIDE.md` and module `AGENTS.md`. `CHANGELOG.md` is a changelog, so instead each `###` entry under `## Unreleased`, and each `.changeset/*.md` entry, is capped at its `maxEntryWords`: that caps verbosity per change, and the file shrinks at release consolidation. `--report`, `--report --sections <file>` and `--list-long-items` print the numbers.
 - `--write-baseline` on either script rewrites its budget file from actuals, `--margin=<pct>` adds headroom, and a rewrite that would raise any number is refused without `--allow-raise`: a raise is a reviewed decision stated in the commit message. To raise one doc, run `node scripts/check-docs.mjs --write-baseline --only <file> --allow-raise`: it leaves every other entry alone and raises only the word counts that doc has outgrown, to the measured count plus 2% (at least 10, at most 40 words).
 - When a doc reaches its ceiling, trim superseded text first. Never compress a sentence below plain clarity to fit, and never trim another entry's guidance to make room: ask for a raise instead.
 - For a comment-only change, `node scripts/diff-comments-only.mjs <git-range>` proves nothing but TypeScript comments changed by comparing parser token streams on both sides; its header lists what else must match.

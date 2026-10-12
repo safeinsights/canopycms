@@ -41,7 +41,8 @@
     "./test-utils": "./src/test-utils/index.ts"
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
     "exports": {

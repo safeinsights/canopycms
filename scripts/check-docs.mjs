@@ -15,7 +15,7 @@
 //        node scripts/check-docs.mjs --self-test
 //        node scripts/check-docs.mjs --report | --sections | --list-long-items
 
-import { readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, existsSync, statSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
@@ -164,6 +164,7 @@ function candidateRepoPath(token) {
 const BUDGET_ROOT_FILES = [
   'AGENTS.md',
   'ARCHITECTURE.md',
+  'CHANGELOG.md',
   'DEVELOPING.md',
   'README.md',
   'CODEBASE_GUIDE.md',
@@ -402,6 +403,22 @@ function measureChangelog(content, cap) {
     if (current) current.words += countWords(proseText(node))
   }
   return { hasUnreleased, strayHeadings, over: entries.filter((e) => e.words > cap) }
+}
+
+/** A changeset's YAML frontmatter, with @changesets/parse's delimiters, anchored at the start of the file. */
+const CHANGESET_FRONTMATTER_RE = /^\s*---[^]*?\r?\n\s*---(?=\s*(?:\n|$))/
+/** Files in `.changeset/` that are not changesets, as @changesets/read skips them: README in any case, the agent files by exact case. */
+const NOT_A_CHANGESET_RE =
+  /^(?:[Rr][Ee][Aa][Dd][Mm][Ee]\.[Mm][Dd]|AGENTS\.md|CLAUDE\.md|GEMINI\.md|\..*)$/
+
+/**
+ * A changeset's body is one changelog entry, so it gets the changelog's entry cap.
+ * A body without a `###` title (a part of an unreleased entry) is measured as one entry.
+ */
+function changesetOverCap(content, cap) {
+  const body = content.replace(/^\uFEFF/, '').replace(CHANGESET_FRONTMATTER_RE, '')
+  const titled = fromMarkdown(body).children.some((n) => n.type === 'heading' && n.depth === 3)
+  return measureChangelog(`## Unreleased\n\n${titled ? '' : '### (part)\n\n'}${body}`, cap).over
 }
 
 /**
@@ -816,6 +833,25 @@ function selfTest() {
     !measureChangelog(['## [Unreleased]', '### A', words(20)].join('\n'), 15).hasUnreleased,
   )
 
+  const changeset = (body) => `---\n"canopycms": minor\n---\n\n${body}`
+  expect(
+    'changeset cap: an entry over the cap is reported and one at it is not',
+    changesetOverCap(changeset(`### A\n\n${words(20)}`), 15)[0]?.heading === 'A' &&
+      changesetOverCap(changeset(`### A\n\n${words(14)}`), 15).length === 0,
+  )
+  expect(
+    'changeset cap: a part without a title is measured as one entry, after the frontmatter',
+    changesetOverCap(changeset(`<!-- migration\nextends: x\n-->\n\n${words(20)}`), 15).length === 1,
+  )
+  expect(
+    'changeset cap: README and dotfiles are not changesets',
+    NOT_A_CHANGESET_RE.test('README.md') &&
+      NOT_A_CHANGESET_RE.test('readme.MD') &&
+      NOT_A_CHANGESET_RE.test('.keep') &&
+      !NOT_A_CHANGESET_RE.test('agents.md') &&
+      !NOT_A_CHANGESET_RE.test('worker-state-dir.md'),
+  )
+
   expect(
     'shape: a changelog entry is valid',
     budgetShapeError({ historyMarkers: null, maxEntryWords: 5 }) === null,
@@ -1173,6 +1209,24 @@ for (const f of inScopeFiles) {
         message: `"${entry.heading}" has ${entry.words} words, cap ${budget.maxEntryWords}`,
       })
     }
+    if (f === 'CHANGELOG.md' && existsSync(join(repoRoot, '.changeset'))) {
+      for (const name of readdirSync(join(repoRoot, '.changeset'))) {
+        if (!name.endsWith('.md') || NOT_A_CHANGESET_RE.test(name)) continue
+        if (!statSync(join(repoRoot, '.changeset', name)).isFile()) continue // migration-notes --check refuses it
+        const file = `.changeset/${name}`
+        for (const entry of changesetOverCap(
+          readFileSync(join(repoRoot, file), 'utf8'),
+          budget.maxEntryWords,
+        )) {
+          problems.push({
+            kind: 'changelog entry over word cap',
+            file,
+            line: null,
+            message: `"${entry.heading}" has ${entry.words} words, cap ${budget.maxEntryWords}`,
+          })
+        }
+      }
+    }
     continue
   }
 
@@ -1233,16 +1287,16 @@ for (const item of longItems) {
   })
 }
 
-// Check 9: every release this branch contains has a section in the migration guide.
+// Check 9: every release this branch contains has a section in the changelog.
 //
-// Entries are written under `## Unreleased` and promoted by hand, so a release that
-// ships without anyone touching the file leaves its entries filed as unreleased. Three
+// A release must move the `## Unreleased` entries under its own `### <version>`; a release that
+// ships without that leaves its entries filed as unreleased. Three
 // releases accumulated that way once (0.0.64 through 0.0.66, ~1,150 lines), which tells
 // an adopter that everything they are already running has not shipped yet — neutralising
 // the "Now deletable" lists the document calls its own point.
 //
 // Tag reachability is the signal: if `vX.Y.Z` is an ancestor of HEAD, this branch
-// contains that release and the guide on this branch should account for it.
+// contains that release and the changelog on this branch should account for it.
 //
 // This check is INERT ON A SHALLOW CLONE, which is what CI checks out — no history, no
 // tags, nothing to compare. That is deliberate rather than overlooked: lint-staged runs
@@ -1250,7 +1304,7 @@ for (const item of longItems) {
 // present, so the check fires at the moment someone edits this file. CI is the backstop
 // for everything else here, not for this one.
 {
-  const guide = 'docs/adopter-migration.md'
+  const guide = 'CHANGELOG.md'
   const guidePath = join(repoRoot, guide)
   let shallow = true
   let tags = []
@@ -1296,7 +1350,7 @@ for (const item of longItems) {
       if (named.has(v)) continue
       if (floor && cmp(v, floor) <= 0) continue
       problems.push({
-        kind: 'released version has no section in the migration guide',
+        kind: 'released version has no section in the changelog',
         file: guide,
         line: null,
         message: `\`${v}\` is tagged and reachable from HEAD -- add a \`### ${v}\` section under \`## Released\` and move its entries out of \`## Unreleased\`, demoting each from \`###\` to \`####\``,

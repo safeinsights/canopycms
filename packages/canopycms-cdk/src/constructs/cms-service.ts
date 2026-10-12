@@ -667,7 +667,7 @@ function assertGitHubAuthProps(props: CanopyCmsServiceProps): void {
   }
 
   // The JSON field counts as "a token is configured", not just the ARN. An
-  // adopter following docs/adopter-migration.md removes `githubTokenSecretArn`
+  // adopter following CHANGELOG.md removes `githubTokenSecretArn`
   // and overlooks `githubTokenSecretJsonField`; left out of this check, that
   // lands on `assertSecretPropPair` instead, which answers "Set
   // githubTokenSecretArn, or drop githubTokenSecretJsonField" -- pointing them
@@ -848,7 +848,7 @@ export interface CanopyCmsServiceProps {
    * A stack deployed before the worker mounted with IAM upgrades in two
    * deploys, `false` first: CloudFormation updates the file system before it
    * replaces the worker, so in one deploy the policy lands while the outgoing
-   * worker still holds an anonymous mount. See docs/adopter-migration.md.
+   * worker still holds an anonymous mount. See CHANGELOG.md.
    */
   efsEnforceIamAndTls?: boolean
 
@@ -1353,7 +1353,7 @@ export class CanopyCmsService extends Construct {
     // `cdk deploy`-then-restart-loop.
     //
     // WHICH CREDENTIAL first, then whether each is well formed: the order is
-    // load-bearing. Reversed, an adopter following docs/adopter-migration.md who
+    // load-bearing. Reversed, an adopter following CHANGELOG.md who
     // removes `githubTokenSecretArn` and overlooks `githubTokenSecretJsonField`
     // is told "Set githubTokenSecretArn, or drop githubTokenSecretJsonField" --
     // pointing them back at the credential they were just told to delete, and at

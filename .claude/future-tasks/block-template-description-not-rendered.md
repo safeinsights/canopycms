@@ -23,4 +23,4 @@ Show it where an editor chooses and edits a block: as the picker option's second
 `Select` `renderOption`), and under the template label on each card using
 `editor/fields/FieldDescription.tsx`, with the card's `aria-describedby` pointing at it. Add a
 `FormRenderer.test.tsx` case under `field descriptions`, and drop the "A block template's
-`description` still does not render" sentence from `docs/adopter-migration.md`.
+`description` still does not render" sentence from `CHANGELOG.md`.

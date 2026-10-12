@@ -18,7 +18,7 @@ afterwards reads `remote.git`'s HEAD. The Lambda reads that same HEAD
 (`GitManager.detectBaseBranch`). Changing the default branch on GitHub afterwards, as a cutover to
 `production` would, changes neither: the deployment keeps forking from, rebasing onto and
 protecting the old branch. Today's documented rule is to set `defaultBaseBranch` explicitly before
-such a change (README config reference, `docs/adopter-migration.md`).
+such a change (README config reference, `CHANGELOG.md`).
 
 ## Fix sketch
 

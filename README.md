@@ -279,7 +279,7 @@ export type AuthorContent = EntryTypes['author']
 
 The string in `.collection.json`'s `entry.schema` is a lookup key into the registry. Keying by the **entry-type name** removes a level of indirection (`entry.name` and `entry.schema` are then the same string), makes errors clearer (`Available schemas: post, author, home`), and lets `EntryTypesFromRegistry` derive the typed entry-type map for you. Keying by schema-variable name instead (`{ postSchema, authorSchema }`) still works, but you then declare that map by hand as an interface of `TypeFromEntrySchema<typeof xSchema>` members and pass it to `buildContentTree<NavFields, MyEntries>`. That is the right choice when several entry types share one schema (`partner-v1` and `partner-v2` both pointing at `partnerSchema`), since name-keying would hold the same schema twice.
 
-To move an existing project onto the entry-type-name convention, see [the migration entry](docs/adopter-migration.md#the-registry-is-keyed-by-entry-type-name-0042). Nothing about content files, frontmatter or `.canopy-meta/` caches changes, and in dev mode editing a `.collection.json` invalidates the schema cache so the next read picks up the new strings.
+To move an existing project onto the entry-type-name convention, see [the migration entry](CHANGELOG.md#the-registry-is-keyed-by-entry-type-name-0042). Nothing about content files, frontmatter or `.canopy-meta/` caches changes, and in dev mode editing a `.collection.json` invalidates the schema cache so the next read picks up the new strings.
 
 ### Creating .collection.json Meta Files
 
@@ -1211,7 +1211,7 @@ import { assetUrl, assetSrcSet } from 'canopycms'
 
 > **The asset store is site-wide, not branch-scoped.** Assets are content-addressed and shared (which is what lets a branch merge avoid moving files), so branch and path ACLs do **not** apply to them: any authenticated editor can list and fetch every asset in the site, including images uploaded on branches they cannot otherwise access. Treat "uploaded to CanopyCMS" as visible to your whole editorial team — confidential material does not belong in the asset store.
 
-**Infrastructure** — `canopycms-cdk` ships an `AssetSupport` construct that provisions the bucket (or attaches to one) and serves `/assets/*` from S3 alone, failing over to an optional `replicaBucket` on a 5xx; an unmaterialized URL is a 403. `lazyPublicTransforms: true` instead transforms misses in a Lambda, for releases without [the two steps below](#storing-a-builds-images-before-it-is-released). Pass it to `CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront read behaviors (`/assets/*` and `/assets/t/*`) in the only safe order. For another distribution, use `assetBehaviors()` or `attachTo(distribution)`; a hand-wired `additionalBehaviors` in the wrong order fails `cdk synth`. `uploadBehavior()` is the opt-in write path and belongs on its own distribution, below. See [the AWS guide](docs/deploying-to-aws.md#media-the-public-image-path) and [migration entry](docs/adopter-migration.md#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking).
+**Infrastructure** — `canopycms-cdk` ships an `AssetSupport` construct that provisions the bucket (or attaches to one) and serves `/assets/*` from S3 alone, failing over to an optional `replicaBucket` on a 5xx; an unmaterialized URL is a 403. `lazyPublicTransforms: true` instead transforms misses in a Lambda, for releases without [the two steps below](#storing-a-builds-images-before-it-is-released). Pass it to `CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront read behaviors (`/assets/*` and `/assets/t/*`) in the only safe order. For another distribution, use `assetBehaviors()` or `attachTo(distribution)`; a hand-wired `additionalBehaviors` in the wrong order fails `cdk synth`. `uploadBehavior()` is the opt-in write path and belongs on its own distribution, below. See [the AWS guide](docs/deploying-to-aws.md#media-the-public-image-path) and [migration entry](CHANGELOG.md#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking).
 
 **Routing uploads through your own CDN**
 
@@ -1961,5 +1961,5 @@ npx canopycms init-github-app create -- <a command that reads the key from stdin
 
 - [DEVELOPING.md](DEVELOPING.md) — contributor guidelines (the monorepo uses **pnpm** workspaces)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — internal architecture
-- [docs/adopter-migration.md](docs/adopter-migration.md) — what changed between versions
+- [CHANGELOG.md](CHANGELOG.md) — what changed between versions
 - [docs/deploying-to-aws.md](docs/deploying-to-aws.md) — deploying to AWS

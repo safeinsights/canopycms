@@ -2,6 +2,8 @@
 
 Development-only authentication provider for CanopyCMS that allows testing the CMS without setting up a real auth provider like Clerk.
 
+What changed in each release, for all five CanopyCMS packages, is in `node_modules/canopycms/CHANGELOG.md`.
+
 **⚠️ Development Only**: This package throws an error if `NODE_ENV === 'production'`. Never use it in production.
 
 ## Features

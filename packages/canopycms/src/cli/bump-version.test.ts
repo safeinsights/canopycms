@@ -262,3 +262,55 @@ describe('scripts/bump-version.mjs', () => {
     )
   })
 })
+
+describe('prerelease-version.mjs', () => {
+  let dir: string
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'prerelease-version-'))
+  })
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
+  const prerelease = async (args: string[]): Promise<string> =>
+    (await execFileAsync(process.execPath, [PRERELEASE_SCRIPT, ...args])).stdout.trim()
+
+  const plan = async (releases: unknown[]): Promise<string> => {
+    const file = path.join(dir, 'plan.json')
+    await fs.writeFile(file, JSON.stringify({ changesets: [], releases }))
+    return file
+  }
+
+  it('patch-bumps main without a plan', async () => {
+    expect(await prerelease(['0.0.67', '115'])).toBe('0.0.68-int.115')
+  })
+
+  it("takes the plan's next canopycms version as the base, unbumped", async () => {
+    const file = await plan([
+      { name: 'canopycms-cdk', type: 'minor', newVersion: '0.1.0' },
+      { name: 'canopycms', type: 'minor', newVersion: '0.1.0' },
+    ])
+    expect(await prerelease(['0.0.67', '115', '--plan', file])).toBe('0.1.0-int.115')
+  })
+
+  it('falls back to main patch-bumped when the plan releases nothing', async () => {
+    // A `none` release keeps the old version, which would sort below the stable release.
+    const file = await plan([{ name: 'canopycms', type: 'none', newVersion: '0.0.67' }])
+    expect(await prerelease(['0.0.67', '115', '--plan', file])).toBe('0.0.68-int.115')
+  })
+
+  it('never goes below main patch-bumped', async () => {
+    // An older line's manifests: its plan would sort below the stable release.
+    const file = await plan([{ name: 'canopycms', type: 'patch', newVersion: '0.0.61' }])
+    expect(await prerelease(['0.0.67', '115', '--plan', file])).toBe('0.0.68-int.115')
+  })
+
+  it('refuses a plan version that is not a plain release', async () => {
+    const file = await plan([{ name: 'canopycms', type: 'minor', newVersion: '0.1.0-int.3' }])
+    await expect(prerelease(['0.0.67', '115', '--plan', file])).rejects.toThrow(/plain version/)
+  })
+
+  it('refuses --plan without a file', async () => {
+    await expect(prerelease(['0.0.67', '115', '--plan'])).rejects.toThrow(/Usage/)
+  })
+})

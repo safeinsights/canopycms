@@ -27,6 +27,7 @@ Repo-level tooling, under `scripts/`:
 - `scripts/check-esm-imports.mjs` — imports every published `exports` subpath under plain Node ESM; see [DEVELOPING.md](DEVELOPING.md#published-package-esm-import-check)
 - `scripts/bump-version.mjs` — sets the version across all five publishable packages in lockstep
 - `scripts/prerelease-version.mjs` — computes an integration publish's `X.Y.Z-int.N` version
+- `scripts/migration-notes.mjs` — assembles `CHANGELOG.md` from `.changeset/`
 - `scripts/check-docs.mjs` — doc word budgets, list-item length, backticked-path and link resolution
 - `scripts/check-comment-budget.mjs` — source-comment volume ratchet, budgets in `scripts/comment-budget.json`
 - `scripts/check-future-tasks.mjs` — task frontmatter and link integrity; see [DEVELOPING.md](DEVELOPING.md#future-tasks-backlog-check)
@@ -35,6 +36,7 @@ Repo-level tooling, under `scripts/`:
 - `scripts/diff-comments-only.mjs` — proves a git range changed only comments in TypeScript files
 - `scripts/wait-for-pr-checks.mjs` — polls a PR's checks to a definite verdict; see [DEVELOPING.md](DEVELOPING.md#waiting-on-pr-checks)
 - `scripts/docs-budgets.json` — the per-doc ceilings `check-docs.mjs` enforces
+- `.changeset/` — changelog entries, see its `README.md`
 - `scripts/smoke/standalone-image.mjs` — builds and boots the generated CMS image against packed tarballs; see [DEVELOPING.md](DEVELOPING.md#standalone-cms-image-smoke-test-standalone-image-ci-job)
 
 ## Source Code Organization

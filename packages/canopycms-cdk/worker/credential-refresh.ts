@@ -17,7 +17,7 @@
  * git/Octokit directly, no AWS SDK dependency". An adopter wiring their own
  * worker on another cloud writes their own equivalent of this file and passes
  * it in through the same seams (`refreshAuthCache`, `refreshGitHubToken`);
- * `docs/adopter-migration.md` carries that wiring written out.
+ * `CHANGELOG.md` carries that wiring written out.
  *
  * Split out of `index.ts` so it can be imported by a test at all: `index.ts`
  * ends in `main().catch(...)`, so importing it RUNS the worker.

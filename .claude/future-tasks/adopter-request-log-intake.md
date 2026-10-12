@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Standing pointer to the marketing site's own log of package bugs and gaps — the closest thing we have to an external adopter's view of this package, re-verified per release against the installed tarball, and referenced by stable item number from `docs/adopter-migration.md`. Nothing here referenced it until 2026-08-20, so items sat unread for releases. Carries the full triage of all 16 open items and the six places our verification disagreed with theirs
+  Standing pointer to the marketing site's own log of package bugs and gaps — the closest thing we have to an external adopter's view of this package, re-verified per release against the installed tarball, and referenced by stable item number from `CHANGELOG.md`. Nothing here referenced it until 2026-08-20, so items sat unread for releases. Carries the full triage of all 16 open items and the six places our verification disagreed with theirs
 ---
 # Adopter request log — standing intake
 
@@ -19,7 +19,7 @@ to an external adopter's view of our own work, and it is unusually disciplined:
   item with no cost attached is explicitly filed as a wish and excluded;
 - every item is re-verified per release against the installed tarball, not against memory;
 - item numbers are **stable and never reused**, because they are referenced from code comments in
-  their repo and from our `docs/adopter-migration.md`. Cite by number; never renumber;
+  their repo and from our `CHANGELOG.md`. Cite by number; never renumber;
 - it carries its own Corrections section for status markers that turned out to be wrong.
 
 Until 2026-08-20 nothing in this backlog referenced it, so items sat unread for releases at a time.
@@ -344,6 +344,6 @@ reading at all.
 
 ## When you act on an item
 
-Update `docs/adopter-migration.md` under the release it ships in (see the promotion note at the top
+Update `CHANGELOG.md` under the release it ships in (see the promotion note at the top
 of that file — it goes stale easily), and produce a status table keyed by their item numbers so the
 adopter can update their own log. Do not edit their repo from here.
