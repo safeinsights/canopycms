@@ -16,7 +16,7 @@ import {
 } from '@mantine/core'
 import { IconChevronsDown, IconChevronsUp, IconListTree } from '@tabler/icons-react'
 
-/** The padding of the scroller the form sits in, set by `EditorPanes`; none elsewhere. */
+/** The padding of the scroller the form sits in, which `EditorPanes` sets; 0 where unset. */
 const PANE_PADDING = 'var(--canopy-form-pane-padding, 0px)'
 
 /** Icon-only controls name themselves on keyboard focus and touch too, not on hover alone. */
@@ -55,10 +55,6 @@ export interface FormHeaderProps {
   onExpandAll?: (expanded: boolean) => void
 }
 
-/**
- * The form's sticky header: which entry this is, an outline of its fields to jump to, and
- * Expand all / Collapse all for every list and block field in it.
- */
 /**
  * One level of the outline as a list. A row's name leads with its field's label ("Page sections ›
  * Hero, Welcome"), so rows of two lists are told apart by ear.
@@ -116,6 +112,10 @@ const OutlineList: React.FC<{
   </ul>
 )
 
+/**
+ * The form's sticky header: which entry this is, an outline of its fields to jump to, and
+ * Expand all / Collapse all for every list and block field in it.
+ */
 export const FormHeader: React.FC<FormHeaderProps> = ({
   title,
   typeLabel,
@@ -126,8 +126,8 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
   const [outlineOpen, setOutlineOpen] = useState(false)
   const headerRef = useRef<HTMLDivElement>(null)
 
-  // Its scroller pads its scroll edge by the header's height, so a field scrolled to the top, as
-  // `scrollIntoView` does, lands below the header rather than under it.
+  // Its scroller pads its scroll edge by the header's height and a gap, so a field scrolled to the
+  // top, as `scrollIntoView` does, lands below the header rather than under it.
   useEffect(() => {
     const header = headerRef.current
     const scroller = header ? scrollerOf(header) : undefined
@@ -185,8 +185,8 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
             width={300}
             shadow="md"
             withinPortal
-            // Focus enters the list, and Escape hands it back to "Outline". A chosen field takes it
-            // instead, so nothing returns it on close.
+            // Focus enters the list; Escape hands it back to "Outline" (`closeOnEscape`). A chosen
+            // field takes it instead, so closing returns it nowhere.
             trapFocus
             returnFocus={false}
           >
