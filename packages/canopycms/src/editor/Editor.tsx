@@ -256,7 +256,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const [quickOpenOpen, setQuickOpenOpen] = useState(false)
   const [quickOpenFromDrawer, setQuickOpenFromDrawer] = useState(false)
   const navigatorToggleRef = useRef<HTMLButtonElement>(null)
-  // Null when a menu item opened the drawer: it unmounts on click.
+  // Null when the drawer opened from a menu item, which unmounts on click, or with focus on the page.
   const navigatorOpenerRef = useRef<HTMLElement | null>(null)
   const quickOpenOpenRef = useRef(false)
   useEffect(() => {

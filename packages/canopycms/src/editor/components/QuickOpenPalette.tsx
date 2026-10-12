@@ -24,8 +24,8 @@ const otherOverlayOpen = () =>
   )
 
 /**
- * Focuses `target` unless the user has moved focus on: nothing is focused, or focus is still inside
- * the overlay that is closing, which stays mounted until after its exit callback.
+ * Focuses `target` unless the user has moved focus on: nothing is focused, or focus is inside an
+ * overlay `QUICK_OPEN_REPLACES_ATTR` marks, as a closing one is until after its exit callback.
  */
 export function focusIfIdle(target: HTMLElement | null): void {
   const active = document.activeElement

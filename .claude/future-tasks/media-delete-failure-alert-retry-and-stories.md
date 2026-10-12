@@ -13,8 +13,8 @@ summary: >-
   in an Alert with Dismiss. The load-error Alert in the same file has a plain sentence, an
   admin-only dimmed `xs` diagnostic line, and a Retry button. docs/ux-guidelines.md States asks
   for Retry on a failure the user can retry.
-- A 403 (not the uploader) is permanent and has its own sentence; Retry would only suit the
-  other failures.
+- An editor's 403 means the file is already gone and has its own sentence; Retry would only
+  suit the other failures.
 - `MediaLibrary.stories.tsx` has no delete-failure story (admin or not), and
   `QuickOpenPalette.stories.tsx` has none that passes `returnFocusTo`.
 

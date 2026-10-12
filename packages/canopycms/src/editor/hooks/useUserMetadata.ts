@@ -84,7 +84,7 @@ export function useUserMetadata(
   const key = userMetadataKey(userId)
   const { data, error, isLoading } = useSWR<UserSearchResult | null, unknown>(
     skip ? null : key,
-    // An answer of null never replaces a record a seed wrote while the lookup was in flight.
+    // A lookup that answers null keeps the record already cached, such as a seeded name.
     async () => (await getUserMetadata(userId)) ?? cachedRecord(cache, key),
   )
 

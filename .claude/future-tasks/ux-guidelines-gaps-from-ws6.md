@@ -21,8 +21,8 @@ summary: >-
   Resolve.
 - An overlay whose opener has unmounted, or that replaced another overlay (navigator drawer, then
   quick-open palette), returns focus to the nearest opener still on screen: the breadcrumb button
-  that opened the drawer, else the header's file dropdown. A return happens only when focus is
-  still on the page body.
+  that opened the drawer, else the header's file dropdown. A return happens only when the user
+  hasn't moved focus elsewhere.
 - Picking an entry from the drawer or palette returns focus to that control, which names the new
   entry, rather than moving it into the form.
 
