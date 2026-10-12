@@ -581,7 +581,7 @@ Components, in `editor/components/`:
 Comments UI, in `editor/comments/`:
 
 - `BranchComments.tsx` / `ThreadCarousel.tsx` — branch discussion
-- `EntryComments.tsx` — the "Comment on this entry" action
+- `EntryComments.tsx` / `form-comments.tsx` — entry comments; Mod+Alt+M field menu
 - `CommentThreadsPopover.tsx` — field or entry comment control and threads popover
 - `field-comment-context.ts` — `useFieldCommentControl`: a `FieldLabel`'s own control
 - `FieldWrapper.tsx` — provides that context, tracks hover and focus
