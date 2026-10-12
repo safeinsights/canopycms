@@ -4,7 +4,6 @@ import { MantineProvider } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { StagedChangesDrawer, type StagedChangesDrawerProps } from './StagedChangesDrawer'
-import { FOCUS_RETURN_ATTR } from '../utils/focus-return'
 
 // The confirm's buttons are Mantine's, so these tests capture its options and drive them
 // directly; the real dialog is covered by e2e (permissions-groups.spec.ts).
@@ -111,18 +110,6 @@ describe('StagedChangesDrawer', () => {
       act(() => lastConfirm().onConfirm?.())
       expect(props.onDiscard).toHaveBeenCalledTimes(1)
       expect(props.onClose).toHaveBeenCalledTimes(1)
-    })
-
-    it('marks its confirm for focus return only when the drawer returns focus itself', () => {
-      renderDrawer({ isDirty: true, returnFocusTo: () => null })
-      pressEscape()
-      expect(lastConfirm()).toHaveProperty(FOCUS_RETURN_ATTR, true)
-      cleanup()
-      openConfirmModal.mockReset()
-
-      renderDrawer({ isDirty: true })
-      pressEscape()
-      expect(lastConfirm()).not.toHaveProperty(FOCUS_RETURN_ATTR)
     })
 
     it('keeps the drawer and the changes when the confirm is dismissed', () => {

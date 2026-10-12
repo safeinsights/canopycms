@@ -19,8 +19,8 @@ export function focusIfIdle(target: HTMLElement | null): void {
 }
 
 /**
- * For a Mantine `Menu`'s `onExitTransitionEnd`: focuses the menu's `target` trigger once an item
- * that opened no overlay has unmounted and dropped focus to the page. Mantine calls it just before
+ * Run by `useMenuItemFocusReturn` when its menu has closed after an item acted: focuses the menu's
+ * `target` trigger once the item has unmounted and dropped focus to the page. Mantine calls it just before
  * unmounting the items, hence the frame's wait; `returnFocus` would instead steal focus from an
  * overlay the item opened, which holds it by then.
  * @internal Exported for tests.

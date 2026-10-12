@@ -384,7 +384,7 @@ describe('Switch branch… (branch menu)', () => {
   })
 })
 
-describe('Menu items that act without opening an overlay', () => {
+describe('Focus once a menu has closed', () => {
   const settled = () => act(() => new Promise((resolve) => setTimeout(resolve, 60)))
 
   it.each([

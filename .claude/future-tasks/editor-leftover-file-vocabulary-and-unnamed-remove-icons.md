@@ -26,6 +26,6 @@ Found next to code PR 532 changed, left out of it:
 - **Title Case labels**: the rail Settings menu's "Manage Permissions" and "Manage Groups"
   (`components/EditorSidebar.tsx`), and the group manager's "Internal Groups" / "External
   Groups" tabs (`group-manager/index.tsx`), "Create Group" (`InternalGroupsTab.tsx`,
-  `GroupForm.tsx`), "Edit Group" and "Add Member" (`MemberList.tsx`). The Copy rule is
+  `GroupForm.tsx`), "Edit Group" (`GroupForm.tsx`) and "Add Member" (`MemberList.tsx`). The Copy rule is
   sentence case. These are baselined in `scripts/ux-copy-baseline.json`, so re-record it with
   `node scripts/check-ux-copy.mjs --write-baseline` in the same change.

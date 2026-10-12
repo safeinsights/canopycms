@@ -118,7 +118,7 @@ describe('EditorSidebar - icon button tooltips', () => {
     expect((await screen.findByRole('tooltip')).textContent).toBe(name)
   })
 
-  it('returns focus to the Settings button after an item that opens no overlay acts', async () => {
+  it('returns focus to the Settings button after an item acts and nothing takes focus', async () => {
     const onMediaLibraryOpen = vi.fn()
     render(<EditorSidebar {...defaultProps} onMediaLibraryOpen={onMediaLibraryOpen} />, {
       wrapper: Wrapper,
@@ -148,7 +148,7 @@ describe('EditorSidebar - icon button tooltips', () => {
 
     await screen.findByText('Media library')
     // Otherwise it lingers beside the menu while the pointer stays on the button. It fades out, so
-    // read its opacity; the open menu hides the page from the accessibility tree, so query the DOM.
+    // read its opacity rather than its presence.
     const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]')
     expect(tooltip?.style.opacity ?? '0').toBe('0')
   })

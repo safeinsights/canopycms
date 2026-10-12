@@ -171,7 +171,7 @@ describe('BranchesDrawer with a confirm opened from inside it', () => {
 })
 
 describe('BranchesDrawer with returnFocusTo', () => {
-  // `Menu` stands in for the branch menu: its item opens the drawer and unmounts with the menu.
+  // A hand-rolled role="menu" stands in for the branch menu: its item opens the drawer and unmounts with it.
   const FocusHarness: React.FC = () => {
     const [open, setOpen] = useState(false)
     const [menuOpen, setMenuOpen] = useState(false)
