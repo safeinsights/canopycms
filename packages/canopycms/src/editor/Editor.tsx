@@ -99,7 +99,14 @@ import {
 } from './context'
 import { EntryLinkContext, type EntryLinkOption } from './fields/entry-link'
 import { MediaLibrary } from './media/MediaLibrary'
-import { removalAnchors, restoreRemoval, type FieldRemoval } from './undo-removal'
+import {
+  removalAnchors,
+  restoreRemoval,
+  restoredFieldPath,
+  type FieldRemoval,
+} from './undo-removal'
+import { formatCanopyPath } from './canopy-path'
+import { findFieldTarget, focusFieldTarget } from './field-target'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
 
@@ -603,6 +610,11 @@ const EditorContent: React.FC<EditorProps> = ({
         const base = prev[contentId] ?? loadedValuesRef.current[contentId]
         const restored = base ? restoreRemoval(fields, base, anchored) : undefined
         return restored ? { ...prev, [contentId]: restored } : prev
+      })
+      // The toast's Undo button unmounts with it, so focus goes to the restored row once rendered.
+      requestAnimationFrame(() => {
+        const target = findFieldTarget(formatCanopyPath(restoredFieldPath(removal)))
+        if (target) focusFieldTarget(target.element)
       })
     }
     undoToastsRef.current.set(id, contentId)

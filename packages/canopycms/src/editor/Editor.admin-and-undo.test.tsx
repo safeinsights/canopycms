@@ -355,6 +355,26 @@ describe('Undo after Remove', () => {
     expect(notifications.hide).toHaveBeenCalledWith(toast.id)
   })
 
+  it('moves focus into the restored row once Undo has put it back', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+
+    fireEvent.click(
+      within(screen.getByRole('group', { name: '/b' })).getByRole('button', { name: 'Remove' }),
+    )
+    await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
+    const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
+    // The toast's Undo button holds focus, as it does when a keyboard user presses it.
+    const undo = message.getByRole('button', { name: /^Undo removing / })
+    act(() => undo.focus())
+    act(() => fireEvent.click(undo))
+
+    const restored = await screen.findByRole('group', { name: '/b' })
+    await waitFor(() => expect(restored.contains(document.activeElement)).toBe(true))
+    expect(document.activeElement).not.toBe(restored)
+  })
+
   it('keeps focus on the named list after Remove, and holds the toast open only while it has focus', async () => {
     stubApi([])
     renderEditor()
