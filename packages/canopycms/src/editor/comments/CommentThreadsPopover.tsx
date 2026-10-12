@@ -468,9 +468,10 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
 
 /** An empty element placed in `node`, as the popover's position reference. */
 const AnchorTarget = React.forwardRef<HTMLDivElement, { node: HTMLElement | null | undefined }>(
-  ({ node }, ref) => (node ? createPortal(<div ref={ref} aria-hidden />, node) : null),
+  function AnchorTarget({ node }, ref) {
+    return node ? createPortal(<div ref={ref} aria-hidden />, node) : null
+  },
 )
-AnchorTarget.displayName = 'AnchorTarget'
 
 const NewThreadComposer: React.FC<{
   text: string
