@@ -271,12 +271,18 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       <Button
         variant="subtle"
         color="gray"
-        c="gray.8"
+        c="var(--mantine-color-text)"
         size="compact-sm"
         leftSection={<IconMessage size={16} aria-hidden />}
         rightSection={
           openCount > 0 ? (
-            <Badge size="sm" variant="light" color="orange" c="dark.7" aria-hidden>
+            <Badge
+              size="sm"
+              variant="light"
+              color="orange"
+              c="var(--mantine-color-text)"
+              aria-hidden
+            >
               {openCount}
             </Badge>
           ) : undefined
@@ -295,7 +301,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       <Button
         variant={openCount > 0 ? 'light' : 'subtle'}
         color={openCount > 0 ? 'orange' : 'gray'}
-        c={openCount > 0 ? 'dark.7' : undefined}
+        c={openCount > 0 ? 'var(--mantine-color-text)' : undefined}
         size="compact-xs"
         px={4}
         ref={setControl}

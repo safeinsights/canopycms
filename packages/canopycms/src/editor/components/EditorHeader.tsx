@@ -1,4 +1,4 @@
-import { forwardRef, type Ref } from 'react'
+import { forwardRef, useRef, type Ref } from 'react'
 import {
   Alert,
   Badge,
@@ -14,6 +14,7 @@ import {
   Tooltip,
   VisuallyHidden,
 } from '@mantine/core'
+import { useMergedRef } from '@mantine/hooks'
 import { IconFolderOpen, IconChevronDown, IconGitBranch, IconLock } from '@tabler/icons-react'
 import type { OperatingMode } from '../../operating-mode'
 import type { BranchStatus } from '../../types'
@@ -25,6 +26,7 @@ import { branchStatusPresentation } from '../branch-status'
 import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
+import { useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
   /**
@@ -94,6 +96,9 @@ export interface EditorHeaderProps {
 
   /** Ref to the button whose menu opens the file navigator. */
   navigatorToggleRef?: Ref<HTMLButtonElement>
+
+  /** Ref to the button whose menu opens the branch manager and discards all drafts. */
+  branchToggleRef?: Ref<HTMLButtonElement>
 
   /**
    * Callback to reload the current file.
@@ -213,6 +218,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
     comments,
     onNavigatorOpen,
     navigatorToggleRef,
+    branchToggleRef,
     onFileReload,
     onFileDiscardDraft,
     onEntrySelect,
@@ -250,6 +256,13 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   // contradicts). In both cases the banner says data is unavailable instead.
   const branchDataUnavailable =
     statusLocked && (branchStatus === undefined || branchStatus === 'editing')
+
+  const fileToggle = useRef<HTMLButtonElement>(null)
+  const fileToggleRef = useMergedRef(fileToggle, navigatorToggleRef)
+  const branchToggle = useRef<HTMLButtonElement>(null)
+  const branchToggleMergedRef = useMergedRef(branchToggle, branchToggleRef)
+  const fileMenuFocus = useMenuItemFocusReturn(fileToggle)
+  const branchMenuFocus = useMenuItemFocusReturn(branchToggle)
 
   // Save stays focusable while blocked (`aria-disabled`, not `disabled`), so its reason opens on
   // keyboard focus and touch as well as hover; the click does nothing.
@@ -315,10 +328,10 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               align="center"
               style={{ minWidth: 0, justifyContent: 'center' }}
             >
-              <Menu withinPortal shadow="sm">
+              <Menu withinPortal shadow="sm" {...fileMenuFocus.menu}>
                 <Menu.Target>
                   <Button
-                    ref={navigatorToggleRef}
+                    ref={fileToggleRef}
                     data-testid="file-dropdown-button"
                     variant="outline"
                     color="gray"
@@ -328,7 +341,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     {currentEntry?.label ?? 'No entry selected'}
                   </Button>
                 </Menu.Target>
-                <Menu.Dropdown>
+                <Menu.Dropdown {...fileMenuFocus.dropdown}>
                   <ReasonedMenuItem
                     onClick={onFileReload}
                     blockedReason={
@@ -355,7 +368,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Menu.Divider />
                   <Menu.Label>Recently modified</Menu.Label>
                   {editedFiles.slice(0, 3).length === 0 ? (
-                    <Menu.Item disabled>&lt;none&gt;</Menu.Item>
+                    <Text size="sm" c="dimmed" px="sm" py={6}>
+                      No recently modified entries
+                    </Text>
                   ) : (
                     editedFiles.slice(0, 3).map((file) => (
                       <Menu.Item key={file.path} onClick={() => onEntrySelect(file.path)}>
@@ -386,9 +401,10 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 ))}
               </Group>
 
-              <Menu withinPortal shadow="sm">
+              <Menu withinPortal shadow="sm" {...branchMenuFocus.menu}>
                 <Menu.Target>
                   <Button
+                    ref={branchToggleMergedRef}
                     variant="outline"
                     color="gray"
                     leftSection={<IconGitBranch size={16} />}
@@ -399,7 +415,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     {branchName || (busy ? 'Loading branches…' : 'No branch selected')}
                   </Button>
                 </Menu.Target>
-                <Menu.Dropdown data-testid="branch-menu">
+                <Menu.Dropdown data-testid="branch-menu" {...branchMenuFocus.dropdown}>
                   <ReasonedMenuItem
                     onClick={onBranchReloadData}
                     blockedReason={branchName ? undefined : 'Open a branch first.'}
@@ -418,9 +434,13 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     {`${EDITOR_ACTIONS.switchBranch}…`}
                   </Menu.Item>
                   <Menu.Divider />
-                  <Menu.Label>{`${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'} modified`}</Menu.Label>
+                  {modifiedCount > 0 && (
+                    <Menu.Label>{`${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'} modified`}</Menu.Label>
+                  )}
                   {editedFiles.length === 0 ? (
-                    <Menu.Item disabled>No edited entries yet</Menu.Item>
+                    <Text size="sm" c="dimmed" px="sm" py={6}>
+                      No edited entries yet
+                    </Text>
                   ) : (
                     editedFiles.map((file) => (
                       <Menu.Item

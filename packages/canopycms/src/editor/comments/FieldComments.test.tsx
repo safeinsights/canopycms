@@ -13,6 +13,7 @@ import { createApiClientWrapper, setupMockApiClient } from '../hooks/__test__/te
 import { FormRenderer, type FormRendererProps } from '../FormRenderer'
 import { TextField } from '../fields/TextField'
 import { FieldCommentContext } from './field-comment-context'
+import { DEFAULT_THEME, defaultCssVariablesResolver } from '@mantine/core'
 import { CanopyCMSProvider } from '../theme'
 
 // ImageField and ReferenceField reach the API client through context; one mocked factory keeps
@@ -1225,5 +1226,47 @@ describe('field comment popover placement, when a highlight opens it', () => {
     rerender({ ...props, highlightThreadId: 't1' })
     await screen.findByTestId('field-comment-title-popover')
     expect(scrolled).toContainEqual({ anchor: 'below', field: 'title' })
+  })
+})
+
+describe('comment controls in dark mode', () => {
+  // What `--mantine-color-text` takes under each scheme; Mantine omits it from the injected CSS
+  // where it equals its stylesheet default, so the resolver is the place to read it.
+  const textIn = (scheme: 'light' | 'dark') =>
+    defaultCssVariablesResolver(DEFAULT_THEME)[scheme]['--mantine-color-text']
+
+  const renderDark = () =>
+    render(
+      <CanopyCMSProvider colorScheme="dark">
+        <FormRenderer
+          fields={fields}
+          value={{ title: 'Hello', meta: { summary: 'S' }, links: [{ href: '/a' }] }}
+          onChange={() => {}}
+          currentEntryPath={ENTRY}
+          currentUserId="alice"
+          canResolve
+          onAddComment={vi.fn(async () => {})}
+          onResolveThread={vi.fn(async () => {})}
+          comments={[thread('e1', undefined, { type: 'entry' }), thread('f1', 'title')]}
+        />
+      </CanopyCMSProvider>,
+    )
+
+  it('takes the theme text colour, which the dark scheme lightens, rather than a fixed shade', () => {
+    renderDark()
+    expect(textIn('dark')).toBe('var(--mantine-color-dark-0)')
+    expect(textIn('light')).toBe('#000')
+
+    const entryButton = screen.getByTestId('entry-comment-button')
+    const menuButton = screen.getByTestId('form-comments-menu-button')
+    const fieldControl = control('title')
+    const badges = [entryButton, menuButton].map((el) =>
+      el.querySelector<HTMLElement>('.mantine-Badge-root'),
+    )
+
+    expect(badges.every(Boolean)).toBe(true)
+    for (const el of [entryButton, menuButton, fieldControl, ...badges]) {
+      expect(el?.style.color).toBe('var(--mantine-color-text)')
+    }
   })
 })

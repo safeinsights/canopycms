@@ -48,7 +48,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
     <Paper
       withBorder
       p="md"
-      bg="white"
+      bg="var(--mantine-color-body)"
       data-testid="inline-comment-thread"
       style={{
         width: '100%',
@@ -77,7 +77,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
               {idx > 0 && (
                 <div
                   style={{
-                    borderTop: '1px solid var(--mantine-color-gray-3)',
+                    borderTop: '1px solid var(--mantine-color-default-border)',
                     marginTop: 8,
                     marginBottom: 8,
                   }}

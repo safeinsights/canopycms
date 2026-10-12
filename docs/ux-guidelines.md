@@ -130,7 +130,7 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 - Tooltips and the shortcut sheet show the platform's modifier.
 - Every action is reachable by keyboard, focus follows visual order, and closing an overlay
   returns focus to the control that opened it. A menu item is gone once it acts, so its menu's
-  trigger stands in. If the opener is otherwise gone or hidden, focus goes to the nearest list
+  trigger stands in (`packages/canopycms/src/editor/utils/focus-return.ts`). If the opener is otherwise gone or hidden, focus goes to the nearest list
   heading or search field.
 
 ## Accessibility

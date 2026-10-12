@@ -3,7 +3,7 @@ import { CLOSE_WAITS_FOR_WRITE } from './comments/use-tracked-writes'
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MantineProvider } from '@mantine/core'
+import { DEFAULT_THEME, defaultCssVariablesResolver, MantineProvider } from '@mantine/core'
 import { CommentsPanel } from './CommentsPanel'
 import type { CommentThread } from '../comment-store'
 
@@ -197,6 +197,41 @@ describe('CommentsPanel', () => {
         undefined,
         undefined,
       )
+    })
+  })
+
+  describe('in both colour schemes', () => {
+    const resolved = defaultCssVariablesResolver(DEFAULT_THEME)
+    const twoComments = (id: string, overrides: Partial<CommentThread> = {}) =>
+      fieldThread(id, {
+        comments: [
+          ...fieldThread(id).comments,
+          {
+            id: `${id}-c2`,
+            threadId: id,
+            userId: 'bob',
+            timestamp: recentTimestamp,
+            text: `Reply in ${id}`,
+          },
+        ],
+        ...overrides,
+      })
+
+    it('tints a resolved card and draws dividers with tokens that follow the scheme', async () => {
+      renderPanel({ comments: [twoComments('a', { resolved: true }), twoComments('b')] })
+      await userEvent.click(screen.getByLabelText('Show resolved'))
+
+      expect(card('a').style.background).toBe('var(--mantine-color-default-hover)')
+      expect(card('b').style.background).toBe('')
+      for (const id of ['a', 'b']) {
+        const divider = card(id).querySelector<HTMLElement>('div[style*="border-top"]')
+        expect(divider?.style.borderTop).toBe('1px solid var(--mantine-color-default-border)')
+      }
+
+      // Each token names a different shade under each scheme, so neither is a fixed one.
+      expect(resolved.light['--mantine-color-default-hover']).toBe('var(--mantine-color-gray-0)')
+      expect(resolved.dark['--mantine-color-default-hover']).toBe('var(--mantine-color-dark-5)')
+      expect(resolved.dark['--mantine-color-default-border']).toBe('var(--mantine-color-dark-4)')
     })
   })
 
@@ -423,9 +458,10 @@ describe('CommentsPanel', () => {
       // A refused close says why.
       expect(screen.getByRole('status').textContent).toBe(CLOSE_WAITS_FOR_WRITE)
       expect(
-        (within(card('a')).getByRole('button', { name: 'Jump to field' }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(true)
+        within(card('a'))
+          .getByRole('button', { name: 'Jump to field' })
+          .getAttribute('aria-disabled'),
+      ).toBe('true')
 
       await act(async () => {
         finish()
@@ -433,6 +469,41 @@ describe('CommentsPanel', () => {
       expect(screen.getByRole('status').textContent).toBe('')
       await userEvent.keyboard('{Escape}')
       expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps a blocked jump focusable, says why on focus and ignores its click', async () => {
+      let finish: () => void = () => {}
+      const onAddComment = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          }),
+      )
+      const onJumpToField = vi.fn()
+      renderPanel({ comments: [fieldThread('a')], onAddComment, onJumpToField })
+
+      await userEvent.click(within(card('a')).getByTestId('reply-thread-button'))
+      await userEvent.type(screen.getByLabelText('Reply to this thread'), 'Wait for me')
+      await userEvent.click(screen.getByTestId('submit-reply-button'))
+
+      const jump = within(card('a')).getByRole('button', { name: 'Jump to field' })
+      expect((jump as HTMLButtonElement).disabled).toBe(false)
+      expect(screen.queryByText(/still saving/)).toBeNull()
+      act(() => jump.focus())
+      expect(
+        await screen.findByText('Your change is still saving. Try again once it finishes.'),
+      ).toBeTruthy()
+      expect(document.activeElement).toBe(jump)
+
+      await userEvent.click(jump)
+      expect(onJumpToField).not.toHaveBeenCalled()
+
+      await act(async () => {
+        finish()
+      })
+      await waitFor(() => expect(jump.getAttribute('aria-disabled')).toBeNull())
+      await userEvent.click(jump)
+      expect(onJumpToField).toHaveBeenCalledTimes(1)
     })
 
     it('leaves focus where the user put it while a resolve was in flight', async () => {

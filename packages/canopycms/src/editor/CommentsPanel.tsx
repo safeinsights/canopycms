@@ -14,6 +14,7 @@ import {
   Textarea,
   Title,
   Switch,
+  Tooltip,
 } from '@mantine/core'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
@@ -61,6 +62,35 @@ export interface CommentsPanelProps {
   /** A field's breadcrumb for a thread's heading; without an answer the heading shows its path. */
   fieldLabel?: (entryPath: string, canopyPath: string) => string | undefined
 }
+
+/**
+ * A jump button that stays focusable while a write is in flight (`aria-disabled`, not `disabled`),
+ * so its reason opens on keyboard focus and touch as well as hover.
+ */
+const JumpButton: React.FC<{
+  blocked: boolean
+  onClick: () => void
+  children: React.ReactNode
+}> = ({ blocked, onClick, children }) => (
+  <Tooltip
+    label="Your change is still saving. Try again once it finishes."
+    disabled={!blocked}
+    events={{ hover: true, focus: true, touch: true }}
+    multiline
+    maw={280}
+  >
+    <Button
+      variant="light"
+      onClick={() => {
+        if (!blocked) onClick()
+      }}
+      data-disabled={blocked ? true : undefined}
+      aria-disabled={blocked ? true : undefined}
+    >
+      {children}
+    </Button>
+  </Tooltip>
+)
 
 const THREAD_KIND_LABELS = { field: 'Field', entry: 'Entry', branch: 'Branch' } as const
 
@@ -211,7 +241,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                   p="md"
                   component="article"
                   aria-labelledby={headingId(thread.id)}
-                  bg={thread.resolved ? 'gray.0' : undefined}
+                  bg={thread.resolved ? 'var(--mantine-color-default-hover)' : undefined}
                   data-testid="comment-thread"
                 >
                   <Stack gap="xs">
@@ -241,9 +271,8 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         thread.entryPath &&
                         thread.canopyPath &&
                         onJumpToField && (
-                          <Button
-                            variant="light"
-                            disabled={inFlight > 0}
+                          <JumpButton
+                            blocked={inFlight > 0}
                             onClick={() =>
                               jump(() =>
                                 onJumpToField(thread.entryPath!, thread.canopyPath!, thread.id),
@@ -251,28 +280,26 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                             }
                           >
                             Jump to field
-                          </Button>
+                          </JumpButton>
                         )}
                       {thread.type === 'entry' && thread.entryPath && onJumpToEntry && (
-                        <Button
-                          variant="light"
-                          disabled={inFlight > 0}
+                        <JumpButton
+                          blocked={inFlight > 0}
                           onClick={() => jump(() => onJumpToEntry(thread.entryPath!, thread.id))}
                         >
                           Jump to entry
-                        </Button>
+                        </JumpButton>
                       )}
                       {thread.type === 'branch' && onJumpToBranch && (
-                        <Button
-                          variant="light"
-                          disabled={inFlight > 0}
+                        <JumpButton
+                          blocked={inFlight > 0}
                           onClick={() => {
                             onJumpToBranch(thread.id)
                             onClose()
                           }}
                         >
                           Open branch discussion
-                        </Button>
+                        </JumpButton>
                       )}
                     </Group>
 
@@ -281,7 +308,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         {idx > 0 && (
                           <div
                             style={{
-                              borderTop: '1px solid var(--mantine-color-gray-3)',
+                              borderTop: '1px solid var(--mantine-color-default-border)',
                               margin: '8px 0',
                             }}
                           />

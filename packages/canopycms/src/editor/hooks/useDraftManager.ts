@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import { openConfirm } from '../utils/confirm-modal'
+import { focusReturnProps } from '../utils/focus-return'
 import equal from 'fast-deep-equal'
 import type { EditorEntry } from '../Editor'
 import type { ContentId, LogicalPath } from '../../paths/types'
@@ -164,9 +165,9 @@ export interface UseDraftManagerReturn {
   modifiedCount: number
   editedFiles: Array<{ path: LogicalPath; label: string }>
   handleSave: () => Promise<void>
-  handleDiscardDrafts: () => void
-  handleDiscardFileDraft: () => void
-  handleReload: () => Promise<void>
+  handleDiscardDrafts: (returnFocusTo?: () => HTMLElement | null) => void
+  handleDiscardFileDraft: (returnFocusTo?: () => HTMLElement | null) => void
+  handleReload: (returnFocusTo?: () => HTMLElement | null) => Promise<void>
   isDirtyForEntry: (entryPath: string) => boolean
   isSelectedDirty: () => boolean
   isAnyDirty: () => boolean
@@ -877,7 +878,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // is actually something to lose (modifiedCount > 0, same definition used
   // everywhere else in this hook). An all-clean discard (e.g. drafts that
   // exactly mirror loaded values) clears silently.
-  const handleDiscardDrafts = () => {
+  const handleDiscardDrafts = (returnFocusTo?: () => HTMLElement | null) => {
     if (modifiedCount === 0) {
       performDiscardDrafts()
       return
@@ -888,6 +889,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       labels: { confirm: 'Discard all changes', cancel: 'Cancel' },
       confirmProps: { color: 'red', 'data-testid': 'confirm-discard-all' },
       onConfirm: performDiscardDrafts,
+      ...focusReturnProps(returnFocusTo),
     })
   }
 
@@ -931,7 +933,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // comparison as `modifiedCount`). Discarding a draft that's identical to
   // the loaded value, or discarding when there's no draft at all, has
   // nothing to lose, so it clears silently.
-  const handleDiscardFileDraft = () => {
+  const handleDiscardFileDraft = (returnFocusTo?: () => HTMLElement | null) => {
     if (!currentId) return
     if (!isSelectedDirty()) {
       performDiscardFileDraft()
@@ -943,6 +945,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       labels: { confirm: 'Discard changes', cancel: 'Cancel' },
       confirmProps: { color: 'red', 'data-testid': 'confirm-discard-entry' },
       onConfirm: performDiscardFileDraft,
+      ...focusReturnProps(returnFocusTo),
     })
   }
 
@@ -1004,7 +1007,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // moment their unsaved work matters most. Guarded exactly like
   // handleDiscardFileDraft: the same `isSelectedDirty()` test (nothing to lose
   // -> no prompt) and the same confirm-modal shape.
-  const handleReload = async () => {
+  const handleReload = async (returnFocusTo?: () => HTMLElement | null) => {
     if (!options.currentEntry || !currentId) return
     if (!isSelectedDirty()) {
       await performReload()
@@ -1018,6 +1021,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       onConfirm: () => {
         void performReload()
       },
+      ...focusReturnProps(returnFocusTo),
     })
   }
 

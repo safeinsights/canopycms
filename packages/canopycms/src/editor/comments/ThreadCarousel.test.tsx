@@ -102,6 +102,26 @@ describe('ThreadCarousel', () => {
     },
   ]
 
+  it('fills its panel with the scheme-aware tint, which the scroll fade ends in', () => {
+    const { container } = render(
+      <ThreadCarousel
+        threads={mockThreads}
+        contextType="branch"
+        label="Branch comments"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    )
+
+    const panel = container.querySelector<HTMLElement>('.mantine-Paper-root')
+    expect(panel?.style.background).toBe('var(--mantine-color-default-hover)')
+    const fade = container.querySelector<HTMLElement>('div[style*="linear-gradient"]')
+    expect(fade?.style.background).toContain('var(--mantine-color-default-hover)')
+  })
+
   it("shows a failed reply's error once, in its thread", async () => {
     const user = userEvent.setup()
     render(

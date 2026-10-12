@@ -308,6 +308,9 @@ cache; a failed lookup leaves the names out.
 rest in a "…" menu, in the editor's vocabulary. A thread's Reply opens a box under it.
 
 **To adopt.** Nothing, unless your browser tests click the old drawer buttons or labels.
+Every form has a "Field comments" button, so tests that find buttons by `/comment/i` may match
+more than one; and the editor listens for Ctrl+Alt+M (⌘⌥M on macOS) on the whole document,
+taking it while a form is open.
 
 ### Editor contrast, and blocked buttons stay focusable
 

@@ -216,13 +216,21 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
             ref={triggerRef}
             variant="subtle"
             color="gray"
-            c="gray.8"
+            // The theme's text colour, not a palette shade: a fixed shade is unreadable on one scheme.
+            c="var(--mantine-color-text)"
             size="compact-sm"
             leftSection={<IconMessages size={16} aria-hidden />}
             rightSection={
               <>
                 {openCount > 0 && (
-                  <Badge size="sm" variant="light" color="orange" c="dark.7" aria-hidden mr={4}>
+                  <Badge
+                    size="sm"
+                    variant="light"
+                    color="orange"
+                    c="var(--mantine-color-text)"
+                    aria-hidden
+                    mr={4}
+                  >
                     {openCount}
                   </Badge>
                 )}

@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useReducer, useRef } from 'react'
 import { Badge, Button, Drawer, Fieldset, Group, Text, Title } from '@mantine/core'
 import { openConfirm } from '../utils/confirm-modal'
+import { focusReturnProps } from '../utils/focus-return'
 
 export interface StagedChangesDrawerProps {
   opened: boolean
@@ -22,6 +23,8 @@ export interface StagedChangesDrawerProps {
   childModalOpen?: boolean
   /** Runs once the close transition has finished; see `useOpeningKey`. */
   onExited?: () => void
+  /** Names the element that takes focus after the drawer closes, for an opener that unmounted (a menu item). */
+  returnFocusTo?: () => HTMLElement | null
   children: React.ReactNode
 }
 
@@ -69,6 +72,7 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
   onDiscard,
   childModalOpen = false,
   onExited,
+  returnFocusTo,
   children,
 }) => {
   // A ref, not state: @mantine/modals runs the confirm's onClose inside its reducer, during
@@ -101,12 +105,18 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
     })
   }, [isDirty, isSaving, onClose, onDiscard])
 
+  const { onExitTransitionEnd: returnFocus, ...focusReturn } = focusReturnProps(returnFocusTo)
+
   return (
     <Drawer
       opened={opened}
       onClose={requestClose}
       closeOnEscape={!childModalOpen}
-      onExitTransitionEnd={onExited}
+      {...focusReturn}
+      onExitTransitionEnd={() => {
+        returnFocus?.()
+        onExited?.()
+      }}
       position="right"
       title={
         <div>
