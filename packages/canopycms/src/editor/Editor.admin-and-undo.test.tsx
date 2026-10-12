@@ -441,7 +441,7 @@ describe('saving collection details', () => {
     )
   })
 
-  it('shows what the branch has when adding an entry type goes unanswered', async () => {
+  it('counts an unanswered entry type add as landed when the branch lists it', async () => {
     const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
     const answerOthers = fetchMock.getMockImplementation()!
     // The add reaches the server and lands, but its answer never comes back.
@@ -480,10 +480,10 @@ describe('saving collection details', () => {
     await user.type(within(addDialog).getByLabelText(/^Name/), 'article')
     await user.click(within(addDialog).getByRole('button', { name: 'Add entry type' }))
 
-    expect(
-      await within(dialog).findByText(/may already have been added\. The list below shows/),
-    ).toBeTruthy()
+    expect(await within(dialog).findByText('Entry type "article" added')).toBeTruthy()
     expect(within(dialog).getByRole('button', { name: 'Actions for article' })).toBeTruthy()
+    expect(within(dialog).queryByText('No answer from the server')).toBeNull()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add entry type' })).toBeNull())
   })
 })
 

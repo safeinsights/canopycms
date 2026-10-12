@@ -74,8 +74,9 @@ export const EditWithError: Story = {
   },
 }
 
-// Every entry-type action goes unanswered. The re-read list has "featured" gone and "page"
-// added, as if a remove of one and an add of the other had landed.
+// Every entry-type action goes unanswered, then the list is re-read: it has "featured" gone and
+// "page" added, so removing "featured" or adding "page" reads as done, while any other add or an
+// edit stays unsettled and keeps its dialog open.
 export const EditUnanswered: Story = {
   args: {
     editingCollection: collection,

@@ -35,6 +35,7 @@ export type SchemaOpResult = { ok: true } | SchemaOpFailure
 type SchemaOpFailure = { ok: false; error: string; unanswered?: true }
 
 const SCHEMA_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-schema-outcome-unknown'
+const CHECK_CONTENT_PANEL = 'Check the "Content" panel'
 
 /** @internal Exported for tests. */
 export const schemaChangeOutcomeUnknown = (action: string, check: string) =>
@@ -165,7 +166,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         return { ok: true, data: result.data }
       } catch (error) {
         return fail(error, 'Failed to create collection', {
-          unknown: schemaChangeOutcomeUnknown('Creating the collection', 'Check the content tree'),
+          unknown: schemaChangeOutcomeUnknown('Creating the collection', CHECK_CONTENT_PANEL),
         })
       } finally {
         setIsLoading(false)
@@ -230,7 +231,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         return { ok: true }
       } catch (error) {
         return fail(error, 'Failed to delete collection', {
-          unknown: schemaChangeOutcomeUnknown('Deleting the collection', 'Check the content tree'),
+          unknown: schemaChangeOutcomeUnknown('Deleting the collection', CHECK_CONTENT_PANEL),
         })
       } finally {
         setIsLoading(false)
@@ -333,7 +334,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         return { ok: true }
       } catch (error) {
         return fail(error, 'Failed to update order', {
-          unknown: schemaChangeOutcomeUnknown('Reordering', 'Check the content tree'),
+          unknown: schemaChangeOutcomeUnknown('Reordering entries', CHECK_CONTENT_PANEL),
         })
       } finally {
         setIsLoading(false)
@@ -370,7 +371,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         return { ok: true }
       } catch (error) {
         return fail(error, 'Failed to delete entry', {
-          unknown: schemaChangeOutcomeUnknown('Deleting the entry', 'Check the content tree'),
+          unknown: schemaChangeOutcomeUnknown('Deleting the entry', CHECK_CONTENT_PANEL),
         })
       } finally {
         setIsLoading(false)

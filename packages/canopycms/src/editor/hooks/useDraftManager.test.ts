@@ -569,16 +569,16 @@ describe('useDraftManager', () => {
       const versionedOptions = { ...defaultOptions, getEntryVersion: mockGetEntryVersion }
       const landed =
         "We couldn't confirm your change was saved because the branch was syncing at the same time. Reload to check before saving again (your unsaved edits will be lost)."
-      const held =
-        'Your last save may already have been recorded. Reload this entry before saving again (your unsaved edits will be lost).'
-
+      const toastId = 'canopy-save-may-have-landed:abc123def456'
       /** Render with a draft, then make one save that comes back outcome-unknown. */
-      const renderAfterUnknownOutcome = async () => {
+      const renderAfterUnknownOutcome = async (serverMessage: string | undefined = landed) => {
         mockGetEntryVersion.mockReturnValue(100)
         mockSaveEntry.mockRejectedValueOnce(
-          new SaveApiError(409, landed, undefined, 'WRITE_OUTCOME_UNKNOWN'),
+          new SaveApiError(409, serverMessage, undefined, 'WRITE_OUTCOME_UNKNOWN'),
         )
-        const hook = renderHook(() => useDraftManager(versionedOptions))
+        const hook = renderHook((props) => useDraftManager(props), {
+          initialProps: versionedOptions,
+        })
         act(() => {
           hook.result.current.setDrafts({ abc123def456: { title: 'Draft' } })
         })
@@ -597,12 +597,18 @@ describe('useDraftManager', () => {
         consoleErrorSpy.mockRestore()
       })
 
-      it("shows the server's message, then holds a re-save that would send the same version", async () => {
+      it("shows the server's message in a sticky toast, then holds a re-save that would send the same version", async () => {
         const { result } = await renderAfterUnknownOutcome()
         const { notifications } = await import('@mantine/notifications')
         expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
-          expect.objectContaining({ message: landed, color: 'yellow' }),
+          expect.objectContaining({
+            id: toastId,
+            message: landed,
+            color: 'yellow',
+            autoClose: false,
+          }),
         )
+        expect(notifications.hide).toHaveBeenCalledWith(toastId)
 
         await act(async () => {
           await result.current.handleSave()
@@ -610,9 +616,91 @@ describe('useDraftManager', () => {
 
         expect(mockSaveEntry).toHaveBeenCalledTimes(1)
         expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: held,
+          id: toastId,
+          message: SAVE_MAY_HAVE_LANDED_MESSAGE,
+          color: 'yellow',
+          autoClose: false,
         })
         expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft' })
+      })
+
+      it('replaces the toast rather than stacking a second one when the held save is refused again', async () => {
+        const { result } = await renderAfterUnknownOutcome()
+        const { notifications } = await import('@mantine/notifications')
+        vi.mocked(notifications.hide).mockClear()
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(notifications.hide).toHaveBeenCalledWith(toastId)
+        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({ id: toastId })
+      })
+
+      it('falls back to the generic message when the server gave none', async () => {
+        await renderAfterUnknownOutcome('')
+
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
+          id: toastId,
+          message: SAVE_MAY_HAVE_LANDED_MESSAGE,
+          color: 'yellow',
+          autoClose: false,
+        })
+      })
+
+      it('takes the toast down when the entry is reloaded over the unsaved draft', async () => {
+        const { result } = await renderAfterUnknownOutcome()
+        const { notifications } = await import('@mantine/notifications')
+        vi.mocked(notifications.hide).mockClear()
+
+        await act(async () => {
+          await result.current.handleReload()
+        })
+
+        expect(notifications.hide).toHaveBeenCalledWith(toastId)
+      })
+
+      it('takes the toast down when the entry is reloaded with nothing unsaved', async () => {
+        const { result } = await renderAfterUnknownOutcome()
+        act(() => result.current.handleDiscardDrafts())
+        const { notifications } = await import('@mantine/notifications')
+        const { modals } = await import('@mantine/modals')
+        vi.mocked(notifications.hide).mockClear()
+        vi.mocked(modals.openConfirmModal).mockClear()
+
+        await act(async () => {
+          await result.current.handleReload()
+        })
+
+        expect(modals.openConfirmModal).not.toHaveBeenCalled()
+        expect(notifications.hide).toHaveBeenCalledWith(toastId)
+      })
+
+      it('takes the toast down for every held entry on switching branch', async () => {
+        const otherEntry: EditorEntry = {
+          ...mockEntry,
+          path: unsafeAsLogicalPath('entry2'),
+          contentId: unsafeAsContentId('def456abc123'),
+        }
+        const { result, rerender } = await renderAfterUnknownOutcome()
+        rerender({ ...versionedOptions, currentEntry: otherEntry, selectedPath: 'entry2' })
+        act(() => {
+          result.current.setDrafts({ def456abc123: { title: 'Other draft' } })
+        })
+        mockSaveEntry.mockRejectedValueOnce(
+          new SaveApiError(409, landed, undefined, 'WRITE_OUTCOME_UNKNOWN'),
+        )
+        await act(async () => {
+          await result.current.handleSave()
+        })
+        const { notifications } = await import('@mantine/notifications')
+        vi.mocked(notifications.hide).mockClear()
+
+        rerender({ ...versionedOptions, currentEntry: otherEntry, branchName: 'feature' })
+
+        expect(notifications.hide).toHaveBeenCalledWith(toastId)
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-save-may-have-landed:def456abc123')
       })
 
       it('stops holding once the entry was re-read, leaving the draft to the stale-base check', async () => {
@@ -744,10 +832,15 @@ describe('useDraftManager', () => {
           })
 
           expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
+            id: 'canopy-save-may-have-landed:abc123def456',
             message: SAVE_MAY_HAVE_LANDED_MESSAGE,
             color: 'yellow',
+            autoClose: false,
           })
           expect(notifications.hide).toHaveBeenCalledWith('canopy-save-timed-out:abc123def456')
+          expect(notifications.hide).toHaveBeenCalledWith(
+            'canopy-save-may-have-landed:abc123def456',
+          )
           expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft' })
         })
 

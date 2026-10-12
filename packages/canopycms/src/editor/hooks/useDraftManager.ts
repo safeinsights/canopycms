@@ -18,7 +18,9 @@ export const SAVE_TIMED_OUT_MESSAGE =
 
 /** @internal Exported for tests. Shown when a save may already have landed, until a reload. */
 export const SAVE_MAY_HAVE_LANDED_MESSAGE =
-  'Your last save may already have been recorded. Reload this entry before saving again (your unsaved edits will be lost).'
+  'Your last save may already have gone through. Before saving again, choose "Reload entry" in the menu under the entry\'s name; your unsaved edits will be lost.'
+
+const saveMayHaveLandedToastId = (contentId: string) => `canopy-save-may-have-landed:${contentId}`
 
 const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
 
@@ -341,6 +343,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // them across a switch would compare one branch's version against
       // another's.
       draftBaseVersionsRef.current = {}
+      for (const id of Object.keys(reloadRequiredRef.current)) {
+        notifications.hide(saveMayHaveLandedToastId(id))
+      }
       reloadRequiredRef.current = {}
       // A timed-out save belongs to the branch it was sent to; content ids repeat across branches.
       for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
@@ -613,6 +618,18 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }
 
+  /** Stays until dismissed or the entry is reloaded: saving is held until then. */
+  const showSaveMayHaveLanded = (contentId: string, message = SAVE_MAY_HAVE_LANDED_MESSAGE) => {
+    notifications.hide(saveMayHaveLandedToastId(contentId))
+    notifications.show({
+      id: saveMayHaveLandedToastId(contentId),
+      message: message || SAVE_MAY_HAVE_LANDED_MESSAGE,
+      color: 'yellow',
+      autoClose: false,
+      withCloseButton: true,
+    })
+  }
+
   /**
    * How the selected entry's draft relates to the server version we hold.
    *
@@ -684,7 +701,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     if (currentId in reloadRequiredRef.current) {
       if (reloadRequiredRef.current[currentId] === options.getEntryVersion?.(currentId)) {
-        showConflictNotification(SAVE_MAY_HAVE_LANDED_MESSAGE)
+        showSaveMayHaveLanded(currentId)
         return
       }
       delete reloadRequiredRef.current[currentId]
@@ -798,9 +815,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           timedOutSavesRef.current.delete(currentId)
           notifications.hide(saveTimedOutToastId(currentId))
         }
-        showConflictNotification(
-          ownSaveLanded ? SAVE_MAY_HAVE_LANDED_MESSAGE : err.serverMessage || undefined,
-        )
+        if (err.code === 'WRITE_OUTCOME_UNKNOWN' || ownSaveLanded) {
+          showSaveMayHaveLanded(currentId, ownSaveLanded ? undefined : err.serverMessage)
+        } else {
+          showConflictNotification(err.serverMessage || undefined)
+        }
       } else if (isUnanswered(err)) {
         // A save that did land moved the file's version, so the server refuses the retry as a
         // conflict; a file since deleted or moved is the exception (`ContentStore.write`).
@@ -931,6 +950,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       const loaded = await options.loadEntry(options.currentEntry)
       options.onDraftsReset?.(currentId)
       delete reloadRequiredRef.current[currentId]
+      notifications.hide(saveMayHaveLandedToastId(currentId))
       if (timedOutSavesRef.current.delete(currentId)) {
         notifications.hide(saveTimedOutToastId(currentId))
       }

@@ -96,6 +96,12 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
 - **Empty** states appear only after loading finishes, say what is missing and offer the next
   action.
 - **Errors** say what failed in plain words, keep the user's input and offer Retry.
+- **A write with no answer** (a timeout, or a gateway's 5xx page) may have gone through
+  (`packages/canopycms/src/editor/unanswered.ts`). Reload what it touched; if that settles the
+  outcome, state it. Otherwise warn in yellow until dismissed: "… may have gone through even
+  though the server didn't answer", then where to check, quoted. Keep the input, unless a
+  retry could duplicate the write, as a create can: then close and say where to check.
+- An inline alert about a list sits above the list, under its heading.
 - A placeholder takes the height of what replaces it, so nothing shifts.
 
 ## Fields
@@ -148,6 +154,8 @@ shown by colour alone. Text contrast is at least 4.5:1, or 3:1 for large text.
 - Dimmed text uses only the `--mantine-color-dimmed` token, never a per-component colour; the
   theme must set it to `gray.7` in light mode.
 - Count badges: text colour on a tinted background, at least 4.5:1.
+- A light yellow `Alert`'s title, icon and close button take the text colour
+  (`packages/canopycms/src/editor/theme.tsx`); yellow on its own tint is under 2:1.
 - Filled destructive buttons are `red.8`, 4.5:1 under white. No orange shade reaches that under
   white, so filled orange buttons, such as a "Withdraw from review" confirm, are `orange.6` with black
   text.

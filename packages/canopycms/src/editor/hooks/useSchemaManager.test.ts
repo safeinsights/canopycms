@@ -500,7 +500,10 @@ describe('useSchemaManager', () => {
           name: 'posts',
           entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         }),
-      unknownToast: schemaChangeOutcomeUnknown('Creating the collection', 'Check the content tree'),
+      unknownToast: schemaChangeOutcomeUnknown(
+        'Creating the collection',
+        'Check the "Content" panel',
+      ),
       failureToast: 'Failed to create collection: x',
     },
     {
@@ -517,21 +520,24 @@ describe('useSchemaManager', () => {
       op: 'deleteCollection',
       mock: (c) => c.schema.deleteCollection as Mock,
       call: (h) => h.deleteCollection(unsafeAsLogicalPath('posts')),
-      unknownToast: schemaChangeOutcomeUnknown('Deleting the collection', 'Check the content tree'),
+      unknownToast: schemaChangeOutcomeUnknown(
+        'Deleting the collection',
+        'Check the "Content" panel',
+      ),
       failureToast: 'Failed to delete collection: x',
     },
     {
       op: 'updateOrder',
       mock: (c) => c.schema.updateOrder as Mock,
       call: (h) => h.updateOrder(unsafeAsLogicalPath('posts'), ['id2', 'id1']),
-      unknownToast: schemaChangeOutcomeUnknown('Reordering', 'Check the content tree'),
+      unknownToast: schemaChangeOutcomeUnknown('Reordering entries', 'Check the "Content" panel'),
       failureToast: 'Failed to update order: x',
     },
     {
       op: 'deleteEntry',
       mock: (c) => c.entries.delete as Mock,
       call: (h) => h.deleteEntry(unsafeAsLogicalPath('posts/a')),
-      unknownToast: schemaChangeOutcomeUnknown('Deleting the entry', 'Check the content tree'),
+      unknownToast: schemaChangeOutcomeUnknown('Deleting the entry', 'Check the "Content" panel'),
       failureToast: 'Failed to delete entry: x',
     },
     {

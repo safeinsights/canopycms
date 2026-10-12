@@ -32,6 +32,7 @@ import {
 } from '@mantine/core'
 import {
   IconAlertCircle,
+  IconAlertTriangle,
   IconCheck,
   IconPlus,
   IconDotsVertical,
@@ -122,6 +123,15 @@ function slugOf(logicalPath: LogicalPath): string {
   return lastPart?.split('.')[0] || ''
 }
 
+/** Whether a listed entry type already holds every field of an update. */
+function showsFields(entryType: ExistingEntryType, fields: Partial<CreateEntryTypeInput>): boolean {
+  return Object.entries(fields).every(([key, value]) =>
+    key === 'default'
+      ? !!entryType.default === !!value
+      : entryType[key as keyof CreateEntryTypeInput] === value,
+  )
+}
+
 function usageOf(entryType: ExistingEntryType | CreateEntryTypeInput): number {
   return 'usageCount' in entryType ? (entryType.usageCount ?? 0) : 0
 }
@@ -168,8 +178,11 @@ export function CollectionEditor({
   // True once an immediate entry-type change has saved, or may have, in this opening of the dialog.
   const [entryTypeChanged, setEntryTypeChanged] = useState(false)
   const [entryTypeStatus, setEntryTypeStatus] = useState('')
-  // What an entry-type action the server never answered may have done, and where to check it.
+  // An unanswered remove the re-read did not settle, shown above the list.
   const [entryTypeUnanswered, setEntryTypeUnanswered] = useState<string | null>(null)
+  // An unanswered add or update the re-read did not settle, shown in the entry type dialog,
+  // which stays open with the user's input.
+  const [entryTypeWarning, setEntryTypeWarning] = useState<string | null>(null)
   const [removeFailure, setRemoveFailure] = useState<{ name: string; message: string } | null>(null)
   const [removing, setRemoving] = useState(false)
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null)
@@ -323,15 +336,12 @@ export function CollectionEditor({
 
   /**
    * After an entry-type action the server never answered, which may have landed: re-reads the
-   * list so the user can check it, and treats the action as a possible change (the footer reads
-   * "Close"). Resolves to the names now listed.
+   * list from the branch and shows it, and counts the action as a possible change (the footer
+   * reads "Close"). Resolves to the re-read list, or null when it could not be read.
    */
-  const settleUnanswered = useCallback(
-    async (
-      collectionPath: LogicalPath,
-      name: string,
-      outcome: 'added' | 'updated' | 'removed',
-    ): Promise<string[]> => {
+  const reloadEntryTypes = useCallback(
+    async (collectionPath: LogicalPath): Promise<ExistingEntryType[] | null> => {
+      setEntryTypeChanged(true)
       const reloaded = await (onReloadEntryTypes?.(collectionPath) ?? Promise.resolve(null)).catch(
         (err: unknown) => {
           console.error(err)
@@ -339,16 +349,9 @@ export function CollectionEditor({
         },
       )
       if (reloaded) setEntryTypes(reloaded)
-      setEntryTypeChanged(true)
-      setEntryTypeUnanswered(
-        `The server didn't answer, so entry type "${name}" may already have been ${outcome}. ` +
-          (reloaded
-            ? 'The list below shows what the branch has now. Check it before trying again.'
-            : 'Close and reopen this collection to check before trying again.'),
-      )
-      return (reloaded ?? entryTypes).map((et) => et.name)
+      return reloaded
     },
-    [onReloadEntryTypes, entryTypes],
+    [onReloadEntryTypes],
   )
 
   const closeEntryTypeEditor = useCallback(() => {
@@ -356,6 +359,7 @@ export function CollectionEditor({
     setEditingEntryType(null)
     setEditingEntryTypeIndex(null)
     setEntryTypeError(null)
+    setEntryTypeWarning(null)
   }, [])
 
   // Esc, the close button and a click outside all land here; closing mid-request would hide
@@ -388,6 +392,7 @@ export function CollectionEditor({
 
         setEntryTypeSaving(true)
         setEntryTypeError(null)
+        setEntryTypeWarning(null)
         setEntryTypeStatus('')
         setEntryTypeUnanswered(null)
         setRemoveFailure(null)
@@ -413,18 +418,23 @@ export function CollectionEditor({
             }
           }
           if (result && !result.ok && result.unanswered) {
-            // The list behind this dialog is where to check, so it closes; focus goes to the
-            // entry type's row if the branch has it.
-            const name = isNew ? data.name : editingEntryType?.name
-            const listed = name
-              ? await settleUnanswered(
-                  editingCollection.logicalPath,
-                  name,
-                  isNew ? 'added' : 'updated',
-                )
-              : []
-            closeEntryTypeEditor()
-            setFocusRequest({ row: name && listed.includes(name) ? name : null })
+            // The re-read settles it when the branch already shows the change. Otherwise this
+            // dialog keeps the input: re-sending an update changes nothing, and re-sending an
+            // add that had landed is refused because the name is in use.
+            const name = isNew ? (data as CreateEntryTypeInput).name : editingEntryType?.name
+            const reloaded = await reloadEntryTypes(editingCollection.logicalPath)
+            const now = reloaded?.find((et) => et.name === name)
+            if (name && now && (isNew || showsFields(now, stored))) {
+              announceEntryTypeChange(`Entry type "${name}" ${isNew ? 'added' : 'updated'}`)
+              closeEntryTypeEditor()
+              setFocusRequest({ row: name })
+              return
+            }
+            setEntryTypeWarning(
+              isNew
+                ? `"${name}" may not have been added. Select "Add entry type" to try again: if it was added, you'll be told the name is in use.`
+                : 'The change may not have been saved. Select "Save entry type" to try again; saving it twice changes nothing.',
+            )
             return
           }
           if (result && !result.ok) {
@@ -465,7 +475,7 @@ export function CollectionEditor({
       onAddEntryType,
       onUpdateEntryType,
       announceEntryTypeChange,
-      settleUnanswered,
+      reloadEntryTypes,
       closeEntryTypeEditor,
     ],
   )
@@ -514,14 +524,20 @@ export function CollectionEditor({
             setFocusRequest({ row: neighbour })
           } else if (result.unanswered) {
             setRemoveFailure(null)
-            const listed = await settleUnanswered(editingCollection.logicalPath, name, 'removed')
-            setFocusRequest({
-              row: listed.includes(name)
-                ? name
-                : neighbour && listed.includes(neighbour)
-                  ? neighbour
-                  : null,
-            })
+            // The re-read settles it when the entry type is gone.
+            const reloaded = await reloadEntryTypes(editingCollection.logicalPath)
+            const listed = reloaded?.map((et) => et.name)
+            if (listed && !listed.includes(name)) {
+              announceEntryTypeChange(`Entry type "${name}" removed`)
+              setFocusRequest({ row: neighbour && listed.includes(neighbour) ? neighbour : null })
+            } else {
+              setEntryTypeUnanswered(
+                listed
+                  ? `"${name}" is still listed, so it may not have been removed yet. Remove it again to retry, or close and reopen this collection later to check.`
+                  : `"${name}" may already have been removed. Close and reopen this collection to check before trying again.`,
+              )
+              setFocusRequest({ row: name })
+            }
           } else {
             setRemoveFailure({ name, message: result.error })
             setFocusRequest({ row: name })
@@ -546,7 +562,7 @@ export function CollectionEditor({
       editingCollection,
       onRemoveEntryType,
       announceEntryTypeChange,
-      settleUnanswered,
+      reloadEntryTypes,
     ],
   )
 
@@ -620,6 +636,21 @@ export function CollectionEditor({
           </Text>
         )}
       </div>
+
+      {entryTypeUnanswered && (
+        <Alert
+          icon={<IconAlertTriangle size={16} />}
+          color="yellow"
+          title="No answer from the server"
+          withCloseButton
+          onClose={() => {
+            setEntryTypeUnanswered(null)
+            setFocusRequest({ row: null })
+          }}
+        >
+          {entryTypeUnanswered}
+        </Alert>
+      )}
 
       {displayEntryTypes.length === 0 ? (
         <Paper p="md" withBorder>
@@ -722,25 +753,16 @@ export function CollectionEditor({
         </Group>
       )}
 
-      {entryTypeUnanswered && (
-        <Alert
-          icon={<IconAlertCircle size={16} />}
-          color="yellow"
-          title="No answer from the server"
-          withCloseButton
-          onClose={() => setEntryTypeUnanswered(null)}
-        >
-          {entryTypeUnanswered}
-        </Alert>
-      )}
-
       {removeFailure && (
         <Alert
           icon={<IconAlertCircle size={16} />}
           color="red"
           title="Couldn't remove entry type"
           withCloseButton
-          onClose={() => setRemoveFailure(null)}
+          onClose={() => {
+            setRemoveFailure(null)
+            setFocusRequest({ row: null })
+          }}
         >
           <Stack gap="xs" align="flex-start">
             <Text size="sm">{removeFailure.message}</Text>
@@ -884,6 +906,7 @@ export function CollectionEditor({
         onClose={dismissEntryTypeEditor}
         isSaving={entryTypeSaving}
         error={entryTypeError}
+        warning={entryTypeWarning}
       />
 
       <ConfirmDeleteModal

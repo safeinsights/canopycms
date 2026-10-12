@@ -350,6 +350,32 @@ describe('CanopyCMSProvider filled button contrast', () => {
   })
 })
 
+describe('CanopyCMSProvider light yellow alert contrast', () => {
+  const alertColor = (props: React.ComponentProps<typeof Alert>) => {
+    const { getByRole } = render(
+      <CanopyCMSProvider>
+        <Alert {...props}>Heads up</Alert>
+      </CanopyCMSProvider>,
+    )
+    const value = getByRole('alert').style.getPropertyValue('--alert-color')
+    cleanup()
+    return value
+  }
+
+  it('draws the title, icon and close button of a light yellow alert in the text colour', () => {
+    expect(alertColor({ color: 'yellow', title: 'Careful' })).toBe('var(--mantine-color-text)')
+  })
+
+  it('applies the text colour when the light variant is named', () => {
+    expect(alertColor({ color: 'yellow', variant: 'light' })).toBe('var(--mantine-color-text)')
+  })
+
+  it('leaves a filled yellow alert, and a light red one, as Mantine draws them', () => {
+    expect(alertColor({ color: 'yellow', variant: 'filled' })).not.toBe('var(--mantine-color-text)')
+    expect(alertColor({ color: 'red' })).not.toBe('var(--mantine-color-text)')
+  })
+})
+
 describe('CanopyCMSProvider dimmed text', () => {
   const dimmedIn = (scheme: 'light' | 'dark') => {
     const css = Array.from(document.querySelectorAll('style'))
