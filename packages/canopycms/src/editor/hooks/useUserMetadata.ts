@@ -38,25 +38,27 @@ const cachedRecord = (cache: Cache, key: string): UserSearchResult | null => {
 /**
  * Caches profiles a response carried, keeping a cached record's email. A profile matching the
  * cached record is not written: any write makes SWR discard a lookup in flight, email included. A
- * user with no record yet is refetched once the writes settle, since the seed may have overtaken
- * a lookup; that refetch is detached, so the caller never waits on the directory.
+ * user with no record, or whose written record still has no email, is refetched once the writes
+ * settle, since the seed may have discarded a lookup; that refetch is detached, so the caller
+ * never waits on the directory.
  */
 export async function seedUserProfiles(
   swr: { cache: Cache; mutate: ScopedMutator },
   users: readonly UserProfile[],
 ): Promise<void> {
   const { cache, mutate } = swr
-  const firstSeen = new Set<string>()
+  const emailless = new Set<string>()
   await Promise.all(
     users.map(async (user) => {
       const key = userMetadataKey(user.id)
       const record = cachedRecord(cache, key)
       if (record && record.name === user.name && record.avatarUrl === user.avatarUrl) return
-      if (!record) firstSeen.add(key)
-      await mutate<UserSearchResult>(key, { email: '', ...record, ...user }, { revalidate: false })
+      const merged = { email: '', ...record, ...user }
+      if (!record || !merged.email) emailless.add(key)
+      await mutate<UserSearchResult>(key, merged, { revalidate: false })
     }),
   )
-  for (const key of firstSeen) void mutate(key)
+  for (const key of emailless) void mutate(key)
 }
 
 /** Answers from the cache with no request and no email, for a reader who may not look users up. */

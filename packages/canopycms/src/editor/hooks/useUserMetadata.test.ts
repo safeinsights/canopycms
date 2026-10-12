@@ -284,6 +284,29 @@ describe('useUserMetadata', () => {
       await waitFor(() => expect(result.current.badge.userMetadata?.email).toBe(mockUser.email))
     })
 
+    it('refetches a changed profile that overtook a lookup, so the badge still gets its email', async () => {
+      const shared = new Map()
+      const sharedCache = ({ children }: { children: ReactNode }) =>
+        createElement(SWRConfig, { value: { provider: () => shared } }, children)
+      const { result: config } = renderHook(() => useSWRConfig(), { wrapper: sharedCache })
+      await act(async () => seedUserProfiles(config.current, [{ id: 'user-1', name: 'Alice' }]))
+      const lookups: Array<(user: UserSearchResult) => void> = []
+      const lookup = vi
+        .fn<(userId: string) => Promise<UserSearchResult | null>>()
+        .mockImplementationOnce(() => new Promise((resolve) => lookups.push(resolve)))
+        .mockImplementation(async () => ({ ...mockUser, name: 'Alice B' }))
+      const { result: badge } = renderHook(() => useUserMetadata('user-1', lookup), {
+        wrapper: sharedCache,
+      })
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1))
+
+      await act(async () => seedUserProfiles(config.current, [{ id: 'user-1', name: 'Alice B' }]))
+      await act(async () => lookups[0]?.(mockUser))
+
+      await waitFor(() => expect(badge.current.userMetadata?.email).toBe(mockUser.email))
+      expect(badge.current.userMetadata?.name).toBe('Alice B')
+    })
+
     it('resolves while the badge lookup never answers', async () => {
       const lookup = vi.fn(pendingLookup)
       const { result } = renderHook(
@@ -331,7 +354,7 @@ describe('useUserMetadata', () => {
       expect(lookup).toHaveBeenCalledTimes(2)
     })
 
-    it('writes a changed profile without looking the user up again', async () => {
+    it('merges a changed profile onto a record that has no email', async () => {
       const lookup = vi.fn(pendingLookup)
       const { result } = renderHook(
         () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', lookup) }),
@@ -355,7 +378,6 @@ describe('useUserMetadata', () => {
         avatarUrl: 'https://example.com/a.png',
         email: '',
       })
-      expect(lookup).toHaveBeenCalledTimes(2)
     })
 
     describe('when the badge looks users up through /users/batch', () => {
