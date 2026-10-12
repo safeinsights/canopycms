@@ -203,9 +203,16 @@ export interface ObjectFieldConfig extends BaseFieldConfig {
   fields: FieldConfig[]
   /**
    * On a `list: true` object, a direct `string` or `number` child whose value titles each
-   * item's card; a blank or non-finite value falls back to "<label> #N".
+   * item's card; a blank or non-finite value falls back to the item's first non-blank `string`
+   * field, then "Item N".
    */
   itemTitleField?: string
+  /**
+   * On a `list: true` object, what one item is called, as it reads mid-sentence ("team member"):
+   * the add button reads "Add team member" and an untitled item "Team member 3". Without it,
+   * "Add item" and "Item 3". `ensureItemTitleFieldsExist` (`validation.ts`) checks it.
+   */
+  itemLabel?: string
 }
 
 /**

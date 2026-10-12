@@ -49,6 +49,44 @@ describe('validateEntryData', () => {
     expect(validateEntryData(schema, validData)).toEqual([])
   })
 
+  describe('with required checks off', () => {
+    const groupSchema: EntrySchema = [
+      {
+        name: 'meta',
+        type: 'group',
+        fields: [{ name: 'summary', type: 'string', required: true }],
+      },
+    ]
+
+    it('skips required fields at the top level, in objects, block items and inline groups', () => {
+      const data = { hero: {}, blocks: [{ template: 'quote', value: {} }] }
+      expect(validateEntryData(schema, data, '', { required: false })).toEqual([])
+      expect(validateEntryData(groupSchema, {}, '', { required: false })).toEqual([])
+    })
+
+    it('still reports the same places as missing when the checks are on', () => {
+      const data = { hero: {}, blocks: [{ template: 'quote', value: {} }] }
+      expect(validateEntryData(schema, data).map((e) => e.fieldPath)).toEqual([
+        'title',
+        'author',
+        'hero.headline',
+        'blocks[0].text',
+      ])
+      expect(validateEntryData(groupSchema, {}).map((e) => e.fieldPath)).toEqual(['summary'])
+    })
+
+    it('still checks the type of every value present, nested ones included', () => {
+      const data = {
+        title: 42,
+        hero: { headline: 7 },
+        blocks: [{ template: 'quote', value: { text: 1 } }],
+      }
+      expect(
+        validateEntryData(schema, data, '', { required: false }).map((e) => e.fieldPath),
+      ).toEqual(['title', 'hero.headline', 'blocks[0].text'])
+    })
+  })
+
   it('rejects a missing required field', () => {
     const errors = validateEntryData(schema, { author: '5NVkkrB1MJUv' })
     expect(errors).toEqual([{ fieldPath: 'title', message: 'This field is required' }])

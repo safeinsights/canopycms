@@ -12,6 +12,14 @@ const SETTINGS_ITEM_TEST_IDS: Record<SettingsItem, string> = {
   'System health': 'settings-menu-system-health',
 }
 
+/** 'my-first-post' as 'My First Post'. */
+const humanizeSlug = (slug: string): string =>
+  slug
+    .split('-')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+
 /** The navigator derives its per-node test ids from the node label this way. */
 const navigatorTestIdSuffix = (label: string): string => label.toLowerCase().replace(/\s+/g, '-')
 
@@ -97,6 +105,17 @@ export class EditorPage {
   }
 
   /**
+   * Open the content navigator from the header's breadcrumb, which shows once an entry is selected.
+   */
+  async openContentNavigatorFromBreadcrumb(): Promise<void> {
+    await this.page.getByTestId('breadcrumb-segment').first().click()
+    await this.contentNavigator.waitFor({
+      state: 'visible',
+      timeout: STANDARD_TIMEOUT,
+    })
+  }
+
+  /**
    * Close the content navigator so the form pane is interactive.
    */
   async closeContentNavigator(): Promise<void> {
@@ -162,16 +181,46 @@ export class EditorPage {
    * The navigator must be open.
    * @param collection - The collection's display label, e.g. 'Posts'
    * @param slug - The new entry's slug
+   * @param title - The new entry's title, which becomes its label; the slug with its words
+   *   capitalised when omitted. Ignored by an entry type that has no title field.
    */
-  async createEntry(collection: string, slug: string): Promise<void> {
+  async createEntry(collection: string, slug: string, title?: string): Promise<void> {
     await this.openCollectionMenu(collection, 'add-entry-menu-item')
 
     const modal = this.page.locator('[data-testid="create-entry-modal"]')
     await expect(modal).toBeVisible()
+    const titleInput = this.page.locator('[data-testid="entry-title-input"]')
+    if ((await titleInput.count()) > 0) {
+      await titleInput.fill(title ?? humanizeSlug(slug))
+    }
+    // fill() replaces the slug the title seeded
     await this.page.locator('[data-testid="entry-slug-input"]').fill(slug)
     await this.page.locator('[data-testid="create-entry-submit"]').click()
     // Entry creation involves server-side file writes
     await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+  }
+
+  /**
+   * Type into the navigator's filter box. The navigator must be open.
+   */
+  async filterNavigator(query: string): Promise<void> {
+    await this.page.locator('[data-testid="entry-nav-filter"]').fill(query)
+  }
+
+  /**
+   * Open an entry through the Mod+P palette: type `query` and take its first match.
+   * Works from wherever focus is, the form's inputs included.
+   */
+  async quickOpen(query: string): Promise<void> {
+    await this.page.keyboard.press('ControlOrMeta+P')
+    const input = this.page.locator('[data-testid="quick-open-input"]')
+    await expect(input).toBeVisible({ timeout: STANDARD_TIMEOUT })
+    await input.fill(query)
+    await expect(this.page.locator('[data-testid="quick-open-option"]').first()).toBeVisible({
+      timeout: STANDARD_TIMEOUT,
+    })
+    await input.press('Enter')
+    await expect(input).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
   /**
@@ -266,7 +315,7 @@ export class EditorPage {
     const item = this.page.locator('[data-testid="discard-file-draft-menu-item"]')
     await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
     await item.click()
-    return this.page.getByRole('dialog', { name: 'Discard draft' })
+    return this.discardDialog('confirm-discard-entry')
   }
 
   /**
@@ -276,14 +325,23 @@ export class EditorPage {
   async discardAllDrafts(): Promise<Locator> {
     await new BranchPage(this.page).openBranchMenu()
     await this.page.locator('[data-testid="discard-all-drafts-menu-item"]').click()
-    return this.page.getByRole('dialog', { name: 'Discard drafts' })
+    return this.discardDialog('confirm-discard-all')
+  }
+
+  /** The confirm dialog holding the given confirm button, found by test id rather than by its wording. */
+  private discardDialog(confirmTestId: string): Locator {
+    return this.page
+      .getByRole('dialog')
+      .filter({ has: this.page.locator(`[data-testid="${confirmTestId}"]`) })
   }
 
   /**
    * Confirm a discard dialog returned by {@link discardEntryDraft} or {@link discardAllDrafts}.
    */
   async confirmDiscard(dialog: Locator): Promise<void> {
-    await dialog.getByRole('button', { name: 'Discard', exact: true }).click()
+    await dialog
+      .locator('[data-testid="confirm-discard-entry"], [data-testid="confirm-discard-all"]')
+      .click()
   }
 
   /**
@@ -342,13 +400,24 @@ export class EditorPage {
   }
 
   /**
-   * Begin a new comment thread on a form field.
+   * A form field's comment control: an icon shown while the field is hovered or focused, and a
+   * count badge while it has open threads.
+   * @param field - The field's data-canopy-field path
+   */
+  fieldCommentControl(field: string): Locator {
+    return this.page.getByTestId(`field-comment-${field}`)
+  }
+
+  /**
+   * Hover a form field and open its comments popover, which starts a new thread when the field
+   * has none.
    * @param field - The field's data-canopy-field path
    */
   async startFieldComment(field: string): Promise<void> {
-    const trigger = this.page.locator(`[data-testid="field-new-comment-${field}"]`)
-    await trigger.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
-    await trigger.click()
+    const control = this.fieldCommentControl(field)
+    await control.waitFor({ state: 'attached', timeout: STANDARD_TIMEOUT })
+    await this.page.locator(`[data-field-comments][data-canopy-field="${field}"]`).hover()
+    await control.click()
   }
 
   /**
@@ -362,7 +431,7 @@ export class EditorPage {
   }
 
   /**
-   * The comment thread shown inline in the form.
+   * The comment thread shown in the open comments popover.
    */
   fieldCommentThread(): Locator {
     return this.page.locator('[data-testid="inline-comment-thread"]')
@@ -618,7 +687,9 @@ export class EditorPage {
    */
   async createPost(slug: string, title: string): Promise<void> {
     await this.openContentNavigator()
-    await this.createEntry('Posts', slug)
+    // Titled "Post" so the entry's label is the one the lookups below expect; the title typed
+    // into the form afterwards replaces it.
+    await this.createEntry('Posts', slug, 'Post')
 
     // After creation the navigator is still open. Expand Posts if collapsed,
     // then click the new entry so it loads in the form pane.

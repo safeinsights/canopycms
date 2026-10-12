@@ -4,6 +4,9 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContext } from '../types'
 import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
+import type { UserProfile } from '../auth/types'
+import { lookupUserProfiles } from '../auth/user-metadata-lookup'
+import { getErrorMessage } from '../utils/error'
 import { isReviewer } from '../authorization'
 import type { ContentAccessChecker } from '../authorization'
 import { parseLogicalPath } from '../paths/validation'
@@ -22,6 +25,8 @@ export interface AddCommentBody {
 
 interface ListCommentsResponse {
   threads: CommentThread[]
+  /** Profiles of the people who wrote or resolved `threads`, in no order; unknown ids are absent. */
+  users: UserProfile[]
 }
 
 /** Response type for listing comments */
@@ -100,6 +105,33 @@ const createThreadReadCheck = async (
   return (entryPath) => canReadThreadEntry(checkAccess, contentRoot, entryPath)
 }
 
+/**
+ * The profile of everyone who wrote or resolved one of `threads`, looked up only for threads
+ * already filtered to what the requester may read, so the list names no one the requester could
+ * not see in a thread. A failed lookup costs the names, never the threads.
+ */
+const lookupThreadUsers = async (
+  ctx: ApiContext,
+  threads: readonly CommentThread[],
+): Promise<UserProfile[]> => {
+  const authPlugin = ctx.authPlugin
+  if (!authPlugin) return []
+  try {
+    const ids: unknown[] = []
+    for (const thread of threads) {
+      ids.push(thread.authorId, thread.resolvedBy)
+      // comments.json is parsed without validation, so a thread may lack its comment list.
+      if (Array.isArray(thread.comments)) {
+        for (const comment of thread.comments) ids.push(comment?.userId)
+      }
+    }
+    return await lookupUserProfiles(authPlugin, ids)
+  } catch (error) {
+    console.error('CanopyCMS: Failed to look up comment authors:', getErrorMessage(error))
+    return []
+  }
+}
+
 const listCommentsHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
@@ -114,8 +146,9 @@ const listCommentsHandler = async (
     createThreadReadCheck(ctx, req, branchContext),
   ])
   const threads = allThreads.filter((thread) => canRead(thread.entryPath))
+  const users = await lookupThreadUsers(ctx, threads)
 
-  return { ok: true, status: 200, data: { threads } }
+  return { ok: true, status: 200, data: { threads, users } }
 }
 
 const addCommentHandler = async (
@@ -233,7 +266,7 @@ const listComments = defineEndpoint({
   params: branchParamSchema,
   responseType: 'CommentsResponse',
   response: {} as CommentsResponse,
-  defaultMockData: { threads: [] },
+  defaultMockData: { threads: [], users: [] },
   guards: ['branchAccess'] as const,
   handler: listCommentsHandler,
 })

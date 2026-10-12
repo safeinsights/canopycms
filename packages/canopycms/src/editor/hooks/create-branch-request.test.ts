@@ -64,6 +64,7 @@ describe('requestBranchCreate', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('returns the created branch', async () => {
@@ -119,6 +120,38 @@ describe('requestBranchCreate', () => {
     expect(CREATE_TIMED_OUT_MESSAGE).toBe(
       "Creating the branch didn't finish (the server timed out). It's safe to try again.",
     )
+  })
+
+  it('abandons the create request itself at the deadline', async () => {
+    // WebCrypto hashes off the fake clock; resolved at once, the POST goes out before the deadline.
+    vi.spyOn(globalThis.crypto.subtle, 'digest').mockResolvedValue(new ArrayBuffer(32))
+    let createSignal: AbortSignal | undefined
+    const fetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        createSignal = init.signal ?? undefined
+        return new Promise<Response>(() => {})
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => listing('main').body,
+      } as unknown as Response
+    })
+    const apiClient = new CanopyApiClient({ fetch, trailingSlash: false })
+
+    const outcome = requestBranchCreate(apiClient, body, me)
+    await vi.advanceTimersByTimeAsync(CREATE_BRANCH_DEADLINE_MS)
+
+    expect(await outcome).toEqual({ kind: 'failed', message: CREATE_TIMED_OUT_MESSAGE })
+    expect(createSignal?.aborted).toBe(true)
+  })
+
+  it('passes a network failure to the caller rather than reporting a timeout', async () => {
+    const { apiClient } = client(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    await expect(requestBranchCreate(apiClient, body, me)).rejects.toThrow('Failed to fetch')
   })
 
   it('looks for the branch after a gateway timeout page from in front of the API', async () => {

@@ -19,6 +19,7 @@ const PermissionManagerDrawer: React.FC<PermissionManagerProps & { onExited: () 
   opened,
   onClose,
   onExited,
+  returnFocusTo,
   collections,
   contentRoot = 'content',
   permissions,
@@ -191,6 +192,7 @@ const PermissionManagerDrawer: React.FC<PermissionManagerProps & { onExited: () 
       onSave={handleSave}
       onDiscard={handleDiscard}
       onExited={onExited}
+      returnFocusTo={returnFocusTo}
     >
       <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
         {!canEdit && (

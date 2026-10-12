@@ -283,11 +283,27 @@ describe('Editor on a read-only branch', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
     const confirm = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
-    expect(confirm?.title).toBe('Discard draft')
+    expect(confirm?.title).toBe('Discard changes')
     act(() => confirm?.onConfirm?.())
 
     await waitFor(() => expect(screen.queryByTestId('read-only-draft-notice')).toBeNull())
     expect(persistedDrafts()).not.toHaveProperty(CONTENT_ID)
+  })
+
+  it("hands focus to the file menu button once the discard's confirm has closed, as the notice's own button is gone", async () => {
+    seedDraft()
+    stubApi([protectedMain])
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('read-only-draft-notice')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+    const confirm = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
+    act(() => confirm?.onConfirm?.())
+    await waitFor(() => expect(screen.queryByTestId('read-only-draft-notice')).toBeNull())
+
+    expect(confirm?.returnFocus).toBe(false)
+    act(() => confirm?.onExitTransitionEnd?.())
+    expect(document.activeElement).toBe(screen.getByTestId('file-dropdown-button'))
   })
 
   it('raises no notice while the branch list is still loading, though the form is locked', async () => {

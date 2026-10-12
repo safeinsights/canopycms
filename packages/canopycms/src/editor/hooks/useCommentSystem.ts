@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSWRConfig } from 'swr'
-import { notifications } from '@mantine/notifications'
 import type { CommentThread } from '../../comment-store'
+import type { UserSearchResult } from '../../auth/types'
 import type { EditorEntry } from '../Editor'
-import { formatCanopyPath, parseCanopyPath } from '../canopy-path'
+import { findFieldTarget, whenRevealed } from '../field-target'
 import { useApiClient } from '../context'
+import { isGatewayFailure, isUnanswered } from '../unanswered'
 import { resolveMessageOrigin } from '../preview-bridge'
 import { isSamePreviewPath } from '../preview-path'
-import { commentsKey, fetchComments, useCommentsData } from './useCommentsData'
+import { commentsKey, fetchCommentsSeedingUsers, useCommentsData } from './useCommentsData'
+import { useSeededUserResolver } from './useUserMetadata'
 
 export interface UseCommentSystemOptions {
   branchName: string
@@ -29,6 +31,8 @@ export interface UseCommentSystemOptions {
 
 export interface UseCommentSystemReturn {
   comments: CommentThread[]
+  /** Resolves a user from the seeded cache, without email or a request (`useSeededUserResolver`). */
+  getCommentUser: (userId: string) => Promise<UserSearchResult | null>
   focusedFieldPath: string | undefined
   setFocusedFieldPath: (path: string | undefined) => void
   highlightThreadId: string | undefined
@@ -60,34 +64,20 @@ export interface UseCommentSystemReturn {
   handleJumpToBranch: (threadId: string) => void
 }
 
-/**
- * The form element for a path, as given or as `canopy-path.ts` spells it (`blocks.2.title` is
- * `blocks[2].title`), else for its nearest ancestor that has one: a list item (`tags[1]`) has no
- * field of its own. Compares values, not a selector: the path is untrusted.
- */
-const findFieldTarget = (path: string): { element: HTMLElement; path: string } | undefined => {
-  const byField = new Map<string, HTMLElement>()
-  for (const element of document.querySelectorAll<HTMLElement>('[data-canopy-field]')) {
-    const field = element.getAttribute('data-canopy-field')
-    if (field && !byField.has(field)) byField.set(field, element)
-  }
-  const exact = byField.get(path)
-  if (exact) return { element: exact, path }
-  const segments = parseCanopyPath(path)
-  for (let length = segments.length; length > 0; length--) {
-    const candidate = formatCanopyPath(segments.slice(0, length))
-    const element = byField.get(candidate)
-    if (element) return { element, path: candidate }
-  }
-  return undefined
-}
+/** @internal Exported for tests. */
+export const COMMENT_NOT_ADDED = "Couldn't add the comment. Try again."
+/** @internal Exported for tests. */
+export const COMMENT_MAY_BE_ADDED =
+  "The server didn't answer, so your comment may have been posted. Check the comments above before sending it again."
+/** @internal Exported for tests. */
+export const THREAD_NOT_RESOLVED = "Couldn't resolve the thread. Try again."
 
 /**
  * Custom hook for managing the comment system.
  */
 export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSystemReturn {
   const apiClient = useApiClient()
-  const { mutate: globalMutate } = useSWRConfig()
+  const { cache, mutate: globalMutate } = useSWRConfig()
   const [focusedFieldPath, setFocusedFieldPath] = useState<string | undefined>(undefined)
   const [highlightThreadId, setHighlightThreadId] = useState<string | undefined>(undefined)
   const [commentsPanelOpen, setCommentsPanelOpen] = useState(false)
@@ -101,28 +91,43 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // Mode's double effect invoke collapses to a single request). Switching
   // branches re-keys automatically, so no manual branch-change effect is
   // needed.
-  const { data: commentsData } = useCommentsData(apiClient, options.branchName)
+  const { data: commentsData, error: commentsError } = useCommentsData(
+    apiClient,
+    options.branchName,
+  )
   const comments = commentsData?.threads ?? []
+  const getCommentUser = useSeededUserResolver()
 
   // Deliberately omits `options.onCommentsChange` from the deps: it's a
   // stable setState passthrough, and this file is plain .ts (not .tsx), so
   // the react-hooks/exhaustive-deps rule isn't active here anyway --
   // including it would refire this on every Editor.tsx render regardless.
+  // A branch whose comments never loaded reports none, not the previous branch's.
   useEffect(() => {
     if (commentsData) options.onCommentsChange?.(commentsData.threads)
-  }, [commentsData])
+    else if (commentsError) options.onCommentsChange?.([])
+  }, [commentsData, commentsError])
 
   // Explicit reload: always issues a fresh, independent fetch (raw call, not
   // SWR's `mutate()` revalidate path) so a caller requesting a reload right
   // after mount isn't coalesced against the still-in-flight automatic load
   // -- then writes the result into the shared cache so useCommentsData's
   // bound hook (and the effect above) pick it up.
+  // A failed reload logs and keeps the threads already shown.
   const loadComments = async (branch: string) => {
     if (!branch) return
-    const fresh = await fetchComments(apiClient, branch)
+    let fresh: Awaited<ReturnType<typeof fetchCommentsSeedingUsers>>
+    try {
+      fresh = await fetchCommentsSeedingUsers(apiClient, { cache, mutate: globalMutate }, branch)
+    } catch (err) {
+      console.error('Failed to load comments:', err)
+      return
+    }
     await globalMutate(commentsKey(branch), fresh, { revalidate: false })
   }
 
+  // Both reject on failure, so the caller keeps the person's text and shows the error where they
+  // wrote it. Success shows itself in the thread, so it has no toast.
   const handleAddComment = async (
     text: string,
     type: 'field' | 'entry' | 'branch',
@@ -130,40 +135,27 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
     canopyPath?: string,
     threadId?: string,
   ) => {
-    if (!options.branchName) return
-    try {
-      const result = await apiClient.comments.add(
-        { branch: options.branchName },
-        {
-          text,
-          threadId,
-          type,
-          entryPath,
-          canopyPath,
-        },
-      )
-      if (!result.ok) throw new Error('Failed to add comment')
-      await loadComments(options.branchName)
-      // Branch summaries auto-update via useMemo watching comments
-      notifications.show({ message: 'Comment added', color: 'green' })
-    } catch {
-      notifications.show({ message: 'Failed to add comment', color: 'red' })
+    const branch = options.branchName
+    if (!branch) return
+    const result = await apiClient.comments
+      .add({ branch }, { text, threadId, type, entryPath, canopyPath })
+      .catch((err: unknown) => (isUnanswered(err) ? 'unanswered' : null))
+    if (result === 'unanswered' || (result && isGatewayFailure(result))) {
+      // An unanswered post may have landed: reload so the thread shows it if it did.
+      void loadComments(branch)
+      throw new Error(COMMENT_MAY_BE_ADDED)
     }
+    if (!result?.ok) throw new Error(COMMENT_NOT_ADDED)
+    await loadComments(branch)
   }
 
   const handleResolveThread = async (threadId: string) => {
     if (!options.branchName) return
-    try {
-      const result = await apiClient.comments.resolve({
-        branch: options.branchName,
-        threadId,
-      })
-      if (!result.ok) throw new Error('Failed to resolve thread')
-      await loadComments(options.branchName)
-      notifications.show({ message: 'Thread resolved', color: 'green' })
-    } catch {
-      notifications.show({ message: 'Failed to resolve thread', color: 'red' })
-    }
+    const result = await apiClient.comments
+      .resolve({ branch: options.branchName, threadId })
+      .catch(() => null)
+    if (!result?.ok) throw new Error(THREAD_NOT_RESOLVED)
+    await loadComments(options.branchName)
   }
 
   // Compute active comment threads for the thread panel
@@ -234,7 +226,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
       const found = typeof msg.fieldPath === 'string' ? findFieldTarget(msg.fieldPath) : undefined
       if (found) {
         const target = found.element
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        whenRevealed(target, () => target.scrollIntoView({ behavior: 'smooth', block: 'center' }))
         const previous = target.style.boxShadow
         target.style.boxShadow = '0 0 0 3px rgba(79, 70, 229, 0.35)'
         later(() => {
@@ -264,7 +256,10 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
 
     window.setTimeout(
       () => {
-        findFieldTarget(canopyPath)?.element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        const target = findFieldTarget(canopyPath)?.element
+        if (target) {
+          whenRevealed(target, () => target.scrollIntoView({ behavior: 'smooth', block: 'center' }))
+        }
         setFocusedFieldPath(canopyPath)
         setHighlightThreadId(threadId)
         window.setTimeout(() => {
@@ -307,6 +302,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
 
   return {
     comments,
+    getCommentUser,
     focusedFieldPath,
     setFocusedFieldPath,
     highlightThreadId,

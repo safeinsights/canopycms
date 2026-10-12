@@ -137,11 +137,13 @@ describe('user metadata batching', () => {
     )
 
     await screen.findByText('Name of user-1')
-    expect(screen.getByText('ghost-1')).toBeTruthy()
+    // Never the raw id.
+    expect(screen.getByText('Name unavailable')).toBeTruthy()
+    expect(screen.queryByText('ghost-1')).toBeNull()
     expect(client.permissions.batchGetUserMetadata).toHaveBeenCalledTimes(1)
   })
 
-  it('resolves every id in a failed request to null rather than rejecting', async () => {
+  it('rejects every id in a failed request, so a cached record survives it', async () => {
     const client = createMockApiClient()
     client.permissions.batchGetUserMetadata
       .mockResolvedValueOnce(mockError(403, 'Forbidden'))
@@ -149,12 +151,29 @@ describe('user metadata batching', () => {
     const getUserMetadata = createUserMetadataBatcher(asApiClient(client))
     const consoleSpy = mockConsole()
 
-    await expect(Promise.all([getUserMetadata('a'), getUserMetadata('b')])).resolves.toEqual([
-      null,
-      null,
-    ])
-    await expect(getUserMetadata('c')).resolves.toBeNull()
+    await expect(Promise.allSettled([getUserMetadata('a'), getUserMetadata('b')])).resolves.toEqual(
+      [
+        {
+          status: 'rejected',
+          reason: expect.objectContaining({ message: expect.stringContaining('Forbidden') }),
+        },
+        {
+          status: 'rejected',
+          reason: expect.objectContaining({ message: expect.stringContaining('Forbidden') }),
+        },
+      ],
+    )
+    await expect(getUserMetadata('c')).rejects.toThrow('offline')
     expect(consoleSpy).toHaveErrored('Batch get user metadata failed')
     consoleSpy.restore()
+  })
+
+  it('resolves an id the response omits to null while answering the rest', async () => {
+    const client = mockClientKnowingUsers()
+    const getUserMetadata = createUserMetadataBatcher(asApiClient(client))
+
+    await expect(
+      Promise.all([getUserMetadata('user-1'), getUserMetadata('ghost-1')]),
+    ).resolves.toEqual([userFor('user-1'), null])
   })
 })

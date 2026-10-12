@@ -465,6 +465,7 @@ const finalizeAsset = defineEndpoint({
 const uploadProxied = defineEndpoint({
   namespace: 'assets',
   name: 'uploadProxied',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/assets/upload',
   bodyFormat: 'multipart',

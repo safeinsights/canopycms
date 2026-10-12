@@ -203,6 +203,13 @@ function stubFetch(options: { flagged: boolean; widgetRead: () => Response }) {
               },
               {
                 type: 'collection',
+                logicalPath: 'folders',
+                name: 'folders',
+                label: 'Folders',
+                entries: [],
+              },
+              {
+                type: 'collection',
                 logicalPath: 'posts',
                 name: 'posts',
                 label: 'Posts',
@@ -290,7 +297,7 @@ describe('Editor: an entry of an unavailable type', () => {
       "This section uses a content type this editor version doesn't know yet (widgetSchema). It usually appears after the editor finishes updating; reload in a few minutes.",
     )
     expect(screen.queryByRole('textbox', { hidden: true })).toBeNull()
-    expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
     // Give a (wrongly) issued read time to land before asserting there was none.
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(readCalls(fetchMock, '/content/widgets/first')).toHaveLength(0)
@@ -378,7 +385,7 @@ describe('Editor: an entry of an unavailable type', () => {
     })
     fireEvent.change(title, { target: { value: 'Edited title' } })
     await waitFor(() => {
-      expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(false)
+      expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBeNull()
     })
     const entriesCallsBefore = fetchMock.mock.calls.filter(([input]) =>
       String(input).includes('/entries'),
@@ -416,7 +423,7 @@ describe('Editor: an entry of an unavailable type', () => {
 
     widgetResponse = () => okJson({ ok: true, status: 200, data: { size: 'large', version: 1 } })
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    fireEvent.click(await screen.findByText('Reload File'))
+    fireEvent.click(await screen.findByText('Reload entry'))
 
     await waitFor(() => {
       const el = screen.queryByRole('textbox', {
@@ -453,7 +460,7 @@ describe('Editor: an entry of an unavailable type', () => {
       await screen.findByTestId('unavailable-entry-notice')
       // Let the restored draft settle before asserting on Save.
       await new Promise((resolve) => setTimeout(resolve, 50))
-      expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+      expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
       expect(writeCalls(fetchMock)).toHaveLength(0)
       expect(window.localStorage.getItem('canopycms:drafts:main')).toContain('draft size')
       // The draft would otherwise frame a page the site cannot read.
@@ -486,13 +493,13 @@ describe('Editor: an entry of an unavailable type', () => {
       renderEditor('widgets/first')
 
       await screen.findByTestId('unavailable-entry-notice')
-      expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+      expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
       expect(writeCalls(fetchMock)).toHaveLength(0)
       expect(window.localStorage.getItem('canopycms:drafts:main')).toContain('draft size')
     })
   })
 
-  it('shows the message once under the affected collection, which offers no Add Entry', async () => {
+  it('shows the message once under the affected collection, which offers no Add entry', async () => {
     stubFetch({
       flagged: true,
       widgetRead: () => okJson({ ok: true, status: 200, data: {} }),
@@ -506,11 +513,11 @@ describe('Editor: an entry of an unavailable type', () => {
     expect(messages[0].textContent).toContain('widgetSchema')
 
     fireEvent.click(screen.getByTestId('collection-menu-widgets'))
-    await screen.findByText('Edit Collection')
+    await screen.findByText('Edit collection…')
     expect(screen.queryByTestId('add-entry-menu-item')).toBeNull()
   })
 
-  it('leaves a healthy collection exactly as before: no message, Add Entry offered', async () => {
+  it('leaves a healthy collection exactly as before: no message, Add entry offered', async () => {
     stubFetch({
       flagged: true,
       widgetRead: () => okJson({ ok: true, status: 200, data: {} }),
@@ -525,6 +532,20 @@ describe('Editor: an entry of an unavailable type', () => {
         .getByTestId('entry-nav-item-posts')
         .querySelector('[data-testid="unavailable-type-message"]'),
     ).toBeNull()
+  })
+
+  it('offers no Add entry in a collection that holds only collections', async () => {
+    stubFetch({
+      flagged: true,
+      widgetRead: () => okJson({ ok: true, status: 200, data: {} }),
+    })
+    renderEditor('posts/hello')
+    await openNavigator()
+
+    fireEvent.click(screen.getByTestId('collection-menu-folders'))
+    // The admin items prove the menu is open and complete before the absence is asserted.
+    await screen.findByText('Edit collection…')
+    expect(screen.queryByTestId('add-entry-menu-item')).toBeNull()
   })
 
   it('offers only the available types when a collection mixes both, and never defaults to an unavailable one', async () => {

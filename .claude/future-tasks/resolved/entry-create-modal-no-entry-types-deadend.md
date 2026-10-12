@@ -2,13 +2,24 @@
 priority: P2
 adopters: KB
 summary: >-
-  A collection with no entry types (valid config) still shows "Add Entry" and opens the create modal, where Create is permanently disabled (`canCreate` requires `entryTypeName !== ''`, which is `''` when the list is empty) and the "select an entry type" message is unreachable because it only fires from the disabled button's handler — with `entryTypes.length === 0` neither the Select nor the label renders, so there is no control and no explanation. Either gate the menu item or give the empty case a defined behaviour
+  RESOLVED (2026-10-11) — both halves. A collection with no entry types (container-only, which
+  `editor-config.ts` hands the client as `entryTypes: undefined`) no longer offers "Add entry"
+  in the navigator, and `EntryCreateModal` given no entry types shows an alert saying the
+  collection holds only collections, with Close as its only action, instead of a dead Create
+  button. Landed with the navigator search and title-first create work (WS5 of the editor UI epic)
 ---
 # "Add Entry" on a container-only collection opens a modal that can never submit
 
+## Status: RESOLVED 2026-10-11
+
+The menu item is gated on the collection having entry types, and the modal explains the
+empty case rather than presenting a dead button. Reproduction was by unit test (a
+container-only collection in the Editor tests); no real schema in this repo was checked for
+one.
+
 **Priority:** P2 — reachable UI dead-end with no explanation shown
 **Found:** 2026-08-12, while fixing
-[resolved/entry-create-modal-slug-reset-race.md](resolved/entry-create-modal-slug-reset-race.md)
+[resolved/entry-create-modal-slug-reset-race.md](entry-create-modal-slug-reset-race.md)
 (noticed in passing; deliberately left out of that PR's scope)
 
 ## Symptom (traced in code, not yet reproduced in the running app)

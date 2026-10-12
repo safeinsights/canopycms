@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Mantine 7.17's ModalBase listens for Escape on `window` in the capture phase (`use-modal.mjs`), so pressing Escape in a modal opened from inside a drawer also closes the drawer behind it. `BranchesDrawer` and `StagedChangesDrawer` guard this with `closeOnEscape`; the entry-navigator drawer in `Editor.tsx` (entry create, rename, delete modals) and `media/MediaLibrary.tsx`'s manage drawer (its confirms) have not been checked. Audit each drawer, reproduce, and guard where a modal can open on top of it.
+  Mantine 7.17's ModalBase listens for Escape on `window` in the capture phase (`use-modal.mjs`), so pressing Escape in a modal opened from inside a drawer also closes the drawer behind it. `BranchesDrawer`, `StagedChangesDrawer` and the entry-navigator drawer in `Editor.tsx` guard this with `closeOnEscape`; `media/MediaLibrary.tsx`'s manage drawer (its confirms) has not been checked. Reproduce it there and guard it, or add one shared way for a drawer to yield Escape
 ---
 
 # Escape in a nested modal can also close the drawer behind it
@@ -20,11 +20,11 @@ Guarded today:
 - `editor/components/BranchesDrawer.tsx` (`confirmOpen` prop).
 - `editor/components/StagedChangesDrawer.tsx` (its own confirm, plus `childModalOpen` for the
   group dialog and the Delete group confirm).
+- The entry-navigator `Drawer.Root` in `editor/Editor.tsx`: off while the create, rename,
+  delete-entry, delete-collection or collection-editor dialog is open.
 
 Not checked:
 
-- The entry-navigator `Drawer.Root` in `editor/Editor.tsx`: can `EntryCreateModal`,
-  `RenameEntryModal` or `ConfirmDeleteModal` open while it is open (narrow layouts)?
 - `editor/media/MediaLibrary.tsx` in `'manage'` mode: its delete or other confirms.
 
 ## To do

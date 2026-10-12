@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
+import { userEvent } from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { SWRConfig } from 'swr'
 import { UserBadge } from './UserBadge'
@@ -123,7 +124,7 @@ describe('UserBadge', () => {
     expect(skeletons.length).toBeGreaterThan(0)
   })
 
-  it('falls back to userId on error', async () => {
+  it('says the name could not load on error, never showing the id', async () => {
     const errorGetUserMetadata = vi.fn(async () => {
       throw new Error('Network error')
     })
@@ -133,12 +134,11 @@ describe('UserBadge', () => {
       { wrapper: Wrapper },
     )
 
-    await waitFor(() => {
-      expect(screen.getByText('user-1')).toBeTruthy()
-    })
+    expect(await screen.findByText("Couldn't load this name")).toBeTruthy()
+    expect(screen.queryByText('user-1')).toBeNull()
   })
 
-  it('falls back to userId when user not found', async () => {
+  it('says the name is unavailable when the user is not found, never showing the id', async () => {
     const notFoundGetUserMetadata = vi.fn(async () => null)
 
     render(
@@ -146,8 +146,106 @@ describe('UserBadge', () => {
       { wrapper: Wrapper },
     )
 
-    await waitFor(() => {
-      expect(screen.getByText('user-1')).toBeTruthy()
+    expect(await screen.findByText('Name unavailable')).toBeTruthy()
+    expect(screen.queryByText('user-1')).toBeNull()
+  })
+
+  it('names an avatar-only badge with no name by its fallback text, not its id', async () => {
+    const { container } = render(
+      <UserBadge userId="user-1" getUserMetadata={async () => null} variant="avatar-only" />,
+      { wrapper: Wrapper },
+    )
+    expect(await screen.findByText('Name unavailable')).toBeTruthy()
+    expect(container.textContent).not.toContain('user-1')
+  })
+
+  it('shows an avatar-only badge with no name its fallback in a tooltip, for sighted and touch users', async () => {
+    const { container } = render(
+      <UserBadge userId="user-1" getUserMetadata={async () => null} variant="avatar-only" />,
+      { wrapper: Wrapper },
+    )
+    await screen.findByText('Name unavailable')
+    await userEvent.hover(container.querySelector('.mantine-Avatar-root') as HTMLElement)
+
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Name unavailable')
+  })
+
+  it('draws the fallback name dimmed and italic, so it does not read as a real name', async () => {
+    render(<UserBadge userId="user-1" getUserMetadata={async () => null} />, { wrapper: Wrapper })
+    const fallback = await screen.findByText('Name unavailable')
+    expect(fallback.style.color).toBe('var(--mantine-color-dimmed)')
+    expect(fallback.style.fontStyle).toBe('italic')
+  })
+
+  describe('revealIdOnFallback, for admin-only surfaces', () => {
+    it('puts the id in the tooltip and the hidden text, never in the visible text', async () => {
+      const { container } = render(
+        <UserBadge userId="user-9" getUserMetadata={async () => null} revealIdOnFallback />,
+        { wrapper: Wrapper },
+      )
+      const visible = await screen.findByText('Name unavailable')
+      expect(visible.className).not.toContain('VisuallyHidden')
+      const hidden = screen.getByText('· user-9')
+      expect(hidden.className).toContain('mantine-VisuallyHidden-root')
+
+      await userEvent.hover(container.querySelector('.mantine-Avatar-root') as HTMLElement)
+      expect((await screen.findByRole('tooltip')).textContent).toBe('Name unavailable · user-9')
+    })
+
+    it('names an avatar-only fallback with the id in its hidden text', async () => {
+      render(
+        <UserBadge
+          userId="user-9"
+          getUserMetadata={async () => null}
+          variant="avatar-only"
+          revealIdOnFallback
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(await screen.findByText('Name unavailable · user-9')).toBeTruthy()
+    })
+  })
+
+  describe('the remove button names its person', () => {
+    it('says "Remove <name>" and shows the same text in a tooltip', async () => {
+      const onRemove = vi.fn()
+      render(
+        <UserBadge
+          userId="user-1"
+          getUserMetadata={vi.fn()}
+          cachedUser={mockUser}
+          onRemove={onRemove}
+        />,
+        { wrapper: Wrapper },
+      )
+      const remove = screen.getByRole('button', { name: 'Remove Alice Johnson' })
+      await userEvent.hover(remove)
+      const tooltips = await screen.findAllByRole('tooltip')
+      expect(tooltips.map((t) => t.textContent)).toContain('Remove Alice Johnson')
+      await userEvent.click(remove)
+      expect(onRemove).toHaveBeenCalledWith('user-1')
+    })
+
+    it('names the fallback for an unresolved person, adding the id only for an admin surface', async () => {
+      const { unmount } = render(
+        <UserBadge userId="user-9" getUserMetadata={async () => null} onRemove={vi.fn()} />,
+        { wrapper: Wrapper },
+      )
+      expect(await screen.findByRole('button', { name: 'Remove Name unavailable' })).toBeTruthy()
+      unmount()
+
+      render(
+        <UserBadge
+          userId="user-9"
+          getUserMetadata={async () => null}
+          onRemove={vi.fn()}
+          revealIdOnFallback
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(
+        await screen.findByRole('button', { name: 'Remove Name unavailable · user-9' }),
+      ).toBeTruthy()
     })
   })
 
@@ -274,5 +372,106 @@ describe('UserBadge', () => {
 
     // Should render without tooltip wrapper
     expect(screen.getByText('Alice Johnson')).toBeTruthy()
+  })
+
+  it('reads the email after the name for a screen reader, without a tab stop', async () => {
+    const { container } = render(
+      <UserBadge userId="user-1" getUserMetadata={vi.fn()} cachedUser={mockUser} />,
+      { wrapper: Wrapper },
+    )
+    const hidden = screen.getByText(', alice@example.com')
+    expect(hidden.className).toContain('mantine-VisuallyHidden-root')
+    expect(container.textContent).toContain('Alice Johnson, alice@example.com')
+    expect(container.querySelectorAll('button, a, [tabindex]')).toHaveLength(0)
+  })
+
+  it('adds no hidden email when the email is empty, hidden by the caller, or already shown', () => {
+    const { container, rerender } = render(
+      <UserBadge
+        userId="user-1"
+        getUserMetadata={vi.fn()}
+        cachedUser={{ ...mockUser, email: '' }}
+      />,
+      { wrapper: Wrapper },
+    )
+    expect(container.querySelector('.mantine-VisuallyHidden-root')).toBeNull()
+
+    rerender(
+      <UserBadge
+        userId="user-1"
+        getUserMetadata={vi.fn()}
+        cachedUser={mockUser}
+        showEmailTooltip={false}
+      />,
+    )
+    expect(container.querySelector('.mantine-VisuallyHidden-root')).toBeNull()
+
+    rerender(
+      <UserBadge userId="user-1" getUserMetadata={vi.fn()} cachedUser={mockUser} variant="full" />,
+    )
+    expect(container.querySelector('.mantine-VisuallyHidden-root')).toBeNull()
+  })
+
+  it('reads the email for an avatar shown alone', () => {
+    render(
+      <UserBadge
+        userId="user-1"
+        getUserMetadata={vi.fn()}
+        cachedUser={mockUser}
+        variant="avatar-only"
+      />,
+      { wrapper: Wrapper },
+    )
+    expect(screen.getByText(', alice@example.com')).toBeTruthy()
+  })
+
+  describe('in a light comment badge', () => {
+    const badgeProps = { showBadge: true, badgeVariant: 'light' as const, color: 'gray' }
+
+    it('draws the name in body text colour, not the faint badge tint', () => {
+      render(
+        <UserBadge
+          userId="user-1"
+          getUserMetadata={vi.fn()}
+          cachedUser={mockUser}
+          {...badgeProps}
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(screen.getByText('Alice Johnson').style.color).toBe('var(--mantine-color-text)')
+    })
+
+    it('keeps an unnamed user in the same pill, saying the name is unavailable', async () => {
+      const { container } = render(
+        <UserBadge userId="user-9" getUserMetadata={async () => null} {...badgeProps} />,
+        { wrapper: Wrapper },
+      )
+      const fallback = await screen.findByText('Name unavailable')
+      expect(fallback.closest('.mantine-Badge-root')).toBeTruthy()
+      expect(fallback.style.color).toBe('var(--mantine-color-dimmed)')
+      expect(container.textContent).not.toContain('user-9')
+      expect(container.textContent).not.toContain('not found')
+    })
+  })
+
+  it('hides an avatar that repeats the name beside it, and labels one shown alone', async () => {
+    const { container, rerender } = render(
+      <UserBadge userId="user-1" getUserMetadata={vi.fn()} cachedUser={mockUser} />,
+      { wrapper: Wrapper },
+    )
+    const avatar = () => container.querySelector('.mantine-Avatar-root')
+    expect(avatar()?.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('img')?.getAttribute('alt')).toBe('')
+
+    rerender(
+      <UserBadge
+        userId="user-1"
+        getUserMetadata={vi.fn()}
+        cachedUser={mockUser}
+        variant="avatar-only"
+      />,
+    )
+    expect(avatar()?.getAttribute('aria-hidden')).toBeNull()
+    expect(container.querySelector('img')?.getAttribute('alt')).toBe('Alice Johnson')
   })
 })

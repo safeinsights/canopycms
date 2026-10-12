@@ -2,6 +2,8 @@ import React, { useId } from 'react'
 
 import { TextInput } from '@mantine/core'
 
+import { LabelledInput } from './FieldLabel'
+
 export interface TextFieldProps {
   id?: string
   label?: string
@@ -26,17 +28,18 @@ export const TextField: React.FC<TextFieldProps> = ({
   const inputId = id ?? generatedId
 
   return (
-    <TextInput
-      id={inputId}
-      label={label}
-      description={description}
-      value={value}
-      size="sm"
-      readOnly={readOnly}
-      onChange={(e) => {
-        if (!readOnly) onChange(e.currentTarget.value)
-      }}
-      data-canopy-field={dataCanopyField}
-    />
+    <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
+      <TextInput
+        id={inputId}
+        description={description}
+        value={value}
+        size="sm"
+        readOnly={readOnly}
+        onChange={(e) => {
+          if (!readOnly) onChange(e.currentTarget.value)
+        }}
+        data-canopy-field={dataCanopyField}
+      />
+    </LabelledInput>
   )
 }

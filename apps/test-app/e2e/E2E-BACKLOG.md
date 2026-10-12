@@ -135,8 +135,8 @@ Use existing fixtures:
 **Status:** Done — `draft-behavior.spec.ts` › "discard file draft reverts field to last-saved state", "unsaved draft survives a page reload"
 **Spec file:** `draft-behavior.spec.ts` (new file)
 **Scenario:** Make edits to an entry. Verify the save button is enabled and a "discard" or "revert" action is available. Click discard. Verify the field values revert to their last-saved state without a page reload.
-**data-testids added:** `data-testid="discard-file-draft-menu-item"` on the "Discard File Draft" `<Menu.Item>` in `EditorHeader.tsx`.
-**Notes:** No confirmation dialog — discard immediately clears the draft from state and localStorage, shows "Draft cleared for file" (blue Mantine notification). Save button is `disabled` when no unsaved changes (`!hasUnsavedChanges`), so can use `toBeDisabled()` to verify clean state before and after. "Discard File Draft" is inside the file dropdown menu (same menu as "All Files" / `file-dropdown-button`).
+**data-testids added:** `data-testid="discard-file-draft-menu-item"` on the "Discard changes" `<Menu.Item>` in `EditorHeader.tsx`.
+**Notes:** Discarding a dirty draft asks for confirmation; confirming clears the draft from state and localStorage and shows "Draft cleared for file" (blue Mantine notification). Save is `aria-disabled` when there are no unsaved changes, and Playwright's `toBeDisabled()` reads that, so it verifies clean state before and after. "Discard changes" is inside the file dropdown menu (same menu as "All Files" / `file-dropdown-button`).
 
 ---
 
@@ -166,7 +166,7 @@ Use existing fixtures:
 **Status:** Done — `comments.spec.ts` › "add a branch-level comment and verify persistence"
 **Spec file:** `comments.spec.ts` (new file)
 **Scenario:** Open the comments panel. Add a branch-level comment. Verify it appears in the thread list. Reload and verify persistence.
-**data-testids added:** `data-testid="comments-button"` on the Comments button in `EditorHeader.tsx`; `data-testid="comment-textarea"` on the Textarea, `data-testid="comment-submit"` on the Add Comment button, `data-testid="comment-thread"` on each thread Paper (all in `CommentsPanel.tsx`).
+**data-testids added:** `data-testid="comments-button"` on the Comments button in `EditorHeader.tsx`; `data-testid="comment-textarea"` on the Textarea, `data-testid="comment-submit"` on the Comment button, `data-testid="comment-thread"` on each thread Paper (all in `CommentsPanel.tsx`).
 **Notes:** Comments work on the `main` branch in `dev` mode (no feature branch needed). The Comments button only renders when `supportsComments()` is true AND a branch is selected. After submit the textarea clears. Close panel with Escape before reload.
 
 ### 12. ✅ Add and resolve a field-level comment thread
@@ -174,8 +174,8 @@ Use existing fixtures:
 **Status:** Done — `comments.spec.ts` › "add and resolve a field-level comment thread"
 **Spec file:** `comments.spec.ts`
 **Scenario:** Select an entry and field. Trigger a field-level comment (look for a comment icon near the field or in the preview). Add a comment. Verify an inline comment thread appears (`InlineCommentThread.tsx`). Resolve/close the thread. Verify it is marked resolved.
-**data-testids added:** `data-testid="field-new-comment-{canopyPath}"` on "New comment" button in `FieldWrapper.tsx`; `data-testid="new-thread-textarea"` and `data-testid="create-thread-button"` in `ThreadCarousel.tsx`; `data-testid="inline-comment-thread"` on Paper root and `data-testid="resolve-thread-button"` on Resolve button in `InlineCommentThread.tsx`.
-**Notes:** Navigate to "Home Page" entry first, then Escape to close navigator drawer before interacting with the form. The "New comment" button is always in the DOM (no hover required). After resolving, the "Resolved" badge appears and the Resolve button disappears.
+**data-testids added:** `data-testid="field-comment-{canopyPath}"` on the field's comment control and `data-testid="new-thread-textarea"` / `"create-thread-button"` in its popover (`CommentThreadsPopover.tsx`); `data-testid="inline-comment-thread"` on Paper root and `data-testid="resolve-thread-button"` on Resolve button in `InlineCommentThread.tsx`.
+**Notes:** Navigate to "Home Page" entry first, then Escape to close navigator drawer before interacting with the form. The comment control is always in the DOM but transparent until its field is hovered or focused, so `startFieldComment` hovers first. After resolving, the "Resolved" badge appears and the Resolve button disappears.
 
 ---
 

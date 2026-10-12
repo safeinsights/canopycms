@@ -7,6 +7,7 @@ import { useDraftManager, type UnsavedSummary } from './useDraftManager'
 import type { EditorEntry } from '../Editor'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { MockApiClient } from '../../api/__test__/mock-client'
+import { CREATE_BRANCH_DEADLINE_MS } from './create-branch-request'
 import {
   setupMockApiClient,
   setupMockLocation,
@@ -205,11 +206,10 @@ describe('useBranchActions', () => {
       })
     })
 
-    expect(mockClient.branches.create).toHaveBeenCalledWith({
-      branch: 'new-branch',
-      title: 'New Branch',
-      description: 'Test branch',
-    })
+    expect(mockClient.branches.create).toHaveBeenCalledWith(
+      { branch: 'new-branch', title: 'New Branch', description: 'Test branch' },
+      { timeoutMs: CREATE_BRANCH_DEADLINE_MS },
+    )
     expect(mockOnReloadBranches).toHaveBeenCalled()
     expect(mockSetBranchName).toHaveBeenCalledWith('new-branch')
   })
@@ -513,11 +513,10 @@ describe('useBranchActions', () => {
       await result.current.handleCreateBranch({ name: 'feature/x' })
     })
 
-    expect(mockClient.branches.create).toHaveBeenCalledWith({
-      branch: 'feature/x',
-      title: undefined,
-      description: undefined,
-    })
+    expect(mockClient.branches.create).toHaveBeenCalledWith(
+      { branch: 'feature/x', title: undefined, description: undefined },
+      { timeoutMs: CREATE_BRANCH_DEADLINE_MS },
+    )
     // setBranchName and the URL should reflect the sanitized name the
     // server persisted, not the raw user-typed name.
     expect(mockSetBranchName).toHaveBeenCalledWith('feature-x')

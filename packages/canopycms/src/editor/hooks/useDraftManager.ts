@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import { openConfirm } from '../utils/confirm-modal'
+import { focusReturnProps } from '../utils/focus-return'
 import equal from 'fast-deep-equal'
 import type { EditorEntry } from '../Editor'
 import type { ContentId, LogicalPath } from '../../paths/types'
@@ -10,6 +11,19 @@ import { validateEntryFormValue, type EntryFieldError } from '../../validation/e
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
+import { isUnanswered } from '../unanswered'
+
+/** @internal Exported for tests. */
+export const SAVE_TIMED_OUT_MESSAGE =
+  "Save didn't finish, and may not have gone through. Your changes are still here, so save again."
+
+/** @internal Exported for tests. Shown when a save may already have landed, until a reload. */
+export const SAVE_MAY_HAVE_LANDED_MESSAGE =
+  'Your last save may already have gone through. Before saving again, choose "Reload entry" in the menu under the entry\'s name; your unsaved edits will be lost.'
+
+const saveMayHaveLandedToastId = (contentId: string) => `canopy-save-may-have-landed:${contentId}`
+
+const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
 
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
 const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
@@ -151,9 +165,9 @@ export interface UseDraftManagerReturn {
   modifiedCount: number
   editedFiles: Array<{ path: LogicalPath; label: string }>
   handleSave: () => Promise<void>
-  handleDiscardDrafts: () => void
-  handleDiscardFileDraft: () => void
-  handleReload: () => Promise<void>
+  handleDiscardDrafts: (returnFocusTo?: () => HTMLElement | null) => void
+  handleDiscardFileDraft: (returnFocusTo?: () => HTMLElement | null) => void
+  handleReload: (returnFocusTo?: () => HTMLElement | null) => Promise<void>
   isDirtyForEntry: (entryPath: string) => boolean
   isSelectedDirty: () => boolean
   isAnyDirty: () => boolean
@@ -203,9 +217,13 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const draftBaseVersionsRef = useRef<Record<string, number | null>>({})
   const [draftStorageFailed, setDraftStorageFailed] = useState(false)
   const [saveInFlight, setSaveInFlight] = useState(false)
-  // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN. That save may have
-  // landed, so re-sending the token would bounce off the user's own write; held until re-read.
+  // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN, or when the retry of
+  // a timed-out save was refused as a version conflict. That save may have landed, so re-sending
+  // the token would bounce off the user's own write; held until re-read.
   const reloadRequiredRef = useRef<Record<string, number | undefined>>({})
+  // Entries whose timed-out save toast is up, taken down once a save, reload, discard or branch
+  // switch ends it, or a retry is refused as having landed.
+  const timedOutSavesRef = useRef(new Set<string>())
   // The draft ids the reconcile effect below has already accounted for. It
   // prunes on an observed present -> absent TRANSITION rather than on "not
   // currently in drafts": the restore effect stamps base versions for ids
@@ -328,7 +346,13 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // them across a switch would compare one branch's version against
       // another's.
       draftBaseVersionsRef.current = {}
+      for (const id of Object.keys(reloadRequiredRef.current)) {
+        notifications.hide(saveMayHaveLandedToastId(id))
+      }
       reloadRequiredRef.current = {}
+      // A timed-out save belongs to the branch it was sent to; content ids repeat across branches.
+      for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
+      timedOutSavesRef.current.clear()
       reconciledDraftIdsRef.current = new Set()
     }
     prevBranchRef.current = options.branchName
@@ -597,6 +621,18 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }
 
+  /** Stays until dismissed or the entry is reloaded: saving is held until then. */
+  const showSaveMayHaveLanded = (contentId: string, message = SAVE_MAY_HAVE_LANDED_MESSAGE) => {
+    notifications.hide(saveMayHaveLandedToastId(contentId))
+    notifications.show({
+      id: saveMayHaveLandedToastId(contentId),
+      message: message || SAVE_MAY_HAVE_LANDED_MESSAGE,
+      color: 'yellow',
+      autoClose: false,
+      withCloseButton: true,
+    })
+  }
+
   /**
    * How the selected entry's draft relates to the server version we hold.
    *
@@ -668,12 +704,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     if (currentId in reloadRequiredRef.current) {
       if (reloadRequiredRef.current[currentId] === options.getEntryVersion?.(currentId)) {
-        showConflictNotification(
-          'Your last save may already have been recorded. Reload this entry before saving again (your unsaved edits will be lost).',
-        )
+        showSaveMayHaveLanded(currentId)
         return
       }
       delete reloadRequiredRef.current[currentId]
+      notifications.hide(saveMayHaveLandedToastId(currentId))
     }
 
     // Conflict check first: a stale-based draft must not be schema-validated
@@ -733,6 +768,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         return next
       })
       setLoadedValues((prev) => ({ ...prev, [currentId]: saved }))
+      if (timedOutSavesRef.current.delete(currentId)) {
+        notifications.hide(saveTimedOutToastId(currentId))
+      }
       notifications.show({
         message: 'Saved',
         color: 'green',
@@ -770,10 +808,33 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         setErrorState({ entryId: currentId, errors: toFieldErrorMap(err.fieldErrors) })
       }
       if (isConflict) {
-        if (err.code === 'WRITE_OUTCOME_UNKNOWN') {
+        // A version conflict on the retry of a save that went unanswered is most likely that
+        // save having landed, which a reload settles just as for WRITE_OUTCOME_UNKNOWN.
+        const ownSaveLanded =
+          err.serverMessage === ENTRY_CHANGED_MESSAGE && timedOutSavesRef.current.has(currentId)
+        if (err.code === 'WRITE_OUTCOME_UNKNOWN' || ownSaveLanded) {
           reloadRequiredRef.current[currentId] = options.getEntryVersion?.(currentId)
         }
-        showConflictNotification(err.serverMessage || undefined)
+        if (ownSaveLanded) {
+          timedOutSavesRef.current.delete(currentId)
+          notifications.hide(saveTimedOutToastId(currentId))
+        }
+        if (err.code === 'WRITE_OUTCOME_UNKNOWN' || ownSaveLanded) {
+          showSaveMayHaveLanded(currentId, ownSaveLanded ? undefined : err.serverMessage)
+        } else {
+          showConflictNotification(err.serverMessage || undefined)
+        }
+      } else if (isUnanswered(err)) {
+        // A save that did land moved the file's version, so the server refuses the retry as a
+        // conflict; a file since deleted or moved is the exception (`ContentStore.write`).
+        timedOutSavesRef.current.add(currentId)
+        notifications.show({
+          id: saveTimedOutToastId(currentId),
+          message: SAVE_TIMED_OUT_MESSAGE,
+          color: 'yellow',
+          autoClose: false,
+          withCloseButton: true,
+        })
       } else {
         const explained = isValidation || isForbidden || isUnavailable
         notifications.show({
@@ -793,6 +854,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   const performDiscardDrafts = () => {
+    for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
+    timedOutSavesRef.current.clear()
     options.onDraftsReset?.()
     setDrafts({})
     setErrorState(null)
@@ -815,17 +878,18 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // is actually something to lose (modifiedCount > 0, same definition used
   // everywhere else in this hook). An all-clean discard (e.g. drafts that
   // exactly mirror loaded values) clears silently.
-  const handleDiscardDrafts = () => {
+  const handleDiscardDrafts = (returnFocusTo?: () => HTMLElement | null) => {
     if (modifiedCount === 0) {
       performDiscardDrafts()
       return
     }
     openConfirm({
-      title: 'Discard drafts',
-      children: `Discard drafts for ${modifiedCount} ${modifiedCount === 1 ? 'file' : 'files'}? Unsaved changes will be lost.`,
-      labels: { confirm: 'Discard', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
+      title: 'Discard all changes',
+      children: `Discard unsaved changes for ${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'}? They will be lost.`,
+      labels: { confirm: 'Discard all changes', cancel: 'Cancel' },
+      confirmProps: { color: 'red', 'data-testid': 'confirm-discard-all' },
       onConfirm: performDiscardDrafts,
+      ...focusReturnProps(returnFocusTo),
     })
   }
 
@@ -869,18 +933,19 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // comparison as `modifiedCount`). Discarding a draft that's identical to
   // the loaded value, or discarding when there's no draft at all, has
   // nothing to lose, so it clears silently.
-  const handleDiscardFileDraft = () => {
+  const handleDiscardFileDraft = (returnFocusTo?: () => HTMLElement | null) => {
     if (!currentId) return
     if (!isSelectedDirty()) {
       performDiscardFileDraft()
       return
     }
     openConfirm({
-      title: 'Discard draft',
-      children: 'Discard unsaved changes for this file?',
-      labels: { confirm: 'Discard', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
+      title: 'Discard changes',
+      children: 'Discard unsaved changes for this entry?',
+      labels: { confirm: 'Discard changes', cancel: 'Cancel' },
+      confirmProps: { color: 'red', 'data-testid': 'confirm-discard-entry' },
       onConfirm: performDiscardFileDraft,
+      ...focusReturnProps(returnFocusTo),
     })
   }
 
@@ -891,6 +956,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       const loaded = await options.loadEntry(options.currentEntry)
       options.onDraftsReset?.(currentId)
       delete reloadRequiredRef.current[currentId]
+      notifications.hide(saveMayHaveLandedToastId(currentId))
+      if (timedOutSavesRef.current.delete(currentId)) {
+        notifications.hide(saveTimedOutToastId(currentId))
+      }
       setLoadedValues((prev) => ({ ...prev, [currentId]: loaded }))
       // Drop the draft rather than seeding it with `loaded`. `effectiveValue`
       // falls back to `loadedValues`, so the rendered value is identical --
@@ -938,20 +1007,21 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // moment their unsaved work matters most. Guarded exactly like
   // handleDiscardFileDraft: the same `isSelectedDirty()` test (nothing to lose
   // -> no prompt) and the same confirm-modal shape.
-  const handleReload = async () => {
+  const handleReload = async (returnFocusTo?: () => HTMLElement | null) => {
     if (!options.currentEntry || !currentId) return
     if (!isSelectedDirty()) {
       await performReload()
       return
     }
     openConfirm({
-      title: 'Reload file',
-      children: 'Reload this file from the server? Unsaved changes for this file will be lost.',
+      title: 'Reload entry',
+      children: 'Reload this entry from the server? Unsaved changes to this entry will be lost.',
       labels: { confirm: 'Reload', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
         void performReload()
       },
+      ...focusReturnProps(returnFocusTo),
     })
   }
 

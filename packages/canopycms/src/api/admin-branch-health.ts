@@ -663,6 +663,7 @@ const repairContentDuplicatesHandler = async (
 const getBranchHealth = defineEndpoint({
   namespace: 'admin',
   name: 'branchHealth',
+  clientTimeout: 'long',
   method: 'GET',
   path: '/admin/branch-health',
   params: branchHealthParamsSchema,
@@ -679,6 +680,7 @@ const getBranchHealth = defineEndpoint({
 const purgeBranchDir = defineEndpoint({
   namespace: 'admin',
   name: 'purgeBranchDir',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/admin/branch-dirs/:dirName/purge',
   params: branchDirParamsSchema,
@@ -695,6 +697,7 @@ const purgeBranchDir = defineEndpoint({
 const repairBranchDir = defineEndpoint({
   namespace: 'admin',
   name: 'repairBranchDir',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/admin/branch-dirs/:dirName/repair-metadata',
   params: branchDirParamsSchema,
@@ -725,6 +728,7 @@ const repairBranchDir = defineEndpoint({
 const repairContentDuplicates = defineEndpoint({
   namespace: 'admin',
   name: 'repairContentDuplicates',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/admin/branch-dirs/:dirName/repair-content-duplicates',
   params: branchDirParamsSchema,

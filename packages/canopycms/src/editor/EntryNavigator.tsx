@@ -1,18 +1,22 @@
 'use client'
 
-import React, { useMemo, useRef, useEffect } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ContentId, LogicalPath } from '../paths/types'
 
 import {
   ActionIcon,
   Badge,
   Box,
+  Button,
+  CloseButton,
   Group,
+  Highlight,
   Loader,
   Menu,
   ScrollArea,
   Stack,
   Text,
+  TextInput,
   Tooltip,
   Tree,
   useTree,
@@ -27,11 +31,15 @@ import {
   IconDots,
   IconEdit,
   IconFolderPlus,
+  IconLock,
   IconPlus,
+  IconSearch,
   IconTrash,
 } from '@tabler/icons-react'
 
 import { calculatePathToEntry } from './editor-utils'
+import { matchesEntryQuery } from './entry-search'
+import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { UnavailableTypeMessage } from './components/UnavailableTypeMessage'
 
 type TreeController = ReturnType<typeof useTree>
@@ -50,6 +58,8 @@ const UnavailableTypeRow: React.FC<{ schemaRefs: readonly string[] }> = ({ schem
 export interface EntryNavItem {
   path: LogicalPath
   label: string
+  /** Matched by the filter; the last segment of `path` when absent. */
+  slug?: string
   status?: string
   collectionPath?: LogicalPath
   contentId?: ContentId // 12-char embedded ID for ordering
@@ -57,6 +67,8 @@ export interface EntryNavItem {
   conflictNotice?: boolean
   /** True when the entry's type is unavailable; it shows no menu, since every item in it writes. */
   unavailable?: boolean
+  /** True when this user cannot edit the entry: it shows a lock and no menu, since every item writes. */
+  readOnly?: boolean
 }
 
 export interface EntryNavCollection {
@@ -106,7 +118,148 @@ export interface EntryNavigatorProps {
    * would only 403 after the fact. Default false.
    */
   readOnly?: boolean
+  /** Entry paths with unsaved changes; each shows a dot, and so does every collection holding one. */
+  dirtyPaths?: ReadonlySet<string>
 }
+
+const lastSegment = (path: string): string => path.split('/').filter(Boolean).pop() ?? path
+
+/** The collection values below `nodes` that have children, as an all-expanded state. */
+const expandedStateFor = (nodes: TreeNodeData[], acc: Record<string, boolean> = {}) => {
+  for (const node of nodes) {
+    if (node.children?.length) {
+      acc[node.value] = true
+      expandedStateFor(node.children, acc)
+    }
+  }
+  return acc
+}
+
+/**
+ * The nodes of `nodes` that match `query`. An entry matches on label or slug; a collection whose
+ * label matches keeps its whole subtree, and any other collection survives only with its matching
+ * descendants. Nodes keep the position data (`childIndex`, `totalChildrenCount`) of the full tree.
+ */
+const filterTree = (nodes: TreeNodeData[], query: string): TreeNodeData[] => {
+  const kept: TreeNodeData[] = []
+  for (const node of nodes) {
+    const label = String(node.label ?? '')
+    if (node.nodeProps?.isEntry) {
+      if (matchesEntryQuery({ label, slug: node.nodeProps.slug as string | undefined }, query)) {
+        kept.push(node)
+      }
+    } else if (matchesEntryQuery({ label }, query)) {
+      kept.push(node)
+    } else {
+      const children = filterTree(node.children ?? [], query)
+      if (children.length > 0) kept.push({ ...node, children })
+    }
+  }
+  return kept
+}
+
+/** The first entry in tree order that matches `query`, else the first entry of any kind. */
+const firstEntryPath = (nodes: TreeNodeData[], query: string): string | undefined => {
+  const entries: TreeNodeData[] = []
+  const walk = (list: TreeNodeData[]) => {
+    for (const node of list) {
+      if (node.nodeProps?.isEntry) entries.push(node)
+      else walk(node.children ?? [])
+    }
+  }
+  walk(nodes)
+  const match = entries.find((node) =>
+    matchesEntryQuery(
+      { label: String(node.label ?? ''), slug: node.nodeProps?.slug as string | undefined },
+      query,
+    ),
+  )
+  return (match ?? entries[0])?.value
+}
+
+/**
+ * A row's title, truncated with an ellipsis. Its full text shows in a tooltip, and only while the
+ * text is cut: the width is measured when the pointer or focus enters the row, not on every render.
+ */
+const TruncatedLabel: React.FC<{ label: string; highlight: string; fw: number }> = ({
+  label,
+  highlight,
+  fw,
+}) => {
+  const elementRef = useRef<HTMLElement | null>(null)
+  const [truncated, setTruncated] = useState(false)
+  const setElement = useCallback((node: HTMLElement | null) => {
+    elementRef.current = node
+  }, [])
+
+  useEffect(() => {
+    const row = elementRef.current?.closest('[data-nav-row]')
+    if (!row) return
+    // Read at measure time: the label swaps between Text and Highlight as a filter starts and stops.
+    const measure = () => {
+      const element = elementRef.current
+      setTruncated(!!element && element.scrollWidth > element.clientWidth)
+    }
+    row.addEventListener('mouseenter', measure)
+    row.addEventListener('focusin', measure)
+    return () => {
+      row.removeEventListener('mouseenter', measure)
+      row.removeEventListener('focusin', measure)
+    }
+  }, [])
+
+  return (
+    <Tooltip label={label} openDelay={400} withinPortal disabled={!truncated}>
+      {highlight ? (
+        <Highlight
+          ref={setElement}
+          highlight={highlight}
+          size="sm"
+          fw={fw}
+          truncate="end"
+          style={{ minWidth: 0 }}
+        >
+          {label}
+        </Highlight>
+      ) : (
+        <Text ref={setElement} size="sm" fw={fw} truncate="end" style={{ minWidth: 0 }}>
+          {label}
+        </Text>
+      )}
+    </Tooltip>
+  )
+}
+
+/** The keys Mantine's tree acts on, matched as it matches them, by `code`. */
+const TREE_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'])
+
+/**
+ * A row menu's dropdown is portaled, but React still bubbles its key events to the row, where the
+ * tree's arrow keys would take focus out of the open menu. Only those keys stop: React's
+ * stopPropagation stops the native event too, and every other key must still reach the document,
+ * where the Mod+P shortcut and the focus traps' Tab handling listen.
+ */
+const stopTreeKeys = (event: React.KeyboardEvent) => {
+  if (TREE_KEYS.has(event.nativeEvent.code)) event.stopPropagation()
+}
+
+const UnsavedDot: React.FC<{ label: string }> = ({ label }) => (
+  <Tooltip label={label} withinPortal>
+    <Box
+      component="span"
+      role="img"
+      aria-label={label}
+      data-testid="unsaved-dot"
+      style={{
+        flexShrink: 0,
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        backgroundColor: 'var(--mantine-color-brand-6)',
+      }}
+    />
+  </Tooltip>
+)
 
 export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   items,
@@ -122,6 +275,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   hiddenRootPath,
   loading,
   readOnly = false,
+  dirtyPaths,
 }) => {
   // Shadow the entry-mutation callbacks with undefined when readOnly, so every
   // downstream reference (hasEntryMenu, canReorder, the menu items themselves)
@@ -135,7 +289,40 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   const hasScrolledRef = useRef(false)
   // Track expanded state synchronously to avoid race conditions on unmount
   const localExpandedStateRef = useRef<Record<string, boolean>>(expandedStateRef?.current ?? {})
+
+  const [query, setQuery] = useState('')
+  const filterInputRef = useRef<HTMLInputElement>(null)
+  const filtering = query.trim() !== ''
+  // Read from the tree's expand/collapse callbacks, which fire from state updaters.
+  const filteringRef = useRef(false)
+  useEffect(() => {
+    filteringRef.current = filtering
+  }, [filtering])
+
   const treeData = useMemo<TreeNodeData[]>(() => {
+    const entryNode = (
+      entry: EntryNavItem,
+      parent: EntryNavCollection,
+      childIndex: number,
+      totalChildren: number,
+    ): TreeNodeData => ({
+      value: entry.path,
+      label: entry.label,
+      nodeProps: {
+        status: entry.status,
+        isEntry: true,
+        entryPath: entry.path,
+        slug: entry.slug ?? lastSegment(entry.path),
+        contentId: entry.contentId,
+        conflictNotice: entry.conflictNotice,
+        unavailable: entry.unavailable,
+        itemReadOnly: entry.readOnly,
+        parentCollectionPath: parent.path,
+        childIndex,
+        totalChildrenCount: totalChildren,
+      },
+    })
+
     if (collections?.length) {
       const toTree = (col: EntryNavCollection): TreeNodeData => {
         if (col.type === 'entry') {
@@ -147,6 +334,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               status: entry?.status,
               isEntry: true,
               entryPath: entry?.path,
+              slug: entry ? (entry.slug ?? lastSegment(entry.path)) : undefined,
+              itemReadOnly: entry?.readOnly,
             },
             children: [],
           }
@@ -158,41 +347,29 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
 
         const entryNodesByContentId = new Map<string, TreeNodeData>()
         entries.forEach((entry) => {
-          const node: TreeNodeData = {
-            value: entry.path,
-            label: entry.label,
-            nodeProps: {
-              status: entry.status,
-              isEntry: true,
-              entryPath: entry.path,
-              contentId: entry.contentId,
-              conflictNotice: entry.conflictNotice,
-              unavailable: entry.unavailable,
-              parentCollectionPath: col.path,
-              childIndex: 0, // Will be set below
-              totalChildrenCount: totalChildren,
-            },
-          }
           if (entry.contentId) {
-            entryNodesByContentId.set(entry.contentId, node)
+            entryNodesByContentId.set(entry.contentId, entryNode(entry, col, 0, totalChildren))
           }
         })
 
-        const childNodesByContentId = new Map<string, TreeNodeData>()
-        childCollections.forEach((child) => {
+        const withPosition = (child: EntryNavCollection, childIndex: number): TreeNodeData => {
           const childTree = toTree(child)
-          const node: TreeNodeData = {
+          return {
             ...childTree,
             nodeProps: {
               ...childTree.nodeProps,
               contentId: child.contentId,
               parentCollectionPath: col.path,
-              childIndex: 0, // Will be set below
+              childIndex,
               totalChildrenCount: totalChildren,
             },
           }
+        }
+
+        const childNodesByContentId = new Map<string, TreeNodeData>()
+        childCollections.forEach((child) => {
           if (child.contentId) {
-            childNodesByContentId.set(child.contentId, node)
+            childNodesByContentId.set(child.contentId, withPosition(child, 0))
           }
         })
 
@@ -200,13 +377,13 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         const usedContentIds = new Set<string>()
 
         for (const contentId of order) {
-          const entryNode = entryNodesByContentId.get(contentId)
-          if (entryNode) {
-            entryNode.nodeProps = {
-              ...entryNode.nodeProps,
+          const orderedEntry = entryNodesByContentId.get(contentId)
+          if (orderedEntry) {
+            orderedEntry.nodeProps = {
+              ...orderedEntry.nodeProps,
               childIndex: allChildren.length,
             }
-            allChildren.push(entryNode)
+            allChildren.push(orderedEntry)
             usedContentIds.add(contentId)
             continue
           }
@@ -225,40 +402,14 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           .filter((e) => !e.contentId || !usedContentIds.has(e.contentId))
           .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? ''))
         for (const entry of unorderedEntries) {
-          const node: TreeNodeData = {
-            value: entry.path,
-            label: entry.label,
-            nodeProps: {
-              status: entry.status,
-              isEntry: true,
-              entryPath: entry.path,
-              contentId: entry.contentId,
-              conflictNotice: entry.conflictNotice,
-              unavailable: entry.unavailable,
-              parentCollectionPath: col.path,
-              childIndex: allChildren.length,
-              totalChildrenCount: totalChildren,
-            },
-          }
-          allChildren.push(node)
+          allChildren.push(entryNode(entry, col, allChildren.length, totalChildren))
         }
 
         const unorderedChildren = childCollections
           .filter((c) => !c.contentId || !usedContentIds.has(c.contentId))
           .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? ''))
         for (const child of unorderedChildren) {
-          const childTree = toTree(child)
-          const node: TreeNodeData = {
-            ...childTree,
-            nodeProps: {
-              ...childTree.nodeProps,
-              contentId: child.contentId,
-              parentCollectionPath: col.path,
-              childIndex: allChildren.length,
-              totalChildrenCount: totalChildren,
-            },
-          }
-          allChildren.push(node)
+          allChildren.push(withPosition(child, allChildren.length))
         }
 
         // Collections should always have children array (even if empty) to show chevron
@@ -295,9 +446,43 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     return flatItems.map((item) => ({
       value: item.path,
       label: item.label,
-      nodeProps: { status: item.status, isEntry: true, entryPath: item.path },
+      nodeProps: {
+        status: item.status,
+        isEntry: true,
+        entryPath: item.path,
+        slug: item.slug ?? lastSegment(item.path),
+        itemReadOnly: item.readOnly,
+      },
     }))
   }, [collections, items, hiddenRootPath])
+
+  // Filtered from the finished tree, so each node keeps its position in the whole collection and
+  // Move up / Move down stay correct while a filter is on.
+  const filteredTree = useMemo(
+    () => (filtering ? filterTree(treeData, query) : treeData),
+    [filtering, treeData, query],
+  )
+
+  // Collections that hold an entry with unsaved changes, found over the whole tree so a filter
+  // never hides the reason for a dot.
+  const dirtyCollections = useMemo(() => {
+    const dirty = new Set<string>()
+    if (!dirtyPaths?.size) return dirty
+    const walk = (nodes: TreeNodeData[]): boolean => {
+      let any = false
+      for (const node of nodes) {
+        if (node.nodeProps?.isEntry) {
+          if (dirtyPaths.has(node.value)) any = true
+        } else if (walk(node.children ?? [])) {
+          dirty.add(node.value)
+          any = true
+        }
+      }
+      return any
+    }
+    walk(treeData)
+    return dirty
+  }, [treeData, dirtyPaths])
 
   // The hidden root's own row never renders, so its message is shown once above the tree.
   const hiddenRootUnavailableRefs =
@@ -307,7 +492,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
 
   const tree = useTree({
     initialExpandedState: expandedStateRef?.current ?? {},
+    // A filter expands and collapses nodes only for as long as it is on, so none of it is saved.
     onNodeExpand: (value) => {
+      if (filteringRef.current) return
       localExpandedStateRef.current = {
         ...localExpandedStateRef.current,
         [value]: true,
@@ -315,6 +502,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       onExpandedStateChange?.(localExpandedStateRef.current)
     },
     onNodeCollapse: (value) => {
+      if (filteringRef.current) return
       localExpandedStateRef.current = {
         ...localExpandedStateRef.current,
         [value]: false,
@@ -336,8 +524,26 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // The expanded state from before the filter started, put back exactly when it clears. The tree
+  // drops the state of nodes it no longer renders, so it cannot be recovered from the tree itself.
+  const expandedBeforeFilterRef = useRef<Record<string, boolean> | null>(null)
   useEffect(() => {
-    if (!selectedPath || !treeData) return
+    if (filtering) {
+      expandedBeforeFilterRef.current ??= tree.expandedState
+      tree.setExpandedState(expandedStateFor(filteredTree))
+    } else if (expandedBeforeFilterRef.current) {
+      // Plus the ancestors of an entry picked while filtering, so it stays in view.
+      tree.setExpandedState({
+        ...expandedBeforeFilterRef.current,
+        ...calculatePathToEntry(selectedPath, treeData),
+      })
+      expandedBeforeFilterRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the filter or the filtered tree changes; `tree` is a fresh object each render
+  }, [filtering, filteredTree])
+
+  useEffect(() => {
+    if (!selectedPath || !treeData || filtering) return
 
     const savedState = expandedStateRef?.current ?? {}
 
@@ -376,6 +582,28 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     hasScrolledRef.current = false
   }, [])
 
+  const clearFilter = () => {
+    setQuery('')
+    filterInputRef.current?.focus()
+  }
+
+  const handleFilterKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    // Enter and Escape during IME composition commit or cancel the composition, nothing more.
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'Escape' && query) {
+      // Clears the filter and nothing else: the surrounding drawer stays open.
+      event.preventDefault()
+      event.stopPropagation()
+      setQuery('')
+    } else if (event.key === 'Enter' && filtering) {
+      const path = firstEntryPath(filteredTree, query)
+      if (path) {
+        event.preventDefault()
+        onSelect(path)
+      }
+    }
+  }
+
   const Chevron = ({ expanded, visible }: { expanded: boolean; visible: boolean }) => (
     <svg
       width="18"
@@ -383,7 +611,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       viewBox="0 0 24 24"
       fill="currentColor"
       aria-hidden="true"
-      style={{ opacity: visible ? 0.9 : 0 }}
+      style={{ flexShrink: 0, opacity: visible ? 0.9 : 0 }}
     >
       {expanded ? (
         <path d="M7.41 8.59 12 13.17 16.59 8.59 18 10l-6 6-6-6z" />
@@ -423,6 +651,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       | undefined
     const isLeaf = !hasChildren || isEntry
     const selected = node.value === selectedPath
+    const label = String(node.label ?? '')
+    const testIdSuffix = label.toLowerCase().replace(/\s+/g, '-')
 
     // For collections, always show chevron (even if empty) to match standard tree UI
     // Mantine only provides hasChildren=true if children.length > 0, but we want
@@ -440,19 +670,28 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       isCollection && (onAdd || onEdit || onAddSubCollection || onDelete || canReorder)
     // An unavailable entry cannot be written, so its menu (rename, delete, reorder) is not offered.
     const entryUnavailable = node.nodeProps?.unavailable as boolean | undefined
+    // The same holds for an entry this user may not edit. A read-only navigator already says so
+    // once, in the branch banner, so only a lone read-only entry gets its own lock.
+    const entryLocked = !readOnly && !!(node.nodeProps?.itemReadOnly as boolean | undefined)
     const hasEntryMenu =
       isEntry &&
       entryPath &&
       !entryUnavailable &&
+      !entryLocked &&
       (onDeleteEntry || onRenameEntry || onReorderEntry)
+
+    const showEntryDirtyDot = isEntry && !!entryPath && !!dirtyPaths?.has(entryPath)
+    const showCollectionDirtyDot = !isEntry && dirtyCollections.has(node.value)
+
+    const adminItems = onAddSubCollection || onEdit || onDelete
+    const hasCollectionContentItems = onAdd || canReorder
 
     return (
       <Box
         {...elementProps}
         ref={selected ? selectedNodeRef : undefined}
-        data-testid={`entry-nav-item-${String(node.label ?? '')
-          .toLowerCase()
-          .replace(/\s+/g, '-')}`}
+        data-nav-row
+        data-testid={`entry-nav-item-${testIdSuffix}`}
         onClick={(event) => {
           elementProps.onClick(event)
           if (isLeaf && isEntry) {
@@ -471,24 +710,29 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           transition: 'background-color 120ms ease, border-color 120ms ease',
         }}
       >
-        <Group gap="xs" justify="space-between" wrap="nowrap">
-          <Group gap={6} wrap="nowrap">
+        <Group gap="xs" justify="space-between" wrap="nowrap" style={{ width: '100%' }}>
+          <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
             <Box
               w={18}
               h={18}
               style={{
                 display: 'flex',
+                flexShrink: 0,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
               <Chevron expanded={expanded} visible={showChevron} />
             </Box>
-            <Text size="sm" fw={selected ? 600 : 500} truncate="end">
-              {node.label}
-            </Text>
+            <TruncatedLabel
+              label={label}
+              highlight={filtering ? query.trim() : ''}
+              fw={selected ? 600 : 500}
+            />
+            {showEntryDirtyDot && <UnsavedDot label="Unsaved changes" />}
+            {showCollectionDirtyDot && <UnsavedDot label="Contains unsaved changes" />}
             {status && (
-              <Badge size="xs" variant="light" color="gray">
+              <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0, maxWidth: 96 }}>
                 {status}
               </Badge>
             )}
@@ -497,13 +741,33 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                 label="This content was updated on the base branch — a reviewer will reconcile"
                 withArrow
               >
-                <Badge size="xs" variant="light" color="orange" data-testid="conflict-badge">
+                <Badge
+                  size="xs"
+                  variant="light"
+                  color="orange"
+                  data-testid="conflict-badge"
+                  style={{ flexShrink: 0 }}
+                >
                   conflict
                 </Badge>
               </Tooltip>
             )}
+            {entryLocked && (
+              <Tooltip label="You can't edit this entry" withinPortal>
+                <Box
+                  component="span"
+                  role="img"
+                  aria-label="You can't edit this entry"
+                  data-testid="entry-lock"
+                  c="dimmed"
+                  style={{ display: 'inline-flex', flexShrink: 0 }}
+                >
+                  <IconLock size={14} aria-hidden />
+                </Box>
+              </Tooltip>
+            )}
           </Group>
-          <Group gap={4} wrap="nowrap">
+          <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
             {hasCollectionMenu && (
               <Menu shadow="md" width={200} withinPortal position="bottom-end">
                 <Menu.Target>
@@ -513,39 +777,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                     color="gray"
                     onClick={(event) => event.stopPropagation()}
                     aria-label="Collection actions"
-                    data-testid={`collection-menu-${String(node.label ?? '')
-                      .toLowerCase()
-                      .replace(/\s+/g, '-')}`}
+                    data-testid={`collection-menu-${testIdSuffix}`}
                   >
                     <IconDots size={14} />
                   </ActionIcon>
                 </Menu.Target>
-                <Menu.Dropdown>
-                  {canReorder && (
-                    <>
-                      <Menu.Item
-                        leftSection={<IconArrowUp size={14} />}
-                        disabled={!canMoveUp}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onReorderEntry?.(parentCollectionPath!, contentId!, 'up')
-                        }}
-                      >
-                        Move Up
-                      </Menu.Item>
-                      <Menu.Item
-                        leftSection={<IconArrowDown size={14} />}
-                        disabled={!canMoveDown}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onReorderEntry?.(parentCollectionPath!, contentId!, 'down')
-                        }}
-                      >
-                        Move Down
-                      </Menu.Item>
-                      {(onAdd || onAddSubCollection || onEdit || onDelete) && <Menu.Divider />}
-                    </>
-                  )}
+                <Menu.Dropdown onKeyDown={stopTreeKeys}>
                   {onAdd && (
                     <Menu.Item
                       leftSection={<IconPlus size={14} />}
@@ -555,8 +792,38 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                       }}
                       data-testid="add-entry-menu-item"
                     >
-                      Add Entry
+                      Add entry…
                     </Menu.Item>
+                  )}
+                  {canReorder && (
+                    <>
+                      <ReasonedMenuItem
+                        leftSection={<IconArrowUp size={14} />}
+                        blockedReason={canMoveUp ? undefined : 'Already first'}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onReorderEntry?.(parentCollectionPath!, contentId!, 'up')
+                        }}
+                      >
+                        Move up
+                      </ReasonedMenuItem>
+                      <ReasonedMenuItem
+                        leftSection={<IconArrowDown size={14} />}
+                        blockedReason={canMoveDown ? undefined : 'Already last'}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onReorderEntry?.(parentCollectionPath!, contentId!, 'down')
+                        }}
+                      >
+                        Move down
+                      </ReasonedMenuItem>
+                    </>
+                  )}
+                  {adminItems && (
+                    <>
+                      {hasCollectionContentItems && <Menu.Divider />}
+                      <Menu.Label>Admin</Menu.Label>
+                    </>
                   )}
                   {onAddSubCollection && (
                     <Menu.Item
@@ -566,10 +833,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                         onAddSubCollection()
                       }}
                     >
-                      Add Sub-Collection
+                      Add sub-collection…
                     </Menu.Item>
                   )}
-                  {(onAdd || onAddSubCollection) && (onEdit || onDelete) && <Menu.Divider />}
                   {onEdit && (
                     <Menu.Item
                       leftSection={<IconEdit size={14} />}
@@ -578,7 +844,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                         onEdit()
                       }}
                     >
-                      Edit Collection
+                      Edit collection…
                     </Menu.Item>
                   )}
                   {onDelete && (
@@ -590,14 +856,14 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                         onDelete()
                       }}
                     >
-                      Delete Collection
+                      Delete collection…
                     </Menu.Item>
                   )}
                 </Menu.Dropdown>
               </Menu>
             )}
             {hasEntryMenu && (
-              <Menu shadow="md" width={150} withinPortal position="bottom-end">
+              <Menu shadow="md" width={180} withinPortal position="bottom-end">
                 <Menu.Target>
                   <ActionIcon
                     size="xs"
@@ -605,39 +871,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                     color="gray"
                     onClick={(event) => event.stopPropagation()}
                     aria-label="Entry actions"
-                    data-testid={`entry-menu-${String(node.label ?? '')
-                      .toLowerCase()
-                      .replace(/\s+/g, '-')}`}
+                    data-testid={`entry-menu-${testIdSuffix}`}
                   >
                     <IconDots size={14} />
                   </ActionIcon>
                 </Menu.Target>
-                <Menu.Dropdown>
-                  {onReorderEntry && contentId && parentCollectionPath && (
-                    <>
-                      <Menu.Item
-                        leftSection={<IconArrowUp size={14} />}
-                        disabled={!canMoveUp}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onReorderEntry(parentCollectionPath, contentId, 'up')
-                        }}
-                      >
-                        Move Up
-                      </Menu.Item>
-                      <Menu.Item
-                        leftSection={<IconArrowDown size={14} />}
-                        disabled={!canMoveDown}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onReorderEntry(parentCollectionPath, contentId, 'down')
-                        }}
-                      >
-                        Move Down
-                      </Menu.Item>
-                      {(onRenameEntry || onDeleteEntry) && <Menu.Divider />}
-                    </>
-                  )}
+                <Menu.Dropdown onKeyDown={stopTreeKeys}>
                   {onRenameEntry && (
                     <Menu.Item
                       leftSection={<IconEdit size={14} />}
@@ -647,21 +886,50 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                       }}
                       data-testid="rename-entry-menu-item"
                     >
-                      Rename Entry
+                      Rename…
                     </Menu.Item>
                   )}
+                  {onReorderEntry && contentId && parentCollectionPath && (
+                    <>
+                      <ReasonedMenuItem
+                        leftSection={<IconArrowUp size={14} />}
+                        blockedReason={canMoveUp ? undefined : 'Already first'}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onReorderEntry(parentCollectionPath, contentId, 'up')
+                        }}
+                      >
+                        Move up
+                      </ReasonedMenuItem>
+                      <ReasonedMenuItem
+                        leftSection={<IconArrowDown size={14} />}
+                        blockedReason={canMoveDown ? undefined : 'Already last'}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onReorderEntry(parentCollectionPath, contentId, 'down')
+                        }}
+                      >
+                        Move down
+                      </ReasonedMenuItem>
+                    </>
+                  )}
                   {onDeleteEntry && (
-                    <Menu.Item
-                      leftSection={<IconTrash size={14} />}
-                      color="red"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onDeleteEntry(entryPath)
-                      }}
-                      data-testid="delete-entry-menu-item"
-                    >
-                      Delete Entry
-                    </Menu.Item>
+                    <>
+                      {(onRenameEntry || (onReorderEntry && contentId && parentCollectionPath)) && (
+                        <Menu.Divider />
+                      )}
+                      <Menu.Item
+                        leftSection={<IconTrash size={14} />}
+                        color="red"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onDeleteEntry(entryPath)
+                        }}
+                        data-testid="delete-entry-menu-item"
+                      >
+                        Delete…
+                      </Menu.Item>
+                    </>
                   )}
                 </Menu.Dropdown>
               </Menu>
@@ -682,7 +950,28 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       gap={0}
       data-testid="entry-navigator"
     >
-      <ScrollArea type="auto" offsetScrollbars style={{ flex: 1 }}>
+      {treeData.length > 0 && (
+        <TextInput
+          ref={filterInputRef}
+          size="sm"
+          py={4}
+          aria-label="Filter entries"
+          spellCheck={false}
+          data-autofocus
+          placeholder="Filter by title or slug"
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          onKeyDown={handleFilterKeyDown}
+          leftSection={<IconSearch size={14} aria-hidden />}
+          rightSection={
+            query ? <CloseButton size="sm" aria-label="Clear filter" onClick={clearFilter} /> : null
+          }
+          // Mantine closes the drawer on Escape from a window listener that reads this attribute.
+          data-mantine-stop-propagation={query ? 'true' : undefined}
+          data-testid="entry-nav-filter"
+        />
+      )}
+      <ScrollArea type="auto" scrollbars="y" offsetScrollbars style={{ flex: 1 }}>
         {hiddenRootUnavailableRefs && hiddenRootUnavailableRefs.length > 0 && (
           <Box pt="sm">
             <UnavailableTypeRow schemaRefs={hiddenRootUnavailableRefs} />
@@ -701,10 +990,19 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               No content
             </Text>
           )
+        ) : filteredTree.length === 0 ? (
+          <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-filter-empty">
+            <Text size="sm" c="dimmed">
+              No entries match “{query}”.
+            </Text>
+            <Button size="compact-sm" variant="subtle" onClick={clearFilter}>
+              Clear filter
+            </Button>
+          </Stack>
         ) : (
           <Box py="sm">
             <Tree
-              data={treeData}
+              data={filteredTree}
               tree={tree}
               renderNode={renderNode}
               selectOnClick={false}

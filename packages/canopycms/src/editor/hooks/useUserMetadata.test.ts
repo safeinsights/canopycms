@@ -1,9 +1,18 @@
-import { describe, it, expect, vi } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
-import { SWRConfig } from 'swr'
-import { useUserMetadata } from './useUserMetadata'
+import { SWRConfig, useSWRConfig } from 'swr'
+import { seedUserProfiles, useSeededUserResolver, useUserMetadata } from './useUserMetadata'
+import { createUserMetadataBatcher } from './user-metadata-batcher'
 import type { UserSearchResult } from '../../auth/types'
+import type { ApiClient } from '../context'
+import {
+  createMockApiClient,
+  mockError,
+  mockSuccess,
+  type MockApiClient,
+} from '../../api/__test__/mock-client'
+import { mockConsole } from '../../test-utils/console-spy'
 
 // A fresh SWR cache per hook, so one test's user never answers another's.
 const wrapper = ({ children }: { children: ReactNode }) =>
@@ -210,5 +219,235 @@ describe('useUserMetadata', () => {
     expect(result.current.userMetadata).toEqual(mockUser)
     expect(result.current.isLoading).toBe(false)
     expect(getUserMetadata).not.toHaveBeenCalled()
+  })
+
+  describe('seedUserProfiles', () => {
+    // Never settles, so whatever the badge shows came from the seed, not from the lookup.
+    const pendingLookup = () => new Promise<UserSearchResult | null>(() => {})
+
+    it('names a user from a seeded profile while the lookup is still pending', async () => {
+      const { result } = renderHook(
+        () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', pendingLookup) }),
+        { wrapper },
+      )
+
+      await act(async () => {
+        await seedUserProfiles(result.current.swr, [{ id: 'user-1', name: 'Alice Johnson' }])
+      })
+
+      expect(result.current.badge.userMetadata).toEqual({
+        id: 'user-1',
+        name: 'Alice Johnson',
+        email: '',
+      })
+      expect(result.current.badge.isLoading).toBe(false)
+    })
+
+    it('keeps the email of a user already looked up', async () => {
+      // Later lookups never settle, so what follows the seed is the seed's own merge.
+      const lookup = vi
+        .fn<(userId: string) => Promise<UserSearchResult | null>>()
+        .mockResolvedValueOnce(mockUser)
+        .mockImplementation(pendingLookup)
+      const { result } = renderHook(
+        () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', lookup) }),
+        { wrapper },
+      )
+      await waitFor(() => expect(result.current.badge.userMetadata).toEqual(mockUser))
+
+      await act(async () => {
+        await seedUserProfiles(result.current.swr, [{ id: 'user-1', name: 'Alice J.' }])
+      })
+
+      expect(result.current.badge.userMetadata).toEqual({ ...mockUser, name: 'Alice J.' })
+      // A record that kept its email is not looked up again.
+      expect(lookup).toHaveBeenCalledTimes(1)
+    })
+
+    it('refetches, so a badge whose lookup the seed overtook still gets its email', async () => {
+      let settleFirst: (user: UserSearchResult) => void = () => {}
+      const lookup = vi
+        .fn<(userId: string) => Promise<UserSearchResult | null>>()
+        .mockImplementationOnce(() => new Promise((resolve) => (settleFirst = resolve)))
+        .mockImplementation(async () => mockUser)
+      const { result } = renderHook(
+        () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', lookup) }),
+        { wrapper },
+      )
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1))
+
+      await act(async () => {
+        await seedUserProfiles(result.current.swr, [{ id: 'user-1', name: 'Alice Johnson' }])
+      })
+      await act(async () => settleFirst(mockUser))
+
+      await waitFor(() => expect(result.current.badge.userMetadata?.email).toBe(mockUser.email))
+    })
+
+    it('refetches a changed profile that overtook a lookup, so the badge still gets its email', async () => {
+      const shared = new Map()
+      const sharedCache = ({ children }: { children: ReactNode }) =>
+        createElement(SWRConfig, { value: { provider: () => shared } }, children)
+      const { result: config } = renderHook(() => useSWRConfig(), { wrapper: sharedCache })
+      await act(async () => seedUserProfiles(config.current, [{ id: 'user-1', name: 'Alice' }]))
+      const lookups: Array<(user: UserSearchResult) => void> = []
+      const lookup = vi
+        .fn<(userId: string) => Promise<UserSearchResult | null>>()
+        .mockImplementationOnce(() => new Promise((resolve) => lookups.push(resolve)))
+        .mockImplementation(async () => ({ ...mockUser, name: 'Alice B' }))
+      const { result: badge } = renderHook(() => useUserMetadata('user-1', lookup), {
+        wrapper: sharedCache,
+      })
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1))
+
+      await act(async () => seedUserProfiles(config.current, [{ id: 'user-1', name: 'Alice B' }]))
+      await act(async () => lookups[0]?.(mockUser))
+
+      await waitFor(() => expect(badge.current.userMetadata?.email).toBe(mockUser.email))
+      expect(badge.current.userMetadata?.name).toBe('Alice B')
+    })
+
+    it('resolves while the badge lookup never answers', async () => {
+      const lookup = vi.fn(pendingLookup)
+      const { result } = renderHook(
+        () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', lookup) }),
+        { wrapper },
+      )
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1))
+
+      let outcome: 'seeded' | 'waiting-on-lookup' | undefined
+      await act(async () => {
+        outcome = await Promise.race([
+          seedUserProfiles(result.current.swr, [{ id: 'user-1', name: 'Alice Johnson' }]).then(
+            () => 'seeded' as const,
+          ),
+          new Promise<'waiting-on-lookup'>((resolve) =>
+            setTimeout(() => resolve('waiting-on-lookup'), 500),
+          ),
+        ])
+      })
+
+      expect(outcome).toBe('seeded')
+    })
+
+    it('looks a user up once after its first seed, however often the same profile is seeded', async () => {
+      let settleRefetch: (user: UserSearchResult) => void = () => {}
+      const lookup = vi
+        .fn<(userId: string) => Promise<UserSearchResult | null>>()
+        .mockImplementationOnce(pendingLookup)
+        .mockImplementationOnce(() => new Promise((resolve) => (settleRefetch = resolve)))
+        .mockImplementation(pendingLookup)
+      const { result } = renderHook(
+        () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', lookup) }),
+        { wrapper },
+      )
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1))
+      const profile = { id: 'user-1', name: 'Alice Johnson' }
+
+      await act(async () => seedUserProfiles(result.current.swr, [profile]))
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2))
+      await act(async () => seedUserProfiles(result.current.swr, [profile]))
+      // The unchanged seed wrote nothing, so the refetch in flight is still the one that counts.
+      await act(async () => settleRefetch(mockUser))
+
+      await waitFor(() => expect(result.current.badge.userMetadata?.email).toBe(mockUser.email))
+      expect(lookup).toHaveBeenCalledTimes(2)
+    })
+
+    it('merges a changed profile onto a record that has no email', async () => {
+      const lookup = vi.fn(pendingLookup)
+      const { result } = renderHook(
+        () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', lookup) }),
+        { wrapper },
+      )
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1))
+      await act(async () =>
+        seedUserProfiles(result.current.swr, [{ id: 'user-1', name: 'Alice Johnson' }]),
+      )
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2))
+
+      await act(async () =>
+        seedUserProfiles(result.current.swr, [
+          { id: 'user-1', name: 'Alice J.', avatarUrl: 'https://example.com/a.png' },
+        ]),
+      )
+
+      expect(result.current.badge.userMetadata).toEqual({
+        id: 'user-1',
+        name: 'Alice J.',
+        avatarUrl: 'https://example.com/a.png',
+        email: '',
+      })
+    })
+
+    describe('when the badge looks users up through /users/batch', () => {
+      let client: MockApiClient
+      let consoleSpy: ReturnType<typeof mockConsole>
+
+      beforeEach(() => {
+        client = createMockApiClient()
+        consoleSpy = mockConsole()
+      })
+      afterEach(() => consoleSpy.restore())
+
+      // Seeds while the first batch is still in its window, then waits for the batches to settle.
+      const seededBadgeAfterLookupAnswers = async () => {
+        const lookup = createUserMetadataBatcher(client as unknown as ApiClient)
+        const { result } = renderHook(
+          () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', lookup) }),
+          { wrapper },
+        )
+        await act(async () =>
+          seedUserProfiles(result.current.swr, [{ id: 'user-1', name: 'Alice Johnson' }]),
+        )
+        await waitFor(() => expect(client.permissions.batchGetUserMetadata).toHaveBeenCalled())
+        await waitFor(() =>
+          expect(result.current.swr.cache.get('canopy:user:user-1')?.isValidating).toBeFalsy(),
+        )
+        return result.current.badge
+      }
+
+      const seededName = { id: 'user-1', name: 'Alice Johnson', email: '' }
+
+      it('keeps the seeded name when the request fails', async () => {
+        client.permissions.batchGetUserMetadata.mockRejectedValue(new Error('offline'))
+
+        const badge = await seededBadgeAfterLookupAnswers()
+
+        expect(badge.userMetadata).toEqual(seededName)
+        expect(badge.error).toBeNull()
+      })
+
+      it('keeps the seeded name when the server answers with an error', async () => {
+        client.permissions.batchGetUserMetadata.mockResolvedValue(mockError(503, 'Unavailable'))
+
+        const badge = await seededBadgeAfterLookupAnswers()
+
+        expect(badge.userMetadata).toEqual(seededName)
+        expect(badge.error).toBeNull()
+      })
+
+      it('keeps the seeded name when the directory does not know the user', async () => {
+        client.permissions.batchGetUserMetadata.mockResolvedValue(mockSuccess({ users: [] }))
+
+        const badge = await seededBadgeAfterLookupAnswers()
+
+        expect(badge.userMetadata).toEqual(seededName)
+        expect(badge.error).toBeNull()
+      })
+    })
+
+    it('answers the seeded resolver without an email, even one cached by a privileged lookup', async () => {
+      const { result } = renderHook(
+        () => ({ swr: useSWRConfig(), resolve: useSeededUserResolver() }),
+        { wrapper },
+      )
+      await act(async () => {
+        await result.current.swr.mutate('canopy:user:user-1', mockUser, { revalidate: false })
+      })
+
+      await expect(result.current.resolve('user-1')).resolves.toEqual({ ...mockUser, email: '' })
+      await expect(result.current.resolve('user-2')).resolves.toBeNull()
+    })
   })
 })

@@ -263,16 +263,16 @@ describe('Editor integration', () => {
     })
 
     // Verify save button is disabled when there are no unsaved changes
-    let saveButton = await screen.findByRole('button', { name: /save file/i })
-    expect(saveButton.hasAttribute('disabled')).toBe(true)
+    let saveButton = await screen.findByRole('button', { name: /^save$/i })
+    expect(saveButton.getAttribute('aria-disabled')).toBe('true')
 
     // Make a change to the form
     fireEvent.change(input!, { target: { value: 'Modified title' } })
 
     // Verify save button becomes enabled after making a change
     await waitFor(() => {
-      saveButton = screen.getByRole('button', { name: /save file/i })
-      expect(saveButton.hasAttribute('disabled')).toBe(false)
+      saveButton = screen.getByRole('button', { name: /^save$/i })
+      expect(saveButton.getAttribute('aria-disabled')).toBeNull()
     })
 
     fireEvent.click(saveButton)
@@ -443,8 +443,8 @@ describe('Editor integration', () => {
     })
 
     // ...and the editor agrees there is nothing modified.
-    const saveButton = await screen.findByRole('button', { name: /save file/i })
-    expect(saveButton.hasAttribute('disabled')).toBe(true)
+    const saveButton = await screen.findByRole('button', { name: /^save$/i })
+    expect(saveButton.getAttribute('aria-disabled')).toBe('true')
   })
 
   it('names the entry path and whom to ask, and renders no form, for an entry the user cannot edit', async () => {
@@ -780,8 +780,8 @@ describe('Editor integration', () => {
     // edit there would 409 instead of being blindly overwritten.
     fireEvent.change(input, { target: { value: 'Edited on feature' } })
     const saveButton = await waitFor(() => {
-      const btn = screen.getByRole('button', { name: /save file/i })
-      expect(btn.hasAttribute('disabled')).toBe(false)
+      const btn = screen.getByRole('button', { name: /^save$/i })
+      expect(btn.getAttribute('aria-disabled')).toBeNull()
       return btn
     })
     fireEvent.click(saveButton)
@@ -1167,8 +1167,8 @@ describe('Editor integration', () => {
       // server value, so dirty-tracking is truthful rather than a permanent
       // false positive.
       await waitFor(() => {
-        const saveButton = screen.getByRole('button', { name: /save file/i })
-        expect(saveButton.hasAttribute('disabled')).toBe(false)
+        const saveButton = screen.getByRole('button', { name: /^save$/i })
+        expect(saveButton.getAttribute('aria-disabled')).toBeNull()
       })
     } finally {
       window.localStorage.removeItem('canopycms:drafts:main')
@@ -1327,8 +1327,8 @@ describe('Editor integration', () => {
       await waitFor(() => {
         const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
         expect(el?.value).toBe('Draft title from localStorage')
-        saveButton = screen.getByRole('button', { name: /save file/i })
-        expect(saveButton.hasAttribute('disabled')).toBe(false)
+        saveButton = screen.getByRole('button', { name: /^save$/i })
+        expect(saveButton.getAttribute('aria-disabled')).toBeNull()
       })
 
       fireEvent.click(saveButton)
@@ -1483,7 +1483,7 @@ describe('Editor integration', () => {
       expect(screen.getByTestId('protected-branch-banner')).toBeDefined()
     })
     expect(screen.getByText(/protected base branch "main"/i)).toBeDefined()
-    expect(screen.getByRole('button', { name: /create a branch/i })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'New branch…' })).toBeDefined()
 
     // Submit is hidden entirely (not just disabled) on the protected branch.
     expect(screen.queryByTestId('submit-button')).toBeNull()
@@ -1499,13 +1499,13 @@ describe('Editor integration', () => {
 
     await waitFor(() => {
       const saveButton = screen.getByTestId('save-button')
-      expect(saveButton.hasAttribute('disabled')).toBe(true)
+      expect(saveButton.getAttribute('aria-disabled')).toBe('true')
     })
 
     // Open the entry navigator (File dropdown -> All Files) and confirm the
     // read-only branch hides every mutation affordance: the per-collection
     // context menu (EntryNavigator's readOnly gating) and the drawer header's
-    // "Content actions" button (Add Entry/Add Collection for the root), which
+    // "Content actions" button (Add entry/Add collection for the root), which
     // reads navCollections[0].onAdd directly and would otherwise bypass
     // EntryNavigator's gating entirely.
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
@@ -1593,7 +1593,7 @@ describe('Editor integration', () => {
 
     await waitFor(() => {
       const withdrawButton = screen.getByTestId('withdraw-button')
-      expect(withdrawButton.hasAttribute('disabled')).toBe(false)
+      expect(withdrawButton.getAttribute('aria-disabled')).toBeNull()
     })
   })
 
@@ -1725,7 +1725,7 @@ describe('Editor integration', () => {
     expect(readPersistedDrafts('main')).not.toHaveProperty('def456ABC123')
     await waitFor(() => {
       const saveButton = screen.getByTestId('save-button')
-      expect(saveButton.hasAttribute('disabled')).toBe(true)
+      expect(saveButton.getAttribute('aria-disabled')).toBe('true')
     })
 
     // isProtected's absence must also fail closed -- Submit hides entirely,
@@ -1868,7 +1868,7 @@ describe('Editor integration', () => {
       await openNavigatorAndFindSubA()
 
       fireEvent.click(screen.getByTestId('collection-menu-sub-a'))
-      const moveDown = await screen.findByText('Move Down')
+      const moveDown = await screen.findByText('Move down')
       fireEvent.click(moveDown)
 
       const { notifications } = await import('@mantine/notifications')
@@ -1973,7 +1973,7 @@ describe('Editor integration', () => {
       await openNavigatorAndFindSubA()
 
       fireEvent.click(screen.getByTestId('collection-menu-sub-a'))
-      const moveDown = await screen.findByText('Move Down')
+      const moveDown = await screen.findByText('Move down')
       fireEvent.click(moveDown)
 
       await waitFor(() => {

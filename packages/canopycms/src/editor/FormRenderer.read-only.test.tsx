@@ -136,15 +136,38 @@ describe('FormRenderer readOnly', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('datetime: the input is locked and a change writes nothing', () => {
-    const { onChange, container } = renderReadOnly(
+  it('datetime: the picker shows the value, is focusable but cannot be removed or opened, and writes nothing', async () => {
+    const { onChange } = renderReadOnly(
       [{ name: 'publishedAt', type: 'datetime', label: 'Published' }],
       { publishedAt: '2024-01-02T03:04:05.000Z' },
     )
-    const input = container.querySelector<HTMLInputElement>('input[type="datetime-local"]')!
-    expectLocked(input)
-    fireEvent.change(input, { target: { value: '2025-01-01T00:00' } })
+    const picker = screen.getByRole('button', { name: /^Published, / })
+    expect(picker.getAttribute('data-read-only')).toBe('true')
+    expect(picker.matches(':disabled')).toBe(false)
+    picker.focus()
+    expect(document.activeElement).toBe(picker)
+    expect(picker.textContent).toMatch(/2024, \d{2}:\d{2}:05$/)
+    expect(screen.queryByRole('button', { name: 'Remove date and time' })).toBeNull()
+
+    fireEvent.click(picker)
+    // Time for an opening transition to mount a dropdown it should not.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(document.querySelector('[data-dates-dropdown]')).toBeNull()
     expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('datetime: the read-only rule greys the picker trigger like every other input', () => {
+    const { container } = renderReadOnly(
+      [{ name: 'publishedAt', type: 'datetime', label: 'Published' }],
+      { publishedAt: '2024-01-02T03:04:05.000Z' },
+    )
+    const picker = screen.getByRole('button', { name: /^Published, / })
+    const rule = [...container.querySelectorAll('style')]
+      .map((style) => style.textContent ?? '')
+      .join('\n')
+      .match(/^\s*(\.canopy-read-only-form \.mantine-Input-input[^{]*)\{\s*background-color/m)
+    expect(rule).not.toBeNull()
+    expect(picker.matches(rule![1].trim())).toBe(true)
   })
 
   it('markdown: MDXEditor mounts read-only, offers no source toggle, and emits nothing', async () => {
@@ -229,55 +252,91 @@ describe('FormRenderer readOnly', () => {
     expect(screen.queryByTestId('image-field-remove-hero')).toBeNull()
   })
 
-  it('block: no add, remove, move or drag; nested fields are locked', () => {
-    const { onChange } = renderReadOnly(
-      [
-        {
-          name: 'blocks',
-          type: 'block',
-          label: 'Sections',
-          templates: [
-            { name: 'hero', label: 'Hero', fields: [{ name: 'heading', type: 'string' }] },
-          ],
-        },
-      ],
-      {
-        blocks: [
-          { template: 'hero', value: { heading: 'First' } },
-          { template: 'hero', value: { heading: 'Second' } },
-        ],
-      },
-    )
-    expect(screen.queryByRole('textbox', { name: 'Add block' })).toBeNull()
+  const blockFields: FieldConfig[] = [
+    {
+      name: 'blocks',
+      type: 'block',
+      label: 'Sections',
+      templates: [{ name: 'hero', label: 'Hero', fields: [{ name: 'heading', type: 'string' }] }],
+    },
+  ]
+  const blockValue = {
+    blocks: [
+      { template: 'hero', value: { heading: 'First' } },
+      { template: 'hero', value: { heading: 'Second' } },
+    ],
+  }
+
+  it('block: no add, insert, remove, move or drag; nested fields are locked', () => {
+    const { onChange } = renderReadOnly(blockFields, blockValue)
     expect(screen.queryByRole('button', { name: 'Drag to reorder' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Move block up' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Move block down' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Actions for / })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add section' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add section here' })).toBeNull()
+    expect(screen.queryByTestId('block-insert-between')).toBeNull()
     const [first] = screen.getAllByRole('textbox', { name: 'heading' })
     expectLocked(first)
     fireEvent.change(first, { target: { value: 'Edited' } })
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('object list: no add or remove; nested fields are locked', () => {
-    const { onChange } = renderReadOnly(
-      [
-        {
-          name: 'links',
-          type: 'object',
-          label: 'Links',
-          list: true,
-          fields: [{ name: 'href', type: 'string', label: 'Href' }],
-        },
-      ],
-      { links: [{ href: '/a' }] },
-    )
+  it('block: the same controls are there when the form is editable', () => {
+    renderReadOnly(blockFields, blockValue, { readOnly: false })
+    expect(screen.getAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /^Actions for Hero/ })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Add section' })).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: 'Add section here' })).toHaveLength(2)
+  })
+
+  it('block: a row still collapses and opens, and a collapse writes nothing', () => {
+    const { onChange } = renderReadOnly(blockFields, blockValue)
+    const [toggle] = screen.getAllByTestId('item-row-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(document.getElementById(toggle.getAttribute('aria-controls')!)!.hidden).toBe(true)
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  const listFields: FieldConfig[] = [
+    {
+      name: 'links',
+      type: 'object',
+      label: 'Links',
+      list: true,
+      fields: [{ name: 'href', type: 'string', label: 'Href' }],
+    },
+  ]
+
+  it('object list: no add, drag or row menu; nested fields are locked', () => {
+    const { onChange } = renderReadOnly(listFields, { links: [{ href: '/a' }] })
     expect(screen.queryByRole('button', { name: 'Add item' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
+    expect(screen.queryByTestId('object-list-add')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Drag to reorder' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Actions for / })).toBeNull()
     const input = screen.getByRole('textbox', { name: 'Href' })
     expectLocked(input)
     fireEvent.change(input, { target: { value: '/b' } })
     expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('object list: the same controls are there when the form is editable', () => {
+    renderReadOnly(listFields, { links: [{ href: '/a' }] }, { readOnly: false })
+    expect(screen.getByRole('button', { name: 'Add item' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Drag to reorder' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Actions for /a' })).toBeTruthy()
+  })
+
+  it('object list: a row still collapses and opens', () => {
+    renderReadOnly(listFields, { links: [{ href: '/a' }] })
+    const toggle = screen.getByTestId('item-row-toggle')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('textbox', { name: 'Href' })).toBeNull()
+    fireEvent.click(toggle)
+    expect(screen.getByRole('textbox', { name: 'Href' })).toBeTruthy()
   })
 
   it('object list (empty): says there are no items without inviting an add', () => {
@@ -293,7 +352,7 @@ describe('FormRenderer readOnly', () => {
       ],
       { links: [] },
     )
-    expect(screen.getByText('No items.')).toBeTruthy()
+    expect(screen.getByText('Nothing added.')).toBeTruthy()
   })
 
   it('object: an optional object with a value offers no Clear', () => {
@@ -405,8 +464,37 @@ describe('FormRenderer readOnly', () => {
         onResolveThread: vi.fn(async () => {}),
       },
     )
-    const newComment = screen.getByTestId('field-new-comment-title')
-    expect(newComment.matches(':disabled')).toBe(false)
+    const control = screen.getByTestId('field-comment-title')
+    expect(control.matches(':disabled')).toBe(false)
+    expect(screen.getByTestId('entry-comment-button').matches(':disabled')).toBe(false)
+  })
+
+  it('takes a new field comment on a read-only form', async () => {
+    const onAddComment = vi.fn(async () => {})
+    renderReadOnly(
+      [{ name: 'title', type: 'string', label: 'Title' }],
+      { title: 'Hello' },
+      {
+        currentEntryPath: 'content/posts/hello',
+        currentUserId: 'user-1',
+        onAddComment,
+        onResolveThread: vi.fn(async () => {}),
+      },
+    )
+    fireEvent.click(screen.getByTestId('field-comment-title'))
+    const box = await screen.findByTestId('new-thread-textarea')
+    expect(box.matches(':disabled')).toBe(false)
+    fireEvent.change(box, { target: { value: 'Please reword' } })
+    fireEvent.click(screen.getByTestId('create-thread-button'))
+    await waitFor(() =>
+      expect(onAddComment).toHaveBeenCalledWith(
+        'Please reword',
+        'field',
+        'content/posts/hello',
+        'title',
+        undefined,
+      ),
+    )
   })
 })
 
@@ -489,13 +577,14 @@ describe('each field refuses edits on its own', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('DateTimeField: a change event calls no onChange', () => {
+  it('DateTimeField: a click opens no picker and calls no onChange', async () => {
     const onChange = vi.fn()
-    const { container } = renderField(
+    renderField(
       <DateTimeField label="F" value="2024-01-02T03:04:05.000Z" onChange={onChange} readOnly />,
     )
-    const input = container.querySelector<HTMLInputElement>('input[type="datetime-local"]')!
-    fireEvent.change(input, { target: { value: '2025-01-01T00:00' } })
+    fireEvent.click(screen.getByRole('button', { name: /^F, / }))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(document.querySelector('[data-dates-dropdown]')).toBeNull()
     expect(onChange).not.toHaveBeenCalled()
   })
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { flattenSchema } from '../config'
+import { flattenSchema, type FieldConfig } from '../config'
+import type { EditorEntryType } from './Editor'
 import { buildEditorCollections } from './editor-config'
 
 const baseConfig = {
@@ -390,5 +391,64 @@ describe('editor-config helpers', () => {
       unavailable,
     )
     expect(widgets?.entryTypes?.find((et) => et.name === 'note')).not.toHaveProperty('unavailable')
+  })
+
+  describe('titleField', () => {
+    const typesOf = (schema: FieldConfig[], unavailable?: EditorEntryType['unavailable']) => {
+      const flat = flattenSchema(
+        {
+          collections: [
+            {
+              name: 'things',
+              path: 'things',
+              entries: [{ name: 'thing', format: 'json' as const, schema, unavailable }],
+            },
+          ],
+        },
+        'content',
+      )
+      const things = buildEditorCollections(flat)[0].children!.find(
+        (c) => c.path === 'content/things',
+      )
+      return things!.entryTypes!
+    }
+
+    it('is the path of the top-level isTitle field', () => {
+      const [thing] = typesOf([
+        { name: 'body', type: 'markdown' },
+        { name: 'heading', type: 'string', isTitle: true },
+      ])
+      expect(thing.titleField).toEqual(['heading'])
+    })
+
+    it('is a nested path when the isTitle field sits inside an object', () => {
+      const [thing] = typesOf([
+        {
+          name: 'hero',
+          type: 'object',
+          fields: [{ name: 'title', type: 'string', isTitle: true }],
+        },
+      ])
+      expect(thing.titleField).toEqual(['hero', 'title'])
+    })
+
+    it('falls back to a string field named title', () => {
+      const [thing] = typesOf([{ name: 'title', type: 'string' }])
+      expect(thing.titleField).toEqual(['title'])
+    })
+
+    it('is absent when the schema has no title field', () => {
+      const [thing] = typesOf([{ name: 'body', type: 'markdown' }])
+      expect(thing).not.toHaveProperty('titleField')
+    })
+
+    it('is absent on an unavailable type', () => {
+      const [thing] = typesOf([{ name: 'title', type: 'string' }], {
+        reason: 'unknown-schema',
+        schemaRef: 'thingSchema',
+        metaFile: 'content/things/.collection.json',
+      })
+      expect(thing).not.toHaveProperty('titleField')
+    })
   })
 })

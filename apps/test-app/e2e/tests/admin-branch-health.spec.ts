@@ -200,7 +200,9 @@ test.describe('Admin Branch Health', () => {
     await expect(purgeButton).toBeDisabled()
 
     await purgeButton.hover()
-    await expect(page.getByText('May be a clone in progress')).toBeVisible()
+    await expect(
+      page.getByText('This may be a clone in progress. Try again in a few minutes.'),
+    ).toBeVisible()
   })
 
   test('the base branch can never be purged: healthy row has no control; corrupt row disables it; API 400s', async ({
@@ -234,7 +236,7 @@ test.describe('Admin Branch Health', () => {
         const purgeButton = adminPage.purgeDirButton(baseDirName)
         await expect(purgeButton).toBeDisabled()
         await purgeButton.hover()
-        await expect(page.getByText('The base branch can never be purged')).toBeVisible()
+        await expect(page.getByText('The base branch can never be purged.')).toBeVisible()
       })
 
       await test.step('API rail: POST purge is refused with the base-branch 400', async () => {

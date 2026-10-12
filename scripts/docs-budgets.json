@@ -59,7 +59,7 @@
     ".claude/agents/ux-review.md": {
       "historyMarkers": 0,
       "maxSectionWords": 92,
-      "words": 459
+      "words": 526
     },
     "AGENTS.md": {
       "historyMarkers": 0,
@@ -77,18 +77,18 @@
     },
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 744,
-      "words": 4294
+      "maxSectionWords": 761,
+      "words": 4321
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 5580,
-      "words": 13326
+      "maxSectionWords": 5597,
+      "words": 13337
     },
     "README.md": {
       "historyMarkers": 0,
       "maxSectionWords": 4914,
-      "words": 16084
+      "words": 16098
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
@@ -102,8 +102,8 @@
     },
     "docs/ux-guidelines.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 137,
-      "words": 1012
+      "maxSectionWords": 178,
+      "words": 1510
     },
     "packages/canopycms/src/AGENTS.md": {
       "historyMarkers": 0,

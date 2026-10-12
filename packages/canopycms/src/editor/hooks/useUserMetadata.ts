@@ -1,5 +1,6 @@
-import useSWR from 'swr'
-import type { UserSearchResult } from '../../auth/types'
+import { useCallback } from 'react'
+import useSWR, { useSWRConfig, type Cache, type ScopedMutator } from 'swr'
+import type { UserProfile, UserSearchResult } from '../../auth/types'
 import type { CanopyUserId } from '../../types'
 import { isSystemUserId } from '../../system-users'
 import { SYSTEM_USER_LABEL } from '../user-display'
@@ -19,6 +20,59 @@ const systemUser = (userId: string): UserSearchResult => ({
   email: '',
 })
 
+const userMetadataKey = (userId: string): string => `canopy:user:${userId}`
+
+const isUserRecord = (value: unknown): value is UserSearchResult =>
+  typeof value === 'object' &&
+  value !== null &&
+  'id' in value &&
+  typeof value.id === 'string' &&
+  'name' in value &&
+  typeof value.name === 'string'
+
+const cachedRecord = (cache: Cache, key: string): UserSearchResult | null => {
+  const data: unknown = cache.get(key)?.data
+  return isUserRecord(data) ? data : null
+}
+
+/**
+ * Caches profiles a response carried, keeping a cached record's email. A profile matching the
+ * cached record is not written: any write makes SWR discard a lookup in flight, email included. A
+ * user with no record, or whose written record still has no email, is refetched once the writes
+ * settle, since the seed may have discarded a lookup; that refetch is detached, so the caller
+ * never waits on the directory.
+ */
+export async function seedUserProfiles(
+  swr: { cache: Cache; mutate: ScopedMutator },
+  users: readonly UserProfile[],
+): Promise<void> {
+  const { cache, mutate } = swr
+  const emailless = new Set<string>()
+  await Promise.all(
+    users.map(async (user) => {
+      const key = userMetadataKey(user.id)
+      const record = cachedRecord(cache, key)
+      if (record && record.name === user.name && record.avatarUrl === user.avatarUrl) return
+      const merged = { email: '', ...record, ...user }
+      if (!record || !merged.email) emailless.add(key)
+      await mutate<UserSearchResult>(key, merged, { revalidate: false })
+    }),
+  )
+  for (const key of emailless) void mutate(key)
+}
+
+/** Answers from the cache with no request and no email, for a reader who may not look users up. */
+export function useSeededUserResolver(): (userId: string) => Promise<UserSearchResult | null> {
+  const { cache } = useSWRConfig()
+  return useCallback(
+    (userId: string) => {
+      const record = cachedRecord(cache, userMetadataKey(userId))
+      return Promise.resolve(record ? { ...record, email: '' } : null)
+    },
+    [cache],
+  )
+}
+
 /** One user's metadata under a per-user SWR key, so every badge for that user shares a fetch. */
 export function useUserMetadata(
   userId: CanopyUserId,
@@ -26,9 +80,12 @@ export function useUserMetadata(
   cachedUser?: UserSearchResult,
 ): UseUserMetadataResult {
   const skip = cachedUser !== undefined || userId === 'anonymous' || isSystemUserId(userId)
+  const { cache } = useSWRConfig()
+  const key = userMetadataKey(userId)
   const { data, error, isLoading } = useSWR<UserSearchResult | null, unknown>(
-    skip ? null : `canopy:user:${userId}`,
-    () => getUserMetadata(userId),
+    skip ? null : key,
+    // A lookup that answers null keeps the record already cached, such as a seeded name.
+    async () => (await getUserMetadata(userId)) ?? cachedRecord(cache, key),
   )
 
   if (cachedUser) return { userMetadata: cachedUser, isLoading: false, error: null }
@@ -38,9 +95,11 @@ export function useUserMetadata(
   }
   return {
     userMetadata: data ?? null,
-    isLoading,
+    // A seed can land while the lookup is in flight; SWR still reports that lookup as loading.
+    isLoading: isLoading && data === undefined,
+    // A record to show outranks a failed lookup, so a seeded name survives it.
     error:
-      error === undefined
+      error === undefined || data
         ? null
         : error instanceof Error
           ? error

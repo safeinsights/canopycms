@@ -698,7 +698,7 @@ The schema has a first-class `image` field whose value is `{ src, alt, width, he
 
 ### Editor Media UI
 
-One **MediaLibrary** component serves both a manage drawer and a picker modal, as a cursor-paginated grid over the meta prefix. The MDX body editor's image plugin opens the same dialog, so prose images share the store and transform layer with structured image fields.
+One **MediaLibrary** component serves both a manage drawer and a picker modal, searching and sorting the whole meta prefix client-side. The MDX body editor's image plugin opens the same dialog, so prose images share the store and transform layer with structured image fields.
 
 **The editor never reads the public asset path.** Every editor image loads through the authenticated raw route (`api/assets.ts`) under `basePath`, which transforms on demand. On S3 it answers a stored object, or a fresh transform over 4 MiB, with a `no-store` 302 to a presigned GET: the CMS function's response is buffered and capped near 6 MiB, and its concurrency is reserved. It never redirects to `/assets/…`, which `withCanopy` rewrites back onto the route.
 

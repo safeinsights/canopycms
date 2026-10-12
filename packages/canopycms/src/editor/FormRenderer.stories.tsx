@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { useMemo, useState } from 'react'
 
+import type { CommentThread } from '../comment-store'
 import type { FieldConfig } from '../config'
 import { FormRenderer } from './FormRenderer'
 import { ReadOnlyDraftNotice } from './components/ReadOnlyDraftNotice'
@@ -215,6 +216,42 @@ export const Default: Story = {
   },
 }
 
+/**
+ * In a scroller like the editor's form pane: the header stays at the top while the form scrolls,
+ * "Outline" jumps to a field or row, and the chevrons expand or collapse every list.
+ */
+const HeaderScroller: React.FC<{ readOnly?: boolean }> = ({ readOnly = false }) => {
+  const [value, setValue] = useState<PostValue>(initialPost)
+  return (
+    <div
+      style={
+        {
+          '--canopy-form-pane-padding': '20px',
+          padding: 'var(--canopy-form-pane-padding)',
+          height: 600,
+          maxWidth: 560,
+          overflow: 'auto',
+          backgroundColor: 'var(--mantine-color-gray-1)',
+        } as React.CSSProperties
+      }
+    >
+      <FormRenderer
+        fields={postSchema}
+        value={value}
+        onChange={(next) => setValue(next as unknown as PostValue)}
+        readOnly={readOnly}
+        // The editor names the entry by its saved title, which a draft does not change.
+        header={{ title: initialPost.title, typeLabel: 'Post' }}
+      />
+    </div>
+  )
+}
+
+export const WithHeader: Story = { render: () => <HeaderScroller /> }
+
+/** Read-only: the outline and Expand or Collapse all lists still work. */
+export const WithHeaderReadOnly: Story = { render: () => <HeaderScroller readOnly /> }
+
 /** A locked branch: every field shows its value read-only, with no add, remove or reorder. */
 export const ReadOnly: Story = {
   render: () => (
@@ -225,9 +262,132 @@ export const ReadOnly: Story = {
 /** As the editor shows a read-only entry that has a draft kept from earlier. */
 export const ReadOnlyWithKeptDraft: Story = {
   render: () => (
-    <div>
-      <ReadOnlyDraftNotice permanentlyReadOnly={false} onDiscard={() => {}} />
-      <FormRenderer fields={postSchema} value={initialPost} onChange={() => {}} readOnly />
+    <FormRenderer
+      fields={postSchema}
+      value={initialPost}
+      onChange={() => {}}
+      readOnly
+      notice={<ReadOnlyDraftNotice permanentlyReadOnly={false} onDiscard={() => {}} />}
+    />
+  ),
+}
+
+const storyThread = (
+  id: string,
+  type: CommentThread['type'],
+  canopyPath: string | undefined,
+  text: string,
+  resolved = false,
+): CommentThread => ({
+  id,
+  type,
+  entryPath: 'posts/hello',
+  canopyPath,
+  authorId: 'alice',
+  createdAt: new Date(Date.now() - 3600000).toISOString(),
+  resolved,
+  comments: [
+    {
+      id: `${id}-1`,
+      threadId: id,
+      userId: 'alice',
+      timestamp: new Date(Date.now() - 3600000).toISOString(),
+      text,
+    },
+  ],
+})
+
+const sampleThreads: CommentThread[] = [
+  storyThread('t1', 'field', 'title', 'Can we make this punchier?'),
+  storyThread('t2', 'field', 'title', 'Check capitalisation.'),
+  storyThread('t3', 'field', 'blocks[0].headline', 'Shorter, please.'),
+  storyThread('t4', 'entry', undefined, 'Ready for review once the hero is final.'),
+  storyThread('t5', 'field', 'seo.description', 'Under 160 characters now.', true),
+]
+
+/** Scrolls inside a fixed-height pane, as the editor's form does, so popovers place as they would there. */
+const CommentingForm: React.FC<{
+  readOnly?: boolean
+  fieldErrors?: Record<string, string>
+  initialThreads?: CommentThread[]
+}> = ({ readOnly, fieldErrors, initialThreads = sampleThreads }) => {
+  const [value, setValue] = useState<PostValue>(initialPost)
+  const [threads, setThreads] = useState<CommentThread[]>(initialThreads)
+  return (
+    <div style={{ height: '90vh', overflowY: 'auto', paddingBottom: 20 }}>
+      <FormRenderer
+        fields={postSchema}
+        value={value}
+        onChange={(next) => setValue(next as unknown as PostValue)}
+        readOnly={readOnly}
+        fieldErrors={fieldErrors}
+        comments={threads}
+        currentEntryPath="posts/hello"
+        currentUserId="alice"
+        canResolve
+        onAddComment={async (text, type, entryPath, canopyPath, threadId) => {
+          setThreads((prev) =>
+            threadId
+              ? prev.map((t) =>
+                  t.id === threadId
+                    ? {
+                        ...t,
+                        comments: [
+                          ...t.comments,
+                          {
+                            id: `${threadId}-${t.comments.length + 1}`,
+                            threadId,
+                            userId: 'alice',
+                            timestamp: new Date().toISOString(),
+                            text,
+                          },
+                        ],
+                      }
+                    : t,
+                )
+              : [...prev, storyThread(`t${prev.length + 1}`, type, canopyPath ?? undefined, text)],
+          )
+        }}
+        onResolveThread={async (threadId) => {
+          setThreads((prev) =>
+            prev.map((t) =>
+              t.id === threadId ? { ...t, resolved: true, resolvedBy: 'alice' } : t,
+            ),
+          )
+        }}
+      />
     </div>
+  )
+}
+
+/**
+ * "Field comments" (⌘⌥M or Ctrl+Alt+M) lists the fields with threads, resolved ones included,
+ * and every field; beside it, "Comment on this entry". A field with open threads shows a count
+ * badge, and any other field an icon after its label while hovered or focused.
+ */
+export const WithComments: Story = {
+  render: () => <CommentingForm />,
+}
+
+/** No threads yet: the "Field comments" menu says so, and still lists every field. */
+export const WithNoCommentsYet: Story = {
+  render: () => <CommentingForm initialThreads={[]} />,
+}
+
+/** Comments stay open on a read-only branch, where reviewers comment on a submitted entry. */
+export const ReadOnlyWithComments: Story = {
+  render: () => <CommentingForm readOnly />,
+}
+
+/** The validation summary names fields by their labels; each breadcrumb focuses its field. */
+export const WithValidationErrors: Story = {
+  render: () => (
+    <CommentingForm
+      fieldErrors={{
+        title: 'This field is required',
+        'features[1].description': 'Expected text',
+        'blocks[0].headline': 'This field is required',
+      }}
+    />
   ),
 }

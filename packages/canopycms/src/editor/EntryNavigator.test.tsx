@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
@@ -173,9 +173,9 @@ describe('EntryNavigator', () => {
 
       // Wait for menu to open and click Edit
       await waitFor(() => {
-        expect(screen.getByText('Edit Collection')).toBeTruthy()
+        expect(screen.getByText('Edit collection…')).toBeTruthy()
       })
-      await user.click(screen.getByText('Edit Collection'))
+      await user.click(screen.getByText('Edit collection…'))
 
       expect(onEdit).toHaveBeenCalled()
     })
@@ -198,9 +198,9 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('collection-menu-posts'))
 
       await waitFor(() => {
-        expect(screen.getByText('Add Sub-Collection')).toBeTruthy()
+        expect(screen.getByText('Add sub-collection…')).toBeTruthy()
       })
-      await user.click(screen.getByText('Add Sub-Collection'))
+      await user.click(screen.getByText('Add sub-collection…'))
 
       expect(onAddSubCollection).toHaveBeenCalled()
     })
@@ -223,9 +223,9 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('collection-menu-posts'))
 
       await waitFor(() => {
-        expect(screen.getByText('Delete Collection')).toBeTruthy()
+        expect(screen.getByText('Delete collection…')).toBeTruthy()
       })
-      await user.click(screen.getByText('Delete Collection'))
+      await user.click(screen.getByText('Delete collection…'))
 
       expect(onDelete).toHaveBeenCalled()
     })
@@ -269,9 +269,9 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('entry-menu-hello-world'))
 
       await waitFor(() => {
-        expect(screen.getByText('Delete Entry')).toBeTruthy()
+        expect(screen.getByText('Delete…')).toBeTruthy()
       })
-      await user.click(screen.getByText('Delete Entry'))
+      await user.click(screen.getByText('Delete…'))
 
       expect(onDeleteEntry).toHaveBeenCalledWith('posts/hello')
     })
@@ -386,7 +386,7 @@ describe('EntryNavigator', () => {
 
       // Add Entry should be visible in the menu
       await waitFor(() => {
-        expect(screen.getByText('Add Entry')).toBeTruthy()
+        expect(screen.getByText('Add entry…')).toBeTruthy()
       })
     })
 
@@ -411,9 +411,9 @@ describe('EntryNavigator', () => {
 
       // Click Add Entry menu item
       await waitFor(() => {
-        expect(screen.getByText('Add Entry')).toBeTruthy()
+        expect(screen.getByText('Add entry…')).toBeTruthy()
       })
-      await user.click(screen.getByText('Add Entry'))
+      await user.click(screen.getByText('Add entry…'))
 
       expect(onAdd).toHaveBeenCalled()
     })
@@ -514,12 +514,12 @@ describe('EntryNavigator', () => {
 
       // Delete Entry should be visible
       await waitFor(() => {
-        expect(screen.getByText('Delete Entry')).toBeTruthy()
+        expect(screen.getByText('Delete…')).toBeTruthy()
       })
 
       // But Move Up/Down should NOT be visible since contentId is missing
-      expect(screen.queryByText('Move Up')).toBeNull()
-      expect(screen.queryByText('Move Down')).toBeNull()
+      expect(screen.queryByText('Move up')).toBeNull()
+      expect(screen.queryByText('Move down')).toBeNull()
     })
 
     it('shows move up/down buttons when onReorderEntry is provided', async () => {
@@ -560,8 +560,8 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('entry-menu-first'))
 
       await waitFor(() => {
-        expect(screen.getByText('Move Up')).toBeTruthy()
-        expect(screen.getByText('Move Down')).toBeTruthy()
+        expect(screen.getByText('Move up')).toBeTruthy()
+        expect(screen.getByText('Move down')).toBeTruthy()
       })
     })
 
@@ -603,9 +603,9 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('entry-menu-second'))
 
       await waitFor(() => {
-        expect(screen.getByText('Move Up')).toBeTruthy()
+        expect(screen.getByText('Move up')).toBeTruthy()
       })
-      await user.click(screen.getByText('Move Up'))
+      await user.click(screen.getByText('Move up'))
 
       expect(onReorderEntry).toHaveBeenCalledWith('posts', 'def456789012', 'up')
     })
@@ -648,14 +648,14 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('entry-menu-first'))
 
       await waitFor(() => {
-        expect(screen.getByText('Move Down')).toBeTruthy()
+        expect(screen.getByText('Move down')).toBeTruthy()
       })
-      await user.click(screen.getByText('Move Down'))
+      await user.click(screen.getByText('Move down'))
 
       expect(onReorderEntry).toHaveBeenCalledWith('posts', 'abc123456789', 'down')
     })
 
-    it('disables Move Up for first entry', async () => {
+    it('blocks Move up for the first entry, saying why, and does not reorder', async () => {
       const user = userEvent.setup()
       const onReorderEntry = vi.fn()
 
@@ -692,14 +692,16 @@ describe('EntryNavigator', () => {
       // Open the entry menu for the first entry
       await user.click(screen.getByTestId('entry-menu-first'))
 
-      await waitFor(() => {
-        const moveUpItem = screen.getByText('Move Up').closest('button')
-        // Mantine uses data-disabled for disabled menu items
-        expect(moveUpItem?.hasAttribute('data-disabled')).toBe(true)
-      })
+      const moveUpItem = (await screen.findByText('Move up')).closest('button')
+      // `aria-disabled`, not `disabled`, so the item stays in the menu's keyboard order.
+      expect(moveUpItem?.getAttribute('aria-disabled')).toBe('true')
+      expect(moveUpItem?.hasAttribute('disabled')).toBe(false)
+      expect(within(moveUpItem as HTMLElement).getByText('Already first')).toBeTruthy()
+      await user.click(moveUpItem as HTMLElement)
+      expect(onReorderEntry).not.toHaveBeenCalled()
     })
 
-    it('disables Move Down for last entry', async () => {
+    it('blocks Move down for the last entry, saying why, and does not reorder', async () => {
       const user = userEvent.setup()
       const onReorderEntry = vi.fn()
 
@@ -736,11 +738,781 @@ describe('EntryNavigator', () => {
       // Open the entry menu for the last entry
       await user.click(screen.getByTestId('entry-menu-second'))
 
-      await waitFor(() => {
-        const moveDownItem = screen.getByText('Move Down').closest('button')
-        // Mantine uses data-disabled for disabled menu items
-        expect(moveDownItem?.hasAttribute('data-disabled')).toBe(true)
+      const moveDownItem = (await screen.findByText('Move down')).closest('button')
+      expect(moveDownItem?.getAttribute('aria-disabled')).toBe('true')
+      expect(within(moveDownItem as HTMLElement).getByText('Already last')).toBeTruthy()
+      await user.click(moveDownItem as HTMLElement)
+      expect(onReorderEntry).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('filter', () => {
+    const lp = unsafeAsLogicalPath
+    const cid = unsafeAsContentId
+    const filterCollections = (): EntryNavCollection[] => [
+      {
+        path: lp('content/guides'),
+        label: 'Guides',
+        type: 'collection',
+        order: ['guide0000001', 'guide0000002', 'guide0000003'],
+        entries: [
+          {
+            path: lp('content/guides/getting-started'),
+            label: 'Getting started',
+            slug: 'getting-started',
+            contentId: cid('guide0000001'),
+          },
+          {
+            path: lp('content/guides/data-access'),
+            label: 'Data access',
+            slug: 'access-rules',
+            contentId: cid('guide0000002'),
+          },
+          {
+            path: lp('content/guides/privacy'),
+            label: 'Privacy',
+            slug: 'privacy',
+            contentId: cid('guide0000003'),
+          },
+        ],
+      },
+      {
+        path: lp('content/news'),
+        label: 'News',
+        type: 'collection',
+        entries: [{ path: lp('content/news/launch'), label: 'Launch day' }],
+      },
+      {
+        path: lp('content/reference'),
+        label: 'Reference',
+        type: 'collection',
+        children: [
+          {
+            path: lp('content/reference/api'),
+            label: 'API',
+            type: 'collection',
+            entries: [{ path: lp('content/reference/api/auth'), label: 'Authentication' }],
+          },
+        ],
+      },
+    ]
+
+    const filterInput = () => screen.getByTestId('entry-nav-filter') as HTMLInputElement
+    const isShown = (testId: string) => screen.queryByTestId(testId) !== null
+
+    it('shows no filter box when there is nothing to filter', () => {
+      renderEntryNavigator()
+      expect(screen.queryByTestId('entry-nav-filter')).toBeNull()
+    })
+
+    it('labels the filter box for assistive technology', () => {
+      renderEntryNavigator({ collections: filterCollections() })
+      expect(screen.getByRole('textbox', { name: 'Filter entries' })).toBe(filterInput())
+      expect(filterInput().placeholder).toBe('Filter by title or slug')
+    })
+
+    it('matches an entry by title', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({ collections: filterCollections() })
+
+      await user.type(filterInput(), 'launch')
+
+      expect(isShown('entry-nav-item-launch-day')).toBe(true)
+      expect(isShown('entry-nav-item-getting-started')).toBe(false)
+    })
+
+    it('matches an entry by slug when the title does not contain the text', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({ collections: filterCollections() })
+
+      await user.type(filterInput(), 'access-rules')
+
+      expect(isShown('entry-nav-item-data-access')).toBe(true)
+      expect(isShown('entry-nav-item-privacy')).toBe(false)
+    })
+
+    it('keeps the collections above a match, expanded, and hides non-matching siblings', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({ collections: filterCollections() })
+      // Nothing is expanded before the filter, so the match can only appear through it.
+      expect(isShown('entry-nav-item-authentication')).toBe(false)
+
+      await user.type(filterInput(), 'authentication')
+
+      expect(isShown('entry-nav-item-reference')).toBe(true)
+      expect(isShown('entry-nav-item-api')).toBe(true)
+      expect(isShown('entry-nav-item-authentication')).toBe(true)
+      expect(isShown('entry-nav-item-guides')).toBe(false)
+      expect(isShown('entry-nav-item-news')).toBe(false)
+    })
+
+    it('shows only the matching entries of a collection that survives through them', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({ collections: filterCollections() })
+
+      await user.type(filterInput(), 'priv')
+
+      expect(isShown('entry-nav-item-guides')).toBe(true)
+      expect(isShown('entry-nav-item-privacy')).toBe(true)
+      expect(isShown('entry-nav-item-getting-started')).toBe(false)
+      expect(isShown('entry-nav-item-data-access')).toBe(false)
+    })
+
+    it('keeps every descendant of a collection whose own title matches', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({ collections: filterCollections() })
+
+      await user.type(filterInput(), 'guides')
+
+      expect(isShown('entry-nav-item-getting-started')).toBe(true)
+      expect(isShown('entry-nav-item-data-access')).toBe(true)
+      expect(isShown('entry-nav-item-privacy')).toBe(true)
+      expect(isShown('entry-nav-item-news')).toBe(false)
+    })
+
+    it('highlights the matched text', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({ collections: filterCollections() })
+
+      await user.type(filterInput(), 'launch')
+
+      const row = screen.getByTestId('entry-nav-item-launch-day')
+      expect(within(row).getByText('Launch').tagName).toBe('MARK')
+    })
+
+    it('keeps Move up and Move down right for an entry shown out of its full position', async () => {
+      const user = userEvent.setup()
+      const onReorderEntry = vi.fn()
+      renderEntryNavigator({ collections: filterCollections(), onReorderEntry })
+
+      // "Privacy" is the last of three, so Move down is disabled and Move up is not, even
+      // though it is the only entry the filter leaves in its collection.
+      await user.type(filterInput(), 'privacy')
+      await user.click(screen.getByTestId('entry-menu-privacy'))
+
+      const moveUp = (await screen.findByText('Move up')).closest('button')
+      const moveDown = screen.getByText('Move down').closest('button')
+      expect(moveUp?.getAttribute('aria-disabled')).toBeNull()
+      expect(moveDown?.getAttribute('aria-disabled')).toBe('true')
+    })
+
+    it('works on a flat list of items', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        items: [
+          { path: lp('posts/hello'), label: 'Hello World' },
+          { path: lp('posts/goodbye'), label: 'Goodbye World', slug: 'farewell' },
+        ],
       })
+
+      await user.type(filterInput(), 'farewell')
+
+      expect(isShown('entry-nav-item-goodbye-world')).toBe(true)
+      expect(isShown('entry-nav-item-hello-world')).toBe(false)
+    })
+
+    it('falls back to the last path segment as the slug', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({ items: [{ path: lp('posts/hello-there'), label: 'Greeting' }] })
+
+      await user.type(filterInput(), 'hello-there')
+
+      expect(isShown('entry-nav-item-greeting')).toBe(true)
+    })
+
+    describe('keys', () => {
+      const renderInsideKeyWatcher = () => {
+        const onParentKeyDown = vi.fn()
+        render(
+          <CanopyCMSProvider>
+            <div onKeyDown={onParentKeyDown}>
+              <EntryNavigator collections={filterCollections()} onSelect={vi.fn()} />
+            </div>
+          </CanopyCMSProvider>,
+        )
+        return onParentKeyDown
+      }
+      const escapes = (spy: ReturnType<typeof vi.fn>) =>
+        spy.mock.calls.filter(([event]) => (event as KeyboardEvent).key === 'Escape')
+
+      it('clears the filter on Escape without the key bubbling past the input', async () => {
+        const user = userEvent.setup()
+        const onParentKeyDown = renderInsideKeyWatcher()
+
+        await user.type(filterInput(), 'launch')
+        await user.keyboard('{Escape}')
+
+        expect(filterInput().value).toBe('')
+        expect(escapes(onParentKeyDown)).toHaveLength(0)
+        expect(isShown('entry-nav-item-guides')).toBe(true)
+      })
+
+      it('marks the input so the drawer ignores Escape only while it holds text', async () => {
+        const user = userEvent.setup()
+        renderEntryNavigator({ collections: filterCollections() })
+
+        expect(filterInput().getAttribute('data-mantine-stop-propagation')).toBeNull()
+        await user.type(filterInput(), 'a')
+        expect(filterInput().getAttribute('data-mantine-stop-propagation')).toBe('true')
+      })
+
+      it('lets Escape through when the filter is already empty', async () => {
+        const user = userEvent.setup()
+        const onParentKeyDown = renderInsideKeyWatcher()
+
+        await user.click(filterInput())
+        await user.keyboard('{Escape}')
+
+        expect(escapes(onParentKeyDown)).toHaveLength(1)
+      })
+
+      it('selects the first match, in tree order, on Enter', async () => {
+        const user = userEvent.setup()
+        const onSelect = vi.fn()
+        renderEntryNavigator({ collections: filterCollections(), onSelect })
+
+        // Matches "Data access" and "Authentication"; Guides comes first.
+        await user.type(filterInput(), 'a{Enter}')
+
+        expect(onSelect).toHaveBeenCalledTimes(1)
+        expect(onSelect).toHaveBeenCalledWith('content/guides/getting-started')
+      })
+
+      it('selects nothing on Enter when the filter is empty', async () => {
+        const user = userEvent.setup()
+        const onSelect = vi.fn()
+        renderEntryNavigator({ collections: filterCollections(), onSelect })
+
+        await user.click(filterInput())
+        await user.keyboard('{Enter}')
+
+        expect(onSelect).not.toHaveBeenCalled()
+      })
+
+      it('leaves Enter and Escape to an IME while it is composing', async () => {
+        const user = userEvent.setup()
+        const onSelect = vi.fn()
+        renderEntryNavigator({ collections: filterCollections(), onSelect })
+        await user.type(filterInput(), 'a')
+
+        fireEvent.keyDown(filterInput(), { key: 'Enter', isComposing: true })
+        fireEvent.keyDown(filterInput(), { key: 'Escape', isComposing: true })
+
+        expect(onSelect).not.toHaveBeenCalled()
+        expect(filterInput().value).toBe('a')
+      })
+
+      it('selects nothing on Enter when nothing matches', async () => {
+        const user = userEvent.setup()
+        const onSelect = vi.fn()
+        renderEntryNavigator({ collections: filterCollections(), onSelect })
+
+        await user.type(filterInput(), 'zzz{Enter}')
+
+        expect(onSelect).not.toHaveBeenCalled()
+      })
+    })
+
+    describe('clearing', () => {
+      it('shows an empty state with a way back when nothing matches', async () => {
+        const user = userEvent.setup()
+        renderEntryNavigator({ collections: filterCollections() })
+
+        await user.type(filterInput(), 'zzz')
+
+        const empty = screen.getByTestId('entry-nav-filter-empty')
+        expect(empty.textContent).toContain('No entries match “zzz”.')
+
+        await user.click(within(empty).getByRole('button', { name: 'Clear filter' }))
+
+        expect(filterInput().value).toBe('')
+        expect(screen.queryByTestId('entry-nav-filter-empty')).toBeNull()
+        expect(isShown('entry-nav-item-guides')).toBe(true)
+      })
+
+      it('clears with the button inside the input, and only while it holds text', async () => {
+        const user = userEvent.setup()
+        renderEntryNavigator({ collections: filterCollections() })
+
+        expect(screen.queryByRole('button', { name: 'Clear filter' })).toBeNull()
+        await user.type(filterInput(), 'launch')
+        await user.click(screen.getByRole('button', { name: 'Clear filter' }))
+
+        expect(filterInput().value).toBe('')
+        expect(screen.queryByRole('button', { name: 'Clear filter' })).toBeNull()
+      })
+    })
+
+    describe('expanded state', () => {
+      const guidesOpen = () => ({
+        current: { 'collection:content/guides': true } as Record<string, boolean>,
+      })
+
+      it('restores the expanded state the user had when the filter clears', async () => {
+        const user = userEvent.setup()
+        renderEntryNavigator({
+          collections: filterCollections(),
+          expandedStateRef: guidesOpen(),
+        })
+        expect(isShown('entry-nav-item-privacy')).toBe(true)
+        expect(isShown('entry-nav-item-launch-day')).toBe(false)
+
+        await user.type(filterInput(), 'launch')
+        expect(isShown('entry-nav-item-launch-day')).toBe(true)
+
+        await user.clear(filterInput())
+
+        expect(isShown('entry-nav-item-privacy')).toBe(true)
+        expect(isShown('entry-nav-item-launch-day')).toBe(false)
+      })
+
+      it('does not report filter-driven expansion as the user’s choice', async () => {
+        const user = userEvent.setup()
+        const onExpandedStateChange = vi.fn()
+        renderEntryNavigator({
+          collections: filterCollections(),
+          expandedStateRef: guidesOpen(),
+          onExpandedStateChange,
+        })
+
+        await user.type(filterInput(), 'launch')
+        await user.clear(filterInput())
+
+        expect(onExpandedStateChange).not.toHaveBeenCalled()
+      })
+
+      it('lets a collection be collapsed by hand while filtering, without saving it', async () => {
+        const user = userEvent.setup()
+        const onExpandedStateChange = vi.fn()
+        renderEntryNavigator({
+          collections: filterCollections(),
+          onExpandedStateChange,
+        })
+
+        await user.type(filterInput(), 'authentication')
+        expect(isShown('entry-nav-item-authentication')).toBe(true)
+
+        await user.click(screen.getByTestId('entry-nav-item-api'))
+        expect(isShown('entry-nav-item-authentication')).toBe(false)
+        expect(onExpandedStateChange).not.toHaveBeenCalled()
+
+        await user.click(screen.getByTestId('entry-nav-item-api'))
+        expect(isShown('entry-nav-item-authentication')).toBe(true)
+        expect(onExpandedStateChange).not.toHaveBeenCalled()
+
+        await user.clear(filterInput())
+        // Back to the unfiltered state: nothing was ever expanded.
+        expect(isShown('entry-nav-item-authentication')).toBe(false)
+        expect(isShown('entry-nav-item-privacy')).toBe(false)
+      })
+
+      it('does not re-expand the selected entry’s ancestors when the data reloads mid-filter', async () => {
+        const user = userEvent.setup()
+        const props = { onSelect: vi.fn(), selectedPath: 'content/reference/api/auth' }
+        const { rerender } = render(
+          <CanopyCMSProvider>
+            <EntryNavigator {...props} collections={filterCollections()} />
+          </CanopyCMSProvider>,
+        )
+        await waitFor(() => expect(isShown('entry-nav-item-authentication')).toBe(true))
+        await user.type(filterInput(), 'launch')
+        expect(isShown('entry-nav-item-authentication')).toBe(false)
+
+        // A fresh `collections` array is what a refetch hands the navigator.
+        rerender(
+          <CanopyCMSProvider>
+            <EntryNavigator {...props} collections={filterCollections()} />
+          </CanopyCMSProvider>,
+        )
+
+        expect(isShown('entry-nav-item-launch-day')).toBe(true)
+        expect(isShown('entry-nav-item-authentication')).toBe(false)
+      })
+
+      it('keeps an entry picked while filtering in view once the filter clears', async () => {
+        const user = userEvent.setup()
+        const onSelect = vi.fn()
+        const { rerender } = render(
+          <CanopyCMSProvider>
+            <EntryNavigator onSelect={onSelect} collections={filterCollections()} />
+          </CanopyCMSProvider>,
+        )
+        expect(isShown('entry-nav-item-authentication')).toBe(false)
+
+        await user.type(filterInput(), 'auth')
+        await user.click(screen.getByTestId('entry-nav-item-authentication'))
+        rerender(
+          <CanopyCMSProvider>
+            <EntryNavigator
+              onSelect={onSelect}
+              selectedPath={onSelect.mock.calls[0][0]}
+              collections={filterCollections()}
+            />
+          </CanopyCMSProvider>,
+        )
+        await user.clear(filterInput())
+
+        expect(isShown('entry-nav-item-authentication')).toBe(true)
+        // Only the picked entry's ancestors open; the rest stay as they were.
+        expect(isShown('entry-nav-item-launch-day')).toBe(false)
+      })
+    })
+  })
+
+  describe('markers', () => {
+    const lp = unsafeAsLogicalPath
+    const markerCollections = (): EntryNavCollection[] => [
+      {
+        path: lp('posts'),
+        label: 'Posts',
+        type: 'collection',
+        entries: [
+          { path: lp('posts/draft'), label: 'Draft' },
+          { path: lp('posts/final'), label: 'Final' },
+        ],
+      },
+      {
+        path: lp('other'),
+        label: 'Other',
+        type: 'collection',
+        entries: [{ path: lp('other/page'), label: 'Page' }],
+      },
+    ]
+    const open = { current: { 'collection:posts': true, 'collection:other': true } }
+
+    it('puts an unsaved dot on the changed entry and on the collection holding it', () => {
+      renderEntryNavigator({
+        collections: markerCollections(),
+        expandedStateRef: { ...open },
+        dirtyPaths: new Set(['posts/draft']),
+      })
+
+      const entryDot = within(screen.getByTestId('entry-nav-item-draft')).getByRole('img', {
+        name: 'Unsaved changes',
+      })
+      expect(entryDot.getAttribute('data-testid')).toBe('unsaved-dot')
+      const collectionDot = within(screen.getByTestId('entry-nav-item-posts')).getByRole('img', {
+        name: 'Contains unsaved changes',
+      })
+      expect(collectionDot.getAttribute('data-testid')).toBe('unsaved-dot')
+    })
+
+    it('puts no dot on clean entries or on collections without changes', () => {
+      renderEntryNavigator({
+        collections: markerCollections(),
+        expandedStateRef: { ...open },
+        dirtyPaths: new Set(['posts/draft']),
+      })
+
+      expect(
+        within(screen.getByTestId('entry-nav-item-final')).queryByTestId('unsaved-dot'),
+      ).toBeNull()
+      expect(
+        within(screen.getByTestId('entry-nav-item-other')).queryByTestId('unsaved-dot'),
+      ).toBeNull()
+      expect(screen.getAllByTestId('unsaved-dot')).toHaveLength(2)
+    })
+
+    it('marks a collection that is collapsed over a changed entry', () => {
+      renderEntryNavigator({
+        collections: markerCollections(),
+        dirtyPaths: new Set(['posts/draft']),
+      })
+
+      expect(isRow('entry-nav-item-draft')).toBe(false)
+      expect(
+        within(screen.getByTestId('entry-nav-item-posts')).getByTestId('unsaved-dot'),
+      ).toBeTruthy()
+    })
+
+    function isRow(testId: string) {
+      return screen.queryByTestId(testId) !== null
+    }
+
+    it('shows a lock, and no entry menu, on an entry the user cannot edit', () => {
+      renderEntryNavigator({
+        collections: [
+          {
+            path: lp('posts'),
+            label: 'Posts',
+            type: 'collection',
+            entries: [
+              { path: lp('posts/locked'), label: 'Locked', readOnly: true },
+              { path: lp('posts/open'), label: 'Open' },
+            ],
+          },
+        ],
+        expandedStateRef: { current: { 'collection:posts': true } },
+        onDeleteEntry: vi.fn(),
+        onRenameEntry: vi.fn(),
+      })
+
+      const lockedRow = screen.getByTestId('entry-nav-item-locked')
+      expect(within(lockedRow).getByRole('img', { name: "You can't edit this entry" })).toBe(
+        within(lockedRow).getByTestId('entry-lock'),
+      )
+      expect(screen.queryByTestId('entry-menu-locked')).toBeNull()
+      expect(screen.getByTestId('entry-menu-open')).toBeTruthy()
+      expect(
+        within(screen.getByTestId('entry-nav-item-open')).queryByTestId('entry-lock'),
+      ).toBeNull()
+    })
+
+    it('shows no per-entry lock when the whole navigator is read-only', () => {
+      renderEntryNavigator({
+        readOnly: true,
+        items: [{ path: lp('posts/locked'), label: 'Locked', readOnly: true }],
+      })
+
+      expect(screen.getByTestId('entry-nav-item-locked')).toBeTruthy()
+      expect(screen.queryByTestId('entry-lock')).toBeNull()
+    })
+  })
+
+  describe('menu grouping', () => {
+    const lp = unsafeAsLogicalPath
+    const dividers = () => document.body.querySelectorAll('.mantine-Menu-divider')
+    const precedes = (a: Element, b: Element) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+    const openCollectionMenu = async (extra: Partial<EntryNavCollection>) => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        collections: [{ path: lp('posts'), label: 'Posts', type: 'collection', ...extra }],
+      })
+      await user.click(screen.getByTestId('collection-menu-posts'))
+      await screen.findByRole('menu')
+    }
+
+    it('lists content actions first, then an Admin group', async () => {
+      await openCollectionMenu({
+        onAdd: vi.fn(),
+        onAddSubCollection: vi.fn(),
+        onEdit: vi.fn(),
+        onDelete: vi.fn(),
+      })
+
+      const add = screen.getByText('Add entry…')
+      const admin = screen.getByText('Admin')
+      const sub = screen.getByText('Add sub-collection…')
+      const edit = screen.getByText('Edit collection…')
+      const del = screen.getByText('Delete collection…')
+      expect(precedes(add, admin)).toBe(true)
+      expect(precedes(admin, sub)).toBe(true)
+      expect(precedes(sub, edit)).toBe(true)
+      expect(precedes(edit, del)).toBe(true)
+      expect(dividers()).toHaveLength(1)
+    })
+
+    it('has no Admin group, and no divider, when only content actions are offered', async () => {
+      await openCollectionMenu({ onAdd: vi.fn() })
+
+      expect(screen.getByText('Add entry…')).toBeTruthy()
+      expect(screen.queryByText('Admin')).toBeNull()
+      expect(dividers()).toHaveLength(0)
+    })
+
+    it('has the Admin label but no leading divider when only admin actions are offered', async () => {
+      await openCollectionMenu({ onEdit: vi.fn() })
+
+      expect(screen.getByText('Admin')).toBeTruthy()
+      expect(screen.getByText('Edit collection…')).toBeTruthy()
+      expect(dividers()).toHaveLength(0)
+    })
+
+    it('orders the entry menu as rename, move, then a divider and a red delete', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        collections: [
+          {
+            path: lp('posts'),
+            label: 'Posts',
+            type: 'collection',
+            entries: [
+              {
+                path: lp('posts/first'),
+                label: 'First',
+                contentId: unsafeAsContentId('abc123456789'),
+              },
+            ],
+          },
+        ],
+        expandedStateRef: { current: { 'collection:posts': true } },
+        onRenameEntry: vi.fn(),
+        onDeleteEntry: vi.fn(),
+        onReorderEntry: vi.fn(),
+      })
+
+      await user.click(screen.getByTestId('entry-menu-first'))
+      await screen.findByRole('menu')
+
+      const rename = screen.getByText('Rename…')
+      const up = screen.getByText('Move up')
+      const down = screen.getByText('Move down')
+      const del = screen.getByText('Delete…')
+      expect(precedes(rename, up)).toBe(true)
+      expect(precedes(up, down)).toBe(true)
+      expect(precedes(down, del)).toBe(true)
+      expect(dividers()).toHaveLength(1)
+      expect(precedes(down, dividers()[0])).toBe(true)
+      expect(precedes(dividers()[0], del)).toBe(true)
+    })
+
+    it('has no divider in an entry menu that only deletes', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        items: [{ path: lp('posts/first'), label: 'First' }],
+        onDeleteEntry: vi.fn(),
+      })
+
+      await user.click(screen.getByTestId('entry-menu-first'))
+      await screen.findByRole('menu')
+
+      expect(screen.getByText('Delete…')).toBeTruthy()
+      expect(dividers()).toHaveLength(0)
+    })
+  })
+
+  describe('row menus by keyboard', () => {
+    it('keeps the arrow keys inside an open row menu', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        collections: [
+          {
+            path: unsafeAsLogicalPath('posts'),
+            label: 'Posts',
+            type: 'collection',
+            entries: [
+              { path: unsafeAsLogicalPath('posts/a'), label: 'Alpha' },
+              { path: unsafeAsLogicalPath('posts/b'), label: 'Beta' },
+            ],
+          },
+        ],
+        expandedStateRef: { current: { 'collection:posts': true } },
+        onRenameEntry: vi.fn(),
+        onDeleteEntry: vi.fn(),
+      })
+
+      await user.click(screen.getByTestId('entry-menu-alpha'))
+      const menu = await screen.findByRole('menu')
+      await user.keyboard('{ArrowDown}')
+      await user.keyboard('{ArrowDown}')
+
+      expect(menu.contains(document.activeElement)).toBe(true)
+    })
+
+    it('lets every other key from an open row menu reach the document', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        items: [{ path: unsafeAsLogicalPath('posts/a'), label: 'Alpha' }],
+        onRenameEntry: vi.fn(),
+      })
+      const reached: string[] = []
+      const listen = (event: KeyboardEvent) => reached.push(event.key)
+      // Where Mantine's useHotkeys listens, so the Mod+P shortcut among them.
+      document.documentElement.addEventListener('keydown', listen)
+
+      try {
+        await user.click(screen.getByTestId('entry-menu-alpha'))
+        await screen.findByRole('menu')
+        await user.keyboard('{ArrowDown}{Control>}p{/Control}{Tab}')
+      } finally {
+        document.documentElement.removeEventListener('keydown', listen)
+      }
+
+      expect(reached).toEqual(expect.arrayContaining(['Control', 'p', 'Tab']))
+      expect(reached).not.toContain('ArrowDown')
+    })
+  })
+
+  describe('row layout', () => {
+    const lp = unsafeAsLogicalPath
+    const longTitle = 'A very long entry title that cannot fit in a narrow navigator panel'
+    const originalScrollWidth = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'scrollWidth',
+    )
+    const originalClientWidth = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'clientWidth',
+    )
+
+    afterEach(() => {
+      for (const [name, descriptor] of [
+        ['scrollWidth', originalScrollWidth],
+        ['clientWidth', originalClientWidth],
+      ] as const) {
+        if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+        else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+      }
+    })
+
+    // Text is cut when its content is wider than its box; jsdom has no layout, so stand in for it.
+    const stubWidths = () => {
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+        configurable: true,
+        get: () => 100,
+      })
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.textContent === longTitle ? 300 : 40
+        },
+      })
+    }
+
+    const renderRows = () =>
+      renderEntryNavigator({
+        items: [
+          { path: lp('posts/long'), label: longTitle },
+          { path: lp('posts/short'), label: 'Short' },
+        ],
+      })
+
+    it('shows the full title in a tooltip when the title is cut', async () => {
+      const user = userEvent.setup()
+      stubWidths()
+      renderRows()
+
+      await user.hover(
+        screen.getByTestId(
+          'entry-nav-item-a-very-long-entry-title-that-cannot-fit-in-a-narrow-navigator-panel',
+        ),
+      )
+      await user.hover(screen.getByText(longTitle))
+
+      const tooltip = await screen.findByRole('tooltip', undefined, { timeout: 2000 })
+      expect(tooltip.textContent).toBe(longTitle)
+    })
+
+    it('still shows the tooltip for a cut title while a filter highlights it', async () => {
+      const user = userEvent.setup()
+      stubWidths()
+      renderRows()
+
+      await user.type(screen.getByTestId('entry-nav-filter'), 'narrow')
+      const row = screen.getByTestId(
+        'entry-nav-item-a-very-long-entry-title-that-cannot-fit-in-a-narrow-navigator-panel',
+      )
+      const mark = row.querySelector('mark')
+      expect(mark).not.toBeNull()
+      await user.hover(row)
+      await user.hover(mark!.parentElement!)
+
+      const tooltip = await screen.findByRole('tooltip', undefined, { timeout: 2000 })
+      expect(tooltip.textContent).toBe(longTitle)
+    })
+
+    it('shows no tooltip for a title that fits', async () => {
+      const user = userEvent.setup()
+      stubWidths()
+      renderRows()
+
+      await user.hover(screen.getByTestId('entry-nav-item-short'))
+      await user.hover(screen.getByText('Short'))
+      await new Promise((resolve) => setTimeout(resolve, 700))
+
+      expect(screen.queryByRole('tooltip')).toBeNull()
     })
   })
 })

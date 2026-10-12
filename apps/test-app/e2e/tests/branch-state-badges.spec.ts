@@ -136,7 +136,7 @@ test.describe('Branch State Badges', () => {
   test('protected badge and submit/delete rails on the base branch (B4)', async () => {
     const protectedBranch = await findProtectedBranch(BASE_URL, 'admin')
 
-    await test.step('UI: protected badge visible, submit and delete disabled', async () => {
+    await test.step('UI: protected badge visible, submit and delete not offered', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
@@ -144,11 +144,9 @@ test.describe('Branch State Badges', () => {
 
       await expect(branchPage.getProtectedBadge(protectedBranch.name)).toBeVisible()
 
-      const submitDisabled = await branchPage.isActionButtonDisabled(protectedBranch.name, 'submit')
-      expect(submitDisabled).toBe(true)
-
-      const deleteDisabled = await branchPage.isActionButtonDisabled(protectedBranch.name, 'delete')
-      expect(deleteDisabled).toBe(true)
+      await expect(branchPage.getProtectedBadge(protectedBranch.name)).toHaveText('Protected')
+      expect(await branchPage.actionState(protectedBranch.name, 'submit')).toBe('absent')
+      expect(await branchPage.actionState(protectedBranch.name, 'delete')).toBe('absent')
     })
 
     await test.step('API: submit is refused with 403 and the base-branch message', async () => {

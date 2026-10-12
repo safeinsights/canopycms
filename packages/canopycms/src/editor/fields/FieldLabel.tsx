@@ -2,6 +2,7 @@ import React from 'react'
 
 import { Group, Input, Stack } from '@mantine/core'
 
+import { useFieldCommentControl } from '../comments/field-comment-context'
 import { FieldDescription } from './FieldDescription'
 
 /**
@@ -23,7 +24,7 @@ export interface FieldLabelProps {
   labelId?: string
   /** Slot right after the label text, for the field's comment control. */
   commentControl?: React.ReactNode
-  /** Right-aligned slot for field actions (Add item, Remove, Add block). */
+  /** Right-aligned slot for field actions (Expand all, Clear). */
   actions?: React.ReactNode
 }
 
@@ -67,6 +68,28 @@ export const FieldLabel: React.FC<FieldLabelProps> = ({
       {descriptionBaseId && (
         <FieldDescription baseId={descriptionBaseId} description={description} />
       )}
+    </Stack>
+  )
+}
+
+/**
+ * A Mantine input under a `FieldLabel` row, in place of the input's own `label` prop, so the
+ * row can carry the field's comment control: a button inside the input's `<label>` would be
+ * invalid HTML and join the input's accessible name. The input keeps its own `description`.
+ */
+export const LabelledInput: React.FC<{
+  label?: string
+  /** The input's id, which the label's `for` names. */
+  inputId: string
+  /** The field's canopy path, which picks its comment control. */
+  canopyPath?: string
+  children: React.ReactNode
+}> = ({ label, inputId, canopyPath, children }) => {
+  const commentControl = useFieldCommentControl(canopyPath)
+  return (
+    <Stack gap={4}>
+      <FieldLabel label={label} htmlFor={inputId} commentControl={commentControl} />
+      {children}
     </Stack>
   )
 }

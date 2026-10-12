@@ -1,9 +1,9 @@
 'use client'
 
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
-import { Alert, Button, Paper, Stack, Text } from '@mantine/core'
-import { IconAlertCircle, IconInfoCircle } from '@tabler/icons-react'
+import { Alert, Stack, Text } from '@mantine/core'
+import { IconInfoCircle } from '@tabler/icons-react'
 
 import type {
   BlockFieldConfig,
@@ -34,18 +34,24 @@ import { ReferenceField } from './fields/ReferenceField'
 import { CodeField } from './fields/CodeField'
 import { ImageField } from './fields/ImageField'
 import { ObjectField } from './fields/ObjectField'
-import { groupDescriptionProps } from './fields/FieldDescription'
-import { FieldLabel } from './fields/FieldLabel'
-import { EDITOR_ACTIONS } from './copy'
+import { ObjectListField } from './fields/ObjectListField'
+import { listItemTitle } from './fields/list-item-title'
 import { InlineGroupField } from './fields/InlineGroupField'
 import { formatCanopyPath, normalizeCanopyPath } from './canopy-path'
 import { FieldWrapper } from './comments/FieldWrapper'
+import { FormCommentsContext, createFormComments } from './comments/form-comments'
 import { EntryComments } from './comments/EntryComments'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { EditorErrorBoundary, type CaughtEditorError } from './components/EditorErrorBoundary'
+import { ValidationSummary } from './components/ValidationSummary'
+import { fieldBreadcrumb } from './field-breadcrumb'
 import { FieldCrashFallback } from './fields/FieldCrashFallback'
 import { useListItemKeys } from './fields/list-item-keys'
+import { FormExpansionContext, type FormExpansionCommand } from './fields/form-expansion'
+import { FormHeader } from './FormHeader'
+import { buildFormOutline, hasCollapsibleList } from './form-outline'
+import { findFieldTarget, focusFieldTarget } from './field-target'
 import type { FieldRemoval } from './undo-removal'
 
 export type FormValue = Record<string, unknown>
@@ -66,21 +72,6 @@ export type CustomFieldRenderers = Record<
 >
 
 /**
- * Card heading for an object-list item: the value of its `itemTitleField` when that is a
- * non-blank string or a number, otherwise `fallback`.
- */
-const listItemTitle = (
-  item: Record<string, unknown>,
-  itemTitleField: string | undefined,
-  fallback: string,
-): string => {
-  const raw = itemTitleField ? item?.[itemTitleField] : undefined
-  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw)
-  if (typeof raw === 'string' && raw.trim() !== '') return raw.trim()
-  return fallback
-}
-
-/**
  * How an Undo toast names a removed object-list item: by its title field or first non-empty
  * text field, since a positional "#2" title passes to the next item once this one is gone.
  */
@@ -90,16 +81,9 @@ const removedItemLabel = (
   listLabel: string,
   index: number,
 ): string => {
-  const named = listItemTitle(item, objectField.itemTitleField, '')
-  const text =
-    named ||
-    objectField.fields
-      .filter((f) => f.type === 'string')
-      .map((f) => item?.[f.name])
-      .find((v): v is string => typeof v === 'string' && v.trim() !== '')
-      ?.trim()
-  if (!text) return `item ${index + 1} from ${listLabel}`
-  return `"${text.length > 60 ? `${text.slice(0, 59)}…` : text}" from ${listLabel}`
+  const text = listItemTitle(item, objectField)
+  const byPosition = `${objectField.itemLabel ?? 'item'} ${index + 1}`
+  return text ? `"${text}" from ${listLabel}` : `${byPosition} from ${listLabel}`
 }
 
 const normalizeOptions = (
@@ -116,10 +100,13 @@ const noop = (): void => {}
 const FENCE_STYLE: React.CSSProperties = { border: 0, padding: 0, margin: 0, minWidth: 0 }
 const READ_ONLY_FORM_CLASS = 'canopy-read-only-form'
 
-/** Read-only inputs look disabled but stay focusable, so a reviewer can select and copy them. */
+/**
+ * Read-only inputs look disabled but stay focusable, so a reviewer can select and copy them. A
+ * picker's trigger is a button, which Mantine marks `data-read-only` instead.
+ */
 const ReadOnlyFormStyles: React.FC = () => (
   <style>{`
-    .${READ_ONLY_FORM_CLASS} .mantine-Input-input:is([readonly], :has(input[readonly])) {
+    .${READ_ONLY_FORM_CLASS} .mantine-Input-input:is([readonly], [data-read-only], :has(input[readonly])) {
       background-color: var(--input-disabled-bg);
     }
     .${READ_ONLY_FORM_CLASS} .canopy-mdx-content {
@@ -217,6 +204,13 @@ export interface FormRendererProps {
   onRemoved?: (removal: FieldRemoval) => void
   /** Resolves comment authors to names in field and entry threads; without it they show as ids. */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /**
+   * Shows a sticky header naming the entry, with an outline of its fields and, when it has list
+   * or block fields, Expand all and Collapse all.
+   */
+  header?: { title: string; typeLabel?: string }
+  /** An entry-wide notice, shown first under the header. */
+  notice?: React.ReactNode
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -239,13 +233,31 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   readOnly = false,
   onRemoved,
   onGetUserMetadata,
+  header,
+  notice,
 }) => {
   const emit = readOnly ? noop : onChange
+  const formRef = useRef<HTMLDivElement>(null)
+  const customTypes = new Set(Object.keys(customRenderers ?? {}))
+  const [expansionCommand, setExpansionCommand] = useState<FormExpansionCommand | undefined>()
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
   const siteMdxAllow = useSiteMdxAllow()
   const bodyName = format === 'md' || format === 'mdx' ? findBodyFieldName(fields) : undefined
 
   const keysForList = useListItemKeys()
+
+  // Whether a list row holds an error, so a collapsed row can say so.
+  const rowHasErrors =
+    (listPath: Array<string | number>) =>
+    (index: number): boolean => {
+      const row = normalizeCanopyPath([...listPath, index])
+      return Object.keys(fieldErrors ?? {}).some(
+        (key) => key === row || key.startsWith(`${row}.`) || key.startsWith(`${row}[`),
+      )
+    }
+  const [formComments] = useState(createFormComments)
+  // The field last focused on one entry is never offered on the next.
+  useEffect(() => formComments.noteFocus(undefined), [formComments, boundaryResetKey])
 
   // Wraps the rendered control in an error boundary, and with an inline validation message
   // when this field has an active error (keyed by canonical canopy path, so errors land on
@@ -278,7 +290,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           )}
         />
         {error && (
-          <Text size="xs" c="red" data-testid={`field-error-${fieldKey(path)}`}>
+          <Text size="xs" c="red.8" data-testid={`field-error-${fieldKey(path)}`}>
             {error}
           </Text>
         )}
@@ -304,6 +316,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               thread.canopyPath === canopyPath,
           )
         : []
+
+    // The full breadcrumb, so a list item's or block's fields are told apart by name.
+    const commentSubject = fieldBreadcrumb(fields, value, canopyPath).join(' › ')
 
     const custom = customRenderers?.[field.type]
     if (custom) {
@@ -334,6 +349,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onResolveThread={onResolveThread}
             highlightThreadId={highlightThreadId}
             onGetUserMetadata={onGetUserMetadata}
+            fieldLabel={commentSubject}
+            resetKey={boundaryResetKey}
+            controlPlacement="corner"
           >
             {renderedField}
           </FieldWrapper>
@@ -359,6 +377,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onResolveThread={onResolveThread}
             highlightThreadId={highlightThreadId}
             onGetUserMetadata={onGetUserMetadata}
+            fieldLabel={commentSubject}
+            resetKey={boundaryResetKey}
           >
             {renderedField}
           </FieldWrapper>
@@ -574,6 +594,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             path={path}
             dataCanopyField={normalizeCanopyPath(path)}
             readOnly={readOnly}
+            resetKey={boundaryResetKey}
+            hasErrors={rowHasErrors(path)}
             onRemoved={(index, block) =>
               onRemoved?.({
                 kind: 'list-item',
@@ -595,106 +617,31 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           const items = Array.isArray(currentValue)
             ? (currentValue as Record<string, unknown>[])
             : []
-          const itemKeys = keysForList(items, fieldKey(path))
           return wrapWithComments(
-            <Paper
+            <ObjectListField
               key={fieldKey(path)}
-              withBorder
-              p="md"
-              shadow="xs"
-              {...groupDescriptionProps(fieldId, field.description)}
-              role="group"
-              aria-label={label}
-              data-removal-focus
-              tabIndex={-1}
-            >
-              <Stack gap="sm">
-                <FieldLabel
-                  label={label}
-                  required={field.required}
-                  description={field.description}
-                  descriptionBaseId={fieldId}
-                  actions={
-                    !readOnly && (
-                      <Button
-                        variant="light"
-                        onClick={() => update([...items, {} as Record<string, unknown>])}
-                      >
-                        Add item
-                      </Button>
-                    )
-                  }
-                />
-                <Stack gap="sm">
-                  {items.map((item, idx) => {
-                    const itemTitle = listItemTitle(
-                      item,
-                      objectField.itemTitleField,
-                      `${label} #${idx + 1}`,
-                    )
-                    return (
-                      <Paper
-                        key={itemKeys[idx]}
-                        role="group"
-                        aria-label={itemTitle}
-                        withBorder
-                        p="sm"
-                        shadow="xs"
-                      >
-                        <Stack gap="xs">
-                          <FieldLabel
-                            label={itemTitle}
-                            actions={
-                              !readOnly && (
-                                <Button
-                                  variant="subtle"
-                                  color="red"
-                                  onClick={(event) => {
-                                    // The row goes, so focus moves to its list, not the page.
-                                    const list =
-                                      event.currentTarget.closest<HTMLElement>(
-                                        '[data-removal-focus]',
-                                      )
-                                    update(items.filter((_, i) => i !== idx))
-                                    list?.focus()
-                                    onRemoved?.({
-                                      kind: 'list-item',
-                                      listPath: path,
-                                      index: idx,
-                                      item,
-                                      label: removedItemLabel(item, objectField, label, idx),
-                                    })
-                                  }}
-                                >
-                                  {EDITOR_ACTIONS.remove}
-                                </Button>
-                              )
-                            }
-                          />
-                          <ObjectField
-                            fields={objectField.fields}
-                            value={item}
-                            onChange={(next) => {
-                              const nextItems = [...items]
-                              nextItems[idx] = next
-                              update(nextItems)
-                            }}
-                            renderField={renderField}
-                            path={[...path, idx]}
-                            dataCanopyField={normalizeCanopyPath([...path, idx])}
-                          />
-                        </Stack>
-                      </Paper>
-                    )
-                  })}
-                  {items.length === 0 && (
-                    <Text size="xs" c="dimmed">
-                      {readOnly ? 'No items.' : 'No items yet. Add one to get started.'}
-                    </Text>
-                  )}
-                </Stack>
-              </Stack>
-            </Paper>,
+              id={fieldId}
+              label={label}
+              field={objectField}
+              items={items}
+              itemKeys={keysForList(items, fieldKey(path))}
+              onChange={(next) => update(next)}
+              renderField={renderField}
+              path={path}
+              canopyPath={canopyPath}
+              readOnly={readOnly}
+              resetKey={boundaryResetKey}
+              hasErrors={rowHasErrors(path)}
+              onRemoved={(index, item) =>
+                onRemoved?.({
+                  kind: 'list-item',
+                  listPath: path,
+                  index,
+                  item,
+                  label: removedItemLabel(item, objectField, label, index),
+                })
+              }
+            />,
           )
         }
 
@@ -748,80 +695,92 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   }
 
   return (
-    <Stack gap="md" data-form-renderer className={readOnly ? READ_ONLY_FORM_CLASS : undefined}>
-      {readOnly && <ReadOnlyFormStyles />}
-      {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
-        <EntryComments
-          comments={comments}
-          entryPath={currentEntryPath}
-          currentUserId={currentUserId}
-          canResolve={canResolve}
-          onAddComment={onAddComment}
-          onResolveThread={onResolveThread}
-          highlightThreadId={highlightThreadId}
-          onGetUserMetadata={onGetUserMetadata}
-        />
-      )}
-
-      {conflictNotice && (
-        <Alert
-          icon={<IconInfoCircle size={16} />}
-          color="orange"
-          variant="light"
-          title="Page updated since your draft started"
-          data-testid="conflict-alert"
+    <FormCommentsContext.Provider value={formComments}>
+      <FormExpansionContext.Provider value={expansionCommand}>
+        <Stack
+          ref={formRef}
+          gap="md"
+          data-form-renderer
+          className={readOnly ? READ_ONLY_FORM_CLASS : undefined}
         >
-          {readOnly
-            ? 'Someone else has recently changed this page.'
-            : 'Someone else has recently changed this page. You can keep editing — a reviewer will reconcile your changes when you submit.'}
-        </Alert>
-      )}
+          {header && (
+            <FormHeader
+              title={header.title}
+              typeLabel={header.typeLabel}
+              outline={buildFormOutline(fields, value, customTypes)}
+              onSelect={(path) => {
+                const target = formRef.current ? findFieldTarget(path, formRef.current) : undefined
+                if (target) focusFieldTarget(target.element)
+              }}
+              onExpandAll={
+                hasCollapsibleList(fields, customTypes)
+                  ? (expanded) =>
+                      setExpansionCommand((prev) => ({ seq: (prev?.seq ?? 0) + 1, expanded }))
+                  : undefined
+              }
+            />
+          )}
+          {notice}
+          {readOnly && <ReadOnlyFormStyles />}
+          {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
+            <EntryComments
+              comments={comments}
+              entryPath={currentEntryPath}
+              currentUserId={currentUserId}
+              canResolve={canResolve}
+              onAddComment={onAddComment}
+              onResolveThread={onResolveThread}
+              highlightThreadId={highlightThreadId}
+              onGetUserMetadata={onGetUserMetadata}
+              resetKey={boundaryResetKey}
+            />
+          )}
 
-      {fieldErrors && Object.keys(fieldErrors).length > 0 && (
-        <Alert
-          icon={<IconAlertCircle size={16} />}
-          color="red"
-          variant="light"
-          title="Fix these issues before saving"
-          data-testid="validation-alert"
-        >
-          <Stack gap={2}>
-            {Object.entries(fieldErrors).map(([path, message]) => (
-              <Text size="xs" key={path}>
-                {path}: {message}
-              </Text>
-            ))}
-          </Stack>
-        </Alert>
-      )}
+          {conflictNotice && (
+            <Alert
+              icon={<IconInfoCircle size={16} />}
+              color="orange"
+              variant="light"
+              title="Page updated since your draft started"
+              data-testid="conflict-alert"
+            >
+              {readOnly
+                ? 'Someone else has recently changed this page.'
+                : 'Someone else has recently changed this page. You can keep editing — a reviewer will reconcile your changes when you submit.'}
+            </Alert>
+          )}
 
-      {fields.map((field) => {
-        // Inline groups are transparent to the value — render them directly with parent value/onChange
-        if (field.type === 'group') {
-          const groupField = field as InlineGroupFieldConfig
-          return (
-            <div key={`group-${groupField.name}`}>
-              <InlineGroupField
-                label={groupField.label}
-                description={groupField.description}
-                fields={groupField.fields}
-                value={value}
-                onChange={emit}
-                renderField={renderField}
-                path={[]}
-              />
-            </div>
-          )
-        }
+          {fieldErrors && <ValidationSummary fields={fields} value={value} errors={fieldErrors} />}
 
-        const val = value[field.name]
-        const path = [field.name]
-        return (
-          <div key={fieldKey(path)}>
-            {renderField(field, val, (next) => emit({ ...value, [field.name]: next }), path)}
-          </div>
-        )
-      })}
-    </Stack>
+          {fields.map((field) => {
+            // Inline groups are transparent to the value — render them directly with parent value/onChange
+            if (field.type === 'group') {
+              const groupField = field as InlineGroupFieldConfig
+              return (
+                <div key={`group-${groupField.name}`}>
+                  <InlineGroupField
+                    label={groupField.label}
+                    description={groupField.description}
+                    fields={groupField.fields}
+                    value={value}
+                    onChange={emit}
+                    renderField={renderField}
+                    path={[]}
+                  />
+                </div>
+              )
+            }
+
+            const val = value[field.name]
+            const path = [field.name]
+            return (
+              <div key={fieldKey(path)}>
+                {renderField(field, val, (next) => emit({ ...value, [field.name]: next }), path)}
+              </div>
+            )
+          })}
+        </Stack>
+      </FormExpansionContext.Provider>
+    </FormCommentsContext.Provider>
   )
 }

@@ -191,8 +191,8 @@ describe('Editor crash containment', () => {
     expect(consoleSpy).toHaveErrored('[canopycms] editor error caught (field settings)')
 
     fireEvent.change(input, { target: { value: 'Modified title' } })
-    const save = screen.getByRole('button', { name: /save file/i })
-    await waitFor(() => expect(save.hasAttribute('disabled')).toBe(false))
+    const save = screen.getByRole('button', { name: /^save$/i })
+    await waitFor(() => expect(save.getAttribute('aria-disabled')).toBeNull())
     fireEvent.click(save)
 
     await waitFor(() =>

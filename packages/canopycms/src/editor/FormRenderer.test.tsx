@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import React, { useState } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -139,8 +139,8 @@ describe('FormRenderer', () => {
     let state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
     expect(state.features).toHaveLength(1)
 
-    const removeButton = screen.getByRole('button', { name: /remove/i })
-    await user.click(removeButton)
+    await user.click(screen.getByRole('button', { name: /^Actions for / }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Remove' }))
 
     state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
     expect(state.features).toHaveLength(0)
@@ -161,12 +161,15 @@ describe('FormRenderer', () => {
       },
     ]
 
-    it('shows the list label once, with numbered card headings and no nested legend', () => {
+    it('shows the list label once, with "Item N" headings for items without text, and no inner card', () => {
       render(<StatefulForm fields={listFields()} initialValue={{ features: [{}, {}] }} />)
 
       expect(screen.getAllByText('Features')).toHaveLength(1)
-      expect(screen.getByText('Features #1')).toBeTruthy()
-      expect(screen.getByText('Features #2')).toBeTruthy()
+      // Each item's fields sit directly in its card: one card per item, no nested one.
+      const card = screen.getByRole('group', { name: 'Item 1' })
+      expect(card.querySelectorAll('.mantine-Paper-root')).toHaveLength(0)
+      expect(screen.getByText('Item 1')).toBeTruthy()
+      expect(screen.getByText('Item 2')).toBeTruthy()
     })
 
     it('titles each card with its itemTitleField value, coercing numbers', () => {
@@ -179,11 +182,11 @@ describe('FormRenderer', () => {
 
       expect(screen.getByText('Fast builds')).toBeTruthy()
       expect(screen.getByText('7')).toBeTruthy()
-      expect(screen.queryByText('Features #1')).toBeNull()
+      expect(screen.queryByText('Item 1')).toBeNull()
       expect(screen.getAllByText('Features')).toHaveLength(1)
     })
 
-    it('falls back to the numbered heading when the title value is empty or not a primitive', () => {
+    it('falls back to "Item N" when the title value is empty or not a primitive, and no other text is set', () => {
       render(
         <StatefulForm
           fields={listFields('title')}
@@ -192,12 +195,12 @@ describe('FormRenderer', () => {
       )
 
       for (const n of [1, 2, 3, 4]) {
-        expect(screen.getByText(`Features #${n}`)).toBeTruthy()
+        expect(screen.getByText(`Item ${n}`)).toBeTruthy()
       }
     })
 
     // YAML's `.nan` and `.inf` parse to non-finite numbers, which must not title a card.
-    it('falls back to the numbered heading for a non-finite number', () => {
+    it('falls back past a non-finite number', () => {
       render(
         <StatefulForm
           fields={listFields('rank')}
@@ -205,8 +208,8 @@ describe('FormRenderer', () => {
         />,
       )
 
-      expect(screen.getByText('Features #1')).toBeTruthy()
-      expect(screen.getByText('Features #2')).toBeTruthy()
+      expect(screen.getByText('Item 1')).toBeTruthy()
+      expect(screen.getByText('Item 2')).toBeTruthy()
       expect(screen.getByText('3')).toBeTruthy()
     })
 
@@ -214,11 +217,11 @@ describe('FormRenderer', () => {
       const user = userEvent.setup()
       render(<StatefulForm fields={listFields('title')} initialValue={{ features: [{}] }} />)
 
-      expect(screen.getByText('Features #1')).toBeTruthy()
+      expect(screen.getByText('Item 1')).toBeTruthy()
       await user.type(screen.getByLabelText('Heading'), 'Typed')
 
       expect(screen.getByText('Typed')).toBeTruthy()
-      expect(screen.queryByText('Features #1')).toBeNull()
+      expect(screen.queryByText('Item 1')).toBeNull()
     })
 
     it('gives each card an accessible name matching its heading', () => {
@@ -230,7 +233,41 @@ describe('FormRenderer', () => {
       )
 
       expect(screen.getByRole('group', { name: 'Fast builds' })).toBeTruthy()
-      expect(screen.getByRole('group', { name: 'Features #2' })).toBeTruthy()
+      expect(screen.getByRole('group', { name: 'Item 2' })).toBeTruthy()
+    })
+
+    it('falls back to the first non-blank text field when there is no itemTitleField', () => {
+      render(
+        <StatefulForm
+          fields={listFields()}
+          initialValue={{ features: [{ title: 'Fast builds', rank: 2 }, { rank: 3 }] }}
+        />,
+      )
+
+      expect(screen.getByRole('group', { name: 'Fast builds, 2' })).toBeTruthy()
+      expect(screen.getByRole('group', { name: 'Item 2, 3' })).toBeTruthy()
+    })
+
+    it('falls back to the first non-blank text field when the itemTitleField is blank', () => {
+      render(
+        <StatefulForm
+          fields={listFields('rank')}
+          initialValue={{ features: [{ title: 'Fast builds', rank: Number.NaN }] }}
+        />,
+      )
+
+      expect(screen.getByRole('group', { name: 'Fast builds' })).toBeTruthy()
+    })
+
+    it('shortens a long title to 60 characters', () => {
+      render(
+        <StatefulForm
+          fields={listFields()}
+          initialValue={{ features: [{ title: 'x'.repeat(80) }] }}
+        />,
+      )
+
+      expect(screen.getByRole('group', { name: `${'x'.repeat(59)}…` })).toBeTruthy()
     })
   })
 
@@ -272,9 +309,8 @@ describe('FormRenderer', () => {
       />,
     )
 
-    const addSelect = screen.getByPlaceholderText('Add block...')
-    await user.click(addSelect)
-    await user.click(screen.getByRole('option', { name: 'Hero' }))
+    await user.click(screen.getByRole('button', { name: 'Add section' }))
+    await user.click(await screen.findByRole('menuitem', { name: /^Hero/ }))
 
     const headlineInput = screen.getByLabelText('Headline') as HTMLInputElement
     await user.type(headlineInput, 'Hello Blocks')
@@ -354,6 +390,68 @@ describe('FormRenderer', () => {
       expect(screen.getByTestId('field-error-blocks[0].headline').textContent).toBe(
         'This field is required',
       )
+    })
+
+    it('lists each error under its labelled breadcrumb, not its raw path', () => {
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={fields}
+            value={{ title: '', blocks: [{ template: 'hero', value: { headline: '' } }] }}
+            onChange={() => {}}
+            fieldErrors={{
+              title: 'This field is required',
+              'blocks[0].headline': 'Expected text',
+            }}
+          />
+        </CanopyCMSProvider>,
+      )
+      const items = screen.getAllByRole('listitem').map((li) => li.textContent)
+      expect(items).toEqual([
+        'Title: This field is required',
+        'Blocks › Hero › headline: Expected text',
+      ])
+      expect(screen.getByTestId('validation-alert').textContent).not.toContain('blocks[0]')
+    })
+
+    it('focuses the field when its breadcrumb is clicked', async () => {
+      const user = userEvent.setup()
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={fields}
+            value={{ title: '', blocks: [{ template: 'hero', value: { headline: '' } }] }}
+            onChange={() => {}}
+            fieldErrors={{ title: 'Required', 'blocks[0].headline': 'Expected text' }}
+          />
+        </CanopyCMSProvider>,
+      )
+      await user.click(screen.getByRole('button', { name: 'Blocks › Hero › headline' }))
+      expect(document.activeElement).toBe(screen.getByLabelText('headline'))
+      await user.click(screen.getByRole('button', { name: 'Title' }))
+      expect(document.activeElement).toBe(screen.getByLabelText('Title'))
+    })
+
+    it("never focuses a hidden input, such as an empty image field's file input", async () => {
+      const user = userEvent.setup()
+      const Wrapper = createApiClientWrapper(await setupMockApiClient())
+      render(
+        <CanopyCMSProvider>
+          <Wrapper>
+            <FormRenderer
+              fields={[{ name: 'pic', type: 'image', label: 'Picture' }]}
+              value={{}}
+              onChange={() => {}}
+              fieldErrors={{ 'pic.src': 'Image src is required' }}
+            />
+          </Wrapper>
+        </CanopyCMSProvider>,
+      )
+      await user.click(screen.getByRole('button', { name: 'Picture › File' }))
+      const active = document.activeElement as HTMLElement
+      expect(active).not.toBe(document.body)
+      expect(active.matches('input[type="file"]')).toBe(false)
+      expect(screen.getByTestId('image-field-pic').contains(active)).toBe(true)
     })
 
     it('renders no validation UI when there are no errors', () => {
@@ -579,7 +677,34 @@ describe('FormRenderer', () => {
   })
 
   describe("'datetime' field type", () => {
-    it('renders a native datetime-local input, not the "Unsupported field" fallback', () => {
+    /** Picks 20 March 2024 at 14:05:09 local, from an empty field, through the picker's own UI. */
+    const pickMarch20 = async (): Promise<number> => {
+      const picker = screen.getByRole('button', { name: /^Published At, / })
+      fireEvent.click(picker)
+      const dropdown = await waitFor(() => {
+        const el = document.querySelector<HTMLElement>('[data-dates-dropdown]')
+        if (!el) throw new Error('picker not open')
+        return el
+      })
+      fireEvent.click(dropdown.querySelector('button[aria-label="20 March 2024"]')!)
+      fireEvent.change(dropdown.querySelector('input[type="time"]')!, {
+        target: { value: '14:05:09' },
+      })
+      return new Date(2024, 2, 20, 14, 5, 9).getTime()
+    }
+
+    // The clock is faked (Date only) so the empty picker opens on a known month.
+    const withClock = async (run: () => Promise<void>) => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2024, 2, 10, 12, 0, 0))
+      try {
+        await run()
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+
+    it('renders a date-time picker, not the "Unsupported field" fallback', () => {
       const fields: FieldConfig[] = [
         { name: 'publishedAt', type: 'datetime', label: 'Published At' },
       ]
@@ -588,36 +713,31 @@ describe('FormRenderer', () => {
           <FormRenderer fields={fields} value={{}} onChange={() => {}} />
         </CanopyCMSProvider>,
       )
-      const input = screen.getByLabelText('Published At') as HTMLInputElement
-      expect(input.type).toBe('datetime-local')
+      const picker = screen.getByLabelText('Published At')
+      expect(picker.getAttribute('data-dates-input')).toBe('true')
       expect(screen.queryByText(/Unsupported field/)).toBeNull()
     })
 
-    it('updates form state when edited, and the value survives a save round-trip', () => {
+    it('updates form state when a date and time are picked, and the value survives a save round-trip', async () => {
       const fields: FieldConfig[] = [
         { name: 'publishedAt', type: 'datetime', label: 'Published At' },
       ]
       render(<StatefulForm fields={fields} initialValue={{}} />)
 
-      const input = screen.getByLabelText('Published At') as HTMLInputElement
-      fireEvent.change(input, { target: { value: '2024-06-15T04:30:00' } })
+      await withClock(async () => {
+        const picked = await pickMarch20()
+        // The expectation is DERIVED from the local wall clock that was picked, never hardcoded:
+        // the ISO string it converts to depends on the runner's time zone, and a hardcoded one
+        // asserts the author's machine. `new Date(y, monthIndex, ...)` constructs in local time,
+        // so this stays correct in every zone, including half-hour offsets and DST boundaries.
+        const expectedIso = new Date(picked).toISOString()
 
-      // The expectation is DERIVED from the same local wall-clock the input
-      // carries, never hardcoded. A datetime-local value is local time, so the
-      // ISO string it converts to depends on the runner's timezone: hardcoding
-      // one asserts the author's machine. The first version of this test did
-      // exactly that and passed locally (UTC-6) while failing in CI's UTC by
-      // precisely six hours -- which is also why a green local suite could not
-      // catch it. `new Date(y, monthIndex, ...)` constructs in local time, so
-      // this stays correct in every zone, including ones with a half-hour
-      // offset or a DST boundary.
-      const expectedIso = new Date(2024, 5, 15, 4, 30, 0).toISOString()
-
-      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
-      expect(state.publishedAt).toBe(expectedIso)
+        const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+        expect(state.publishedAt).toBe(expectedIso)
+      })
     })
 
-    it('a required datetime field can be filled and saved (previously permanently unsaveable)', () => {
+    it('a required datetime field can be filled and saved (previously permanently unsaveable)', async () => {
       const fields: FieldConfig[] = [
         { name: 'publishedAt', type: 'datetime', label: 'Published At', required: true },
       ]
@@ -625,11 +745,11 @@ describe('FormRenderer', () => {
 
       expect(validateEntryData(fields, {})).not.toEqual([])
 
-      const input = screen.getByLabelText('Published At') as HTMLInputElement
-      fireEvent.change(input, { target: { value: '2024-06-15T04:30:00' } })
-
-      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
-      expect(validateEntryData(fields, state)).toEqual([])
+      await withClock(async () => {
+        await pickMarch20()
+        const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+        expect(validateEntryData(fields, state)).toEqual([])
+      })
     })
   })
 
@@ -811,8 +931,8 @@ describe('FormRenderer', () => {
           />
         </CanopyCMSProvider>,
       )
-      expect(screen.getByTestId('field-new-comment-meta')).toBeTruthy()
-      expect(screen.getByTestId('field-new-comment-meta.label')).toBeTruthy()
+      expect(screen.getAllByTestId('field-comment-meta')).toHaveLength(1)
+      expect(screen.getAllByTestId('field-comment-meta.label')).toHaveLength(1)
     })
   })
 
@@ -875,9 +995,12 @@ describe('FormRenderer', () => {
     /**
      * The description text is rendered once, has an id, and exactly one element points
      * at that id through `aria-describedby`: the input itself for Mantine-native fields,
-     * the field's group container for custom ones.
+     * the field's group container for custom ones, the picker's button for a date-time.
      */
-    const expectDescribed = (kind: 'input' | 'group', text: string = DESCRIPTION): HTMLElement => {
+    const expectDescribed = (
+      kind: 'input' | 'picker' | 'group',
+      text: string | RegExp = DESCRIPTION,
+    ): HTMLElement => {
       const node = screen.getByText(text)
       expect(node.id).toMatch(/-description$/)
       const owners = describedBy(node.id)
@@ -885,6 +1008,8 @@ describe('FormRenderer', () => {
       const owner = owners[0]
       if (kind === 'input') {
         expect(['INPUT', 'TEXTAREA']).toContain(owner.tagName)
+      } else if (kind === 'picker') {
+        expect(owner.tagName).toBe('BUTTON')
       } else {
         expect(owner.getAttribute('role')).toBe('group')
       }
@@ -902,7 +1027,8 @@ describe('FormRenderer', () => {
 
     it('string list', () => {
       renderFields(described({ name: 'tags', type: 'string', label: 'Tags', list: true }))
-      expectDescribed('input')
+      // An editable list adds the Enter hint after the description.
+      expectDescribed('input', `${DESCRIPTION}. Press Enter to add.`)
     })
 
     it('boolean', () => {
@@ -922,7 +1048,10 @@ describe('FormRenderer', () => {
 
     it('datetime', () => {
       renderFields(described({ name: 'publishedAt', type: 'datetime', label: 'Published At' }))
-      expect(expectDescribed('input')).toBe(screen.getByLabelText('Published At'))
+      // The picker adds the zone its times are shown in.
+      expect(
+        expectDescribed('picker', /^Guidance for the editor In your time zone \(.+\)\.$/),
+      ).toBe(screen.getByLabelText('Published At', { exact: false }))
     })
 
     it('markdown', () => {
@@ -995,6 +1124,31 @@ describe('FormRenderer', () => {
     it('block', () => {
       renderFields(described({ name: 'blocks', type: 'block', label: 'Blocks', templates: [] }))
       expectDescribed('group')
+    })
+
+    it("block template: its description is in the block's body and describes the block's row", () => {
+      renderFields(
+        [
+          {
+            name: 'blocks',
+            type: 'block',
+            label: 'Blocks',
+            templates: [
+              {
+                name: 'hero',
+                label: 'Hero',
+                description: 'The banner at the top of a page',
+                fields: [{ name: 'headline', type: 'string', label: 'Headline' }],
+              },
+            ],
+          },
+        ],
+        { blocks: [{ template: 'hero', value: { headline: 'Hi' } }] },
+      )
+      const row = screen.getByRole('group', { name: 'Hero, Hi' })
+      const text = within(row).getByText('The banner at the top of a page')
+      expect(row.getAttribute('aria-describedby')).toBe(text.id)
+      expect(describedBy(text.id)).toEqual([row])
     })
 
     it('object', () => {

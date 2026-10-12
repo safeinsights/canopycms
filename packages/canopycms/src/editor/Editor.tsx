@@ -14,6 +14,7 @@ import {
   Skeleton,
   Stack,
   Text,
+  Tooltip,
   useTree,
 } from '@mantine/core'
 import {
@@ -22,6 +23,7 @@ import {
   IconDots,
   IconFolderPlus,
   IconPlus,
+  IconSearch,
 } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 
@@ -44,9 +46,16 @@ import { GroupManager } from './GroupManager'
 import { PermissionManager } from './PermissionManager'
 import { SystemHealthPanel } from './admin/SystemHealthPanel'
 // Import directly from helpers to avoid server-only code in authorization barrel
-import { isAdmin, isPrivileged } from '../authorization/helpers'
+import { isAdmin, isPrivileged, isReviewer } from '../authorization/helpers'
+import { fieldBreadcrumb } from './field-breadcrumb'
 import type { CommentThread } from '../comment-store'
-import { buildPreviewSrc, buildCollectionLabels, buildBreadcrumbSegments } from './editor-utils'
+import {
+  buildPreviewRoute,
+  buildPreviewSrc,
+  buildCollectionLabels,
+  entryTypeLabel,
+  buildBreadcrumbSegments,
+} from './editor-utils'
 import {
   useEditorLayout,
   useDraftManager,
@@ -66,6 +75,9 @@ import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
+import { QUICK_OPEN_REPLACES_ATTR, QuickOpenPalette } from './components/QuickOpenPalette'
+import { FOCUS_RETURN_ATTR, focusIfIdle, rememberOpener, returnTarget } from './utils/focus-return'
+import { modKeyLabel } from './platform'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { ReferencedByList, referencedDeleteMessage } from './components/ReferencedByList'
@@ -85,7 +97,14 @@ import {
 } from './context'
 import { EntryLinkContext, type EntryLinkOption } from './fields/entry-link'
 import { MediaLibrary } from './media/MediaLibrary'
-import { removalAnchors, restoreRemoval, type FieldRemoval } from './undo-removal'
+import {
+  removalAnchors,
+  restoreRemoval,
+  restoredFieldPath,
+  type FieldRemoval,
+} from './undo-removal'
+import { formatCanopyPath } from './canopy-path'
+import { findFieldTarget, focusFieldTarget } from './field-target'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
 
@@ -119,6 +138,8 @@ export interface EditorEntryType {
   maxItems?: number
   /** Set when the type has no schema in the running code; it cannot be created or edited. */
   unavailable?: EntryTypeUnavailable
+  /** Data path of the field that titles an entry of this type; the create form asks for it first. */
+  titleField?: readonly string[]
 }
 
 export interface EditorCollection {
@@ -237,6 +258,20 @@ const EditorContent: React.FC<EditorProps> = ({
   >(undefined)
   const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
 
+  const [quickOpenOpen, setQuickOpenOpen] = useState(false)
+  const [quickOpenFromDrawer, setQuickOpenFromDrawer] = useState(false)
+  const navigatorToggleRef = useRef<HTMLButtonElement>(null)
+  const branchToggleRef = useRef<HTMLButtonElement>(null)
+  const settingsToggleRef = useRef<HTMLButtonElement>(null)
+  // Null when the branches drawer opened from a menu item; see `rememberOpener`.
+  const branchOpenerRef = useRef<HTMLElement | null>(null)
+  // Null when the drawer opened from a menu item, which unmounts on click, or with focus on the page.
+  const navigatorOpenerRef = useRef<HTMLElement | null>(null)
+  const quickOpenOpenRef = useRef(false)
+  useEffect(() => {
+    quickOpenOpenRef.current = quickOpenOpen
+  }, [quickOpenOpen])
+
   const [renameModalOpen, setRenameModalOpen] = useState(false)
   const [renamingEntry, setRenamingEntry] = useState<EditorEntry | null>(null)
   const [renameModalError, setRenameModalError] = useState<string | null>(null)
@@ -264,9 +299,13 @@ const EditorContent: React.FC<EditorProps> = ({
   // whose API routes all take the `admin` guard) render only for admins: each menu item, action
   // and drawer mount is gated here. Until whoami answers, the user counts as no admin.
   const userIsAdmin = isAdmin(userContext?.groups)
-  // Name lookups take the `privileged` guard (admins and reviewers); anyone else sees ids, and
-  // no lookup is sent that would only be refused.
+  // Name lookups take the `privileged` guard (admins and reviewers); no lookup is sent that would
+  // only be refused. Comment surfaces name their people for everyone (getCommentUserMetadata).
   const canResolveUserNames = isPrivileged(userContext?.groups)
+  // Reviewers and admins resolve any thread; everyone else only the threads they started.
+  const canResolveAnyComment = canResolveComments && isReviewer(userContext?.groups)
+  // The signed-in user, so "started by me" matches the thread authors the server records.
+  const commentUserId = userContext?.userId ?? currentUser
 
   const {
     layout,
@@ -370,9 +409,19 @@ const EditorContent: React.FC<EditorProps> = ({
         default: et.default,
         maxItems: et.maxItems,
         unavailable: et.unavailable,
+        titleField: et.titleField,
       })) ?? [],
     [createModalCollection],
   )
+
+  // The route a slug's page is served at, shown under the slug: `buildPreviewSrc`'s route before
+  // its prefix, base path, trailing slash and `?branch=`. Undefined when the entry has no page.
+  const previewPathFor = (entry: {
+    collectionPath: string
+    collectionName?: string
+    slug: string
+    entryType?: string
+  }): string | undefined => buildPreviewRoute(entry, { previewBaseByCollection, contentRoot })
 
   // Use collections from API (falls back to props if not loaded yet)
   const activeCollections = collectionsFromApi.length > 0 ? collectionsFromApi : collections
@@ -438,6 +487,7 @@ const EditorContent: React.FC<EditorProps> = ({
   // 5. Comment system (depends on branchNameState)
   const {
     comments,
+    getCommentUser,
     focusedFieldPath,
     highlightThreadId,
     commentsPanelOpen,
@@ -451,10 +501,13 @@ const EditorContent: React.FC<EditorProps> = ({
     branchName: branchNameState,
     selectedPath,
     currentEntry,
-    currentUser,
-    canResolveComments,
+    currentUser: commentUserId,
+    canResolveComments: canResolveAnyComment,
     setSelectedPath,
-    setBranchManagerOpen,
+    setBranchManagerOpen: (open) => {
+      if (open) branchOpenerRef.current = rememberOpener()
+      setBranchManagerOpen(open)
+    },
     onCommentsChange: setCommentsForBranchSummaries,
   })
 
@@ -466,6 +519,9 @@ const EditorContent: React.FC<EditorProps> = ({
     handleGetUserMetadata,
     handleSearchExternalGroups,
   } = useGroupManager({ isOpen: groupManagerOpen })
+  // The comments and branches responses name their people, without email; a privileged lookup
+  // adds the email.
+  const getCommentUserMetadata = canResolveUserNames ? handleGetUserMetadata : getCommentUser
 
   const { permissionsData, permissionsLoading, handleSavePermissions, handleListGroups } =
     usePermissionManager({
@@ -555,10 +611,16 @@ const EditorContent: React.FC<EditorProps> = ({
         })
         return
       }
+      const restoredPath = formatCanopyPath(restoredFieldPath(fields, now, removal))
       setDrafts((prev) => {
         const base = prev[contentId] ?? loadedValuesRef.current[contentId]
         const restored = base ? restoreRemoval(fields, base, anchored) : undefined
         return restored ? { ...prev, [contentId]: restored } : prev
+      })
+      // The toast's Undo button unmounts with it, so focus goes to the restored row once rendered.
+      requestAnimationFrame(() => {
+        const target = findFieldTarget(restoredPath)
+        if (target) focusFieldTarget(target.element)
       })
     }
     undoToastsRef.current.set(id, contentId)
@@ -588,6 +650,17 @@ const EditorContent: React.FC<EditorProps> = ({
     [activeCollections],
   )
   const schema = currentEntry?.schema ?? EMPTY_SCHEMA
+
+  const commentEntryLabel = (entryPath: string) =>
+    entriesState.find((e) => e.path === entryPath)?.label
+  // Only the open entry's value is at hand; for another entry the breadcrumb falls back to its
+  // schema's field labels.
+  const commentFieldLabel = (entryPath: string, canopyPath: string) => {
+    const entry = entriesState.find((e) => e.path === entryPath)
+    if (!entry) return undefined
+    const value = entry.path === currentEntry?.path ? displayValue : undefined
+    return fieldBreadcrumb(entry.schema, value, canopyPath).join(' › ')
+  }
 
   // Gated on `loadedValues[contentId]` (not `drafts[contentId]`) so a
   // restored-from-localStorage draft never skips the load: skipping left
@@ -728,84 +801,55 @@ const EditorContent: React.FC<EditorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path/branch/loadedValues change
   }, [currentEntry, loadedValues, selectedPath, branchNameState, loadAttempt])
 
+  // The collection dialog's entry types, with schema and usage, as the branch has them; null when
+  // the API refuses the read or the collection is gone, and a rejection when the read times out.
+  const readEntryTypes = async (
+    collectionPath: LogicalPath,
+  ): Promise<ExistingEntryType[] | null> => {
+    const result = await apiClient.schema.getCollection({
+      branch: branchNameState,
+      collectionPath,
+    })
+    const withUsage = result.ok ? result.data?.entryTypesWithUsage : undefined
+    return withUsage
+      ? withUsage.map(
+          (et): ExistingEntryType => ({
+            name: et.name,
+            label: et.label,
+            format: et.format,
+            schema: et.schemaRef,
+            default: et.default,
+            maxItems: et.maxItems,
+            usageCount: et.usageCount,
+          }),
+        )
+      : null
+  }
+
   const handleOpenCollectionEditor = async (
     collection: EditorCollection | null,
     parentPath?: LogicalPath,
   ) => {
     if (collection) {
-      try {
-        const result = await apiClient.schema.getCollection({
-          branch: branchNameState,
-          collectionPath: collection.path,
-        })
-
-        if (result.ok && result.data && result.data.collection) {
-          const entries: ExistingEntryType[] = result.data.entryTypesWithUsage
-            ? result.data.entryTypesWithUsage.map(
-                (et): ExistingEntryType => ({
-                  name: et.name,
-                  label: et.label,
-                  format: et.format,
-                  schema: et.schemaRef,
-                  default: et.default,
-                  maxItems: et.maxItems,
-                  usageCount: et.usageCount,
-                }),
-              )
-            : (collection.entryTypes ?? []).map(
-                (et): ExistingEntryType => ({
-                  name: et.name,
-                  label: et.label,
-                  format: et.format,
-                  schema: '', // Fallback if entryTypesWithUsage not available
-                  default: et.default,
-                  maxItems: et.maxItems,
-                }),
-              )
-
-          const existingCollection: ExistingCollection = {
-            name: collection.name,
-            label: collection.label,
-            logicalPath: collection.path,
-            entries,
-          }
-          setEditingCollection(existingCollection)
-        } else {
-          const existingCollection: ExistingCollection = {
-            name: collection.name,
-            label: collection.label,
-            logicalPath: collection.path,
-            entries: (collection.entryTypes ?? []).map(
-              (et): ExistingEntryType => ({
-                name: et.name,
-                label: et.label,
-                format: et.format,
-                schema: '',
-                default: et.default,
-                maxItems: et.maxItems,
-              }),
-            ),
-          }
-          setEditingCollection(existingCollection)
-        }
-      } catch {
-        const existingCollection: ExistingCollection = {
-          name: collection.name,
-          label: collection.label,
-          logicalPath: collection.path,
-          entries: (collection.entryTypes ?? []).map(
-            (et): ExistingEntryType => ({
-              name: et.name,
-              label: et.label,
-              format: et.format,
-              schema: '',
-              default: et.default,
-              maxItems: et.maxItems,
-            }),
-          ),
-        }
-        setEditingCollection(existingCollection)
-      }
+      // The tree's entry types, the fallback, carry no schema or usage.
+      const entries =
+        (await readEntryTypes(collection.path).catch(() => null)) ??
+        (collection.entryTypes ?? []).map(
+          (et): ExistingEntryType => ({
+            name: et.name,
+            label: et.label,
+            format: et.format,
+            schema: '',
+            default: et.default,
+            maxItems: et.maxItems,
+          }),
+        )
+      setEditingCollection({
+        name: collection.name,
+        label: collection.label,
+        logicalPath: collection.path,
+        entries,
+      })
       setCollectionEditorParentPath(undefined)
     } else {
       setEditingCollection(null)
@@ -832,7 +876,9 @@ const EditorContent: React.FC<EditorProps> = ({
     // instead of try/catch.
     if (isNew) {
       const result = await createCollection(data as Parameters<typeof createCollection>[0])
-      if (result.ok) {
+      // A retried create that had landed makes a second collection, so an unanswered one closes
+      // the dialog too, leaving the hook's toast to say to check the "Content" panel first.
+      if (result.ok || result.unanswered) {
         handleCloseCollectionEditor()
       } else {
         setCollectionEditorError(result.error)
@@ -842,7 +888,9 @@ const EditorContent: React.FC<EditorProps> = ({
         editingCollection.logicalPath,
         data as Parameters<typeof updateCollection>[1],
       )
-      if (result.ok) {
+      // An unanswered save may have renamed the collection, leaving `editingCollection`'s path
+      // stale, so the dialog closes; the hook's toast says to reopen it and check.
+      if (result.ok || result.unanswered) {
         handleCloseCollectionEditor()
       } else {
         setCollectionEditorError(result.error)
@@ -1016,8 +1064,10 @@ const EditorContent: React.FC<EditorProps> = ({
       list.push({
         path: entry.path,
         label: entry.label,
+        slug: entry.slug,
         status: entry.status,
         contentId: entry.contentId,
+        readOnly: entry.canEdit === false || undefined,
         conflictNotice: !!(
           entry.contentId && currentBranch?.conflictFiles?.includes(entry.contentId)
         ),
@@ -1033,7 +1083,10 @@ const EditorContent: React.FC<EditorProps> = ({
       // No entry can be created where every entry type is unavailable.
       const allUnavailable =
         !!node.entryTypes?.length && node.entryTypes.every((et) => et.unavailable)
-      const canAddEntry = node.type !== 'entry' && !allUnavailable
+      // A collection that holds only collections has no entry type to add (`entryTypes` is
+      // undefined when its list is empty).
+      const canAddEntry =
+        node.type !== 'entry' && !allUnavailable && (node.entryTypes?.length ?? 0) > 0
 
       return {
         path: node.path,
@@ -1076,6 +1129,38 @@ const EditorContent: React.FC<EditorProps> = ({
     schemaUnavailableKeys,
     userIsAdmin,
   ])
+
+  const quickOpenShortcut = modKeyLabel() === '⌘' ? '⌘P' : 'Ctrl+P'
+  const openNavigator = () => {
+    navigatorOpenerRef.current = rememberOpener()
+    setNavigatorOpen(true)
+  }
+  const navigatorReturnTarget = () =>
+    returnTarget(navigatorOpenerRef.current, () => navigatorToggleRef.current)
+  const branchReturnTarget = () =>
+    returnTarget(branchOpenerRef.current, () => branchToggleRef.current)
+  const settingsReturnTarget = () => settingsToggleRef.current
+  const openQuickOpen = () => {
+    if (!quickOpenOpen) setQuickOpenFromDrawer(navigatorOpen)
+    setNavigatorOpen(false)
+    setQuickOpenOpen(true)
+  }
+
+  const dirtyPaths = useMemo<ReadonlySet<string>>(
+    () => new Set(editedFiles.map((file) => file.path)),
+    [editedFiles],
+  )
+
+  // Slugs of the entries beside the one being renamed, for the duplicate check.
+  const renameExistingSlugs = useMemo<ReadonlySet<string>>(
+    () =>
+      new Set(
+        entriesState
+          .filter((e) => e.collectionPath === renamingEntry?.collectionPath && e.slug)
+          .map((e) => e.slug as string),
+      ),
+    [entriesState, renamingEntry],
+  )
 
   // Tree expansion state - persists across drawer close/open
   const treeExpandedStateRef = useRef<Record<string, boolean>>({})
@@ -1267,13 +1352,16 @@ const EditorContent: React.FC<EditorProps> = ({
             branchIsProtected={currentBranch?.isProtected ?? true}
             branchReadOnly={currentBranch?.readOnly}
             branchWriteBlocked={branchContentLocked}
-            onNavigatorOpen={() => setNavigatorOpen(true)}
-            onFileReload={handleReload}
-            onFileDiscardDraft={handleDiscardFileDraft}
+            onNavigatorOpen={openNavigator}
+            navigatorToggleRef={navigatorToggleRef}
+            branchToggleRef={branchToggleRef}
+            onFileReload={() => handleReload(() => navigatorToggleRef.current)}
+            onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
             onEntrySelect={setSelectedPath}
             onBranchReloadData={handleReloadBranchData}
-            onBranchDiscardDrafts={handleDiscardDrafts}
+            onBranchDiscardDrafts={() => handleDiscardDrafts(() => branchToggleRef.current)}
             onBranchManagerOpen={() => {
+              branchOpenerRef.current = rememberOpener()
               setBranchManagerOpen(true)
               // Always retry, not only when branchless. Opening the manager is
               // the one in-app retry for a failed branches fetch, and the fetch
@@ -1340,23 +1428,29 @@ const EditorContent: React.FC<EditorProps> = ({
                     ) : schema.length > 0 && displayValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <SiteMdxAllowContext.Provider value={mdxAllow}>
-                          {hiddenDraftNotice && (
-                            <ReadOnlyDraftNotice
-                              permanentlyReadOnly={
-                                (currentBranch?.isProtected ?? true) ||
-                                currentBranch?.status === 'archived'
-                              }
-                              onDiscard={handleDiscardFileDraft}
-                            />
-                          )}
                           <FormRenderer
+                            notice={
+                              hiddenDraftNotice && (
+                                <ReadOnlyDraftNotice
+                                  permanentlyReadOnly={
+                                    (currentBranch?.isProtected ?? true) ||
+                                    currentBranch?.status === 'archived'
+                                  }
+                                  onDiscard={() =>
+                                    handleDiscardFileDraft(() => navigatorToggleRef.current)
+                                  }
+                                />
+                              )
+                            }
                             fields={schema}
                             value={displayValue}
                             readOnly={contentReadOnly}
                             onRemoved={handleFieldRemoved}
-                            onGetUserMetadata={
-                              canResolveUserNames ? handleGetUserMetadata : undefined
-                            }
+                            onGetUserMetadata={getCommentUserMetadata}
+                            header={{
+                              title: currentEntry.label,
+                              typeLabel: entryTypeLabel(activeCollections, currentEntry),
+                            }}
                             // The one writer of drafts. Read-only content gets none, whatever a
                             // field emits (MDXEditor's mount-time normalisation included).
                             onChange={(next) => {
@@ -1369,8 +1463,8 @@ const EditorContent: React.FC<EditorProps> = ({
                             branch={branchNameState}
                             comments={comments}
                             currentEntryPath={selectedPath}
-                            currentUserId={currentUser}
-                            canResolve={canResolveComments}
+                            currentUserId={commentUserId}
+                            canResolve={canResolveAnyComment}
                             focusedFieldPath={focusedFieldPath}
                             highlightThreadId={highlightThreadId}
                             onAddComment={handleAddComment}
@@ -1438,6 +1532,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 onGroupManagerOpen={userIsAdmin ? () => setGroupManagerOpen(true) : undefined}
                 onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
                 onSystemHealthOpen={userIsAdmin ? () => setSystemHealthOpen(true) : undefined}
+                settingsToggleRef={settingsToggleRef}
                 AccountComponent={AccountComponent}
                 onAccountClick={onAccountClick}
                 onLogoutClick={onLogoutClick}
@@ -1450,11 +1545,24 @@ const EditorContent: React.FC<EditorProps> = ({
           <Drawer.Root
             opened={navigatorOpen}
             onClose={() => setNavigatorOpen(false)}
+            returnFocus={false}
+            onExitTransitionEnd={() => {
+              if (!quickOpenOpenRef.current) focusIfIdle(navigatorReturnTarget())
+            }}
+            // Mantine closes every open overlay on one Escape, so the drawer leaves it to a dialog
+            // opened from it.
+            closeOnEscape={
+              !createModalOpen &&
+              !renameModalOpen &&
+              !deleteEntryModalOpen &&
+              !deleteCollectionModalOpen &&
+              !collectionEditorOpen
+            }
             position="left"
             size={360}
           >
             <Drawer.Overlay blur={2} />
-            <Drawer.Content>
+            <Drawer.Content {...{ [QUICK_OPEN_REPLACES_ATTR]: true, [FOCUS_RETURN_ATTR]: true }}>
               <Drawer.Header>
                 <Drawer.Title>Content</Drawer.Title>
                 <Group gap="xs">
@@ -1474,38 +1582,55 @@ const EditorContent: React.FC<EditorProps> = ({
                               leftSection={<IconPlus size={14} />}
                               onClick={() => navCollections[0].onAdd?.()}
                             >
-                              Add Entry
+                              Add entry…
                             </Menu.Item>
                           )}
                           {navCollections[0].onAddSubCollection && (
-                            <Menu.Item
-                              leftSection={<IconFolderPlus size={14} />}
-                              onClick={() => navCollections[0].onAddSubCollection?.()}
-                            >
-                              Add Collection
-                            </Menu.Item>
+                            <>
+                              {navCollections[0].onAdd && <Menu.Divider />}
+                              <Menu.Label>Admin</Menu.Label>
+                              <Menu.Item
+                                leftSection={<IconFolderPlus size={14} />}
+                                onClick={() => navCollections[0].onAddSubCollection?.()}
+                              >
+                                Add collection…
+                              </Menu.Item>
+                            </>
                           )}
                         </Menu.Dropdown>
                       </Menu>
                     )}
-                  <ActionIcon
-                    variant="subtle"
-                    color="gray"
-                    onClick={handleCollapseAll}
-                    title="Collapse all folders"
-                    aria-label="Collapse all folders"
-                  >
-                    <IconChevronUp size={16} />
-                  </ActionIcon>
-                  <ActionIcon
-                    variant="subtle"
-                    color="gray"
-                    onClick={handleExpandAll}
-                    title="Expand all folders"
-                    aria-label="Expand all folders"
-                  >
-                    <IconChevronDown size={16} />
-                  </ActionIcon>
+                  <Tooltip label={`Quick open (${quickOpenShortcut})`} withinPortal>
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      onClick={openQuickOpen}
+                      aria-label="Quick open"
+                      data-testid="quick-open-button"
+                    >
+                      <IconSearch size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label="Collapse all folders" withinPortal>
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      onClick={handleCollapseAll}
+                      aria-label="Collapse all folders"
+                    >
+                      <IconChevronUp size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label="Expand all folders" withinPortal>
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      onClick={handleExpandAll}
+                      aria-label="Expand all folders"
+                    >
+                      <IconChevronDown size={16} />
+                    </ActionIcon>
+                  </Tooltip>
                   <Drawer.CloseButton />
                 </Group>
               </Drawer.Header>
@@ -1519,7 +1644,9 @@ const EditorContent: React.FC<EditorProps> = ({
                         : entriesState.map((e) => ({
                             path: e.path,
                             label: e.label,
+                            slug: e.slug,
                             status: e.status,
+                            readOnly: e.canEdit === false || undefined,
                           }))
                     }
                     selectedPath={selectedPath}
@@ -1536,20 +1663,33 @@ const EditorContent: React.FC<EditorProps> = ({
                     hiddenRootPath={hiddenRootPath}
                     loading={entriesInitializing}
                     readOnly={branchContentLocked}
+                    dirtyPaths={dirtyPaths}
                   />
                 </Box>
               </Drawer.Body>
             </Drawer.Content>
           </Drawer.Root>
+          <QuickOpenPalette
+            opened={quickOpenOpen}
+            onOpen={openQuickOpen}
+            onClose={() => setQuickOpenOpen(false)}
+            returnFocusTo={quickOpenFromDrawer ? navigatorReturnTarget : undefined}
+            entries={entriesState}
+            // The hidden root's entries sit at the top of the tree, so they get no heading here either.
+            collectionLabel={(path) => (path === hiddenRootPath ? '' : collectionLabels.get(path))}
+            onSelect={setSelectedPath}
+          />
           <BranchesDrawer
             opened={branchManagerOpen}
             onClose={() => setBranchManagerOpen(false)}
             confirmOpen={branchConfirmOpen}
+            returnFocusTo={branchReturnTarget}
           >
             <BranchManager
               branches={branchSummaries}
               mode={operatingMode}
               user={userContext}
+              currentBranchName={currentBranch?.name ?? branchNameState}
               onSelect={async (name) => {
                 try {
                   await handleBranchChange(name)
@@ -1575,24 +1715,31 @@ const EditorContent: React.FC<EditorProps> = ({
               }}
               onClose={() => setBranchManagerOpen(false)}
               comments={comments}
-              currentUserId={currentUser}
-              canResolve={canResolveComments}
+              currentUserId={commentUserId}
+              canResolve={canResolveAnyComment}
               onAddComment={handleAddComment}
               onResolveThread={handleResolveThread}
               highlightThreadId={highlightThreadId}
               onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
+              onGetOwnerMetadata={getCommentUserMetadata}
+              onGetCommentUserMetadata={getCommentUserMetadata}
             />
           </BranchesDrawer>
-          {commentsPanelOpen && branchNameState && (
+          {branchNameState && (
             <CommentsPanel
+              key={branchNameState}
+              opened={commentsPanelOpen}
               branchName={branchNameState}
               comments={comments}
-              canResolve={true}
+              canResolve={canResolveAnyComment}
+              currentUserId={commentUserId}
+              entryLabel={commentEntryLabel}
+              fieldLabel={commentFieldLabel}
               onAddComment={handleAddComment}
               onResolveThread={handleResolveThread}
               onClose={() => setCommentsPanelOpen(false)}
               onJumpToField={handleJumpToField}
-              onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
+              onGetUserMetadata={getCommentUserMetadata}
               onJumpToEntry={handleJumpToEntry}
               onJumpToBranch={handleJumpToBranch}
             />
@@ -1602,6 +1749,7 @@ const EditorContent: React.FC<EditorProps> = ({
             <GroupManager
               opened={groupManagerOpen}
               onClose={() => setGroupManagerOpen(false)}
+              returnFocusTo={settingsReturnTarget}
               internalGroups={groupsData}
               loading={groupsLoading}
               canEdit={userIsAdmin}
@@ -1616,6 +1764,7 @@ const EditorContent: React.FC<EditorProps> = ({
             <PermissionManager
               opened={permissionManagerOpen}
               onClose={() => setPermissionManagerOpen(false)}
+              returnFocusTo={settingsReturnTarget}
               collections={activeCollections}
               contentRoot={contentRoot}
               permissions={permissionsData}
@@ -1632,6 +1781,7 @@ const EditorContent: React.FC<EditorProps> = ({
             <SystemHealthPanel
               opened={systemHealthOpen}
               onClose={() => setSystemHealthOpen(false)}
+              returnFocusTo={settingsReturnTarget}
             />
           )}
 
@@ -1639,6 +1789,7 @@ const EditorContent: React.FC<EditorProps> = ({
             opened={mediaLibraryOpen}
             onClose={() => setMediaLibraryOpen(false)}
             mode="manage"
+            returnFocusTo={settingsReturnTarget}
           />
 
           {userIsAdmin && (
@@ -1659,6 +1810,7 @@ const EditorContent: React.FC<EditorProps> = ({
               onRemoveEntryType={
                 editingCollection ? (path, name) => removeEntryType(path, name) : undefined
               }
+              onReloadEntryTypes={editingCollection ? readEntryTypes : undefined}
               onClose={handleCloseCollectionEditor}
               isSaving={schemaLoading}
               error={collectionEditorError}
@@ -1678,6 +1830,15 @@ const EditorContent: React.FC<EditorProps> = ({
               }}
               isSaving={renameModalSaving}
               error={renameModalError}
+              existingSlugs={renameExistingSlugs}
+              previewPath={(slug) =>
+                previewPathFor({
+                  collectionPath: renamingEntry.collectionPath ?? '',
+                  collectionName: renamingEntry.collectionName,
+                  slug,
+                  entryType: renamingEntry.entryType,
+                })
+              }
             />
           )}
 
@@ -1691,6 +1852,14 @@ const EditorContent: React.FC<EditorProps> = ({
               isCreating={createModalCreating}
               error={createModalError}
               existingSlugs={createModalExistingSlugs}
+              previewPath={(slug, entryTypeName) =>
+                previewPathFor({
+                  collectionPath: createModalCollection.path,
+                  collectionName: createModalCollection.name,
+                  slug,
+                  entryType: entryTypeName,
+                })
+              }
             />
           )}
 

@@ -30,6 +30,8 @@ import { GitManager } from '../git-manager'
 import { syncDeleteRemoteBranch } from './github-sync'
 import { branchNameSchema, branchParamSchema } from './validators'
 import { baseBranchOf } from '../utils/base-branch'
+import type { UserProfile } from '../auth/types'
+import { lookupUserProfiles } from '../auth/user-metadata-lookup'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
 
@@ -92,6 +94,8 @@ export type BranchListResponse = ApiResponse<{
    * Optional on the wire so older servers remain compatible.
    */
   defaultBranch?: string
+  /** Profiles of the listed branches' creators, in no order; unknown ids are absent. */
+  users: UserProfile[]
 }>
 
 /** Response type for branch deletion */
@@ -545,16 +549,7 @@ export const listBranchesHandler = async (
 
   // Admins and Reviewers see all branches
   if (isPrivileged(req.user.groups)) {
-    return {
-      ok: true,
-      status: 200,
-      data: {
-        branches: allBranches.map((context) =>
-          toBranchListItem(ctx.services.config, context.branch),
-        ),
-        defaultBranch,
-      },
-    }
+    return branchListResponse(ctx, allBranches, defaultBranch)
   }
 
   // Regular users only see branches they created or have explicit access to
@@ -584,14 +579,37 @@ export const listBranchesHandler = async (
     return false
   })
 
+  return branchListResponse(ctx, visibleBranches, defaultBranch)
+}
+
+/**
+ * The listing, with the profile of each listed branch's creator. Looked up only for branches the
+ * requester may see, so it names no one they could not; the branch ACL's users stay behind the
+ * privileged user lookup. A failed lookup costs the names, never the listing.
+ */
+const branchListResponse = async (
+  ctx: ApiContext,
+  branches: readonly BranchContext[],
+  defaultBranch: string,
+): Promise<BranchListResponse> => {
+  let users: UserProfile[] = []
+  if (ctx.authPlugin) {
+    try {
+      users = await lookupUserProfiles(
+        ctx.authPlugin,
+        branches.map((context) => context.branch.createdBy),
+      )
+    } catch (error) {
+      console.error('CanopyCMS: Failed to look up branch owners:', getErrorMessage(error))
+    }
+  }
   return {
     ok: true,
     status: 200,
     data: {
-      branches: visibleBranches.map((context) =>
-        toBranchListItem(ctx.services.config, context.branch),
-      ),
+      branches: branches.map((context) => toBranchListItem(ctx.services.config, context.branch)),
       defaultBranch,
+      users,
     },
   }
 }
@@ -896,13 +914,14 @@ const listBranches = defineEndpoint({
   path: '/branches',
   responseType: 'BranchListResponse',
   response: {} as BranchListResponse,
-  defaultMockData: { branches: [] },
+  defaultMockData: { branches: [], users: [] },
   handler: listBranchesHandler,
 })
 
 const createBranch = defineEndpoint({
   namespace: 'branches',
   name: 'create',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/branches',
   body: createBranchBodySchema,

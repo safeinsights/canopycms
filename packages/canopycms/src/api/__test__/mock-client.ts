@@ -42,7 +42,7 @@ export type MockApiClient = {
 export function createMockApiClient(): MockApiClient {
   return {
   branches: {
-    list: vi.fn().mockResolvedValue(mockSuccess({"branches":[]})),
+    list: vi.fn().mockResolvedValue(mockSuccess({"branches":[],"users":[]})),
     create: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
     delete: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
     updateAccess: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
@@ -58,7 +58,7 @@ export function createMockApiClient(): MockApiClient {
   },
 
   comments: {
-    list: vi.fn().mockResolvedValue(mockSuccess({"threads":[]})),
+    list: vi.fn().mockResolvedValue(mockSuccess({"threads":[],"users":[]})),
     add: vi.fn().mockResolvedValue(mockSuccess({"threadId":"mock-thread-id","commentId":"mock-comment-id"})),
     resolve: vi.fn().mockResolvedValue(mockSuccess({"resolved":true})),
   },
@@ -147,7 +147,7 @@ export function mockForbidden(): ApiResponse<never> {
 }
 
 export function mockBranchListResponse(): BranchListResponse {
-  return mockSuccess({"branches":[]})
+  return mockSuccess({"branches":[],"users":[]})
 }
 
 export function mockBranchListItemResponse(): BranchListItemResponse {
@@ -167,7 +167,7 @@ export function mockBranchMergeResponse(): BranchMergeResponse {
 }
 
 export function mockCommentsResponse(): CommentsResponse {
-  return mockSuccess({"threads":[]})
+  return mockSuccess({"threads":[],"users":[]})
 }
 
 export function mockAddCommentResponse(): AddCommentResponse {

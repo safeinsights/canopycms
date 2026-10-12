@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, useEffect, useMemo, useRef, useState } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import type { WriteContentBody } from '../../api/content'
@@ -8,11 +8,16 @@ import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
 import { buildWritePayload, normalizeContentPayload } from '../editor-utils'
 import { isDataOnlyFormat } from '../../utils/format'
+import { withTitleAtPath } from '../../utils/title-field'
 import { getErrorMessage } from '../../utils/error'
 import type { EntryFieldError } from '../../validation/entry-validator'
 import { useApiClient } from '../context'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
+import { RetryToastMessage } from '../components/RetryToastMessage'
+import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
+
+const ENTRIES_LOAD_FAILED_TOAST_ID = 'canopy-entries-load-failed'
 
 // Re-exported so existing imports of `listAllEntries` from this module keep
 // working -- the implementation lives in useEntriesData.ts alongside the
@@ -111,7 +116,8 @@ export interface UseEntryManagerReturn {
    * server's authoritative 409 guard.
    */
   createModalExistingSlugs: Set<string>
-  handleCreateModalSubmit: (slug: string, entryTypeName: string) => Promise<void>
+  /** `title` is written to the entry type's `titleField`, so the new entry opens already titled. */
+  handleCreateModalSubmit: (slug: string, entryTypeName: string, title?: string) => Promise<void>
   closeCreateModal: () => void
 }
 
@@ -378,6 +384,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       expectedVersion,
     }
     const result = await apiClient.content.write(writeParams, writeBody)
+    if (isGatewayFailure(result)) throw new UnansweredError()
     if (!result.ok)
       throw new SaveApiError(result.status, result.error, result.fieldErrors, result.code)
     // Update stored version token from write response
@@ -452,7 +459,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     setCreateModalOpen(true)
   }
 
-  const handleCreateModalSubmit = async (slug: string, entryTypeName: string) => {
+  const handleCreateModalSubmit = async (slug: string, entryTypeName: string, title?: string) => {
     if (!createModalCollection) return
 
     setCreateModalCreating(true)
@@ -468,9 +475,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       // already exist yet". The client always sends create intent here,
       // never a blind update, so a same-slug create cannot silently
       // overwrite existing content.
+      const data =
+        title && selectedType?.titleField ? withTitleAtPath(selectedType.titleField, title) : {}
       const payload = isDataOnlyFormat(format)
-        ? { format: format as 'json' | 'yaml', data: {}, expectedVersion: null }
-        : { format, data: {}, body: '', expectedVersion: null }
+        ? { format: format as 'json' | 'yaml', data, expectedVersion: null }
+        : { format, data, body: '', expectedVersion: null }
 
       // Use collection path (e.g., "content/posts") not name (e.g., "posts")
       const path = `${createModalCollection.path}/${slug}`
@@ -483,6 +492,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         payload as unknown as WriteContentBody,
       )
 
+      if (isGatewayFailure(result)) throw new UnansweredError()
       if (!result.ok) {
         const errorMsg = 'error' in result ? result.error : `Create failed: ${result.status}`
         throw new Error(errorMsg)
@@ -512,6 +522,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       console.error(err)
       const errorMessage = err instanceof Error ? err.message : 'Create failed'
       setCreateModalError(errorMessage)
+      // An unanswered create may have landed; the content tree then shows it.
+      if (isUnanswered(err)) void refreshEntries().catch(console.error)
     } finally {
       setCreateModalCreating(false)
     }
@@ -534,6 +546,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         },
         { newSlug },
       )
+      if (isGatewayFailure(result)) throw new UnansweredError()
       if (!result.ok) {
         const errorMsg = 'error' in result ? result.error : `Rename failed: ${result.status}`
         throw new Error(errorMsg)
@@ -554,6 +567,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       console.error(err)
       const errorMessage = err instanceof Error ? err.message : 'Rename failed'
       notifications.show({ message: errorMessage, color: 'red' })
+      if (isUnanswered(err)) void refreshEntries().catch(console.error)
       throw err
     } finally {
       options.setBusy(false)
@@ -672,16 +686,29 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const notifiedErrorBranchRef = useRef<string | null>(null)
   useEffect(() => {
     if (!entriesError || !options.branchName) {
+      if (notifiedErrorBranchRef.current !== null) notifications.hide(ENTRIES_LOAD_FAILED_TOAST_ID)
       notifiedErrorBranchRef.current = null
       return
     }
     if (notifiedErrorBranchRef.current === options.branchName) return
-    notifiedErrorBranchRef.current = options.branchName
+    const branch = options.branchName
+    notifiedErrorBranchRef.current = branch
     console.error(entriesError)
+    // A shown toast with this id ignores `show`, so another branch's would keep its Retry.
+    notifications.hide(ENTRIES_LOAD_FAILED_TOAST_ID)
     notifications.show({
+      id: ENTRIES_LOAD_FAILED_TOAST_ID,
       title: 'Could not load content',
-      message: getErrorMessage(entriesError),
+      message: createElement(RetryToastMessage, {
+        message: getErrorMessage(entriesError),
+        onRetry: () => {
+          notifications.hide(ENTRIES_LOAD_FAILED_TOAST_ID)
+          notifiedErrorBranchRef.current = null
+          void globalMutate(entriesKey(branch))
+        },
+      }),
       color: 'red',
+      autoClose: false,
     })
   }, [entriesError, options.branchName])
 

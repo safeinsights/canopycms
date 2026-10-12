@@ -2,7 +2,7 @@
 
 import React, { Suspense, useId, useRef, useCallback, useEffect, useReducer, useState } from 'react'
 
-import { Alert, Button, Group, Text, Textarea } from '@mantine/core'
+import { Alert, Box, Button, Text, Textarea } from '@mantine/core'
 
 import type { EditorSubscription, MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
@@ -13,7 +13,9 @@ import { createMdxJsxPlugins } from './mdx-jsx-support'
 import { useApiClient, useAssetContext } from '../context'
 import { editorImageSrc } from '../media/editor-image-src'
 import { uploadAsset } from '../media/upload-asset'
+import { useFieldCommentControl } from '../comments/field-comment-context'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { FieldLabel } from './FieldLabel'
 import { EditorErrorBoundary, type CaughtEditorError } from '../components/EditorErrorBoundary'
 import { getErrorMessage, sanitizeErrorMessage } from '../../utils/error'
 import {
@@ -264,6 +266,7 @@ export const MDXEditorLazy = React.lazy(async () => {
             ? []
             : [
                 toolbarPlugin({
+                  toolbarClassName: 'canopy-mdx-toolbar',
                   toolbarContents: () => (
                     <>
                       <UndoRedo />
@@ -305,11 +308,13 @@ const editorWrapperStyle: React.CSSProperties = {
 
 /**
  * Mantine's global CSS reset strips styles from semantic HTML elements.
- * Restore them inside the MDXEditor content area so formatting is visible.
+ * Restore them inside the MDXEditor content area so formatting is visible. The toolbar wraps
+ * rather than scrolling sideways, so a narrow form hides none of its buttons.
  */
 const EditorContentStyles: React.FC = () => (
   <style>{`
     .canopy-mdx-content { min-height: 120px; padding: 8px 12px; }
+    .mdxeditor .canopy-mdx-toolbar { flex-wrap: wrap; overflow-x: visible; }
     .canopy-mdx-content ul { list-style-type: disc; padding-left: 1.5em; margin: 0.5em 0; }
     .canopy-mdx-content ol { list-style-type: decimal; padding-left: 1.5em; margin: 0.5em 0; }
     .canopy-mdx-content ul ul { list-style-type: circle; }
@@ -406,6 +411,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
+  const commentControl = useFieldCommentControl(dataCanopyField)
   const editorRef = useRef<MDXEditorMethods>(null)
   const lastExternalValue = useRef(value)
   const lastRejectedSource = useRef<string | null>(null)
@@ -559,25 +565,24 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
       className="canopy-markdown-field"
       {...groupDescriptionProps(inputId, description)}
     >
-      <Group justify="space-between" align="flex-end" mb={4} wrap="nowrap">
-        {label ? (
-          <Text size="sm" fw={500}>
-            {label}
-          </Text>
-        ) : (
-          <span />
-        )}
-        {!readOnly && (
-          <Button
-            variant="subtle"
-            size="compact-xs"
-            data-testid="markdown-mode-toggle"
-            onClick={toggleMode}
-          >
-            {showSource ? 'Rich text' : 'Edit source'}
-          </Button>
-        )}
-      </Group>
+      <Box mb={4}>
+        <FieldLabel
+          label={label}
+          commentControl={commentControl}
+          actions={
+            !readOnly && (
+              <Button
+                variant="subtle"
+                size="compact-xs"
+                data-testid="markdown-mode-toggle"
+                onClick={toggleMode}
+              >
+                {showSource ? 'Rich text' : 'Edit source'}
+              </Button>
+            )
+          }
+        />
+      </Box>
       <FieldDescription baseId={inputId} description={description} />
       <EditorContentStyles />
       {showSource ? (

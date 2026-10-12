@@ -2,9 +2,14 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-10-10, from the editor UI epic's WS3b; approved by JP 2026-10-10 as a post-launch follow-up. The comments API returns each author's (and resolver's) display name and avatar, with no email, for threads the requester can already read, so editors see names instead of raw user ids
+  RESOLVED (2026-10-11): GET /:branch/comments returns `users` (id, name, avatar, no email) for the people in the threads the requester can read, the editor seeds the user-metadata cache from it, and every editor sees names on comment surfaces. Step 3 (branch owners) split to branch-owner-names-for-editors.md
 ---
 # Comment author names for editors
+
+## Status: RESOLVED 2026-10-11
+
+Plan steps 1 and 2 shipped on `feat/comment-author-names`. Step 3 is a scope question for JP,
+filed as [branch-owner-names-for-editors.md](branch-owner-names-for-editors.md).
 
 **Decision (JP, 2026-10-10):** the comments API returns each author's display name and avatar,
 with no email, for threads the requester can read. It is a follow-up chip after the launch

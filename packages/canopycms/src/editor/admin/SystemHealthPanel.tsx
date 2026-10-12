@@ -31,6 +31,7 @@ import {
 } from '@mantine/core'
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
+import { focusReturnProps } from '../utils/focus-return'
 import {
   useSystemHealth,
   type UseSystemHealthReturn,
@@ -83,21 +84,58 @@ function formatAgeMs(ms: number): string {
  */
 function purgeGateFor(entry: BranchHealthEntry): { disabled: boolean; tooltip?: string } {
   if (entry.isBaseBranch) {
-    return { disabled: true, tooltip: 'The base branch can never be purged' }
+    return { disabled: true, tooltip: 'The base branch can never be purged.' }
   }
   const lockFresh =
     !!entry.provisioningLock && entry.provisioningLock.ageMs < PROVISIONING_LOCK_FRESH_MS
   if (entry.kind === 'orphan') {
     const tooYoung = (entry.ageMs ?? 0) < ORPHAN_YOUTH_THRESHOLD_MS
     const disabled = lockFresh || tooYoung
-    return { disabled, tooltip: disabled ? 'May be a clone in progress' : undefined }
+    return {
+      disabled,
+      tooltip: disabled
+        ? 'This may be a clone in progress. Try again in a few minutes.'
+        : undefined,
+    }
   }
   return {
     disabled: lockFresh,
     tooltip: lockFresh
-      ? 'Provisioning, or the worker syncing this branch, may be in progress'
+      ? 'Provisioning, or the worker syncing this branch, may be in progress. Try again in a few minutes.'
       : undefined,
   }
+}
+
+/** Purge stays focusable while gated (`aria-disabled`), so its reason opens on focus and touch. */
+function PurgeButton({
+  entry,
+  gate,
+  onPurge,
+}: {
+  entry: BranchHealthEntry
+  gate: { disabled: boolean; tooltip?: string }
+  onPurge: (dirName: string) => void
+}) {
+  return (
+    <Tooltip
+      label={gate.tooltip}
+      disabled={!gate.disabled}
+      events={{ hover: true, focus: true, touch: true }}
+    >
+      <Button
+        variant="light"
+        color="red"
+        data-disabled={gate.disabled ? true : undefined}
+        aria-disabled={gate.disabled ? true : undefined}
+        data-testid={`purge-dir-${entry.dirName}`}
+        onClick={() => {
+          if (!gate.disabled) onPurge(entry.dirName)
+        }}
+      >
+        Purge
+      </Button>
+    </Tooltip>
+  )
 }
 
 function workerLivenessBadge(
@@ -188,11 +226,11 @@ function DivergedBranchesAlert({ names }: { names: readonly string[] }) {
         </Text>
         <Text size="sm">
           A developer decides which version to keep. To keep GitHub&apos;s, first push it to a new
-          branch name on GitHub, because Delete Branch in the editor also deletes a published branch
-          on GitHub; then delete this branch in the editor (Withdraw Branch first if it is in
-          review). The editor&apos;s changes cannot be copied to another branch: to keep them, leave
-          this branch as it is, or re-enter them by hand in a new branch. For the base branch or a
-          settings branch, ask a developer to check what changed on GitHub.
+          branch name on GitHub, because &quot;Delete branch&quot; in the editor also deletes a
+          published branch on GitHub; then delete this branch in the editor (withdraw it from review
+          first if it is in review). The editor&apos;s changes cannot be copied to another branch:
+          to keep them, leave this branch as it is, or re-enter them by hand in a new branch. For
+          the base branch or a settings branch, ask a developer to check what changed on GitHub.
         </Text>
         <Group gap={4}>
           {names.map((name) => (
@@ -324,13 +362,20 @@ const PURGE_CONFIRM_TEXT =
 export interface SystemHealthPanelProps {
   opened: boolean
   onClose: () => void
+  returnFocusTo?: () => HTMLElement | null
 }
 
-export function SystemHealthPanel({ opened, onClose }: SystemHealthPanelProps) {
+export function SystemHealthPanel({ opened, onClose, returnFocusTo }: SystemHealthPanelProps) {
   const health = useSystemHealth({ isOpen: opened })
 
   return (
-    <Modal opened={opened} onClose={onClose} title="System health" size="xl">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="System health"
+      size="xl"
+      {...focusReturnProps(returnFocusTo)}
+    >
       <Tabs defaultValue="overview">
         <Tabs.List>
           <Tabs.Tab value="overview">Overview</Tabs.Tab>
@@ -1036,8 +1081,8 @@ function BranchHealthRow({
             <Tooltip
               label={
                 b.syncFailureReason
-                  ? `${b.syncFailureReason} — retry from the Tasks tab`
-                  : 'GitHub sync failed — retry from the Tasks tab'
+                  ? `${b.syncFailureReason} — retry from the "Tasks" tab`
+                  : 'GitHub sync failed — retry from the "Tasks" tab'
               }
               multiline
               maw={320}
@@ -1170,19 +1215,7 @@ function BranchHealthRow({
             >
               Repair
             </Button>
-            <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
-              <span>
-                <Button
-                  variant="light"
-                  color="red"
-                  disabled={purgeGate.disabled}
-                  data-testid={`purge-dir-${entry.dirName}`}
-                  onClick={() => onPurge(entry.dirName)}
-                >
-                  Purge
-                </Button>
-              </span>
-            </Tooltip>
+            <PurgeButton entry={entry} gate={purgeGate} onPurge={onPurge} />
           </Group>
         </Table.Td>
       </Table.Tr>
@@ -1212,19 +1245,7 @@ function BranchHealthRow({
         </Text>
       </Table.Td>
       <Table.Td>
-        <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
-          <span>
-            <Button
-              variant="light"
-              color="red"
-              disabled={purgeGate.disabled}
-              data-testid={`purge-dir-${entry.dirName}`}
-              onClick={() => onPurge(entry.dirName)}
-            >
-              Purge
-            </Button>
-          </span>
-        </Tooltip>
+        <PurgeButton entry={entry} gate={purgeGate} onPurge={onPurge} />
       </Table.Td>
     </Table.Tr>
   )

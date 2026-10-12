@@ -1,6 +1,16 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useCommentSystem } from './useCommentSystem'
+import {
+  COMMENT_MAY_BE_ADDED,
+  COMMENT_NOT_ADDED,
+  THREAD_NOT_RESOLVED,
+  useCommentSystem,
+} from './useCommentSystem'
+import { ApiTimeoutError } from '../../api/request-deadline'
+import { useUserMetadata } from './useUserMetadata'
+import { createUserMetadataBatcher } from './user-metadata-batcher'
+import type { ApiClient } from '../context'
+import type { UserSearchResult } from '../../auth/types'
 import type { EditorEntry } from '../Editor'
 import type { CommentThread } from '../../comment-store'
 import type { MockApiClient } from '../../api/__test__/mock-client'
@@ -9,6 +19,7 @@ import {
   setupMockConsole,
   createApiClientWrapper,
   createStrictModeApiClientWrapper,
+  gatewayPage,
 } from './__test__/test-utils'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 
@@ -119,7 +130,7 @@ describe('useCommentSystem', () => {
     mockClient.comments.list.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { threads: [] },
+      data: { threads: [], users: [] },
     })
     mockReloadBranches.mockResolvedValue(undefined)
   })
@@ -152,7 +163,7 @@ describe('useCommentSystem', () => {
     mockClient.comments.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { threads: mockComments },
+      data: { threads: mockComments, users: [] },
     })
 
     await act(async () => {
@@ -165,25 +176,41 @@ describe('useCommentSystem', () => {
     expect(mockClient.comments.list).toHaveBeenCalledWith({ branch: 'main' })
   })
 
-  it('handles load comments error gracefully', async () => {
+  it('reports no comments for a branch whose comments failed to load', async () => {
+    const { restore } = setupMockConsole(['error'])
+    mockClient.comments.list.mockRejectedValueOnce(
+      new ApiTimeoutError('GET', '/main/comments', 75_000),
+    )
+    const onCommentsChange = vi.fn()
+    renderHook(() => useCommentSystem({ ...defaultOptions, onCommentsChange }), { wrapper })
+
+    await waitFor(() => expect(onCommentsChange).toHaveBeenCalledWith([]))
+    restore()
+  })
+
+  it('keeps the threads already shown when a reload fails', async () => {
     const { error, restore } = setupMockConsole(['error'])
+    mockClient.comments.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { threads: mockComments, users: [] },
+    })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions), {
       wrapper,
     })
+    await waitFor(() => expect(result.current.comments).toEqual(mockComments))
 
-    // Override the default mock for this specific test
     mockClient.comments.list.mockResolvedValueOnce({
       ok: false,
       status: 500,
     })
-
     await act(async () => {
       await result.current.loadComments('main')
     })
 
-    expect(error).toHaveBeenCalledWith('Failed to load comments:', 500)
-    expect(result.current.comments).toEqual([])
+    expect(error).toHaveBeenCalledWith('Failed to load comments:', expect.any(Error))
+    expect(result.current.comments).toEqual(mockComments)
     restore()
   })
 
@@ -195,7 +222,7 @@ describe('useCommentSystem', () => {
     mockClient.comments.list.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { threads: mockComments },
+      data: { threads: mockComments, users: [] },
     })
 
     const strictWrapper = createStrictModeApiClientWrapper(mockClient)
@@ -212,7 +239,7 @@ describe('useCommentSystem', () => {
     mockClient.comments.list.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { threads: [] },
+      data: { threads: [], users: [] },
     })
 
     const { rerender } = renderHook((props) => useCommentSystem(props), {
@@ -238,12 +265,12 @@ describe('useCommentSystem', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { threads: [] },
+        data: { threads: [], users: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { threads: mockComments },
+        data: { threads: mockComments, users: [] },
       })
 
     mockClient.comments.add.mockResolvedValueOnce({
@@ -278,12 +305,12 @@ describe('useCommentSystem', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { threads: [] },
+        data: { threads: [], users: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { threads: [] },
+        data: { threads: [], users: [] },
       })
 
     mockClient.comments.add.mockResolvedValueOnce({
@@ -315,12 +342,12 @@ describe('useCommentSystem', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { threads: [] },
+        data: { threads: [], users: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { threads: [] },
+        data: { threads: [], users: [] },
       })
 
     mockClient.comments.add.mockResolvedValueOnce({
@@ -350,7 +377,7 @@ describe('useCommentSystem', () => {
     mockClient.comments.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { threads: [] },
+      data: { threads: [], users: [] },
     })
 
     mockClient.comments.add.mockResolvedValueOnce({
@@ -363,10 +390,58 @@ describe('useCommentSystem', () => {
     })
 
     await act(async () => {
-      await result.current.handleAddComment('Test comment', 'field', 'entry1', 'title')
+      await expect(
+        result.current.handleAddComment('Test comment', 'field', 'entry1', 'title'),
+      ).rejects.toThrow(COMMENT_NOT_ADDED)
     })
 
     expect(mockReloadBranches).not.toHaveBeenCalled()
+  })
+
+  it('rejects when the request itself fails, so the caller keeps the text', async () => {
+    mockClient.comments.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { threads: [], users: [] },
+    })
+    mockClient.comments.add.mockRejectedValueOnce(new Error('network down'))
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    await act(async () => {
+      await expect(result.current.handleAddComment('Test comment', 'branch')).rejects.toThrow(
+        COMMENT_NOT_ADDED,
+      )
+    })
+  })
+
+  it('says a timed-out post may have landed, and reloads the threads to show it if it did', async () => {
+    const landed = { ...mockComments[0], id: 'landed-thread' }
+    mockClient.comments.list
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { threads: [], users: [] } })
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { threads: [landed], users: [] } })
+    mockClient.comments.add.mockRejectedValueOnce(
+      new ApiTimeoutError('POST', '/main/comments', 75_000),
+    )
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    await waitFor(() => expect(mockClient.comments.list).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      await expect(result.current.handleAddComment('Test comment', 'branch')).rejects.toThrow(
+        COMMENT_MAY_BE_ADDED,
+      )
+    })
+
+    await waitFor(() => expect(result.current.comments).toEqual([landed]))
+  })
+
+  it("says a post answered by a gateway's 5xx page may have been posted", async () => {
+    mockClient.comments.add.mockResolvedValueOnce(await gatewayPage(504))
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+
+    await act(async () => {
+      await expect(result.current.handleAddComment('Test comment', 'branch')).rejects.toThrow(
+        COMMENT_MAY_BE_ADDED,
+      )
+    })
   })
 
   it('resolves thread successfully', async () => {
@@ -374,12 +449,12 @@ describe('useCommentSystem', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { threads: [] },
+        data: { threads: [], users: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { threads: [] },
+        data: { threads: [], users: [] },
       })
 
     mockClient.comments.resolve.mockResolvedValueOnce({
@@ -407,7 +482,7 @@ describe('useCommentSystem', () => {
     mockClient.comments.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { threads: [] },
+      data: { threads: [], users: [] },
     })
 
     mockClient.comments.resolve.mockResolvedValueOnce({
@@ -420,7 +495,9 @@ describe('useCommentSystem', () => {
     })
 
     await act(async () => {
-      await result.current.handleResolveThread('thread1')
+      await expect(result.current.handleResolveThread('thread1')).rejects.toThrow(
+        THREAD_NOT_RESOLVED,
+      )
     })
 
     expect(mockReloadBranches).not.toHaveBeenCalled()
@@ -430,7 +507,7 @@ describe('useCommentSystem', () => {
     mockClient.comments.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { threads: mockComments },
+      data: { threads: mockComments, users: [] },
     })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions), {
@@ -457,7 +534,7 @@ describe('useCommentSystem', () => {
     mockClient.comments.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { threads: mockComments },
+      data: { threads: mockComments, users: [] },
     })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions), {
@@ -481,7 +558,7 @@ describe('useCommentSystem', () => {
     mockClient.comments.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { threads: mockComments },
+      data: { threads: mockComments, users: [] },
     })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions), {
@@ -802,5 +879,107 @@ describe('useCommentSystem', () => {
     })
 
     expect(mockClient.comments.resolve).not.toHaveBeenCalled()
+  })
+
+  describe('names from the comments response', () => {
+    const users = [
+      { id: 'user1', name: 'Ada Lovelace', avatarUrl: 'https://avatars.example.test/ada.png' },
+    ]
+
+    beforeEach(() => {
+      mockClient.comments.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { threads: mockComments, users },
+      })
+    })
+
+    it('resolves a named user from the response, with no request and no email', async () => {
+      const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.comments).toHaveLength(3))
+
+      await expect(result.current.getCommentUser('user1')).resolves.toEqual({
+        ...users[0],
+        email: '',
+      })
+      await expect(result.current.getCommentUser('someone-else')).resolves.toBeNull()
+      expect(mockClient.permissions.getUserMetadata).not.toHaveBeenCalled()
+      expect(mockClient.permissions.batchGetUserMetadata).not.toHaveBeenCalled()
+    })
+
+    it('seeds the user-metadata cache, so a badge is named while its own lookup is pending', async () => {
+      const pendingLookup = () => new Promise<UserSearchResult | null>(() => {})
+      const { result } = renderHook(
+        () => ({
+          system: useCommentSystem(defaultOptions),
+          badge: useUserMetadata('user1', pendingLookup),
+        }),
+        { wrapper },
+      )
+
+      await waitFor(() => expect(result.current.badge.userMetadata?.name).toBe('Ada Lovelace'))
+    })
+
+    it('posts a reply without waiting on a directory lookup that never answers', async () => {
+      // A privileged viewer's badges look users up through the real batcher.
+      mockClient.permissions.batchGetUserMetadata.mockReturnValue(new Promise(() => {}))
+      const lookup = createUserMetadataBatcher(mockClient as unknown as ApiClient)
+      mockClient.comments.add.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { threadId: 'thread1', commentId: 'c9' },
+      })
+      const { result } = renderHook(
+        () => ({
+          system: useCommentSystem(defaultOptions),
+          badge: useUserMetadata('user1', lookup),
+        }),
+        { wrapper },
+      )
+      await waitFor(() => expect(result.current.system.comments).toHaveLength(3))
+      await waitFor(() => expect(mockClient.permissions.batchGetUserMetadata).toHaveBeenCalled())
+      mockClient.comments.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: {
+          threads: [mockComments[0]],
+          users: [{ id: 'user1', name: 'Ada King' }],
+        },
+      })
+
+      let outcome: 'posted' | 'waiting-on-lookup' | undefined
+      await act(async () => {
+        outcome = await Promise.race([
+          result.current.system
+            .handleAddComment('Reply', 'field', 'entry1', 'title', 'thread1')
+            .then(() => 'posted' as const),
+          new Promise<'waiting-on-lookup'>((resolve) =>
+            setTimeout(() => resolve('waiting-on-lookup'), 500),
+          ),
+        ])
+      })
+
+      expect(outcome).toBe('posted')
+      expect(result.current.system.comments).toHaveLength(1)
+      expect(result.current.badge.userMetadata?.name).toBe('Ada King')
+    })
+
+    it('keeps a user named by an earlier response when a reload names no one', async () => {
+      const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+      await waitFor(async () =>
+        expect((await result.current.getCommentUser('user1'))?.name).toBe('Ada Lovelace'),
+      )
+
+      mockClient.comments.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { threads: mockComments, users: [] },
+      })
+      await act(async () => {
+        await result.current.loadComments('main')
+      })
+
+      expect((await result.current.getCommentUser('user1'))?.name).toBe('Ada Lovelace')
+    })
   })
 })

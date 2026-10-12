@@ -207,7 +207,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
     expect(canSubmit).toBe(true)
   })
 
-  test('permission boundaries: non-reviewers cannot request changes', async ({ page }) => {
+  test('permission boundaries: non-reviewers are not offered request changes', async ({ page }) => {
     const branchName = `test-permissions-${Date.now()}`
 
     // Set editor user and create/submit branch
@@ -226,9 +226,9 @@ test.describe('Branch Lifecycle & Workflow', () => {
     // Wait for branch to appear (editor can see their own branch)
     await branchPage.waitForBranchInList(branchName)
 
-    // Verify request changes button is disabled for non-reviewer
-    const isDisabled = await branchPage.isActionButtonDisabled(branchName, 'request-changes')
-    expect(isDisabled).toBe(true)
+    // Request changes is not offered to a non-reviewer at all, though the branch is in review
+    expect(await branchPage.actionState(branchName, 'request-changes')).toBe('absent')
+    expect(await branchPage.actionState(branchName, 'withdraw')).toBe('enabled')
   })
 
   test("permission boundaries: admin can withdraw another user's branch", async ({ page }) => {
@@ -286,11 +286,11 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.verifyBranchStatus(branchName, 'submitted')
 
     // Cannot delete submitted branch
-    const canDeleteSubmitted = await branchPage.isActionButtonDisabled(branchName, 'delete')
-    expect(canDeleteSubmitted).toBe(true)
+    expect(await branchPage.actionState(branchName, 'delete')).toBe('disabled')
 
     // Withdraw it
     await branchPage.withdrawBranch(branchName)
+    await branchPage.verifyBranchStatus(branchName, 'editing')
 
     // Now can delete again
     await branchPage.deleteBranch(branchName)

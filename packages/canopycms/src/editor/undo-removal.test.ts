@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import type { FieldConfig } from '../config'
-import { removalAnchors, restoreRemoval, type FieldRemoval } from './undo-removal'
+import {
+  removalAnchors,
+  restoredFieldPath,
+  restoreRemoval,
+  type FieldRemoval,
+} from './undo-removal'
 
 const fields: FieldConfig[] = [
   { name: 'title', type: 'string' },
@@ -233,5 +238,49 @@ describe('restoreRemoval', () => {
         { kind: 'list-item', listPath: ['links'], index: 1, item, label: '/b' },
       ),
     ).toBeUndefined()
+  })
+})
+
+describe('restoredFieldPath', () => {
+  const link = (index: number): FieldRemoval => ({
+    kind: 'list-item',
+    listPath: ['links'],
+    index,
+    item: { href: '/c' },
+    label: '/c',
+  })
+
+  it('is the removed index while the list still reaches it', () => {
+    const value = { links: [{ href: '/a' }, { href: '/b' }] }
+    expect(restoredFieldPath(fields, value, link(1))).toEqual(['links', 1])
+  })
+
+  it('is where restoreRemoval actually inserts, once the list has shrunk below the index', () => {
+    const value = { links: [{ href: '/b' }] }
+    expect(restoredFieldPath(fields, value, link(2))).toEqual(['links', 1])
+    expect(restoreRemoval(fields, value, link(2))?.links).toEqual([{ href: '/b' }, { href: '/c' }])
+    expect(restoredFieldPath(fields, {}, link(2))).toEqual(['links', 0])
+  })
+
+  it('clamps a list inside a block through the block value', () => {
+    const removal: FieldRemoval = {
+      kind: 'list-item',
+      listPath: ['blocks', 0, 'items'],
+      index: 4,
+      item: { caption: 'x' },
+      label: 'x',
+    }
+    const value = { blocks: [{ template: 'gallery', value: { items: [{ caption: 'y' }] } }] }
+    expect(restoredFieldPath(fields, value, removal)).toEqual(['blocks', 0, 'items', 1])
+  })
+
+  it('is the field itself for a removed value', () => {
+    const removal: FieldRemoval = {
+      kind: 'value',
+      path: ['meta', 'hero'],
+      value: 'a.png',
+      label: 'x',
+    }
+    expect(restoredFieldPath(fields, {}, removal)).toEqual(['meta', 'hero'])
   })
 })

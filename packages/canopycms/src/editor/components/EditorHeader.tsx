@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, useRef, type Ref } from 'react'
 import {
   Alert,
   Badge,
@@ -14,6 +14,7 @@ import {
   Tooltip,
   VisuallyHidden,
 } from '@mantine/core'
+import { useMergedRef } from '@mantine/hooks'
 import { IconFolderOpen, IconChevronDown, IconGitBranch, IconLock } from '@tabler/icons-react'
 import type { OperatingMode } from '../../operating-mode'
 import type { BranchStatus } from '../../types'
@@ -22,7 +23,10 @@ import type { LogicalPath } from '../../paths/types'
 import { clientOperatingStrategy } from '../../operating-mode/client'
 import { isAdmin, isReviewer } from '../../authorization/helpers'
 import { branchStatusPresentation } from '../branch-status'
+import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
+import { ReasonedMenuItem } from './ReasonedMenuItem'
+import { useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
   /**
@@ -89,6 +93,12 @@ export interface EditorHeaderProps {
    * Callback to open the entry navigator.
    */
   onNavigatorOpen: () => void
+
+  /** Ref to the button whose menu opens the file navigator. */
+  navigatorToggleRef?: Ref<HTMLButtonElement>
+
+  /** Ref to the button whose menu opens the branch manager and discards all drafts. */
+  branchToggleRef?: Ref<HTMLButtonElement>
 
   /**
    * Callback to reload the current file.
@@ -207,6 +217,8 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
     unresolvedCommentCount: _,
     comments,
     onNavigatorOpen,
+    navigatorToggleRef,
+    branchToggleRef,
     onFileReload,
     onFileDiscardDraft,
     onEntrySelect,
@@ -244,6 +256,36 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   // contradicts). In both cases the banner says data is unavailable instead.
   const branchDataUnavailable =
     statusLocked && (branchStatus === undefined || branchStatus === 'editing')
+
+  const fileToggle = useRef<HTMLButtonElement>(null)
+  const fileToggleRef = useMergedRef(fileToggle, navigatorToggleRef)
+  const branchToggle = useRef<HTMLButtonElement>(null)
+  const branchToggleMergedRef = useMergedRef(branchToggle, branchToggleRef)
+  const fileMenuFocus = useMenuItemFocusReturn(fileToggle)
+  const branchMenuFocus = useMenuItemFocusReturn(branchToggle)
+
+  // Save stays focusable while blocked (`aria-disabled`, not `disabled`), so its reason opens on
+  // keyboard focus and touch as well as hover; the click does nothing.
+  const saveBlocked =
+    !branchName || !currentEntry || busy || !hasUnsavedChanges || branchReadOnly || statusLocked
+  // Why Save is blocked, with the way forward. The Tooltip hides it while a save is in flight.
+  const saveBlockedReason = branchReadOnly
+    ? 'The base branch is read-only. Create a branch to make changes.'
+    : branchDataUnavailable
+      ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
+      : statusLocked
+        ? branchStatus === 'submitted'
+          ? 'This branch is in review. Withdraw it to make changes.'
+          : branchStatus === 'approved'
+            ? 'This branch is approved. Withdraw it to make changes.'
+            : `This branch is ${branchStatus}. Its content is read-only.`
+        : !branchName
+          ? 'Open a branch first.'
+          : !currentEntry
+            ? 'Open an entry to save it.'
+            : !hasUnsavedChanges
+              ? 'No changes to save.'
+              : ''
 
   const statusPresentation = branchStatusPresentation(branchStatus, branchIsProtected)
   const unresolvedCount = comments.filter((t) => !t.resolved).length
@@ -286,29 +328,39 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               align="center"
               style={{ minWidth: 0, justifyContent: 'center' }}
             >
-              <Menu withinPortal shadow="sm">
+              <Menu withinPortal shadow="sm" {...fileMenuFocus.menu}>
                 <Menu.Target>
                   <Button
+                    ref={fileToggleRef}
                     data-testid="file-dropdown-button"
                     variant="outline"
                     color="gray"
                     leftSection={<IconFolderOpen size={16} />}
                     rightSection={<IconChevronDown size={14} />}
                   >
-                    {currentEntry?.label ?? 'No file selected'}
+                    {currentEntry?.label ?? 'No entry selected'}
                   </Button>
                 </Menu.Target>
-                <Menu.Dropdown>
-                  <Menu.Item onClick={onFileReload} disabled={!branchName || !currentEntry}>
-                    Reload File
-                  </Menu.Item>
-                  <Menu.Item
+                <Menu.Dropdown {...fileMenuFocus.dropdown}>
+                  <ReasonedMenuItem
+                    onClick={onFileReload}
+                    blockedReason={
+                      !branchName
+                        ? 'Open a branch first.'
+                        : !currentEntry
+                          ? 'Open an entry first.'
+                          : undefined
+                    }
+                  >
+                    Reload entry
+                  </ReasonedMenuItem>
+                  <ReasonedMenuItem
                     data-testid="discard-file-draft-menu-item"
                     onClick={onFileDiscardDraft}
-                    disabled={!currentEntry}
+                    blockedReason={currentEntry ? undefined : 'Open an entry first.'}
                   >
-                    Discard File Draft
-                  </Menu.Item>
+                    Discard changes
+                  </ReasonedMenuItem>
                   <Menu.Divider />
                   <Menu.Item data-testid="all-files-menu-item" onClick={onNavigatorOpen}>
                     All Files
@@ -316,16 +368,12 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Menu.Divider />
                   <Menu.Label>Recently modified</Menu.Label>
                   {editedFiles.slice(0, 3).length === 0 ? (
-                    <Menu.Item disabled>&lt;none&gt;</Menu.Item>
+                    <Text size="sm" c="dimmed" px="sm" py={6}>
+                      No recently modified entries
+                    </Text>
                   ) : (
                     editedFiles.slice(0, 3).map((file) => (
-                      <Menu.Item
-                        key={file.path}
-                        onClick={() => {
-                          onEntrySelect(file.path)
-                          onNavigatorOpen()
-                        }}
-                      >
+                      <Menu.Item key={file.path} onClick={() => onEntrySelect(file.path)}>
                         {file.label}
                       </Menu.Item>
                     ))
@@ -341,16 +389,22 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                         /
                       </Text>
                     )}
-                    <Button variant="subtle" px="xs" onClick={onNavigatorOpen}>
+                    <Button
+                      variant="subtle"
+                      px="xs"
+                      onClick={onNavigatorOpen}
+                      data-testid="breadcrumb-segment"
+                    >
                       {segment}
                     </Button>
                   </Group>
                 ))}
               </Group>
 
-              <Menu withinPortal shadow="sm">
+              <Menu withinPortal shadow="sm" {...branchMenuFocus.menu}>
                 <Menu.Target>
                   <Button
+                    ref={branchToggleMergedRef}
                     variant="outline"
                     color="gray"
                     leftSection={<IconGitBranch size={16} />}
@@ -361,33 +415,37 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     {branchName || (busy ? 'Loading branches…' : 'No branch selected')}
                   </Button>
                 </Menu.Target>
-                <Menu.Dropdown data-testid="branch-menu">
-                  <Menu.Item onClick={onBranchReloadData} disabled={!branchName}>
-                    Reload All Files
-                  </Menu.Item>
-                  <Menu.Item
+                <Menu.Dropdown data-testid="branch-menu" {...branchMenuFocus.dropdown}>
+                  <ReasonedMenuItem
+                    onClick={onBranchReloadData}
+                    blockedReason={branchName ? undefined : 'Open a branch first.'}
+                  >
+                    Reload all entries
+                  </ReasonedMenuItem>
+                  <ReasonedMenuItem
                     data-testid="discard-all-drafts-menu-item"
                     onClick={onBranchDiscardDrafts}
-                    disabled={!branchName}
+                    blockedReason={branchName ? undefined : 'Open a branch first.'}
                   >
-                    Discard All File Drafts
-                  </Menu.Item>
+                    Discard all changes
+                  </ReasonedMenuItem>
                   <Menu.Divider />
                   <Menu.Item onClick={onBranchManagerOpen} data-testid="manage-branches-menu-item">
-                    Change / Manage Branches
+                    {`${EDITOR_ACTIONS.switchBranch}…`}
                   </Menu.Item>
                   <Menu.Divider />
-                  <Menu.Label>{`${modifiedCount} file${modifiedCount === 1 ? '' : 's'} modified`}</Menu.Label>
+                  {modifiedCount > 0 && (
+                    <Menu.Label>{`${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'} modified`}</Menu.Label>
+                  )}
                   {editedFiles.length === 0 ? (
-                    <Menu.Item disabled>No edited files yet</Menu.Item>
+                    <Text size="sm" c="dimmed" px="sm" py={6}>
+                      No edited entries yet
+                    </Text>
                   ) : (
                     editedFiles.map((file) => (
                       <Menu.Item
                         key={`branch-mod-${file.path}`}
-                        onClick={() => {
-                          onEntrySelect(file.path)
-                          onNavigatorOpen()
-                        }}
+                        onClick={() => onEntrySelect(file.path)}
                       >
                         {file.label}
                       </Menu.Item>
@@ -447,7 +505,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Text
                     size="xs"
                     lh={1.2}
-                    c={draftStorageFailed ? 'red.9' : 'gray.7'}
+                    c={draftStorageFailed ? 'red.9' : 'dimmed'}
                     data-testid="unsaved-indicator"
                   >
                     {draftStorageFailed
@@ -463,36 +521,23 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               )}
             </Box>
             <Tooltip
-              label={
-                branchReadOnly
-                  ? 'The base branch is read-only'
-                  : branchDataUnavailable
-                    ? 'Branch details are still loading — saving is disabled until they arrive'
-                    : statusLocked
-                      ? branchStatus === 'submitted'
-                        ? 'This branch is submitted for review — withdraw it to make changes'
-                        : `This branch is ${branchStatus} — content is read-only`
-                      : !hasUnsavedChanges && currentEntry
-                        ? 'No changes to save'
-                        : ''
-              }
-              disabled={!branchReadOnly && !statusLocked && (hasUnsavedChanges || !currentEntry)}
+              label={saveBlockedReason}
+              disabled={!saveBlocked || busy}
+              events={{ hover: true, focus: true, touch: true }}
+              multiline
+              maw={280}
             >
               <Button
                 data-testid="save-button"
                 variant="light"
                 size="sm"
-                onClick={onSave}
-                disabled={
-                  !branchName ||
-                  !currentEntry ||
-                  busy ||
-                  !hasUnsavedChanges ||
-                  branchReadOnly ||
-                  statusLocked
-                }
+                onClick={() => {
+                  if (!saveBlocked) onSave()
+                }}
+                data-disabled={saveBlocked ? true : undefined}
+                aria-disabled={saveBlocked ? true : undefined}
               >
-                Save File
+                {EDITOR_ACTIONS.save}
               </Button>
             </Tooltip>
             {(() => {
@@ -534,6 +579,8 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               // sent people to an admin to fix a non-permissions problem.
               const statusHasAction = isEditing || isWithdrawable
               const canPerformAction = userHasPermission && statusHasAction
+              // Blocked, it stays focusable (`aria-disabled`), so its reason opens on focus.
+              const actionBlocked = !branchName || busy || !canPerformAction
 
               return (
                 <Tooltip
@@ -544,23 +591,33 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     // today only as a side effect of `branchIsProtected`'s `?? true`
                     // default -- not a guarantee this arm stays unreachable.
                     branchStatus === undefined
-                      ? 'Branch data could not be loaded, so no submit or withdraw action is available'
+                      ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
                       : !statusHasAction
-                        ? `This branch is ${branchStatus} and has no submit or withdraw action available`
+                        ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
                         : !userHasPermission
-                          ? 'You do not have permission to submit or withdraw this branch'
+                          ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
                           : ''
                   }
                   disabled={canPerformAction}
+                  events={{ hover: true, focus: true, touch: true }}
+                  multiline
+                  maw={320}
                 >
                   <Button
                     size="sm"
                     color={isWithdrawable ? 'orange' : 'brand'}
-                    onClick={isWithdrawable ? onWithdraw : onSubmit}
-                    disabled={!branchName || busy || !canPerformAction}
+                    onClick={() => {
+                      if (actionBlocked) return
+                      if (isWithdrawable) onWithdraw()
+                      else onSubmit()
+                    }}
+                    data-disabled={actionBlocked ? true : undefined}
+                    aria-disabled={actionBlocked ? true : undefined}
                     data-testid={isWithdrawable ? 'withdraw-button' : 'submit-button'}
                   >
-                    {isWithdrawable ? 'Withdraw Branch...' : 'Submit Branch...'}
+                    {isWithdrawable
+                      ? EDITOR_ACTIONS.withdrawFromReview
+                      : EDITOR_ACTIONS.submitForReview}
                   </Button>
                 </Tooltip>
               )
@@ -580,7 +637,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 {`You are viewing the protected base branch "${branchName}". Content is read-only — create a branch to make changes.`}
               </Text>
               <Button variant="default" onClick={onBranchManagerOpen}>
-                Create a branch
+                {`${EDITOR_ACTIONS.newBranch}…`}
               </Button>
             </Group>
           </Alert>
@@ -596,13 +653,13 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
             <Group justify="space-between" align="center" gap="sm" wrap="wrap">
               <Text size="sm">
                 {branchDataUnavailable
-                  ? `Branch details for "${branchName}" could not be loaded, so content is locked until they arrive. Use Manage Branches to retry.`
+                  ? `Branch details for "${branchName}" could not be loaded, so content is locked until they arrive. Use Switch branch… to retry.`
                   : branchStatus === 'submitted'
-                    ? `Branch "${branchName}" is submitted for review and locked for edits. Use Withdraw Branch above to resume editing.`
+                    ? `Branch "${branchName}" is submitted for review and locked for edits. Withdraw it from review to make changes.`
                     : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
               </Text>
               <Button variant="default" onClick={onBranchManagerOpen}>
-                Manage Branches
+                {`${EDITOR_ACTIONS.switchBranch}…`}
               </Button>
             </Group>
           </Alert>

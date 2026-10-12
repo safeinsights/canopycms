@@ -141,6 +141,7 @@ Support files:
 - `settings-helpers.ts` — settings-branch context resolution and commit helpers
 - `entries-constants.ts`, `branch-create-window.ts`, `users-constants.ts` — entries pagination caps, `ENTRY_CHANGED_MESSAGE`; the idempotent branch-create window; `MAX_USER_METADATA_BATCH`. Dependency-free so the editor bundle can import them
 - `request-body-hash.ts` — computes the `x-amz-content-sha256` CloudFront OAC requires on a body-carrying request
+- `request-deadline.ts` — every client call's deadline and `ApiTimeoutError`; an endpoint's `clientTimeout` picks its class
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
 - `client.ts` — generated API client; `ApiClientOptions.onUnauthorized` reports every 401, `trailingSlash` shapes request URLs
@@ -158,7 +159,7 @@ the dependency-free modules above.
 **Location**: `packages/canopycms/src/auth/`
 
 - `plugin.ts` — `AuthPlugin` interface (optional `getUsersMetadata`), `verifiesCredentials` marker, `assertAuthPluginAllowedForMode`
-- `user-metadata-lookup.ts` — `lookupUsersMetadata`: the `/users` lookups' per-process cache and batching
+- `user-metadata-lookup.ts` — `lookupUsersMetadata`: per-process cached, batched `/users` lookups; `lookupUserProfiles`, emailless
 - `types.ts` — `CanopyUser`, `AuthPluginConfig`, `AuthenticationResult`, `GroupMetadata`, `PermissionGroupOption`
 - `context-helpers.ts` — auth context helpers, `extractHeaders` and `isCanopyRequest`
 - `caching-auth-plugin.ts` — `CachingAuthPlugin`, `AuthCacheProvider`, `TokenVerifier`: local token verify plus cached metadata
@@ -489,28 +490,33 @@ Top-level components and helpers:
 - `EditorAuthGate.tsx` — between `ApiClientProvider` and `Editor`; signed-out decided by API 401s, sign-in full-screen before mount, overlay after
 - `Editor.tsx` — the composition root
 - `EditorPanes.tsx` — pane layout
-- `EntryNavigator.tsx` — collection and entry tree, with per-collection conflict badges
+- `EntryNavigator.tsx` — entry tree: filter, unsaved dots, read-only locks, conflict badges
+- `entry-search.ts` — label/slug match, collection grouping
 - `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
+- `FormHeader.tsx` / `form-outline.ts` — the form's sticky header and its field outline
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
 - `CommentsPanel.tsx` — comment panel
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group, permission drawers
 - `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; see [Preview Bridge](#preview-bridge)
 - `unavailable-entry-type.ts` — unavailable-entry-type wording
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
-- `editor-utils.ts` — `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)
+- `editor-utils.ts` — `buildPreviewRoute`, `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)
 - `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
 - `preview-asset-base.ts` — the preview's asset-route prefix `assetUrl` reads
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
 - `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
+- `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`, `revealField`
 - `undo-removal.ts` — `FieldRemoval`, `restoreRemoval` — undo for a form Remove
 - `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
 - `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
 - `preview-marks.ts` — `findInexactMarks`, for `hooks/usePreviewMarks.ts`
 - `client-reference-resolver.ts` — resolves preview references at any depth, batched
-- `relative-time.ts` — `formatRelativeTime`
+- `relative-time.ts` — `formatRelativeTime`; `components/RelativeTime.tsx` adds a tooltip
 - `theme.tsx` — theme, default control sizes
 - `branch-status.ts` — shared status label/colour map
 - `copy.ts` — fixed action verbs
+- `platform.ts` — `modKeyLabel()`, ⌘ or Ctrl
+- `slug.ts` — `slugFromTitle`; `validateEntrySlug`, the one slug validator
 - `utils/env.ts` — `getNotificationDuration`, longer under test
 - `utils/confirm-modal.ts` — `openConfirm`, confirm dialogs at `sm`
 - `utils/editor-errors.ts` — `reportEditorError` (one logging point), `formatErrorDetails`
@@ -525,15 +531,14 @@ Context providers, in `editor/context/`:
 - `AssetContext.tsx` — editor asset-URL prefix
 - `index.ts` — context exports
 
-Editor code takes the API client from `useOptionalApiClient()`, never `createApiClient()`, which
-bypasses the provider's prefixed base.
+Take the API client from `useOptionalApiClient()`; `createApiClient()` bypasses the prefixed base.
 
 Manager hooks, in `editor/hooks/` — see
 [hooks/README.md](packages/canopycms/src/editor/hooks/README.md) for which are SWR-backed:
 
 - `useBranchManager.tsx` — branch state; adopts the server's `defaultBranch` when unpinned; overlays just-created branches
 - `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm; adopts server-sanitized names
-- `create-branch-request.ts` — `requestBranchCreate`: create under a 90 s deadline, settling by the branch list
+- `create-branch-request.ts` — `requestBranchCreate`: a 90 s create deadline, settled by the branch list
 - `useEntryManager.ts` — entry loading/saving, `readEntryValue`, `listAllEntries` cursors
 - `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; verifies restored drafts
 - `useSchemaManager.ts` — schema mutations, returning result objects
@@ -541,7 +546,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
 - `user-metadata-batcher.ts` — `createUserMetadataBatcher`: a render's badge lookups as one `POST /users/batch`
 - `useEditorLayout.ts` — persisted layout prefs
-- `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and SWR-backed user metadata
+- `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`); SWR user metadata, `seedUserProfiles`
 - `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
 - `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` — the three SWR hooks; keys in the README
@@ -558,46 +563,55 @@ Field components, in `editor/fields/`:
 - `markdown-fidelity-visitors.ts` — round-trip fixes
 - `CodeField.tsx` — code and Mermaid field
 - `ObjectField.tsx` — nested object; Clear when optional and filled
-- `InlineGroupField.tsx` — renders `type: 'group'` as a bordered container, transparent to the data path
+- `ObjectListField.tsx` / `list-item-title.ts` — `list: true` objects; item titles
+- `ItemList.tsx` / `item-expansion.ts` — collapsible sortable rows
+- `InlineGroupField.tsx` — `type: 'group'` as a bordered container, transparent to the data path
 - `BlockField.tsx` — blocks
 - `list-item-keys.ts` — `useListItemKeys`, identity keys for object lists and `BlockField`
 - `ReferenceField.tsx` — reference picker
 - `ImageField.tsx` — structured image field, storing the raw `AssetRecord.src`
 - `MdxImageDialog.tsx` — image dialog
-- `FieldLabel.tsx` — label row with comment/action slots
+- `FieldLabel.tsx` — label row with comment/action slots; `LabelledInput`
 - `FieldDescription.tsx` — `description` without Mantine's native prop
 - `entry-link/EntryLinkContext.tsx` — supplies `EntryLinkOption[]` to toolbar components
 - `entry-link/InsertEntryLink.tsx` — toolbar entry picker, inserting `[Title](entry:ID)`
 
 Components, in `editor/components/`:
 
-- `EditorHeader.tsx` — save, submit and the read-only protected-branch banner
+- `EditorHeader.tsx` — save, submit, the read-only banner
 - `EditorFooter.tsx` / `EditorSidebar.tsx` — chrome
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
+- `QuickOpenPalette.tsx` — Mod+P quick-open palette
 - `BranchesDrawer.tsx` — Branches drawer
 - `StagedChangesDrawer.tsx` — unsaved-changes drawer shell
 - `UserBadge.tsx` — user avatar and name
+- `ReasonedMenuItem.tsx` — a blocked menu item and why
 - `UndoToastMessage.tsx` — a form Remove's undo toast
+- `RetryToastMessage.tsx` — a failed load's toast body with Retry
+- `ValidationSummary.tsx` — pre-save issues alert with breadcrumb buttons
 - `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`
 - `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the editor crash screen
 
 Comments UI, in `editor/comments/`:
 
-- `BranchComments.tsx` / `EntryComments.tsx` — branch-level and entry-level threads
-- `InlineCommentThread.tsx` / `ThreadCarousel.tsx` — thread rendering and navigation
-- `FieldWrapper.tsx` — wraps a field to carry comments
+- `BranchComments.tsx` / `ThreadCarousel.tsx` — branch discussion
+- `EntryComments.tsx` / `form-comments.tsx` — entry comments; Mod+Alt+M field menu
+- `CommentThreadsPopover.tsx` / `popover-placement.ts` — comment control, popover, its placement
+- `field-comment-context.ts` — `useFieldCommentControl`: a `FieldLabel`'s own control
+- `FieldWrapper.tsx` — provides that context, tracks hover and focus
+- `InlineCommentThread.tsx` / `ThreadReplyControls.tsx` — a thread, and its Reply and Resolve
 
 Media UI, in `editor/media/`:
 
-- `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser and dropzone
-- `AssetCard.tsx` — one asset's tile
+- `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser; `useAssetLibrary.ts` loads every page
+- `AssetCard.tsx` / `AssetListRow.tsx` — one asset's tile or row
 - `CropStep.tsx` — crop UI over `react-easy-crop`
 - `editor-image-src.ts` — editor image preview srcs
 - `crop-math.ts` — pure conversion between the crop library's `Area` and normalized `CropRect`
 - `upload-asset.ts` — shared presign, transport, finalize state machine behind every upload
 - `useAssetUpload.ts` — React hook over that state machine
-- `xhr-upload.ts` — raw XHR POST for presigned uploads, the only browser API exposing upload progress
-- `upload-constants.ts` — client-side upload UX caps, deliberately duplicated from the server-only pipeline
+- `xhr-upload.ts` — raw XHR POST for presigned uploads, with progress
+- `upload-constants.ts` — client-side upload UX caps; why duplicated in its header
 
 Schema editor, in `editor/schema-editor/`: `CollectionEditor.tsx`, `EntryTypeEditor.tsx`,
 `index.ts`.
@@ -617,13 +631,13 @@ Group manager, in `editor/group-manager/`:
 - `hooks/useGroupState.ts` / `hooks/useUserSearch.ts` / `hooks/useExternalGroupSearch.ts` — state and search
 - `types.ts` / `index.tsx` — types, entry point
 
-Admin UI, in `editor/admin/` — `Editor.tsx` renders it only for an admin; the component does not re-check.
+Admin UI, in `editor/admin/`, gated only by `Editor.tsx`:
 
 - `SystemHealthPanel.tsx` — Overview, Tasks and Branches tabs over the admin endpoints
-- `useSystemHealth.tsx` — loads status, tasks and branch health on open, polls every 30 s, exposes the actions
+- `useSystemHealth.tsx` — loads on open, polls every 30 s, exposes the actions
 
-Conflict indicators per entry (`FormRenderer`'s `conflictNotice` prop) and per collection
-(`EntryNavCollection.conflictNotice`, rendered as a badge), both computed in `Editor.tsx` from `currentBranch.conflictFiles`.
+Conflict notices (`FormRenderer`'s `conflictNotice`, `EntryNavCollection.conflictNotice`) are
+computed in `Editor.tsx` from `currentBranch.conflictFiles`.
 
 Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 
@@ -781,7 +795,7 @@ parse-versus-create-versus-cast conventions.
 [AGENTS.md](packages/canopycms/src/validation/AGENTS.md)
 
 - `field-traversal.ts` — schema-aware traversal of nested data: `traverseFields`, `findFieldsByType`, `collectReferenceIds`, the `onContainer` hook
-- `entry-validator.ts` — `validateEntryData`, `findUnknownKeys` and `normalizeReferenceValues`, shared by the editor and the write boundary
+- `entry-validator.ts` — `validateEntryData` (`{ required }` option), `findUnknownKeys` and `normalizeReferenceValues`, shared by the editor and the write boundary
 - `reference-validator.ts` — reference field validation: ID format, existence, collection and entry-type constraints
 - `entry-type-reference-validator.ts` — `validateReferenceEntryTypes`, checks a reference's `entryTypes` against the resolved schema
 - `entry-link-validator.ts` — `validateEntryLinks`, warns on broken `entry:ID` links at save time
@@ -825,7 +839,7 @@ in `server.ts` and `client.ts`. See
 - `yaml-source-splice.ts` — `spliceSource`, its YAML half
 - `json-source-splice.ts` — `serializeJson`, the JSON half
 - `body-field.ts` — `isBody` flag validation, including `findReservedBodyFieldName`
-- `title-field.ts` — `isTitle` flag utilities: `resolveEntryTitle`, `findInvalidTitleFields`, `findTitleFieldsInLists`
+- `title-field.ts` — `isTitle` flag utilities: `resolveEntryTitle`, `titleFieldPath` / `withTitleAtPath`, `findInvalidTitleFields`, `findTitleFieldsInLists`
 - `entry-url.ts` — `computeEntryUrl` (collection plus slug to URL) and `isIndexSlug`
 - `typed-filename.ts` — `parseTypedFilename`, the `{type}.{slug}.{id}.{ext}` grammar
 - `flatten-group-fields.ts` — `flattenGroupFields`, flattens inline groups
