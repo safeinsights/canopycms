@@ -547,6 +547,27 @@ describe('CanopyApiClient', () => {
       expect(fetch).toHaveBeenCalledTimes(2)
     })
 
+    it('sends nothing when the deadline passes while the body is still being hashed', async () => {
+      let hashed: (digest: ArrayBuffer) => void = () => {}
+      vi.spyOn(globalThis.crypto.subtle, 'digest').mockReturnValue(
+        new Promise<ArrayBuffer>((resolve) => {
+          hashed = resolve
+        }),
+      )
+      const { fetch } = stalledFetch()
+      const pending = new CanopyApiClient({ fetch }).comments.add(
+        { branch: 'main' },
+        { text: 'hi', type: 'entry', entryPath: 'posts/hello' },
+      )
+      const rejection = expect(pending).rejects.toBeInstanceOf(ApiTimeoutError)
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard)
+      await rejection
+
+      hashed(new ArrayBuffer(32))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
     it('clears its deadline once the response arrives', async () => {
       const fetch = vi.fn(answered)
       await new CanopyApiClient({ fetch }).branches.list()

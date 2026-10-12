@@ -64,6 +64,7 @@ describe('requestBranchCreate', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('returns the created branch', async () => {
@@ -122,6 +123,8 @@ describe('requestBranchCreate', () => {
   })
 
   it('abandons the create request itself at the deadline', async () => {
+    // WebCrypto hashes off the fake clock; resolved at once, the POST goes out before the deadline.
+    vi.spyOn(globalThis.crypto.subtle, 'digest').mockResolvedValue(new ArrayBuffer(32))
     let createSignal: AbortSignal | undefined
     const fetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'POST') {

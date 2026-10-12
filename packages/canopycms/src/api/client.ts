@@ -474,6 +474,8 @@ export class CanopyApiClient {
       init.body = requestBody
     }
 
+    // Hashing the body is async, so the deadline may already have passed: send nothing then.
+    signal.throwIfAborted()
     let response = await this.fetchFn(url, init)
     // A body from in front of the API (a proxy or CDN error page) may be empty, not JSON, or
     // not an ApiResponse; every such body becomes an `ok: false` ApiResponse, never a throw.
