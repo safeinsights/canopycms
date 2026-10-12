@@ -735,6 +735,52 @@ describe('the form keyboard route to field comments', () => {
     expect(screen.queryByTestId('field-comment-title-popover')).toBeNull()
   })
 
+  it('leaves AltGr+M alone where it types another character', async () => {
+    renderForm()
+    const input = screen.getByLabelText('Title')
+    act(() => input.focus())
+    // AltGr reads as Ctrl+Alt; on a layout where AltGr+M types "µ", `key` is that character.
+    const event = new KeyboardEvent('keydown', {
+      key: 'µ',
+      code: 'KeyM',
+      ctrlKey: true,
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    act(() => {
+      input.dispatchEvent(event)
+    })
+    expect(event.defaultPrevented).toBe(false)
+    await expect(
+      screen.findByTestId('field-comment-title-popover', {}, { timeout: 300 }),
+    ).rejects.toThrow()
+  })
+
+  it('matches ⌘⌥M by key position on macOS, where ⌥ changes the character', async () => {
+    const platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel')
+    try {
+      renderForm()
+      const input = screen.getByLabelText('Title')
+      act(() => input.focus())
+      const event = new KeyboardEvent('keydown', {
+        key: 'µ',
+        code: 'KeyM',
+        metaKey: true,
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      act(() => {
+        input.dispatchEvent(event)
+      })
+      expect(event.defaultPrevented).toBe(true)
+      expect(await screen.findByTestId('field-comment-title-popover')).toBeTruthy()
+    } finally {
+      platform.mockRestore()
+    }
+  })
+
   it('leaves Mod+Alt+M alone while a modal dialog is open', async () => {
     const user = userEvent.setup()
     renderForm()
@@ -760,24 +806,48 @@ describe('the form keyboard route to field comments', () => {
         thread('t2', 'title'),
         thread('t3', 'title'),
         thread('e1', undefined, { type: 'entry' }),
+        // On a field no longer in the form: neither listed nor counted.
+        thread('t4', 'links[5].href'),
       ],
     })
-    expect(menuButton().getAttribute('aria-label')).toBe(
-      'Comments in this form (2 open threads on fields)',
-    )
+    expect(menuButton().getAttribute('aria-label')).toBe('Field comments (2 open threads)')
     expect(menuButton().getAttribute('aria-haspopup')).toBe('menu')
     await user.click(menuButton())
     const menu = await screen.findByTestId('form-comments-menu')
     expect(menuButton().getAttribute('aria-expanded')).toBe('true')
-    const items = within(menu).getAllByRole('menuitem')
-    expect(items.map((item) => item.textContent)).toEqual([
+    const withThreads = within(menu)
+      .getAllByRole('menuitem')
+      .filter((item) => item.dataset.testid?.startsWith('form-comments-field-'))
+    expect(withThreads.map((item) => item.textContent)).toEqual([
       'Title2 open threads',
       'Links › /a › HrefResolved',
-      expect.stringContaining('Comment on a field'),
     ])
-    await user.click(items[1])
+    await user.click(withThreads[1])
     const popover = await screen.findByTestId('field-comment-links[0].href-popover')
     expect(within(popover).getByText('Comment in t1')).toBeTruthy()
+  })
+
+  it('lists every field, so one with nothing focusable of its own can be commented on', async () => {
+    const user = userEvent.setup()
+    const { onAddComment } = renderForm({ readOnly: true })
+    await user.click(menuButton())
+    const menu = await screen.findByTestId('form-comments-menu')
+    expect(within(menu).getByText('Comment on a field')).toBeTruthy()
+    const items = within(menu)
+      .getAllByRole('menuitem')
+      .filter((item) => item.dataset.testid?.startsWith('form-comments-any-field-'))
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Title',
+      'Meta',
+      'Meta › Summary',
+      'Links',
+      'Links › /a › Href',
+    ])
+    await user.click(within(menu).getByTestId('form-comments-any-field-meta'))
+    const popover = await screen.findByTestId('field-comment-meta-popover')
+    await user.type(within(popover).getByTestId('new-thread-textarea'), 'Whole group')
+    await user.click(within(popover).getByTestId('create-thread-button'))
+    expect(onAddComment).toHaveBeenCalledWith('Whole group', 'field', ENTRY, 'meta', undefined)
   })
 
   it('returns focus to the menu button when a popover opened from the menu closes', async () => {
@@ -786,9 +856,20 @@ describe('the form keyboard route to field comments', () => {
     await user.click(menuButton())
     await user.click(await screen.findByTestId('form-comments-field-title'))
     await screen.findByTestId('field-comment-title-popover')
+    const scrollButton = vi.fn()
+    menuButton().scrollIntoView = scrollButton
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(menuButton()))
+    // The button may have scrolled out of view, so focus brings it back.
+    expect(scrollButton).toHaveBeenCalledWith({ block: 'nearest' })
+    // Opened from its own control next, it returns focus there instead, also when a click on
+    // the page, not Escape, closes it.
+    await user.click(control('title'))
+    await screen.findByTestId('field-comment-title-popover')
+    await user.click(document.body)
+    await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(control('title')))
   })
 
   it('starts a thread on the field last focused', async () => {
@@ -796,8 +877,10 @@ describe('the form keyboard route to field comments', () => {
     const { onAddComment } = renderForm()
     act(() => screen.getByLabelText('Summary').focus())
     await user.click(menuButton())
-    const item = await screen.findByTestId('form-comments-comment-on-field')
-    expect(item.textContent).toContain('Comment on Meta › Summary')
+    const menu = await screen.findByTestId('form-comments-menu')
+    const item = within(menu).getByTestId('form-comments-comment-on-focused')
+    expect(item.textContent).toBe('Comment on Meta › Summary')
+    expect(within(menu).getByText('Comment on another field')).toBeTruthy()
     await user.click(item)
     const popover = await screen.findByTestId('field-comment-meta.summary-popover')
     await user.type(within(popover).getByTestId('new-thread-textarea'), 'Tighten this')
@@ -811,47 +894,47 @@ describe('the form keyboard route to field comments', () => {
     )
   })
 
-  it('says why it cannot comment on a field before one is focused, and stays focusable', async () => {
-    const user = userEvent.setup()
-    renderForm()
-    await user.click(menuButton())
-    const item = await screen.findByTestId('form-comments-comment-on-field')
-    expect(item.getAttribute('aria-disabled')).toBe('true')
-    expect(item.hasAttribute('disabled')).toBe(false)
-    expect(item.textContent).toContain('Focus a field first, or press Ctrl+Alt+M in it.')
-    await user.click(item)
-    expect(screen.queryByTestId('field-comment-title-popover')).toBeNull()
-  })
-
   it("names the shortcut in the controls' tooltips and aria-keyshortcuts", async () => {
     const user = userEvent.setup()
-    renderForm()
+    renderForm({ comments: [thread('t1', 'meta.summary')] })
     expect(control('title').getAttribute('aria-keyshortcuts')).toBe('Control+Alt+M')
     expect(menuButton().getAttribute('aria-keyshortcuts')).toBe('Control+Alt+M')
     await user.hover(control('title'))
     expect(await screen.findByText('Comment on Title (Ctrl+Alt+M)')).toBeTruthy()
+    await user.hover(control('meta.summary'))
+    expect(
+      await screen.findByText('Comment on Meta › Summary (1 open thread, Ctrl+Alt+M)'),
+    ).toBeTruthy()
     await user.hover(menuButton())
-    expect(await screen.findByText('Comments in this form (Ctrl+Alt+M)')).toBeTruthy()
+    expect(await screen.findByText('Field comments (Ctrl+Alt+M)')).toBeTruthy()
   })
 })
 
 describe('field comment popover placement', () => {
-  it('opens below the field, beneath its input, and toggles from its control', async () => {
+  /** Lays a field's anchors out at `top`..`bottom` in an 800px-tall window. */
+  const layOut = (path: string, top: number, bottom: number) => {
+    const wrapper = document.querySelector(`[data-field-comments][data-canopy-field="${path}"]`)
+    const rect = (y: number) => ({ top: y, bottom: y, left: 0, right: 600, width: 600, height: 0 })
+    const above = wrapper?.querySelector<HTMLElement>(':scope > [data-comment-anchor="above"]')
+    const below = wrapper?.querySelector<HTMLElement>(':scope > [data-comment-anchor="below"]')
+    if (!above || !below) throw new Error(`no anchors for ${path}`)
+    vi.spyOn(above, 'getBoundingClientRect').mockReturnValue(rect(top) as DOMRect)
+    vi.spyOn(below, 'getBoundingClientRect').mockReturnValue(rect(bottom) as DOMRect)
+    return { above, below }
+  }
+  beforeEach(() => {
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800)
+  })
+
+  it('opens a short field below its input, and toggles from its control', async () => {
     const user = userEvent.setup()
     renderForm()
+    layOut('title', 100, 160)
     await user.click(control('title'))
     const popover = await screen.findByTestId('field-comment-title-popover')
     expect(popover.getAttribute('data-position')).toBe('bottom-start')
     expect(popover.getAttribute('role')).toBe('dialog')
     expect(control('title').getAttribute('aria-controls')).toBe(popover.id)
-    // Its position reference sits in the field's wrapper, after the input.
-    const wrapper = screen.getByLabelText('Title').closest('[data-field-comments]')
-    const anchor = wrapper?.querySelector(':scope > [data-comment-anchor]') ?? null
-    expect(anchor?.firstElementChild).toBeTruthy()
-    expect(
-      screen.getByLabelText('Title').compareDocumentPosition(anchor as Node) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy()
     // A second click on the control closes it rather than reopening it.
     await user.click(control('title'))
     await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
@@ -859,5 +942,56 @@ describe('field comment popover placement', () => {
     await screen.findByTestId('field-comment-title-popover')
     await user.click(screen.getByLabelText('Summary'))
     await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+  })
+
+  it('opens above the label row when there is no room below, never over the input', async () => {
+    const user = userEvent.setup()
+    renderForm()
+    const { below } = layOut('title', 600, 660)
+    const scroll = vi.fn()
+    below.scrollIntoView = scroll
+    await user.click(control('title'))
+    const popover = await screen.findByTestId('field-comment-title-popover')
+    expect(popover.getAttribute('data-position')).toBe('top-start')
+    expect(scroll).not.toHaveBeenCalled()
+  })
+
+  it('opens a group above its label row, since its end is far from the control', async () => {
+    const user = userEvent.setup()
+    renderForm()
+    layOut('meta', 400, 520)
+    await user.click(control('meta'))
+    const popover = await screen.findByTestId('field-comment-meta-popover')
+    expect(popover.getAttribute('data-position')).toBe('top-start')
+  })
+
+  it('leaves the scroll to the popover when a jump both focuses and highlights the field', () => {
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    try {
+      renderForm({
+        comments: [thread('t1', 'title')],
+        focusedFieldPath: 'title',
+        highlightThreadId: 't1',
+      })
+      expect(scroll).not.toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
+    } finally {
+      scroll.mockRestore()
+    }
+  })
+
+  it('scrolls a field into the middle when neither side has room', async () => {
+    const user = userEvent.setup()
+    renderForm()
+    const { below } = layOut('title', 100, 700)
+    below.scrollIntoView = vi.fn()
+    const above = document.querySelector<HTMLElement>(
+      '[data-canopy-field="title"] > [data-comment-anchor="above"]',
+    )
+    const scrollAbove = vi.fn()
+    if (above) above.scrollIntoView = scrollAbove
+    await user.click(control('title'))
+    await screen.findByTestId('field-comment-title-popover')
+    // 600px tall is a tall field: it prefers above its label row, and scrolls that into view.
+    expect(scrollAbove).toHaveBeenCalledWith({ block: 'center' })
   })
 })

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Box } from '@mantine/core'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
@@ -75,7 +75,11 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [pointerOn, setPointerOn] = useState(false)
   const [focusOn, setFocusOn] = useState(false)
-  const [anchor, setAnchor] = useState<HTMLDivElement | null>(null)
+  const [above, setAbove] = useState<HTMLDivElement | null>(null)
+  const [below, setBelow] = useState<HTMLDivElement | null>(null)
+  const anchors = useMemo(() => ({ above, below }), [above, below])
+  // A highlighted thread here opens the popover, which scrolls the field itself.
+  const highlightHere = !!highlightThreadId && threads.some((t) => t.id === highlightThreadId)
   const [openRequest, setOpenRequest] = useState<OpenRequest | undefined>(undefined)
   const formComments = useFormComments()
 
@@ -91,13 +95,13 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   )
 
   useEffect(() => {
-    if (autoFocus) {
+    if (autoFocus && !highlightHere) {
       wrapperRef.current?.scrollIntoView({
         behavior: 'smooth',
         block: 'center',
       })
     }
-  }, [autoFocus])
+  }, [autoFocus, highlightHere])
 
   // Events from a nested field, or from a popover portalled out of the DOM, have another
   // closest scope (or none), so they leave this field's icon hidden.
@@ -113,7 +117,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
       subject={fieldLabel}
       variant="field"
       revealed={pointerOn || focusOn}
-      anchor={anchor}
+      anchors={anchors}
       openRequest={openRequest}
       currentUserId={currentUserId}
       canResolve={canResolve}
@@ -146,6 +150,8 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
         if (!(next instanceof Node && event.currentTarget.contains(next))) setFocusOn(false)
       }}
     >
+      {/* The comment popover opens above this or beneath the one below, never over the input. */}
+      <div ref={setAbove} data-comment-anchor="above" />
       <FieldCommentContext.Provider value={{ canopyPath, control }}>
         <Box
           style={{
@@ -158,8 +164,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
           {children}
         </Box>
       </FieldCommentContext.Provider>
-      {/* The comment popover opens beneath this, below the field's input. */}
-      <div ref={setAnchor} data-comment-anchor />
+      <div ref={setBelow} data-comment-anchor="below" />
       {controlPlacement === 'corner' && (
         <Box pos="absolute" top={4} right={4} style={{ zIndex: 1 }}>
           {control}

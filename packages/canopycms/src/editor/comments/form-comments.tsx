@@ -28,18 +28,31 @@ export interface FormComments {
   /** Registers a field's popover under its canopy path; returns the unregister. */
   register: (canopyPath: string, opener: FieldCommentOpener) => () => void
   get: (canopyPath: string) => FieldCommentOpener | undefined
+  /** Every registered field, in the form's order. */
+  fields: () => Array<FieldCommentOpener & { canopyPath: string }>
   /** Records the field that last took focus, which "Comment on …" names; `undefined` forgets it. */
   noteFocus: (canopyPath: string | undefined) => void
   lastFocused: () => string | undefined
+  /** Changes with every registration and focus, for `useSyncExternalStore`. */
+  version: () => number
   subscribe: (listener: () => void) => () => void
 }
 
-/** One form's field comment popovers, for its "Comments in this form" menu and shortcut. */
+const byFormOrder = (a: HTMLElement | null, b: HTMLElement | null): number => {
+  if (!a || !b || a === b) return 0
+  return a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+}
+
+/** One form's field comment popovers, for its "Field comments" menu and shortcut. */
 export const createFormComments = (): FormComments => {
   const openers = new Map<string, FieldCommentOpener>()
   const listeners = new Set<() => void>()
   let lastFocused: string | undefined
-  const notify = () => listeners.forEach((listener) => listener())
+  let version = 0
+  const notify = () => {
+    version += 1
+    listeners.forEach((listener) => listener())
+  }
   return {
     register: (canopyPath, opener) => {
       openers.set(canopyPath, opener)
@@ -51,12 +64,17 @@ export const createFormComments = (): FormComments => {
       }
     },
     get: (canopyPath) => openers.get(canopyPath),
+    fields: () =>
+      [...openers]
+        .map(([canopyPath, opener]) => ({ ...opener, canopyPath }))
+        .sort((a, b) => byFormOrder(a.element(), b.element())),
     noteFocus: (canopyPath) => {
       if (lastFocused === canopyPath) return
       lastFocused = canopyPath
       notify()
     },
     lastFocused: () => lastFocused,
+    version: () => version,
     subscribe: (listener) => {
       listeners.add(listener)
       return () => listeners.delete(listener)
@@ -68,7 +86,7 @@ export const FormCommentsContext = createContext<FormComments | null>(null)
 
 export const useFormComments = (): FormComments | null => useContext(FormCommentsContext)
 
-/** The shortcut's label for tooltips and the menu, in the platform's modifier. */
+/** The shortcut's label for tooltips, in the platform's modifier. */
 export const commentsShortcutLabel = (): string => (modKeyLabel() === '⌘' ? '⌘⌥M' : 'Ctrl+Alt+M')
 
 /** The shortcut for `aria-keyshortcuts`. */
@@ -89,13 +107,6 @@ const inOtherOverlay = (active: Element | null, form: Element): boolean => {
 const openThreadsText = (count: number): string =>
   count === 1 ? '1 open thread' : `${count} open threads`
 
-interface FieldThreadsSummary {
-  canopyPath: string
-  subject: string
-  open: number
-  total: number
-}
-
 export interface FormCommentsMenuProps {
   /** Every thread on the branch; the menu counts this entry's field threads. */
   comments: CommentThread[]
@@ -103,18 +114,19 @@ export interface FormCommentsMenuProps {
 }
 
 /**
- * The form's one keyboard route to field comments: a menu listing the fields with threads that
- * opens each one's popover, and can start a thread on the field last focused. Mod+Alt+M opens the
- * focused field's popover, or this menu when focus is elsewhere in the editor.
+ * The form's one keyboard route to field comments: a menu listing the fields with threads, the
+ * field last focused, and every field, each opening that field's popover. Mod+Alt+M opens
+ * the focused field's popover, or this menu when focus is elsewhere in the editor.
  */
 export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, entryPath }) => {
   const formComments = useFormComments()
   const [opened, setOpened] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const lastFocusedPath = useSyncExternalStore(
+  // Re-renders on every registration, so counts and lists follow the fields mounted now.
+  useSyncExternalStore(
     formComments?.subscribe ?? noopSubscribe,
-    formComments?.lastFocused ?? noLastFocused,
-    noLastFocused,
+    formComments?.version ?? noVersion,
+    noVersion,
   )
 
   const counts = useMemo(() => {
@@ -128,35 +140,41 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
     }
     return byPath
   }, [comments, entryPath])
-  const openCount = useMemo(
-    () => [...counts.values()].reduce((sum, count) => sum + count.open, 0),
-    [counts],
-  )
+
+  const onShortcut = (event: KeyboardEvent) => {
+    const form = triggerRef.current?.closest('[data-form-renderer]')
+    if (!formComments || !form) return
+    const active = document.activeElement
+    if (inOtherOverlay(active, form)) return
+    event.preventDefault()
+    const field = active && form.contains(active) ? active.closest(FIELD_SCOPE_SELECTOR) : null
+    const path = field?.getAttribute('data-canopy-field')
+    const opener = path ? formComments.get(path) : undefined
+    if (opener) opener.open()
+    else {
+      triggerRef.current?.scrollIntoView?.({ block: 'nearest' })
+      setOpened(true)
+    }
+  }
 
   useHotkeys(
     [
       [
         'mod+alt+M',
         (event) => {
-          // Mantine's `mod` is Ctrl or ⌘ everywhere; on macOS the shortcut is ⌘⌥M only.
-          if (modKeyLabel() === '⌘' && !event.metaKey) return
-          const form = triggerRef.current?.closest('[data-form-renderer]')
-          if (!formComments || !form) return
-          const active = document.activeElement
-          if (inOtherOverlay(active, form)) return
-          event.preventDefault()
-          const field =
-            active && form.contains(active) ? active.closest(FIELD_SCOPE_SELECTOR) : null
-          const path = field?.getAttribute('data-canopy-field')
-          const opener = path ? formComments.get(path) : undefined
-          if (opener) opener.open()
-          else {
-            triggerRef.current?.scrollIntoView?.({ block: 'nearest' })
-            setOpened(true)
-          }
+          // ⌥ turns M into another character on macOS, so there the key matches by position.
+          if (modKeyLabel() === '⌘' && event.metaKey) onShortcut(event)
         },
-        // `M` by position: ⌥ turns it into another character on macOS.
         { preventDefault: false, usePhysicalKeys: true },
+      ],
+      [
+        'mod+alt+M',
+        (event) => {
+          // Elsewhere by character: AltGr reads as Ctrl+Alt, and AltGr+M types a character
+          // on some layouts, which this leaves alone.
+          if (modKeyLabel() !== '⌘') onShortcut(event)
+        },
+        { preventDefault: false },
       ],
     ],
     // `[]` ignores no tags and `true` fires from contenteditable, so it works while typing.
@@ -166,28 +184,20 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
 
   if (!formComments) return null
 
-  // Read when the menu renders open, so it lists the fields mounted now, in the form's order.
-  const fields: FieldThreadsSummary[] = []
-  if (opened) {
-    for (const [canopyPath, count] of counts) {
-      const opener = formComments.get(canopyPath)
-      if (opener) fields.push({ canopyPath, subject: opener.subject, ...count })
-    }
-    fields.sort((a, b) => {
-      const elA = formComments.get(a.canopyPath)?.element()
-      const elB = formComments.get(b.canopyPath)?.element()
-      if (!elA || !elB) return 0
-      return elA.compareDocumentPosition(elB) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
-    })
-  }
+  const allFields = formComments.fields()
+  const withThreads = allFields.flatMap((field) => {
+    const count = counts.get(field.canopyPath)
+    return count ? [{ field, ...count }] : []
+  })
+  const openCount = withThreads.reduce((sum, { open }) => sum + open, 0)
+  const lastFocusedPath = formComments.lastFocused()
   const lastFocused = lastFocusedPath ? formComments.get(lastFocusedPath) : undefined
   // The menu item is gone once the popover opens, so its trigger stands in as the opener.
   const openField = (opener: FieldCommentOpener) => opener.open(() => triggerRef.current)
-  const shortcut = commentsShortcutLabel()
 
   return (
     <Menu opened={opened} onChange={setOpened} position="bottom-end" withinPortal shadow="sm">
-      <Tooltip label={`Comments in this form (${shortcut})`} withinPortal disabled={opened}>
+      <Tooltip label={`Field comments (${commentsShortcutLabel()})`} withinPortal disabled={opened}>
         <Menu.Target>
           <Button
             ref={triggerRef}
@@ -207,74 +217,71 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
               </>
             }
             aria-label={
-              openCount > 0
-                ? `Comments in this form (${openThreadsText(openCount)} on fields)`
-                : 'Comments in this form'
+              openCount > 0 ? `Field comments (${openThreadsText(openCount)})` : 'Field comments'
             }
             aria-keyshortcuts={commentsAriaKeyShortcuts()}
             data-testid="form-comments-menu-button"
           >
-            Comments in this form
+            Field comments
           </Button>
         </Menu.Target>
       </Tooltip>
-      <Menu.Dropdown data-testid="form-comments-menu" maw={420}>
+      <Menu.Dropdown
+        data-testid="form-comments-menu"
+        maw={420}
+        mah="min(480px, 70vh)"
+        style={{ overflowY: 'auto' }}
+      >
         <Menu.Label>Fields with comments</Menu.Label>
-        {fields.length === 0 ? (
+        {withThreads.length === 0 ? (
           <Text size="xs" c="dimmed" px="sm" pb="xs">
             No field has comments yet.
           </Text>
         ) : (
-          fields.map((field) => {
-            const opener = formComments.get(field.canopyPath)
-            return (
-              <Menu.Item
-                key={field.canopyPath}
-                onClick={() => opener && openField(opener)}
-                data-testid={`form-comments-field-${field.canopyPath}`}
-              >
-                <Text size="sm" lineClamp={2}>
-                  {field.subject}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  {field.open > 0 ? openThreadsText(field.open) : 'Resolved'}
-                </Text>
-              </Menu.Item>
-            )
-          })
+          withThreads.map(({ field, open }) => (
+            <Menu.Item
+              key={field.canopyPath}
+              onClick={() => openField(field)}
+              data-testid={`form-comments-field-${field.canopyPath}`}
+            >
+              <Text size="sm" lineClamp={2}>
+                {field.subject}
+              </Text>
+              <Text size="xs" c="dimmed">
+                {open > 0 ? openThreadsText(open) : 'Resolved'}
+              </Text>
+            </Menu.Item>
+          ))
         )}
         <Menu.Divider />
-        {lastFocused ? (
+        {lastFocused && (
           <Menu.Item
             onClick={() => openField(lastFocused)}
-            rightSection={
-              <Text size="xs" c="dimmed">
-                {shortcut}
-              </Text>
-            }
-            data-testid="form-comments-comment-on-field"
+            data-testid="form-comments-comment-on-focused"
           >
             <Text size="sm" lineClamp={2}>
               Comment on {lastFocused.subject}
             </Text>
           </Menu.Item>
-        ) : (
-          // Focusable, so the reason is read; Mantine's `disabled` would skip it.
+        )}
+        {/* Every field, so one with nothing focusable of its own, such as a read-only toggle or
+            a group, is still reachable. */}
+        <Menu.Label>{lastFocused ? 'Comment on another field' : 'Comment on a field'}</Menu.Label>
+        {allFields.map((field) => (
           <Menu.Item
-            aria-disabled
-            closeMenuOnClick={false}
-            data-testid="form-comments-comment-on-field"
+            key={field.canopyPath}
+            onClick={() => openField(field)}
+            data-testid={`form-comments-any-field-${field.canopyPath}`}
           >
-            <Text size="sm">Comment on a field</Text>
-            <Text size="xs" c="dimmed">
-              Focus a field first, or press {shortcut} in it.
+            <Text size="sm" lineClamp={2}>
+              {field.subject}
             </Text>
           </Menu.Item>
-        )}
+        ))}
       </Menu.Dropdown>
     </Menu>
   )
 }
 
 const noopSubscribe = () => () => {}
-const noLastFocused = (): string | undefined => undefined
+const noVersion = (): number => 0

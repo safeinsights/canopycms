@@ -258,68 +258,81 @@ const storyThread = (
   ],
 })
 
-const CommentingForm: React.FC<{ readOnly?: boolean; fieldErrors?: Record<string, string> }> = ({
-  readOnly,
-  fieldErrors,
-}) => {
+const sampleThreads: CommentThread[] = [
+  storyThread('t1', 'field', 'title', 'Can we make this punchier?'),
+  storyThread('t2', 'field', 'title', 'Check capitalisation.'),
+  storyThread('t3', 'field', 'blocks[0].headline', 'Shorter, please.'),
+  storyThread('t4', 'entry', undefined, 'Ready for review once the hero is final.'),
+  storyThread('t5', 'field', 'seo.description', 'Under 160 characters now.', true),
+]
+
+/** Scrolls inside a fixed-height pane, as the editor's form does, so popovers place as they would there. */
+const CommentingForm: React.FC<{
+  readOnly?: boolean
+  fieldErrors?: Record<string, string>
+  initialThreads?: CommentThread[]
+}> = ({ readOnly, fieldErrors, initialThreads = sampleThreads }) => {
   const [value, setValue] = useState<PostValue>(initialPost)
-  const [threads, setThreads] = useState<CommentThread[]>([
-    storyThread('t1', 'field', 'title', 'Can we make this punchier?'),
-    storyThread('t2', 'field', 'title', 'Check capitalisation.'),
-    storyThread('t3', 'field', 'blocks[0].headline', 'Shorter, please.'),
-    storyThread('t4', 'entry', undefined, 'Ready for review once the hero is final.'),
-    storyThread('t5', 'field', 'seo.description', 'Under 160 characters now.', true),
-  ])
+  const [threads, setThreads] = useState<CommentThread[]>(initialThreads)
   return (
-    <FormRenderer
-      fields={postSchema}
-      value={value}
-      onChange={(next) => setValue(next as unknown as PostValue)}
-      readOnly={readOnly}
-      fieldErrors={fieldErrors}
-      comments={threads}
-      currentEntryPath="posts/hello"
-      currentUserId="alice"
-      canResolve
-      onAddComment={async (text, type, entryPath, canopyPath, threadId) => {
-        setThreads((prev) =>
-          threadId
-            ? prev.map((t) =>
-                t.id === threadId
-                  ? {
-                      ...t,
-                      comments: [
-                        ...t.comments,
-                        {
-                          id: `${threadId}-${t.comments.length + 1}`,
-                          threadId,
-                          userId: 'alice',
-                          timestamp: new Date().toISOString(),
-                          text,
-                        },
-                      ],
-                    }
-                  : t,
-              )
-            : [...prev, storyThread(`t${prev.length + 1}`, type, canopyPath ?? undefined, text)],
-        )
-      }}
-      onResolveThread={async (threadId) => {
-        setThreads((prev) =>
-          prev.map((t) => (t.id === threadId ? { ...t, resolved: true, resolvedBy: 'alice' } : t)),
-        )
-      }}
-    />
+    <div style={{ height: '90vh', overflowY: 'auto', paddingBottom: 20 }}>
+      <FormRenderer
+        fields={postSchema}
+        value={value}
+        onChange={(next) => setValue(next as unknown as PostValue)}
+        readOnly={readOnly}
+        fieldErrors={fieldErrors}
+        comments={threads}
+        currentEntryPath="posts/hello"
+        currentUserId="alice"
+        canResolve
+        onAddComment={async (text, type, entryPath, canopyPath, threadId) => {
+          setThreads((prev) =>
+            threadId
+              ? prev.map((t) =>
+                  t.id === threadId
+                    ? {
+                        ...t,
+                        comments: [
+                          ...t.comments,
+                          {
+                            id: `${threadId}-${t.comments.length + 1}`,
+                            threadId,
+                            userId: 'alice',
+                            timestamp: new Date().toISOString(),
+                            text,
+                          },
+                        ],
+                      }
+                    : t,
+                )
+              : [...prev, storyThread(`t${prev.length + 1}`, type, canopyPath ?? undefined, text)],
+          )
+        }}
+        onResolveThread={async (threadId) => {
+          setThreads((prev) =>
+            prev.map((t) =>
+              t.id === threadId ? { ...t, resolved: true, resolvedBy: 'alice' } : t,
+            ),
+          )
+        }}
+      />
+    </div>
   )
 }
 
 /**
- * Comments on: "Comments in this form" (⌘⌥M or Ctrl+Alt+M), which lists every field with threads,
- * resolved ones included, and "Comment on this entry" at the top; a count badge on fields with
- * open threads, and an icon after the label of any other field while it is hovered or focused.
+ * "Field comments" (⌘⌥M or Ctrl+Alt+M) lists the fields with threads, resolved ones included,
+ * and every field; beside it, "Comment on this entry". A field with open threads shows a count
+ * badge, and any other field an icon after its label while hovered or focused.
  */
 export const WithComments: Story = {
   render: () => <CommentingForm />,
+}
+
+/** No threads yet: the "Field comments" menu says so, and still lists every field. */
+export const WithNoCommentsYet: Story = {
+  render: () => <CommentingForm initialThreads={[]} />,
 }
 
 /** Comments stay open on a read-only branch, where reviewers comment on a submitted entry. */
