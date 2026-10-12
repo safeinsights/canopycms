@@ -21,6 +21,10 @@ R3–R5). `docs/deploying-to-aws.md`'s "What the separation leaves open" states 
   `inspect-checks` does for `canopy-inspect`. Adding both to `workerSelfChecks` is cheap; the
   gateway's checks (EFS invisible, cores, socket access) could take them too.
 - **R5, denial of service.** The worker can fill the gateway's incoming bundle cap one at a time,
+  and hold up to 64 outgoing whole-repository bundles open at once (one per connection, each
+  downloaded at the 16 KiB/s floor), which can fill the 8 GiB root volume; nothing bounds the count
+  of open outgoing bundles (`github-mirror.ts` `openBundle`, `github-gateway-http.ts`
+  `MAX_CONNECTIONS`). It can also
   choose the gateway's GitHub fetch rate by pushing in a loop (within GitHub's limits), make a push
   wait for a credential re-read it armed (the join is capped at 15 s), and fake the `Syncing git...`
   lines the worker-down alarm counts. `completeLifecycle` is refused until the gateway's own watch
