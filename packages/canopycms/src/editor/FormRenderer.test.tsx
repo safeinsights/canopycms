@@ -244,8 +244,8 @@ describe('FormRenderer', () => {
         />,
       )
 
-      expect(screen.getByRole('group', { name: 'Fast builds' })).toBeTruthy()
-      expect(screen.getByRole('group', { name: 'Item 2' })).toBeTruthy()
+      expect(screen.getByRole('group', { name: 'Fast builds, 2' })).toBeTruthy()
+      expect(screen.getByRole('group', { name: 'Item 2, 3' })).toBeTruthy()
     })
 
     it('falls back to the first non-blank text field when the itemTitleField is blank', () => {
@@ -1114,7 +1114,7 @@ describe('FormRenderer', () => {
         ],
         { blocks: [{ template: 'hero', value: { headline: 'Hi' } }] },
       )
-      const row = screen.getByRole('group', { name: 'Hero' })
+      const row = screen.getByRole('group', { name: 'Hero, Hi' })
       const text = within(row).getByText('The banner at the top of a page')
       expect(row.getAttribute('aria-describedby')).toBe(text.id)
       expect(describedBy(text.id)).toEqual([row])

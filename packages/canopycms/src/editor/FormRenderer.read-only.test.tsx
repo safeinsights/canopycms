@@ -260,9 +260,9 @@ describe('FormRenderer readOnly', () => {
   it('block: the same controls are there when the form is editable', () => {
     renderReadOnly(blockFields, blockValue, { readOnly: false })
     expect(screen.getAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(2)
-    expect(screen.getAllByRole('button', { name: 'Actions for Hero' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /^Actions for Hero/ })).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Add section' })).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: 'Add section here' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Add section here' })).toHaveLength(2)
   })
 
   it('block: a row still collapses and opens, and a collapse writes nothing', () => {
@@ -329,7 +329,7 @@ describe('FormRenderer readOnly', () => {
       ],
       { links: [] },
     )
-    expect(screen.getByText('No items.')).toBeTruthy()
+    expect(screen.getByText('Nothing added.')).toBeTruthy()
   })
 
   it('object: an optional object with a value offers no Clear', () => {

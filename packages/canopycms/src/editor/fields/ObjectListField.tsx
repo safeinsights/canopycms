@@ -137,7 +137,7 @@ export const ObjectListField: React.FC<ObjectListFieldProps> = ({
         />
         {items.length === 0 && (
           <Text size="sm" c="dimmed">
-            {readOnly ? 'No items.' : 'No items yet.'}
+            {readOnly ? 'Nothing added.' : 'Nothing added yet.'}
           </Text>
         )}
         {!readOnly && (

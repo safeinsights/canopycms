@@ -14,6 +14,7 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core'
+import { useMediaQuery } from '@mantine/hooks'
 import { IconPlus } from '@tabler/icons-react'
 
 import type { BlockConfig, FieldConfig } from '../../config'
@@ -101,8 +102,8 @@ const TemplateMenu: React.FC<{
 )
 
 /**
- * The gap between two blocks. Its add control shows while the gap is hovered or the control is
- * focused, and stays in the tab order, so a keyboard reaches it between the two blocks.
+ * The gap before a block. Its add control shows while the gap is hovered or the control is
+ * focused, and stays in the tab order, so a keyboard reaches it before each block.
  */
 const InsertBetween: React.FC<{
   templates: BlockConfig[]
@@ -111,7 +112,10 @@ const InsertBetween: React.FC<{
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [opened, setOpened] = useState(false)
+  // A touch screen has no hover, so the control stays faintly visible there.
+  const noHover = useMediaQuery('(hover: none)')
   const shown = hovered || focused || opened
+  const opacity = shown ? 1 : noHover ? 0.6 : 0
   return (
     <Box
       h={20}
@@ -145,7 +149,7 @@ const InsertBetween: React.FC<{
                   aria-label="Add section here"
                   onFocus={() => setFocused(true)}
                   onBlur={() => setFocused(false)}
-                  style={{ opacity: shown ? 1 : 0, transition: 'opacity 120ms ease' }}
+                  style={{ opacity, transition: 'opacity 120ms ease' }}
                 >
                   <IconPlus size={14} aria-hidden />
                 </ActionIcon>

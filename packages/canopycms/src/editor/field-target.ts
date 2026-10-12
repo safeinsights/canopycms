@@ -30,25 +30,33 @@ export const REVEAL_FIELD_EVENT = 'canopy:reveal-field'
 
 /**
  * Asks every collapsed row holding `element` to open. True when one was closed: its content shows
- * once React re-renders, so act on the element through `whenRevealed`.
+ * once React re-renders, so act on the element through `whenRevealed`. @internal Exported for
+ * tests; callers use `whenRevealed`.
  */
 export const revealField = (element: HTMLElement): boolean =>
   !element.dispatchEvent(new CustomEvent(REVEAL_FIELD_EVENT, { bubbles: true, cancelable: true }))
 
 const MAX_REVEAL_FRAMES = 10
 
-/** Runs `then` once `element` is shown: at once, or a few frames on when a row had to open. */
+/**
+ * Runs `then` once `element` is shown: at once, or a few frames on when a row had to open. It asks
+ * again each frame, since a row mounted in the same commit as the element may not listen yet.
+ */
 export const whenRevealed = (element: HTMLElement, then: () => void): void => {
-  if (!revealField(element)) {
+  const shown = () => typeof element.checkVisibility !== 'function' || element.checkVisibility()
+  if (!revealField(element) && shown()) {
     then()
     return
   }
   let frames = 0
   const check = () => {
     frames += 1
-    const shown = typeof element.checkVisibility !== 'function' || element.checkVisibility()
-    if (shown || frames >= MAX_REVEAL_FRAMES) then()
-    else requestAnimationFrame(check)
+    if (shown() || frames >= MAX_REVEAL_FRAMES) {
+      then()
+      return
+    }
+    revealField(element)
+    requestAnimationFrame(check)
   }
   requestAnimationFrame(check)
 }

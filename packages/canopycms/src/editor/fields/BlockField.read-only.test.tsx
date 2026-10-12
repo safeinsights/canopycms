@@ -65,17 +65,17 @@ describe('BlockField readOnly', () => {
 
   it('offers no menu, add or insert control while read-only, and all of them once it unlocks', () => {
     const { rerender } = render(field(true))
-    expect(screen.queryAllByRole('button', { name: 'Actions for Hero' })).toHaveLength(0)
+    expect(screen.queryAllByRole('button', { name: /^Actions for Hero/ })).toHaveLength(0)
     expect(screen.queryByRole('button', { name: 'Add section' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Add section here' })).toBeNull()
 
     rerender(field(false))
-    expect(screen.getAllByRole('button', { name: 'Actions for Hero' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /^Actions for Hero/ })).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Add section' })).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: 'Add section here' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Add section here' })).toHaveLength(2)
 
     rerender(field(true))
-    expect(screen.queryAllByRole('button', { name: 'Actions for Hero' })).toHaveLength(0)
+    expect(screen.queryAllByRole('button', { name: /^Actions for Hero/ })).toHaveLength(0)
     expect(screen.queryByRole('button', { name: 'Add section' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Add section here' })).toBeNull()
   })

@@ -86,7 +86,7 @@ describe('FormRenderer removals', () => {
       ],
       { blocks: [block] },
     )
-    await removeRow('Hero')
+    await removeRow('Hero, Hi')
     expect(onRemoved).toHaveBeenCalledWith({
       kind: 'list-item',
       listPath: ['blocks'],
@@ -123,8 +123,26 @@ describe('FormRenderer removals', () => {
       ],
       { sizes: [{ width: 1 }, { width: 2 }] },
     )
-    await removeRow('Item 1')
+    await removeRow('Item 1, 1')
     expect(onRemoved.mock.calls[0][0].label).toBe('item 1 from Sizes')
+  })
+
+  it('names an untitled item by its position in the words of itemLabel, which the toast then states', async () => {
+    const { onRemoved } = renderForm(
+      [
+        {
+          name: 'team',
+          type: 'object',
+          label: 'Team',
+          list: true,
+          itemLabel: 'team member',
+          fields: [{ name: 'name', type: 'string' }],
+        },
+      ],
+      { team: [{}, {}] },
+    )
+    await removeRow('Team member 2')
+    expect(onRemoved.mock.calls[0][0].label).toBe('team member 2 from Team')
   })
 
   it('shortens a long title in the label to 60 characters', async () => {

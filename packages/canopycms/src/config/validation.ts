@@ -115,9 +115,10 @@ export const forEachReferenceField = (
 }
 
 /**
- * Check that every `itemTitleField` sits on a `list: true` object and names a direct child
- * of type `string` or `number`, the only values the card heading shows as typed (a reference
- * would show its raw id, a select its stored value). Throws an error when it does not.
+ * Check that every `itemLabel` and `itemTitleField` sits on a `list: true` object, and that every
+ * `itemTitleField` names a direct child of type `string` or `number`, the only values the card
+ * heading shows as typed (a reference would show its raw id, a select its stored value). Throws an
+ * error when it does not.
  */
 export const ensureItemTitleFieldsExist = (fields: unknown): void => {
   if (!Array.isArray(fields)) return
@@ -125,6 +126,11 @@ export const ensureItemTitleFieldsExist = (fields: unknown): void => {
     const f = field as Record<string, unknown>
     if (f?.type === 'object') {
       const children = Array.isArray(f.fields) ? (f.fields as Array<Record<string, unknown>>) : []
+      if (f.itemLabel !== undefined && f.list !== true) {
+        throw new Error(
+          `Object field "${(f.name as string) ?? 'unknown'}" has itemLabel, but itemLabel applies only to list: true objects`,
+        )
+      }
       if (f.itemTitleField !== undefined) {
         const label = `Object field "${(f.name as string) ?? 'unknown'}" has itemTitleField "${String(f.itemTitleField)}"`
         if (f.list !== true) {

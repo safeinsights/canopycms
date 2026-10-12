@@ -2,13 +2,14 @@
  * The collapsible rows shared by object lists and block lists, driven through `ObjectListField`
  * and `BlockField`: collapsing, the row menu, adding, and what a read-only list withholds.
  */
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { BlockConfig, ObjectFieldConfig } from '../../config'
+import type { BlockConfig, FieldConfig, ObjectFieldConfig } from '../../config'
+import { revealField } from '../field-target'
 import { BlockField, type BlockInstance } from './BlockField'
 import type { RenderField } from './ObjectField'
 import { ObjectListField } from './ObjectListField'
@@ -482,12 +483,64 @@ describe('a read-only object list', () => {
   })
 })
 
+describe('row names', () => {
+  it('tell rows with one title apart by their second value, in the row and in its "Actions for" button', () => {
+    render(<BlockHarness initial={[hero('One'), hero('Two')]} />)
+    expect(rowTitles()).toEqual(['Hero, One', 'Hero, Two'])
+    expect(screen.getByRole('button', { name: 'Actions for Hero, One' })).toBe(
+      actionsButton(rows()[0]),
+    )
+    expect(screen.getByRole('button', { name: 'Actions for Hero, Two' })).toBe(
+      actionsButton(rows()[1]),
+    )
+  })
+
+  it('leave the drag handle named "Drag to reorder"', () => {
+    render(<BlockHarness initial={[hero('One'), hero('Two')]} />)
+    expect(screen.getAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(2)
+  })
+
+  it('name an untitled item by its position, in the words of itemLabel when the schema has one', () => {
+    render(<ListHarness initial={[{}, {}]} field={{ ...teamField, itemLabel: 'team member' }} />)
+    expect(rowTitles()).toEqual(['Team member 1', 'Team member 2'])
+    expect(screen.getByRole('button', { name: 'Actions for Team member 2' })).toBe(
+      actionsButton(rows()[1]),
+    )
+  })
+
+  it('name an untitled item "Item N" without an itemLabel', () => {
+    render(<ListHarness initial={[{}, {}]} />)
+    expect(rowTitles()).toEqual(['Item 1', 'Item 2'])
+  })
+})
+
+describe('an object list with no items', () => {
+  it('says "Nothing added yet." while editable and "Nothing added." when read-only', () => {
+    const { unmount } = render(<ListHarness initial={[]} />)
+    expect(screen.getByText('Nothing added yet.')).toBeTruthy()
+    unmount()
+    render(<ListHarness initial={[]} readOnly />)
+    expect(screen.getByText('Nothing added.')).toBeTruthy()
+    expect(screen.queryByText('Nothing added yet.')).toBeNull()
+  })
+})
+
+describe('the Remove menu item', () => {
+  it("is drawn in red.8, which reads at 4.5:1 on white where Mantine's red.6 does not", async () => {
+    const user = userEvent.setup()
+    render(<ListHarness initial={people('Ada')} />)
+    await openRowMenu(user, rows()[0])
+    const remove = await screen.findByTestId('item-row-remove')
+    expect(remove.getAttribute('style')).toContain('--mantine-color-red-8')
+  })
+})
+
 describe('a block list', () => {
   const sectionMenu = () => screen.findByTestId('block-template-menu')
 
   it('titles a row with its template label and dims the first text value beside it', () => {
     render(<BlockHarness initial={[hero('Welcome'), cta('Sign up')]} />)
-    expect(rowTitles()).toEqual(['Hero', 'Call to action'])
+    expect(rowTitles()).toEqual(['Hero, Welcome', 'Call to action, Sign up'])
     expect(toggleOf(rows()[0]).textContent).toBe('HeroWelcome')
     expect(toggleOf(rows()[1]).textContent).toBe('Call to actionSign up')
   })
@@ -520,38 +573,45 @@ describe('a block list', () => {
 
     expect(onChange).toHaveBeenCalledTimes(1)
     expect(onChange).toHaveBeenCalledWith([first, { template: 'cta', value: {} }])
-    expect(rowTitles()).toEqual(['Hero', 'Call to action'])
+    expect(rowTitles()).toEqual(['Hero, Welcome', 'Call to action'])
     expect(expandedStates()).toEqual(['true', 'true'])
     await waitFor(() =>
       expect(document.activeElement).toBe(within(rows()[1]).getByRole('textbox', { name: 'text' })),
     )
   })
 
-  it('offers no "Add section here" before the second block', () => {
+  it('offers an "Add section here" before the first block, even when it is the only one', () => {
     render(<BlockHarness initial={[hero('Only')]} />)
-    expect(screen.queryByTestId('block-insert-between')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Add section here' })).toBeNull()
+    expect(screen.getAllByTestId('block-insert-between')).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Add section here' })).toHaveLength(1)
+    const control = screen.getByTestId('block-insert-between')
+    expect(
+      control.compareDocumentPosition(rows()[0]) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
   })
 
   it.each([
-    ['first', 0, 1],
-    ['second', 1, 2],
-  ])('inserts at the gap the %s "Add section here" sits in', async (_which, gap, index) => {
+    ['first', 0],
+    ['second', 1],
+    ['third', 2],
+  ])('inserts at the index of the %s "Add section here"', async (_which, index) => {
     const user = userEvent.setup()
     const onChange = vi.fn()
     const blocks = [hero('One'), hero('Two'), hero('Three')]
     render(<BlockHarness initial={blocks} onChange={onChange} />)
     const inserts = screen.getAllByTestId('block-insert-between')
-    expect(inserts).toHaveLength(2)
+    expect(inserts).toHaveLength(3)
 
-    await user.click(within(inserts[gap]).getByRole('button', { name: 'Add section here' }))
+    await user.click(within(inserts[index]).getByRole('button', { name: 'Add section here' }))
     await user.click(within(await sectionMenu()).getByTestId('block-template-cta'))
 
     const expected = [...blocks]
     expected.splice(index, 0, { template: 'cta', value: {} })
     expect(onChange).toHaveBeenCalledWith(expected)
     expect(rowTitles()).toEqual(
-      expected.map((b) => (b.template === 'cta' ? 'Call to action' : 'Hero')),
+      expected.map((b) =>
+        b.template === 'cta' ? 'Call to action' : `Hero, ${String(b.value.headline)}`,
+      ),
     )
     await waitFor(() =>
       expect(document.activeElement).toBe(
@@ -592,7 +652,7 @@ describe('a block list', () => {
     await chooseFromRowMenu(user, rows()[0], /^Move down/)
 
     expect(onChange).toHaveBeenCalledWith([blocks[1], blocks[0]])
-    expect(rowTitles()).toEqual(['Call to action', 'Hero'])
+    expect(rowTitles()).toEqual(['Call to action, Two', 'Hero, One'])
   })
 
   it('blocks Move up on the first block', async () => {
@@ -661,6 +721,125 @@ describe('a block list', () => {
     expect(screen.getAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(2)
     expect(screen.getAllByTestId('item-row-menu')).toHaveLength(2)
     expect(screen.getByTestId('block-add-section')).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: 'Add section here' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Add section here' })).toHaveLength(2)
+  })
+})
+
+describe('a list nested in a block list', () => {
+  const leaf: BlockConfig = {
+    name: 'leaf',
+    label: 'Leaf',
+    fields: [{ name: 'text', type: 'string' }],
+  }
+  const group: BlockConfig = {
+    name: 'group',
+    label: 'Group',
+    fields: [{ name: 'children', type: 'block', templates: [leaf] }],
+  }
+  const renderNested = (
+    field: FieldConfig,
+    value: unknown,
+    onChange: (v: unknown) => void,
+    path: Array<string | number>,
+  ): React.ReactNode =>
+    field.type === 'block' ? (
+      <BlockField
+        label="Children"
+        templates={[leaf]}
+        value={(value as BlockInstance[] | undefined) ?? []}
+        onChange={onChange}
+        renderField={renderNested}
+        path={path}
+        resetKey="entry"
+      />
+    ) : (
+      <input
+        aria-label={path.join('.')}
+        value={typeof value === 'string' ? value : ''}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      />
+    )
+  const Nested = () => {
+    const [blocks, setBlocks] = useState<BlockInstance[]>([
+      {
+        template: 'group',
+        value: { children: [1, 2, 3].map((n) => ({ template: 'leaf', value: { text: `c${n}` } })) },
+      },
+      { template: 'leaf', value: { text: 'top' } },
+    ])
+    return (
+      <MantineProvider>
+        <BlockField
+          label="Sections"
+          templates={[group, leaf]}
+          value={blocks}
+          onChange={setBlocks}
+          renderField={renderNested}
+          path={['blocks']}
+          resetKey="entry"
+        />
+      </MantineProvider>
+    )
+  }
+
+  it('focuses the section it added, never a nested row whose key matches', async () => {
+    const user = userEvent.setup()
+    render(<Nested />)
+    const adds = screen.getAllByTestId('block-add-section')
+    await user.click(adds[adds.length - 1])
+    const menus = await screen.findAllByTestId('block-template-menu')
+    await user.click(within(menus[menus.length - 1]).getByTestId('block-template-leaf'))
+
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement).getAttribute('aria-label')).toBe(
+        'blocks.2.text',
+      ),
+    )
+  })
+})
+
+describe('a field that asks to be revealed as it mounts', () => {
+  const Revealer = () => {
+    const ref = useRef<HTMLSpanElement>(null)
+    useEffect(() => {
+      if (ref.current) revealField(ref.current)
+    }, [])
+    return <span ref={ref} data-testid="revealer" />
+  }
+  const field: ObjectFieldConfig = {
+    name: 'team',
+    type: 'object',
+    list: true,
+    label: 'Team',
+    fields: [{ name: 'name', type: 'string' }],
+  }
+  const Mounting = () => {
+    const keysFor = useListItemKeys()
+    const items = ['a', 'b', 'c', 'd', 'e'].map((name) => ({ name }))
+    return (
+      <MantineProvider>
+        <ObjectListField
+          id="team"
+          label="Team"
+          field={field}
+          items={items}
+          itemKeys={keysFor(items, 'team')}
+          onChange={() => {}}
+          renderField={(_f, _v, _c, path) =>
+            path[1] === 4 ? <Revealer /> : <input aria-label={path.join('.')} />
+          }
+          path={['team']}
+          canopyPath="team"
+          readOnly={false}
+          resetKey="entry"
+        />
+      </MantineProvider>
+    )
+  }
+
+  it('opens its collapsed row, which mounted in the same commit', async () => {
+    render(<Mounting />)
+    const row = screen.getByTestId('revealer').closest<HTMLElement>('[data-testid="item-row"]')
+    await waitFor(() => expect(row?.getAttribute('data-expanded')).toBe('true'))
   })
 })

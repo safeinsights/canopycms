@@ -79,6 +79,24 @@ describe('listItemSummary title', () => {
   })
 })
 
+describe('an untitled item named by position', () => {
+  const objectField = { fields: [name], itemLabel: 'team member' }
+
+  it('uses itemLabel, capitalised, in listItemSummary and listItemHeading', () => {
+    expect(listItemSummary({}, objectField, 1).title).toBe('Team member 2')
+    expect(listItemHeading({}, objectField, 1)).toBe('Team member 2')
+  })
+
+  it('uses "Item N" without an itemLabel', () => {
+    expect(listItemHeading({}, { fields: [name] }, 1)).toBe('Item 2')
+  })
+
+  it('leaves a titled item to its title', () => {
+    expect(listItemSummary({ name: 'Ada' }, objectField, 1).title).toBe('Ada')
+    expect(listItemHeading({ name: 'Ada' }, objectField, 1)).toBe('Ada')
+  })
+})
+
 describe('listItemSummary secondary', () => {
   it('is the next text field after the one that titled the item', () => {
     const fields: FieldConfig[] = [name, { name: 'city', type: 'string' }]

@@ -78,7 +78,8 @@ const removedItemLabel = (
   index: number,
 ): string => {
   const text = listItemTitle(item, objectField)
-  return text ? `"${text}" from ${listLabel}` : `item ${index + 1} from ${listLabel}`
+  const byPosition = `${objectField.itemLabel ?? 'item'} ${index + 1}`
+  return text ? `"${text}" from ${listLabel}` : `${byPosition} from ${listLabel}`
 }
 
 const normalizeOptions = (

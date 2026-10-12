@@ -70,12 +70,17 @@ export const listItemTitle = (
   return record ? titleSource(record, objectField)?.text : undefined
 }
 
-/** An object-list item's card heading: its title, else "Item N" (1-based). */
-export const listItemHeading = (
-  item: unknown,
-  objectField: Pick<ObjectFieldConfig, 'fields' | 'itemTitleField'>,
-  index: number,
-): string => listItemTitle(item, objectField) ?? `Item ${index + 1}`
+type ItemNaming = Pick<ObjectFieldConfig, 'fields' | 'itemTitleField' | 'itemLabel'>
+
+/** What an untitled item is called by position: "Item 3", or "Team member 3" from `itemLabel`. */
+const positionalTitle = (objectField: ItemNaming, index: number): string => {
+  const noun = objectField.itemLabel ?? 'item'
+  return `${noun.charAt(0).toUpperCase()}${noun.slice(1)} ${index + 1}`
+}
+
+/** An object-list item's card heading: its title, else its positional title (1-based). */
+export const listItemHeading = (item: unknown, objectField: ItemNaming, index: number): string =>
+  listItemTitle(item, objectField) ?? positionalTitle(objectField, index)
 
 /**
  * The second value a collapsed row shows beside its title: the first non-blank single-line text
@@ -101,13 +106,13 @@ export const listItemSecondary = (
 /** A collapsed object-list row's title and secondary value. */
 export const listItemSummary = (
   item: unknown,
-  objectField: Pick<ObjectFieldConfig, 'fields' | 'itemTitleField'>,
+  objectField: ItemNaming,
   index: number,
 ): { title: string; secondary?: string } => {
   const record = asRecord(item)
   const source = record ? titleSource(record, objectField) : undefined
   return {
-    title: source?.text ?? `Item ${index + 1}`,
+    title: source?.text ?? positionalTitle(objectField, index),
     secondary: listItemSecondary(item, objectField.fields, source?.name),
   }
 }

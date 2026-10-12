@@ -16,6 +16,7 @@ import {
 } from '@mantine/core'
 import {
   DndContext,
+  closestCenter,
   type Announcements,
   type DragEndEvent,
   KeyboardSensor,
@@ -31,6 +32,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { useIsomorphicEffect } from '@mantine/hooks'
 import { IconAlertCircle, IconChevronRight, IconDots, IconGripVertical } from '@tabler/icons-react'
 
 import { formatCanopyPath } from '../canopy-path'
@@ -64,7 +66,7 @@ export interface ItemListProps<T> {
   onDuplicate: (index: number) => void
   /** Takes row `index` out; focus has already moved to the list. */
   onRemove: (index: number) => void
-  /** Rendered between rows `index - 1` and `index`, such as a block list's insert-here control. */
+  /** Rendered before row `index`, such as a block list's insert-here control. */
   renderBetween?: (index: number) => React.ReactNode
   /**
    * A row index to focus after the next render, set by the caller just before it adds a row.
@@ -112,8 +114,11 @@ export function ItemList<T>({
     const index = focusAfterRenderRef?.current
     if (index === null || index === undefined || !focusAfterRenderRef) return
     focusAfterRenderRef.current = null
+    // Keys are unique only within one list, so a nested list's rows never count.
     const row = [...(listRef.current?.querySelectorAll<HTMLElement>('[data-item-row]') ?? [])].find(
-      (el) => el.dataset.itemRow === itemKeys[index],
+      (el) =>
+        el.dataset.itemRow === itemKeys[index] &&
+        el.closest('[data-item-list]') === listRef.current,
     )
     if (row) focusFieldTarget(row)
   })
@@ -162,15 +167,20 @@ export function ItemList<T>({
   }
 
   return (
-    <div ref={listRef} data-testid={testId}>
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd} accessibility={{ announcements }}>
+    <div ref={listRef} data-item-list data-testid={testId}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+        accessibility={{ announcements }}
+      >
         <SortableContext items={[...itemKeys]} strategy={verticalListSortingStrategy}>
           {items.map((item, idx) => {
             const key = itemKeys[idx]
             const summary = summarize(item, idx)
             return (
               <React.Fragment key={key}>
-                {idx > 0 && (renderBetween ? renderBetween(idx) : <Box h={ROW_GAP} aria-hidden />)}
+                {renderBetween ? renderBetween(idx) : idx > 0 && <Box h={ROW_GAP} aria-hidden />}
                 <ItemRow
                   rowKey={key}
                   canopyPath={formatCanopyPath([...path, idx])}
@@ -250,11 +260,12 @@ const ItemRow: React.FC<ItemRowProps> = ({
 
   const expandedRef = useRef(expanded)
   const onExpandedChangeRef = useRef(onExpandedChange)
-  useEffect(() => {
+  // Both from the layout phase, before any field inside runs an effect that asks to reveal it.
+  useIsomorphicEffect(() => {
     expandedRef.current = expanded
     onExpandedChangeRef.current = onExpandedChange
   })
-  useEffect(() => {
+  useIsomorphicEffect(() => {
     const row = rowRef.current
     if (!row) return
     const reveal = (event: Event) => {
@@ -273,7 +284,9 @@ const ItemRow: React.FC<ItemRowProps> = ({
     requestAnimationFrame(() => menuTargetRef.current?.focus())
   }
 
-  const actionsLabel = `Actions for ${summary.title}`
+  // Rows can share a title (two sections of one template), so names carry the second value too.
+  const name = summary.secondary ? `${summary.title}, ${summary.secondary}` : summary.title
+  const actionsLabel = `Actions for ${name}`
 
   return (
     <Paper
@@ -284,7 +297,7 @@ const ItemRow: React.FC<ItemRowProps> = ({
       withBorder
       shadow="xs"
       role="group"
-      aria-label={summary.title}
+      aria-label={name}
       aria-describedby={expanded && description ? fieldDescriptionId(baseId) : undefined}
       data-canopy-field={canopyPath}
       data-item-row={rowKey}
@@ -390,7 +403,13 @@ const ItemRow: React.FC<ItemRowProps> = ({
                 Duplicate
               </Menu.Item>
               <Menu.Divider />
-              <Menu.Item color="red.8" onClick={onRemove} data-testid="item-row-remove">
+              <Menu.Item
+                color="red"
+                // Mantine draws a red item at red.6, 3.3:1 on white.
+                c="red.8"
+                onClick={onRemove}
+                data-testid="item-row-remove"
+              >
                 {EDITOR_ACTIONS.remove}
               </Menu.Item>
             </Menu.Dropdown>

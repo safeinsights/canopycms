@@ -7,7 +7,7 @@ import type { UserSearchResult } from '../../auth/types'
 import { CommentThreadsPopover, type OpenRequest } from './CommentThreadsPopover'
 import { FieldCommentContext } from './field-comment-context'
 import { useFormComments } from './form-comments'
-import { revealField, whenRevealed } from '../field-target'
+import { whenRevealed } from '../field-target'
 
 export interface FieldWrapperProps {
   /** Child form field element */
@@ -102,7 +102,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   useEffect(() => {
     const field = wrapperRef.current
     if (!field) return
-    if (highlightHere) revealField(field)
+    if (highlightHere) whenRevealed(field, () => {})
     else if (autoFocus) {
       whenRevealed(field, () => field.scrollIntoView({ behavior: 'smooth', block: 'center' }))
     }
