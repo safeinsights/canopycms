@@ -18,14 +18,30 @@ touches: the components, and the user flows that reach them.
 
 ## 1. Read the diff against the guidelines
 
-For each changed surface, check every section of the guidelines: vocabulary, copy, surface
-choice, destructive actions, disabled/loading/empty/error states, field anatomy, keyboard,
-accessibility and shell regions. Run `pnpm lint:ux-copy` and `pnpm lint:a11y`; a failure there
+For each changed surface, check every section of the guidelines, from vocabulary to shell
+regions. Run `pnpm lint:ux-copy` and `pnpm lint:a11y`; a failure there
 is already a finding, so spend your attention on what they cannot see: a new control without
 a disabled reason, an empty state that flashes during loading, a toast duplicating visible
 state, a missing Undo, a wrong word that is still sentence case.
 
-## 2. Render the stories
+## 2. Check the rules reviews miss
+
+Check each changed surface against these rules:
+
+- comment control: Tab order, and no badge at zero ([Fields](../../docs/ux-guidelines.md#fields))
+- disabled reasons on focus and touch, and `aria-disabled` menu items
+  ([Disabled controls](../../docs/ux-guidelines.md#disabled-controls))
+- focus when the opener is gone ([Keyboard](../../docs/ux-guidelines.md#keyboard))
+- toast pause, and focus after Undo
+  ([Choosing a surface](../../docs/ux-guidelines.md#choosing-a-surface),
+  [Destructive actions](../../docs/ux-guidelines.md#destructive-actions))
+- names, fallbacks, avatars, tooltip-only details ([People](../../docs/ux-guidelines.md#people))
+- named colour tokens
+  ([Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast))
+- no reorder under the pointer
+  ([Loading, empty and error states](../../docs/ux-guidelines.md#loading-empty-and-error-states))
+
+## 3. Render the stories
 
 Find the `*.stories.tsx` covering each changed component. A changed component with no story is
 a finding (LOW, or MEDIUM for a new surface). Start Storybook with `preview_start` using the
@@ -34,7 +50,7 @@ a finding (LOW, or MEDIUM for a new surface). Start Storybook with `preview_star
 layout at 1280px and at 390px with `resize_window`, then reset to `desktop`. Read the console
 for React warnings.
 
-## 3. Walk the flow
+## 4. Walk the flow
 
 Start `apps/example1` with `preview_start` (`example1` entry) and open `/edit`. Walk each
 affected flow end to end in each role it concerns, switching dev users (User One, User Two,

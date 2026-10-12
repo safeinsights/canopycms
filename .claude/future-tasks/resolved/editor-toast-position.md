@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-10, from the editor UI epic's WS3 UX review. docs/ux-guidelines.md places toasts bottom-right, but theme.tsx renders `<Notifications position="bottom-left" />`, where the Next.js dev badge covers them in example1; "Comment added" also repeats a visible thread
+  RESOLVED (2026-10-11) — superseded. JP ruled toasts go in the corner opposite the rail, which theme.tsx's `position="bottom-left"` already meets, and docs/ux-guidelines.md now says so. The "Comment added" toast is gone from the editor. example1's dev badge covering toasts moved to [filled-button-contrast-and-toast-guidelines.md](../filled-button-contrast-and-toast-guidelines.md).
 ---
 # Editor toasts render bottom-left, against the guideline
 
