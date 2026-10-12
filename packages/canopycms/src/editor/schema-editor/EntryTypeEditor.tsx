@@ -58,7 +58,7 @@ export interface EntryTypeEditorProps {
   onClose: () => void
   isSaving?: boolean
   error?: string | null
-  /** Why the last save's outcome is unknown, shown above the form it kept. */
+  /** A note above the kept form that the last save's outcome is unknown, and how to retry. */
   warning?: string | null
 }
 

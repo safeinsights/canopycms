@@ -216,10 +216,12 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const draftBaseVersionsRef = useRef<Record<string, number | null>>({})
   const [draftStorageFailed, setDraftStorageFailed] = useState(false)
   const [saveInFlight, setSaveInFlight] = useState(false)
-  // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN. That save may have
-  // landed, so re-sending the token would bounce off the user's own write; held until re-read.
+  // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN, or when the retry of
+  // a timed-out save was refused as a version conflict. That save may have landed, so re-sending
+  // the token would bounce off the user's own write; held until re-read.
   const reloadRequiredRef = useRef<Record<string, number | undefined>>({})
-  // Entries whose timed-out save toast is up, taken down once a save, reload or discard ends it.
+  // Entries whose timed-out save toast is up, taken down once a save, reload, discard or branch
+  // switch ends it, or a retry is refused as having landed.
   const timedOutSavesRef = useRef(new Set<string>())
   // The draft ids the reconcile effect below has already accounted for. It
   // prunes on an observed present -> absent TRANSITION rather than on "not

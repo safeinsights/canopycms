@@ -96,11 +96,11 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
 - **Empty** states appear only after loading finishes, say what is missing and offer the next
   action.
 - **Errors** say what failed in plain words, keep the user's input and offer Retry.
-- **A write with no answer** (a timeout, or a gateway's 5xx page) may have gone through
+- **A write with no answer** (a timeout or a gateway's 5xx page) may have gone through
   (`packages/canopycms/src/editor/unanswered.ts`). Reload what it touched; if that settles the
-  outcome, state it. Otherwise warn in yellow until dismissed: "… may have gone through even
-  though the server didn't answer", then where to check, quoted. Keep the input, unless a
-  retry could duplicate the write, as a create can: then close and say where to check.
+  outcome, say so. Otherwise warn in yellow until dismissed or acted on: "… may have gone
+  through even though the server didn't answer", then where to check, quoted. Keep the input,
+  unless a retry could duplicate the write (a create): then close, saying where to check.
 - An inline alert about a list sits above the list, under its heading.
 - A placeholder takes the height of what replaces it, so nothing shifts.
 

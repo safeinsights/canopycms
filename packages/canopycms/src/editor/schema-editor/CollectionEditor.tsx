@@ -419,8 +419,8 @@ export function CollectionEditor({
           }
           if (result && !result.ok && result.unanswered) {
             // The re-read settles it when the branch already shows the change. Otherwise this
-            // dialog keeps the input: re-sending an update changes nothing, and re-sending an
-            // add that had landed is refused because the name is in use.
+            // dialog keeps the input: re-sending an update sends the same change, and re-sending
+            // an add that had landed is refused because the name exists (`schema-store.ts`).
             const name = isNew ? (data as CreateEntryTypeInput).name : editingEntryType?.name
             const reloaded = await reloadEntryTypes(editingCollection.logicalPath)
             const now = reloaded?.find((et) => et.name === name)
@@ -432,8 +432,8 @@ export function CollectionEditor({
             }
             setEntryTypeWarning(
               isNew
-                ? `"${name}" may not have been added. Select "Add entry type" to try again: if it was added, you'll be told the name is in use.`
-                : 'The change may not have been saved. Select "Save entry type" to try again; saving it twice changes nothing.',
+                ? `"${name}" may not have been added. Select "Add entry type" to try again: if it was added, you'll be told it already exists.`
+                : 'The change may not have been saved. Select "Save entry type" to send it again.',
             )
             return
           }

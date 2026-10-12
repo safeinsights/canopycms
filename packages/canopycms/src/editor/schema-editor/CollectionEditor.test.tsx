@@ -1092,9 +1092,9 @@ describe('CollectionEditor', () => {
         waitFor(() => expect(screen.queryByRole('dialog', { name: /entry type/ })).toBeNull())
       const noAnswerTitle = 'No answer from the server'
       const notAdded = (name: string) =>
-        `"${name}" may not have been added. Select "Add entry type" to try again: if it was added, you'll be told the name is in use.`
+        `"${name}" may not have been added. Select "Add entry type" to try again: if it was added, you'll be told it already exists.`
       const notSaved =
-        'The change may not have been saved. Select "Save entry type" to try again; saving it twice changes nothing.'
+        'The change may not have been saved. Select "Save entry type" to send it again.'
       const stillListed = (name: string) =>
         `"${name}" is still listed, so it may not have been removed yet. Remove it again to retry, or close and reopen this collection later to check.`
       const maybeRemoved = (name: string) =>

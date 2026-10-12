@@ -1,6 +1,7 @@
 /**
- * The row-reordering callback `ObjectListField` hands its `ItemList`, which can be called with
- * an index outside the list (a Move up on the first row) and must then change nothing.
+ * The row-reordering callback `ObjectListField` hands its `ItemList`. `ItemList` blocks the
+ * moves that would leave the list, so an index outside it never arrives today; if one does, the
+ * callback changes nothing.
  */
 import React from 'react'
 import { cleanup, render } from '@testing-library/react'

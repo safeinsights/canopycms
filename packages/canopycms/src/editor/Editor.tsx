@@ -798,7 +798,7 @@ const EditorContent: React.FC<EditorProps> = ({
   }, [currentEntry, loadedValues, selectedPath, branchNameState, loadAttempt])
 
   // The collection dialog's entry types, with schema and usage, as the branch has them; null when
-  // the read fails or the collection is gone.
+  // the API refuses the read or the collection is gone, and a rejection when the read times out.
   const readEntryTypes = async (
     collectionPath: LogicalPath,
   ): Promise<ExistingEntryType[] | null> => {
@@ -873,7 +873,7 @@ const EditorContent: React.FC<EditorProps> = ({
     if (isNew) {
       const result = await createCollection(data as Parameters<typeof createCollection>[0])
       // A retried create that had landed makes a second collection, so an unanswered one closes
-      // the dialog too, leaving the hook's toast to say to check the content tree first.
+      // the dialog too, leaving the hook's toast to say to check the "Content" panel first.
       if (result.ok || result.unanswered) {
         handleCloseCollectionEditor()
       } else {

@@ -75,8 +75,9 @@ export const EditWithError: Story = {
 }
 
 // Every entry-type action goes unanswered, then the list is re-read: it has "featured" gone and
-// "page" added, so removing "featured" or adding "page" reads as done, while any other add or an
-// edit stays unsettled and keeps its dialog open.
+// "page" added as the form's defaults send it (JSON, postSchema, no label). Removing "featured" or
+// adding "page" with those defaults reads as done; any other add, or an edit that changes
+// something, stays unsettled and keeps its dialog open.
 export const EditUnanswered: Story = {
   args: {
     editingCollection: collection,
@@ -85,7 +86,7 @@ export const EditUnanswered: Story = {
     onRemoveEntryType: goesUnanswered,
     onReloadEntryTypes: async () => [
       collection.entries[0] as ExistingEntryType,
-      { name: 'page', label: 'Page', format: 'json', schema: 'pageSchema', usageCount: 0 },
+      { name: 'page', format: 'json', schema: 'postSchema', usageCount: 0 },
     ],
   },
 }
