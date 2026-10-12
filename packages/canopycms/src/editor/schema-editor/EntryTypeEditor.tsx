@@ -52,6 +52,8 @@ export interface EntryTypeEditorProps {
   availableSchemas: string[]
   /** Existing entry type names in the collection (for duplicate validation) */
   existingEntryTypeNames?: string[]
+  /** The caller holds an edit until its own save, so confirming it updates rather than saves. */
+  staged?: boolean
   onSave: (data: CreateEntryTypeInput | UpdateEntryTypeInput, isNew: boolean) => void
   onClose: () => void
   isSaving?: boolean
@@ -70,6 +72,7 @@ export function EntryTypeEditor({
   editingEntryType,
   availableSchemas,
   existingEntryTypeNames = [],
+  staged = false,
   onSave,
   onClose,
   isSaving = false,
@@ -202,7 +205,11 @@ export function EntryTypeEditor({
     <Modal
       opened={isOpen}
       onClose={onClose}
-      title={isEditMode ? `Edit entry type: ${editingEntryType?.name}` : 'Add entry type'}
+      title={
+        isEditMode
+          ? `Edit entry type: ${editingEntryType?.label || editingEntryType?.name}`
+          : 'Add entry type'
+      }
       size="md"
     >
       <Stack gap="md">
@@ -321,7 +328,7 @@ export function EntryTypeEditor({
             Cancel
           </Button>
           <Button size="sm" onClick={handleSave} loading={isSaving}>
-            {isEditMode ? 'Save entry type' : 'Add entry type'}
+            {isEditMode ? (staged ? 'Update entry type' : 'Save entry type') : 'Add entry type'}
           </Button>
         </Group>
       </Stack>

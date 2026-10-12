@@ -8,11 +8,12 @@
  * stages everything locally and sends it with "Create collection"; Cancel
  * discards it. Edit mode stages name, label and slug until "Save collection
  * details", but every entry-type add, update and remove saves to the branch
- * at once, so the footer reads "Close" once one has succeeded: Cancel would
- * promise a revert it cannot do.
+ * at once. The footer's dismiss button says what leaving does: "Discard
+ * changes" while details are staged, "Close" once an entry-type change has
+ * saved, else "Cancel" (which would promise a revert it cannot do after one).
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   Modal,
   Stack,
@@ -24,7 +25,7 @@ import {
   Paper,
   ActionIcon,
   Menu,
-  Divider,
+  Title,
   Badge,
   Tooltip,
 } from '@mantine/core'
@@ -108,6 +109,17 @@ export interface CollectionEditorProps {
   error?: string | null
 }
 
+/** The directory name in a logical path, without its embedded id ("posts.abc123" -> "posts"). */
+function slugOf(logicalPath: LogicalPath): string {
+  const pathParts = logicalPath.split('/')
+  const lastPart = pathParts[pathParts.length - 1]
+  return lastPart?.split('.')[0] || ''
+}
+
+function usageOf(entryType: ExistingEntryType | CreateEntryTypeInput): number {
+  return 'usageCount' in entryType ? (entryType.usageCount ?? 0) : 0
+}
+
 export function CollectionEditor({
   isOpen,
   editingCollection,
@@ -139,6 +151,7 @@ export function CollectionEditor({
   const [editingEntryTypeIndex, setEditingEntryTypeIndex] = useState<number | null>(null)
   const [entryTypeSaving, setEntryTypeSaving] = useState(false)
   const [entryTypeError, setEntryTypeError] = useState<string | null>(null)
+  const [errorDismissed, setErrorDismissed] = useState(false)
 
   // Edit mode renders this list rather than `editingCollection.entries`, a snapshot taken when
   // the dialog opened that the parent never refreshes. Each immediate action patches it.
@@ -148,9 +161,15 @@ export function CollectionEditor({
   // True once an immediate entry-type change has saved in this opening of the dialog.
   const [entryTypeChanged, setEntryTypeChanged] = useState(false)
   const [entryTypeStatus, setEntryTypeStatus] = useState('')
-  const [removeError, setRemoveError] = useState<string | null>(null)
+  const [removeFailure, setRemoveFailure] = useState<{ name: string; message: string } | null>(null)
   const [removing, setRemoving] = useState(false)
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null)
+
+  // Closing an overlay returns focus to its opener, but a row's menu item is gone once it acts,
+  // so Mantine's own return lands nowhere. `row` names the trigger to focus; null is the heading.
+  const [focusRequest, setFocusRequest] = useState<{ row: string | null } | null>(null)
+  const triggerRefs = useRef(new Map<string, HTMLButtonElement>())
+  const entryTypesHeadingRef = useRef<HTMLHeadingElement>(null)
 
   const [deleteEntryTypeModalOpen, setDeleteEntryTypeModalOpen] = useState(false)
   const [deletingEntryType, setDeletingEntryType] = useState<{
@@ -167,11 +186,7 @@ export function CollectionEditor({
           entries: [], // Edit mode keeps its entry types in `entryTypes`
         })
         setEntryTypes(editingCollection.entries)
-        // Slug is the logical path's last segment before its embedded id (e.g. "posts.abc123" -> "posts").
-        const pathParts = editingCollection.logicalPath.split('/')
-        const lastPart = pathParts[pathParts.length - 1]
-        const slugPart = lastPart?.split('.')[0] || ''
-        setSlug(slugPart)
+        setSlug(slugOf(editingCollection.logicalPath))
       } else {
         setFormData({
           name: '',
@@ -184,9 +199,35 @@ export function CollectionEditor({
       setValidationError(null)
       setEntryTypeChanged(false)
       setEntryTypeStatus('')
-      setRemoveError(null)
+      setRemoveFailure(null)
+    } else {
+      // The parent closes this dialog (and nulls `editingCollection`) when details save, so a
+      // sub-dialog left open would stage into a closed dialog in create mode.
+      setEntryTypeEditorOpen(false)
+      setEditingEntryType(null)
+      setEditingEntryTypeIndex(null)
+      setEntryTypeError(null)
+      setDeleteEntryTypeModalOpen(false)
     }
   }, [isOpen, editingCollection])
+
+  useEffect(() => {
+    setErrorDismissed(false)
+  }, [error, isOpen, editingCollection])
+
+  useEffect(() => {
+    if (!focusRequest) return
+    // Runs after the overlay's own focus return has had its turn.
+    const timer = window.setTimeout(() => {
+      const target =
+        focusRequest.row === null
+          ? entryTypesHeadingRef.current
+          : triggerRefs.current.get(focusRequest.row)
+      target?.focus()
+      setFocusRequest(null)
+    }, 50)
+    return () => window.clearTimeout(timer)
+  }, [focusRequest])
 
   const updateField = useCallback(
     <K extends keyof CollectionFormData>(field: K, value: CollectionFormData[K]) => {
@@ -231,9 +272,7 @@ export function CollectionEditor({
       if (formData.label !== (editingCollection?.label || '')) {
         updates.label = formData.label || undefined
       }
-      const pathParts = editingCollection?.logicalPath.split('/') || []
-      const lastPart = pathParts[pathParts.length - 1]
-      const currentSlug = lastPart?.split('.')[0] || ''
+      const currentSlug = editingCollection ? slugOf(editingCollection.logicalPath) : ''
       if (slug && slug !== currentSlug) {
         updates.slug = slug
       }
@@ -272,13 +311,45 @@ export function CollectionEditor({
     setEntryTypeChanged(true)
   }, [])
 
+  const closeEntryTypeEditor = useCallback(() => {
+    setEntryTypeEditorOpen(false)
+    setEditingEntryType(null)
+    setEditingEntryTypeIndex(null)
+    setEntryTypeError(null)
+  }, [])
+
+  // Esc, the close button and a click outside all land here; closing mid-request would hide
+  // the request's result.
+  const dismissEntryTypeEditor = useCallback(() => {
+    if (entryTypeSaving) return
+    const editedName = editingEntryType?.name
+    closeEntryTypeEditor()
+    if (editedName) setFocusRequest({ row: editedName })
+  }, [entryTypeSaving, editingEntryType, closeEntryTypeEditor])
+
   const handleEntryTypeSave = useCallback(
     async (data: CreateEntryTypeInput | Partial<CreateEntryTypeInput>, isNew: boolean) => {
+      const editedName = isNew ? undefined : editingEntryType?.name
+      const finish = () => {
+        closeEntryTypeEditor()
+        if (editedName) setFocusRequest({ row: editedName })
+      }
+
       if (isEditMode && editingCollection) {
+        // The server skips undefined fields, so a cleared label or max items keeps its stored
+        // value: the list shows what was stored, and an update with none saves nothing.
+        const stored: Partial<CreateEntryTypeInput> = Object.fromEntries(
+          Object.entries(data).filter(([, value]) => value !== undefined),
+        )
+        if (!isNew && Object.keys(stored).length === 0) {
+          finish()
+          return
+        }
+
         setEntryTypeSaving(true)
         setEntryTypeError(null)
         setEntryTypeStatus('')
-        setRemoveError(null)
+        setRemoveFailure(null)
         try {
           // An absent callback leaves `result` undefined: nothing was saved, so nothing is
           // applied locally or announced.
@@ -294,11 +365,6 @@ export function CollectionEditor({
             const name = editingEntryType.name
             result = await onUpdateEntryType?.(editingCollection.logicalPath, name, data)
             if (result?.ok) {
-              // The server skips undefined fields, so a cleared label or max items keeps its
-              // stored value; the list shows what was stored.
-              const stored = Object.fromEntries(
-                Object.entries(data).filter(([, value]) => value !== undefined),
-              )
               setEntryTypes((prev) =>
                 prev.map((et) => (et.name === name ? { ...et, ...stored } : et)),
               )
@@ -333,9 +399,7 @@ export function CollectionEditor({
           }))
         }
       }
-      setEntryTypeEditorOpen(false)
-      setEditingEntryType(null)
-      setEditingEntryTypeIndex(null)
+      finish()
     },
     [
       isEditMode,
@@ -345,8 +409,13 @@ export function CollectionEditor({
       onAddEntryType,
       onUpdateEntryType,
       announceEntryTypeChange,
+      closeEntryTypeEditor,
     ],
   )
+
+  const displayEntryTypes: (ExistingEntryType | CreateEntryTypeInput)[] = isEditMode
+    ? entryTypes
+    : formData.entries
 
   const handleRemoveEntryType = useCallback(
     (entryType: ExistingEntryType | CreateEntryTypeInput, index: number) => {
@@ -356,84 +425,122 @@ export function CollectionEditor({
     [],
   )
 
+  // Only closes: the target is replaced on the next open, so the message stays put while the
+  // dialog fades out.
   const closeRemoveConfirm = useCallback(() => {
     setDeleteEntryTypeModalOpen(false)
-    setDeletingEntryType(null)
   }, [])
 
-  const confirmRemoveEntryType = useCallback(async () => {
-    if (!deletingEntryType) return
+  const cancelRemoveConfirm = useCallback(() => {
+    closeRemoveConfirm()
+    if (deletingEntryType) setFocusRequest({ row: deletingEntryType.entryType.name })
+  }, [closeRemoveConfirm, deletingEntryType])
 
-    const { entryType, index } = deletingEntryType
+  const removeEntryType = useCallback(
+    async (name: string, index: number) => {
+      const names = displayEntryTypes.map((et) => et.name)
+      // Focus moves to the row that takes the removed one's place, else the one before it, else
+      // the heading.
+      const neighbour = names[names.indexOf(name) + 1] ?? names[names.indexOf(name) - 1] ?? null
 
-    if (isEditMode && editingCollection) {
-      if (onRemoveEntryType) {
+      if (isEditMode && editingCollection) {
+        if (!onRemoveEntryType) return
         setRemoving(true)
-        setRemoveError(null)
         setEntryTypeStatus('')
         try {
-          const result = await onRemoveEntryType(editingCollection.logicalPath, entryType.name)
+          const result = await onRemoveEntryType(editingCollection.logicalPath, name)
           if (result.ok) {
-            setEntryTypes((prev) => prev.filter((et) => et.name !== entryType.name))
-            announceEntryTypeChange(`Entry type "${entryType.name}" removed`)
+            setEntryTypes((prev) => prev.filter((et) => et.name !== name))
+            setRemoveFailure(null)
+            announceEntryTypeChange(`Entry type "${name}" removed`)
+            setFocusRequest({ row: neighbour })
           } else {
-            setRemoveError(result.error)
+            setRemoveFailure({ name, message: result.error })
+            setFocusRequest({ row: name })
           }
         } catch (err) {
-          setRemoveError(getErrorMessage(err))
+          setRemoveFailure({ name, message: getErrorMessage(err) })
+          setFocusRequest({ row: name })
         } finally {
           setRemoving(false)
         }
+      } else {
+        setFormData((prev) => ({
+          ...prev,
+          entries: prev.entries.filter((_, i) => i !== index),
+        }))
+        setFocusRequest({ row: neighbour })
       }
-    } else {
-      setFormData((prev) => ({
-        ...prev,
-        entries: prev.entries.filter((_, i) => i !== index),
-      }))
-    }
+    },
+    [displayEntryTypes, isEditMode, editingCollection, onRemoveEntryType, announceEntryTypeChange],
+  )
 
+  const confirmRemoveEntryType = useCallback(async () => {
+    if (!deletingEntryType) return
+    await removeEntryType(deletingEntryType.entryType.name, deletingEntryType.index)
     closeRemoveConfirm()
-  }, [
-    deletingEntryType,
-    isEditMode,
-    editingCollection,
-    onRemoveEntryType,
-    announceEntryTypeChange,
-    closeRemoveConfirm,
-  ])
+  }, [deletingEntryType, removeEntryType, closeRemoveConfirm])
 
   const removeMessage = (() => {
     if (!deletingEntryType) return ''
     const { name } = deletingEntryType.entryType
-    if (!isEditMode) return `Remove "${name}" from this new collection?`
-    const usageCount =
-      'usageCount' in deletingEntryType.entryType
-        ? (deletingEntryType.entryType.usageCount ?? 0)
-        : 0
-    return usageCount > 0
-      ? `"${name}" is used by ${usageCount} ${usageCount === 1 ? 'entry' : 'entries'}. Removing it saves immediately and stops those entries from being edited.`
-      : `Remove "${name}"? This saves immediately and cannot be undone.`
+    return isEditMode
+      ? `Remove "${name}"? This saves immediately and cannot be undone.`
+      : `Remove "${name}" from this new collection?`
   })()
 
-  const displayEntryTypes: (ExistingEntryType | CreateEntryTypeInput)[] = isEditMode
-    ? entryTypes
-    : formData.entries
+  const removeBlockedReason = (entryType: ExistingEntryType | CreateEntryTypeInput) => {
+    if (displayEntryTypes.length === 1) {
+      return 'A collection needs at least one entry type. Add another before removing this one.'
+    }
+    // The server refuses to remove an entry type that entries use. Staged ones have no entries.
+    const used = isEditMode ? usageOf(entryType) : 0
+    return used > 0
+      ? `${used} ${used === 1 ? 'entry uses' : 'entries use'} this entry type. Move or delete ${used === 1 ? 'it' : 'them'} first.`
+      : undefined
+  }
 
   // The hook's single `isLoading` flag drives `isSaving`, so it is also true while an
   // entry-type action runs; the footer must not spin or close over that action's result.
   const entryTypeBusy = entryTypeSaving || removing
 
-  const displayError = error || validationError
+  // Mantine's Escape handler fires on every open Modal, so one Esc would close a sub-dialog and
+  // this dialog together, losing staged details. A request in flight must not be hidden either.
+  const dismissBlocked = entryTypeBusy || entryTypeEditorOpen || deleteEntryTypeModalOpen
+
+  const propErrorVisible = !!error && !errorDismissed
+  const displayError = propErrorVisible ? error : validationError
+  const errorTitle = propErrorVisible
+    ? isEditMode
+      ? "Couldn't save collection details"
+      : "Couldn't create collection"
+    : undefined
+
+  // Same comparisons as handleSave, so the button says "Discard changes" exactly when Save
+  // collection details would send something.
+  const detailsDirty =
+    editingCollection !== null &&
+    (formData.name !== editingCollection.name ||
+      formData.label !== (editingCollection.label || '') ||
+      (!!slug && slug !== slugOf(editingCollection.logicalPath)))
+  const dismissLabel = detailsDirty
+    ? 'Discard changes'
+    : isEditMode && entryTypeChanged
+      ? 'Close'
+      : 'Cancel'
 
   const entryTypesSection = (
     <Stack gap="md">
-      <Divider label="Entry types" labelPosition="left" />
-
-      {isEditMode && (
-        <Text size="sm" c="dimmed">
-          Changes here save to the branch immediately.
-        </Text>
-      )}
+      <div>
+        <Title order={3} size="h5" tabIndex={-1} ref={entryTypesHeadingRef}>
+          Entry types
+        </Title>
+        {isEditMode && (
+          <Text size="sm" c="dimmed">
+            Changes here save to the branch immediately.
+          </Text>
+        )}
+      </div>
 
       {displayEntryTypes.length === 0 ? (
         <Paper p="md" withBorder>
@@ -480,7 +587,14 @@ export function CollectionEditor({
                     disabled={menuOpenFor === entryType.name}
                   >
                     <Menu.Target>
-                      <ActionIcon variant="subtle" aria-label={`Actions for ${entryType.name}`}>
+                      <ActionIcon
+                        variant="subtle"
+                        aria-label={`Actions for ${entryType.name}`}
+                        ref={(el) => {
+                          if (el) triggerRefs.current.set(entryType.name, el)
+                          else triggerRefs.current.delete(entryType.name)
+                        }}
+                      >
                         <IconDotsVertical size={16} aria-hidden />
                       </ActionIcon>
                     </Menu.Target>
@@ -497,11 +611,7 @@ export function CollectionEditor({
                       leftSection={<IconTrash size={14} />}
                       color="red"
                       onClick={() => handleRemoveEntryType(entryType, index)}
-                      blockedReason={
-                        displayEntryTypes.length === 1
-                          ? 'A collection needs at least one entry type. Add another before removing this one.'
-                          : undefined
-                      }
+                      blockedReason={removeBlockedReason(entryType)}
                     >
                       Remove
                     </ReasonedMenuItem>
@@ -514,28 +624,44 @@ export function CollectionEditor({
       )}
 
       {isEditMode && (
-        // Stays mounted while empty so screen readers announce each change.
-        <Group gap={6} wrap="nowrap" role="status">
+        // Stays mounted while empty so screen readers announce each change, and holds one line
+        // of text so the message appearing shifts nothing. Only the icon is green: green text
+        // misses 4.5:1, while a non-text graphic needs just 3:1.
+        <Group
+          gap={6}
+          wrap="nowrap"
+          role="status"
+          mih="calc(var(--mantine-font-size-sm) * var(--mantine-line-height-sm))"
+        >
           {entryTypeStatus && (
             <>
-              <IconCheck size={14} aria-hidden />
-              <Text size="sm" c="green.8">
-                {entryTypeStatus}
-              </Text>
+              <IconCheck size={14} color="var(--mantine-color-green-8)" aria-hidden />
+              <Text size="sm">{entryTypeStatus}</Text>
             </>
           )}
         </Group>
       )}
 
-      {removeError && (
+      {removeFailure && (
         <Alert
           icon={<IconAlertCircle size={16} />}
           color="red"
           title="Couldn't remove entry type"
           withCloseButton
-          onClose={() => setRemoveError(null)}
+          onClose={() => setRemoveFailure(null)}
         >
-          {removeError}
+          <Stack gap="xs" align="flex-start">
+            <Text size="sm">{removeFailure.message}</Text>
+            <Button
+              size="xs"
+              variant="light"
+              color="red"
+              loading={removing}
+              onClick={() => void removeEntryType(removeFailure.name, 0)}
+            >
+              Retry
+            </Button>
+          </Stack>
         </Alert>
       )}
 
@@ -554,8 +680,12 @@ export function CollectionEditor({
     <>
       <Modal
         opened={isOpen}
-        onClose={entryTypeBusy ? () => {} : onClose}
-        title={isEditMode ? `Edit collection: ${editingCollection?.name}` : 'Create collection'}
+        onClose={dismissBlocked ? () => {} : onClose}
+        title={
+          isEditMode
+            ? `Edit collection: ${editingCollection?.label || editingCollection?.name}`
+            : 'Create collection'
+        }
         size="lg"
       >
         <Stack gap="md">
@@ -563,9 +693,11 @@ export function CollectionEditor({
             <Alert
               icon={<IconAlertCircle size={16} />}
               color="red"
-              title="Error"
+              title={errorTitle}
               withCloseButton
-              onClose={() => setValidationError(null)}
+              onClose={() =>
+                propErrorVisible ? setErrorDismissed(true) : setValidationError(null)
+              }
             >
               {displayError}
             </Alert>
@@ -573,7 +705,9 @@ export function CollectionEditor({
 
           {isEditMode && (
             <div>
-              <Text fw={500}>Collection details</Text>
+              <Title order={3} size="h5">
+                Collection details
+              </Title>
               <Text size="sm" c="dimmed">
                 Saved when you select &quot;Save collection details&quot;.
               </Text>
@@ -632,7 +766,7 @@ export function CollectionEditor({
               onClick={onClose}
               disabled={isSaving || entryTypeBusy}
             >
-              {entryTypeChanged ? 'Close' : 'Cancel'}
+              {dismissLabel}
             </Button>
             <Button
               size="sm"
@@ -651,13 +785,9 @@ export function CollectionEditor({
         editingEntryType={editingEntryType}
         availableSchemas={availableSchemas}
         existingEntryTypeNames={displayEntryTypes.map((et) => et.name)}
+        staged={!isEditMode}
         onSave={handleEntryTypeSave}
-        onClose={() => {
-          setEntryTypeEditorOpen(false)
-          setEditingEntryType(null)
-          setEditingEntryTypeIndex(null)
-          setEntryTypeError(null)
-        }}
+        onClose={dismissEntryTypeEditor}
         isSaving={entryTypeSaving}
         error={entryTypeError}
       />
@@ -668,7 +798,7 @@ export function CollectionEditor({
         message={removeMessage}
         confirmLabel="Remove entry type"
         onConfirm={confirmRemoveEntryType}
-        onClose={removing ? () => {} : closeRemoveConfirm}
+        onClose={removing ? () => {} : cancelRemoveConfirm}
         loading={removing}
       />
     </>

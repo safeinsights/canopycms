@@ -149,12 +149,35 @@ describe('EntryTypeEditor', () => {
     it('renders edit modal with existing data', () => {
       renderEntryTypeEditor({ editingEntryType: existingEntryType })
 
-      expect(screen.getByText(/Edit entry type: post/)).toBeTruthy()
+      expect(screen.getByText('Edit entry type: Blog Post')).toBeTruthy()
       const nameInput = screen.getByLabelText(/^Name/) as HTMLInputElement
       expect(nameInput.value).toBe('post')
       expect(nameInput.disabled).toBe(true)
       const labelInput = screen.getByLabelText(/^Label/) as HTMLInputElement
       expect(labelInput.value).toBe('Blog Post')
+    })
+
+    it('titles by name when there is no label', () => {
+      renderEntryTypeEditor({ editingEntryType: { ...existingEntryType, label: undefined } })
+
+      expect(screen.getByText('Edit entry type: post')).toBeTruthy()
+    })
+
+    it('confirms an edit with Save entry type, or Update entry type when staged', () => {
+      const saved = renderEntryTypeEditor({ editingEntryType: existingEntryType })
+      expect(screen.getByRole('button', { name: 'Save entry type' })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Update entry type' })).toBeNull()
+      saved.unmount()
+
+      renderEntryTypeEditor({ editingEntryType: existingEntryType, staged: true })
+      expect(screen.getByRole('button', { name: 'Update entry type' })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Save entry type' })).toBeNull()
+    })
+
+    it('keeps Add entry type when adding, staged or not', () => {
+      renderEntryTypeEditor({ staged: true })
+
+      expect(screen.getAllByRole('button', { name: 'Add entry type' }).length).toBeGreaterThan(0)
     })
 
     it('only includes changed fields in update', async () => {

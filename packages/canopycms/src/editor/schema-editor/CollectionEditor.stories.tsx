@@ -45,7 +45,8 @@ export const Create: Story = {
   args: { editingCollection: null },
 }
 
-// The dismiss button reads "Cancel" until an entry-type change saves, then "Close".
+// The dismiss button reads "Cancel", "Discard changes" once the details are edited, and "Close"
+// after an entry-type change saves. "post" is in use, so its Remove is blocked with a reason.
 export const Edit: Story = {
   args: {
     editingCollection: collection,
