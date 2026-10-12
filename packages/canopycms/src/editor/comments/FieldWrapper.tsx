@@ -7,6 +7,7 @@ import type { UserSearchResult } from '../../auth/types'
 import { CommentThreadsPopover, type OpenRequest } from './CommentThreadsPopover'
 import { FieldCommentContext } from './field-comment-context'
 import { useFormComments } from './form-comments'
+import { whenRevealed } from '../field-target'
 
 export interface FieldWrapperProps {
   /** Child form field element */
@@ -88,18 +89,22 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
       formComments?.register(canopyPath, {
         subject: fieldLabel,
         // A new object per request, so asking again while it is open still counts.
-        open: (returnFocusTo) => setOpenRequest({ returnFocusTo }),
+        open: (returnFocusTo) => {
+          const field = wrapperRef.current
+          if (field) whenRevealed(field, () => setOpenRequest({ returnFocusTo }))
+          else setOpenRequest({ returnFocusTo })
+        },
         element: () => wrapperRef.current,
       }),
     [formComments, canopyPath, fieldLabel],
   )
 
   useEffect(() => {
-    if (autoFocus && !highlightHere) {
-      wrapperRef.current?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-      })
+    const field = wrapperRef.current
+    if (!field) return
+    if (highlightHere) whenRevealed(field, () => {})
+    else if (autoFocus) {
+      whenRevealed(field, () => field.scrollIntoView({ behavior: 'smooth', block: 'center' }))
     }
   }, [autoFocus, highlightHere])
 

@@ -35,8 +35,18 @@ const renderForm = (fields: FieldConfig[], value: FormValue) => {
   return { onRemoved, onChange }
 }
 
+/** Opens a row's "..." menu and chooses Remove, as a person does. */
+const removeRow = async (rowTitle: string) => {
+  fireEvent.click(
+    within(screen.getByRole('group', { name: rowTitle })).getByRole('button', {
+      name: `Actions for ${rowTitle}`,
+    }),
+  )
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove' }))
+}
+
 describe('FormRenderer removals', () => {
-  it('reports a removed object-list item, as the same object, named by its content', () => {
+  it('reports a removed object-list item, as the same object, named by its content', async () => {
     const second = { href: '/b' }
     const { onRemoved, onChange } = renderForm(
       [
@@ -50,11 +60,7 @@ describe('FormRenderer removals', () => {
       ],
       { links: [{ href: '/a' }, second] },
     )
-    fireEvent.click(
-      within(screen.getByRole('group', { name: '/b' })).getByRole('button', {
-        name: 'Remove',
-      }),
-    )
+    await removeRow('/b')
     expect(onChange).toHaveBeenCalledWith({ links: [{ href: '/a' }] })
     expect(onRemoved).toHaveBeenCalledWith({
       kind: 'list-item',
@@ -66,7 +72,7 @@ describe('FormRenderer removals', () => {
     expect(onRemoved.mock.calls[0][0].item).toBe(second)
   })
 
-  it('reports a removed block with its template label', () => {
+  it('reports a removed block with its template label', async () => {
     const block = { template: 'hero', value: { heading: 'Hi' } }
     const { onRemoved } = renderForm(
       [
@@ -80,7 +86,7 @@ describe('FormRenderer removals', () => {
       ],
       { blocks: [block] },
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    await removeRow('Hero, Hi')
     expect(onRemoved).toHaveBeenCalledWith({
       kind: 'list-item',
       listPath: ['blocks'],
@@ -104,7 +110,7 @@ describe('FormRenderer removals', () => {
     })
   })
 
-  it('names an item with no text by its position, which the toast then states', () => {
+  it('names an item with no text by its position, which the toast then states', async () => {
     const { onRemoved } = renderForm(
       [
         {
@@ -117,15 +123,29 @@ describe('FormRenderer removals', () => {
       ],
       { sizes: [{ width: 1 }, { width: 2 }] },
     )
-    fireEvent.click(
-      within(screen.getByRole('group', { name: 'Item 1' })).getByRole('button', {
-        name: 'Remove',
-      }),
-    )
+    await removeRow('Item 1, 1')
     expect(onRemoved.mock.calls[0][0].label).toBe('item 1 from Sizes')
   })
 
-  it('shortens a long title in the label to 60 characters', () => {
+  it('names an untitled item by its position in the words of itemLabel, which the toast then states', async () => {
+    const { onRemoved } = renderForm(
+      [
+        {
+          name: 'team',
+          type: 'object',
+          label: 'Team',
+          list: true,
+          itemLabel: 'team member',
+          fields: [{ name: 'name', type: 'string' }],
+        },
+      ],
+      { team: [{}, {}] },
+    )
+    await removeRow('Team member 2')
+    expect(onRemoved.mock.calls[0][0].label).toBe('team member 2 from Team')
+  })
+
+  it('shortens a long title in the label to 60 characters', async () => {
     const long = 'x'.repeat(200)
     const { onRemoved } = renderForm(
       [
@@ -139,7 +159,7 @@ describe('FormRenderer removals', () => {
       ],
       { links: [{ href: long }] },
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    await removeRow('x'.repeat(59) + '…')
     expect(onRemoved.mock.calls[0][0].label).toBe(`"${'x'.repeat(59)}…" from Links`)
   })
 })
