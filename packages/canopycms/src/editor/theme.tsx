@@ -6,7 +6,9 @@ import {
   ActionIcon,
   Button,
   DEFAULT_THEME,
+  Drawer,
   MantineProvider,
+  Modal,
   getDefaultZIndex,
   mergeThemeOverrides,
   type CSSVariablesResolver,
@@ -78,6 +80,9 @@ const toScale = (
 // The editor's default control sizes; a per-call `size` is only for a deliberate exception.
 // Filled red is red.8 under white; filled orange is orange.6 under black, since no orange shade
 // reaches 4.5:1 under white. Callers pass a plain `color`.
+// An icon-only close button has no other name, so every Modal and Drawer names it here. Mantine
+// replaces `closeButtonProps` whole, so a caller that passes its own repeats the `aria-label`.
+const CLOSE_BUTTON_PROPS = { 'aria-label': 'Close' }
 const canopyComponents = {
   Button: Button.extend({
     defaultProps: { size: 'xs' },
@@ -101,6 +106,8 @@ const canopyComponents = {
     },
   }),
   ActionIcon: ActionIcon.extend({ defaultProps: { size: 'sm' } }),
+  Modal: Modal.extend({ defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS } }),
+  Drawer: Drawer.extend({ defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS } }),
 }
 
 export const createCanopyTheme = (

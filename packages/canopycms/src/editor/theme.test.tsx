@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { ActionIcon, Button, DEFAULT_THEME, Drawer, getDefaultZIndex } from '@mantine/core'
+import { ActionIcon, Button, DEFAULT_THEME, Drawer, Modal, getDefaultZIndex } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { CanopyCMSProvider } from './theme'
 import { openConfirm } from './utils/confirm-modal'
@@ -179,6 +179,51 @@ describe('CanopyCMSProvider default control sizes', () => {
     })
     await waitFor(() => expect(closeLabel()).toBe('Dismiss'))
     modals.closeAll()
+  })
+})
+
+describe('CanopyCMSProvider close buttons', () => {
+  const closeButton = (kind: 'Drawer' | 'Modal') =>
+    document.body.querySelector(`button.mantine-${kind}-close`)
+
+  it('names the close button of every Drawer', async () => {
+    render(
+      <CanopyCMSProvider>
+        <Drawer opened onClose={() => {}} title="Branches">
+          Body
+        </Drawer>
+      </CanopyCMSProvider>,
+    )
+    await waitFor(() => expect(closeButton('Drawer')?.getAttribute('aria-label')).toBe('Close'))
+  })
+
+  it('names the close button of every Modal, including one a confirm opens itself', async () => {
+    render(
+      <CanopyCMSProvider>
+        <Modal opened onClose={() => {}} title="Rename">
+          Body
+        </Modal>
+        <OpensConfirm />
+      </CanopyCMSProvider>,
+    )
+    await waitFor(() => {
+      const labels = Array.from(document.body.querySelectorAll('button.mantine-Modal-close')).map(
+        (button) => button.getAttribute('aria-label'),
+      )
+      expect(labels).toEqual(['Close', 'Close'])
+    })
+    modals.closeAll()
+  })
+
+  it('leaves a caller that names its own close button in charge of the name', async () => {
+    render(
+      <CanopyCMSProvider>
+        <Drawer opened onClose={() => {}} closeButtonProps={{ 'aria-label': 'Dismiss' }}>
+          Body
+        </Drawer>
+      </CanopyCMSProvider>,
+    )
+    await waitFor(() => expect(closeButton('Drawer')?.getAttribute('aria-label')).toBe('Dismiss'))
   })
 })
 
