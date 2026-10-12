@@ -137,7 +137,9 @@ describe('user metadata batching', () => {
     )
 
     await screen.findByText('Name of user-1')
-    expect(screen.getByText('ghost-1')).toBeTruthy()
+    // Never the raw id.
+    expect(screen.getByText('Name unavailable')).toBeTruthy()
+    expect(screen.queryByText('ghost-1')).toBeNull()
     expect(client.permissions.batchGetUserMetadata).toHaveBeenCalledTimes(1)
   })
 

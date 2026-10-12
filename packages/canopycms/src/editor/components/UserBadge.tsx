@@ -1,4 +1,13 @@
-import { Avatar, Badge, Tooltip, Group, Text, Skeleton, ActionIcon } from '@mantine/core'
+import {
+  Avatar,
+  Badge,
+  Tooltip,
+  Group,
+  Text,
+  Skeleton,
+  ActionIcon,
+  VisuallyHidden,
+} from '@mantine/core'
 import { IconRobot, IconUserOff, IconX } from '@tabler/icons-react'
 import type { UserSearchResult } from '../../auth/types'
 import type { CanopyUserId } from '../../types'
@@ -129,6 +138,8 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
   }
 
   if (error || !userMetadata) {
+    // Never the id: it is an internal name, and the only route to the cause is this text.
+    const unavailable = error ? "Couldn't load this name" : 'Name unavailable'
     return wrap(
       <Group gap={4}>
         <Avatar
@@ -136,13 +147,15 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
           color="gray"
           aria-hidden={variant !== 'avatar-only' || undefined}
         />
-        {variant !== 'avatar-only' && (
+        {variant === 'avatar-only' ? (
+          <VisuallyHidden component="span">{unavailable}</VisuallyHidden>
+        ) : (
           <Text size={textSize} c={nameColor}>
-            {userId}
+            {unavailable}
           </Text>
         )}
       </Group>,
-      error ? "Couldn't load this name" : 'Name unavailable',
+      '',
     )
   }
 
@@ -200,12 +213,26 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     )
   }
 
+  // The tooltip's email, read after the name by a screen reader, with no tab stop.
+  const detail =
+    showEmailTooltip && variant !== 'full' && userId !== 'anonymous' ? userMetadata.email : ''
+  const detailText = detail ? (
+    <VisuallyHidden component="span">{`, ${detail}`}</VisuallyHidden>
+  ) : null
+
   const renderContent = () => {
     const avatar = renderAvatar()
 
     switch (variant) {
       case 'avatar-only':
-        return avatar
+        return detailText ? (
+          <Group gap={0}>
+            {avatar}
+            {detailText}
+          </Group>
+        ) : (
+          avatar
+        )
 
       case 'full':
         return (
@@ -230,6 +257,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
             <Text size={textSize} fw={500} c={nameColor}>
               {userId === 'anonymous' ? 'Anonymous (Public)' : userMetadata.name}
             </Text>
+            {detailText}
           </Group>
         )
     }
