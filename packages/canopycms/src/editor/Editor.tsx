@@ -373,6 +373,8 @@ const EditorContent: React.FC<EditorProps> = ({
     readEntryValue,
     saveEntry,
     getEntryVersion,
+    followMovedEntry,
+    recreateEntry,
     createModalOpen,
     createModalCollection,
     createModalError,
@@ -459,6 +461,8 @@ const EditorContent: React.FC<EditorProps> = ({
     readEntryValue,
     saveEntry,
     getEntryVersion,
+    followMovedEntry,
+    recreateEntry,
     setBusy: setEntriesLoading,
     onSaved: () => {
       void refreshEntries(branchNameState).catch((err) =>

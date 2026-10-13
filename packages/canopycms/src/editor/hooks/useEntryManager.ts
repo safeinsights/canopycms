@@ -103,6 +103,19 @@ export interface UseEntryManagerReturn {
    * server's conflict check and revert whoever wrote that newer version).
    */
   getEntryVersion: (contentId: string) => number | undefined
+  /**
+   * Finds an entry a save reported gone (`ENTRY_GONE`) under a new path. A rename keeps the
+   * content ID, so a renamed entry is found: the list is refreshed and it is selected, carrying
+   * its draft. Undefined when it is nowhere, i.e. deleted; the list is then left as it is,
+   * because refreshing it would close the gone entry's form and its unsaved changes with it.
+   */
+  followMovedEntry: (entry: EditorEntry) => Promise<EditorEntry | undefined>
+  /**
+   * Creates `entry` again at its own path from `value`, then refreshes the list and selects the
+   * new entry, which has a new content ID. A create (`expectedVersion: null`), so it is refused
+   * if anything holds that path; the deliberate alternative to a save of a deleted entry.
+   */
+  recreateEntry: (entry: EditorEntry, value: FormValue) => Promise<EditorEntry | undefined>
   collectionByPath: Map<LogicalPath, EditorCollection>
   // Entry create modal state
   createModalOpen: boolean
@@ -417,6 +430,49 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       })
     }
     return normalizeContentPayload(result.data)
+  }
+
+  const followMovedEntry = async (entry: EditorEntry): Promise<EditorEntry | undefined> => {
+    const branch = options.branchName
+    const { entries } = await fetchEntriesAndSchema(apiClient, branch, {
+      resolvePreviewSrc: options.resolvePreviewSrc,
+    })
+    if (!entries.some((e) => e.contentId === entry.contentId && e.path !== entry.path)) {
+      return undefined
+    }
+    const refreshed = await refreshEntries(branch)
+    const moved = refreshed.find((e) => e.contentId === entry.contentId)
+    if (!moved || branch !== currentBranchRef.current) return undefined
+    setSelectedPath(moved.path)
+    return moved
+  }
+
+  const recreateEntry = async (
+    entry: EditorEntry,
+    value: FormValue,
+  ): Promise<EditorEntry | undefined> => {
+    if (!entry.collectionPath) {
+      throw new Error('Entry missing collectionPath')
+    }
+    const branch = options.branchName
+    const path = entry.slug ? `${entry.collectionPath}/${entry.slug}` : entry.collectionPath
+    const writeParams: { branch: string; path: string; entryType?: string } = { branch, path }
+    if (entry.entryType) writeParams.entryType = entry.entryType
+    const result = await apiClient.content.write(writeParams, {
+      ...(buildWritePayload(entry, value) as unknown as WriteContentBody),
+      expectedVersion: null,
+    })
+    if (isGatewayFailure(result)) throw new UnansweredError()
+    if (!result.ok)
+      throw new SaveApiError(result.status, result.error, result.fieldErrors, result.code)
+    const refreshed = await refreshEntries(branch)
+    const created = refreshed.find((e) => e.path === entry.path)
+    if (!created || branch !== currentBranchRef.current) return undefined
+    if (typeof result.data?.version === 'number') {
+      entryVersionsRef.current.set(versionKey(branch, created.contentId), result.data.version)
+    }
+    setSelectedPath(created.path)
+    return created
   }
 
   // Explicit reload: always issues a fresh, independent fetch (never
@@ -772,6 +828,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     readEntryValue,
     saveEntry,
     getEntryVersion,
+    followMovedEntry,
+    recreateEntry,
     collectionByPath: collectionByPath,
     createModalOpen,
     createModalCollection,

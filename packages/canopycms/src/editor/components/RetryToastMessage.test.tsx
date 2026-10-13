@@ -16,4 +16,20 @@ describe('RetryToastMessage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(onRetry).toHaveBeenCalledTimes(1)
   })
+
+  it('labels its button with actionLabel instead of Retry, and acts on a click of it', async () => {
+    const onRetry = vi.fn()
+    render(
+      <MantineProvider>
+        <RetryToastMessage
+          message="This entry was deleted."
+          actionLabel="Save as new entry"
+          onRetry={onRetry}
+        />
+      </MantineProvider>,
+    )
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Save as new entry' }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
 })

@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 import { BASE_URL } from '../fixtures/base-url'
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import {
@@ -8,6 +8,7 @@ import {
   ensureMainBranch,
   findContentFile,
   getContentFilePath,
+  readContentFile,
 } from '../fixtures/test-workspace'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT } from '../fixtures/timeouts'
 
@@ -159,7 +160,19 @@ test.describe('Entry CRUD Operations', () => {
     })
   })
 
-  test('a save of an entry deleted elsewhere is refused and does not bring it back', async ({
+  /** Save, and return the content PUT's response. */
+  const saveForResponse = async (page: Page) => {
+    const [response] = await Promise.all([
+      page.waitForResponse(
+        (resp) => resp.url().includes('/api/canopycms/') && resp.request().method() === 'PUT',
+        { timeout: STANDARD_TIMEOUT },
+      ),
+      editorPage.save(),
+    ])
+    return response
+  }
+
+  test('a save of an entry deleted elsewhere is refused, and "Save as new entry" brings it back on request', async ({
     page,
   }) => {
     const slug = `deleted-elsewhere-${Date.now()}`
@@ -180,25 +193,71 @@ test.describe('Entry CRUD Operations', () => {
       await fs.rm(getContentFilePath(file!))
     })
 
-    await test.step('edit and save: refused as gone', async () => {
+    const goneToast = editorPage.notification(/was deleted since you opened it/)
+    await test.step('edit and save: refused as gone, and not re-created', async () => {
       await editorPage.fillTextField('title', editedTitle)
-      const [response] = await Promise.all([
-        page.waitForResponse(
-          (resp) => resp.url().includes('/api/canopycms/') && resp.request().method() === 'PUT',
-          { timeout: STANDARD_TIMEOUT },
-        ),
-        editorPage.save(),
-      ])
+      const response = await saveForResponse(page)
       expect(response.status()).toBe(409)
       expect(await response.json()).toMatchObject({ code: 'ENTRY_GONE' })
-      await expect(editorPage.notification(/was deleted or moved since you opened it/)).toBeVisible(
-        { timeout: STANDARD_TIMEOUT },
-      )
-    })
-
-    await test.step('the entry stays deleted and the edits stay in the form', async () => {
+      await expect(goneToast).toBeVisible({ timeout: STANDARD_TIMEOUT })
       expect(await findContentFile(filePrefix)).toBeNull()
       await editorPage.verifyFieldValue('title', editedTitle)
+    })
+
+    await test.step('"Save as new entry" creates it from the edits', async () => {
+      await goneToast.getByRole('button', { name: 'Save as new entry' }).click()
+      await expect(editorPage.notification('Saved as a new entry')).toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
+      await expect(goneToast).toHaveCount(0)
+      const file = await findContentFile(filePrefix)
+      expect(file).not.toBeNull()
+      expect(await readContentFile<{ title?: string }>(file!)).toMatchObject({
+        title: editedTitle,
+      })
+      await editorPage.verifyFieldValue('title', editedTitle)
+    })
+  })
+
+  test('a save of an entry renamed elsewhere follows it, and saving again lands on the new name', async ({
+    page,
+  }) => {
+    const slug = `renamed-elsewhere-${Date.now()}`
+    const editedTitle = 'Edited after the rename'
+    let renamedFile = ''
+
+    await test.step('create and open a post', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.openContentNavigator()
+      await editorPage.createEntry('Posts', slug, 'Post')
+      await editorPage.selectEntry('Post')
+    })
+
+    await test.step('another editor renames it, keeping its content ID', async () => {
+      const file = await findContentFile(`posts.qrstuvwxyz12/post.${slug}.`)
+      expect(file).not.toBeNull()
+      renamedFile = file!.replace(`post.${slug}.`, `post.${slug}-new.`)
+      await fs.rename(getContentFilePath(file!), getContentFilePath(renamedFile))
+    })
+
+    await test.step('edit and save: refused, then the editor opens it under its new name', async () => {
+      await editorPage.fillTextField('title', editedTitle)
+      const response = await saveForResponse(page)
+      expect(response.status()).toBe(409)
+      await expect(editorPage.notification(/was renamed since you opened it/)).toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
+      await editorPage.verifyFieldValue('title', editedTitle)
+    })
+
+    await test.step('saving again writes the renamed file, and the old name stays gone', async () => {
+      const response = await saveForResponse(page)
+      expect(response.status()).toBe(200)
+      expect(await readContentFile<{ title?: string }>(renamedFile)).toMatchObject({
+        title: editedTitle,
+      })
+      expect(await findContentFile(`posts.qrstuvwxyz12/post.${slug}.`)).toBeNull()
     })
   })
 })
