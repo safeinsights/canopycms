@@ -2,32 +2,28 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  For an editor who isn't an admin or reviewer, a branch card's access list is mostly identical "Name unavailable" avatars: the server never seeds names for a branch's ACL users, by design. Decide whether non-privileged viewers see a count, the resolvable names only, or no list. Meanwhile `toBranchListItem` still sends them the ACL's user ids.
+  For a non-privileged viewer, a branch card's access list is mostly identical "Name unavailable" avatars, and `toBranchListItem` still sends them the ACL's user ids. docs/ux-guidelines.md (People) now rules: show the names the viewer can resolve, then "and N others", and never send `access.allowedUsers` ids to a caller without the privileged lookup
 ---
 
 # Branch card access list for non-privileged viewers
 
+[People](../../docs/ux-guidelines.md#people) rules the card and the wire.
+
+## The card
+
 `packages/canopycms/src/editor/BranchManager.tsx` renders each access user through `UserBadge`
-with the owner line's lookup. For non-privileged viewers that lookup is the seeded resolver, and
-the server keeps ACL users behind the privileged lookup, so an access user falls back to
-"Name unavailable" unless they also own a listed branch or wrote a loaded comment. Before PR 532 the list showed raw ids, which the People rule forbids.
+with the owner line's lookup. For non-privileged viewers that is the seeded resolver, and the
+server keeps ACL users behind the privileged lookup, so most fall back to "Name unavailable".
+Show only the names that resolve, then "and N others".
 
-Raised by the round-2 review of PR 532.
-
-## Options
-
-- Show a count ("Shared with 3 people") to non-privileged viewers.
-- Show only the names the viewer can already resolve, plus "and N others".
-- Hide the list for them.
-
-## Related: the ACL ids still reach non-privileged callers
+## The wire
 
 `toBranchListItem` in `packages/canopycms/src/api/branch.ts` spreads `...branch`, so every
 listed branch's `access.allowedUsers` (and `allowedGroups`) ids go to every caller who can see
-the branch, privileged or not. The names stay behind the privileged lookup, but the ids don't.
-Whatever the ruling above, strip or reduce `access` for non-privileged callers in the same
-change, so the wire matches what the card shows.
+the branch. Strip or reduce `access` for non-privileged callers in the same change, keeping the
+count the card needs.
 
 ## Done when
 
-A ruling is recorded in docs/ux-guidelines.md (People) and the card follows it. Non-privileged callers no longer receive `access.allowedUsers` ids.
+The card follows the rule, and non-privileged callers no longer receive `access.allowedUsers`
+ids, each with a test.
