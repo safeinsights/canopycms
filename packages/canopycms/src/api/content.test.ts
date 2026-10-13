@@ -673,6 +673,8 @@ describe('content api', () => {
       slug?: string
       schema?: unknown[]
       maxItems?: number
+      /** Marks the collection's only entry type unavailable, as a degraded schema resolve does. */
+      unavailable?: boolean
       write?: ReturnType<typeof vi.fn>
     }) => {
       const { ContentStore } = await import('../content-store')
@@ -690,6 +692,15 @@ describe('content api', () => {
                   format: 'json',
                   schema: opts.schema ?? [],
                   maxItems: opts.maxItems,
+                  ...(opts.unavailable
+                    ? {
+                        unavailable: {
+                          reason: 'unknown-schema',
+                          schemaRef: 'postSchema',
+                          metaFile: 'posts/.collection.json',
+                        },
+                      }
+                    : {}),
                 },
               ],
             },
@@ -707,15 +718,22 @@ describe('content api', () => {
       })
       return writeSpy
     }
-    const write = (body: {
-      format: 'json'
-      data: Record<string, unknown>
-      expectedVersion: number | null
-    }) =>
+    const write = (
+      body: {
+        format: 'json'
+        data: Record<string, unknown>
+        expectedVersion: number | null
+      },
+      entryType?: string,
+    ) =>
       writeContent(
         allowedCtx(),
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+        {
+          branch: unsafeAsBranchName('feature/x'),
+          path: unsafeAsLogicalPath('posts/hello'),
+          ...(entryType ? { entryType } : {}),
+        },
         body,
       )
 
@@ -747,6 +765,45 @@ describe('content api', () => {
       const res = await write({ format: 'json', data: {}, expectedVersion: 42 })
 
       expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('reports a gone entry as gone when its entryType names a type the collection lacks, not as a 400', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false })
+
+      const res = await write(
+        { format: 'json', data: { title: 'edit' }, expectedVersion: 42 },
+        'no-such-type',
+      )
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('reports a gone entry as gone when its entry type is unavailable, not as a schema error', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false, unavailable: true })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 })
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('still refuses a create naming a type the collection lacks with a 400', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false })
+
+      const res = await write({ format: 'json', data: {}, expectedVersion: null }, 'no-such-type')
+
+      expect(res).toEqual({ ok: false, status: 400, error: "Entry type 'no-such-type' not found" })
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('still refuses a write to an unavailable entry type for an entry that exists', async () => {
+      const writeSpy = await mockStoreOnce({ exists: true, unavailable: true })
+
+      await expect(
+        write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 }),
+      ).rejects.toBeInstanceOf(SchemaUnavailableError)
       expect(writeSpy).not.toHaveBeenCalled()
     })
 

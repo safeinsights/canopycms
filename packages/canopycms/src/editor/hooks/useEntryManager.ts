@@ -104,16 +104,15 @@ export interface UseEntryManagerReturn {
    */
   getEntryVersion: (contentId: string) => number | undefined
   /**
-   * Finds an entry a save reported gone (`ENTRY_GONE`) under a new path. A rename keeps the
-   * content ID, so a renamed entry is found: the list is refreshed and it is selected, carrying
-   * its draft. Undefined when it is nowhere, i.e. deleted; the list is then left as it is,
-   * because refreshing it would close the gone entry's form and its unsaved changes with it.
+   * Opens an entry a save reported gone (`ENTRY_GONE`) at its new path, found by content ID,
+   * which a rename keeps. Undefined if deleted; the list is then not refreshed, which would close
+   * the form holding its unsaved changes.
    */
   followMovedEntry: (entry: EditorEntry) => Promise<EditorEntry | undefined>
   /**
-   * Creates `entry` again at its own path from `value`, then refreshes the list and selects the
-   * new entry, which has a new content ID. A create (`expectedVersion: null`), so it is refused
-   * if anything holds that path; the deliberate alternative to a save of a deleted entry.
+   * Creates `entry` again at its path from `value` (`expectedVersion: null`, so refused if the
+   * path is taken) and opens the new entry. An unanswered create counts as created when the list
+   * then shows it. Undefined when the list does not show it yet, or the branch changed.
    */
   recreateEntry: (entry: EditorEntry, value: FormValue) => Promise<EditorEntry | undefined>
   collectionByPath: Map<LogicalPath, EditorCollection>
@@ -207,6 +206,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   // Initialize with prop value or empty (URL sync happens in effect after mount)
   const [selectedPath, setSelectedPath] = useState<string>(options.initialSelectedId ?? '')
+  const selectedPathRef = useRef(selectedPath)
+  selectedPathRef.current = selectedPath
   const [navigatorOpen, setNavigatorOpen] = useState(() => readUrlEntry() === '')
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
@@ -432,19 +433,34 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     return normalizeContentPayload(result.data)
   }
 
+  // The branch's entries as the server lists them now, without replacing the list on screen.
+  const listEntriesUncommitted = async (branch: string): Promise<EditorEntry[]> =>
+    (
+      await fetchEntriesAndSchema(apiClient, branch, {
+        resolvePreviewSrc: options.resolvePreviewSrc,
+      })
+    ).entries
+
+  // Commits a fresh list and opens the entry `pick` finds in it, unless the user had left
+  // `fromPath` or the branch. Judged before the refresh: committing a list without `fromPath`
+  // moves the selection to the first entry on its own. Returns what `pick` found, opened or not.
+  const refreshAndOpen = async (
+    branch: string,
+    fromPath: string,
+    pick: (e: EditorEntry) => boolean,
+  ): Promise<EditorEntry | undefined> => {
+    const stillOnIt = selectedPathRef.current === fromPath
+    const found = (await refreshEntries(branch)).find(pick)
+    if (!found || branch !== currentBranchRef.current) return undefined
+    if (stillOnIt) setSelectedPath(found.path)
+    return found
+  }
+
   const followMovedEntry = async (entry: EditorEntry): Promise<EditorEntry | undefined> => {
     const branch = options.branchName
-    const { entries } = await fetchEntriesAndSchema(apiClient, branch, {
-      resolvePreviewSrc: options.resolvePreviewSrc,
-    })
-    if (!entries.some((e) => e.contentId === entry.contentId && e.path !== entry.path)) {
-      return undefined
-    }
-    const refreshed = await refreshEntries(branch)
-    const moved = refreshed.find((e) => e.contentId === entry.contentId)
-    if (!moved || branch !== currentBranchRef.current) return undefined
-    setSelectedPath(moved.path)
-    return moved
+    const movedHere = (e: EditorEntry) => e.contentId === entry.contentId && e.path !== entry.path
+    if (!(await listEntriesUncommitted(branch)).some(movedHere)) return undefined
+    return refreshAndOpen(branch, entry.path, movedHere)
   }
 
   const recreateEntry = async (
@@ -458,20 +474,28 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const path = entry.slug ? `${entry.collectionPath}/${entry.slug}` : entry.collectionPath
     const writeParams: { branch: string; path: string; entryType?: string } = { branch, path }
     if (entry.entryType) writeParams.entryType = entry.entryType
-    const result = await apiClient.content.write(writeParams, {
-      ...(buildWritePayload(entry, value) as unknown as WriteContentBody),
-      expectedVersion: null,
-    })
-    if (isGatewayFailure(result)) throw new UnansweredError()
+    // The new entry, not the gone one a lagging list may still show at that path.
+    const createdHere = (e: EditorEntry) => e.path === entry.path && e.contentId !== entry.contentId
+    let result: Awaited<ReturnType<typeof apiClient.content.write>>
+    try {
+      result = await apiClient.content.write(writeParams, {
+        ...(buildWritePayload(entry, value) as unknown as WriteContentBody),
+        expectedVersion: null,
+      })
+      if (isGatewayFailure(result)) throw new UnansweredError()
+    } catch (err) {
+      // An unanswered create may have landed: if the list now has a new entry at the path, it did.
+      if (!isUnanswered(err)) throw err
+      const listed = await listEntriesUncommitted(branch).catch(() => [])
+      if (!listed.some(createdHere)) throw err
+      return refreshAndOpen(branch, entry.path, createdHere)
+    }
     if (!result.ok)
       throw new SaveApiError(result.status, result.error, result.fieldErrors, result.code)
-    const refreshed = await refreshEntries(branch)
-    const created = refreshed.find((e) => e.path === entry.path)
-    if (!created || branch !== currentBranchRef.current) return undefined
-    if (typeof result.data?.version === 'number') {
+    const created = await refreshAndOpen(branch, entry.path, createdHere)
+    if (created && typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(versionKey(branch, created.contentId), result.data.version)
     }
-    setSelectedPath(created.path)
     return created
   }
 

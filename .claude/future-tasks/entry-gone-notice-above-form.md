@@ -19,6 +19,10 @@ summary: >-
   protects it. Related: [draft-orphaned-by-contentid-swap.md](draft-orphaned-by-contentid-swap.md).
 - `showSaveMayHaveLanded` (the `WRITE_OUTCOME_UNKNOWN` hold) is the same shape: a sticky toast for a
   lasting per-entry state.
+- A content list served from a lagging view (another EFS client) can still show a renamed entry at
+  its old path, so `useEntryManager.followMovedEntry` finds no move and the toast offers "Save as
+  new entry", which would create a copy beside the renamed entry. The notice could check the
+  content ID again before creating.
 
 ## Done when
 

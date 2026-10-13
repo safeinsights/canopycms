@@ -1336,8 +1336,6 @@ describe('useEntryManager', () => {
         await act(async () => {
           await result.current.refreshEntries()
         })
-        act(() => result.current.setSelectedPath(other.logicalPath))
-        expect(result.current.selectedPath).toBe('entry2')
         mockClient.content.write.mockResolvedValueOnce({
           ok: true,
           status: 200,
@@ -1367,6 +1365,61 @@ describe('useEntryManager', () => {
         // The new entry is saveable at once: it carries the version the create returned.
         expect(result.current.getEntryVersion(created)).toBe(77)
         expect(result.current.getEntryVersion(mockEntry.contentId)).toBeUndefined()
+      })
+
+      it('leaves the selection alone when the user has moved to another entry meanwhile', async () => {
+        const { result } = await mountWithOpenedEntry()
+        const other = {
+          contentId: unsafeAsContentId('other0000001'),
+          logicalPath: unsafeAsLogicalPath('entry2'),
+        }
+        mockClient.entries.list.mockResolvedValue(listOf(listedAsOpenedItem, other))
+        await act(async () => {
+          await result.current.refreshEntries()
+        })
+        act(() => result.current.setSelectedPath(other.logicalPath))
+        mockClient.content.write.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { format: 'mdx', data: { title: 'Mine' }, body: 'Words', version: 77 } as any,
+        })
+        mockClient.entries.list.mockResolvedValue(
+          listOf({ contentId: created, logicalPath: mockEntry.path }, other),
+        )
+
+        let recreated: EditorEntry | undefined
+        await act(async () => {
+          recreated = await result.current.recreateEntry(gone, { title: 'Mine', body: 'Words' })
+        })
+
+        expect(recreated?.contentId).toBe(created)
+        expect(result.current.selectedPath).toBe('entry2')
+      })
+
+      it('resolves a create that got no answer as created when the list then shows a new entry there', async () => {
+        const { result } = await mountWithOpenedEntry()
+        mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+        mockClient.entries.list.mockResolvedValue(
+          listOf({ contentId: created, logicalPath: mockEntry.path }),
+        )
+
+        let recreated: EditorEntry | undefined
+        await act(async () => {
+          recreated = await result.current.recreateEntry(gone, { title: 'Mine', body: 'Words' })
+        })
+
+        expect(recreated?.contentId).toBe(created)
+        expect(result.current.currentEntry?.contentId).toBe(created)
+      })
+
+      it('still throws a create that got no answer when the list shows only the gone entry there', async () => {
+        const { result } = await mountWithOpenedEntry()
+        mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+        mockClient.entries.list.mockResolvedValue(listOf(listedAsOpenedItem))
+
+        await expect(
+          result.current.recreateEntry(gone, { title: 'Mine', body: 'Words' }),
+        ).rejects.toBeInstanceOf(UnansweredError)
       })
 
       it('throws the 409 with its server code when the path is taken, and creates nothing', async () => {
