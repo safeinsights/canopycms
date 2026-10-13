@@ -274,6 +274,8 @@ const EditorContent: React.FC<EditorProps> = ({
   // What the last unanswered collection create or details save sent, until its dialog's opener
   // sees it land on a fresh read, a matching save succeeds, or the user discards it.
   const collectionDraftRef = useRef<CollectionDraft | null>(null)
+  // The draft the open dialog was filled from, if any: its save replaces that draft.
+  const refilledDraftRef = useRef<CollectionDraft | null>(null)
   // What the dialog fills in, decided by its opener against a fresh tree.
   const [restoredCollectionInput, setRestoredCollectionInput] =
     useState<RestoredCollectionInput | null>(null)
@@ -974,11 +976,17 @@ const EditorContent: React.FC<EditorProps> = ({
       opening === collectionOpeningRef.current && currentBranchRef.current === branch
     // A draft is checked on a fresh tree first: refilling a create that landed would duplicate it.
     const draft = collectionDraftRef.current
+    // A details save that changed the slug and landed is reopened at its new path, never refilled.
+    const atNewPath =
+      draft?.kind === 'details' &&
+      !!draft.updates.slug &&
+      collection?.path ===
+        `${draft.collectionPath.slice(0, draft.collectionPath.lastIndexOf('/') + 1)}${draft.updates.slug}`
     const refills =
       draft?.branch === branch &&
       (draft.kind === 'create'
         ? !collection && draft.input.parentPath === parentPath
-        : collection?.path === draft.collectionPath)
+        : collection?.path === draft.collectionPath || atNewPath)
     let restore: RestoredCollectionInput | null = null
     if (draft && refills) {
       const fresh = await refreshContent(branch).catch((err: unknown) => {
@@ -988,7 +996,11 @@ const EditorContent: React.FC<EditorProps> = ({
       if (!stillCurrent()) return
       if (fresh && collectionDraftLanded(fresh.collections, draft)) {
         settleCollectionDraft(draft)
-      } else if (collectionDraftRef.current === draft && (fresh || draft.kind === 'details')) {
+      } else if (
+        collectionDraftRef.current === draft &&
+        !atNewPath &&
+        (fresh || draft.kind === 'details')
+      ) {
         // A create no read has ruled out stays unfilled; a details save resends the same change.
         restore = draft.kind === 'create' ? draft.input : draft.updates
       }
@@ -1020,6 +1032,7 @@ const EditorContent: React.FC<EditorProps> = ({
       setEditingCollection(null)
       setCollectionEditorParentPath(parentPath)
     }
+    refilledDraftRef.current = restore ? draft : null
     setRestoredCollectionInput(restore)
     setCollectionEditorError(null)
     setCollectionEditorOpen(true)
@@ -1051,9 +1064,11 @@ const EditorContent: React.FC<EditorProps> = ({
         if (!result.ok) {
           collectionDraftRef.current = { branch: branchNameState, kind: 'create', input }
         } else if (
+          collectionDraftRef.current === draft &&
           draft?.kind === 'create' &&
           draft.branch === branchNameState &&
-          draft.input.parentPath === input.parentPath
+          draft.input.parentPath === input.parentPath &&
+          (draft === refilledDraftRef.current || draft.input.name === input.name)
         ) {
           collectionDraftRef.current = null
         }
@@ -1079,6 +1094,7 @@ const EditorContent: React.FC<EditorProps> = ({
           }
         } else if (
           result.ok &&
+          collectionDraftRef.current === draft &&
           draft?.kind === 'details' &&
           draft.branch === branchNameState &&
           draft.collectionPath === collectionPath
