@@ -542,7 +542,8 @@ const NewThreadComposer: React.FC<{
       Comment
     </Button>
   )
-  // `aria-disabled` keeps it focusable for its reason; unblocked it isn't wrapped, since the Tooltip keeps Escape from the popover.
+  // `aria-disabled` keeps it focusable for its reason. Unblocked it isn't wrapped: around a focused
+  // button the Tooltip keeps Escape from the listener that refuses a close mid-post.
   const commentButton = blockedReason ? (
     <Tooltip
       label={blockedReason}

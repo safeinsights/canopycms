@@ -522,7 +522,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     return () => window.removeEventListener('beforeunload', warn)
   }, [leaveLosesWork])
 
-  // A draft stored before items had keys gains the ones a read gives, so an unchanged one drops.
+  // A pre-key draft gains the keys a read gives, so an unchanged one drops, if free of references.
   useEffect(() => {
     const keyed = new Map<string, FormValue>()
     for (const [id, draft] of Object.entries(drafts)) {

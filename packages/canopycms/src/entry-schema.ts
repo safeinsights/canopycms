@@ -269,7 +269,7 @@ type SelectValue<F extends InferableField> = F extends {
 
 /**
  * The key a list item or block carries (`ITEM_KEY` in item-keys.ts), spelled out as `ImageValue`
- * is. Optional: a file saved before keys existed has none until its next save.
+ * is. Every canopy read returns it; optional so data built by hand, such as a write, needn't.
  */
 type ItemKeyed = { _key?: string }
 

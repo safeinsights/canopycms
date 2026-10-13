@@ -372,21 +372,27 @@ function reconcileMap(
 }
 
 /**
- * Make a sequence's items match `value` exactly, aligning by VALUE first and position second.
+ * Make a sequence's items match `value` exactly, aligning by VALUE first, then by item key
+ * (`item-keys.ts`), then by position.
  *
- * A list has no item identity, so any alignment is a guess and the failure modes are not equally
- * bad: losing a comment shows up in review as a deletion, silently MOVING one onto content it does
- * not describe does not, and the comments this protects are the load-bearing kind ("do not delete
- * this block"). The rules run from most evidence to least, and stop rather than guessing:
+ * Without keys a list has no item identity, so any alignment is a guess and the failure modes are
+ * not equally bad: losing a comment shows up in review as a deletion, silently MOVING one onto
+ * content it does not describe does not, and the comments this protects are the load-bearing kind
+ * ("do not delete this block"). The rules run from most evidence to least, and stop rather than
+ * guessing:
  *
  * 1. **Exact value match** — reuse that old node whole, comments and all. This carries a comment
- *    through a pure reorder instead of stranding it on whatever moved into its index.
- * 2. **Same index, still unclaimed, and recognisably the same item** (`looksLikeSameItem`) —
+ *    through a pure reorder instead of stranding it on whatever moved into its index. On the save
+ *    that first writes keys, an item also matches the un-keyed node it was read from, reconciled
+ *    so the keys are written.
+ * 2. **Same key** — an edited keyed item is reconciled against the node holding its key, wherever
+ *    it was, so its comments move with it.
+ * 3. **Same index, still unclaimed, and recognisably the same item** (`looksLikeSameItem`) —
  *    reconcile against it: the edit-in-place case. Same-index rather than "next unclaimed old
  *    node in order", which pairs a newly-inserted item with an unrelated deleted one whenever one
  *    save both removes and adds; and evidence as well as position, because a wholesale
- *    replacement lands on the index it replaced.
- * 3. **Otherwise a fresh node, with no comments.**
+ *    replacement lands on the index it replaced. Items whose keys differ are never the same.
+ * 4. **Otherwise a fresh node, with no comments.**
  */
 function reconcileSeq(
   ctx: ReconcileContext,
@@ -446,7 +452,7 @@ function reconcileSeq(
     if (matched !== undefined) {
       return reconciles.has(index) ? reconcileNode(ctx, oldItems[matched], item) : oldItems[matched]
     }
-    // `consumed` holds OLD indices claimed by rule 1, so this asks "is the node at my index still
+    // `consumed` holds OLD indices claimed by rules 1 and 2, so this asks "is the node at my index still
     // unclaimed?". Each iteration owns a distinct index, so a candidate cannot be taken twice.
     const candidate = index < oldItems.length && !consumed.has(index) ? oldItems[index] : undefined
     const sameItem =

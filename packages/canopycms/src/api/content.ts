@@ -556,8 +556,8 @@ const writeContentHandler = async (
   // a payload that already holds ID strings is unchanged.
   //
   // Every list item and block leaves a save keyed (`item-keys.ts`). A key sent is kept, so a
-  // thread naming it still finds its item; one missing is filled from these bytes, as a read of
-  // the saved file would fill it.
+  // thread naming it still finds its item; one missing is filled from the item's content, as a
+  // read fills one.
   const normalizedData =
     requestData === undefined
       ? undefined

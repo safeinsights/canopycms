@@ -105,7 +105,10 @@ import {
 } from './undo-removal'
 import { formatCanopyPath } from './canopy-path'
 import { itemKeysOnPath, resolveThreadPath, withItemKeys } from '../item-keys'
-import { NEW_ITEM_COMMENT_MESSAGE } from './comments/item-anchor-copy'
+import {
+  ENTRY_NOT_LOADED_COMMENT_MESSAGE,
+  NEW_ITEM_COMMENT_MESSAGE,
+} from './comments/item-anchor-copy'
 import { findFieldTarget, focusFieldTarget } from './field-target'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
@@ -702,7 +705,6 @@ const EditorContent: React.FC<EditorProps> = ({
   }
   useEffect(() => {
     if (!pendingFieldJump) return
-    // Opening another entry first drops the jump.
     if (selectedPath !== pendingFieldJump.entryPath) {
       setPendingFieldJump(null)
       return
@@ -737,6 +739,7 @@ const EditorContent: React.FC<EditorProps> = ({
     const itemKeys = itemKeysOnPath(currentEntry.schema, displayValue, canopyPath)
     if (!itemKeys?.length) return handleAddComment(text, type, entryPath, canopyPath)
     // The field's control says so before anyone types (`commentBlockedReason`); this is the backstop.
+    if (!loadedValue) throw new Error(ENTRY_NOT_LOADED_COMMENT_MESSAGE)
     if (onUnsavedItem(itemKeys, canopyPath)) throw new Error(NEW_ITEM_COMMENT_MESSAGE)
     return handleAddComment(text, type, entryPath, canopyPath, undefined, itemKeys)
   }

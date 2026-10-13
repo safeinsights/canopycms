@@ -18,11 +18,11 @@ from its content. A comment on a field inside a list item or block now follows t
 comment whose item was removed stays on the entry, under "Comment on this entry", marked "On a
 removed item".
 
-Reads return `_key`: `TypeFromEntrySchema` types it as an optional `_key?: string` on list items
-and blocks. A block keeps it beside `template`, never inside `value`. The unknown-field warnings
-never report it.
+Reads return `_key`, and so does the data a `validateEntry` hook is given: `TypeFromEntrySchema`
+types it as an optional `_key?: string` on list items and blocks. A block keeps it beside
+`template`, never inside `value`. The unknown-field warnings never report it.
 
-**To adopt.** Rename any schema field named `_key`: the config now refuses it. If your code
-checks content against a strict schema, allow `_key` on list items and blocks. Don't spread a list
-item onto a DOM element (`<li {...item}>`), or it renders a `_key` attribute. `_key` also suits
-React's `key` when rendering a list.
+**To adopt.** Rename any schema field named `_key`: the config now refuses it. If your code,
+a `validateEntry` hook included, checks content against a strict schema, allow `_key` on list
+items and blocks. Don't spread a list item onto a DOM element (`<li {...item}>`), or it renders
+a `_key` attribute. `_key` also suits React's `key` when rendering a list.
