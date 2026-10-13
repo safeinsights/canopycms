@@ -13,6 +13,7 @@ import type { UserSearchResult } from '../../auth/types'
 import type { CanopyUserId } from '../../types'
 import { useUserMetadata } from '../hooks/useUserMetadata'
 import { isSystemUserId } from '../../system-users'
+import { personName } from '../../auth/person-name'
 
 export interface UserBadgeProps {
   /** User ID to display */
@@ -143,34 +144,54 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     )
   }
 
-  if (error || !userMetadata) {
+  const record = error ? null : userMetadata
+  const displayName = record ? personName(userId, record.name) : undefined
+
+  if (!record || displayName === undefined) {
     // The id shows only where `revealIdOnFallback` is set (admin surfaces); the People rule treats
-    // an id as an internal name.
+    // an id as an internal name. A record with no usable name still offers its avatar and email.
     const unavailable = error ? "Couldn't load this name" : 'Name unavailable'
     const described = revealIdOnFallback ? `${unavailable} · ${userId}` : unavailable
+    const emailDetail = showEmailTooltip && variant !== 'full' ? (record?.email ?? '') : ''
+    const describedWithEmail = emailDetail ? `${described}, ${emailDetail}` : described
     // A filled badge keeps its white text; dimmed would not contrast with its fill.
     const fallbackColor = inBadge && badgeVariant === 'filled' ? undefined : 'dimmed'
+    const unavailableText = (
+      <Text size={textSize} c={fallbackColor} fs="italic">
+        {unavailable}
+      </Text>
+    )
+    const hiddenDetail = `${revealIdOnFallback ? ` · ${userId}` : ''}${emailDetail ? `, ${emailDetail}` : ''}`
     return wrap(
       <Group gap={4}>
         <Avatar
+          src={record?.avatarUrl}
+          alt=""
           size={avatarSize}
           color="gray"
           aria-hidden={variant !== 'avatar-only' || undefined}
         />
         {variant === 'avatar-only' ? (
-          <VisuallyHidden component="span">{described}</VisuallyHidden>
+          <VisuallyHidden component="span">{describedWithEmail}</VisuallyHidden>
         ) : (
           <>
-            <Text size={textSize} c={fallbackColor} fs="italic">
-              {unavailable}
-            </Text>
-            {revealIdOnFallback && (
-              <VisuallyHidden component="span">{` · ${userId}`}</VisuallyHidden>
+            {variant === 'full' && record?.email ? (
+              <div>
+                {unavailableText}
+                <Text size="xs" c="dimmed">
+                  {record.email}
+                </Text>
+              </div>
+            ) : (
+              unavailableText
             )}
+            {hiddenDetail && <VisuallyHidden component="span">{hiddenDetail}</VisuallyHidden>}
           </>
         )}
       </Group>,
-      variant === 'avatar-only' || revealIdOnFallback ? described : '',
+      variant === 'avatar-only'
+        ? describedWithEmail
+        : [revealIdOnFallback ? described : '', emailDetail].filter(Boolean).join(', '),
       described,
     )
   }
@@ -216,22 +237,22 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
 
     return (
       <Avatar
-        src={userMetadata.avatarUrl}
+        src={record.avatarUrl}
         // Beside the name it repeats it, so it is hidden from screen readers.
-        alt={variant === 'avatar-only' ? userMetadata.name : ''}
+        alt={variant === 'avatar-only' ? displayName : ''}
         aria-hidden={variant !== 'avatar-only' || undefined}
         size={avatarSize}
         color={avatarColor}
         style={avatarStyles}
       >
-        {!userMetadata.avatarUrl && getInitials(userMetadata.name)}
+        {!record.avatarUrl && getInitials(displayName)}
       </Avatar>
     )
   }
 
   // The tooltip's email, read after the name by a screen reader, with no tab stop.
   const detail =
-    showEmailTooltip && variant !== 'full' && userId !== 'anonymous' ? userMetadata.email : ''
+    showEmailTooltip && variant !== 'full' && userId !== 'anonymous' ? record.email : ''
   const detailText = detail ? (
     <VisuallyHidden component="span">{`, ${detail}`}</VisuallyHidden>
   ) : null
@@ -256,10 +277,10 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
             {avatar}
             <div>
               <Text size={textSize} fw={500}>
-                {userMetadata.name}
+                {displayName}
               </Text>
               <Text size="xs" c="dimmed">
-                {userMetadata.email}
+                {record.email}
               </Text>
             </div>
           </Group>
@@ -271,7 +292,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
           <Group gap={4}>
             {avatar}
             <Text size={textSize} fw={500} c={nameColor}>
-              {userId === 'anonymous' ? 'Anonymous (Public)' : userMetadata.name}
+              {userId === 'anonymous' ? 'Anonymous (Public)' : displayName}
             </Text>
             {detailText}
           </Group>
@@ -281,7 +302,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
 
   return wrap(
     renderContent(),
-    variant === 'full' ? '' : userMetadata.email,
-    userId === 'anonymous' ? 'Anonymous (Public)' : userMetadata.name,
+    variant === 'full' ? '' : record.email,
+    userId === 'anonymous' ? 'Anonymous (Public)' : displayName,
   )
 }

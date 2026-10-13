@@ -6,6 +6,7 @@ import { CachingAuthPlugin } from './caching-auth-plugin'
 import { MAX_USER_METADATA_BATCH } from '../api/users-constants'
 import { isSystemUserId } from '../system-users'
 import { ANONYMOUS_USER } from '../user'
+import { personName } from './person-name'
 
 /**
  * How long a looked-up user, or the fact that an id is unknown, is served without asking again.
@@ -99,9 +100,10 @@ async function fetchFromPlugin(
 const MAX_USER_ID_LENGTH = 256
 
 /**
- * The name and avatar of each id a response may show to any reader, never the email. Callers pass
- * only ids the requester can already see. Non-string, empty, oversized, bot and anonymous ids are
- * skipped: the editor labels bots and the anonymous user without a lookup. Unknown ids are absent.
+ * The name and avatar of each id a response may show to any reader, never the email. A user with
+ * no usable name (blank, or equal to the id) gets an empty name. Callers pass only ids the
+ * requester can already see. Non-string, empty, oversized, bot and anonymous ids are skipped: the
+ * editor labels bots and the anonymous user without a lookup. Unknown ids are absent.
  */
 export async function lookupUserProfiles(
   plugin: AuthPlugin,
@@ -126,10 +128,11 @@ export async function lookupUserProfiles(
   for (const [id, user] of found) {
     // A record for some other id (a provider resolving an alias) names someone nobody asked about.
     if (user === null || user.id !== id) continue
+    const name = personName(user.id, user.name) ?? ''
     profiles.push(
       user.avatarUrl === undefined
-        ? { id: user.id, name: user.name }
-        : { id: user.id, name: user.name, avatarUrl: user.avatarUrl },
+        ? { id: user.id, name }
+        : { id: user.id, name, avatarUrl: user.avatarUrl },
     )
   }
   return profiles

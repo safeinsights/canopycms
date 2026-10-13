@@ -35,6 +35,18 @@ export const NameUnavailable: Story = {
   args: { userId: asUserId('story-unknown'), getUserMetadata: async () => null },
 }
 
+/** The directory has the person but no name for them: the badge says so, keeping the avatar and email. */
+export const NamelessUser: Story = {
+  args: {
+    userId: asUserId('story-nameless'),
+    getUserMetadata: async () => ({
+      id: 'story-nameless',
+      name: '',
+      email: 'nameless@example.com',
+    }),
+  },
+}
+
 /** The lookup failed. */
 export const CouldNotLoadName: Story = {
   args: {
