@@ -833,7 +833,7 @@ export function CollectionEditor({
           <TextInput
             label="Name"
             description="Machine-readable identifier (e.g., posts, pages, articles)"
-            placeholder="posts"
+            placeholder="e.g. posts"
             value={formData.name}
             onChange={(e) => updateField('name', e.target.value)}
             required
@@ -842,7 +842,7 @@ export function CollectionEditor({
           <TextInput
             label="Label"
             description="Human-readable display name"
-            placeholder="Blog posts"
+            placeholder="e.g. Blog posts"
             value={formData.label}
             onChange={(e) => updateField('label', e.target.value)}
           />
@@ -851,7 +851,7 @@ export function CollectionEditor({
             <TextInput
               label="Slug"
               description="Directory name (filesystem path). Changing this renames the directory."
-              placeholder="posts"
+              placeholder="e.g. posts"
               value={slug}
               onChange={(e) => {
                 setSlug(e.target.value)

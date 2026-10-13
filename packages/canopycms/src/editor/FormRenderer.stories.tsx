@@ -231,7 +231,7 @@ const HeaderScroller: React.FC<{ readOnly?: boolean }> = ({ readOnly = false }) 
           height: 600,
           maxWidth: 560,
           overflow: 'auto',
-          backgroundColor: 'var(--mantine-color-gray-1)',
+          backgroundColor: 'var(--canopy-surface-muted)',
         } as React.CSSProperties
       }
     >

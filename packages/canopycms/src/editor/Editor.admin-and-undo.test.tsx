@@ -258,7 +258,7 @@ describe('admin surfaces', () => {
     await openNavigator()
     fireEvent.click(screen.getByTestId('collection-menu-posts'))
     await screen.findByTestId('add-entry-menu-item')
-    for (const label of ['Add sub-collection…', 'Edit collection…', 'Delete collection…']) {
+    for (const label of ['Add sub-collection…', 'Edit collection…', 'Delete collection']) {
       expect(screen.queryByText(label) !== null).toBe(admin)
     }
   })

@@ -27,7 +27,7 @@ import { Notifications } from '@mantine/notifications'
 import { ModalsProvider } from '@mantine/modals'
 import { generateColors } from '@mantine/colors-generator'
 
-import { composite, isMeasurable, readableOnScale } from './contrast'
+import { NON_TEXT_CONTRAST, composite, isMeasurable, readableOnScale } from './contrast'
 
 import '@mantine/core/styles.css'
 import '@mantine/dates/styles.css'
@@ -191,10 +191,24 @@ const readableColourVariables = (theme: MantineTheme, scheme: 'light' | 'dark') 
   return variables
 }
 
+/** Dark `--mantine-primary-color-filled` (focus rings, focused borders): 3:1 on dark.5. */
+const darkFocusColour = (theme: MantineTheme): string => {
+  const scale = theme.colors[theme.primaryColor]
+  const shade = getPrimaryShade(theme, 'dark')
+  if (!scale.every(isMeasurable)) return `var(--mantine-color-${theme.primaryColor}-filled)`
+  const { shade: step, value } = readableOnScale(scale, {
+    from: shade,
+    toward: 'lighter',
+    background: theme.colors.dark[5],
+    minimum: NON_TEXT_CONTRAST,
+  })
+  return step === undefined ? value : `var(--mantine-color-${theme.primaryColor}-${step})`
+}
+
 /**
  * docs/ux-guidelines.md "Colour and contrast" says what each token is for; `theme.test.tsx` pins
  * every ratio for the default palette. Dark dimmed mixes dark.1 with dark.2, since dark.1 alone
- * reads as body text.
+ * reads as body text; placeholders sit further from it, so they never pass for a value.
  */
 const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
   variables: {
@@ -204,9 +218,11 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
   light: {
     ...readableColourVariables(theme, 'light'),
     '--mantine-color-dimmed': 'var(--mantine-color-gray-7)',
-    '--mantine-color-placeholder': 'var(--mantine-color-dimmed)',
+    '--mantine-color-placeholder':
+      'color-mix(in srgb, var(--mantine-color-gray-6) 60%, var(--mantine-color-gray-7))',
     '--canopy-danger-text': 'var(--mantine-color-red-9)',
-    '--canopy-input-border': 'var(--mantine-color-gray-6)',
+    '--canopy-input-border':
+      'color-mix(in srgb, var(--mantine-color-gray-6) 80%, var(--mantine-color-gray-7))',
     '--canopy-surface-subtle': 'var(--mantine-color-gray-0)',
     '--canopy-surface-muted': 'var(--mantine-color-gray-1)',
   },
@@ -214,9 +230,12 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
     ...readableColourVariables(theme, 'dark'),
     '--mantine-color-dimmed':
       'color-mix(in srgb, var(--mantine-color-dark-1) 85%, var(--mantine-color-dark-2))',
-    '--mantine-color-placeholder': 'var(--mantine-color-dimmed)',
+    '--mantine-primary-color-filled': darkFocusColour(theme),
+    '--mantine-color-placeholder':
+      'color-mix(in srgb, var(--mantine-color-dark-2) 60%, var(--mantine-color-dark-1))',
     '--canopy-danger-text': 'var(--mantine-color-red-3)',
-    '--canopy-input-border': 'var(--mantine-color-dark-2)',
+    '--canopy-input-border':
+      'color-mix(in srgb, var(--mantine-color-dark-2) 80%, var(--mantine-color-dark-1))',
     '--canopy-surface-subtle': 'var(--mantine-color-dark-6)',
     '--canopy-surface-muted': 'var(--mantine-color-dark-5)',
   },

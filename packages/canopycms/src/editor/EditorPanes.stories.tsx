@@ -236,7 +236,7 @@ export const Default: Story = {
             onLayoutChange={setLayout}
             layout={layout}
             preview={
-              <Box p="lg" bg="gray.0" h="100%">
+              <Box p="lg" bg="var(--canopy-surface-subtle)" h="100%">
                 <PostPreview post={post} authorName={authorMap[post.author]} />
               </Box>
             }

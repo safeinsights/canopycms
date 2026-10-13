@@ -245,7 +245,7 @@ export function EntryTypeEditor({
         <TextInput
           label="Name"
           description="Machine-readable identifier (e.g., post, page, article)"
-          placeholder="post"
+          placeholder="e.g. post"
           value={formData.name}
           onChange={(e) => updateField('name', e.target.value)}
           disabled={isEditMode}
@@ -255,7 +255,7 @@ export function EntryTypeEditor({
         <TextInput
           label="Label"
           description="Human-readable display name"
-          placeholder="Blog post"
+          placeholder="e.g. Blog post"
           value={formData.label}
           onChange={(e) => updateField('label', e.target.value)}
         />

@@ -328,9 +328,33 @@ describe('FormHeader', () => {
       fakeHeaderWidth(200)
       renderHeader()
       const button = screen.getByRole('button', { name: 'Outline' })
-      expect(button.textContent).toBe('')
+      expect(button.querySelector('.mantine-VisuallyHidden-root')?.textContent).toBe('Outline')
       act(() => button.focus())
       await waitFor(() => expect(screen.getByRole('tooltip').textContent).toBe('Outline'))
+    })
+
+    it('keeps the same focused button as the pane widens past the threshold', () => {
+      let resize = () => {}
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(callback: () => void) {
+            resize = callback
+          }
+          observe() {}
+          disconnect() {}
+        },
+      )
+      fakeHeaderWidth(200)
+      renderHeader()
+      const button = screen.getByRole('button', { name: 'Outline' })
+      act(() => button.focus())
+      fakeHeaderWidth(400)
+      act(() => resize())
+      expect(screen.getByRole('button', { name: 'Outline' })).toBe(button)
+      expect(button.querySelector('.mantine-VisuallyHidden-root')).toBeNull()
+      expect(document.activeElement).toBe(button)
+      vi.unstubAllGlobals()
     })
 
     it('still opens the outline from the icon', async () => {

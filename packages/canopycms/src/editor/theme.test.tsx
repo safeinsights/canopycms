@@ -456,11 +456,28 @@ describe('CanopyCMSProvider colour and contrast', () => {
     expect(inDark('--mantine-color-dimmed')).not.toBe(dark[1])
   })
 
-  it('draws placeholders at 4.5:1 on the input background in both schemes', () => {
-    expect(light['--mantine-color-placeholder']).toBe('var(--mantine-color-dimmed)')
-    expect(darkVars['--mantine-color-placeholder']).toBe('var(--mantine-color-dimmed)')
-    expect(contrastRatio(inLight('--mantine-color-placeholder'), white)).toBeCloseTo(8.18, 2)
-    expect(contrastRatio(inDark('--mantine-color-placeholder'), dark[6])).toBeCloseTo(6.26, 2)
+  it('draws placeholders at 4.5:1 on the input background, apart from typed text', () => {
+    const placeholder = {
+      light: inLight('--mantine-color-placeholder'),
+      dark: inDark('--mantine-color-placeholder'),
+    }
+    expect(contrastRatio(placeholder.light, white)).toBeCloseTo(4.66, 2)
+    expect(contrastRatio(placeholder.dark, dark[6])).toBeCloseTo(4.71, 2)
+    // Further from the text colour than the dimmed colour is, so it never passes for a value.
+    expect(contrastRatio(placeholder.light, inLight('--mantine-color-text'))).toBeCloseTo(4.5, 2)
+    expect(contrastRatio(placeholder.dark, inDark('--mantine-color-text'))).toBeCloseTo(1.74, 2)
+    expect(contrastRatio(placeholder.dark, inDark('--mantine-color-text'))).toBeGreaterThan(
+      contrastRatio(inDark('--mantine-color-dimmed'), inDark('--mantine-color-text')),
+    )
+  })
+
+  it('draws the focus ring, focused borders and checked controls at 3:1 in dark mode', () => {
+    expect(darkVars['--mantine-primary-color-filled']).toBe('var(--mantine-color-brand-5)')
+    const focus = inDark('--mantine-primary-color-filled')
+    expect(
+      [dark[5], dark[6], dark[7]].map((bg) => Number(contrastRatio(focus, bg).toFixed(2))),
+    ).toEqual([3.05, 3.7, 4.23])
+    expect(contrastRatio(inLight('--mantine-primary-color-filled'), gray[1])).toBeCloseTo(4.48, 2)
   })
 
   it('draws danger text at red.9 in light mode and red.3 in dark, 4.5:1 wherever it sits', () => {
@@ -488,11 +505,12 @@ describe('CanopyCMSProvider colour and contrast', () => {
       light: inLight('--canopy-input-border'),
       dark: inDark('--canopy-input-border'),
     }
-    expect(contrastRatio(border.light, white)).toBeCloseTo(3.32, 2)
-    expect(contrastRatio(border.light, inLight('--canopy-surface-subtle'))).toBeCloseTo(3.15, 2)
-    expect(contrastRatio(border.dark, dark[6])).toBeCloseTo(3.53, 2)
-    expect(contrastRatio(border.dark, inDark('--canopy-surface-subtle'))).toBeCloseTo(3.53, 2)
-    expect(contrastRatio(border.dark, dark[7])).toBeCloseTo(4.04, 2)
+    // The form pane is the muted surface, the lowest-contrast one an input sits on.
+    expect(contrastRatio(border.light, white)).toBeCloseTo(3.9, 2)
+    expect(contrastRatio(border.light, inLight('--canopy-surface-muted'))).toBeCloseTo(3.51, 2)
+    expect(contrastRatio(border.dark, inDark('--canopy-surface-muted'))).toBeCloseTo(3.37, 2)
+    expect(contrastRatio(border.dark, dark[6])).toBeCloseTo(4.09, 2)
+    expect(contrastRatio(border.dark, dark[7])).toBeCloseTo(4.68, 2)
   })
 
   it('fills primary controls dark enough for white text: Submit for review in both schemes', () => {
@@ -670,12 +688,12 @@ describe('DestructiveMenuItem', () => {
             <button type="button">Actions</button>
           </Menu.Target>
           <Menu.Dropdown>
-            <DestructiveMenuItem>Delete…</DestructiveMenuItem>
+            <DestructiveMenuItem>Delete entry</DestructiveMenuItem>
           </Menu.Dropdown>
         </Menu>
       </CanopyCMSProvider>,
     )
-    const item = await waitFor(() => getByRole('menuitem', { name: 'Delete…' }))
+    const item = await waitFor(() => getByRole('menuitem', { name: 'Delete entry' }))
     expect(item.style.color).toBe('var(--canopy-danger-text)')
     expect(item.style.getPropertyValue('--menu-item-hover')).toBe(
       'var(--mantine-color-red-light-hover)',
@@ -691,13 +709,13 @@ describe('DestructiveMenuItem', () => {
           </Menu.Target>
           <Menu.Dropdown>
             <DestructiveMenuItem blockedReason="This branch is in review.">
-              Delete…
+              Delete entry
             </DestructiveMenuItem>
           </Menu.Dropdown>
         </Menu>
       </CanopyCMSProvider>,
     )
-    const item = await waitFor(() => getByRole('menuitem', { name: /Delete…/ }))
+    const item = await waitFor(() => getByRole('menuitem', { name: /Delete entry/ }))
     expect(item.getAttribute('aria-disabled')).toBe('true')
     expect(item.style.color).toBe('var(--mantine-color-dimmed)')
   })

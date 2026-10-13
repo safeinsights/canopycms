@@ -315,13 +315,15 @@ const editorWrapperStyle: React.CSSProperties = {
  * Mantine's global CSS reset strips styles from semantic HTML elements.
  * Restore them inside the MDXEditor content area so formatting is visible. The toolbar wraps
  * rather than scrolling sideways (`toolbar-wrap.ts` hides a separator left at a row's edge).
- * MDXEditor's dark theme leaves its page background white, so it takes the body colour.
+ * MDXEditor's dark theme leaves its page background white; the body colour replaces it.
  */
 const EditorContentStyles: React.FC = () => (
   <style>{`
     .canopy-mdx-content { min-height: 120px; padding: 8px 12px; }
     .mdxeditor .canopy-mdx-toolbar { flex-wrap: wrap; overflow-x: visible; }
-    .mdxeditor, .mdxeditor-popup-container { --basePageBg: var(--mantine-color-body); }
+    .mdxeditor { --basePageBg: var(--mantine-color-body); }
+    .mdxeditor-popup-container { --basePageBg: var(--canopy-surface-subtle); }
+    .canopy-mdx-toolbar [data-placeholder] > span:first-child { color: var(--mantine-color-placeholder); }
     .canopy-mdx-content ul { list-style-type: disc; padding-left: 1.5em; margin: 0.5em 0; }
     .canopy-mdx-content ol { list-style-type: decimal; padding-left: 1.5em; margin: 0.5em 0; }
     .canopy-mdx-content ul ul { list-style-type: circle; }

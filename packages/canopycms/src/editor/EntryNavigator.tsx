@@ -706,8 +706,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           paddingInline: 10,
           paddingBlock: 6,
           paddingLeft: `calc(${rem(8)} + ${rem(level * 12)})`,
-          backgroundColor: selected ? 'var(--mantine-color-brand-0)' : undefined,
-          border: selected ? '1px solid var(--mantine-color-brand-3)' : '1px solid transparent',
+          backgroundColor: selected ? 'var(--mantine-primary-color-light)' : undefined,
+          color: selected ? 'var(--mantine-primary-color-light-color)' : undefined,
+          border: selected
+            ? '1px solid var(--mantine-primary-color-light-color)'
+            : '1px solid transparent',
           transition: 'background-color 120ms ease, border-color 120ms ease',
         }}
       >
@@ -856,7 +859,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                         onDelete()
                       }}
                     >
-                      Delete collection…
+                      Delete collection
                     </DestructiveMenuItem>
                   )}
                 </Menu.Dropdown>
@@ -926,7 +929,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                         }}
                         data-testid="delete-entry-menu-item"
                       >
-                        Delete…
+                        Delete entry
                       </DestructiveMenuItem>
                     </>
                   )}

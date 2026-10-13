@@ -28,7 +28,7 @@ const meta: Meta<typeof FieldWrapper> = {
   },
   decorators: [
     (Story) => (
-      <Box p="xl" bg="gray.0">
+      <Box p="xl" bg="var(--canopy-surface-subtle)">
         <Story />
       </Box>
     ),

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useRef, useState } from 'react'
 
 import {
   ActionIcon,
@@ -13,7 +13,9 @@ import {
   Text,
   Tooltip,
   UnstyledButton,
+  VisuallyHidden,
 } from '@mantine/core'
+import { useIsomorphicEffect } from '@mantine/hooks'
 import { IconChevronsDown, IconChevronsUp, IconListTree } from '@tabler/icons-react'
 
 /** The padding of the scroller the form sits in, which `EditorPanes` sets; 0 where unset. */
@@ -129,7 +131,7 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
 
   // Its scroller pads its scroll edge by the header's height and a gap, so a field scrolled to the
   // top, as `scrollIntoView` does, lands below the header rather than under it.
-  useEffect(() => {
+  useIsomorphicEffect(() => {
     const header = headerRef.current
     if (!header) return
     const scroller = scrollerOf(header)
@@ -191,35 +193,24 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
             trapFocus
             returnFocus={false}
           >
-            {compact ? (
-              <Tooltip label="Outline">
-                <Popover.Target>
-                  <ActionIcon
-                    variant="subtle"
-                    color="gray"
-                    aria-label="Outline"
-                    onClick={() => setOutlineOpen((open) => !open)}
-                    data-testid="form-outline-button"
-                  >
-                    <IconListTree size={16} aria-hidden />
-                  </ActionIcon>
-                </Popover.Target>
-              </Tooltip>
-            ) : (
+            {/* One element either way, so focus survives the pane crossing the width. */}
+            <Tooltip label="Outline" disabled={!compact}>
               <Popover.Target>
                 <Button
                   variant="subtle"
                   color="gray"
                   c="dimmed"
                   size="compact-sm"
+                  px={compact ? 6 : undefined}
                   leftSection={<IconListTree size={14} aria-hidden />}
+                  styles={compact ? { section: { marginInlineEnd: 0 } } : undefined}
                   onClick={() => setOutlineOpen((open) => !open)}
                   data-testid="form-outline-button"
                 >
-                  Outline
+                  {compact ? <VisuallyHidden>Outline</VisuallyHidden> : 'Outline'}
                 </Button>
               </Popover.Target>
-            )}
+            </Tooltip>
             <Popover.Dropdown p={4}>
               <ScrollArea.Autosize mah={400} type="auto">
                 <nav aria-label="Outline" data-testid="form-outline">

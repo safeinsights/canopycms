@@ -17,7 +17,8 @@ scheme-aware variables, so `colorScheme="dark"` leaves no light surface behind. 
 opens on keyboard focus. Date-time fields follow the browser's 12- or 24-hour clock and read a
 date-only value as local midnight; empty header menus show a focusable item saying why.
 
-**To adopt.** Nothing, unless visual snapshots or browser tests assert the old colours. A
+**To adopt.** Nothing, unless visual snapshots or browser tests assert the old colours, or click
+the navigator's "Delete…" or "Delete collection…", now "Delete entry" and "Delete collection". A
 `themeOverride` setting `primaryShade` or `components.Tooltip.defaultProps.events` replaces these
 defaults.
 
