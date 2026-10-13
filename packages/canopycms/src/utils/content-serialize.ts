@@ -619,15 +619,21 @@ function withUnchangedAsOnDisk(value: unknown, read: unknown, disk: unknown): un
   if (Array.isArray(value) && Array.isArray(read) && Array.isArray(disk)) {
     if (read.length !== disk.length) return value
     // An item sent as read anywhere in the list, so an insert or a reorder keeps the rest as read.
+    // On the save that first writes item keys, it is found by what it was read as without them,
+    // and keeps the keys while its unchanged values take their disk form.
     const readKeys = read.map(identityKey)
     const claimed = new Set<number>()
-    return value.map((child, i) => {
-      const key = identityKey(child)
+    const claim = (key: string | undefined): number => {
       const at = readKeys.findIndex((k, j) => k !== undefined && k === key && !claimed.has(j))
-      if (at >= 0) {
-        claimed.add(at)
-        return disk[at]
-      }
+      if (at >= 0) claimed.add(at)
+      return at
+    }
+    return value.map((child, i) => {
+      const at = claim(identityKey(child))
+      if (at >= 0) return disk[at]
+      const unkeyed = unkeyedIdentityKey(child)
+      const asRead = unkeyed === undefined ? -1 : claim(unkeyed)
+      if (asRead >= 0) return withUnchangedAsOnDisk(child, read[asRead], disk[asRead])
       return i < read.length ? withUnchangedAsOnDisk(child, read[i], disk[i]) : child
     })
   }

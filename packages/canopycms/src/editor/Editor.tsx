@@ -655,10 +655,12 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // A field thread inside list items follows them by key, placed in its entry's value where that
   // is at hand (on screen, a draft, a load); one whose item is gone shows on the entry.
-  const entryValue = (entry: EditorEntry): FormValue | undefined =>
-    entry.path === currentEntry?.path
-      ? displayValue
-      : (drafts[entry.contentId] ?? loadedValues[entry.contentId])
+  const entryValue = (entry: EditorEntry): FormValue | undefined => {
+    if (entry.path === currentEntry?.path) return displayValue
+    // As `displayValue` would show it: read-only content shows its saved value, not a draft.
+    const readOnly = branchContentLocked || entry.canEdit === false
+    return (readOnly ? undefined : drafts[entry.contentId]) ?? loadedValues[entry.contentId]
+  }
   const displayComments = useMemo(() => {
     const byPath = new Map(entriesState.map((entry) => [entry.path as string, entry]))
     return comments.map((thread) => {
@@ -671,7 +673,15 @@ const EditorContent: React.FC<EditorProps> = ({
       return path === thread.canopyPath ? thread : { ...thread, canopyPath: path }
     })
     // `entryValue` reads the open entry, its shown value, and the drafts and loads.
-  }, [comments, entriesState, currentEntry, displayValue, drafts, loadedValues])
+  }, [
+    comments,
+    entriesState,
+    currentEntry,
+    displayValue,
+    drafts,
+    loadedValues,
+    branchContentLocked,
+  ])
 
   // A thread's stored path is where its items were when it was made, so a jump into another entry
   // waits for that entry's value to place the thread before it goes to the field.
@@ -733,8 +743,9 @@ const EditorContent: React.FC<EditorProps> = ({
     !currentEntry ||
     !loadedValue ||
     resolveThreadPath(currentEntry.schema, loadedValue, canopyPath, itemKeys) === null
+  // Says nothing until the saved value is known, which is what tells a new item from a saved one.
   const commentBlockedReason = (canopyPath: string): string | undefined => {
-    if (!currentEntry || !displayValue) return undefined
+    if (!currentEntry || !displayValue || !loadedValue) return undefined
     const itemKeys = itemKeysOnPath(currentEntry.schema, displayValue, canopyPath)
     return itemKeys?.length && onUnsavedItem(itemKeys, canopyPath)
       ? NEW_ITEM_COMMENT_MESSAGE

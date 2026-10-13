@@ -1324,6 +1324,43 @@ describe('serializeYaml follows a comment with a keyed list item', () => {
     expect(out).toContain('# about Ada')
   })
 
+  describe('the first keyed save of frontmatter that moves date-bearing items', () => {
+    const md = `---
+events:
+  # about A -- keep
+  - name: A
+    date: 2024-01-01
+  # about B -- keep
+  - name: B
+    date: 2024-02-01
+---
+
+Body.
+`
+    // As the API carries them: js-yaml reads a bare date as a Date, sent back as a timestamp.
+    const a = { name: 'A', date: '2024-01-01T00:00:00.000Z' }
+    const b = { name: 'B', date: '2024-02-01T00:00:00.000Z' }
+    const keyed = <T extends object>(item: T, key: string) => ({ ...item, _key: key })
+    const withoutKeyLines = (text: string) => text.replace(/\n *_key: k[ab]/g, '')
+
+    it.each([
+      ['reordered', [b, a]],
+      ['with the first item removed', [b]],
+    ])('writes what an un-keyed save would, plus the keys, when %s', (_, events) => {
+      const unkeyedOut = serializeFrontmatter('\nBody.\n', { events }, md, 'md')
+      const keyedEvents = events.map((e) => keyed(e, e === a ? 'ka' : 'kb'))
+      const out = serializeFrontmatter('\nBody.\n', { events: keyedEvents }, md, 'md')
+
+      expect(out).toContain('# about B -- keep')
+      expect(out).toContain('date: 2024-02-01\n')
+      expect(out).not.toContain('T00:00:00.000Z')
+      expect(withoutKeyLines(out)).toBe(unkeyedOut)
+      expect(matter(out).data.events.map((e: { _key: string }) => e._key)).toEqual(
+        keyedEvents.map((e) => e._key),
+      )
+    })
+  })
+
   it('keeps frontmatter comments on the first save that writes keys', () => {
     const md = `---
 # keep: owned by legal
