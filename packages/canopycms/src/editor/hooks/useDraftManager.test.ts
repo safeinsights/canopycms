@@ -6,7 +6,7 @@ import {
   useDraftManager,
 } from './useDraftManager'
 import { ApiTimeoutError } from '../../api/request-deadline'
-import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
+import { ENTRY_CHANGED_MESSAGE, ENTRY_GONE_MESSAGE } from '../../api/entries-constants'
 import { UnansweredError } from '../unanswered'
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import type { EditorEntry } from '../Editor'
@@ -735,6 +735,129 @@ describe('useDraftManager', () => {
         })
 
         expect(mockSaveEntry).toHaveBeenCalledTimes(2)
+      })
+    })
+
+    describe('a save refused because the entry is gone (ENTRY_GONE)', () => {
+      const mockGetEntryVersion = vi.fn<(contentId: string) => number | undefined>()
+      const versionedOptions = { ...defaultOptions, getEntryVersion: mockGetEntryVersion }
+      const goneToastId = 'canopy-entry-gone:abc123def456'
+      const timedOutToastId = 'canopy-save-timed-out:abc123def456'
+      const goneError = () => new SaveApiError(409, ENTRY_GONE_MESSAGE, undefined, 'ENTRY_GONE')
+
+      /** Render with a draft, then make one save that is refused as gone. */
+      const renderAfterGone = async () => {
+        mockGetEntryVersion.mockReturnValue(100)
+        mockSaveEntry.mockRejectedValueOnce(goneError())
+        const hook = renderHook((props) => useDraftManager(props), {
+          initialProps: versionedOptions,
+        })
+        act(() => {
+          hook.result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+        })
+        await act(async () => {
+          await hook.result.current.handleSave()
+        })
+        return hook
+      }
+
+      let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+      beforeEach(() => {
+        mockGetEntryVersion.mockReset()
+        consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      })
+      afterEach(() => {
+        consoleErrorSpy.mockRestore()
+      })
+
+      it('says the entry was not saved in a sticky toast, and keeps the draft', async () => {
+        const { result } = await renderAfterGone()
+
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: goneToastId,
+            title: '"Test Entry" not saved',
+            message: ENTRY_GONE_MESSAGE,
+            color: 'yellow',
+            autoClose: false,
+            withCloseButton: true,
+          }),
+        )
+        const shownMessages = vi.mocked(notifications.show).mock.calls.map(([n]) => n.message)
+        expect(shownMessages).not.toContain('Saved')
+        expect(shownMessages).not.toContain(ENTRY_CHANGED_MESSAGE)
+        expect(shownMessages).not.toContain(SAVE_MAY_HAVE_LANDED_MESSAGE)
+        expect(mockSetBusy).toHaveBeenLastCalledWith(false)
+        expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft' })
+      })
+
+      it('does not hold the entry for a reload: the next save sends a request again', async () => {
+        const { result } = await renderAfterGone()
+        expect(mockSaveEntry).toHaveBeenCalledTimes(1)
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(mockSaveEntry).toHaveBeenCalledTimes(2)
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
+          message: 'Saved',
+        })
+      })
+
+      it('takes the timed-out warning down when the retry of an unanswered save finds the entry gone', async () => {
+        mockGetEntryVersion.mockReturnValue(100)
+        mockSaveEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PUT', '/main/content/posts/a', 75_000),
+        )
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        act(() => {
+          result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+        })
+        await act(async () => {
+          await result.current.handleSave()
+        })
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({ id: timedOutToastId, message: SAVE_TIMED_OUT_MESSAGE }),
+        )
+        expect(notifications.hide).not.toHaveBeenCalled()
+        mockSaveEntry.mockRejectedValueOnce(goneError())
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(notifications.hide).toHaveBeenCalledWith(timedOutToastId)
+        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
+          id: goneToastId,
+          message: ENTRY_GONE_MESSAGE,
+        })
+        const shownMessages = vi.mocked(notifications.show).mock.calls.map(([n]) => n.message)
+        expect(shownMessages).not.toContain(SAVE_MAY_HAVE_LANDED_MESSAGE)
+        expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft' })
+      })
+
+      it('takes the toast down on switching branch, where the same entry id is another file', async () => {
+        const { rerender } = await renderAfterGone()
+        const { notifications } = await import('@mantine/notifications')
+        expect(notifications.hide).not.toHaveBeenCalledWith(goneToastId)
+
+        rerender({ ...versionedOptions, branchName: 'feature' })
+
+        expect(notifications.hide).toHaveBeenCalledWith(goneToastId)
+      })
+
+      it('takes the toast down on discarding all drafts', async () => {
+        const { result } = await renderAfterGone()
+        const { notifications } = await import('@mantine/notifications')
+        expect(notifications.hide).not.toHaveBeenCalledWith(goneToastId)
+
+        act(() => result.current.handleDiscardDrafts())
+
+        expect(notifications.hide).toHaveBeenCalledWith(goneToastId)
       })
     })
 

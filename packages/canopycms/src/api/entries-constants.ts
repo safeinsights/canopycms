@@ -19,3 +19,11 @@ export const DEFAULT_ENTRIES_LIMIT = 50
  */
 export const ENTRY_CHANGED_MESSAGE =
   'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).'
+
+/**
+ * The 409 for an update whose entry is gone: deleted or moved since the caller read it (API code
+ * `ENTRY_GONE`). The save is refused rather than re-creating the entry, so the copy tells the
+ * editor how to keep their changes; re-creating the entry is their deliberate choice.
+ */
+export const ENTRY_GONE_MESSAGE =
+  'This entry was deleted or moved since you opened it, so your changes were not saved. They are still in the form: copy what you want to keep, then paste it into the entry under its new name, or add it again with "Add entry…".'

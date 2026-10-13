@@ -10,7 +10,8 @@ import { getNotificationDuration } from '../utils/env'
 import { validateEntryFormValue, type EntryFieldError } from '../../validation/entry-validator'
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
-import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
+import { ENTRY_CHANGED_MESSAGE, ENTRY_GONE_MESSAGE } from '../../api/entries-constants'
+import type { ApiErrorCode } from '../../api/types'
 import { isUnanswered } from '../unanswered'
 
 /** @internal Exported for tests. */
@@ -24,6 +25,10 @@ export const SAVE_MAY_HAVE_LANDED_MESSAGE =
 const saveMayHaveLandedToastId = (contentId: string) => `canopy-save-may-have-landed:${contentId}`
 
 const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
+
+const entryGoneToastId = (contentId: string) => `canopy-entry-gone:${contentId}`
+
+const ENTRY_GONE_CODE = 'ENTRY_GONE' satisfies ApiErrorCode
 
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
 const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
@@ -224,6 +229,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // Entries whose timed-out save toast is up, taken down once a save, reload, discard or branch
   // switch ends it, or a retry is refused as having landed.
   const timedOutSavesRef = useRef(new Set<string>())
+  // Entries whose "deleted or moved" toast is up, taken down by a branch switch or a discard.
+  const goneEntriesRef = useRef(new Set<string>())
   // The draft ids the reconcile effect below has already accounted for. It
   // prunes on an observed present -> absent TRANSITION rather than on "not
   // currently in drafts": the restore effect stamps base versions for ids
@@ -353,6 +360,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // A timed-out save belongs to the branch it was sent to; content ids repeat across branches.
       for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
       timedOutSavesRef.current.clear()
+      for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
+      goneEntriesRef.current.clear()
       reconciledDraftIdsRef.current = new Set()
     }
     prevBranchRef.current = options.branchName
@@ -634,6 +643,22 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   /**
+   * Stays until dismissed: the entry is gone, so the form on screen is the only copy of the
+   * changes, and nothing else says so. Never re-creates the entry; that is the user's choice.
+   */
+  const showEntryGone = (entry: EditorEntry) => {
+    goneEntriesRef.current.add(entry.contentId)
+    notifications.show({
+      id: entryGoneToastId(entry.contentId),
+      title: `"${entry.label}" not saved`,
+      message: ENTRY_GONE_MESSAGE,
+      color: 'yellow',
+      autoClose: false,
+      withCloseButton: true,
+    })
+  }
+
+  /**
    * How the selected entry's draft relates to the server version we hold.
    *
    * - `ok`: nothing to object to (or nothing to compare against).
@@ -807,7 +832,15 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       ) {
         setErrorState({ entryId: currentId, errors: toFieldErrorMap(err.fieldErrors) })
       }
-      if (isConflict) {
+      if (isConflict && err.code === ENTRY_GONE_CODE) {
+        // Deleted or moved since it was read, by someone else or by a delete or rename of this
+        // user's that got no answer. Neither a reload nor a retry can save it, so the timed-out
+        // toast's "save again" no longer applies.
+        if (timedOutSavesRef.current.delete(currentId)) {
+          notifications.hide(saveTimedOutToastId(currentId))
+        }
+        showEntryGone(options.currentEntry)
+      } else if (isConflict) {
         // A version conflict on the retry of a save that went unanswered is most likely that
         // save having landed, which a reload settles just as for WRITE_OUTCOME_UNKNOWN.
         const ownSaveLanded =
@@ -826,7 +859,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         }
       } else if (isUnanswered(err)) {
         // A save that did land moved the file's version, so the server refuses the retry as a
-        // conflict; a file since deleted or moved is the exception (`ContentStore.write`).
+        // conflict; a file since deleted or moved refuses it as gone (`ContentStore.write`).
         timedOutSavesRef.current.add(currentId)
         notifications.show({
           id: saveTimedOutToastId(currentId),
@@ -856,6 +889,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const performDiscardDrafts = () => {
     for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
     timedOutSavesRef.current.clear()
+    for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
+    goneEntriesRef.current.clear()
     options.onDraftsReset?.()
     setDrafts({})
     setErrorState(null)

@@ -150,6 +150,23 @@ export class ContentConflictError extends Error {
 }
 
 /**
+ * Thrown when a write carrying a numeric `expectedVersion` finds no file: the entry was deleted
+ * or moved since that version was read. A missing file is a change since the read, so the write
+ * is refused rather than re-creating the entry; re-creating it is a create (`expectedVersion:
+ * null`) the caller makes deliberately.
+ *
+ * A `ContentConflictError` subclass so every 409 mapping keeps working; the distinct type lets
+ * the API tell the editor the entry is gone, where "reload to see the latest version" has
+ * nothing to reload.
+ */
+export class EntryGoneError extends ContentConflictError {
+  constructor() {
+    super('This entry was deleted or moved since it was read')
+    this.name = 'EntryGoneError'
+  }
+}
+
+/**
  * [SYNC-C1] Thrown when a mutation could not take the branch's cross-host
  * content-write lock within its bounded wait (utils/content-write-lock.ts) --
  * usually the worker mid-rebase on this branch's working tree, though
@@ -1145,6 +1162,33 @@ export class ContentStore {
             }
           }
 
+          // OCC: undefined means no opinion (skip entirely, a blind write). A number means
+          // "must match this mtime", and a missing file fails it too: the entry was deleted or
+          // moved since the read, and writing would re-create it (`EntryGoneError`). `null`
+          // means "must NOT exist yet" — the create-intent guard, without which a create
+          // request against a slug that already has content falls through to an ordinary
+          // blind overwrite. This is the authoritative check: it runs inside the per-entry lock
+          // and the content-write lock against a fresh stat, so it holds even if a caller's own
+          // pre-write existence check (e.g. the API layer's `documentExists`) went stale under
+          // concurrency. It runs before the create-only guards below and before `mkdir`, so a
+          // refused update neither re-creates a deleted collection directory nor reports a
+          // create-only failure for a write that was never a create.
+          if (input.expectedVersion !== undefined) {
+            try {
+              const existing = await fs.stat(absolutePath)
+              if (input.expectedVersion === null) {
+                throw new ContentConflictError('An entry with this slug already exists')
+              }
+              if (existing.mtimeMs !== input.expectedVersion) {
+                throw new ContentConflictError()
+              }
+            } catch (err) {
+              if (err instanceof ContentConflictError) throw err
+              if (!isNodeError(err) || err.code !== 'ENOENT') throw err
+              if (input.expectedVersion !== null) throw new EntryGoneError()
+            }
+          }
+
           // [URL] Contested-URL guard, create only: an ordinary save cannot contest a URL it
           // already holds, and blocking it would trap the author in an entry they can no
           // longer edit.
@@ -1195,34 +1239,6 @@ export class ContentStore {
 
           await fs.mkdir(path.dirname(absolutePath), { recursive: true })
 
-          // OCC: undefined means no opinion (skip entirely, a blind write). A number means
-          // "must match this mtime" (stale-write rejection). `null` means "must NOT exist
-          // yet" — the create-intent guard, without which a create request against a slug
-          // that already has content falls through to an ordinary blind overwrite. This is
-          // the authoritative check: it runs inside the per-entry lock against a fresh stat,
-          // so it holds even if a caller's own pre-write existence check (e.g. the API
-          // layer's `documentExists`) went stale under concurrency.
-          if (input.expectedVersion !== undefined) {
-            try {
-              const existing = await fs.stat(absolutePath)
-              if (input.expectedVersion === null) {
-                throw new ContentConflictError('An entry with this slug already exists')
-              }
-              if (existing.mtimeMs !== input.expectedVersion) {
-                throw new ContentConflictError()
-              }
-            } catch (err) {
-              if (err instanceof ContentConflictError) throw err
-              if (isNodeError(err) && err.code === 'ENOENT') {
-                // No file yet: for a numeric expectedVersion this is the "first write,
-                // skip the version check" back-compat behavior; for null it is create-only
-                // correctly seeing no collision. Either way, proceed with the write.
-              } else {
-                throw err
-              }
-            }
-          }
-
           // Existence guard (cross-process): the caller asserts this entry exists
           // (existingId), so a missing file at the path about to be written means this store's
           // index may be stale -- another process may have renamed the entry. Recreating a
@@ -1231,8 +1247,9 @@ export class ContentStore {
           // this host: if the ID's actual on-disk location differs from what the index
           // believes, fail with a conflict so the caller reloads fresh state. (An intentional
           // slug-change save passes: index and directory agree on the entry's current,
-          // old-slug path. External deletes also pass: the ID is nowhere on disk, so
-          // recreating is last-writer-wins.)
+          // old-slug path. An external delete passes here, since the ID is nowhere on disk; a
+          // write carrying a version has already been refused by the OCC check above, so only
+          // a blind write re-creates it.)
           //
           // indexedRelPath reads the LIVE index synchronously — NOT idIndex(), which would
           // run a full rescan while holding the entry lock if invalidateIndex() fired since

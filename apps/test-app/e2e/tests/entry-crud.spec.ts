@@ -1,8 +1,14 @@
+import fs from 'node:fs/promises'
 import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
-import { resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
+import {
+  resetWorkspace,
+  ensureMainBranch,
+  findContentFile,
+  getContentFilePath,
+} from '../fixtures/test-workspace'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT } from '../fixtures/timeouts'
 
 /**
@@ -150,6 +156,49 @@ test.describe('Entry CRUD Operations', () => {
       await editorPage.toggleCollection('Posts')
 
       await expect(editorPage.navigatorItem('Post')).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+    })
+  })
+
+  test('a save of an entry deleted elsewhere is refused and does not bring it back', async ({
+    page,
+  }) => {
+    const slug = `deleted-elsewhere-${Date.now()}`
+    const filePrefix = `posts.qrstuvwxyz12/post.${slug}.`
+    const editedTitle = 'Edited after the delete'
+
+    await test.step('create and open a post', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.openContentNavigator()
+      await editorPage.createEntry('Posts', slug, 'Post')
+      await editorPage.selectEntry('Post')
+    })
+
+    await test.step('another editor deletes its file', async () => {
+      const file = await findContentFile(filePrefix)
+      expect(file).not.toBeNull()
+      await fs.rm(getContentFilePath(file!))
+    })
+
+    await test.step('edit and save: refused as gone', async () => {
+      await editorPage.fillTextField('title', editedTitle)
+      const [response] = await Promise.all([
+        page.waitForResponse(
+          (resp) => resp.url().includes('/api/canopycms/') && resp.request().method() === 'PUT',
+          { timeout: STANDARD_TIMEOUT },
+        ),
+        editorPage.save(),
+      ])
+      expect(response.status()).toBe(409)
+      expect(await response.json()).toMatchObject({ code: 'ENTRY_GONE' })
+      await expect(editorPage.notification(/was deleted or moved since you opened it/)).toBeVisible(
+        { timeout: STANDARD_TIMEOUT },
+      )
+    })
+
+    await test.step('the entry stays deleted and the edits stay in the form', async () => {
+      expect(await findContentFile(filePrefix)).toBeNull()
+      await editorPage.verifyFieldValue('title', editedTitle)
     })
   })
 })
