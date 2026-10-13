@@ -1309,7 +1309,7 @@ describe('useEntryManager', () => {
         expect(String(err)).toContain(`Renaming "${opened.label}" may have gone through`)
       })
 
-      it('says it was not renamed when the entry is still at its old path', async () => {
+      it('leaves the outcome unknown when the entry is still at its old path', async () => {
         const { result, opened } = await mountWithOpenedEntry()
         mockClient.content.renameEntry.mockRejectedValueOnce(
           new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
@@ -1319,10 +1319,8 @@ describe('useEntryManager', () => {
         await act(async () => {
           err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
         })
-        expect(err).not.toBeInstanceOf(MayHaveLandedError)
-        expect(String(err)).toContain(
-          `Not renamed: the server didn't answer, and "${opened.label}"`,
-        )
+        expect(err).toBeInstanceOf(MayHaveLandedError)
+        expect(String(err)).toContain(`Renaming "${opened.label}" may have gone through`)
       })
 
       it('leaves the outcome unknown when the entries cannot be re-read', async () => {

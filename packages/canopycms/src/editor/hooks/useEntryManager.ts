@@ -669,7 +669,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     } catch (err) {
       console.error(err)
       if (!isUnanswered(err)) throw err
-      // Re-listed by content ID: under the new slug it landed, at the old path it did not.
+      // Re-listed by content ID, under the new slug it landed. Still at the old path proves
+      // nothing: past the client's deadline the server may still be working.
       const listed = await listEntriesUncommitted(options.branchName).catch(() => null)
       const now = contentId ? listed?.find((e) => e.contentId === contentId) : undefined
       if (now && now.path !== path && now.slug === newSlug) {
@@ -677,11 +678,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         return
       }
       void refreshEntries().catch(console.error)
-      if (now?.path === path) {
-        throw new Error(
-          `Not renamed: the server didn't answer, and "${label}" still has its old name. Try again.`,
-        )
-      }
       throw new MayHaveLandedError(
         `Renaming "${label}" may have gone through even though the server didn't answer. Check the "Content" panel before trying again.`,
       )

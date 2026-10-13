@@ -141,20 +141,28 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   ) => {
     const branch = options.branchName
     if (!branch) return
-    const shown = new Set(comments.flatMap((t) => t.comments.map((c) => c.id)))
+    // What was on screen at send, so only a comment that is new since can count as this one.
+    const loaded = commentsData !== undefined
+    const shownComments = new Set(comments.flatMap((t) => t.comments.map((c) => c.id)))
+    const isThis = (c: { id: string; userId: string; text: string }) =>
+      !shownComments.has(c.id) && c.userId === options.currentUser && c.text === text
     const result = await apiClient.comments
       .add({ branch }, { text, threadId, type, entryPath, canopyPath, itemKeys })
       .catch((err: unknown) => (isUnanswered(err) ? 'unanswered' : null))
     if (result === 'unanswered' || (result && isGatewayFailure(result))) {
-      // An unanswered post that landed shows in the reload as a new comment of theirs with this text.
+      // Landed, it is a new comment of theirs: in the thread replied to, or opening one here.
       const reloaded = await loadComments(branch)
-      const posted = reloaded?.some(
-        (t) =>
-          (!threadId || t.id === threadId) &&
-          t.comments.some(
-            (c) => !shown.has(c.id) && c.userId === options.currentUser && c.text === text,
-          ),
-      )
+      const posted =
+        loaded &&
+        reloaded?.some((t) =>
+          threadId
+            ? t.id === threadId && t.comments.some(isThis)
+            : t.type === type &&
+              t.entryPath === entryPath &&
+              t.canopyPath === canopyPath &&
+              t.comments[0] !== undefined &&
+              isThis(t.comments[0]),
+        )
       if (posted) return
       throw new MayHaveLandedError(COMMENT_MAY_BE_ADDED)
     }

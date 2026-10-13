@@ -940,7 +940,7 @@ describe('a collection write with no answer', () => {
     expect(within(dialog).getByText('Restored what you entered')).toBeTruthy()
   })
 
-  it('says the create went through once the content tree lists it, and fills nothing in', async () => {
+  it('says a create went through when reopening finds it listed, and fills nothing in', async () => {
     stubUnansweredCreate({ lands: true })
     renderEditor()
     await loaded()
@@ -948,15 +948,107 @@ describe('a collection write with no answer', () => {
     const user = userEvent.setup()
 
     await createNotesCollection(user)
+    const dialog = await reopenCreate()
 
-    await waitFor(() =>
-      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
-        expect.objectContaining({ message: 'Collection "notes" created', color: 'green' }),
-      ),
+    expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('')
+    expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Collection "notes" created', color: 'green' }),
     )
     expect(vi.mocked(notifications.hide)).toHaveBeenCalledWith('canopy-collection-outcome-unknown')
+  })
+
+  it('does not fill a create in again when the fresh read fails', async () => {
+    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+    const answerOthers = fetchMock.getMockImplementation()!
+    let created = false
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = urlOf(input)
+      if (init?.method === 'POST' && url.endsWith('/schema/collections')) {
+        created = true
+        return gatewayPage()
+      }
+      // After the unanswered create, every schema read fails.
+      if (created && url.includes('/schema') && !url.includes('/schema/')) return gatewayPage()
+      return answerOthers(input, init)
+    })
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const user = userEvent.setup()
+    await createNotesCollection(user)
+
     const dialog = await reopenCreate()
+
     expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('')
+    expect(within(dialog).queryByText('Restored what you entered')).toBeNull()
+  })
+
+  it("keeps a create's draft through another collection write that succeeds", async () => {
+    stubUnansweredCreate({ lands: false })
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const user = userEvent.setup()
+    await createNotesCollection(user)
+
+    fireEvent.click(screen.getByTestId('collection-menu-posts'))
+    fireEvent.click(await screen.findByText('Edit collection…'))
+    const edit = await screen.findByRole('dialog', { name: /^Edit collection:/ })
+    fireEvent.change(within(edit).getByLabelText(/^Label/), { target: { value: 'Articles' } })
+    fireEvent.click(within(edit).getByRole('button', { name: 'Save collection details' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: /^Edit collection:/ })).toBeNull(),
+    )
+
+    const dialog = await reopenCreate()
+    expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('notes')
+  })
+
+  it("keeps a create's draft through a create under another parent that succeeds", async () => {
+    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+    const answerOthers = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = urlOf(input)
+      if (init?.method === 'POST' && url.endsWith('/schema/collections')) {
+        const body = JSON.parse(String(init.body)) as { parentPath?: string }
+        return body.parentPath === 'content/posts'
+          ? gatewayPage()
+          : okJson({ collectionPath: 'content/pages/drafts', contentId: 'drf123456789' })
+      }
+      const response = await answerOthers(input, init)
+      if (!url.includes('/schema') || url.includes('/schema/')) return response
+      const data = (await response.json()).data
+      data.flatSchema.push({
+        type: 'collection',
+        logicalPath: 'content/pages',
+        name: 'pages',
+        label: 'Pages',
+        entries: [{ name: 'page', format: 'json', schema }],
+      })
+      return okJson(data)
+    })
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const user = userEvent.setup()
+    await createNotesCollection(user)
+
+    fireEvent.click(await screen.findByTestId('collection-menu-pages'))
+    fireEvent.click(await screen.findByText('Add sub-collection…'))
+    const other = await screen.findByRole('dialog', { name: 'Create collection' })
+    await user.type(within(other).getByLabelText(/^Name/), 'drafts')
+    await user.click(within(other).getByRole('button', { name: 'Add entry type…' }))
+    const addDialog = await screen.findByRole('dialog', { name: 'Add entry type' })
+    await user.type(within(addDialog).getByLabelText(/^Name/), 'draft')
+    await user.click(within(addDialog).getByRole('button', { name: 'Add entry type' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add entry type' })).toBeNull())
+    await user.click(within(other).getByRole('button', { name: 'Create collection' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Create collection' })).toBeNull(),
+    )
+
+    const dialog = await reopenCreate()
+    expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('notes')
   })
 
   it('fills a details save in again when the collection is reopened', async () => {
@@ -1086,6 +1178,39 @@ describe('a collection write with no answer', () => {
     expect(within(dialog).queryByText('Restored what you entered')).toBeNull()
     expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Collection "notes" created', color: 'green' }),
+    )
+  })
+
+  it('keeps nothing to fill in from a details save that sent no value', async () => {
+    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+    const answerOthers = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((input, init) =>
+      init?.method === 'PATCH' && urlOf(input).includes('/schema/collection/')
+        ? Promise.resolve(gatewayPage())
+        : answerOthers(input, init),
+    )
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const openEdit = async () => {
+      fireEvent.click(screen.getByTestId('collection-menu-posts'))
+      fireEvent.click(await screen.findByText('Edit collection…'))
+      return screen.findByRole('dialog', { name: /^Edit collection:/ })
+    }
+    // Clearing the label sends `label: undefined`, which JSON drops.
+    const first = await openEdit()
+    fireEvent.change(within(first).getByLabelText(/^Label/), { target: { value: '' } })
+    fireEvent.click(within(first).getByRole('button', { name: 'Save collection details' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: /^Edit collection:/ })).toBeNull(),
+    )
+
+    const dialog = await openEdit()
+
+    expect((within(dialog).getByLabelText(/^Label/) as HTMLInputElement).value).toBe('Posts')
+    expect(within(dialog).queryByText('Restored what you entered')).toBeNull()
+    expect(vi.mocked(notifications.show)).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Collection updated' }),
     )
   })
 

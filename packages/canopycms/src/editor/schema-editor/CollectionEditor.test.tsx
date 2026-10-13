@@ -765,6 +765,32 @@ describe('CollectionEditor', () => {
       expect(onClose).toHaveBeenCalledTimes(typed ? 0 : 1)
     })
 
+    it('create mode: undoes removals one at a time, latest first', async () => {
+      const user = userEvent.setup()
+      renderCollectionEditor()
+      await addEntryTypeViaUi(user, 'article')
+      await addEntryTypeViaUi(user, 'page')
+      await addEntryTypeViaUi(user, 'author')
+      await screen.findByText('author')
+      for (const name of ['page', 'author']) {
+        await openRowMenu(user, name)
+        await user.click(await screen.findByRole('menuitem', { name: 'Remove' }))
+        await waitFor(() => expect(screen.queryByText(name)).toBeNull())
+      }
+
+      await user.click(screen.getByRole('button', { name: 'Undo removing entry type "author"' }))
+      await user.click(
+        await screen.findByRole('button', { name: 'Undo removing entry type "page"' }),
+      )
+
+      const rows = screen.getAllByRole('button', { name: /^Actions for / })
+      expect(rows.map((row) => row.getAttribute('aria-label'))).toEqual([
+        'Actions for article',
+        'Actions for page',
+        'Actions for author',
+      ])
+    })
+
     it('create mode: offers Undo for the latest removal, until the dialog closes', async () => {
       const user = userEvent.setup()
       const { rerender, props } = renderCollectionEditor()

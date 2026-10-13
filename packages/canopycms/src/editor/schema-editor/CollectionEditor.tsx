@@ -164,11 +164,11 @@ export function CollectionEditor({
   restoredRef.current = restored
   const [showingRestored, setShowingRestored] = useState(false)
   const nameInputRef = useRef<HTMLInputElement>(null)
-  // The last staged removal; its Undo stays in the dialog, as a toast's is outside the focus trap.
-  const [stagedRemoval, setStagedRemoval] = useState<{
-    entryType: CreateEntryTypeInput
-    index: number
-  } | null>(null)
+  // Staged removals, latest last; Undo stays in the dialog, as a toast's is outside the focus trap.
+  const [stagedRemovals, setStagedRemovals] = useState<
+    { entryType: CreateEntryTypeInput; index: number }[]
+  >([])
+  const stagedRemoval = stagedRemovals.at(-1)
 
   const [formData, setFormData] = useState<CollectionFormData>({
     name: '',
@@ -237,7 +237,7 @@ export function CollectionEditor({
         setEntryTypes([])
       }
       setShowingRestored(!!prefill)
-      setStagedRemoval(null)
+      setStagedRemovals([])
       setValidationError(null)
       setEntryTypeChanged(false)
       setEntryTypeStatus('')
@@ -280,6 +280,7 @@ export function CollectionEditor({
     })
     setSlug(editingCollection ? slugOf(editingCollection.logicalPath) : '')
     setShowingRestored(false)
+    setStagedRemovals([])
     onDiscardRestored?.()
     nameInputRef.current?.focus()
   }, [editingCollection, onDiscardRestored])
@@ -523,7 +524,7 @@ export function CollectionEditor({
       const names = formData.entries.map((et) => et.name)
       const neighbour = names[index + 1] ?? names[index - 1] ?? null
       setFormData((prev) => ({ ...prev, entries: prev.entries.filter((_, i) => i !== index) }))
-      setStagedRemoval({ entryType, index })
+      setStagedRemovals((prev) => [...prev, { entryType, index }])
       setFocusRequest({ row: neighbour })
     },
     [formData.entries],
@@ -541,7 +542,7 @@ export function CollectionEditor({
             entries: [...prev.entries.slice(0, index), entryType, ...prev.entries.slice(index)],
           },
     )
-    setStagedRemoval(null)
+    setStagedRemovals((prev) => prev.slice(0, -1))
     setFocusRequest({ row: entryType.name })
   }, [stagedRemoval])
 
