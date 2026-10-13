@@ -634,6 +634,12 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   }
 
   const renameEntry = async (path: string, newSlug: string): Promise<void> => {
+    const contentId = entriesState.find((e) => e.path === path)?.contentId
+    const landed = async (newPath: string | undefined) => {
+      if (newPath && selectedPath === path) setSelectedPath(newPath)
+      await refreshEntries()
+      notifications.show({ message: 'Entry renamed', color: 'green' })
+    }
     options.setBusy(true)
     try {
       const result = await apiClient.content.renameEntry(
@@ -648,24 +654,21 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         const errorMsg = 'error' in result ? result.error : `Rename failed: ${result.status}`
         throw new Error(errorMsg)
       }
-
-      // Update the selected path if the renamed entry is currently selected
-      if (selectedPath === path && result.data) {
-        setSelectedPath(result.data.newPath)
-      }
-
-      // Refresh entries to get updated paths
-      await refreshEntries()
-      notifications.show({
-        message: 'Entry renamed successfully',
-        color: 'green',
-      })
+      await landed(result.data?.newPath)
     } catch (err) {
       console.error(err)
-      const errorMessage = err instanceof Error ? err.message : 'Rename failed'
-      notifications.show({ message: errorMessage, color: 'red' })
-      if (isUnanswered(err)) void refreshEntries().catch(console.error)
-      throw err
+      if (!isUnanswered(err)) {
+        notifications.show({ message: getErrorMessage(err), color: 'red' })
+        throw err
+      }
+      // An unanswered rename that landed lists the entry, by content ID, at another path.
+      const listed = await listEntriesUncommitted(options.branchName).catch(() => [])
+      const moved = listed.find((e) => e.contentId === contentId && e.path !== path)
+      if (!contentId || !moved) {
+        void refreshEntries().catch(console.error)
+        throw err
+      }
+      await landed(moved.path)
     } finally {
       options.setBusy(false)
     }
