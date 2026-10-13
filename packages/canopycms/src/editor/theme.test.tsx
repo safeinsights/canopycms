@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import {
   ActionIcon,
   Alert,
+  Badge,
   Button,
   DEFAULT_THEME,
   Drawer,
@@ -326,6 +327,34 @@ describe('CanopyCMSProvider filled button contrast', () => {
     )
   })
 
+  it('fills a primary Button and Badge, named or by default, with the primary fill', () => {
+    const { getByText } = render(
+      <CanopyCMSProvider>
+        <Button>Save</Button>
+        <Button color="brand">Submit for review</Button>
+        <Button color="brand" variant="light">
+          Open
+        </Button>
+        <Badge>Current</Badge>
+        <Badge variant="light">Editing</Badge>
+      </CanopyCMSProvider>,
+    )
+    for (const name of ['Save', 'Submit for review']) {
+      const button = getByText(name).closest('button')
+      expect(buttonVar(button, '--button-bg')).toBe('var(--canopy-primary-fill)')
+      expect(buttonVar(button, '--button-hover')).toBe('var(--canopy-primary-fill-hover)')
+    }
+    expect(buttonVar(getByText('Open').closest('button'), '--button-bg')).not.toBe(
+      'var(--canopy-primary-fill)',
+    )
+    const badgeBg = (name: string) =>
+      (getByText(name).closest('.mantine-Badge-root') as HTMLElement).style.getPropertyValue(
+        '--badge-bg',
+      )
+    expect(badgeBg('Current')).toBe('var(--canopy-primary-fill)')
+    expect(badgeBg('Editing')).not.toBe('var(--canopy-primary-fill)')
+  })
+
   it('keeps the shades when an adopter overrides another Button prop, not its vars', () => {
     const { getByText } = render(
       <CanopyCMSProvider
@@ -471,13 +500,15 @@ describe('CanopyCMSProvider colour and contrast', () => {
     )
   })
 
-  it('draws the focus ring, focused borders and checked controls at 3:1 in dark mode', () => {
-    expect(darkVars['--mantine-primary-color-filled']).toBe('var(--mantine-color-brand-5)')
-    const focus = inDark('--mantine-primary-color-filled')
+  it('draws focus rings, focused borders and checked controls at 3:1 in both schemes', () => {
+    const indicator = {
+      light: inLight('--mantine-primary-color-filled'),
+      dark: inDark('--mantine-primary-color-filled'),
+    }
+    expect(contrastRatio(indicator.light, gray[1])).toBeCloseTo(4.48, 2)
     expect(
-      [dark[5], dark[6], dark[7]].map((bg) => Number(contrastRatio(focus, bg).toFixed(2))),
+      [dark[5], dark[6], dark[7]].map((bg) => Number(contrastRatio(indicator.dark, bg).toFixed(2))),
     ).toEqual([3.05, 3.7, 4.23])
-    expect(contrastRatio(inLight('--mantine-primary-color-filled'), gray[1])).toBeCloseTo(4.48, 2)
   })
 
   it('draws danger text at red.9 in light mode and red.3 in dark, 4.5:1 wherever it sits', () => {
@@ -497,7 +528,7 @@ describe('CanopyCMSProvider colour and contrast', () => {
       dark[7],
       composite(red[darkPs - 2], 0.2, dark[6]),
     ].map((bg) => contrastRatio(red[3], bg))
-    expect(darkRatios.map((r) => Number(r.toFixed(2)))).toEqual([5.46, 6.09, 7.38, 8.44, 5.81])
+    expect(darkRatios.map((r) => Number(r.toFixed(2)))).toEqual([5.46, 6.09, 7.38, 8.44, 4.8])
   })
 
   it('draws input borders at 3:1 on the surfaces inputs sit on', () => {
@@ -513,10 +544,13 @@ describe('CanopyCMSProvider colour and contrast', () => {
     expect(contrastRatio(border.dark, dark[7])).toBeCloseTo(4.68, 2)
   })
 
-  it('fills primary controls dark enough for white text: Submit for review in both schemes', () => {
-    const filled = (scheme: 'light' | 'dark') => colors.brand[getPrimaryShade(canopyTheme, scheme)]
-    expect(contrastRatio(white, filled('light'))).toBeCloseTo(4.98, 2)
-    expect(contrastRatio(white, filled('dark'))).toBeCloseTo(5.67, 2)
+  it('fills primary Buttons and Badges dark enough for white text in both schemes', () => {
+    expect(light['--canopy-primary-fill']).toBe('var(--mantine-color-brand-7)')
+    expect(darkVars['--canopy-primary-fill']).toBe('var(--mantine-color-brand-7)')
+    expect(darkVars['--canopy-primary-fill-hover']).toBe('var(--mantine-color-brand-8)')
+    expect(contrastRatio(white, inLight('--canopy-primary-fill'))).toBeCloseTo(4.98, 2)
+    expect(contrastRatio(white, inDark('--canopy-primary-fill'))).toBeCloseTo(4.98, 2)
+    expect(contrastRatio(white, inDark('--canopy-primary-fill-hover'))).toBeCloseTo(5.67, 2)
   })
 
   it('puts a count in the text colour on a tint of the primary colour', () => {
@@ -534,7 +568,7 @@ describe('CanopyCMSProvider colour and contrast', () => {
       2,
     )
     expect(contrastRatio(inDark('--mantine-color-text'), tint(darkVars, 'dark'))).toBeCloseTo(
-      7.94,
+      7.2,
       2,
     )
   })
@@ -588,7 +622,7 @@ describe('CanopyCMSProvider colour and contrast', () => {
       expect(light['--mantine-color-brand-light-color']).toBe('var(--mantine-color-brand-9)')
       expect(light['--mantine-color-gray-light-color']).toBe('var(--mantine-color-gray-7)')
       expect(light['--mantine-color-orange-light-color']).toMatch(/^rgba\(/)
-      expect(darkVars['--mantine-color-red-light-color']).toBe('var(--mantine-color-red-3)')
+      expect(darkVars['--mantine-color-red-text']).toBe('var(--mantine-color-red-2)')
     })
 
     it("draws a light orange button's label in the readable orange", () => {
@@ -607,6 +641,24 @@ describe('CanopyCMSProvider colour and contrast', () => {
 })
 
 describe('CanopyCMSProvider adopter palettes it cannot measure', () => {
+  it('leaves every colour to Mantine when the gray scale it measures against is oklch', () => {
+    const oklchGray = Array.from(
+      { length: 10 },
+      (_, i) => `oklch(${98 - i * 8}% 0.003 264)`,
+    ) as unknown as MantineColorsTuple
+    render(
+      <CanopyCMSProvider themeOverride={{ colors: { gray: oklchGray } }}>
+        <span>text</span>
+      </CanopyCMSProvider>,
+    )
+    const css = Array.from(document.querySelectorAll('style'))
+      .map((style) => style.textContent ?? '')
+      .join('\n')
+    expect(css).not.toMatch(/--mantine-color-[a-z]+-light-color:\s*(rgba?\(|#)/)
+    expect(css).toMatch(/--mantine-color-brand-light-color:\s*var\(--mantine-color-brand-7\)/)
+    cleanup()
+  })
+
   it("leaves a virtual colour's and an oklch palette's variables to Mantine", () => {
     const oklch = Array.from(
       { length: 10 },

@@ -2,14 +2,14 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  What is left of docs/ux-guidelines.md "Colour and contrast" after the theme pass: filled badges in colours other than the primary (blue, green, grape in the permission editor and member list) put white text on a fill under 4.5:1, and Checkbox, Radio and Switch borders are still Mantine's gray.4, under 3:1
+  What is left of docs/ux-guidelines.md "Colour and contrast" after the theme pass: filled badges in colours other than the primary put white text on a fill under 4.5:1; in dark mode a combobox's armed option and the date picker's selected day put white on primary shade 5 (3.67:1); and Checkbox, Radio and Switch borders are still Mantine's gray.4, under 3:1
 ---
 # Contrast beyond the ruled colours
 
 The theme (`packages/canopycms/src/editor/theme.tsx`) now draws every colour's text, light and
-subtle variants and outline at 4.5:1, fills the primary at shade 7 (light) and 8 (dark), and sets
-the dimmed, placeholder, danger-text, input-border, surface and count-badge tokens, with the ratios
-pinned in `theme.test.tsx`. Two gaps remain.
+subtle variants and outline at 4.5:1, fills primary Buttons and Badges with `--canopy-primary-fill`,
+and sets the dimmed, placeholder, danger-text, input-border, surface and count-badge tokens, with
+the ratios pinned in `theme.test.tsx`. Three gaps remain.
 
 ## Filled badges in other colours
 
@@ -19,6 +19,15 @@ from `LEVEL_CONFIG` in `permission-manager/constants.tsx`: blue, green, grape) a
 `group-manager/MemberList.tsx` (blue). Either make them light badges, which the theme already
 makes readable, or give filled badges Mantine's `autoContrast` (black text on light fills) without
 breaking the filled red and orange Button resolver in `theme.tsx`.
+
+## White on the primary colour in dark mode
+
+Primary Buttons and Badges fill with `--canopy-primary-fill` (4.98:1 under white), but other
+places Mantine puts white text on `--mantine-primary-color-filled` (shade 5 in dark, 3.67:1)
+still miss 4.5:1: a combobox's armed option (Select, Tags, the quick-open palette, whose slug
+also has `opacity: 0.75`, 3.53:1 even in light mode), the date picker's selected day and focused
+time segment. Shade 5 stays because focus rings, focused borders and checked controls need 3:1
+on dark surfaces. Each needs the fill token through a scoped rule or the component's `styles`.
 
 ## Checkbox, Radio and Switch borders
 

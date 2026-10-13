@@ -315,6 +315,7 @@ describe('FormHeader', () => {
     afterEach(() => {
       if (originalWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalWidth)
       else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth
+      vi.unstubAllGlobals()
     })
 
     const renderHeader = () =>
@@ -354,7 +355,6 @@ describe('FormHeader', () => {
       expect(screen.getByRole('button', { name: 'Outline' })).toBe(button)
       expect(button.querySelector('.mantine-VisuallyHidden-root')).toBeNull()
       expect(document.activeElement).toBe(button)
-      vi.unstubAllGlobals()
     })
 
     it('still opens the outline from the icon', async () => {

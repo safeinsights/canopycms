@@ -276,9 +276,9 @@ describe('DateTimeField', () => {
     }
   })
 
-  it('shows a date-only value with an out-of-range month or day as not set, and writes nothing', () => {
+  it('shows a value whose month or day is out of range as not set, and writes nothing', () => {
     const onChange = vi.fn()
-    for (const stored of ['2024-13-01', '2024-00-10', '2024-02-30']) {
+    for (const stored of ['2024-13-01', '2024-00-10', '2024-02-30', '2024-02-30T10:00:00.000Z']) {
       render(<Harness initial={stored} onChange={onChange} />)
       expect(pickerButton().textContent).toBe('Pick a date and time')
       cleanup()

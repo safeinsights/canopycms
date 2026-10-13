@@ -69,7 +69,9 @@ const noop = () => {}
 /** The navigator at the drawer's content width, with long titles, nesting, markers and every menu. */
 export const DrawerWidth: Story = {
   render: () => (
-    <div style={{ width: 328, height: 520, border: '1px solid #ddd' }}>
+    <div
+      style={{ width: 328, height: 520, border: '1px solid var(--mantine-color-default-border)' }}
+    >
       <EntryNavigator
         selectedPath="content/guides/getting-started-with-a-very-long-guide-title"
         onSelect={noop}

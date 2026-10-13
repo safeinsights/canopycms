@@ -5,6 +5,7 @@ import React, { useMemo } from 'react'
 import {
   Alert,
   ActionIcon,
+  Badge,
   Button,
   DEFAULT_THEME,
   Drawer,
@@ -27,7 +28,7 @@ import { Notifications } from '@mantine/notifications'
 import { ModalsProvider } from '@mantine/modals'
 import { generateColors } from '@mantine/colors-generator'
 
-import { NON_TEXT_CONTRAST, composite, isMeasurable, readableOnScale } from './contrast'
+import { composite, isMeasurable, readableOnScale } from './contrast'
 
 import '@mantine/core/styles.css'
 import '@mantine/dates/styles.css'
@@ -90,7 +91,10 @@ const toScale = (
 // `closeButtonProps` unless that sets `aria-label`; a toast's or Alert's is replaced whole.
 const CLOSE_BUTTON_PROPS = { 'aria-label': 'Close' }
 // Filled red is red.8 under white; filled orange is orange.6 under black, since no orange shade
-// reaches 4.5:1 under white. Callers pass a plain `color`.
+// reaches 4.5:1 under white; a filled primary is `--canopy-primary-fill`. Callers pass a plain
+// `color`.
+const isPrimary = (theme: MantineTheme, color: string | undefined) =>
+  color === undefined || color === theme.primaryColor
 const canopyComponents = {
   Button: Button.extend({
     // The editor's default control size; a per-call `size` is only for a deliberate exception.
@@ -111,8 +115,22 @@ const canopyComponents = {
           },
         }
       }
+      if (isPrimary(theme, props.color)) {
+        return {
+          root: {
+            '--button-bg': 'var(--canopy-primary-fill)',
+            '--button-hover': 'var(--canopy-primary-fill-hover)',
+          },
+        }
+      }
       return { root: {} }
     },
+  }),
+  Badge: Badge.extend({
+    vars: (theme, props) =>
+      (props.variant ?? 'filled') === 'filled' && isPrimary(theme, props.color)
+        ? { root: { '--badge-bg': 'var(--canopy-primary-fill)' } }
+        : { root: {} },
   }),
   ActionIcon: ActionIcon.extend({ defaultProps: { size: 'sm' } }),
   // Tooltips open on focus and touch too, so an icon-only control's name reaches the keyboard.
@@ -149,8 +167,9 @@ export const createCanopyTheme = (
 
   const base = createTheme({
     primaryColor: 'brand',
-    // White on a filled primary is 4.98:1 at indigo.7 and 5.67:1 at indigo.8, the default brand.
-    primaryShade: { light: 7, dark: 8 },
+    // Focus rings, focused borders and checked controls draw in the primary shade: indigo.7 is
+    // 4.48:1 on gray.1, indigo.5 3.05:1 on dark.5. Fills under white use `--canopy-primary-fill`.
+    primaryShade: { light: 7, dark: 5 },
     defaultRadius: 'md',
     colors: { ...DEFAULT_THEME.colors, brand, primary, neutral, accent },
     fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',
@@ -169,6 +188,9 @@ export const createCanopyTheme = (
 const readableColourVariables = (theme: MantineTheme, scheme: 'light' | 'dark') => {
   const variables: Record<string, string> = {}
   const shade = getPrimaryShade(theme, scheme)
+  if (!theme.colors.gray.every(isMeasurable) || !theme.colors.dark.every(isMeasurable)) {
+    return variables
+  }
   for (const [name, scale] of Object.entries(theme.colors)) {
     if (scale.length !== 10 || !scale.every(isMeasurable)) continue
     const { shade: step, value } =
@@ -179,7 +201,7 @@ const readableColourVariables = (theme: MantineTheme, scheme: 'light' | 'dark') 
             background: composite(scale[shade], 0.12, theme.colors.gray[1]),
           })
         : readableOnScale(scale, {
-            from: Math.max(shade - 5, 0),
+            from: 4,
             toward: 'lighter',
             background: composite(scale[Math.max(shade - 2, 0)], 0.2, theme.colors.dark[4]),
           })
@@ -191,18 +213,27 @@ const readableColourVariables = (theme: MantineTheme, scheme: 'light' | 'dark') 
   return variables
 }
 
-/** Dark `--mantine-primary-color-filled` (focus rings, focused borders): 3:1 on dark.5. */
-const darkFocusColour = (theme: MantineTheme): string => {
+/** `--canopy-primary-fill`: the first primary step from its shade on that white reaches 4.5:1. */
+const primaryFill = (theme: MantineTheme, scheme: 'light' | 'dark') => {
   const scale = theme.colors[theme.primaryColor]
-  const shade = getPrimaryShade(theme, 'dark')
-  if (!scale.every(isMeasurable)) return `var(--mantine-color-${theme.primaryColor}-filled)`
-  const { shade: step, value } = readableOnScale(scale, {
-    from: shade,
-    toward: 'lighter',
-    background: theme.colors.dark[5],
-    minimum: NON_TEXT_CONTRAST,
+  if (!scale.every(isMeasurable)) {
+    return {
+      '--canopy-primary-fill': 'var(--mantine-primary-color-filled)',
+      '--canopy-primary-fill-hover': 'var(--mantine-primary-color-filled-hover)',
+    }
+  }
+  const { shade, value } = readableOnScale(scale, {
+    from: getPrimaryShade(theme, scheme),
+    toward: 'darker',
+    background: theme.white,
   })
-  return step === undefined ? value : `var(--mantine-color-${theme.primaryColor}-${step})`
+  const step = (n: number) => `var(--mantine-color-${theme.primaryColor}-${n})`
+  return shade === undefined
+    ? { '--canopy-primary-fill': value, '--canopy-primary-fill-hover': value }
+    : {
+        '--canopy-primary-fill': step(shade),
+        '--canopy-primary-fill-hover': step(Math.min(shade + 1, 9)),
+      }
 }
 
 /**
@@ -225,12 +256,12 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
       'color-mix(in srgb, var(--mantine-color-gray-6) 80%, var(--mantine-color-gray-7))',
     '--canopy-surface-subtle': 'var(--mantine-color-gray-0)',
     '--canopy-surface-muted': 'var(--mantine-color-gray-1)',
+    ...primaryFill(theme, 'light'),
   },
   dark: {
     ...readableColourVariables(theme, 'dark'),
     '--mantine-color-dimmed':
       'color-mix(in srgb, var(--mantine-color-dark-1) 85%, var(--mantine-color-dark-2))',
-    '--mantine-primary-color-filled': darkFocusColour(theme),
     '--mantine-color-placeholder':
       'color-mix(in srgb, var(--mantine-color-dark-2) 60%, var(--mantine-color-dark-1))',
     '--canopy-danger-text': 'var(--mantine-color-red-3)',
@@ -238,6 +269,7 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
       'color-mix(in srgb, var(--mantine-color-dark-2) 80%, var(--mantine-color-dark-1))',
     '--canopy-surface-subtle': 'var(--mantine-color-dark-6)',
     '--canopy-surface-muted': 'var(--mantine-color-dark-5)',
+    ...primaryFill(theme, 'dark'),
   },
 })
 

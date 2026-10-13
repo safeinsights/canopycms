@@ -11,7 +11,8 @@ row: Editor colours reach contrast in both schemes
 -->
 
 **What changed.** The editor theme draws each colour's text, light and subtle variants at 4.5:1,
-fills the primary colour one shade darker (7 in light mode, 8 in dark), and sets placeholders,
+uses primary shade 7 in light mode, fills primary Buttons and Badges at 4.5:1 under white text in
+both schemes (`--canopy-primary-fill`), and sets placeholders,
 dark-mode dimmed text, input borders (3:1), destructive and error text, and editor panels from
 scheme-aware variables, so `colorScheme="dark"` leaves no light surface behind. Every Tooltip
 opens on keyboard focus. Date-time fields follow the browser's 12- or 24-hour clock and read a

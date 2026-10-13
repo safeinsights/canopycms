@@ -38,7 +38,7 @@ export const GroupForm: React.FC<GroupFormProps> = ({
         )}
         <TextInput
           label="Group Name"
-          placeholder="e.g., content editors"
+          placeholder="e.g. Content editors"
           value={formData.name}
           onChange={(e) => onFormChange({ name: e.target.value })}
           required

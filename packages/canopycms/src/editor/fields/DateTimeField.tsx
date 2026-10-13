@@ -41,7 +41,14 @@ const CALENDAR_LABELS = {
   yearLevelControl: 'Choose a year',
 }
 
-const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/
+const DATE_PART = /^(\d{4})-(\d{2})-(\d{2})(T|$)/
+
+/** Whether the written year, month and day name a real day; `Date` rolls 30 Feb on to 1 Mar. */
+const isCalendarDate = (year: number, month: number, day: number): boolean => {
+  const lastOfMonth = new Date(0)
+  lastOfMonth.setUTCFullYear(year, month, 0)
+  return month >= 1 && month <= 12 && day >= 1 && day <= lastOfMonth.getUTCDate()
+}
 
 /**
  * The stored ISO string as a Date, or null for '' or an unparsable value. A date-only value is
@@ -49,17 +56,17 @@ const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/
  */
 const toDate = (iso: string): Date | null => {
   if (!iso) return null
-  const dateOnly = DATE_ONLY.exec(iso)
-  if (dateOnly) {
-    const [year, month, day] = dateOnly.slice(1).map(Number)
-    // setFullYear, since the constructor maps years 0-99 to 1900-1999; a month or day out of range
-    // rolls over, so it must read back unchanged.
-    const local = new Date(0)
-    local.setFullYear(year, month - 1, day)
-    local.setHours(0, 0, 0, 0)
-    const same =
-      local.getFullYear() === year && local.getMonth() === month - 1 && local.getDate() === day
-    return same ? local : null
+  const datePart = DATE_PART.exec(iso)
+  if (datePart) {
+    const [year, month, day] = datePart.slice(1, 4).map(Number)
+    if (!isCalendarDate(year, month, day)) return null
+    if (datePart[4] === '') {
+      // setFullYear, since the constructor maps years 0-99 to 1900-1999.
+      const local = new Date(0)
+      local.setFullYear(year, month - 1, day)
+      local.setHours(0, 0, 0, 0)
+      return local
+    }
   }
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? null : date

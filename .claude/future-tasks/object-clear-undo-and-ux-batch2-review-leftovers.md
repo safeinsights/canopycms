@@ -26,6 +26,12 @@ compact "Outline"). None was in that PR's scope.
   information rather than a blocked action.
 - **"All Files"** in `components/EditorHeader.tsx`'s entry menu is Title Case and says "file" for
   entries ([Vocabulary](../../docs/ux-guidelines.md#vocabulary)).
+- **Compact "Outline" tooltip.** `FormHeader.tsx` keeps the Tooltip mounted (`disabled` when the
+  pane is wide) so the button keeps focus across the width change; if the pane widens while it is
+  open, the button keeps a stale `aria-describedby` until blur, and when compact the name is
+  announced twice (name and description).
+- **MDX popups have no edge** in dark mode where they open over a `--canopy-surface-subtle` panel
+  (`fields/MarkdownField.tsx`); a border or Mantine's dropdown shadow would separate them.
 - **Raw schema names**: an unlabelled block field shows "blocks" in the outline and "headline",
   "body" as labels in the block story fixture; `entryTypeLabel`-style humanising would cover them.
 
