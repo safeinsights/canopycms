@@ -8,6 +8,7 @@ import {
 } from './useCommentSystem'
 import { ApiTimeoutError } from '../../api/request-deadline'
 import { MayHaveLandedError } from '../unanswered'
+import { mockConsole } from '../../test-utils/console-spy'
 import { useUserMetadata } from './useUserMetadata'
 import { createUserMetadataBatcher } from './user-metadata-batcher'
 import type { ApiClient } from '../context'
@@ -497,8 +498,14 @@ describe('useCommentSystem', () => {
     })
 
     it('never counts it as posted when the comments had not loaded at send', async () => {
-      postTimesOut([branchThread('t2', [comment('c2', 'Test comment')])], 'fails')
-      expectUnknown(await send(undefined, 'fails'))
+      const consoleSpy = mockConsole()
+      try {
+        postTimesOut([branchThread('t2', [comment('c2', 'Test comment')])], 'fails')
+        expectUnknown(await send(undefined, 'fails'))
+        expect(consoleSpy).toHaveErrored(/Failed to load comments/)
+      } finally {
+        consoleSpy.restore()
+      }
     })
   })
 

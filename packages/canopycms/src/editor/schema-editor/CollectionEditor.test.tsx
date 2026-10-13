@@ -1656,6 +1656,8 @@ describe('CollectionEditor', () => {
           renderCollectionEditor(stillListedProps())
           await removeEntryTypeViaUi(user, 'featured')
           await screen.findByText(stillListed('featured'))
+          // The removal's focus move lands after a delay; acting first races it.
+          await expectFocusOn('featured')
 
           await nextAction(user)
 
