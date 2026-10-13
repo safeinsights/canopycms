@@ -1361,6 +1361,71 @@ Body.
     })
   })
 
+  describe('a keyed frontmatter list whose neighbours share a bare date', () => {
+    const md = `---
+# page title
+title: Events
+date: 2024-03-03
+items:
+  - title: A
+    when: 2024-01-01
+    _key: ka
+  # about B
+  - title: B
+    when: 2024-01-01
+    _key: kb
+---
+
+Body.
+`
+    // As the API carries them: js-yaml reads a bare date as a Date, sent back as a timestamp.
+    const read = (title: string, key: string) => ({
+      title,
+      when: '2024-01-01T00:00:00.000Z',
+      _key: key,
+    })
+    const page = (items: unknown[]) => ({
+      title: 'Events',
+      date: '2024-03-03T00:00:00.000Z',
+      items,
+    })
+
+    it.each([
+      ['an item is removed and the next edited', [read('B, edited', 'kb')], 'B, edited'],
+      ['the items swap and one is edited', [read('B, edited', 'kb'), read('A', 'ka')], 'B, edited'],
+      ['a new item is inserted first', [read('N', 'kn'), read('A', 'ka'), read('B', 'kb')], 'A'],
+    ])('keeps the comments and the dates as written when %s', (_, items, kept) => {
+      const out = serializeFrontmatter('\nBody.\n', page(items), md, 'md')
+      expect(out).toContain('# page title')
+      expect(out).toContain('# about B')
+      expect(out).toContain('date: 2024-03-03\n')
+      // An item read before keeps its date as written, never a quoted or ISO rewrite.
+      expect(out).toContain(`title: ${kept}\n    when: 2024-01-01\n`)
+      expect(out).not.toMatch(/when: ['"]/)
+    })
+  })
+
+  it("moves an edited keyed item's comment with it, in a YAML file", () => {
+    const yaml = `items:
+  - name: a
+    _key: ka
+  # about B
+  - name: b
+    _key: kb
+`
+    const out = serializeYaml(
+      {
+        items: [
+          { name: 'b, edited', _key: 'kb' },
+          { name: 'a', _key: 'ka' },
+        ],
+      },
+      yaml,
+    )
+    expect(out.indexOf('# about B')).toBeLessThan(out.indexOf('b, edited'))
+    expect(out.indexOf('b, edited')).toBeLessThan(out.indexOf('name: a'))
+  })
+
   it('keeps frontmatter comments on the first save that writes keys', () => {
     const md = `---
 # keep: owned by legal
