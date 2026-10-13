@@ -1,4 +1,5 @@
 import type { UserSearchResult } from './auth/types'
+import { personName } from './auth/person-name'
 import type { CanopyUser } from './user'
 import { getErrorMessage } from './utils/error'
 import { canopyLogWarn } from './utils/logger'
@@ -133,7 +134,9 @@ export async function describeEditors(
       if (!lookup) return { userId }
       try {
         const found = await lookup(userId)
-        return found ? { userId, name: found.name, email: found.email } : { userId }
+        return found
+          ? { userId, name: personName(userId, found.name), email: found.email }
+          : { userId }
       } catch (err: unknown) {
         canopyLogWarn(
           'CanopyCMS: Could not look up an editor; crediting them by id:',

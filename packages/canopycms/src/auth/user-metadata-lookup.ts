@@ -70,6 +70,10 @@ export async function lookupUsersMetadata(
   return result
 }
 
+/** Every lookup answers with the same name the editor shows: blank or id-equal names become ''. */
+const withPersonName = (user: UserSearchResult | null): UserSearchResult | null =>
+  user && { ...user, name: personName(user.id, user.name) ?? '' }
+
 async function fetchFromPlugin(
   plugin: AuthPlugin,
   ids: CanopyUserId[],
@@ -80,7 +84,7 @@ async function fetchFromPlugin(
     for (let i = 0; i < ids.length; i += MAX_USER_METADATA_BATCH) {
       const users = await getUsersMetadata(ids.slice(i, i + MAX_USER_METADATA_BATCH))
       // A provider answering for an id nobody asked about must not plant it in the cache.
-      for (const user of users) if (result.has(user.id)) result.set(user.id, user)
+      for (const user of users) if (result.has(user.id)) result.set(user.id, withPersonName(user))
     }
     return result
   }
@@ -89,7 +93,7 @@ async function fetchFromPlugin(
   const worker = async () => {
     while (next < ids.length) {
       const id = ids[next++]
-      result.set(id, await plugin.getUserMetadata(id))
+      result.set(id, withPersonName(await plugin.getUserMetadata(id)))
     }
   }
   await Promise.all(Array.from({ length: Math.min(SINGLE_LOOKUP_CONCURRENCY, ids.length) }, worker))
@@ -100,10 +104,9 @@ async function fetchFromPlugin(
 const MAX_USER_ID_LENGTH = 256
 
 /**
- * The name and avatar of each id a response may show to any reader, never the email. A user with
- * no usable name (blank, or equal to the id) gets an empty name. Callers pass only ids the
- * requester can already see. Non-string, empty, oversized, bot and anonymous ids are skipped: the
- * editor labels bots and the anonymous user without a lookup. Unknown ids are absent.
+ * The name and avatar of each id a response may show to any reader, never the email. Callers pass
+ * only ids the requester can already see. Non-string, empty, oversized, bot and anonymous ids are
+ * skipped: the editor labels bots and the anonymous user without a lookup. Unknown ids are absent.
  */
 export async function lookupUserProfiles(
   plugin: AuthPlugin,
@@ -128,11 +131,10 @@ export async function lookupUserProfiles(
   for (const [id, user] of found) {
     // A record for some other id (a provider resolving an alias) names someone nobody asked about.
     if (user === null || user.id !== id) continue
-    const name = personName(user.id, user.name) ?? ''
     profiles.push(
       user.avatarUrl === undefined
-        ? { id: user.id, name }
-        : { id: user.id, name, avatarUrl: user.avatarUrl },
+        ? { id: user.id, name: user.name }
+        : { id: user.id, name: user.name, avatarUrl: user.avatarUrl },
     )
   }
   return profiles

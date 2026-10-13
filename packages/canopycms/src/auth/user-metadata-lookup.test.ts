@@ -10,7 +10,11 @@ import type { AuthCacheProvider } from './caching-auth-plugin'
 import type { UserSearchResult } from './types'
 import { MAX_USER_METADATA_BATCH } from '../api/users-constants'
 
-const userFor = (id: string): UserSearchResult => ({ id, name: id, email: `${id}@x.test` })
+const userFor = (id: string): UserSearchResult => ({
+  id,
+  name: `Name ${id}`,
+  email: `${id}@x.test`,
+})
 const ids = (n: number, prefix = 'u') => Array.from({ length: n }, (_, i) => `${prefix}-${i}`)
 
 /** Knows every id except those starting `ghost-`. */
@@ -149,6 +153,33 @@ describe('lookupUsersMetadata', () => {
     expect(fileCache.getAllUsers).toHaveBeenCalledTimes(2)
     expect(fileCache.getUser).not.toHaveBeenCalled()
   })
+})
+
+describe('lookupUsersMetadata names', () => {
+  it.each([
+    ['batch', true],
+    ['single', false],
+  ])(
+    'gives a %s-looked-up user whose name is blank or their id an empty name',
+    async (_l, batch) => {
+      const plugin = pluginWith(batch)
+      const raw: Record<string, string> = { 'id-named': 'id-named', blank: '  ', real: ' Alice ' }
+      const answer = (id: string): UserSearchResult => ({
+        id,
+        name: raw[id],
+        email: `${id}@x.test`,
+      })
+      vi.mocked(plugin.getUserMetadata).mockImplementation(async (id) => answer(id))
+      if (plugin.getUsersMetadata) {
+        vi.mocked(plugin.getUsersMetadata).mockImplementation(async (wanted) => wanted.map(answer))
+      }
+
+      const result = await lookupUsersMetadata(plugin, ['id-named', 'blank', 'real'])
+
+      expect([...result.values()].map((u) => u?.name)).toEqual(['', '', 'Alice'])
+      expect(result.get('id-named')?.email).toBe('id-named@x.test')
+    },
+  )
 })
 
 describe('lookupUserProfiles names', () => {
