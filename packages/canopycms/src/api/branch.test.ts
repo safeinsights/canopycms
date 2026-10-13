@@ -1418,7 +1418,9 @@ describe('updateBranchAccess api', () => {
       { allowedUsers: ['u2', 'u3'] },
     )
     expect(res.ok).toBe(true)
-    expect(res.data?.branch.access.allowedUsers).toEqual(['u2', 'u3'])
+    // A creator without the privileged lookup gets back only a count of the ids it set.
+    expect(res.data?.branch.access.allowedUsers).toEqual([])
+    expect(res.data?.branch.withheldAccess).toEqual({ users: 2, groups: 0 })
   })
 
   it('updates branch access when user is admin', async () => {

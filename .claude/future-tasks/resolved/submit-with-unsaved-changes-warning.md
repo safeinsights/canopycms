@@ -2,9 +2,13 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-10-10, from the editor UI epic's WS3 UX review. Submitting a branch for review while the open entry has unsaved edits gives no warning that those edits are not included; they are then kept as a hidden draft on the now read-only branch
+  RESOLVED (2026-10-13). Submitting the open branch asks `resolveUnsaved` first; with unsaved edits the submit confirm warns in yellow that the named entries won't be submitted, and its confirm reads "Submit anyway". One dialog, so no modal opens from a modal
 ---
 # Warn when submitting with unsaved changes
+
+## Status: RESOLVED 2026-10-13
+
+`useBranchManager`'s `getUnsaved` option, wired from `Editor.tsx`; tested in `useBranchManager.test.tsx`. A "Save first" button that saved every entry was not added: there is no save-all, so the dialog says to cancel and save instead.
 
 In example1, typing into an entry and then submitting the branch submitted only the saved
 content, with no prompt. The unsaved edit survives as a kept draft behind

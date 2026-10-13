@@ -39,7 +39,10 @@ export const REQUEST_TIMED_OUT_MESSAGE =
 export const WRITE_TIMED_OUT_MESSAGE =
   "The server didn't answer, so this may have gone through anyway. Check before trying again."
 
-/** A request ran past its deadline and was abandoned; the server may still have acted on it. */
+/**
+ * A request ran past its deadline and was abandoned; the server may still have acted on it.
+ * `readOnly` defaults to GET; a body-taking lookup passes it (`EndpointConfigBase['readOnly']`).
+ */
 export class ApiTimeoutError extends Error {
   override readonly name = 'ApiTimeoutError'
 
@@ -47,8 +50,9 @@ export class ApiTimeoutError extends Error {
     readonly method: string,
     readonly path: string,
     readonly timeoutMs: number,
+    readOnly = method === 'GET',
   ) {
-    super(method === 'GET' ? REQUEST_TIMED_OUT_MESSAGE : WRITE_TIMED_OUT_MESSAGE)
+    super(readOnly ? REQUEST_TIMED_OUT_MESSAGE : WRITE_TIMED_OUT_MESSAGE)
   }
 }
 
@@ -72,7 +76,13 @@ export function resolveTimeoutMs(
  */
 export async function runWithDeadline<T>(
   run: (signal: AbortSignal) => Promise<T>,
-  request: { method: string; path: string; timeoutMs: number | null; signal?: AbortSignal },
+  request: {
+    method: string
+    path: string
+    timeoutMs: number | null
+    signal?: AbortSignal
+    readOnly?: boolean
+  },
 ): Promise<T> {
   const { signal: callerSignal, timeoutMs } = request
   callerSignal?.throwIfAborted()
@@ -83,7 +93,10 @@ export async function runWithDeadline<T>(
     timeoutMs === null
       ? undefined
       : setTimeout(
-          () => controller.abort(new ApiTimeoutError(request.method, request.path, timeoutMs)),
+          () =>
+            controller.abort(
+              new ApiTimeoutError(request.method, request.path, timeoutMs, request.readOnly),
+            ),
           timeoutMs,
         )
   const aborted = new Promise<never>((_, reject) => {

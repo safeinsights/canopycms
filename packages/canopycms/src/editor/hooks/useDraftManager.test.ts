@@ -1465,6 +1465,7 @@ describe('useDraftManager', () => {
         const { notifications } = await import('@mantine/notifications')
         expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
           expect.objectContaining({
+            title: 'No answer saving "Test Entry"',
             message: SAVE_TIMED_OUT_MESSAGE,
             color: 'yellow',
             autoClose: false,
@@ -1533,6 +1534,7 @@ describe('useDraftManager', () => {
 
           expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
             id: 'canopy-save-may-have-landed:abc123def456',
+            title: 'No answer saving "Test Entry"',
             message: SAVE_MAY_HAVE_LANDED_MESSAGE,
             color: 'yellow',
             autoClose: false,

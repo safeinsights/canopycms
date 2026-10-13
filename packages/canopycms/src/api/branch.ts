@@ -35,9 +35,6 @@ import { lookupUserProfiles } from '../auth/user-metadata-lookup'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
 
-/** Response type for single branch operations (create, update, status) */
-export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
-
 /**
  * A listed branch plus server-computed protected-base-branch flags (see
  * authorization/protected-branch.ts). Optional on the wire, matching the
@@ -76,6 +73,11 @@ export interface BranchListItem extends BranchMetadata {
    * archived non-base branch.
    */
   submitBlocked?: boolean
+  /**
+   * How many ACL entries {@link toBranchListItem} left out of `access` for a caller without the
+   * privileged user lookup. Absent for a privileged caller, who gets the whole list.
+   */
+  withheldAccess?: { users: number; groups: number }
 }
 
 /**
@@ -217,16 +219,45 @@ const resolveReadOnlyMirrorPath = (
 }
 
 /**
- * Attach server-computed protected-base-branch flags to a branch. Reads config
- * per call so dev-mode refreshActiveBranch() updates are reflected.
+ * The ACL as `viewer` may see it. Without the privileged user lookup, a caller gets only the
+ * entries naming them or their groups, which is all the editor's membership checks read, and a
+ * count of the rest: the other ids name people that lookup keeps from them.
+ */
+const accessForViewer = (
+  access: BranchAccessControl,
+  viewer: CanopyUser,
+): Pick<BranchListItem, 'access' | 'withheldAccess'> => {
+  if (isPrivileged(viewer.groups)) return { access }
+  const viewerGroups: readonly string[] = viewer.groups ?? []
+  const allowedUsers = access.allowedUsers?.filter((id) => id === viewer.userId)
+  const allowedGroups = access.allowedGroups?.filter((id) => viewerGroups.includes(id))
+  return {
+    access: {
+      ...access,
+      ...(allowedUsers && { allowedUsers }),
+      ...(allowedGroups && { allowedGroups }),
+    },
+    withheldAccess: {
+      users: (access.allowedUsers?.length ?? 0) - (allowedUsers?.length ?? 0),
+      groups: (access.allowedGroups?.length ?? 0) - (allowedGroups?.length ?? 0),
+    },
+  }
+}
+
+/**
+ * A branch as `viewer` may see it, with server-computed protected-base-branch flags. Every
+ * branch response outside the admin-only repairs goes through here. Reads config per call so
+ * dev-mode refreshActiveBranch() updates are reflected.
  */
 export const toBranchListItem = (
   config: ApiContext['services']['config'],
   branch: BranchMetadata,
+  viewer: CanopyUser,
 ): BranchListItem => {
   const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
   return {
     ...branch,
+    ...accessForViewer(branch.access ?? {}, viewer),
     isProtected: protection.isProtected,
     readOnly: protection.readOnly,
     writeBlocked: protection.writeBlocked,
@@ -494,7 +525,7 @@ export const createBranchHandler = async (
     return {
       ok: true,
       status: 200,
-      data: { branch: toBranchListItem(ctx.services.config, outcome.context.branch) },
+      data: { branch: toBranchListItem(ctx.services.config, outcome.context.branch, req.user) },
     }
   })
 }
@@ -509,7 +540,7 @@ const existingBranchResponse = (
     return {
       ok: true,
       status: 200,
-      data: { branch: toBranchListItem(ctx.services.config, existing.branch) },
+      data: { branch: toBranchListItem(ctx.services.config, existing.branch, req.user) },
     }
   }
   return { ok: false, status: 409, error: 'A branch with this name already exists' }
@@ -549,7 +580,7 @@ export const listBranchesHandler = async (
 
   // Admins and Reviewers see all branches
   if (isPrivileged(req.user.groups)) {
-    return branchListResponse(ctx, allBranches, defaultBranch)
+    return branchListResponse(ctx, req, allBranches, defaultBranch)
   }
 
   // Regular users only see branches they created or have explicit access to
@@ -579,7 +610,7 @@ export const listBranchesHandler = async (
     return false
   })
 
-  return branchListResponse(ctx, visibleBranches, defaultBranch)
+  return branchListResponse(ctx, req, visibleBranches, defaultBranch)
 }
 
 /**
@@ -589,6 +620,7 @@ export const listBranchesHandler = async (
  */
 const branchListResponse = async (
   ctx: ApiContext,
+  req: ApiRequest,
   branches: readonly BranchContext[],
   defaultBranch: string,
 ): Promise<BranchListResponse> => {
@@ -607,7 +639,9 @@ const branchListResponse = async (
     ok: true,
     status: 200,
     data: {
-      branches: branches.map((context) => toBranchListItem(ctx.services.config, context.branch)),
+      branches: branches.map((context) =>
+        toBranchListItem(ctx.services.config, context.branch, req.user),
+      ),
       defaultBranch,
       users,
     },
@@ -842,7 +876,7 @@ export const updateBranchAccessHandler = async (
   req: ApiRequest,
   params: z.infer<typeof branchParamSchema>,
   body: z.infer<typeof updateBranchAccessBodySchema>,
-): Promise<BranchResponse> => {
+): Promise<BranchListItemResponse> => {
   const branchName = params.branch
 
   const branchContext = await ctx.getBranchContext(branchName)
@@ -901,7 +935,11 @@ export const updateBranchAccessHandler = async (
     branch: { access: newAccess },
   })
 
-  return { ok: true, status: 200, data: { branch: updated.branch } }
+  return {
+    ok: true,
+    status: 200,
+    data: { branch: toBranchListItem(ctx.services.config, updated.branch, req.user) },
+  }
 }
 
 /**
@@ -969,8 +1007,8 @@ const updateBranchAccess = defineEndpoint({
   params: branchParamSchema,
   body: updateBranchAccessBodySchema,
   bodyType: 'UpdateBranchAccessBody',
-  responseType: 'BranchResponse',
-  response: {} as BranchResponse,
+  responseType: 'BranchListItemResponse',
+  response: {} as BranchListItemResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',

@@ -461,6 +461,19 @@ describe('CanopyApiClient', () => {
       await rejection
     })
 
+    it('says a timed-out read sent as a POST is safe to retry', async () => {
+      const { fetch } = stalledFetch()
+      const pending = new CanopyApiClient({ fetch }).permissions.batchGetUserMetadata({
+        userIds: ['u1'],
+      })
+      const rejection = expect(pending).rejects.toMatchObject({
+        method: 'POST',
+        message: REQUEST_TIMED_OUT_MESSAGE,
+      })
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard)
+      await rejection
+    })
+
     it('does not cut a long operation off at the standard deadline', async () => {
       const { fetch } = stalledFetch()
       const pending = new CanopyApiClient({ fetch }).workflow.submit({ branch: 'feature' })

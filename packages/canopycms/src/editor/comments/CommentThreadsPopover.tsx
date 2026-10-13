@@ -24,13 +24,17 @@ import {
 import { IconMessage, IconMessagePlus, IconPlus } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
-import { getErrorMessage } from '../../utils/error'
 import { InlineCommentThread } from './InlineCommentThread'
 import { useTrackedWrites } from './use-tracked-writes'
 import { CloseRefusedNotice } from './CloseRefusedNotice'
 import { useRefocusAfterSubmit } from './ThreadReplyControls'
 import { commentsAriaKeyShortcuts, commentsShortcutLabel } from './form-comments'
 import { choosePopoverSide, type FieldAnchors, type PopoverSide } from './popover-placement'
+import {
+  CommentWriteAlert,
+  toCommentWriteFailure,
+  type CommentWriteFailure,
+} from './CommentWriteAlert'
 
 export interface CommentThreadsPopoverProps {
   /** The threads on this field or entry. */
@@ -506,7 +510,7 @@ const NewThreadComposer: React.FC<{
   blockedReason?: string
 }> = ({ text, onTextChange: setText, onSubmit, onCancel, blockedReason }) => {
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<CommentWriteFailure | null>(null)
   const boxRef = useRef<HTMLTextAreaElement>(null)
 
   // Shown on request ("New thread"), so it takes focus.
@@ -523,7 +527,7 @@ const NewThreadComposer: React.FC<{
       await onSubmit(text)
       setText('')
     } catch (err) {
-      setError(getErrorMessage(err))
+      setError(toCommentWriteFailure(err))
     } finally {
       setSubmitting(false)
     }
@@ -564,10 +568,11 @@ const NewThreadComposer: React.FC<{
         autosize
         disabled={submitting}
         description={blockedReason}
-        error={error ?? undefined}
+        error={error && !error.mayHaveLanded ? error.message : undefined}
         data-autofocus
         data-testid="new-thread-textarea"
       />
+      {error?.mayHaveLanded && <CommentWriteAlert failure={error} onClose={() => setError(null)} />}
       <Group gap="xs">
         {commentButton}
         <Button

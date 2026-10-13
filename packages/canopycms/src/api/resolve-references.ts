@@ -86,6 +86,7 @@ const resolveReferences = defineEndpoint({
   namespace: 'content',
   name: 'resolveReferences',
   method: 'POST',
+  readOnly: true,
   path: '/:branch/resolve-references',
   params: resolveReferencesParamsSchema,
   body: resolveReferencesBodySchema,

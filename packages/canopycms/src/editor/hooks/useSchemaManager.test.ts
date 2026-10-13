@@ -491,6 +491,8 @@ describe('useSchemaManager', () => {
     call: (hook: ReturnType<typeof useSchemaManager>) => Promise<{ ok: boolean }>
     unknownToast: string | null
     failureToast: string | null
+    /** The unknown-outcome toast's id, when not the shared one. */
+    unknownToastId?: string
   }>([
     {
       op: 'createCollection',
@@ -504,6 +506,7 @@ describe('useSchemaManager', () => {
         'Creating the collection',
         'Check the "Content" panel',
       ),
+      unknownToastId: 'canopy-collection-outcome-unknown',
       failureToast: 'Failed to create collection: x',
     },
     {
@@ -514,6 +517,7 @@ describe('useSchemaManager', () => {
         'Saving collection details',
         'Reopen the collection to check',
       ),
+      unknownToastId: 'canopy-collection-outcome-unknown',
       failureToast: 'Failed to update collection: x',
     },
     {
@@ -566,96 +570,107 @@ describe('useSchemaManager', () => {
       unknownToast: null,
       failureToast: null,
     },
-  ])('$op outcome handling', ({ mock, call, unknownToast, failureToast }) => {
-    const run = async (onSchemaChange: () => unknown) => {
-      const { result } = renderHook(
-        () => useSchemaManager({ branchName: 'main', onSchemaChange }),
-        { wrapper },
-      )
-      let outcome: Awaited<ReturnType<typeof call>> = { ok: true }
-      await act(async () => {
-        outcome = await call(result.current)
-      })
-      return outcome
-    }
-
-    // An unanswered write may have landed, so it is neither a plain failure nor a success.
-    const expectUnanswered = (outcome: unknown) => {
-      expect(outcome).toEqual({ ok: false, error: WRITE_TIMED_OUT_MESSAGE, unanswered: true })
-      expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ color: 'red' }))
-      if (unknownToast) {
-        expect(notifications.show).toHaveBeenCalledTimes(1)
-        expect(notifications.show).toHaveBeenCalledWith(
-          expect.objectContaining({
-            id: 'canopy-schema-outcome-unknown',
-            message: unknownToast,
-            color: 'yellow',
-            autoClose: false,
-          }),
+  ])(
+    '$op outcome handling',
+    ({
+      mock,
+      call,
+      unknownToast,
+      failureToast,
+      unknownToastId = 'canopy-schema-outcome-unknown',
+    }) => {
+      const run = async (onSchemaChange: () => unknown) => {
+        const { result } = renderHook(
+          () => useSchemaManager({ branchName: 'main', onSchemaChange }),
+          { wrapper },
         )
-      } else {
-        expect(notifications.show).not.toHaveBeenCalled()
+        let outcome: Awaited<ReturnType<typeof call>> = { ok: true }
+        await act(async () => {
+          outcome = await call(result.current)
+        })
+        return outcome
       }
-    }
 
-    it('reloads the content tree and reports a client timeout as unanswered', async () => {
-      mock(mockClient).mockRejectedValueOnce(new ApiTimeoutError('POST', '/main/schema', 75_000))
-      const onSchemaChange = vi.fn()
-
-      expectUnanswered(await run(onSchemaChange))
-      expect(onSchemaChange).toHaveBeenCalledTimes(1)
-    })
-
-    it("reloads the content tree and reports a gateway's 5xx page as unanswered", async () => {
-      mock(mockClient).mockResolvedValueOnce(await gatewayPage(504))
-      const onSchemaChange = vi.fn()
-
-      expectUnanswered(await run(onSchemaChange))
-      expect(onSchemaChange).toHaveBeenCalledTimes(1)
-    })
-
-    it('stays unanswered when the content tree reload rejects', async () => {
-      mock(mockClient).mockResolvedValueOnce(await gatewayPage(502))
-      // Not a `vi.fn`, which handles the rejection of a promise it returns.
-      let reloads = 0
-      const onSchemaChange = () => {
-        reloads += 1
-        return Promise.reject(new Error('still down'))
+      // An unanswered write may have landed, so it is neither a plain failure nor a success.
+      const expectUnanswered = (outcome: unknown) => {
+        expect(outcome).toEqual({ ok: false, error: WRITE_TIMED_OUT_MESSAGE, unanswered: true })
+        expect(notifications.show).not.toHaveBeenCalledWith(
+          expect.objectContaining({ color: 'red' }),
+        )
+        if (unknownToast) {
+          expect(notifications.show).toHaveBeenCalledTimes(1)
+          expect(notifications.show).toHaveBeenCalledWith(
+            expect.objectContaining({
+              id: unknownToastId,
+              message: unknownToast,
+              color: 'yellow',
+              autoClose: false,
+            }),
+          )
+        } else {
+          expect(notifications.show).not.toHaveBeenCalled()
+        }
       }
-      const unhandled: unknown[] = []
-      const record = (reason: unknown) => unhandled.push(reason)
-      process.on('unhandledRejection', record)
 
-      try {
+      it('reloads the content tree and reports a client timeout as unanswered', async () => {
+        mock(mockClient).mockRejectedValueOnce(new ApiTimeoutError('POST', '/main/schema', 75_000))
+        const onSchemaChange = vi.fn()
+
         expectUnanswered(await run(onSchemaChange))
-        await new Promise((resolve) => setTimeout(resolve, 0))
-      } finally {
-        process.off('unhandledRejection', record)
-      }
+        expect(onSchemaChange).toHaveBeenCalledTimes(1)
+      })
 
-      expect(reloads).toBe(1)
-      expect(unhandled).toEqual([])
-    })
+      it("reloads the content tree and reports a gateway's 5xx page as unanswered", async () => {
+        mock(mockClient).mockResolvedValueOnce(await gatewayPage(504))
+        const onSchemaChange = vi.fn()
 
-    it('reports a plain failure without reloading the content tree or marking it unanswered', async () => {
-      mock(mockClient).mockResolvedValueOnce(mockError(400, 'x'))
-      const onSchemaChange = vi.fn()
+        expectUnanswered(await run(onSchemaChange))
+        expect(onSchemaChange).toHaveBeenCalledTimes(1)
+      })
 
-      const outcome = await run(onSchemaChange)
+      it('stays unanswered when the content tree reload rejects', async () => {
+        mock(mockClient).mockResolvedValueOnce(await gatewayPage(502))
+        // Not a `vi.fn`, which handles the rejection of a promise it returns.
+        let reloads = 0
+        const onSchemaChange = () => {
+          reloads += 1
+          return Promise.reject(new Error('still down'))
+        }
+        const unhandled: unknown[] = []
+        const record = (reason: unknown) => unhandled.push(reason)
+        process.on('unhandledRejection', record)
 
-      expect(outcome).toEqual({ ok: false, error: 'x' })
-      expect(outcome).not.toHaveProperty('unanswered')
-      expect(onSchemaChange).not.toHaveBeenCalled()
-      if (failureToast) {
-        expect(notifications.show).toHaveBeenCalledTimes(1)
-        expect(notifications.show).toHaveBeenCalledWith(
-          expect.objectContaining({ color: 'red', message: failureToast }),
-        )
-      } else {
-        expect(notifications.show).not.toHaveBeenCalled()
-      }
-    })
-  })
+        try {
+          expectUnanswered(await run(onSchemaChange))
+          await new Promise((resolve) => setTimeout(resolve, 0))
+        } finally {
+          process.off('unhandledRejection', record)
+        }
+
+        expect(reloads).toBe(1)
+        expect(unhandled).toEqual([])
+      })
+
+      it('reports a plain failure without reloading the content tree or marking it unanswered', async () => {
+        mock(mockClient).mockResolvedValueOnce(mockError(400, 'x'))
+        const onSchemaChange = vi.fn()
+
+        const outcome = await run(onSchemaChange)
+
+        expect(outcome).toEqual({ ok: false, error: 'x' })
+        expect(outcome).not.toHaveProperty('unanswered')
+        expect(onSchemaChange).not.toHaveBeenCalled()
+        if (failureToast) {
+          expect(notifications.show).toHaveBeenCalledTimes(1)
+          expect(notifications.show).toHaveBeenCalledWith(
+            expect.objectContaining({ color: 'red', message: failureToast }),
+          )
+        } else {
+          expect(notifications.show).not.toHaveBeenCalled()
+        }
+      })
+    },
+  )
 
   it('replaces an earlier outcome-unknown toast instead of stacking another', async () => {
     mockClient.schema.updateOrder.mockRejectedValue(

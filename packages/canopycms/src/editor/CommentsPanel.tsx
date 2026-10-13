@@ -2,7 +2,6 @@
 
 import React, { useId, useRef, useState } from 'react'
 import {
-  Alert,
   Badge,
   Button,
   Drawer,
@@ -26,7 +25,11 @@ import { ThreadReplyControls } from './comments/ThreadReplyControls'
 import { useTrackedWrites } from './comments/use-tracked-writes'
 import { CloseRefusedNotice } from './comments/CloseRefusedNotice'
 import { ON_REMOVED_ITEM } from './comments/item-anchor-copy'
-import { getErrorMessage } from '../utils/error'
+import {
+  CommentWriteAlert,
+  toCommentWriteFailure,
+  type CommentWriteFailure,
+} from './comments/CommentWriteAlert'
 
 export interface CommentsPanelProps {
   /**
@@ -115,7 +118,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({})
   const [showResolved, setShowResolved] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<CommentWriteFailure | null>(null)
   const { inFlight, track, holdOpen, closeRefused } = useTrackedWrites()
   const addComment = track(onAddComment)
   const resolveThread = track(onResolveThread)
@@ -149,7 +152,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
       await addComment(newCommentText, 'branch', undefined, undefined, undefined)
       setNewCommentText('')
     } catch (err) {
-      setError(getErrorMessage(err))
+      setError(toCommentWriteFailure(err))
     } finally {
       setIsSubmitting(false)
     }
@@ -196,11 +199,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
               disabled={isSubmitting}
               data-testid="comment-textarea"
             />
-            {error && (
-              <Alert color="red" variant="light" withCloseButton onClose={() => setError(null)}>
-                {error}
-              </Alert>
-            )}
+            {error && <CommentWriteAlert failure={error} onClose={() => setError(null)} />}
 
             <Button
               onClick={handleAddComment}

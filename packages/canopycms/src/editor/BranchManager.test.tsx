@@ -1516,7 +1516,7 @@ describe('BranchManager', () => {
       expect(screen.queryByText('acl-user')).toBeNull()
     })
 
-    it('shows access users as unnamed, never as ids, when nothing can name them', async () => {
+    it('counts access users nothing can name, never showing them as ids', async () => {
       const { container } = renderBranchManager({
         branches: [
           {
@@ -1530,8 +1530,36 @@ describe('BranchManager', () => {
         user: creatorUser,
       })
 
-      expect(await screen.findByText('Name unavailable')).toBeDefined()
+      expect(await screen.findByText('Access: 1 person')).toBeDefined()
+      expect(screen.queryByText('Name unavailable')).toBeNull()
       expect(container.textContent).not.toContain('acl-user')
+    })
+
+    it('names the access users it can, then counts the rest with those the server withheld', async () => {
+      const onGetOwnerMetadata = vi.fn(async (id: string) =>
+        id === 'known' || id === 'owner1' ? { id, name: `Name of ${id}`, email: '' } : null,
+      )
+      renderBranchManager({
+        branches: [
+          {
+            name: 'feature/shared',
+            status: 'editing',
+            createdBy: 'owner1',
+            access: {
+              users: ['known', 'unknown'],
+              groups: ['team-a'],
+              withheldUsers: 2,
+              withheldGroups: 1,
+            },
+          },
+        ],
+        mode: 'prod',
+        user: creatorUser,
+        onGetOwnerMetadata,
+      })
+
+      expect(await screen.findByText('Access: Name of known, team-a and 4 others')).toBeDefined()
+      expect(screen.queryByText('Name unavailable')).toBeNull()
     })
   })
 })

@@ -19,3 +19,11 @@ export function isGatewayFailure(result: ApiResponse): boolean {
 export function isUnanswered(err: unknown): boolean {
   return isApiTimeoutError(err) || err instanceof UnansweredError
 }
+
+/**
+ * A failed write whose outcome is unknown, so its message is a warning (yellow), not an error
+ * (docs/ux-guidelines.md, Loading, empty and error states).
+ */
+export class MayHaveLandedError extends Error {
+  override readonly name = 'MayHaveLandedError'
+}

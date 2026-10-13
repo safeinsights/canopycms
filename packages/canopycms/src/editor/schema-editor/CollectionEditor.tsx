@@ -33,6 +33,7 @@ import {
 import {
   IconAlertCircle,
   IconAlertTriangle,
+  IconRestore,
   IconCheck,
   IconPlus,
   IconDotsVertical,
@@ -53,6 +54,7 @@ import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal'
 import { DestructiveMenuItem } from '../components/DestructiveMenuItem'
 import { getErrorMessage } from '../../utils/error'
 import type { SchemaOpResult } from '../hooks/useSchemaManager'
+import { slugOf } from './collection-draft'
 
 export interface CollectionFormData {
   name: string
@@ -114,14 +116,18 @@ export interface CollectionEditorProps {
   onClose: () => void
   isSaving?: boolean
   error?: string | null
+  /**
+   * What was entered for a create or details save that got no answer and that the opener's fresh
+   * read did not show landed, filled in when the dialog opens (docs/ux-guidelines.md: a create closed after no answer
+   * prefills its dialog's next open).
+   */
+  restored?: RestoredCollectionInput | null
+  /** Drops `restored`, once the user discards it. */
+  onDiscardRestored?: () => void
 }
 
-/** The directory name in a logical path, without its embedded id ("posts.abc123" -> "posts"). */
-function slugOf(logicalPath: LogicalPath): string {
-  const pathParts = logicalPath.split('/')
-  const lastPart = pathParts[pathParts.length - 1]
-  return lastPart?.split('.')[0] || ''
-}
+/** A create's input, or a details save's changed fields. */
+export type RestoredCollectionInput = Partial<CollectionFormData> & { slug?: string }
 
 /** Whether a listed entry type holds every field an add or update sent. */
 function showsFields(entryType: ExistingEntryType, fields: Partial<CreateEntryTypeInput>): boolean {
@@ -149,8 +155,20 @@ export function CollectionEditor({
   onClose,
   isSaving = false,
   error = null,
+  restored = null,
+  onDiscardRestored,
 }: CollectionEditorProps) {
   const isEditMode = editingCollection !== null
+  // Read when the dialog opens only: dropping it later must not reset what the user has typed.
+  const restoredRef = useRef(restored)
+  restoredRef.current = restored
+  const [showingRestored, setShowingRestored] = useState(false)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+  // Staged removals, latest last; Undo stays in the dialog, as a toast's is outside the focus trap.
+  const [stagedRemovals, setStagedRemovals] = useState<
+    { entryType: CreateEntryTypeInput; index: number }[]
+  >([])
+  const stagedRemoval = stagedRemovals.at(-1)
 
   const [formData, setFormData] = useState<CollectionFormData>({
     name: '',
@@ -196,28 +214,30 @@ export function CollectionEditor({
   const [deleteEntryTypeModalOpen, setDeleteEntryTypeModalOpen] = useState(false)
   const [deletingEntryType, setDeletingEntryType] = useState<{
     entryType: ExistingEntryType | CreateEntryTypeInput
-    index: number
   } | null>(null)
 
   useEffect(() => {
     if (isOpen) {
+      const prefill = restoredRef.current
       if (editingCollection) {
         setFormData({
-          name: editingCollection.name,
-          label: editingCollection.label || '',
+          name: prefill?.name ?? editingCollection.name,
+          label: prefill?.label ?? (editingCollection.label || ''),
           entries: [], // Edit mode keeps its entry types in `entryTypes`
         })
         setEntryTypes(editingCollection.entries)
-        setSlug(slugOf(editingCollection.logicalPath))
+        setSlug(prefill?.slug ?? slugOf(editingCollection.logicalPath))
       } else {
         setFormData({
-          name: '',
-          label: '',
-          entries: [],
+          name: prefill?.name ?? '',
+          label: prefill?.label ?? '',
+          entries: prefill?.entries ?? [],
         })
         setSlug('')
         setEntryTypes([])
       }
+      setShowingRestored(!!prefill)
+      setStagedRemovals([])
       setValidationError(null)
       setEntryTypeChanged(false)
       setEntryTypeStatus('')
@@ -251,6 +271,19 @@ export function CollectionEditor({
     }, 50)
     return () => window.clearTimeout(timer)
   }, [focusRequest])
+
+  const discardRestored = useCallback(() => {
+    setFormData({
+      name: editingCollection?.name ?? '',
+      label: editingCollection?.label ?? '',
+      entries: [],
+    })
+    setSlug(editingCollection ? slugOf(editingCollection.logicalPath) : '')
+    setShowingRestored(false)
+    setStagedRemovals([])
+    onDiscardRestored?.()
+    nameInputRef.current?.focus()
+  }, [editingCollection, onDiscardRestored])
 
   const updateField = useCallback(
     <K extends keyof CollectionFormData>(field: K, value: CollectionFormData[K]) => {
@@ -484,12 +517,45 @@ export function CollectionEditor({
     ? entryTypes
     : formData.entries
 
+  // Create mode stages entry types, so a removal goes at once with an Undo; edit mode's saves at
+  // once with no restore, so it confirms (docs/ux-guidelines.md, Destructive actions).
+  const removeStagedEntryType = useCallback(
+    (entryType: CreateEntryTypeInput, index: number) => {
+      const names = formData.entries.map((et) => et.name)
+      const neighbour = names[index + 1] ?? names[index - 1] ?? null
+      setFormData((prev) => ({ ...prev, entries: prev.entries.filter((_, i) => i !== index) }))
+      setStagedRemovals((prev) => [...prev, { entryType, index }])
+      setFocusRequest({ row: neighbour })
+    },
+    [formData.entries],
+  )
+
+  const undoStagedRemoval = useCallback(() => {
+    if (!stagedRemoval) return
+    const { entryType, index } = stagedRemoval
+    // Into the list as it is now, unless an entry type of that name was added since.
+    setFormData((prev) =>
+      prev.entries.some((et) => et.name === entryType.name)
+        ? prev
+        : {
+            ...prev,
+            entries: [...prev.entries.slice(0, index), entryType, ...prev.entries.slice(index)],
+          },
+    )
+    setStagedRemovals((prev) => prev.slice(0, -1))
+    setFocusRequest({ row: entryType.name })
+  }, [stagedRemoval])
+
   const handleRemoveEntryType = useCallback(
     (entryType: ExistingEntryType | CreateEntryTypeInput, index: number) => {
-      setDeletingEntryType({ entryType, index })
+      if (!isEditMode) {
+        removeStagedEntryType(entryType as CreateEntryTypeInput, index)
+        return
+      }
+      setDeletingEntryType({ entryType })
       setDeleteEntryTypeModalOpen(true)
     },
-    [],
+    [isEditMode, removeStagedEntryType],
   )
 
   // Only closes: the target is replaced on the next open, so the message stays put while the
@@ -504,13 +570,13 @@ export function CollectionEditor({
   }, [closeRemoveConfirm, deletingEntryType])
 
   const removeEntryType = useCallback(
-    async (name: string, index: number) => {
+    async (name: string) => {
       const names = displayEntryTypes.map((et) => et.name)
       // Focus moves to the row that takes the removed one's place, else the one before it, else
       // the heading.
       const neighbour = names[names.indexOf(name) + 1] ?? names[names.indexOf(name) - 1] ?? null
 
-      if (isEditMode && editingCollection) {
+      if (editingCollection) {
         if (!onRemoveEntryType) return
         setRemoving(true)
         setEntryTypeStatus('')
@@ -548,17 +614,10 @@ export function CollectionEditor({
         } finally {
           setRemoving(false)
         }
-      } else {
-        setFormData((prev) => ({
-          ...prev,
-          entries: prev.entries.filter((_, i) => i !== index),
-        }))
-        setFocusRequest({ row: neighbour })
       }
     },
     [
       displayEntryTypes,
-      isEditMode,
       editingCollection,
       onRemoveEntryType,
       announceEntryTypeChange,
@@ -568,17 +627,13 @@ export function CollectionEditor({
 
   const confirmRemoveEntryType = useCallback(async () => {
     if (!deletingEntryType) return
-    await removeEntryType(deletingEntryType.entryType.name, deletingEntryType.index)
+    await removeEntryType(deletingEntryType.entryType.name)
     closeRemoveConfirm()
   }, [deletingEntryType, removeEntryType, closeRemoveConfirm])
 
-  const removeMessage = (() => {
-    if (!deletingEntryType) return ''
-    const { name } = deletingEntryType.entryType
-    return isEditMode
-      ? `Remove "${name}"? This saves immediately and cannot be undone.`
-      : `Remove "${name}" from this new collection?`
-  })()
+  const removeMessage = deletingEntryType
+    ? `Remove "${deletingEntryType.entryType.name}"? This saves immediately and cannot be undone.`
+    : ''
 
   const removeBlockedReason = (entryType: ExistingEntryType | CreateEntryTypeInput) => {
     if (displayEntryTypes.length === 1) {
@@ -618,6 +673,8 @@ export function CollectionEditor({
     (formData.name !== editingCollection.name ||
       formData.label !== (editingCollection.label || '') ||
       (!!slug && slug !== slugOf(editingCollection.logicalPath)))
+  const createStaged =
+    !isEditMode && (!!formData.name || !!formData.label || formData.entries.length > 0)
   const dismissLabel = detailsDirty
     ? 'Discard changes'
     : isEditMode && entryTypeChanged
@@ -733,24 +790,35 @@ export function CollectionEditor({
         </Stack>
       )}
 
-      {isEditMode && (
-        // Stays mounted while empty so screen readers announce each change, and holds one line
-        // of text so the message appearing shifts nothing. Only the icon is green: green text
-        // misses 4.5:1, while a non-text graphic needs just 3:1.
-        <Group
-          gap={6}
-          wrap="nowrap"
-          role="status"
-          mih="calc(var(--mantine-font-size-sm) * var(--mantine-line-height-sm))"
-        >
-          {entryTypeStatus && (
-            <>
-              <IconCheck size={14} color="var(--mantine-color-green-text)" aria-hidden />
-              <Text size="sm">{entryTypeStatus}</Text>
-            </>
-          )}
-        </Group>
-      )}
+      {/* Stays mounted while empty so screen readers announce each change, and holds one line
+          of text so the message appearing shifts nothing. Only the icon is green: green text
+          misses 4.5:1, while a non-text graphic needs just 3:1. */}
+      <Group
+        gap={6}
+        wrap="nowrap"
+        role="status"
+        mih="calc(var(--mantine-font-size-sm) * var(--mantine-line-height-sm))"
+      >
+        {isEditMode && entryTypeStatus && (
+          <>
+            <IconCheck size={14} color="var(--mantine-color-green-text)" aria-hidden />
+            <Text size="sm">{entryTypeStatus}</Text>
+          </>
+        )}
+        {!isEditMode && stagedRemoval && (
+          <>
+            <Text size="sm">{`Removed entry type "${stagedRemoval.entryType.name}".`}</Text>
+            <Button
+              size="compact-sm"
+              variant="subtle"
+              onClick={undoStagedRemoval}
+              aria-label={`Undo removing entry type "${stagedRemoval.entryType.name}"`}
+            >
+              Undo
+            </Button>
+          </>
+        )}
+      </Group>
 
       {removeFailure && (
         <Alert
@@ -771,7 +839,7 @@ export function CollectionEditor({
               color="red"
               loading={removing}
               disabled={requestBusy}
-              onClick={() => void removeEntryType(removeFailure.name, 0)}
+              onClick={() => void removeEntryType(removeFailure.name)}
             >
               Retry
             </Button>
@@ -796,6 +864,7 @@ export function CollectionEditor({
       <Modal
         opened={isOpen}
         onClose={dismissBlocked ? () => {} : onClose}
+        closeOnClickOutside={!detailsDirty && !createStaged}
         title={
           isEditMode
             ? `Edit collection: ${editingCollection?.label || editingCollection?.name}`
@@ -804,6 +873,20 @@ export function CollectionEditor({
         size="lg"
       >
         <Stack gap="md">
+          {showingRestored && restored && (
+            <Alert icon={<IconRestore size={16} />} color="blue" title="Restored what you entered">
+              <Stack gap="xs" align="flex-start">
+                <Text size="sm">
+                  {isEditMode
+                    ? "The server didn't answer your last save, and this collection doesn't show it, so your changes are filled in again."
+                    : "The server didn't answer your last create, and the collection isn't in the content tree, so what you entered is filled in again."}
+                </Text>
+                <Button size="xs" variant="light" onClick={discardRestored}>
+                  Discard changes
+                </Button>
+              </Stack>
+            </Alert>
+          )}
           {displayError && (
             <Alert
               icon={<IconAlertCircle size={16} />}
@@ -831,6 +914,7 @@ export function CollectionEditor({
 
           {/* Name is metadata in .collection.json, independent of the directory slug */}
           <TextInput
+            ref={nameInputRef}
             label="Name"
             description="Machine-readable identifier (e.g., posts, pages, articles)"
             placeholder="e.g. posts"
@@ -878,7 +962,11 @@ export function CollectionEditor({
             <Button
               size="sm"
               variant="subtle"
-              onClick={onClose}
+              onClick={() => {
+                // "Discard changes" over refilled input discards the kept input too.
+                if (detailsDirty && showingRestored && restored) onDiscardRestored?.()
+                onClose()
+              }}
               disabled={isSaving || entryTypeBusy}
             >
               {dismissLabel}

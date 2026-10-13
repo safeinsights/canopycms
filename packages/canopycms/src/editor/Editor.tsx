@@ -68,6 +68,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
+import type { UnsavedSummary } from './hooks/useDraftManager'
 import { editorLayoutStorageKey } from './hooks/useEditorLayout'
 import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
@@ -87,7 +88,14 @@ import { ReadOnlyDraftNotice } from './components/ReadOnlyDraftNotice'
 import { UnavailableEntryNotice } from './components/UnavailableEntryNotice'
 import { unavailableSchemaRefs } from './unavailable-entry-type'
 import { EditorCrashBoundary } from './components/EditorCrashScreen'
-import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
+import {
+  CollectionEditor,
+  type ExistingCollection,
+  type ExistingEntryType,
+  type RestoredCollectionInput,
+} from './schema-editor'
+import { collectionDraftLanded, type CollectionDraft } from './schema-editor/collection-draft'
+import { hideCollectionOutcomeUnknown } from './hooks/useSchemaManager'
 import type { LogicalPath, ContentId } from '../paths/types'
 import {
   AssetContextProvider,
@@ -112,6 +120,7 @@ import {
 import { findFieldTarget, focusFieldTarget } from './field-target'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
+import { MayHaveLandedError } from './unanswered'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -262,6 +271,16 @@ const EditorContent: React.FC<EditorProps> = ({
     LogicalPath | undefined
   >(undefined)
   const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
+  // What the last unanswered collection create or details save sent, until its dialog's opener
+  // sees it land on a fresh read, a matching save succeeds, or the user discards it.
+  const collectionDraftRef = useRef<CollectionDraft | null>(null)
+  // The draft the open dialog was filled from, if any: its save replaces that draft.
+  const refilledDraftRef = useRef<CollectionDraft | null>(null)
+  // What the dialog fills in, decided by its opener against a fresh tree.
+  const [restoredCollectionInput, setRestoredCollectionInput] =
+    useState<RestoredCollectionInput | null>(null)
+  // Each open or close of the collection dialog moves it on, so a slow open answers only if current.
+  const collectionOpeningRef = useRef(0)
 
   const [quickOpenOpen, setQuickOpenOpen] = useState(false)
   const [quickOpenFromDrawer, setQuickOpenFromDrawer] = useState(false)
@@ -279,7 +298,10 @@ const EditorContent: React.FC<EditorProps> = ({
 
   const [renameModalOpen, setRenameModalOpen] = useState(false)
   const [renamingEntry, setRenamingEntry] = useState<EditorEntry | null>(null)
-  const [renameModalError, setRenameModalError] = useState<string | null>(null)
+  const [renameModalError, setRenameModalError] = useState<{
+    message: string
+    mayHaveLanded: boolean
+  } | null>(null)
   const [renameModalSaving, setRenameModalSaving] = useState(false)
 
   const [deleteCollectionModalOpen, setDeleteCollectionModalOpen] = useState(false)
@@ -328,6 +350,10 @@ const EditorContent: React.FC<EditorProps> = ({
   const [commentsForBranchSummaries, setCommentsForBranchSummaries] = useState<CommentThread[]>([])
 
   // 1. Branch manager (provides branchNameState, no dependencies)
+  const resolveUnsavedRef = useRef<() => Promise<UnsavedSummary>>(async () => ({
+    count: 0,
+    labels: [],
+  }))
   const {
     branchName: branchNameState,
     setBranchName,
@@ -345,6 +371,8 @@ const EditorContent: React.FC<EditorProps> = ({
     operatingMode,
     setBusy: setBranchesLoading,
     comments: commentsForBranchSummaries,
+    // The draft manager comes later, as it depends on this hook's branch.
+    getUnsaved: () => resolveUnsavedRef.current(),
   })
 
   // Content mutations (add/delete/rename/reorder entries) are locked whenever the
@@ -372,6 +400,7 @@ const EditorContent: React.FC<EditorProps> = ({
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,
+    refreshContent,
     handleCreateEntry,
     renameEntry,
     loadEntry,
@@ -477,6 +506,7 @@ const EditorContent: React.FC<EditorProps> = ({
     // An Undo built on a discarded draft would put back an item the server's copy already has.
     onDraftsReset: (contentId) => dismissUndoToasts(contentId),
   })
+  resolveUnsavedRef.current = resolveUnsaved
 
   // 4. Branch actions (depends on resolveUnsaved, setBranchName)
   const {
@@ -940,10 +970,47 @@ const EditorContent: React.FC<EditorProps> = ({
     collection: EditorCollection | null,
     parentPath?: LogicalPath,
   ) => {
+    const opening = ++collectionOpeningRef.current
+    const branch = branchNameState
+    const stillCurrent = () =>
+      opening === collectionOpeningRef.current && currentBranchRef.current === branch
+    // A draft is checked on a fresh tree first: refilling a create that landed would duplicate it.
+    const draft = collectionDraftRef.current
+    // A details save that changed the slug and landed is reopened at its new path, never refilled.
+    const atNewPath =
+      draft?.kind === 'details' &&
+      !!draft.updates.slug &&
+      collection?.path ===
+        `${draft.collectionPath.slice(0, draft.collectionPath.lastIndexOf('/') + 1)}${draft.updates.slug}`
+    const refills =
+      draft?.branch === branch &&
+      (draft.kind === 'create'
+        ? !collection && draft.input.parentPath === parentPath
+        : collection?.path === draft.collectionPath || atNewPath)
+    let restore: RestoredCollectionInput | null = null
+    if (draft && refills) {
+      const fresh = await refreshContent(branch).catch((err: unknown) => {
+        console.error(err)
+        return null
+      })
+      if (!stillCurrent()) return
+      if (fresh && collectionDraftLanded(fresh.collections, draft)) {
+        settleCollectionDraft(draft)
+      } else if (
+        collectionDraftRef.current === draft &&
+        !atNewPath &&
+        (fresh || draft.kind === 'details')
+      ) {
+        // A create no read has ruled out stays unfilled; a details save resends the same change.
+        restore = draft.kind === 'create' ? draft.input : draft.updates
+      }
+    }
     if (collection) {
       // The tree's entry types, the fallback, carry no schema or usage.
+      const read = await readEntryTypes(collection.path).catch(() => null)
+      if (!stillCurrent()) return
       const entries =
-        (await readEntryTypes(collection.path).catch(() => null)) ??
+        read ??
         (collection.entryTypes ?? []).map(
           (et): ExistingEntryType => ({
             name: et.name,
@@ -965,11 +1032,14 @@ const EditorContent: React.FC<EditorProps> = ({
       setEditingCollection(null)
       setCollectionEditorParentPath(parentPath)
     }
+    refilledDraftRef.current = restore ? draft : null
+    setRestoredCollectionInput(restore)
     setCollectionEditorError(null)
     setCollectionEditorOpen(true)
   }
 
   const handleCloseCollectionEditor = () => {
+    collectionOpeningRef.current++
     setCollectionEditorOpen(false)
     setEditingCollection(null)
     setCollectionEditorParentPath(undefined)
@@ -984,28 +1054,71 @@ const EditorContent: React.FC<EditorProps> = ({
     // createCollection/updateCollection are contractually non-throwing (they
     // return result objects — see useSchemaManager), so branch on `result.ok`
     // instead of try/catch.
+    const draft = collectionDraftRef.current
     if (isNew) {
-      const result = await createCollection(data as Parameters<typeof createCollection>[0])
+      const input = data as Parameters<typeof createCollection>[0]
+      const result = await createCollection(input)
       // A retried create that had landed makes a second collection, so an unanswered one closes
       // the dialog too, leaving the hook's toast to say to check the "Content" panel first.
       if (result.ok || result.unanswered) {
+        if (!result.ok) {
+          collectionDraftRef.current = { branch: branchNameState, kind: 'create', input }
+        } else if (
+          collectionDraftRef.current === draft &&
+          draft?.kind === 'create' &&
+          draft.branch === branchNameState &&
+          draft.input.parentPath === input.parentPath &&
+          (draft === refilledDraftRef.current || draft.input.name === input.name)
+        ) {
+          collectionDraftRef.current = null
+        }
         handleCloseCollectionEditor()
       } else {
         setCollectionEditorError(result.error)
       }
     } else if (editingCollection) {
-      const result = await updateCollection(
-        editingCollection.logicalPath,
-        data as Parameters<typeof updateCollection>[1],
-      )
+      const updates = data as Parameters<typeof updateCollection>[1]
+      const collectionPath = editingCollection.logicalPath
+      const result = await updateCollection(collectionPath, updates)
       // An unanswered save may have renamed the collection, leaving `editingCollection`'s path
       // stale, so the dialog closes; the hook's toast says to reopen it and check.
       if (result.ok || result.unanswered) {
+        // An update with no defined value sent nothing worth filling in again.
+        const sent = Object.values(updates).some((value) => value !== undefined)
+        if (!result.ok && sent) {
+          collectionDraftRef.current = {
+            branch: branchNameState,
+            kind: 'details',
+            collectionPath,
+            updates,
+          }
+        } else if (
+          result.ok &&
+          collectionDraftRef.current === draft &&
+          draft?.kind === 'details' &&
+          draft.branch === branchNameState &&
+          draft.collectionPath === collectionPath
+        ) {
+          collectionDraftRef.current = null
+        }
         handleCloseCollectionEditor()
       } else {
         setCollectionEditorError(result.error)
       }
     }
+  }
+
+  /** The draft's write landed: drop it, take its warning down and say so, once. */
+  const settleCollectionDraft = (draft: CollectionDraft) => {
+    if (collectionDraftRef.current !== draft) return
+    collectionDraftRef.current = null
+    setRestoredCollectionInput(null)
+    hideCollectionOutcomeUnknown()
+    notifications.show({
+      message:
+        draft.kind === 'create' ? `Collection "${draft.input.name}" created` : 'Collection updated',
+      color: 'green',
+    })
   }
 
   const handleDeleteCollection = (collectionPath: LogicalPath) => {
@@ -1079,8 +1192,10 @@ const EditorContent: React.FC<EditorProps> = ({
       setRenameModalOpen(false)
       setRenamingEntry(null)
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Rename failed'
-      setRenameModalError(errorMessage)
+      setRenameModalError({
+        message: err instanceof Error ? err.message : 'Rename failed',
+        mayHaveLanded: err instanceof MayHaveLandedError,
+      })
     } finally {
       setRenameModalSaving(false)
     }
@@ -1927,6 +2042,11 @@ const EditorContent: React.FC<EditorProps> = ({
               onClose={handleCloseCollectionEditor}
               isSaving={schemaLoading}
               error={collectionEditorError}
+              restored={restoredCollectionInput}
+              onDiscardRestored={() => {
+                collectionDraftRef.current = null
+                setRestoredCollectionInput(null)
+              }}
             />
           )}
 
@@ -1942,7 +2062,8 @@ const EditorContent: React.FC<EditorProps> = ({
                 setRenameModalError(null)
               }}
               isSaving={renameModalSaving}
-              error={renameModalError}
+              error={renameModalError?.mayHaveLanded ? null : renameModalError?.message}
+              warning={renameModalError?.mayHaveLanded ? renameModalError.message : null}
               existingSlugs={renameExistingSlugs}
               previewPath={(slug) =>
                 previewPathFor({

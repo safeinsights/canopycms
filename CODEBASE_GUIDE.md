@@ -113,7 +113,7 @@ Which guards run, in what order, and what each one catches are in
 
 Route handlers, one file per endpoint namespace:
 
-- `branch.ts` — `/branches`: create, list, delete; each `BranchListItem` carries server-computed `isProtected` / `readOnly`
+- `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes every branch response, with server-computed `isProtected` / `readOnly`
 - `branch-status.ts` — `/branch-status`: status and submit
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
 - `branch-review.ts` — `/branch-review`: request changes
@@ -141,7 +141,7 @@ Support files:
 - `settings-helpers.ts` — settings-branch context resolution and commit helpers
 - `entries-constants.ts`, `branch-create-window.ts`, `users-constants.ts` — entries pagination caps, `ENTRY_CHANGED_MESSAGE`; the idempotent branch-create window; `MAX_USER_METADATA_BATCH`. Dependency-free so the editor bundle can import them
 - `request-body-hash.ts` — computes the `x-amz-content-sha256` CloudFront OAC requires on a body-carrying request
-- `request-deadline.ts` — every client call's deadline and `ApiTimeoutError`; an endpoint's `clientTimeout` picks its class
+- `request-deadline.ts` — every client call's deadline and `ApiTimeoutError`; an endpoint's `clientTimeout` picks its class, `readOnly` its retry wording
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
 - `client.ts` — generated API client; `ApiClientOptions.onUnauthorized` reports every 401, `trailingSlash` shapes request URLs
@@ -587,6 +587,7 @@ Components, in `editor/components/`:
 - `BranchesDrawer.tsx` — Branches drawer
 - `StagedChangesDrawer.tsx` — unsaved-changes drawer shell
 - `UserBadge.tsx` — user avatar and name
+- `BranchAccessList.tsx` — a branch card's access list
 - `ReasonedMenuItem.tsx` — a blocked menu item and why
 - `UndoToastMessage.tsx` — a form Remove's undo toast
 - `RetryToastMessage.tsx` — a failed load's toast body with Retry
@@ -616,7 +617,7 @@ Media UI, in `editor/media/`:
 - `upload-constants.ts` — client-side upload UX caps; why duplicated in its header
 
 Schema editor, in `editor/schema-editor/`: `CollectionEditor.tsx`, `EntryTypeEditor.tsx`,
-`index.ts`.
+`collection-draft.ts`, `index.ts`.
 
 Permission manager, in `editor/permission-manager/`:
 

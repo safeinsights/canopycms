@@ -7,6 +7,8 @@ import {
   useCommentSystem,
 } from './useCommentSystem'
 import { ApiTimeoutError } from '../../api/request-deadline'
+import { MayHaveLandedError } from '../unanswered'
+import { mockConsole } from '../../test-utils/console-spy'
 import { useUserMetadata } from './useUserMetadata'
 import { createUserMetadataBatcher } from './user-metadata-batcher'
 import type { ApiClient } from '../context'
@@ -413,24 +415,98 @@ describe('useCommentSystem', () => {
     })
   })
 
-  it('says a timed-out post may have landed, and reloads the threads to show it if it did', async () => {
-    const landed = { ...mockComments[0], id: 'landed-thread' }
-    mockClient.comments.list
-      .mockResolvedValueOnce({ ok: true, status: 200, data: { threads: [], users: [] } })
-      .mockResolvedValueOnce({ ok: true, status: 200, data: { threads: [landed], users: [] } })
-    mockClient.comments.add.mockRejectedValueOnce(
-      new ApiTimeoutError('POST', '/main/comments', 75_000),
-    )
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
-    await waitFor(() => expect(mockClient.comments.list).toHaveBeenCalledTimes(1))
-
-    await act(async () => {
-      await expect(result.current.handleAddComment('Test comment', 'branch')).rejects.toThrow(
-        COMMENT_MAY_BE_ADDED,
+  describe('a timed-out post, settled by the reload', () => {
+    const comment = (id: string, text: string, userId = 'user1') => ({
+      ...mockComments[0].comments[0],
+      id,
+      text,
+      userId,
+    })
+    const shownThread = {
+      ...mockComments[0],
+      id: 'shown-thread',
+      comments: [comment('shown-comment', 'Test comment')],
+    }
+    const branchThread = (
+      id: string,
+      comments: ReturnType<typeof comment>[],
+      type: CommentThread['type'] = 'branch',
+    ): CommentThread => ({
+      ...mockComments[0],
+      id,
+      type,
+      entryPath: type === 'branch' ? undefined : 'entry1',
+      canopyPath: undefined,
+      comments,
+    })
+    const postTimesOut = (reloaded: CommentThread[], firstLoad: 'ok' | 'fails' = 'ok') => {
+      if (firstLoad === 'ok') {
+        mockClient.comments.list.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { threads: [shownThread], users: [] },
+        })
+      } else {
+        mockClient.comments.list.mockRejectedValueOnce(new Error('offline'))
+      }
+      mockClient.comments.list.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { threads: reloaded, users: [] },
+      })
+      mockClient.comments.add.mockRejectedValueOnce(
+        new ApiTimeoutError('POST', '/main/comments', 75_000),
       )
+    }
+    const send = async (threadId?: string, firstLoad: 'ok' | 'fails' = 'ok') => {
+      const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+      await waitFor(() => expect(mockClient.comments.list).toHaveBeenCalledTimes(1))
+      if (firstLoad === 'ok') await waitFor(() => expect(result.current.comments).toHaveLength(1))
+      let err: unknown
+      await act(async () => {
+        err = await result.current
+          .handleAddComment('Test comment', 'branch', undefined, undefined, threadId)
+          .catch((e) => e)
+      })
+      return err
+    }
+    const expectUnknown = (err: unknown) => {
+      expect(err).toBeInstanceOf(MayHaveLandedError)
+      expect(err).toHaveProperty('message', COMMENT_MAY_BE_ADDED)
+    }
+
+    it('counts a new thread of theirs, at the same place, with this text as posted', async () => {
+      postTimesOut([shownThread, branchThread('t2', [comment('c2', 'Test comment')])])
+      expect(await send()).toBeUndefined()
     })
 
-    await waitFor(() => expect(result.current.comments).toEqual([landed]))
+    it.each([
+      ['other text', [branchThread('t2', [comment('c2', 'Other text')])]],
+      ["someone else's comment", [branchThread('t2', [comment('c2', 'Test comment', 'user2')])]],
+      ['a thread at another place', [branchThread('t2', [comment('c2', 'Test comment')], 'entry')]],
+      ['only what was already shown', []],
+    ])('leaves it unknown when the reload shows %s', async (_, extra) => {
+      postTimesOut([shownThread, ...extra])
+      expectUnknown(await send())
+    })
+
+    it('counts a new reply of theirs in the thread replied to as posted', async () => {
+      postTimesOut([
+        { ...shownThread, comments: [...shownThread.comments, comment('c2', 'Test comment')] },
+      ])
+      expect(await send('shown-thread')).toBeUndefined()
+    })
+
+    it('never counts it as posted when the comments had not loaded at send', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        postTimesOut([branchThread('t2', [comment('c2', 'Test comment')])], 'fails')
+        expectUnknown(await send(undefined, 'fails'))
+        expect(consoleSpy).toHaveErrored(/Failed to load comments/)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
   })
 
   it("says a post answered by a gateway's 5xx page may have been posted", async () => {
@@ -438,9 +514,9 @@ describe('useCommentSystem', () => {
     const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
 
     await act(async () => {
-      await expect(result.current.handleAddComment('Test comment', 'branch')).rejects.toThrow(
-        COMMENT_MAY_BE_ADDED,
-      )
+      const err = await result.current.handleAddComment('Test comment', 'branch').catch((e) => e)
+      expect(err).toBeInstanceOf(MayHaveLandedError)
+      expect(err).toHaveProperty('message', COMMENT_MAY_BE_ADDED)
     })
   })
 

@@ -2,12 +2,16 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  For a non-privileged viewer, a branch card's access list is mostly identical "Name unavailable" avatars, and `toBranchListItem` still sends them the ACL's user ids. docs/ux-guidelines.md (People) now rules: show the names the viewer can resolve, then "and N others", and never send `access.allowedUsers` ids to a caller without the privileged lookup
+  RESOLVED (2026-10-13). Every branch response goes through `toBranchListItem`, which gives a caller without the privileged user lookup only the ACL entries naming them or their groups, plus a `withheldAccess` count; `getStatus` and `updateAccess` go through it too. The branch card's `BranchAccessList` shows the names its lookup resolves, then "and N others"
 ---
 
 # Branch card access list for non-privileged viewers
 
-[People](../../docs/ux-guidelines.md#people) rules the card and the wire.
+## Status: RESOLVED 2026-10-13
+
+`toBranchListItem` (`api/branch.ts`) reduces `access` for non-privileged callers; `api/branch-owners.test.ts` checks the wire carries no withheld id and no email. `editor/components/BranchAccessList.tsx` renders the card's list, tested in `BranchManager.test.tsx`.
+
+[People](../../../docs/ux-guidelines.md#people) rules the card and the wire.
 
 ## The card
 

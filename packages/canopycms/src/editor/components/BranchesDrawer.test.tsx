@@ -104,14 +104,14 @@ describe('BranchesDrawer with a confirm opened from inside it', () => {
     renderHarness(onDecision)
 
     await userEvent.click(await screen.findByRole('button', { name: 'Create' }))
-    await screen.findByText(/Unsaved changes in: About/)
+    await screen.findByText(/Unsaved changes in: "About"/)
 
     expect(dialogWith('Unsaved changes in').contains(document.activeElement)).toBe(true)
 
     await userEvent.keyboard('{Escape}')
 
     await waitFor(() => expect(onDecision).toHaveBeenCalledWith(false))
-    await waitFor(() => expect(screen.queryByText(/Unsaved changes in: About/)).toBeNull())
+    await waitFor(() => expect(screen.queryByText(/Unsaved changes in: "About"/)).toBeNull())
     // Past the transitions, so a drawer that is closing has been removed.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 400))
@@ -135,9 +135,9 @@ describe('BranchesDrawer with a confirm opened from inside it', () => {
     renderHarness(vi.fn())
 
     await userEvent.click(await screen.findByRole('button', { name: 'Create' }))
-    await screen.findByText(/Unsaved changes in: About/)
+    await screen.findByText(/Unsaved changes in: "About"/)
     await userEvent.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByText(/Unsaved changes in: About/)).toBeNull())
+    await waitFor(() => expect(screen.queryByText(/Unsaved changes in: "About"/)).toBeNull())
 
     // The confirm's settle reaches the drawer a tick later; wait for it to hand Escape back.
     await userEvent.keyboard('{Escape}')
@@ -152,7 +152,7 @@ describe('BranchesDrawer with a confirm opened from inside it', () => {
     await userEvent.click(trigger)
     await userEvent.click(await screen.findByRole('button', { name: 'Create' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(screen.queryByText(/Unsaved changes in: About/)).toBeNull())
+    await waitFor(() => expect(screen.queryByText(/Unsaved changes in: "About"/)).toBeNull())
 
     await userEvent.keyboard('{Escape}')
     await waitFor(() => expect(drawerOpened()).toBe('false'))

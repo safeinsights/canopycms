@@ -48,9 +48,6 @@
     "packages/canopycms/src/editor/hooks/useBranchActions.tsx": {
       "title-case": 2
     },
-    "packages/canopycms/src/editor/hooks/useEntryManager.ts": {
-      "successfully": 1
-    },
     "packages/canopycms/src/editor/hooks/useGroupManager.ts": {
       "title-case": 1
     },

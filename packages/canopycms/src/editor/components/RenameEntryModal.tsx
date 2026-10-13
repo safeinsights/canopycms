@@ -7,7 +7,7 @@
 
 import { useState } from 'react'
 import { Modal, Stack, TextInput, Group, Button, Alert, Text } from '@mantine/core'
-import { IconAlertCircle } from '@tabler/icons-react'
+import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 
 import { validateEntrySlug } from '../slug'
 
@@ -26,6 +26,8 @@ export interface RenameEntryModalProps {
   isSaving?: boolean
   /** Error message to display */
   error?: string | null
+  /** A rename whose outcome is unknown, shown in yellow in place of `error` */
+  warning?: string | null
   /** Slugs held by the other entries of the collection; the entry's own slug is never a clash. */
   existingSlugs?: ReadonlySet<string>
   /** The URL path the entry will be served at for a slug; undefined when it has no page. */
@@ -40,6 +42,7 @@ export function RenameEntryModal({
   onClose,
   isSaving = false,
   error = null,
+  warning = null,
   existingSlugs,
   previewPath,
 }: RenameEntryModalProps) {
@@ -85,10 +88,16 @@ export function RenameEntryModal({
     >
       <form onSubmit={handleSubmit} noValidate>
         <Stack gap="md" data-testid="rename-entry-modal">
-          {error && (
-            <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
-              {error}
+          {warning ? (
+            <Alert icon={<IconAlertTriangle size={16} />} color="yellow" variant="light">
+              {warning}
             </Alert>
+          ) : (
+            error && (
+              <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
+                {error}
+              </Alert>
+            )
           )}
 
           <Text size="sm" c="dimmed">

@@ -35,7 +35,14 @@ export type SchemaOpResult = { ok: true } | SchemaOpFailure
 type SchemaOpFailure = { ok: false; error: string; unanswered?: true }
 
 const SCHEMA_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-schema-outcome-unknown'
+// A collection create or details save has its own, so settling one leaves another write's up.
+const COLLECTION_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-collection-outcome-unknown'
 const CHECK_CONTENT_PANEL = 'Check the "Content" panel'
+
+/** Takes down a collection create's or details save's unknown-outcome toast, once it landed. */
+export const hideCollectionOutcomeUnknown = (): void => {
+  notifications.hide(COLLECTION_OUTCOME_UNKNOWN_TOAST_ID)
+}
 
 /** @internal Exported for tests. */
 export const schemaChangeOutcomeUnknown = (action: string, check: string) =>
@@ -126,15 +133,19 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
     (
       error: unknown,
       message: string,
-      { toast = true, unknown }: { toast?: boolean; unknown?: string } = {},
+      {
+        toast = true,
+        unknown,
+        unknownId = SCHEMA_OUTCOME_UNKNOWN_TOAST_ID,
+      }: { toast?: boolean; unknown?: string; unknownId?: string } = {},
     ): SchemaOpFailure => {
       if (!isUnanswered(error)) return { ok: false, error: handleError(message, error, { toast }) }
       console.error(message, error)
       void Promise.resolve(options.onSchemaChange?.()).catch(console.error)
       if (unknown) {
-        notifications.hide(SCHEMA_OUTCOME_UNKNOWN_TOAST_ID)
+        notifications.hide(unknownId)
         notifications.show({
-          id: SCHEMA_OUTCOME_UNKNOWN_TOAST_ID,
+          id: unknownId,
           message: unknown,
           color: 'yellow',
           autoClose: false,
@@ -167,6 +178,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
       } catch (error) {
         return fail(error, 'Failed to create collection', {
           unknown: schemaChangeOutcomeUnknown('Creating the collection', CHECK_CONTENT_PANEL),
+          unknownId: COLLECTION_OUTCOME_UNKNOWN_TOAST_ID,
         })
       } finally {
         setIsLoading(false)
@@ -203,6 +215,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
             'Saving collection details',
             'Reopen the collection to check',
           ),
+          unknownId: COLLECTION_OUTCOME_UNKNOWN_TOAST_ID,
         })
       } finally {
         setIsLoading(false)

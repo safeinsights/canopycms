@@ -15,7 +15,7 @@ import { useApiClient } from '../context'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
 import { RetryToastMessage } from '../components/RetryToastMessage'
-import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
+import { isGatewayFailure, isUnanswered, MayHaveLandedError, UnansweredError } from '../unanswered'
 
 const ENTRIES_LOAD_FAILED_TOAST_ID = 'canopy-entries-load-failed'
 
@@ -83,6 +83,10 @@ export interface UseEntryManagerReturn {
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
   refreshEntries: (branch?: string) => Promise<EditorEntry[]>
+  /** `refreshEntries`, resolving to the collections it read too. */
+  refreshContent: (
+    branch?: string,
+  ) => Promise<{ entries: EditorEntry[]; collections: EditorCollection[] }>
   handleCreateEntry: (collectionPath: LogicalPath, entryTypeName?: string) => Promise<void>
   renameEntry: (path: string, newSlug: string) => Promise<void>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
@@ -523,8 +527,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // refreshSeqRef doc comment above; also warms the SWR cache for `branch`
   // so a later automatic re-fetch of the same key (e.g. switching away and
   // back) can reuse it instead of refetching.
-  const refreshEntries = async (branch: string = options.branchName): Promise<EditorEntry[]> => {
-    if (!branch) return []
+  const refreshContent = async (
+    branch: string = options.branchName,
+  ): Promise<{ entries: EditorEntry[]; collections: EditorCollection[] }> => {
+    if (!branch) return { entries: [], collections: [] }
     const seq = claimRefreshSeq(branch)
     const fetched = await fetchEntriesAndSchema(apiClient, branch, {
       resolvePreviewSrc: options.resolvePreviewSrc,
@@ -542,8 +548,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         setView({ branch, ...fetched })
       }
     }
-    return fetched.entries
+    return fetched
   }
+
+  const refreshEntries = async (branch: string = options.branchName): Promise<EditorEntry[]> =>
+    (await refreshContent(branch)).entries
 
   const handleCreateEntry = async (collectionPath: LogicalPath, _?: string) => {
     const col = collectionByPath.get(collectionPath)
@@ -634,6 +643,14 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   }
 
   const renameEntry = async (path: string, newSlug: string): Promise<void> => {
+    const renaming = entriesState.find((e) => e.path === path)
+    const contentId = renaming?.contentId
+    const label = renaming?.label ?? path
+    const landed = async (newPath: string | undefined) => {
+      if (newPath && selectedPath === path) setSelectedPath(newPath)
+      await refreshEntries()
+      notifications.show({ message: 'Entry renamed', color: 'green' })
+    }
     options.setBusy(true)
     try {
       const result = await apiClient.content.renameEntry(
@@ -648,24 +665,22 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         const errorMsg = 'error' in result ? result.error : `Rename failed: ${result.status}`
         throw new Error(errorMsg)
       }
-
-      // Update the selected path if the renamed entry is currently selected
-      if (selectedPath === path && result.data) {
-        setSelectedPath(result.data.newPath)
-      }
-
-      // Refresh entries to get updated paths
-      await refreshEntries()
-      notifications.show({
-        message: 'Entry renamed successfully',
-        color: 'green',
-      })
+      await landed(result.data?.newPath)
     } catch (err) {
       console.error(err)
-      const errorMessage = err instanceof Error ? err.message : 'Rename failed'
-      notifications.show({ message: errorMessage, color: 'red' })
-      if (isUnanswered(err)) void refreshEntries().catch(console.error)
-      throw err
+      if (!isUnanswered(err)) throw err
+      // Re-listed by content ID, under the new slug it landed. Still at the old path proves
+      // nothing: past the client's deadline the server may still be working.
+      const listed = await listEntriesUncommitted(options.branchName).catch(() => null)
+      const now = contentId ? listed?.find((e) => e.contentId === contentId) : undefined
+      if (now && now.path !== path && now.slug === newSlug) {
+        await landed(now.path)
+        return
+      }
+      void refreshEntries().catch(console.error)
+      throw new MayHaveLandedError(
+        `Renaming "${label}" may have gone through even though the server didn't answer. Check the "Content" panel before trying again.`,
+      )
     } finally {
       options.setBusy(false)
     }
@@ -863,6 +878,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,
+    refreshContent,
     handleCreateEntry,
     renameEntry,
     loadEntry,

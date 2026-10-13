@@ -14,7 +14,7 @@ import { readTrailingSlashEnv, withTrailingSlash } from '../utils/url-prefix'
 import { EDITOR_MODE_HEADER, EDITOR_MODE_MISMATCH_STATUS } from '../operating-mode/editor-mode-check'
 import type { OperatingMode } from '../operating-mode/types'
 
-import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, BranchResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
+import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchMergeResponse } from './branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
@@ -97,7 +97,7 @@ export class CanopyApiClient {
     },
 
     /** PATCH /:branch/access */
-    updateAccess: (params: Record<string, string>, body: UpdateBranchAccessBody, options?: RequestOptions): Promise<BranchResponse> => {
+    updateAccess: (params: Record<string, string>, body: UpdateBranchAccessBody, options?: RequestOptions): Promise<BranchListItemResponse> => {
       return this.request('PATCH', this.buildPath('/:branch/access', params), body, 'standard', options)
     },
   }
@@ -124,7 +124,7 @@ export class CanopyApiClient {
     },
 
     /** GET /:branch/status */
-    getStatus: (params: Record<string, string>, options?: RequestOptions): Promise<BranchResponse> => {
+    getStatus: (params: Record<string, string>, options?: RequestOptions): Promise<BranchListItemResponse> => {
       return this.request('GET', this.buildPath('/:branch/status', params), undefined, 'standard', options)
     },
 
@@ -164,7 +164,7 @@ export class CanopyApiClient {
 
     /** POST /:branch/validate-references/...path */
     validateReferences: (params: Record<string, string>, body: ValidateReferencesBody, options?: RequestOptions): Promise<ReferenceValidationResponse> => {
-      return this.request('POST', this.buildPath('/:branch/validate-references/...path', params), body, 'standard', options)
+      return this.request('POST', this.buildPath('/:branch/validate-references/...path', params), body, 'standard', options, true)
     },
 
     /** PATCH /:branch/rename-entry/...path */
@@ -179,7 +179,7 @@ export class CanopyApiClient {
 
     /** POST /:branch/resolve-references */
     resolveReferences: (params: Record<string, string>, body: ResolveReferencesBody, options?: RequestOptions): Promise<ResolveReferencesResponse> => {
-      return this.request('POST', this.buildPath('/:branch/resolve-references', params), body, 'standard', options)
+      return this.request('POST', this.buildPath('/:branch/resolve-references', params), body, 'standard', options, true)
     },
   }
 
@@ -198,7 +198,7 @@ export class CanopyApiClient {
   readonly assets = {
     /** POST /assets/presign */
     presign: (body: PresignAssetBody, options?: RequestOptions): Promise<PresignAssetResponse> => {
-      return this.request('POST', '/assets/presign', body, 'standard', options)
+      return this.request('POST', '/assets/presign', body, 'standard', options, true)
     },
 
     /** POST /assets/finalize */
@@ -255,7 +255,7 @@ export class CanopyApiClient {
 
     /** POST /users/batch */
     batchGetUserMetadata: (body: BatchGetUserMetadataBody, options?: RequestOptions): Promise<BatchGetUserMetadataResponse> => {
-      return this.request('POST', '/users/batch', body, 'standard', options)
+      return this.request('POST', '/users/batch', body, 'standard', options, true)
     },
   }
 
@@ -425,11 +425,13 @@ export class CanopyApiClient {
     path: string,
     body: unknown,
     timeout: RequestTimeoutClass,
-    options?: RequestOptions
+    options?: RequestOptions,
+    readOnly = method === 'GET'
   ): Promise<T> {
     return runWithDeadline((signal) => this.send<T>(method, path, body, signal), {
       method,
       path,
+      readOnly,
       timeoutMs: resolveTimeoutMs(timeout, options),
       signal: options?.signal,
     })

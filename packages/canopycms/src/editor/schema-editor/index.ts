@@ -3,6 +3,7 @@ export {
   type CollectionEditorProps,
   type ExistingCollection,
   type ExistingEntryType,
+  type RestoredCollectionInput,
 } from './CollectionEditor'
 export {
   EntryTypeEditor,

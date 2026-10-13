@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
-import { Text } from '@mantine/core'
+import { Alert, Stack, Text } from '@mantine/core'
+import { IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { EDITOR_ACTIONS } from '../copy'
 import { notifications } from '@mantine/notifications'
@@ -21,6 +22,8 @@ import { RetryToastMessage } from '../components/RetryToastMessage'
 import { isNonApiResponse } from '../../api/client'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 import type { ApiResponse } from '../../api/types'
+import type { UnsavedSummary } from './useDraftManager'
+import { describeUnsaved } from './useBranchActions'
 
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
 const BRANCH_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-branch-outcome-unknown'
@@ -68,19 +71,41 @@ const confirmModalHandlers = (onConfirm: () => Promise<void>, onDismiss: () => v
   }
 }
 
+/**
+ * With `unsaved` edits on the branch, the dialog says they are left out: a submit sends only what
+ * is saved, and the branch is read-only in review, so they wait as drafts until it is editable.
+ */
 const showSubmitConfirmation = (
   branchName: string,
+  unsaved: UnsavedSummary | undefined,
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
 ) => {
+  const leftOut = unsaved && unsaved.count > 0 ? unsaved : undefined
   openConfirm({
     title: EDITOR_ACTIONS.submitForReview,
     children: (
-      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Submit "${branchName}" for review?\n\nThis will:\n• Create a pull request for review\n• Change the branch status to "submitted"\n• Notify reviewers of pending changes`}
-      </Text>
+      <Stack gap="sm">
+        {leftOut && (
+          <Alert
+            color="yellow"
+            icon={<IconAlertTriangle size={16} />}
+            title={`${leftOut.count} ${leftOut.count === 1 ? "entry has unsaved changes that won't" : "entries have unsaved changes that won't"} be submitted`}
+            data-testid="submit-unsaved-warning"
+          >
+            {describeUnsaved(leftOut)} To include them, cancel and save first. If you submit now,
+            those changes stay unsaved on this branch while it is in review.
+          </Alert>
+        )}
+        <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
+          {`Submit "${branchName}" for review?\n\nThis will:\n• Create a pull request for review\n• Change the branch status to "In review"\n• Notify reviewers of pending changes`}
+        </Text>
+      </Stack>
     ),
-    labels: { confirm: EDITOR_ACTIONS.submitForReview, cancel: 'Cancel' },
+    labels: {
+      confirm: leftOut ? 'Submit anyway' : EDITOR_ACTIONS.submitForReview,
+      cancel: 'Cancel',
+    },
     confirmProps: { color: 'brand', 'data-testid': 'confirm-submit-branch' },
     ...confirmModalHandlers(onConfirm, onDismiss),
   })
@@ -250,6 +275,8 @@ interface BranchSummary {
   access: {
     users: string[] | undefined
     groups: string[] | undefined
+    withheldUsers: number | undefined
+    withheldGroups: number | undefined
   }
   pullRequestUrl?: string
   pullRequestNumber?: number
@@ -295,6 +322,9 @@ export interface UseBranchManagerOptions {
   setBusy: (busy: boolean) => void
 
   comments: CommentThread[]
+
+  /** What is unsaved on the open branch (useDraftManager's `resolveUnsaved`), named before a submit. */
+  getUnsaved?: () => Promise<UnsavedSummary>
 }
 
 export interface UseBranchManagerReturn {
@@ -440,6 +470,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         access: {
           users: b.access.allowedUsers,
           groups: b.access.allowedGroups,
+          withheldUsers: b.withheldAccess?.users,
+          withheldGroups: b.withheldAccess?.groups,
         },
         pullRequestUrl: b.pullRequestUrl,
         pullRequestNumber: b.pullRequestNumber,
@@ -562,55 +594,65 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   const handleSubmit = (requested: string) => {
     const branchNameToSubmit = listedName(requested)
-    return singleFlight(
-      'submit',
-      branchNameToSubmit,
-      () =>
-        new Promise<void>((resolve, reject) => {
-          showSubmitConfirmation(
-            branchNameToSubmit,
-            async () => {
-              // A listing that arrived while the dialog was open may show the branch already
-              // submitted; submitting it again would only fail.
-              const listed = latest.current.branches.find((b) => b.name === branchNameToSubmit)
-              if (listed?.status === 'submitted') {
-                notifications.show({
-                  message: 'Branch is already submitted for review',
-                  color: 'blue',
-                })
-                resolve()
-                return
-              }
-              options.setBusy(true)
-              try {
-                const result = await apiClient.workflow.submit({
-                  branch: branchNameToSubmit,
-                })
-                if (!result.ok) throw actionError(result, 'Failed to submit branch')
-                notifications.show({
-                  message: 'Branch submitted for review',
-                  color: 'green',
-                })
-                updateCreatedBranch(branchNameToSubmit, result.data?.branch)
-                await loadBranches()
-                resolve()
-              } catch (err) {
-                await reportActionFailure(
-                  err,
-                  'Failed to submit branch',
-                  EDITOR_ACTIONS.submitForReview,
-                )
-                reject(err)
-              } finally {
-                options.setBusy(false)
-              }
-            },
-            // Dismissal is not an error: the call sites log rejections to the console. Settled
-            // once, by onCancel OR onClose, so an Escape/overlay dismissal can't leave this pending.
-            () => resolve(),
-          )
-        }),
-    )
+    return singleFlight('submit', branchNameToSubmit, async () => {
+      // Drafts belong to the open branch, so only its submit can leave edits behind. Without
+      // that check the dialog opens in this same tick.
+      const checking =
+        branchNameToSubmit === listedName(latest.current.branchName)
+          ? options.getUnsaved?.().catch((err: unknown) => {
+              console.error(err)
+              return undefined
+            })
+          : undefined
+      // Checking can wait on draft verification, so the busy state shows it is working meanwhile.
+      if (checking) options.setBusy(true)
+      const unsaved = checking && (await checking.finally(() => options.setBusy(false)))
+      return new Promise<void>((resolve, reject) => {
+        showSubmitConfirmation(
+          branchNameToSubmit,
+          unsaved,
+          async () => {
+            // A listing that arrived while the dialog was open may show the branch already
+            // submitted; submitting it again would only fail.
+            const listed = latest.current.branches.find((b) => b.name === branchNameToSubmit)
+            if (listed?.status === 'submitted') {
+              notifications.show({
+                message: 'Branch is already submitted for review',
+                color: 'blue',
+              })
+              resolve()
+              return
+            }
+            options.setBusy(true)
+            try {
+              const result = await apiClient.workflow.submit({
+                branch: branchNameToSubmit,
+              })
+              if (!result.ok) throw actionError(result, 'Failed to submit branch')
+              notifications.show({
+                message: 'Branch submitted for review',
+                color: 'green',
+              })
+              updateCreatedBranch(branchNameToSubmit, result.data?.branch)
+              await loadBranches()
+              resolve()
+            } catch (err) {
+              await reportActionFailure(
+                err,
+                'Failed to submit branch',
+                EDITOR_ACTIONS.submitForReview,
+              )
+              reject(err)
+            } finally {
+              options.setBusy(false)
+            }
+          },
+          // Dismissal is not an error: the call sites log rejections to the console. Settled
+          // once, by onCancel OR onClose, so an Escape/overlay dismissal can't leave this pending.
+          () => resolve(),
+        )
+      })
+    })
   }
 
   const handleWithdraw = (requested: string) => {

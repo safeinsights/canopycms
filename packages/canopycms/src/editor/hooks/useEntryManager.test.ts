@@ -13,6 +13,7 @@ import { notifications } from '@mantine/notifications'
 import { UnansweredError } from '../unanswered'
 import type React from 'react'
 import { ApiTimeoutError, WRITE_TIMED_OUT_MESSAGE } from '../../api/request-deadline'
+import { MayHaveLandedError } from '../unanswered'
 import type { RetryToastMessageProps } from '../components/RetryToastMessage'
 import {
   setupMockApiClient,
@@ -1250,6 +1251,92 @@ describe('useEntryManager', () => {
       expect(opened.contentId).toBe(mockEntry.contentId)
       return { ...hook, opened }
     }
+
+    describe('a rename with no answer', () => {
+      let restoreConsole: () => void
+      beforeEach(() => {
+        restoreConsole = setupMockConsole(['error']).restore
+      })
+      afterEach(() => restoreConsole())
+
+      it('keeps the entry selected at its new path when the rename landed', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        act(() => result.current.setSelectedPath(opened.path))
+        mockClient.content.renameEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
+        )
+        // Listed first, so it is what the selection would fall back to.
+        mockClient.entries.list.mockResolvedValue(
+          listOf(
+            {
+              contentId: unsafeAsContentId('other0000001'),
+              logicalPath: unsafeAsLogicalPath('aaa'),
+            },
+            {
+              contentId: mockEntry.contentId,
+              logicalPath: unsafeAsLogicalPath('entry1-renamed'),
+              slug: unsafeAsSlug('renamed'),
+            },
+          ),
+        )
+
+        await act(async () => {
+          await result.current.renameEntry(opened.path, 'renamed')
+        })
+
+        expect(result.current.selectedPath).toBe('entry1-renamed')
+        expect(result.current.currentEntry?.contentId).toBe(mockEntry.contentId)
+      })
+
+      it('does not count a rename to another slug as this one landing', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        mockClient.content.renameEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
+        )
+        mockClient.entries.list.mockResolvedValue(
+          listOf({
+            contentId: mockEntry.contentId,
+            logicalPath: unsafeAsLogicalPath('entry1-elsewhere'),
+            slug: unsafeAsSlug('elsewhere'),
+          }),
+        )
+
+        let err: unknown
+        await act(async () => {
+          err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
+        })
+        expect(err).toBeInstanceOf(MayHaveLandedError)
+        expect(String(err)).toContain(`Renaming "${opened.label}" may have gone through`)
+      })
+
+      it('leaves the outcome unknown when the entry is still at its old path', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        mockClient.content.renameEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
+        )
+
+        let err: unknown
+        await act(async () => {
+          err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
+        })
+        expect(err).toBeInstanceOf(MayHaveLandedError)
+        expect(String(err)).toContain(`Renaming "${opened.label}" may have gone through`)
+      })
+
+      it('leaves the outcome unknown when the entries cannot be re-read', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        mockClient.content.renameEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
+        )
+        mockClient.entries.list.mockRejectedValue(new Error('offline'))
+
+        let err: unknown
+        await act(async () => {
+          err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
+        })
+        expect(err).toBeInstanceOf(MayHaveLandedError)
+      })
+    })
 
     describe('followMovedEntry', () => {
       it('finds a renamed entry by its content ID, refreshes the list and selects the new path', async () => {

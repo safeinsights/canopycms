@@ -10,7 +10,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-user'
 import { createApiClient, saveSamplePost } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
-import type { BranchResponse, BranchListResponse } from '../../api/branch'
+import type { BranchListItemResponse, BranchListResponse } from '../../api/branch'
 
 describe('Role Permission Integration', () => {
   let workspace: TestWorkspace
@@ -64,7 +64,7 @@ describe('Role Permission Integration', () => {
     const adminAccessResponse = await adminClient.get('/api/canopycms/editor-branch/status')
 
     expect(adminAccessResponse.status).toBe(200)
-    const status = await adminAccessResponse.json<BranchResponse>()
+    const status = await adminAccessResponse.json<BranchListItemResponse>()
     expect(status.data?.branch.name).toBe('editor-branch')
   })
 
@@ -160,7 +160,7 @@ describe('Role Permission Integration', () => {
     })
 
     expect(approveResponse.status).toBe(200)
-    const approveData = await approveResponse.json<BranchResponse>()
+    const approveData = await approveResponse.json<BranchListItemResponse>()
     expect(approveData.data?.branch.status).toBe('approved')
   })
 

@@ -385,6 +385,8 @@ Per-branch ACLs control who can access a branch; it can be restricted to specifi
 
 Both are scoped to branches with **no ACL**, so writing an explicit ACL still restricts the branch — including against its own creator, which is how an admin locks down someone else's branch. The base-branch grant is applied as a fallback where the bare default would otherwise decide, never as a short-circuit ahead of the ACL: short-circuiting would replace `allowed_by_acl` with `base_branch` and silently strip Withdraw rights from ACL-listed users.
 
+**Who is on an ACL is itself privileged.** Ids name people, and only admins and review-capable users may look people up, so `toBranchListItem` (`api/branch.ts`) sends anyone else only the entries naming them or their groups, which is all the editor's membership checks need, and a count of the rest.
+
 Neither grant widens anything separately gated: `canPerformWorkflowAction` disables its system-branch grant on the same `isProtectedBranch` flag, `getBranchWriteProtection().readOnly` still blocks prod writes, path permissions still decide what content is readable, and the HTTP handler 401s anonymous callers before authorization runs at all.
 
 ### Layer 2: Path Permissions

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { branchParamSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchContext } from '../types'
-import { toBranchListItem, type BranchListItemResponse, type BranchResponse } from './branch'
+import { toBranchListItem, type BranchListItemResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
@@ -22,13 +22,17 @@ export type { BranchMergeResponse } from './branch-merge'
 
 const getBranchStatusHandler = async (
   gc: { branchContext: BranchContext },
-  _ctx: ApiContext,
-  _req: ApiRequest,
+  ctx: ApiContext,
+  req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
-): Promise<BranchResponse> => {
+): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
-  return { ok: true, status: 200, data: { branch: branchContext.branch } }
+  return {
+    ok: true,
+    status: 200,
+    data: { branch: toBranchListItem(ctx.services.config, branchContext.branch, req.user) },
+  }
 }
 
 const submitBranchForMergeHandler = async (
@@ -193,7 +197,7 @@ const submitBranchForMergeHandler = async (
   return {
     ok: true,
     status: 200,
-    data: { branch: toBranchListItem(ctx.services.config, updated.branch) },
+    data: { branch: toBranchListItem(ctx.services.config, updated.branch, req.user) },
   }
 }
 
@@ -203,8 +207,8 @@ const getBranchStatus = defineEndpoint({
   method: 'GET',
   path: '/:branch/status',
   params: branchParamSchema,
-  responseType: 'BranchResponse',
-  response: {} as BranchResponse,
+  responseType: 'BranchListItemResponse',
+  response: {} as BranchListItemResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',

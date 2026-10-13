@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { ThreadCarousel } from './ThreadCarousel'
 import type { CommentThread } from '../../comment-store'
+import { MayHaveLandedError } from '../unanswered'
 
 afterEach(() => {
   cleanup()
@@ -139,6 +140,30 @@ describe('ThreadCarousel', () => {
     await user.type(screen.getByPlaceholderText('Write a reply…'), 'A reply')
     await user.click(screen.getByTestId('submit-reply-button'))
     expect(await screen.findAllByText("Couldn't add the comment. Try again.")).toHaveLength(1)
+  })
+
+  it.each([
+    ['red', new Error("Couldn't add the comment.")],
+    ['yellow', new MayHaveLandedError('Your comment may have been posted.')],
+  ])('shows a failed reply in %s by whether it may have been posted', async (colour, err) => {
+    const user = userEvent.setup()
+    render(
+      <ThreadCarousel
+        threads={[mockThreads[0]]}
+        contextType="branch"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn().mockRejectedValue(err)}
+        onResolveThread={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    )
+    await user.click(screen.getByTestId('reply-thread-button'))
+    await user.type(screen.getByPlaceholderText('Write a reply…'), 'A reply')
+    await user.click(screen.getByTestId('submit-reply-button'))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(err.message)
+    expect(alert.getAttribute('style')).toContain(colour)
   })
 
   it('moves focus to its heading once a thread is resolved', async () => {

@@ -716,34 +716,111 @@ describe('CollectionEditor', () => {
       )
     })
 
-    it('create mode: removing a staged entry type drops its row without calling the API', async () => {
+    it('create mode: removes a staged entry type at once, offering Undo, without calling the API', async () => {
       const user = userEvent.setup()
       const onRemoveEntryType = vi.fn()
       renderCollectionEditor({ onRemoveEntryType })
       await addEntryTypeViaUi(user, 'article')
       await addEntryTypeViaUi(user, 'page')
-      await screen.findByText('page')
-
-      await removeEntryTypeViaUi(user, 'page')
-
-      await waitFor(() => expect(screen.queryByText('page')).toBeNull())
-      expect(screen.getByText('article')).toBeTruthy()
-      expect(onRemoveEntryType).not.toHaveBeenCalled()
-    })
-
-    it('create mode: the remove confirm wording names the new collection', async () => {
-      const user = userEvent.setup()
-      renderCollectionEditor()
-      await addEntryTypeViaUi(user, 'article')
-      await addEntryTypeViaUi(user, 'page')
-      await screen.findByText('page')
+      await addEntryTypeViaUi(user, 'author')
+      await screen.findByText('author')
 
       await openRowMenu(user, 'page')
       await user.click(await screen.findByRole('menuitem', { name: 'Remove' }))
 
-      expect((await screen.findByTestId('confirm-delete-modal')).textContent).toContain(
-        'Remove "page" from this new collection?',
+      await waitFor(() => expect(screen.queryByText('page')).toBeNull())
+      expect(screen.queryByTestId('confirm-delete-modal')).toBeNull()
+      expect(onRemoveEntryType).not.toHaveBeenCalled()
+
+      expect(screen.getByRole('status').textContent).toContain('Removed entry type "page".')
+      await user.click(screen.getByRole('button', { name: 'Undo removing entry type "page"' }))
+
+      await screen.findByText('page')
+      const rows = screen.getAllByRole('button', { name: /^Actions for / })
+      expect(rows.map((row) => row.getAttribute('aria-label'))).toEqual([
+        'Actions for article',
+        'Actions for page',
+        'Actions for author',
+      ])
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          screen.getByRole('button', { name: 'Actions for page' }),
+        ),
       )
+    })
+
+    it.each([
+      ['closes on an outside click with nothing typed', false],
+      ['keeps typed input through an outside click', true],
+    ])('create mode: %s', async (_, typed) => {
+      const user = userEvent.setup()
+      const onClose = vi.fn()
+      renderCollectionEditor({ onClose })
+      if (typed) await user.type(screen.getByLabelText(/^Name/), 'posts')
+
+      const overlay = document.querySelector('.mantine-Modal-overlay')
+      if (!overlay) throw new Error('no modal overlay')
+      await user.click(overlay)
+
+      expect(onClose).toHaveBeenCalledTimes(typed ? 0 : 1)
+    })
+
+    it('create mode: undoes removals one at a time, latest first', async () => {
+      const user = userEvent.setup()
+      renderCollectionEditor()
+      await addEntryTypeViaUi(user, 'article')
+      await addEntryTypeViaUi(user, 'page')
+      await addEntryTypeViaUi(user, 'author')
+      await screen.findByText('author')
+      for (const name of ['page', 'author']) {
+        await openRowMenu(user, name)
+        await user.click(await screen.findByRole('menuitem', { name: 'Remove' }))
+        await waitFor(() => expect(screen.queryByText(name)).toBeNull())
+      }
+
+      await user.click(screen.getByRole('button', { name: 'Undo removing entry type "author"' }))
+      await user.click(
+        await screen.findByRole('button', { name: 'Undo removing entry type "page"' }),
+      )
+
+      const rows = screen.getAllByRole('button', { name: /^Actions for / })
+      expect(rows.map((row) => row.getAttribute('aria-label'))).toEqual([
+        'Actions for article',
+        'Actions for page',
+        'Actions for author',
+      ])
+    })
+
+    it('create mode: offers Undo for the latest removal, until the dialog closes', async () => {
+      const user = userEvent.setup()
+      const { rerender, props } = renderCollectionEditor()
+      await addEntryTypeViaUi(user, 'article')
+      await addEntryTypeViaUi(user, 'page')
+      await addEntryTypeViaUi(user, 'author')
+      await screen.findByText('author')
+      const remove = async (name: string) => {
+        await openRowMenu(user, name)
+        await user.click(await screen.findByRole('menuitem', { name: 'Remove' }))
+        await waitFor(() => expect(screen.queryByText(name)).toBeNull())
+      }
+
+      await remove('page')
+      await remove('author')
+
+      expect(screen.queryByRole('button', { name: 'Undo removing entry type "page"' })).toBeNull()
+      expect(screen.getByRole('button', { name: 'Undo removing entry type "author"' })).toBeTruthy()
+
+      rerender(
+        <CanopyCMSProvider>
+          <CollectionEditor {...props} isOpen={false} />
+        </CanopyCMSProvider>,
+      )
+      rerender(
+        <CanopyCMSProvider>
+          <CollectionEditor {...props} isOpen={true} />
+        </CanopyCMSProvider>,
+      )
+      expect(screen.queryByRole('button', { name: /^Undo removing/ })).toBeNull()
     })
 
     describe('sub-dialogs', () => {
@@ -1579,6 +1656,8 @@ describe('CollectionEditor', () => {
           renderCollectionEditor(stillListedProps())
           await removeEntryTypeViaUi(user, 'featured')
           await screen.findByText(stillListed('featured'))
+          // The removal's focus move lands after a delay; acting first races it.
+          await expectFocusOn('featured')
 
           await nextAction(user)
 
@@ -1683,6 +1762,97 @@ describe('CollectionEditor', () => {
         expect(await screen.findByText(/"Article"/)).toBeTruthy()
         expect(onUpdateEntryType).not.toHaveBeenCalled()
       })
+    })
+  })
+
+  describe('input restored after a write with no answer', () => {
+    const staged = {
+      name: 'article',
+      format: 'json' as const,
+      schema: 'postSchema',
+    }
+
+    it('fills a create in again, and discards it on request', async () => {
+      const user = userEvent.setup()
+      const onDiscardRestored = vi.fn()
+      renderCollectionEditor({
+        restored: { name: 'posts', label: 'Blog posts', entries: [staged] },
+        onDiscardRestored,
+      })
+
+      expect((screen.getByLabelText(/^Name/) as HTMLInputElement).value).toBe('posts')
+      expect((screen.getByLabelText(/^Label/) as HTMLInputElement).value).toBe('Blog posts')
+      expect(screen.getByText('article')).toBeTruthy()
+
+      await user.click(screen.getByRole('button', { name: 'Discard changes' }))
+
+      expect((screen.getByLabelText(/^Name/) as HTMLInputElement).value).toBe('')
+      expect(screen.queryByText('article')).toBeNull()
+      expect(screen.queryByText('Restored what you entered')).toBeNull()
+      expect(onDiscardRestored).toHaveBeenCalledTimes(1)
+    })
+
+    it("fills a details save's changes in over the stored values", () => {
+      renderCollectionEditor({
+        editingCollection: {
+          name: 'posts',
+          label: 'Posts',
+          logicalPath: unsafeAsLogicalPath('content/posts'),
+          entries: [{ ...staged, usageCount: 0 }],
+        },
+        restored: { label: 'Blog posts', slug: 'blog' },
+      })
+
+      expect((screen.getByLabelText(/^Name/) as HTMLInputElement).value).toBe('posts')
+      expect((screen.getByLabelText(/^Label/) as HTMLInputElement).value).toBe('Blog posts')
+      expect((screen.getByLabelText(/^Slug/) as HTMLInputElement).value).toBe('blog')
+      expect(screen.getByText('Restored what you entered')).toBeTruthy()
+    })
+
+    it('discards the kept input with the footer\'s "Discard changes" too', async () => {
+      const user = userEvent.setup()
+      const onDiscardRestored = vi.fn()
+      const onClose = vi.fn()
+      renderCollectionEditor({
+        editingCollection: {
+          name: 'posts',
+          label: 'Posts',
+          logicalPath: unsafeAsLogicalPath('content/posts'),
+          entries: [{ ...staged, usageCount: 0 }],
+        },
+        restored: { label: 'Blog posts' },
+        onDiscardRestored,
+        onClose,
+      })
+
+      await user.click(footerButton('Discard changes'))
+
+      expect(onDiscardRestored).toHaveBeenCalledTimes(1)
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('moves focus to Name once the restored input is discarded', async () => {
+      const user = userEvent.setup()
+      renderCollectionEditor({ restored: { name: 'posts' }, onDiscardRestored: vi.fn() })
+
+      await user.click(screen.getByRole('button', { name: 'Discard changes' }))
+
+      expect(document.activeElement).toBe(screen.getByLabelText(/^Name/))
+    })
+
+    it('keeps what was typed when the restored input is dropped while open', async () => {
+      const user = userEvent.setup()
+      const { rerender, props } = renderCollectionEditor({ restored: { name: 'posts' } })
+      await user.type(screen.getByLabelText(/^Label/), 'Typed')
+
+      rerender(
+        <CanopyCMSProvider>
+          <CollectionEditor {...props} restored={null} />
+        </CanopyCMSProvider>,
+      )
+
+      expect((screen.getByLabelText(/^Name/) as HTMLInputElement).value).toBe('posts')
+      expect((screen.getByLabelText(/^Label/) as HTMLInputElement).value).toBe('Typed')
     })
   })
 })

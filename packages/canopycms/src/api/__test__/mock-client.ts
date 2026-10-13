@@ -8,7 +8,7 @@ import type { CanopyApiClient } from '../client'
 import type { ApiResponse } from '../types'
 import { createLogicalPath, createPhysicalPath } from '../../paths'
 import type { ContentId } from '../../paths'
-import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, BranchResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
+import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
 import type { BranchMergeResponse } from '../branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from '../content'
@@ -156,10 +156,6 @@ export function mockBranchListItemResponse(): BranchListItemResponse {
 
 export function mockBranchDeleteResponse(): BranchDeleteResponse {
   return mockSuccess({"deleted":true})
-}
-
-export function mockBranchResponse(): BranchResponse {
-  return mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})
 }
 
 export function mockBranchMergeResponse(): BranchMergeResponse {

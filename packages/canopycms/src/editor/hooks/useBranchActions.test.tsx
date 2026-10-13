@@ -351,7 +351,7 @@ describe('useBranchActions', () => {
       await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalled())
 
       const text = textOf(vi.mocked(modals.openConfirmModal).mock.calls[0][0].children)
-      expect(text).toContain('Unsaved changes in: Site settings, About.')
+      expect(text).toContain('Unsaved changes in: "Site settings", "About".')
       expect(text).toContain('Your drafts stay on “main” and come back when you return.')
       expect(vi.mocked(modals.openConfirmModal).mock.calls[0][0].labels).toEqual({
         confirm: 'Continue Anyway',
@@ -371,7 +371,7 @@ describe('useBranchActions', () => {
       await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalled())
 
       const text = textOf(vi.mocked(modals.openConfirmModal).mock.calls[0][0].children)
-      expect(text).toContain('Unsaved changes in: A, B, C, D, E and 2 more.')
+      expect(text).toContain('Unsaved changes in: "A", "B", "C", "D", "E" and 2 more.')
     })
 
     it('falls back to a generic message when no entry label is known', async () => {

@@ -11,7 +11,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
-import type { BranchResponse } from '../../api/branch'
+import type { BranchListItemResponse } from '../../api/branch'
 import { initTestRepo } from '../../test-utils'
 
 describe('Editing Workflow Integration', () => {
@@ -42,7 +42,7 @@ describe('Editing Workflow Integration', () => {
     })
 
     expect(createResponse.status).toBe(200)
-    const createData = await createResponse.json<BranchResponse>()
+    const createData = await createResponse.json<BranchListItemResponse>()
     expect(createData.data?.branch.status).toBe('editing')
     expect(createData.data?.branch.createdBy).toBe('test-editor')
 
@@ -151,7 +151,7 @@ describe('Editing Workflow Integration', () => {
     })
 
     expect(createResponse.status).toBe(200)
-    const createData = await createResponse.json<BranchResponse>()
+    const createData = await createResponse.json<BranchListItemResponse>()
     const branchRoot = (createData.data?.branch as { workspaceRoot?: string })?.workspaceRoot
 
     // Write multiple posts via API
