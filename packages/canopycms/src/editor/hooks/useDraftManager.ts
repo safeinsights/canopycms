@@ -679,11 +679,15 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }
 
-  /** Stays until dismissed or the entry is reloaded: saving is held until then. */
-  const showSaveMayHaveLanded = (contentId: string, message = SAVE_MAY_HAVE_LANDED_MESSAGE) => {
-    notifications.hide(saveMayHaveLandedToastId(contentId))
+  /**
+   * Stays until dismissed or the entry is reloaded: saving is held until then. Named, since it
+   * outlasts opening other entries.
+   */
+  const showSaveMayHaveLanded = (entry: EditorEntry, message = SAVE_MAY_HAVE_LANDED_MESSAGE) => {
+    notifications.hide(saveMayHaveLandedToastId(entry.contentId))
     notifications.show({
-      id: saveMayHaveLandedToastId(contentId),
+      id: saveMayHaveLandedToastId(entry.contentId),
+      title: `"${entry.label}" may already be saved`,
       message: message || SAVE_MAY_HAVE_LANDED_MESSAGE,
       color: 'yellow',
       autoClose: false,
@@ -853,7 +857,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     if (currentId in reloadRequiredRef.current) {
       if (reloadRequiredRef.current[currentId] === options.getEntryVersion?.(currentId)) {
-        showSaveMayHaveLanded(currentId)
+        showSaveMayHaveLanded(entry)
         return
       }
       delete reloadRequiredRef.current[currentId]
@@ -999,7 +1003,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           notifications.hide(saveTimedOutToastId(currentId))
         }
         if (err.code === 'WRITE_OUTCOME_UNKNOWN' || ownSaveLanded) {
-          showSaveMayHaveLanded(currentId, ownSaveLanded ? undefined : err.serverMessage)
+          showSaveMayHaveLanded(entry, ownSaveLanded ? undefined : err.serverMessage)
         } else {
           showConflictNotification(err.serverMessage || undefined)
         }
@@ -1009,6 +1013,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         timedOutSavesRef.current.add(currentId)
         notifications.show({
           id: saveTimedOutToastId(currentId),
+          title: `"${entry.label}" may not be saved`,
           message: SAVE_TIMED_OUT_MESSAGE,
           color: 'yellow',
           autoClose: false,
