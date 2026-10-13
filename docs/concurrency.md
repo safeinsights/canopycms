@@ -305,7 +305,9 @@ the critical section.
 **Editor saves are OCC-checked against the file's mtime, and the API has no blind update.**
 A read returns `version` (the mtime), and an update must send it back as `expectedVersion`.
 An omitted token means create-only (`null`), so a write that lost its token gets a 409, never
-an unchecked overwrite. The check is the in-lock stat above. `ContentStore.write`'s
+an unchecked overwrite. A token whose file is gone is a 409 too (`EntryGoneError`, API code
+`ENTRY_GONE`): the entry was deleted or moved since the read, and only a create brings it back.
+The check is the in-lock stat above, ahead of `mkdir` and the create-only guards. `ContentStore.write`'s
 `undefined` (skip the check) is for direct store callers only. The editor keys tokens by
 branch + contentId, the same key as its drafts, and `saveEntry` refuses a save it holds no
 token for (api/content.ts, editor/hooks/useEntryManager.ts).

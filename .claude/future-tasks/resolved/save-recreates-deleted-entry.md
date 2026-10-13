@@ -1,12 +1,14 @@
 ---
 priority: P2
 summary: >-
-  New 2026-10-04, same source. A save carrying a numeric `expectedVersion` whose file is gone skips the version check (`ENOENT` is treated as a first write), so editing an entry another editor deleted (or renamed) silently recreates it, undoing their delete; a delete or rename of the editor's own that got no answer reaches it too. Not content loss, but a version-holding save that isn't checked against disk
+  RESOLVED (2026-10-12). A save carrying a numeric `expectedVersion` whose file is gone is refused with `EntryGoneError` (API 409, code `ENTRY_GONE`) inside the write lock, ahead of `mkdir` and the create-only guards, so it never re-creates a deleted entry or a renamed entry's old slug; the API refuses it before its create-only checks too. The editor keeps the changes in the form and says the entry was deleted or moved, pointing to its new name or "Add entry…". Covers an editor's own unanswered delete or rename. Creates (`expectedVersion: null`) are unchanged
 ---
 # A save carrying a version silently recreates an entry another editor deleted
 
+## Status: RESOLVED 2026-10-12
+
 Found 2026-10-04 while re-verifying
-[occ-version-key-contentid-swap.md](resolved/occ-version-key-contentid-swap.md).
+[occ-version-key-contentid-swap.md](occ-version-key-contentid-swap.md).
 
 ## The problem
 
@@ -28,7 +30,7 @@ version is checked against what is on disk: a missing file is a change since the
   its content tree after such a delete, rename or create (`editor/unanswered.ts`, in
   `useSchemaManager.deleteEntry`, `useEntryManager.renameEntry` and `handleCreateModalSubmit`),
   but an entry left open with a draft can still be saved back.
-- Read [docs/concurrency.md](../../docs/concurrency.md) before changing the check: it is the
+- Read [docs/concurrency.md](../../../docs/concurrency.md) before changing the check: it is the
   authoritative OCC gate for entry writes.
 
 ## Fix direction
