@@ -412,12 +412,22 @@ function reconcileSeq(
     return undefined
   }
   // The save that first writes item keys (`item-keys.ts`) adds them to items the file holds
-  // without, so an item is also the same as an un-keyed one equal to it but for its keys.
-  const matches = value.map((item) => claim(identityKey(item)) ?? claim(unkeyedIdentityKey(item)))
+  // without, so an item is also the same as an un-keyed one equal to it but for its keys. That
+  // node is reconciled rather than kept whole, which is what writes the keys in.
+  const gainsKeys = new Set<number>()
+  const matches = value.map((item, index) => {
+    const exact = claim(identityKey(item))
+    if (exact !== undefined) return exact
+    const unkeyed = claim(unkeyedIdentityKey(item))
+    if (unkeyed !== undefined) gainsKeys.add(index)
+    return unkeyed
+  })
 
   seq.items = value.map((item, index) => {
     const matched = matches[index]
-    if (matched !== undefined) return oldItems[matched]
+    if (matched !== undefined) {
+      return gainsKeys.has(index) ? reconcileNode(ctx, oldItems[matched], item) : oldItems[matched]
+    }
     // `consumed` holds OLD indices claimed by rule 1, so this asks "is the node at my index still
     // unclaimed?". Each iteration owns a distinct index, so a candidate cannot be taken twice.
     const candidate = index < oldItems.length && !consumed.has(index) ? oldItems[index] : undefined

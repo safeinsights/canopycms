@@ -703,7 +703,9 @@ const EditorContent: React.FC<EditorProps> = ({
     const { entryPath, canopyPath, threadId } = pendingFieldJump
     setPendingFieldJump(null)
     const placed = displayComments.find((t) => t.id === threadId)
-    handleJumpToField(entryPath, placed?.canopyPath ?? canopyPath, threadId)
+    // A thread whose item is gone lives on its entry, not at the index it was made at.
+    if (placed?.onRemovedItem) handleJumpToEntry(entryPath, threadId)
+    else handleJumpToField(entryPath, placed?.canopyPath ?? canopyPath, threadId)
   }, [pendingFieldJump, selectedPath, currentEntry, displayValue, displayComments])
 
   // A new field thread names the list items on its path by key. An item only the draft has is

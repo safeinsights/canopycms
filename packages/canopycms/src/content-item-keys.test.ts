@@ -405,3 +405,94 @@ describe('a hand edit before the first save', () => {
     expect(resolveThreadPath(fields, after, 'team[1].name', threadKeys)).toBe('team[2].name')
   })
 })
+
+describe('a YAML or MD entry saved for the first time with keys', () => {
+  const teamSchema: FieldConfig[] = [
+    { name: 'title', type: 'string', isTitle: true },
+    { name: 'team', type: 'object', list: true, fields: [{ name: 'name', type: 'string' }] },
+  ]
+  const notesFlat = flattenSchema(
+    {
+      collections: [
+        {
+          name: 'notes',
+          path: 'notes',
+          entries: [
+            { name: 'yamlnote', format: 'yaml', schema: teamSchema },
+            {
+              name: 'mdnote',
+              format: 'md',
+              schema: [...teamSchema, { name: 'body', type: 'markdown', isBody: true }],
+            },
+          ],
+        },
+      ],
+    },
+    'content',
+  )
+  const NOTES = unsafeAsLogicalPath('content/notes')
+
+  const setUp = async (type: string, slug: string, raw: string) => {
+    const dir = path.join(root, 'content', `notes.${generateId()}`)
+    await fs.mkdir(dir, { recursive: true })
+    const file = path.join(
+      dir,
+      `${type}.${slug}.${generateId()}.${type === 'mdnote' ? 'md' : 'yaml'}`,
+    )
+    await fs.writeFile(file, raw)
+    return file
+  }
+
+  it('writes the copy key when the original is removed, and keeps the YAML comment', async () => {
+    const file = await setUp(
+      'yamlnote',
+      'crew',
+      'title: Crew\nteam:\n  # about Ada\n  - name: Ada\n',
+    )
+    const store = new ContentStore(root, notesFlat)
+    const read = await store.read(NOTES, unsafeAsSlug('crew'))
+    const [ada] = items(read.data.team)
+    expect(isItemKey(ada[ITEM_KEY])).toBe(true)
+
+    // Duplicate Ada (the copy gets a fresh key), then Remove the original.
+    const team = [{ name: 'Ada', [ITEM_KEY]: 'copyKey' }]
+    await store.write(NOTES, unsafeAsSlug('crew'), {
+      format: 'yaml',
+      data: { ...read.data, team },
+      expectedVersion: read.version,
+    })
+
+    const raw = await fs.readFile(file, 'utf8')
+    expect(raw).toContain('# about Ada')
+    expect(keysOf((await store.read(NOTES, unsafeAsSlug('crew'))).data.team)).toEqual(['copyKey'])
+  })
+
+  it('keeps every frontmatter comment and writes the keys on an MD entry', async () => {
+    const file = await setUp(
+      'mdnote',
+      'crew',
+      '---\n# keep: owned by legal\ntitle: Crew # inline note\nteam:\n  # about Ada\n  - name: Ada\n  - name: Bo\n---\n\nBody.\n',
+    )
+    const store = new ContentStore(root, notesFlat)
+    const read = await store.read(NOTES, unsafeAsSlug('crew'))
+    const keys = keysOf(read.data.team)
+    await store.write(
+      NOTES,
+      unsafeAsSlug('crew'),
+      {
+        format: 'md',
+        data: { ...read.data, title: 'Crew, edited' },
+        body: read.body ?? '',
+        expectedVersion: read.version,
+      },
+      'mdnote',
+    )
+
+    const raw = await fs.readFile(file, 'utf8')
+    expect(raw).toContain('# keep: owned by legal')
+    expect(raw).toContain('# inline note')
+    expect(raw).toContain('# about Ada')
+    expect(raw).toContain(`_key: ${keys[0]}`)
+    expect(keysOf((await store.read(NOTES, unsafeAsSlug('crew'))).data.team)).toEqual(keys)
+  })
+})

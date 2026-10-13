@@ -1267,6 +1267,12 @@ describe('serializeYaml follows a comment with a keyed list item', () => {
     )
 
     expect(out).toContain('# about B -- do not delete')
+    expect(yamlParse(out)).toEqual({
+      items: [
+        { _key: 'kb', name: 'b', role: 'y' },
+        { _key: 'ka', name: 'a', role: 'x' },
+      ],
+    })
   })
 
   it('keeps the comment when the first save writes keys without moving anything', () => {
@@ -1290,5 +1296,57 @@ describe('serializeYaml follows a comment with a keyed list item', () => {
     expect(out).toContain('# about B -- do not delete')
     expect(out.indexOf('do not delete')).toBeLessThan(out.indexOf('name: b'))
     expect(out.indexOf('do not delete')).toBeGreaterThan(out.indexOf('_key: ka'))
+  })
+
+  it('writes the keys of items that match their un-keyed selves', () => {
+    const unkeyed = `items:
+  - name: a
+  - name: b
+`
+    const data = {
+      items: [
+        { name: 'a', _key: 'ka' },
+        { name: 'b', _key: 'kb' },
+      ],
+    }
+    expect(yamlParse(serializeYaml(data, unkeyed))).toEqual(data)
+  })
+
+  it('writes the key of the copy left when the original is removed, not the original', () => {
+    // Duplicate, then Remove the original: the copy matches the original's un-keyed node.
+    const unkeyed = `team:
+  # about Ada
+  - name: Ada
+`
+    const data = { team: [{ name: 'Ada', _key: 'copy' }] }
+    const out = serializeYaml(data, unkeyed)
+    expect(yamlParse(out)).toEqual(data)
+    expect(out).toContain('# about Ada')
+  })
+
+  it('keeps frontmatter comments on the first save that writes keys', () => {
+    const md = `---
+# keep: owned by legal
+title: Hello # inline note
+team:
+  # about Ada -- do not delete
+  - name: Ada
+  - name: Bo
+---
+
+Body.
+`
+    const data = {
+      title: 'Hello again',
+      team: [
+        { name: 'Ada', _key: 'ka' },
+        { name: 'Bo', _key: 'kb' },
+      ],
+    }
+    const out = serializeFrontmatter('\nBody.\n', data, md, 'md')
+    expect(out).toContain('# keep: owned by legal')
+    expect(out).toContain('# inline note')
+    expect(out).toContain('# about Ada -- do not delete')
+    expect(matter(out).data).toEqual(data)
   })
 })

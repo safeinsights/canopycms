@@ -804,4 +804,27 @@ describe('jumping to a thread on another entry', () => {
     expect(outlined('blocks[1].headline')).toBe(true)
     expect(outlined('blocks[0].headline')).toBe(false)
   })
+
+  it('opens the entry popover, not the field at its stored index, when its item is gone', async () => {
+    // Stored at blocks[0], whose block is now another one; its own block was removed.
+    const orphan = fieldThread('t-gone', page, 'blocks[0].headline', ['k-gone'], 'Check gone')
+    stubApi([orphan], { hello: teamData, landing: pageData })
+    renderEditor(team)
+    await loaded()
+
+    fireEvent.click(screen.getByTestId('comments-button'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Jump to field' }))
+
+    const popover = await screen.findByTestId('entry-comment-button-popover')
+    expect(within(popover).getByText('Check gone')).toBeTruthy()
+    expect(within(popover).getByText('On a removed item')).toBeTruthy()
+    expect(screen.queryByTestId('field-comment-blocks[0].headline-popover')).toBeNull()
+    // Nor does it outline the block now at the stored index, which is another block.
+    const outline = () =>
+      Array.from(
+        document.querySelector('[data-canopy-field="blocks[0].headline"]')?.children ?? [],
+      ).some((child) => (child as HTMLElement).style.outline.includes('solid'))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(outline()).toBe(false)
+  })
 })
