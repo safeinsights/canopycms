@@ -84,7 +84,7 @@ const withdrawBranchHandler = async (
   return {
     ok: true,
     status: 200,
-    data: { branch: toBranchListItem(ctx.services.config, updated.branch) },
+    data: { branch: toBranchListItem(ctx.services.config, updated.branch, req.user) },
   }
 }
 

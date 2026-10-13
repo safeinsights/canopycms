@@ -14,7 +14,7 @@ import { readTrailingSlashEnv, withTrailingSlash } from '../utils/url-prefix'
 import { EDITOR_MODE_HEADER, EDITOR_MODE_MISMATCH_STATUS } from '../operating-mode/editor-mode-check'
 import type { OperatingMode } from '../operating-mode/types'
 
-import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, BranchResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
+import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchMergeResponse } from './branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
@@ -97,7 +97,7 @@ export class CanopyApiClient {
     },
 
     /** PATCH /:branch/access */
-    updateAccess: (params: Record<string, string>, body: UpdateBranchAccessBody, options?: RequestOptions): Promise<BranchResponse> => {
+    updateAccess: (params: Record<string, string>, body: UpdateBranchAccessBody, options?: RequestOptions): Promise<BranchListItemResponse> => {
       return this.request('PATCH', this.buildPath('/:branch/access', params), body, 'standard', options)
     },
   }
@@ -124,7 +124,7 @@ export class CanopyApiClient {
     },
 
     /** GET /:branch/status */
-    getStatus: (params: Record<string, string>, options?: RequestOptions): Promise<BranchResponse> => {
+    getStatus: (params: Record<string, string>, options?: RequestOptions): Promise<BranchListItemResponse> => {
       return this.request('GET', this.buildPath('/:branch/status', params), undefined, 'standard', options)
     },
 

@@ -250,6 +250,8 @@ interface BranchSummary {
   access: {
     users: string[] | undefined
     groups: string[] | undefined
+    withheldUsers: number | undefined
+    withheldGroups: number | undefined
   }
   pullRequestUrl?: string
   pullRequestNumber?: number
@@ -440,6 +442,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         access: {
           users: b.access.allowedUsers,
           groups: b.access.allowedGroups,
+          withheldUsers: b.withheldAccess?.users,
+          withheldGroups: b.withheldAccess?.groups,
         },
         pullRequestUrl: b.pullRequestUrl,
         pullRequestNumber: b.pullRequestNumber,

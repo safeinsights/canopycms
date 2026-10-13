@@ -24,6 +24,7 @@ import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
 import { UserBadge } from './components/UserBadge'
+import { BranchAccessList } from './components/BranchAccessList'
 import { userIdLabel } from './user-display'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isReviewer } from '../authorization/helpers'
@@ -43,6 +44,9 @@ export interface BranchSummary {
   access?: {
     users?: string[]
     groups?: string[]
+    /** Entries the server withheld from this viewer; see `BranchListItem.withheldAccess`. */
+    withheldUsers?: number
+    withheldGroups?: number
   }
   pullRequestUrl?: string
   pullRequestNumber?: number
@@ -212,7 +216,7 @@ export interface BranchManagerProps {
   onGetCommentUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
-/** The access-list lookup when a card has none: its access users show as unnamed. */
+/** The access-list lookup when a card has none: its access users are counted, not named. */
 const noUserLookup = async (): Promise<UserSearchResult | null> => null
 
 const CLOSED_PULL_REQUEST_REASON =
@@ -450,23 +454,13 @@ const BranchCard: React.FC<BranchCardProps> = ({
             )}
           </Group>
           {b.access && (
-            <Group gap={6}>
-              {b.access.users?.map((u) => (
-                <UserBadge
-                  key={u}
-                  userId={u}
-                  getUserMetadata={onGetOwnerMetadata ?? noUserLookup}
-                  variant="avatar-only"
-                  size="xs"
-                  showEmailTooltip={true}
-                />
-              ))}
-              {b.access.groups?.map((g) => (
-                <Badge key={g} variant="outline" color="neutral">
-                  {g}
-                </Badge>
-              ))}
-            </Group>
+            <BranchAccessList
+              users={b.access.users}
+              groups={b.access.groups}
+              withheldUsers={b.access.withheldUsers}
+              withheldGroups={b.access.withheldGroups}
+              getUserMetadata={onGetOwnerMetadata ?? noUserLookup}
+            />
           )}
         </Stack>
         <Group gap={8} wrap="nowrap">

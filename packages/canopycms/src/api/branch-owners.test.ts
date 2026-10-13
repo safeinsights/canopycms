@@ -48,7 +48,7 @@ const registry = createMockRegistry([
   createMockBranchContext({
     branchName: 'feature/shared-group',
     createdBy: 'group-sharer',
-    access: { allowedGroups: ['writers'] },
+    access: { allowedGroups: ['writers', 'other-team'] },
   }),
   createMockBranchContext({
     branchName: 'feature/hidden',
@@ -174,5 +174,39 @@ describe('branch list names the owners of the branches it lists', () => {
     expect(res.ok).toBe(true)
     expect(res.data?.branches).toHaveLength(4)
     expect(res.data?.users).toEqual([])
+  })
+})
+
+describe('branch list sends the ACL only to a requester with the privileged user lookup', () => {
+  const byName = (res: Awaited<ReturnType<typeof list>>, name: string) =>
+    res.data?.branches.find((b) => b.name === name)
+
+  it('sends a non-privileged requester only the entries naming it, and a count of the rest', async () => {
+    const res = await list(editor)
+
+    expect(byName(res, 'feature/shared-user')?.access.allowedUsers).toEqual(['editor1'])
+    expect(byName(res, 'feature/shared-user')?.withheldAccess).toEqual({ users: 1, groups: 0 })
+    expect(byName(res, 'feature/shared-group')?.access.allowedGroups).toEqual(['writers'])
+    expect(byName(res, 'feature/shared-group')?.withheldAccess).toEqual({ users: 0, groups: 1 })
+    const wire = JSON.stringify(res.data)
+    for (const withheld of ['acl-colleague', 'other-team', 'hidden-colleague']) {
+      expect(wire).not.toContain(withheld)
+    }
+    expect(wire).not.toContain('@')
+  })
+
+  it('sends a privileged requester the whole ACL, with nothing withheld', async () => {
+    const res = await list(admin)
+
+    expect(byName(res, 'feature/shared-user')?.access.allowedUsers).toEqual([
+      'editor1',
+      'acl-colleague',
+    ])
+    expect(byName(res, 'feature/shared-group')?.access.allowedGroups).toEqual([
+      'writers',
+      'other-team',
+    ])
+    expect(byName(res, 'feature/hidden')?.access.allowedUsers).toEqual(['hidden-colleague'])
+    expect(byName(res, 'feature/shared-user')?.withheldAccess).toBeUndefined()
   })
 })
