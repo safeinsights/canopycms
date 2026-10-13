@@ -2,7 +2,7 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  CollectionEditor.test.tsx's "the alert above the list > clears when an update starts" failed once in CI (unit shard 1/3, run 38334202071) on a docs-only PR: after "Edit…" was clicked, `findByRole('dialog', { name: /^Edit entry type:/ })` found only an empty Modal root. It passes locally, alone and with its file
+  CollectionEditor.test.tsx's "the alert above the list > clears when an update starts" failed in two of three CI runs of a docs-only PR (unit shard 1/3, runs 38333369829 and 38334202071): after "Edit…" was clicked, `findByRole('dialog', { name: /^Edit entry type:/ })` found only an empty Modal root. It passes locally, alone and with its file
 ---
 
 # Flaky "clears when an update starts" in CollectionEditor.test.tsx
@@ -15,8 +15,8 @@ case of `clears when %s starts`. `editEntryTypeLabelViaUi` (line 102) clicked th
 "Edit…" item, then `entryTypeDialog` (line 80) timed out. The DOM dump showed a
 `mantine-Modal-root` with no content and `data-scroll-locked="1"` on `<body>`.
 
-The PR changed only docs and `.claude/` files. Locally the test passes alone and in the full
-file (96 of 96).
+The PR (#541) changed only docs and `.claude/` files, and other PRs' runs at the same time passed.
+Locally the test passes alone and in the full file (96 of 96).
 
 ## Suspects
 

@@ -96,6 +96,10 @@ surfaces.
 on a re-run. Same shape: the test's `afterEach` removes a tree a git child is still writing, so a
 fix belongs in a shared tmpdir-cleanup helper rather than in each file.
 
+On 2026-10-13, `src/worker/cms-worker-sync-reconcile.test.ts` > "warns once per pair of tips, and
+again when either tip moves" failed the same way on PR #541, a docs-only PR (run 38334797914):
+`ENOTEMPTY … rmdir '…/workspace/remote.git/info'`.
+
 ## Related
 
 - [markdownfield-mdxeditor-mount-flake](resolved/markdownfield-mdxeditor-mount-flake.md) — the other known intermittent in this
