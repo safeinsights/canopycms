@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import { Badge, Group, Skeleton, Text } from '@mantine/core'
+import { Skeleton, Text } from '@mantine/core'
 import type { UserSearchResult } from '../../auth/types'
 import { personName } from '../../auth/person-name'
-import { UserBadge } from './UserBadge'
 
 export interface BranchAccessListProps {
   users?: readonly string[]
@@ -24,9 +23,9 @@ const othersLabel = (people: number, groups: number, afterNames: boolean): strin
 }
 
 /**
- * A branch's access list: the people the viewer's lookup names, the groups they may see, then
- * "and N others" for the rest (docs/ux-guidelines.md, People). An unnamed person is counted, not
- * shown as "Name unavailable".
+ * A branch's access list as one line of text: the people the viewer's lookup names, the groups
+ * they may see, then "and N others" for the rest (docs/ux-guidelines.md, People). An unnamed
+ * person is counted, not shown as "Name unavailable".
  */
 export function BranchAccessList({
   users = [],
@@ -70,44 +69,20 @@ export function BranchAccessList({
 
   if (users.length + groups.length + withheldUsers + withheldGroups === 0) return null
 
-  if (named === null) {
-    return (
-      <Group gap={6} aria-busy="true">
-        {users.map((id) => (
-          <Skeleton key={id} circle height={16} width={16} />
-        ))}
-      </Group>
-    )
-  }
-
-  const otherPeople = users.length - named.length + withheldUsers
-  const shownAny = named.length + groups.length > 0
+  const otherPeople = named ? users.length - named.length + withheldUsers : 0
+  const shown = [...(named ?? []).map((user) => personName(user.id, user.name) ?? ''), ...groups]
+  const others =
+    otherPeople + withheldGroups > 0
+      ? othersLabel(otherPeople, withheldGroups, shown.length > 0)
+      : ''
   return (
-    <Group gap={6}>
-      <Text size="xs" c="dimmed">
-        Access:
-      </Text>
-      {named.map((user) => (
-        <UserBadge
-          key={user.id}
-          userId={user.id}
-          cachedUser={user}
-          getUserMetadata={getUserMetadata}
-          variant="avatar-only"
-          size="xs"
-          showEmailTooltip={true}
-        />
-      ))}
-      {groups.map((g) => (
-        <Badge key={g} variant="outline" color="neutral">
-          {g}
-        </Badge>
-      ))}
-      {otherPeople + withheldGroups > 0 && (
-        <Text size="xs" c="dimmed">
-          {othersLabel(otherPeople, withheldGroups, shownAny)}
-        </Text>
+    <Text size="xs" c="dimmed" aria-busy={named === null || undefined}>
+      {'Access: '}
+      {named === null ? (
+        <Skeleton component="span" display="inline-block" height={10} width={120} />
+      ) : (
+        [shown.join(', '), others].filter(Boolean).join(' ')
       )}
-    </Group>
+    </Text>
   )
 }

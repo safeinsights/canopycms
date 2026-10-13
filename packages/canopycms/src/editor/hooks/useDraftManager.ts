@@ -687,7 +687,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     notifications.hide(saveMayHaveLandedToastId(entry.contentId))
     notifications.show({
       id: saveMayHaveLandedToastId(entry.contentId),
-      title: `"${entry.label}" may already be saved`,
+      title: `No answer saving "${entry.label}"`,
       message: message || SAVE_MAY_HAVE_LANDED_MESSAGE,
       color: 'yellow',
       autoClose: false,
@@ -1013,7 +1013,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         timedOutSavesRef.current.add(currentId)
         notifications.show({
           id: saveTimedOutToastId(currentId),
-          title: `"${entry.label}" may not be saved`,
+          title: `No answer saving "${entry.label}"`,
           message: SAVE_TIMED_OUT_MESSAGE,
           color: 'yellow',
           autoClose: false,

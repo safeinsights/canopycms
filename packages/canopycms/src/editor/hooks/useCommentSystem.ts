@@ -60,7 +60,7 @@ export interface UseCommentSystemReturn {
     itemKeys?: string[],
   ) => Promise<void>
   handleResolveThread: (threadId: string) => Promise<void>
-  loadComments: (branch: string) => Promise<void>
+  loadComments: (branch: string) => Promise<CommentThread[] | undefined>
   handleJumpToField: (entryPath: string, canopyPath: string, threadId: string) => void
   handleJumpToEntry: (entryPath: string, threadId: string) => void
   handleJumpToBranch: (threadId: string) => void
@@ -70,7 +70,7 @@ export interface UseCommentSystemReturn {
 export const COMMENT_NOT_ADDED = "Couldn't add the comment. Try again."
 /** @internal Exported for tests. */
 export const COMMENT_MAY_BE_ADDED =
-  "The server didn't answer, so your comment may have been posted. Check the comments above before sending it again."
+  "The server didn't answer, and the comments don't show yours yet, but it may still be posted. Wait a moment and check before sending it again."
 /** @internal Exported for tests. */
 export const THREAD_NOT_RESOLVED = "Couldn't resolve the thread. Try again."
 
@@ -115,17 +115,18 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // after mount isn't coalesced against the still-in-flight automatic load
   // -- then writes the result into the shared cache so useCommentsData's
   // bound hook (and the effect above) pick it up.
-  // A failed reload logs and keeps the threads already shown.
-  const loadComments = async (branch: string) => {
-    if (!branch) return
+  // A failed reload logs and keeps the threads already shown. Resolves to the reloaded threads.
+  const loadComments = async (branch: string): Promise<CommentThread[] | undefined> => {
+    if (!branch) return undefined
     let fresh: Awaited<ReturnType<typeof fetchCommentsSeedingUsers>>
     try {
       fresh = await fetchCommentsSeedingUsers(apiClient, { cache, mutate: globalMutate }, branch)
     } catch (err) {
       console.error('Failed to load comments:', err)
-      return
+      return undefined
     }
     await globalMutate(commentsKey(branch), fresh, { revalidate: false })
+    return fresh.threads
   }
 
   // Both reject on failure, so the caller keeps the person's text and shows the error where they
@@ -140,12 +141,21 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   ) => {
     const branch = options.branchName
     if (!branch) return
+    const shown = new Set(comments.flatMap((t) => t.comments.map((c) => c.id)))
     const result = await apiClient.comments
       .add({ branch }, { text, threadId, type, entryPath, canopyPath, itemKeys })
       .catch((err: unknown) => (isUnanswered(err) ? 'unanswered' : null))
     if (result === 'unanswered' || (result && isGatewayFailure(result))) {
-      // An unanswered post may have landed: reload so the thread shows it if it did.
-      void loadComments(branch)
+      // An unanswered post that landed shows in the reload as a new comment of theirs with this text.
+      const reloaded = await loadComments(branch)
+      const posted = reloaded?.some(
+        (t) =>
+          (!threadId || t.id === threadId) &&
+          t.comments.some(
+            (c) => !shown.has(c.id) && c.userId === options.currentUser && c.text === text,
+          ),
+      )
+      if (posted) return
       throw new MayHaveLandedError(COMMENT_MAY_BE_ADDED)
     }
     if (!result?.ok) throw new Error(COMMENT_NOT_ADDED)

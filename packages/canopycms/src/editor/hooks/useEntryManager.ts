@@ -15,7 +15,7 @@ import { useApiClient } from '../context'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
 import { RetryToastMessage } from '../components/RetryToastMessage'
-import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
+import { isGatewayFailure, isUnanswered, MayHaveLandedError, UnansweredError } from '../unanswered'
 
 const ENTRIES_LOAD_FAILED_TOAST_ID = 'canopy-entries-load-failed'
 
@@ -643,7 +643,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   }
 
   const renameEntry = async (path: string, newSlug: string): Promise<void> => {
-    const contentId = entriesState.find((e) => e.path === path)?.contentId
+    const renaming = entriesState.find((e) => e.path === path)
+    const contentId = renaming?.contentId
+    const label = renaming?.label ?? path
     const landed = async (newPath: string | undefined) => {
       if (newPath && selectedPath === path) setSelectedPath(newPath)
       await refreshEntries()
@@ -666,20 +668,23 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       await landed(result.data?.newPath)
     } catch (err) {
       console.error(err)
-      if (!isUnanswered(err)) {
-        notifications.show({ message: getErrorMessage(err), color: 'red' })
-        throw err
+      if (!isUnanswered(err)) throw err
+      // Re-listed by content ID: under the new slug it landed, at the old path it did not.
+      const listed = await listEntriesUncommitted(options.branchName).catch(() => null)
+      const now = contentId ? listed?.find((e) => e.contentId === contentId) : undefined
+      if (now && now.path !== path && now.slug === newSlug) {
+        await landed(now.path)
+        return
       }
-      // An unanswered rename that landed lists the entry, by content ID, under the new slug.
-      const listed = await listEntriesUncommitted(options.branchName).catch(() => [])
-      const moved = listed.find(
-        (e) => e.contentId === contentId && e.path !== path && e.slug === newSlug,
+      void refreshEntries().catch(console.error)
+      if (now?.path === path) {
+        throw new Error(
+          `Not renamed: the server didn't answer, and "${label}" still has its old name. Try again.`,
+        )
+      }
+      throw new MayHaveLandedError(
+        `Renaming "${label}" may have gone through even though the server didn't answer. Check the "Content" panel before trying again.`,
       )
-      if (!contentId || !moved) {
-        void refreshEntries().catch(console.error)
-        throw err
-      }
-      await landed(moved.path)
     } finally {
       options.setBusy(false)
     }

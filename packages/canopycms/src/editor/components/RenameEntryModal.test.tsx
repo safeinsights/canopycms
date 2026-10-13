@@ -40,6 +40,21 @@ describe('RenameEntryModal', () => {
     await waitFor(() => expect(document.activeElement).toBe(slugInput()))
   })
 
+  it.each([
+    ['an error in red', { error: 'Not renamed.' }, 'red', 'Not renamed.'],
+    [
+      'an unknown outcome in yellow',
+      { warning: 'May have gone through.' },
+      'yellow',
+      'May have gone through.',
+    ],
+  ])('shows %s', (_, props, colour, text) => {
+    renderModal(props)
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain(text)
+    expect(alert.getAttribute('style')).toContain(colour)
+  })
+
   it('does not offer Rename until the slug changes', () => {
     renderModal()
 

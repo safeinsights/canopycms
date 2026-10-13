@@ -93,12 +93,12 @@ const showSubmitConfirmation = (
             title={`${leftOut.count} ${leftOut.count === 1 ? "entry has unsaved changes that won't" : "entries have unsaved changes that won't"} be submitted`}
             data-testid="submit-unsaved-warning"
           >
-            {describeUnsaved(leftOut)} To include them, cancel and save first. Submitted without
-            them, they stay as drafts while the branch is in review.
+            {describeUnsaved(leftOut)} To include them, cancel and save first. If you submit now,
+            those changes stay unsaved on this branch while it is in review.
           </Alert>
         )}
         <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-          {`Submit "${branchName}" for review?\n\nThis will:\n• Create a pull request for review\n• Change the branch status to "submitted"\n• Notify reviewers of pending changes`}
+          {`Submit "${branchName}" for review?\n\nThis will:\n• Create a pull request for review\n• Change the branch status to "In review"\n• Notify reviewers of pending changes`}
         </Text>
       </Stack>
     ),

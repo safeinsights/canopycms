@@ -35,10 +35,13 @@ export interface UseBranchActionsReturn {
 
 const MAX_LISTED_LABELS = 5
 
-/** "Unsaved changes in: A, B." */
+/** 'Unsaved changes in: "A", "B".' */
 export const describeUnsaved = ({ labels }: UnsavedSummary): string => {
   if (labels.length === 0) return 'You have unsaved changes.'
-  const shown = labels.slice(0, MAX_LISTED_LABELS).join(', ')
+  const shown = labels
+    .slice(0, MAX_LISTED_LABELS)
+    .map((label) => `"${label}"`)
+    .join(', ')
   const rest = labels.length - MAX_LISTED_LABELS
   return `Unsaved changes in: ${shown}${rest > 0 ? ` and ${rest} more` : ''}.`
 }

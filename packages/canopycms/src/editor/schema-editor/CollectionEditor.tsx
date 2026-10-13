@@ -30,7 +30,6 @@ import {
   Badge,
   Tooltip,
 } from '@mantine/core'
-import { notifications } from '@mantine/notifications'
 import {
   IconAlertCircle,
   IconAlertTriangle,
@@ -53,8 +52,6 @@ import type { LogicalPath } from '../../paths/types'
 import { EntryTypeEditor } from './EntryTypeEditor'
 import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal'
 import { ReasonedMenuItem } from '../components/ReasonedMenuItem'
-import { UndoToastMessage } from '../components/UndoToastMessage'
-import { getNotificationDuration } from '../utils/env'
 import { getErrorMessage } from '../../utils/error'
 import type { SchemaOpResult } from '../hooks/useSchemaManager'
 import { slugOf } from './collection-draft'
@@ -166,10 +163,12 @@ export function CollectionEditor({
   const restoredRef = useRef(restored)
   restoredRef.current = restored
   const [showingRestored, setShowingRestored] = useState(false)
-  // Counts openings, so an Undo from a toast that outlived its dialog does nothing.
-  const openingRef = useRef(0)
-  const undoToastIds = useRef(new Set<string>())
-  const removalSeq = useRef(0)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+  // The last staged removal; its Undo stays in the dialog, as a toast's is outside the focus trap.
+  const [stagedRemoval, setStagedRemoval] = useState<{
+    entryType: CreateEntryTypeInput
+    index: number
+  } | null>(null)
 
   const [formData, setFormData] = useState<CollectionFormData>({
     name: '',
@@ -219,7 +218,6 @@ export function CollectionEditor({
 
   useEffect(() => {
     if (isOpen) {
-      openingRef.current += 1
       const prefill = restoredRef.current
       if (editingCollection) {
         setFormData({
@@ -239,6 +237,7 @@ export function CollectionEditor({
         setEntryTypes([])
       }
       setShowingRestored(!!prefill)
+      setStagedRemoval(null)
       setValidationError(null)
       setEntryTypeChanged(false)
       setEntryTypeStatus('')
@@ -252,9 +251,6 @@ export function CollectionEditor({
       setEditingEntryTypeIndex(null)
       setEntryTypeError(null)
       setDeleteEntryTypeModalOpen(false)
-      // Staged removals went with the dialog's input, so there is nothing left to undo.
-      for (const id of undoToastIds.current) notifications.hide(id)
-      undoToastIds.current.clear()
     }
   }, [isOpen, editingCollection])
 
@@ -285,6 +281,7 @@ export function CollectionEditor({
     setSlug(editingCollection ? slugOf(editingCollection.logicalPath) : '')
     setShowingRestored(false)
     onDiscardRestored?.()
+    nameInputRef.current?.focus()
   }, [editingCollection, onDiscardRestored])
 
   const updateField = useCallback(
@@ -519,52 +516,34 @@ export function CollectionEditor({
     ? entryTypes
     : formData.entries
 
-  // Create mode stages entry types, so a removal goes at once with an Undo toast; edit mode's
-  // saves at once with no restore, so it confirms (docs/ux-guidelines.md, Destructive actions).
+  // Create mode stages entry types, so a removal goes at once with an Undo; edit mode's saves at
+  // once with no restore, so it confirms (docs/ux-guidelines.md, Destructive actions).
   const removeStagedEntryType = useCallback(
     (entryType: CreateEntryTypeInput, index: number) => {
       const names = formData.entries.map((et) => et.name)
       const neighbour = names[index + 1] ?? names[index - 1] ?? null
       setFormData((prev) => ({ ...prev, entries: prev.entries.filter((_, i) => i !== index) }))
+      setStagedRemoval({ entryType, index })
       setFocusRequest({ row: neighbour })
-
-      const opening = openingRef.current
-      const id = `canopy-staged-entry-type-removed:${++removalSeq.current}`
-      const label = `"${entryType.name}"`
-      const undo = () => {
-        notifications.hide(id)
-        undoToastIds.current.delete(id)
-        if (openingRef.current !== opening) return
-        // Into the list as it is now, unless an entry type of that name was added since.
-        setFormData((prev) =>
-          prev.entries.some((et) => et.name === entryType.name)
-            ? prev
-            : {
-                ...prev,
-                entries: [...prev.entries.slice(0, index), entryType, ...prev.entries.slice(index)],
-              },
-        )
-        setFocusRequest({ row: entryType.name })
-      }
-      const toast = {
-        id,
-        message: (
-          <UndoToastMessage
-            label={label}
-            onUndo={undo}
-            onHold={() => notifications.update({ ...toast, autoClose: false })}
-            onRelease={() => notifications.update(toast)}
-          />
-        ),
-        autoClose: getNotificationDuration(8000),
-        withCloseButton: true,
-        onClose: () => undoToastIds.current.delete(id),
-      }
-      undoToastIds.current.add(id)
-      notifications.show(toast)
     },
     [formData.entries],
   )
+
+  const undoStagedRemoval = useCallback(() => {
+    if (!stagedRemoval) return
+    const { entryType, index } = stagedRemoval
+    // Into the list as it is now, unless an entry type of that name was added since.
+    setFormData((prev) =>
+      prev.entries.some((et) => et.name === entryType.name)
+        ? prev
+        : {
+            ...prev,
+            entries: [...prev.entries.slice(0, index), entryType, ...prev.entries.slice(index)],
+          },
+    )
+    setStagedRemoval(null)
+    setFocusRequest({ row: entryType.name })
+  }, [stagedRemoval])
 
   const handleRemoveEntryType = useCallback(
     (entryType: ExistingEntryType | CreateEntryTypeInput, index: number) => {
@@ -693,6 +672,8 @@ export function CollectionEditor({
     (formData.name !== editingCollection.name ||
       formData.label !== (editingCollection.label || '') ||
       (!!slug && slug !== slugOf(editingCollection.logicalPath)))
+  const createStaged =
+    !isEditMode && (!!formData.name || !!formData.label || formData.entries.length > 0)
   const dismissLabel = detailsDirty
     ? 'Discard changes'
     : isEditMode && entryTypeChanged
@@ -809,24 +790,35 @@ export function CollectionEditor({
         </Stack>
       )}
 
-      {isEditMode && (
-        // Stays mounted while empty so screen readers announce each change, and holds one line
-        // of text so the message appearing shifts nothing. Only the icon is green: green text
-        // misses 4.5:1, while a non-text graphic needs just 3:1.
-        <Group
-          gap={6}
-          wrap="nowrap"
-          role="status"
-          mih="calc(var(--mantine-font-size-sm) * var(--mantine-line-height-sm))"
-        >
-          {entryTypeStatus && (
-            <>
-              <IconCheck size={14} color="var(--mantine-color-green-8)" aria-hidden />
-              <Text size="sm">{entryTypeStatus}</Text>
-            </>
-          )}
-        </Group>
-      )}
+      {/* Stays mounted while empty so screen readers announce each change, and holds one line
+          of text so the message appearing shifts nothing. Only the icon is green: green text
+          misses 4.5:1, while a non-text graphic needs just 3:1. */}
+      <Group
+        gap={6}
+        wrap="nowrap"
+        role="status"
+        mih="calc(var(--mantine-font-size-sm) * var(--mantine-line-height-sm))"
+      >
+        {isEditMode && entryTypeStatus && (
+          <>
+            <IconCheck size={14} color="var(--mantine-color-green-8)" aria-hidden />
+            <Text size="sm">{entryTypeStatus}</Text>
+          </>
+        )}
+        {!isEditMode && stagedRemoval && (
+          <>
+            <Text size="sm">{`Removed entry type "${stagedRemoval.entryType.name}".`}</Text>
+            <Button
+              size="compact-sm"
+              variant="subtle"
+              onClick={undoStagedRemoval}
+              aria-label={`Undo removing entry type "${stagedRemoval.entryType.name}"`}
+            >
+              Undo
+            </Button>
+          </>
+        )}
+      </Group>
 
       {removeFailure && (
         <Alert
@@ -872,6 +864,7 @@ export function CollectionEditor({
       <Modal
         opened={isOpen}
         onClose={dismissBlocked ? () => {} : onClose}
+        closeOnClickOutside={!detailsDirty && !createStaged}
         title={
           isEditMode
             ? `Edit collection: ${editingCollection?.label || editingCollection?.name}`
@@ -881,12 +874,18 @@ export function CollectionEditor({
       >
         <Stack gap="md">
           {showingRestored && restored && (
-            <Alert icon={<IconRestore size={16} />} color="blue" title="Restored what you entered">
+            <Alert
+              icon={<IconRestore size={16} />}
+              color="blue"
+              title="Restored what you entered"
+              // Blue on its own tint misses 4.5:1 for the title text.
+              styles={{ title: { color: 'var(--mantine-color-text)' } }}
+            >
               <Stack gap="xs" align="flex-start">
                 <Text size="sm">
                   {isEditMode
-                    ? "The server didn't answer your last save, and this collection doesn't show it yet, so your changes are filled in again."
-                    : "The server didn't answer your last create, and the collection isn't listed yet, so what you entered is filled in again."}
+                    ? "The server didn't answer your last save, and this collection doesn't show it, so your changes are filled in again."
+                    : "The server didn't answer your last create, and the collection isn't in the content tree, so what you entered is filled in again."}
                 </Text>
                 <Button size="xs" variant="light" onClick={discardRestored}>
                   Discard changes
@@ -921,6 +920,7 @@ export function CollectionEditor({
 
           {/* Name is metadata in .collection.json, independent of the directory slug */}
           <TextInput
+            ref={nameInputRef}
             label="Name"
             description="Machine-readable identifier (e.g., posts, pages, articles)"
             placeholder="posts"
@@ -968,7 +968,11 @@ export function CollectionEditor({
             <Button
               size="sm"
               variant="subtle"
-              onClick={onClose}
+              onClick={() => {
+                // "Discard changes" over refilled input discards the kept input too.
+                if (detailsDirty && showingRestored && restored) onDiscardRestored?.()
+                onClose()
+              }}
               disabled={isSaving || entryTypeBusy}
             >
               {dismissLabel}

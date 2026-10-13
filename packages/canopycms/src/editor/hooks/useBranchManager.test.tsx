@@ -947,7 +947,7 @@ describe('useBranchManager', () => {
       const { options, body } = await lastDialog()
       expect(options.labels).toEqual({ confirm: 'Submit anyway', cancel: 'Cancel' })
       expect(body).toContain("2 entries have unsaved changes that won't be submitted")
-      expect(body).toContain('Unsaved changes in: Home, About.')
+      expect(body).toContain('Unsaved changes in: "Home", "About".')
       expect(body).toContain('Submit "feature" for review?')
     })
 

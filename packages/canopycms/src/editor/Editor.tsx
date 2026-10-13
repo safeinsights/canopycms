@@ -120,6 +120,7 @@ import {
 import { findFieldTarget, focusFieldTarget } from './field-target'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
+import { MayHaveLandedError } from './unanswered'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -299,7 +300,10 @@ const EditorContent: React.FC<EditorProps> = ({
 
   const [renameModalOpen, setRenameModalOpen] = useState(false)
   const [renamingEntry, setRenamingEntry] = useState<EditorEntry | null>(null)
-  const [renameModalError, setRenameModalError] = useState<string | null>(null)
+  const [renameModalError, setRenameModalError] = useState<{
+    message: string
+    mayHaveLanded: boolean
+  } | null>(null)
   const [renameModalSaving, setRenameModalSaving] = useState(false)
 
   const [deleteCollectionModalOpen, setDeleteCollectionModalOpen] = useState(false)
@@ -1166,8 +1170,10 @@ const EditorContent: React.FC<EditorProps> = ({
       setRenameModalOpen(false)
       setRenamingEntry(null)
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Rename failed'
-      setRenameModalError(errorMessage)
+      setRenameModalError({
+        message: err instanceof Error ? err.message : 'Rename failed',
+        mayHaveLanded: err instanceof MayHaveLandedError,
+      })
     } finally {
       setRenameModalSaving(false)
     }
@@ -2034,7 +2040,8 @@ const EditorContent: React.FC<EditorProps> = ({
                 setRenameModalError(null)
               }}
               isSaving={renameModalSaving}
-              error={renameModalError}
+              error={renameModalError?.mayHaveLanded ? null : renameModalError?.message}
+              warning={renameModalError?.mayHaveLanded ? renameModalError.message : null}
               existingSlugs={renameExistingSlugs}
               previewPath={(slug) =>
                 previewPathFor({

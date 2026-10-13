@@ -13,6 +13,7 @@ import { notifications } from '@mantine/notifications'
 import { UnansweredError } from '../unanswered'
 import type React from 'react'
 import { ApiTimeoutError, WRITE_TIMED_OUT_MESSAGE } from '../../api/request-deadline'
+import { MayHaveLandedError } from '../unanswered'
 import type { RetryToastMessageProps } from '../components/RetryToastMessage'
 import {
   setupMockApiClient,
@@ -1289,7 +1290,6 @@ describe('useEntryManager', () => {
 
       it('does not count a rename to another slug as this one landing', async () => {
         const { result, opened } = await mountWithOpenedEntry()
-        act(() => result.current.setSelectedPath(opened.path))
         mockClient.content.renameEntry.mockRejectedValueOnce(
           new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
         )
@@ -1301,24 +1301,42 @@ describe('useEntryManager', () => {
           }),
         )
 
+        let err: unknown
         await act(async () => {
-          await expect(result.current.renameEntry(opened.path, 'renamed')).rejects.toThrow(
-            WRITE_TIMED_OUT_MESSAGE,
-          )
+          err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
         })
+        expect(err).toBeInstanceOf(MayHaveLandedError)
+        expect(String(err)).toContain(`Renaming "${opened.label}" may have gone through`)
       })
 
-      it('rejects with the unknown outcome when the entry is still at its old path', async () => {
+      it('says it was not renamed when the entry is still at its old path', async () => {
         const { result, opened } = await mountWithOpenedEntry()
         mockClient.content.renameEntry.mockRejectedValueOnce(
           new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
         )
 
+        let err: unknown
         await act(async () => {
-          await expect(result.current.renameEntry(opened.path, 'renamed')).rejects.toThrow(
-            WRITE_TIMED_OUT_MESSAGE,
-          )
+          err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
         })
+        expect(err).not.toBeInstanceOf(MayHaveLandedError)
+        expect(String(err)).toContain(
+          `Not renamed: the server didn't answer, and "${opened.label}"`,
+        )
+      })
+
+      it('leaves the outcome unknown when the entries cannot be re-read', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        mockClient.content.renameEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
+        )
+        mockClient.entries.list.mockRejectedValue(new Error('offline'))
+
+        let err: unknown
+        await act(async () => {
+          err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
+        })
+        expect(err).toBeInstanceOf(MayHaveLandedError)
       })
     })
 

@@ -732,7 +732,8 @@ describe('CollectionEditor', () => {
       expect(screen.queryByTestId('confirm-delete-modal')).toBeNull()
       expect(onRemoveEntryType).not.toHaveBeenCalled()
 
-      await user.click(await screen.findByRole('button', { name: 'Undo removing "page"' }))
+      expect(screen.getByRole('status').textContent).toContain('Removed entry type "page".')
+      await user.click(screen.getByRole('button', { name: 'Undo removing entry type "page"' }))
 
       await screen.findByText('page')
       const rows = screen.getAllByRole('button', { name: /^Actions for / })
@@ -748,53 +749,52 @@ describe('CollectionEditor', () => {
       )
     })
 
-    it('create mode: gives each removal its own Undo, even of a re-added name', async () => {
+    it.each([
+      ['closes on an outside click with nothing typed', false],
+      ['keeps typed input through an outside click', true],
+    ])('create mode: %s', async (_, typed) => {
       const user = userEvent.setup()
-      renderCollectionEditor()
-      await addEntryTypeViaUi(user, 'article')
-      await addEntryTypeViaUi(user, 'page')
-      await screen.findByText('page')
-      const removePage = async () => {
-        await openRowMenu(user, 'page')
-        await user.click(await screen.findByRole('menuitem', { name: 'Remove' }))
-        await waitFor(() => expect(screen.queryByText('page')).toBeNull())
-        // Focus moves to the neighbouring row after the removal; typing before then loses keys.
-        await waitFor(() =>
-          expect(document.activeElement).toBe(
-            screen.getByRole('button', { name: 'Actions for article' }),
-          ),
-        )
-      }
+      const onClose = vi.fn()
+      renderCollectionEditor({ onClose })
+      if (typed) await user.type(screen.getByLabelText(/^Name/), 'posts')
 
-      await removePage()
-      await addEntryTypeViaUi(user, 'page')
-      await screen.findByText('page')
-      await removePage()
+      const overlay = document.querySelector('.mantine-Modal-overlay')
+      if (!overlay) throw new Error('no modal overlay')
+      await user.click(overlay)
 
-      await waitFor(() =>
-        expect(screen.getAllByRole('button', { name: 'Undo removing "page"' })).toHaveLength(2),
-      )
+      expect(onClose).toHaveBeenCalledTimes(typed ? 0 : 1)
     })
 
-    it("create mode: an Undo toast goes with its dialog's input", async () => {
+    it('create mode: offers Undo for the latest removal, until the dialog closes', async () => {
       const user = userEvent.setup()
       const { rerender, props } = renderCollectionEditor()
       await addEntryTypeViaUi(user, 'article')
       await addEntryTypeViaUi(user, 'page')
-      await screen.findByText('page')
-      await openRowMenu(user, 'page')
-      await user.click(await screen.findByRole('menuitem', { name: 'Remove' }))
-      await screen.findByRole('button', { name: 'Undo removing "page"' })
+      await addEntryTypeViaUi(user, 'author')
+      await screen.findByText('author')
+      const remove = async (name: string) => {
+        await openRowMenu(user, name)
+        await user.click(await screen.findByRole('menuitem', { name: 'Remove' }))
+        await waitFor(() => expect(screen.queryByText(name)).toBeNull())
+      }
+
+      await remove('page')
+      await remove('author')
+
+      expect(screen.queryByRole('button', { name: 'Undo removing entry type "page"' })).toBeNull()
+      expect(screen.getByRole('button', { name: 'Undo removing entry type "author"' })).toBeTruthy()
 
       rerender(
         <CanopyCMSProvider>
           <CollectionEditor {...props} isOpen={false} />
         </CanopyCMSProvider>,
       )
-
-      await waitFor(() =>
-        expect(screen.queryByRole('button', { name: 'Undo removing "page"' })).toBeNull(),
+      rerender(
+        <CanopyCMSProvider>
+          <CollectionEditor {...props} isOpen={true} />
+        </CanopyCMSProvider>,
       )
+      expect(screen.queryByRole('button', { name: /^Undo removing/ })).toBeNull()
     })
 
     describe('sub-dialogs', () => {
@@ -1779,6 +1779,37 @@ describe('CollectionEditor', () => {
       expect((screen.getByLabelText(/^Label/) as HTMLInputElement).value).toBe('Blog posts')
       expect((screen.getByLabelText(/^Slug/) as HTMLInputElement).value).toBe('blog')
       expect(screen.getByText('Restored what you entered')).toBeTruthy()
+    })
+
+    it('discards the kept input with the footer\'s "Discard changes" too', async () => {
+      const user = userEvent.setup()
+      const onDiscardRestored = vi.fn()
+      const onClose = vi.fn()
+      renderCollectionEditor({
+        editingCollection: {
+          name: 'posts',
+          label: 'Posts',
+          logicalPath: unsafeAsLogicalPath('content/posts'),
+          entries: [{ ...staged, usageCount: 0 }],
+        },
+        restored: { label: 'Blog posts' },
+        onDiscardRestored,
+        onClose,
+      })
+
+      await user.click(footerButton('Discard changes'))
+
+      expect(onDiscardRestored).toHaveBeenCalledTimes(1)
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('moves focus to Name once the restored input is discarded', async () => {
+      const user = userEvent.setup()
+      renderCollectionEditor({ restored: { name: 'posts' }, onDiscardRestored: vi.fn() })
+
+      await user.click(screen.getByRole('button', { name: 'Discard changes' }))
+
+      expect(document.activeElement).toBe(screen.getByLabelText(/^Name/))
     })
 
     it('keeps what was typed when the restored input is dropped while open', async () => {

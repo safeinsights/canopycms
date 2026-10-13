@@ -1530,7 +1530,7 @@ describe('BranchManager', () => {
         user: creatorUser,
       })
 
-      expect(await screen.findByText('1 person')).toBeDefined()
+      expect(await screen.findByText('Access: 1 person')).toBeDefined()
       expect(screen.queryByText('Name unavailable')).toBeNull()
       expect(container.textContent).not.toContain('acl-user')
     })
@@ -1545,7 +1545,12 @@ describe('BranchManager', () => {
             name: 'feature/shared',
             status: 'editing',
             createdBy: 'owner1',
-            access: { users: ['known', 'unknown'], withheldUsers: 2, withheldGroups: 1 },
+            access: {
+              users: ['known', 'unknown'],
+              groups: ['team-a'],
+              withheldUsers: 2,
+              withheldGroups: 1,
+            },
           },
         ],
         mode: 'prod',
@@ -1553,8 +1558,7 @@ describe('BranchManager', () => {
         onGetOwnerMetadata,
       })
 
-      expect(await screen.findByText('and 4 others')).toBeDefined()
-      expect(screen.getByTitle('Name of known')).toBeDefined()
+      expect(await screen.findByText('Access: Name of known, team-a and 4 others')).toBeDefined()
       expect(screen.queryByText('Name unavailable')).toBeNull()
     })
   })

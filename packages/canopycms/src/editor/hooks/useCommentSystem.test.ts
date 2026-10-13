@@ -414,25 +414,58 @@ describe('useCommentSystem', () => {
     })
   })
 
-  it('says a timed-out post may have landed, and reloads the threads to show it if it did', async () => {
-    const landed = { ...mockComments[0], id: 'landed-thread' }
-    mockClient.comments.list
-      .mockResolvedValueOnce({ ok: true, status: 200, data: { threads: [], users: [] } })
-      .mockResolvedValueOnce({ ok: true, status: 200, data: { threads: [landed], users: [] } })
-    mockClient.comments.add.mockRejectedValueOnce(
-      new ApiTimeoutError('POST', '/main/comments', 75_000),
-    )
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
-    await waitFor(() => expect(mockClient.comments.list).toHaveBeenCalledTimes(1))
+  it.each([
+    ['their new comment with this text', 'Test comment', 'landed-comment', 'user1', true],
+    ['a comment with other text', 'Other text', 'landed-comment', 'user1', false],
+    ["someone else's comment", 'Test comment', 'landed-comment', 'user2', false],
+    ['only a comment already shown', 'Test comment', 'shown-comment', 'user1', false],
+  ])(
+    'after a timed-out post, a reload showing %s settles it: %s',
+    async (_, text, commentId, userId, posted) => {
+      const shownThread = {
+        ...mockComments[0],
+        id: 'shown-thread',
+        comments: [{ ...mockComments[0].comments[0], id: 'shown-comment', text: 'Test comment' }],
+      }
+      const landed = {
+        ...mockComments[0],
+        id: 'landed-thread',
+        comments: [{ ...mockComments[0].comments[0], id: commentId, text, userId }],
+      }
+      mockClient.comments.list
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { threads: [shownThread], users: [] },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: {
+            threads: commentId === 'shown-comment' ? [shownThread] : [shownThread, landed],
+            users: [],
+          },
+        })
+      mockClient.comments.add.mockRejectedValueOnce(
+        new ApiTimeoutError('POST', '/main/comments', 75_000),
+      )
+      const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.comments).toHaveLength(1))
 
-    await act(async () => {
-      const err = await result.current.handleAddComment('Test comment', 'branch').catch((e) => e)
-      expect(err).toBeInstanceOf(MayHaveLandedError)
-      expect(err).toHaveProperty('message', COMMENT_MAY_BE_ADDED)
-    })
+      let err: unknown
+      await act(async () => {
+        err = await result.current.handleAddComment('Test comment', 'branch').catch((e) => e)
+      })
 
-    await waitFor(() => expect(result.current.comments).toEqual([landed]))
-  })
+      if (posted) {
+        expect(err).toBeUndefined()
+      } else {
+        expect(err).toBeInstanceOf(MayHaveLandedError)
+        expect(err).toHaveProperty('message', COMMENT_MAY_BE_ADDED)
+      }
+      expect(mockClient.comments.list).toHaveBeenCalledTimes(2)
+    },
+  )
 
   it("says a post answered by a gateway's 5xx page may have been posted", async () => {
     mockClient.comments.add.mockResolvedValueOnce(await gatewayPage(504))

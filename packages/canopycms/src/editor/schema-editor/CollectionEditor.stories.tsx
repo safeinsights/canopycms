@@ -90,3 +90,38 @@ export const EditUnanswered: Story = {
     ],
   },
 }
+
+// A create the server never answered and the content tree doesn't show, filled in again.
+export const CreateRestored: Story = {
+  args: {
+    editingCollection: null,
+    restored: {
+      name: 'notes',
+      label: 'Notes',
+      entries: [{ name: 'note', format: 'json', schema: 'postSchema' }],
+    },
+    onDiscardRestored: () => {},
+  },
+}
+
+// The footer's "Discard changes" drops the refilled details save's kept input too.
+export const EditRestored: Story = {
+  args: {
+    editingCollection: collection,
+    restored: { label: 'Articles', slug: 'articles' },
+    onDiscardRestored: () => {},
+  },
+}
+
+export const CreateWithStagedTypes: Story = {
+  args: {
+    editingCollection: null,
+    restored: {
+      name: 'notes',
+      entries: [
+        { name: 'note', format: 'json', schema: 'postSchema' },
+        { name: 'memo', format: 'mdx', schema: 'pageSchema' },
+      ],
+    },
+  },
+}
