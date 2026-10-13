@@ -3,8 +3,9 @@ import { CLOSE_WAITS_FOR_WRITE } from './comments/use-tracked-writes'
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { DEFAULT_THEME, defaultCssVariablesResolver, MantineProvider } from '@mantine/core'
+import { DEFAULT_THEME, defaultCssVariablesResolver } from '@mantine/core'
 import { CommentsPanel } from './CommentsPanel'
+import { CanopyCMSProvider } from './theme'
 import type { CommentThread } from '../comment-store'
 
 const showNotification = vi.hoisted(() => vi.fn())
@@ -45,7 +46,7 @@ beforeAll(() => {
 })
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
-  <MantineProvider>{children}</MantineProvider>
+  <CanopyCMSProvider>{children}</CanopyCMSProvider>
 )
 
 describe('CommentsPanel', () => {

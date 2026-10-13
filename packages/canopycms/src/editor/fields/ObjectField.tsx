@@ -6,6 +6,7 @@ import type { FieldConfig } from '../../config'
 import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
 import { useFieldCommentControl } from '../comments/field-comment-context'
+import { EDITOR_ACTIONS } from '../copy'
 import { groupDescriptionProps } from './FieldDescription'
 import { FieldLabel } from './FieldLabel'
 
@@ -26,13 +27,7 @@ export interface ObjectFieldProps {
   renderField: RenderField
   path: Array<string | number>
   dataCanopyField?: string
-  /**
-   * When set, shows a "Clear" affordance that resets this field to unset
-   * (`undefined`) — used by `FormRenderer.tsx`'s non-list `case 'object'` so
-   * a required child can't strand the field present-but-invalid with no way
-   * back to "not filled in". Omitted for object-list items, which remove via
-   * the list's own per-item button.
-   */
+  /** Set, shows a gray "Clear" resetting the field to `undefined`; omitted for list items. */
   onRemove?: () => void
 }
 
@@ -56,7 +51,7 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
     <Paper
       withBorder
       p="md"
-      bg="gray.0"
+      bg="var(--canopy-surface-subtle)"
       data-canopy-field={dataCanopyField ?? formatCanopyPath(path)}
       shadow="xs"
       {...groupDescriptionProps(descriptionBaseId, description)}
@@ -70,8 +65,8 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
           commentControl={commentControl}
           actions={
             onRemove && (
-              <Button variant="subtle" color="red" onClick={onRemove}>
-                Clear
+              <Button variant="subtle" color="gray" onClick={onRemove}>
+                {EDITOR_ACTIONS.clear}
               </Button>
             )
           }

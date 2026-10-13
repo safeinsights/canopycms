@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, render, screen, cleanup, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { MantineProvider } from '@mantine/core'
 import { EditorSidebar, type EditorSidebarProps } from './EditorSidebar'
+import { CanopyCMSProvider } from '../theme'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
-  <MantineProvider>{children}</MantineProvider>
+  <CanopyCMSProvider>{children}</CanopyCMSProvider>
 )
 
 const defaultProps: EditorSidebarProps = {

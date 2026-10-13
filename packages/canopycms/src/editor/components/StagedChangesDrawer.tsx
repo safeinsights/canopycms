@@ -155,7 +155,7 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
             bottom: 0,
             zIndex: 1,
             background: 'var(--mantine-color-body)',
-            borderTop: '1px solid var(--mantine-color-gray-3)',
+            borderTop: '1px solid var(--mantine-color-default-border)',
           }}
         >
           <Text size="sm" c="dimmed">

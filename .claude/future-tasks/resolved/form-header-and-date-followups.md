@@ -2,15 +2,17 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Code follow-ups from the form header and date picker PR: the date-time field must take its 12/24-hour clock from the locale and show the time zone, date-only values must read as local midnight, icon-only tooltips must open on focus, toolbar separators dangle at a wrap, and the header's "Outline" text clips in a very narrow pane
+  RESOLVED (2026-10-13) — the date-time field follows the locale's 12- or 24-hour clock and reads a date-only value as local midnight; Tooltips open on focus theme-wide; "Outline" is icon-only under a 280px header; `fields/toolbar-wrap.ts` hides a separator at a row's edge
 ---
 # Form header and date picker: follow-ups
+
+## Status: RESOLVED 2026-10-13
 
 ## Priority: P3 [BOTH]
 
 From the reviews of the form header and date picker PR (`editor/FormHeader.tsx`,
 `editor/fields/DateTimeField.tsx`). The rules are in
-[docs/ux-guidelines.md](../../docs/ux-guidelines.md#fields).
+[docs/ux-guidelines.md](../../../docs/ux-guidelines.md#fields).
 
 ## Date picker
 
@@ -20,11 +22,11 @@ From the reviews of the form header and date picker PR (`editor/FormHeader.tsx`,
 - **Date-only values.** A stored `2024-05-01` parses as UTC midnight, so it shows as the previous
   evening west of UTC. Read a date-only string as local midnight.
 
-Placeholder contrast belongs to [contrast-beyond-the-ruled-colours.md](contrast-beyond-the-ruled-colours.md).
+Placeholder contrast belongs to [contrast-beyond-the-ruled-colours.md](../contrast-beyond-the-ruled-colours.md).
 
 ## Tooltips on focus
 
-[Accessibility](../../docs/ux-guidelines.md#accessibility) has every icon-only control's Tooltip
+[Accessibility](../../../docs/ux-guidelines.md#accessibility) has every icon-only control's Tooltip
 open on focus as well as hover. Mantine's default is hover only, and most editor Tooltips pass no
 `events`; set the default once in `theme.tsx`'s `components`.
 

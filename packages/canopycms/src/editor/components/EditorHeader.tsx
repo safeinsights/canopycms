@@ -368,9 +368,12 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Menu.Divider />
                   <Menu.Label>Recently modified</Menu.Label>
                   {editedFiles.slice(0, 3).length === 0 ? (
-                    <Text size="sm" c="dimmed" px="sm" py={6}>
+                    <ReasonedMenuItem
+                      data-testid="recent-entries-empty"
+                      blockedReason="Entries you edit on this branch appear here."
+                    >
                       No recently modified entries
-                    </Text>
+                    </ReasonedMenuItem>
                   ) : (
                     editedFiles.slice(0, 3).map((file) => (
                       <Menu.Item key={file.path} onClick={() => onEntrySelect(file.path)}>
@@ -438,9 +441,12 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     <Menu.Label>{`${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'} modified`}</Menu.Label>
                   )}
                   {editedFiles.length === 0 ? (
-                    <Text size="sm" c="dimmed" px="sm" py={6}>
+                    <ReasonedMenuItem
+                      data-testid="edited-entries-empty"
+                      blockedReason="Entries you edit on this branch appear here."
+                    >
                       No edited entries yet
-                    </Text>
+                    </ReasonedMenuItem>
                   ) : (
                     editedFiles.map((file) => (
                       <Menu.Item
@@ -473,9 +479,15 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Indicator
                     label={<span data-testid="comments-unresolved-count">{unresolvedCount}</span>}
                     size={18}
-                    color="brand"
+                    withBorder
                     disabled={unresolvedCount === 0}
-                    styles={{ indicator: { pointerEvents: 'none' } }}
+                    styles={{
+                      indicator: {
+                        pointerEvents: 'none',
+                        background: 'var(--canopy-count-bg)',
+                        color: 'var(--mantine-color-text)',
+                      },
+                    }}
                   >
                     <Button
                       variant="outline"
@@ -505,7 +517,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Text
                     size="xs"
                     lh={1.2}
-                    c={draftStorageFailed ? 'red.9' : 'dimmed'}
+                    c={draftStorageFailed ? 'var(--canopy-danger-text)' : 'dimmed'}
                     data-testid="unsaved-indicator"
                   >
                     {draftStorageFailed
@@ -520,13 +532,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 </Tooltip>
               )}
             </Box>
-            <Tooltip
-              label={saveBlockedReason}
-              disabled={!saveBlocked || busy}
-              events={{ hover: true, focus: true, touch: true }}
-              multiline
-              maw={280}
-            >
+            <Tooltip label={saveBlockedReason} disabled={!saveBlocked || busy} multiline maw={280}>
               <Button
                 data-testid="save-button"
                 variant="light"
@@ -599,7 +605,6 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                           : ''
                   }
                   disabled={canPerformAction}
-                  events={{ hover: true, focus: true, touch: true }}
                   multiline
                   maw={320}
                 >

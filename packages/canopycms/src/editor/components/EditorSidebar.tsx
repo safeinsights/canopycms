@@ -15,8 +15,6 @@ import type { PaneLayout } from '../EditorPanes'
 import type { InexactMark } from '../preview-marks'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 
-const ICON_TOOLTIP_EVENTS = { hover: true, focus: true, touch: true } as const
-
 export interface EditorSidebarProps {
   /**
    * Current layout mode (side or stacked).
@@ -155,7 +153,7 @@ export function EditorSidebar({
       }}
     >
       <Stack gap="sm" align="center" style={{ width: '100%', paddingTop: 6 }}>
-        <Tooltip label="Toggle layout" position="left" events={ICON_TOOLTIP_EVENTS}>
+        <Tooltip label="Toggle layout" position="left">
           <ActionIcon
             variant="subtle"
             size="lg"
@@ -222,12 +220,7 @@ export function EditorSidebar({
           onChange={setSettingsOpened}
           {...settingsMenuFocus.menu}
         >
-          <Tooltip
-            label="Settings"
-            position="left"
-            events={ICON_TOOLTIP_EVENTS}
-            disabled={settingsOpened}
-          >
+          <Tooltip label="Settings" position="left" disabled={settingsOpened}>
             <Menu.Target>
               <ActionIcon
                 ref={settingsMergedRef}

@@ -28,6 +28,7 @@ import { userIdLabel } from './user-display'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
+import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
 import { branchStatusPresentation } from './branch-status'
@@ -411,7 +412,12 @@ const BranchCard: React.FC<BranchCardProps> = ({
             )}
           </Group>
           {b.syncStatus === 'sync-failed' && b.syncFailureReason && (
-            <Text size="xs" c="red" maw={480} data-testid={`sync-failed-reason-${b.name}`}>
+            <Text
+              size="xs"
+              c="var(--canopy-danger-text)"
+              maw={480}
+              data-testid={`sync-failed-reason-${b.name}`}
+            >
               {b.syncFailureReason}
               {b.status === 'submitted' && ' Withdraw it from review to make changes.'}
             </Text>
@@ -483,7 +489,6 @@ const BranchCard: React.FC<BranchCardProps> = ({
             <Tooltip
               label={primary.blockedReason}
               disabled={!primary.blockedReason}
-              events={{ hover: true, focus: true, touch: true }}
               multiline
               maw={280}
             >
@@ -543,8 +548,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 {showDelete && (
                   <>
                     {(menuActions.length > 0 || showViewPullRequest) && <Menu.Divider />}
-                    <ReasonedMenuItem
-                      color="red"
+                    <DestructiveMenuItem
                       data-testid={`delete-branch-button-${b.name}`}
                       blockedReason={
                         b.status === 'submitted' || b.status === 'approved'
@@ -554,7 +558,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
                       onClick={() => onDelete?.(b.name)}
                     >
                       Delete branch
-                    </ReasonedMenuItem>
+                    </DestructiveMenuItem>
                   </>
                 )}
               </Menu.Dropdown>

@@ -18,7 +18,15 @@ export interface DateTimeFieldProps {
   readOnly?: boolean
 }
 
-const VALUE_FORMAT = 'D MMM YYYY, HH:mm:ss'
+/** Whether the locale uses a 12-hour clock, as the dropdown's native time input then does. */
+const usesTwelveHourClock = (): boolean => {
+  const { hour12, hourCycle } = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+  }).resolvedOptions()
+  return hour12 ?? (hourCycle === 'h11' || hourCycle === 'h12')
+}
+
+const valueFormat = (): string => `D MMM YYYY, ${usesTwelveHourClock() ? 'h:mm:ss A' : 'HH:mm:ss'}`
 const REMOVE_LABEL = 'Remove date and time'
 
 // The picker's own controls are icon-only or unlabelled without these.
@@ -33,9 +41,33 @@ const CALENDAR_LABELS = {
   yearLevelControl: 'Choose a year',
 }
 
-/** The stored ISO string as a Date, or null for '' or an unparsable value. */
+const DATE_PART = /^(\d{4})-(\d{2})-(\d{2})([Tt ]|$)/
+
+/** Whether the written year, month and day name a real day; `Date` rolls 30 Feb on to 1 Mar. */
+const isCalendarDate = (year: number, month: number, day: number): boolean => {
+  const lastOfMonth = new Date(0)
+  lastOfMonth.setUTCFullYear(year, month, 0)
+  return month >= 1 && month <= 12 && day >= 1 && day <= lastOfMonth.getUTCDate()
+}
+
+/**
+ * The stored value as a Date, or null for '', an unparsable value or a day that does not exist. A
+ * date-only value is local midnight; `Date` reads UTC midnight, the evening before west of UTC.
+ */
 const toDate = (iso: string): Date | null => {
   if (!iso) return null
+  const datePart = DATE_PART.exec(iso)
+  if (datePart) {
+    const [year, month, day] = datePart.slice(1, 4).map(Number)
+    if (!isCalendarDate(year, month, day)) return null
+    if (datePart[4] === '') {
+      // setFullYear, since the constructor maps years 0-99 to 1900-1999.
+      const local = new Date(0)
+      local.setFullYear(year, month - 1, day)
+      local.setHours(0, 0, 0, 0)
+      return local
+    }
+  }
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? null : date
 }
@@ -54,7 +86,7 @@ const zoneName = (at: Date): string | undefined =>
  * `Date.prototype.toISOString()` produces and `validation/entry-validator.ts`'s
  * datetime check (`Date.parse`) accepts. Empty string means "not set".
  *
- * Only a pick or Remove writes, so a loaded value saves back unchanged, unparsable ones included.
+ * Only a pick or Remove writes, so a loaded value, date-only or unparsable, saves back unchanged.
  * A pick keeps seconds (`withSeconds`).
  */
 export const DateTimeField: React.FC<DateTimeFieldProps> = ({
@@ -72,6 +104,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
   const date = toDate(value)
   const zone = zoneName(date ?? new Date())
   const zoneNote = zone ? `In your time zone (${zone}).` : undefined
+  const format = valueFormat()
 
   return (
     <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
@@ -79,7 +112,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
         ref={triggerRef}
         id={inputId}
         // The label alone would name the trigger; a screen reader also needs the value.
-        aria-label={`${label ?? 'Date and time'}, ${date ? dayjs(date).format(VALUE_FORMAT) : 'not set'}`}
+        aria-label={`${label ?? 'Date and time'}, ${date ? dayjs(date).format(format) : 'not set'}`}
         description={[description, zoneNote].filter(Boolean).join(' ') || undefined}
         size="sm"
         value={date}
@@ -87,7 +120,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
           if (!readOnly) onChange(next ? next.toISOString() : '')
         }}
         withSeconds
-        valueFormat={VALUE_FORMAT}
+        valueFormat={format}
         placeholder={readOnly ? undefined : 'Pick a date and time'}
         ariaLabels={CALENDAR_LABELS}
         timeInputProps={{ 'aria-label': 'Time' }}

@@ -1,18 +1,29 @@
 import React, { useEffect } from 'react'
-import { cleanup, render, waitFor } from '@testing-library/react'
+import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import {
   ActionIcon,
   Alert,
+  Badge,
   Button,
   DEFAULT_THEME,
   Drawer,
+  Menu,
   Modal,
   Notification,
+  TextInput,
+  Tooltip,
   getDefaultZIndex,
+  defaultCssVariablesResolver,
+  getPrimaryShade,
+  mergeMantineTheme,
+  virtualColor,
+  type MantineColorsTuple,
 } from '@mantine/core'
 import { modals } from '@mantine/modals'
-import { CanopyCMSProvider } from './theme'
+import { DestructiveMenuItem } from './components/DestructiveMenuItem'
+import { composite, contrastRatio } from './contrast'
+import { CanopyCMSProvider, createCanopyTheme } from './theme'
 import { openConfirm } from './utils/confirm-modal'
 
 const originalMatchMedia = window.matchMedia
@@ -316,6 +327,56 @@ describe('CanopyCMSProvider filled button contrast', () => {
     )
   })
 
+  it('keeps white text on the primary fill when autoContrast would pick black for a light brand', () => {
+    const { getByText } = render(
+      <CanopyCMSProvider colors={{ brand: '#facc15' }} themeOverride={{ autoContrast: true }}>
+        <Button>Save</Button>
+        <Badge color="brand">Current</Badge>
+      </CanopyCMSProvider>,
+    )
+    expect(buttonVar(getByText('Save').closest('button'), '--button-color')).toBe(
+      'var(--mantine-color-white)',
+    )
+    expect(
+      (getByText('Current').closest('.mantine-Badge-root') as HTMLElement).style.getPropertyValue(
+        '--badge-color',
+      ),
+    ).toBe('var(--mantine-color-white)')
+  })
+
+  it('fills a primary Button and Badge, named or by default, with the primary fill', () => {
+    const { getByText } = render(
+      <CanopyCMSProvider>
+        <Button>Save</Button>
+        <Button color="brand">Submit for review</Button>
+        <Button color="brand" variant="light">
+          Open
+        </Button>
+        <Badge>Current</Badge>
+        <Badge variant="light">Editing</Badge>
+        <Button color="brand.6">Shaded</Button>
+      </CanopyCMSProvider>,
+    )
+    for (const name of ['Save', 'Submit for review']) {
+      const button = getByText(name).closest('button')
+      expect(buttonVar(button, '--button-bg')).toBe('var(--canopy-primary-fill)')
+      expect(buttonVar(button, '--button-hover')).toBe('var(--canopy-primary-fill-hover)')
+    }
+    expect(buttonVar(getByText('Open').closest('button'), '--button-bg')).not.toBe(
+      'var(--canopy-primary-fill)',
+    )
+    const badgeBg = (name: string) =>
+      (getByText(name).closest('.mantine-Badge-root') as HTMLElement).style.getPropertyValue(
+        '--badge-bg',
+      )
+    expect(badgeBg('Current')).toBe('var(--canopy-primary-fill)')
+    expect(badgeBg('Editing')).not.toBe('var(--canopy-primary-fill)')
+    // A named shade is the caller's choice.
+    expect(buttonVar(getByText('Shaded').closest('button'), '--button-bg')).toBe(
+      'var(--mantine-color-brand-6)',
+    )
+  })
+
   it('keeps the shades when an adopter overrides another Button prop, not its vars', () => {
     const { getByText } = render(
       <CanopyCMSProvider
@@ -376,28 +437,377 @@ describe('CanopyCMSProvider light yellow alert contrast', () => {
   })
 })
 
-describe('CanopyCMSProvider dimmed text', () => {
-  const dimmedIn = (scheme: 'light' | 'dark') => {
-    const css = Array.from(document.querySelectorAll('style'))
-      .map((style) => style.textContent ?? '')
-      .join('\n')
-    const rule = css
-      .split('}')
-      .find(
-        (block) =>
-          block.includes(`data-mantine-color-scheme="${scheme}"`) &&
-          block.includes('--mantine-color-dimmed'),
-      )
-    return rule?.match(/--mantine-color-dimmed:\s*([^;]+);/)?.[1]
-  }
+/** The full theme the provider builds, for the colours its variables name. */
+const canopyTheme = mergeMantineTheme(DEFAULT_THEME, createCanopyTheme())
 
-  it('sets the dimmed colour to gray.7 in light mode and dark.1 in dark mode', () => {
+/**
+ * Every variable in force for one scheme: what the provider's style tag writes, over Mantine's
+ * defaults, which the tag leaves out where the provider's value is the same.
+ */
+const variablesIn = (scheme: 'light' | 'dark'): Record<string, string> => {
+  const defaults = defaultCssVariablesResolver(DEFAULT_THEME)
+  const variables: Record<string, string> = { ...defaults.variables, ...defaults[scheme] }
+  const css = Array.from(document.querySelectorAll('style'))
+    .map((style) => style.textContent ?? '')
+    .join('\n')
+  const blocks = css.split('}')
+  const root = blocks.filter((block) => /:root\s*\{/.test(block))
+  const schemed = blocks.filter((block) => block.includes(`data-mantine-color-scheme="${scheme}"`))
+  for (const block of [...root, ...schemed]) {
+    for (const [, name, value] of block.matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
+      variables[name] = value.trim()
+    }
+  }
+  return variables
+}
+
+/** A variable's value as an opaque colour, following `var()` and `color-mix()` through the theme. */
+const resolveColour = (value: string, variables: Record<string, string>): string => {
+  const palette = /^var\(--mantine-color-([a-z]+)-(\d)\)$/.exec(value)
+  if (palette) return canopyTheme.colors[palette[1]][Number(palette[2])]
+  const reference = /^var\((--[\w-]+)\)$/.exec(value)
+  if (reference) return resolveColour(variables[reference[1]], variables)
+  const mix = /^color-mix\(in srgb, (var\([^)]+\)) (\d+)%, (var\([^)]+\))\)$/.exec(value)
+  if (mix) {
+    const a = resolveColour(mix[1], variables)
+    const b = resolveColour(mix[3], variables)
+    return composite(a, Number(mix[2]) / 100, b)
+  }
+  return value
+}
+
+describe('CanopyCMSProvider colour and contrast', () => {
+  const { colors, white } = canopyTheme
+  const { gray, dark, red } = colors
+  let light: Record<string, string>
+  let darkVars: Record<string, string>
+  const inLight = (name: string) => resolveColour(light[name], light)
+  const inDark = (name: string) => resolveColour(darkVars[name], darkVars)
+
+  beforeAll(() => {
     render(
       <CanopyCMSProvider>
         <span>text</span>
       </CanopyCMSProvider>,
     )
-    expect(dimmedIn('light')).toBe('var(--mantine-color-gray-7)')
-    expect(dimmedIn('dark')).toBe('var(--mantine-color-dark-1)')
+    light = variablesIn('light')
+    darkVars = variablesIn('dark')
+    cleanup()
+  })
+
+  it('sets the dimmed colour to gray.7 in light mode and the dark.1/dark.2 mix in dark mode', () => {
+    expect(light['--mantine-color-dimmed']).toBe('var(--mantine-color-gray-7)')
+    expect(darkVars['--mantine-color-dimmed']).toBe(
+      'color-mix(in srgb, var(--mantine-color-dark-1) 85%, var(--mantine-color-dark-2))',
+    )
+    expect(contrastRatio(inLight('--mantine-color-dimmed'), gray[1])).toBeCloseTo(7.35, 2)
+    expect(contrastRatio(inDark('--mantine-color-dimmed'), dark[4])).toBeCloseTo(4.63, 2)
+    expect(contrastRatio(inDark('--mantine-color-dimmed'), dark[7])).toBeCloseTo(7.16, 2)
+    // Distinct from body text, which plain dark.1 is not.
+    expect(inDark('--mantine-color-dimmed')).not.toBe(dark[1])
+  })
+
+  it('draws placeholders at 4.5:1 on the input background, apart from typed text', () => {
+    const placeholder = {
+      light: inLight('--mantine-color-placeholder'),
+      dark: inDark('--mantine-color-placeholder'),
+    }
+    expect(contrastRatio(placeholder.light, white)).toBeCloseTo(4.66, 2)
+    expect(contrastRatio(placeholder.dark, dark[6])).toBeCloseTo(4.71, 2)
+    // Further from the text colour than the dimmed colour is, so it never passes for a value.
+    expect(contrastRatio(placeholder.light, inLight('--mantine-color-text'))).toBeCloseTo(4.5, 2)
+    expect(contrastRatio(placeholder.dark, inDark('--mantine-color-text'))).toBeCloseTo(1.74, 2)
+    expect(contrastRatio(placeholder.dark, inDark('--mantine-color-text'))).toBeGreaterThan(
+      contrastRatio(inDark('--mantine-color-dimmed'), inDark('--mantine-color-text')),
+    )
+  })
+
+  it('draws focus rings, focused borders and checked controls at 3:1 in both schemes', () => {
+    const indicator = {
+      light: inLight('--mantine-primary-color-filled'),
+      dark: inDark('--mantine-primary-color-filled'),
+    }
+    expect(contrastRatio(indicator.light, gray[1])).toBeCloseTo(4.48, 2)
+    expect(
+      [dark[5], dark[6], dark[7]].map((bg) => Number(contrastRatio(indicator.dark, bg).toFixed(2))),
+    ).toEqual([3.05, 3.7, 4.23])
+  })
+
+  it('draws danger text at red.9 in light mode and red.3 in dark, 4.5:1 wherever it sits', () => {
+    expect(light['--canopy-danger-text']).toBe('var(--mantine-color-red-9)')
+    expect(darkVars['--canopy-danger-text']).toBe('var(--mantine-color-red-3)')
+    const lightPs = getPrimaryShade(canopyTheme, 'light')
+    const darkPs = getPrimaryShade(canopyTheme, 'dark')
+    const lightRatios = [white, gray[0], gray[1], composite(red[lightPs], 0.12, white)].map((bg) =>
+      contrastRatio(red[9], bg),
+    )
+    expect(lightRatios.map((r) => Number(r.toFixed(2)))).toEqual([5.46, 5.18, 4.91, 4.65])
+    // A red menu item's hover is red's light hover tint over the dark dropdown (dark.6).
+    const darkRatios = [
+      dark[4],
+      dark[5],
+      dark[6],
+      dark[7],
+      composite(red[darkPs - 2], 0.2, dark[6]),
+    ].map((bg) => contrastRatio(red[3], bg))
+    expect(darkRatios.map((r) => Number(r.toFixed(2)))).toEqual([5.46, 6.09, 7.38, 8.44, 4.8])
+  })
+
+  it('draws input borders at 3:1 on the surfaces inputs sit on', () => {
+    const border = {
+      light: inLight('--canopy-input-border'),
+      dark: inDark('--canopy-input-border'),
+    }
+    // The form pane is the muted surface, the lowest-contrast one an input sits on.
+    expect(contrastRatio(border.light, white)).toBeCloseTo(3.9, 2)
+    expect(contrastRatio(border.light, inLight('--canopy-surface-muted'))).toBeCloseTo(3.51, 2)
+    expect(contrastRatio(border.dark, inDark('--canopy-surface-muted'))).toBeCloseTo(3.37, 2)
+    expect(contrastRatio(border.dark, dark[6])).toBeCloseTo(4.09, 2)
+    expect(contrastRatio(border.dark, dark[7])).toBeCloseTo(4.68, 2)
+  })
+
+  it('fills primary Buttons and Badges dark enough for white text in both schemes', () => {
+    expect(light['--canopy-primary-fill']).toBe('var(--mantine-color-brand-7)')
+    expect(darkVars['--canopy-primary-fill']).toBe('var(--mantine-color-brand-7)')
+    expect(darkVars['--canopy-primary-fill-hover']).toBe('var(--mantine-color-brand-8)')
+    expect(contrastRatio(white, inLight('--canopy-primary-fill'))).toBeCloseTo(4.98, 2)
+    expect(contrastRatio(white, inDark('--canopy-primary-fill'))).toBeCloseTo(4.98, 2)
+    expect(contrastRatio(white, inDark('--canopy-primary-fill-hover'))).toBeCloseTo(5.67, 2)
+  })
+
+  it('puts a count in the text colour on a tint of the primary colour', () => {
+    expect(light['--canopy-count-bg']).toBe(
+      'color-mix(in srgb, var(--mantine-primary-color-filled) 20%, var(--mantine-color-body))',
+    )
+    const tint = (vars: Record<string, string>, scheme: 'light' | 'dark') =>
+      composite(
+        colors.brand[getPrimaryShade(canopyTheme, scheme)],
+        0.2,
+        resolveColour(vars['--mantine-color-body'], vars),
+      )
+    expect(contrastRatio(inLight('--mantine-color-text'), tint(light, 'light'))).toBeCloseTo(
+      16.01,
+      2,
+    )
+    expect(contrastRatio(inDark('--mantine-color-text'), tint(darkVars, 'dark'))).toBeCloseTo(
+      7.2,
+      2,
+    )
+  })
+
+  describe('coloured text, light and subtle variants', () => {
+    const lightPs = getPrimaryShade(canopyTheme, 'light')
+    const darkPs = getPrimaryShade(canopyTheme, 'dark')
+    // The controls the guidelines name, by the colour each is drawn in.
+    const named = {
+      'light orange buttons': 'orange',
+      'light red buttons ("Purge", "Delete branch")': 'red',
+      'light brand buttons ("Save", "Open")': 'brand',
+      '"In review" badge': 'green',
+      '"Approved" badge': 'teal',
+      'warning text': 'yellow',
+      'neutral badges': 'gray',
+    } as const
+
+    for (const [control, colour] of Object.entries(named)) {
+      it(`reaches 4.5:1 for ${control}, at rest and hovered, in both schemes`, () => {
+        const scale = colors[colour]
+        for (const name of ['text', 'light-color', 'outline']) {
+          expect(light[`--mantine-color-${colour}-${name}`]).toBe(
+            light[`--mantine-color-${colour}-light-color`],
+          )
+        }
+        const text = {
+          light: inLight(`--mantine-color-${colour}-light-color`),
+          dark: inDark(`--mantine-color-${colour}-light-color`),
+        }
+        for (const surface of [white, gray[1]]) {
+          for (const opacity of [0.1, 0.12]) {
+            const tint = composite(scale[lightPs], opacity, surface)
+            expect(contrastRatio(text.light, tint)).toBeGreaterThanOrEqual(4.5)
+          }
+        }
+        for (const surface of [dark[4], dark[6], dark[7]]) {
+          for (const opacity of [0.15, 0.2]) {
+            const tint = composite(scale[Math.max(darkPs - 2, 0)], opacity, surface)
+            expect(contrastRatio(text.dark, tint)).toBeGreaterThanOrEqual(4.5)
+          }
+        }
+        // Plain coloured text (`c="red"`) on the lightest dark surface, the menu hover.
+        expect(
+          contrastRatio(inDark(`--mantine-color-${colour}-text`), dark[4]),
+        ).toBeGreaterThanOrEqual(4.5)
+      })
+    }
+
+    it('names a step of the scale where one reaches 4.5:1, and darkens the end shade otherwise', () => {
+      expect(light['--mantine-color-brand-light-color']).toBe('var(--mantine-color-brand-9)')
+      expect(light['--mantine-color-gray-light-color']).toBe('var(--mantine-color-gray-7)')
+      expect(light['--mantine-color-orange-light-color']).toMatch(/^rgba\(/)
+      expect(darkVars['--mantine-color-red-text']).toBe('var(--mantine-color-red-2)')
+    })
+
+    it("draws a light orange button's label in the readable orange", () => {
+      const { getByText } = render(
+        <CanopyCMSProvider>
+          <Button color="orange" variant="light">
+            Withdraw
+          </Button>
+        </CanopyCMSProvider>,
+      )
+      expect(
+        getByText('Withdraw').closest('button')?.style.getPropertyValue('--button-color'),
+      ).toBe('var(--mantine-color-orange-light-color)')
+    })
+  })
+})
+
+describe('CanopyCMSProvider adopter palettes it cannot measure', () => {
+  it('leaves every colour to Mantine in dark mode when the dark scale is oklch', () => {
+    const oklchDark = Array.from(
+      { length: 10 },
+      (_, i) => `oklch(${80 - i * 8}% 0.003 264)`,
+    ) as unknown as MantineColorsTuple
+    render(
+      <CanopyCMSProvider themeOverride={{ colors: { dark: oklchDark } }}>
+        <span>text</span>
+      </CanopyCMSProvider>,
+    )
+    const css = Array.from(document.querySelectorAll('style'))
+      .map((style) => style.textContent ?? '')
+      .join('\n')
+    expect(css).not.toMatch(/--mantine-color-[a-z]+-light-color:\s*(rgba?\(|#)/)
+    cleanup()
+  })
+
+  it('leaves every colour to Mantine when the gray scale it measures against is oklch', () => {
+    const oklchGray = Array.from(
+      { length: 10 },
+      (_, i) => `oklch(${98 - i * 8}% 0.003 264)`,
+    ) as unknown as MantineColorsTuple
+    render(
+      <CanopyCMSProvider themeOverride={{ colors: { gray: oklchGray } }}>
+        <span>text</span>
+      </CanopyCMSProvider>,
+    )
+    const css = Array.from(document.querySelectorAll('style'))
+      .map((style) => style.textContent ?? '')
+      .join('\n')
+    expect(css).not.toMatch(/--mantine-color-[a-z]+-light-color:\s*(rgba?\(|#)/)
+    expect(css).toMatch(/--mantine-color-brand-light-color:\s*var\(--mantine-color-brand-7\)/)
+    cleanup()
+  })
+
+  it("leaves a virtual colour's and an oklch palette's variables to Mantine", () => {
+    const oklch = Array.from(
+      { length: 10 },
+      (_, i) => `oklch(${90 - i * 7}% 0.16 250)`,
+    ) as unknown as MantineColorsTuple
+    render(
+      <CanopyCMSProvider
+        themeOverride={{
+          colors: { virt: virtualColor({ name: 'virt', light: 'blue', dark: 'orange' }), oklch },
+        }}
+      >
+        <span>text</span>
+      </CanopyCMSProvider>,
+    )
+    const css = Array.from(document.querySelectorAll('style'))
+      .map((style) => style.textContent ?? '')
+      .join('\n')
+    for (const name of ['virt', 'oklch']) {
+      for (const suffix of ['text', 'light-color', 'outline']) {
+        const written = css.match(new RegExp(`--mantine-color-${name}-${suffix}:\\s*([^;]+);`, 'g'))
+        // Only Mantine's own value, one of the colour's variables, never a computed black or grey.
+        for (const declaration of written ?? []) {
+          expect(declaration).toMatch(new RegExp(`:\\s*var\\(--mantine-color-${name}-[\\w]+\\);$`))
+        }
+      }
+    }
+    // The measurable default palette is still computed alongside them.
+    expect(css).toMatch(/--mantine-color-orange-light-color:\s*rgba\(/)
+  })
+})
+
+describe('CanopyCMSProvider tooltips', () => {
+  it('opens a tooltip on keyboard focus without the caller asking', async () => {
+    const { getByRole } = render(
+      <CanopyCMSProvider>
+        <Tooltip label="Expand">
+          <button type="button">E</button>
+        </Tooltip>
+      </CanopyCMSProvider>,
+    )
+    act(() => getByRole('button').focus())
+    await waitFor(() => expect(getByRole('tooltip').textContent).toBe('Expand'))
+  })
+})
+
+describe('CanopyCMSProvider input borders', () => {
+  const wrapperBorder = (input: HTMLElement) =>
+    (input.closest('.mantine-Input-wrapper') as HTMLElement | null)?.style.getPropertyValue(
+      '--input-bd',
+    )
+
+  it('borders a default input with the input border token', () => {
+    const { getByLabelText } = render(
+      <CanopyCMSProvider>
+        <TextInput label="Title" />
+      </CanopyCMSProvider>,
+    )
+    expect(wrapperBorder(getByLabelText('Title'))).toBe('var(--canopy-input-border)')
+  })
+
+  it("leaves an errored input's border, and a filled input's, to Mantine", () => {
+    const { getByLabelText } = render(
+      <CanopyCMSProvider>
+        <TextInput label="Title" error="Required" />
+        <TextInput label="Slug" variant="filled" />
+      </CanopyCMSProvider>,
+    )
+    expect(wrapperBorder(getByLabelText('Title'))).toBe('')
+    expect(wrapperBorder(getByLabelText('Slug'))).toBe('')
+  })
+})
+
+describe('DestructiveMenuItem', () => {
+  it('draws its label in the danger text colour over the red hover tint', async () => {
+    const { getByRole } = render(
+      <CanopyCMSProvider>
+        <Menu opened>
+          <Menu.Target>
+            <button type="button">Actions</button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <DestructiveMenuItem>Delete entry</DestructiveMenuItem>
+          </Menu.Dropdown>
+        </Menu>
+      </CanopyCMSProvider>,
+    )
+    const item = await waitFor(() => getByRole('menuitem', { name: 'Delete entry' }))
+    expect(item.style.color).toBe('var(--canopy-danger-text)')
+    expect(item.style.getPropertyValue('--menu-item-hover')).toBe(
+      'var(--mantine-color-red-light-hover)',
+    )
+  })
+
+  it('is dimmed with its reason when blocked', async () => {
+    const { getByRole } = render(
+      <CanopyCMSProvider>
+        <Menu opened>
+          <Menu.Target>
+            <button type="button">Actions</button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <DestructiveMenuItem blockedReason="This branch is in review.">
+              Delete entry
+            </DestructiveMenuItem>
+          </Menu.Dropdown>
+        </Menu>
+      </CanopyCMSProvider>,
+    )
+    const item = await waitFor(() => getByRole('menuitem', { name: /Delete entry/ }))
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.style.color).toBe('var(--mantine-color-dimmed)')
   })
 })

@@ -146,7 +146,7 @@ describe('FormRenderer readOnly', () => {
     expect(picker.matches(':disabled')).toBe(false)
     picker.focus()
     expect(document.activeElement).toBe(picker)
-    expect(picker.textContent).toMatch(/2024, \d{2}:\d{2}:05$/)
+    expect(picker.textContent).toMatch(/2024, \d{1,2}:\d{2}:05( [AP]M)?$/)
     expect(screen.queryByRole('button', { name: 'Remove date and time' })).toBeNull()
 
     fireEvent.click(picker)

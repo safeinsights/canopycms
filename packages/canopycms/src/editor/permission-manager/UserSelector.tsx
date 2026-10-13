@@ -37,14 +37,14 @@ export const UserSelector: React.FC<UserSelectorProps> = ({
           style={{
             width: '100%',
             padding: '6px 8px',
-            border: '1px solid var(--mantine-color-gray-4)',
+            border: '1px solid var(--canopy-input-border)',
             borderRadius: 'var(--mantine-radius-sm)',
             fontSize: '14px',
           }}
         />
         {isSearching && <Loader size="xs" />}
         {searchError && (
-          <Text size="xs" c="red">
+          <Text size="xs" c="var(--canopy-danger-text)">
             {searchError}
           </Text>
         )}

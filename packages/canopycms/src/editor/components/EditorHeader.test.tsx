@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, render, screen, cleanup, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { MantineProvider } from '@mantine/core'
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
+import { CanopyCMSProvider } from '../theme'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { EditorEntry } from '../Editor'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
-  <MantineProvider>{children}</MantineProvider>
+  <CanopyCMSProvider>{children}</CanopyCMSProvider>
 )
 
 const currentEntry: EditorEntry = {
@@ -211,22 +211,45 @@ describe('EditorHeader - branch menu with no edits', () => {
 
     await userEvent.click(screen.getByTestId('branch-dropdown-button'))
 
-    const note = await screen.findByText('No edited entries yet')
+    expect(await screen.findAllByText('No edited entries yet')).toHaveLength(1)
     expect(screen.queryByText('0 entries modified')).toBeNull()
-    expect(note.closest('[role="menuitem"]')).toBeNull()
-    expect(
-      within(screen.getByTestId('branch-menu')).getAllByRole('menuitem').length,
-    ).toBeGreaterThan(0)
   })
 
-  it('says nothing was modified recently in the file menu, as text rather than a menu item', async () => {
+  it('offers the branch menu empty state as a blocked item that arrow keys reach', async () => {
+    renderHeader({ modifiedCount: 0, editedFiles: [] })
+
+    await userEvent.click(screen.getByTestId('branch-dropdown-button'))
+
+    const empty = await screen.findByTestId('edited-entries-empty')
+    expect(empty.getAttribute('role')).toBe('menuitem')
+    expect(empty.getAttribute('aria-disabled')).toBe('true')
+    expect(empty.hasAttribute('disabled')).toBe(false)
+    expect(empty.hasAttribute('data-disabled')).toBe(false)
+    expect(within(empty).getByText('Entries you edit on this branch appear here.')).toBeTruthy()
+
+    // "Switch branch…" is the last enabled item above it; ArrowDown must land on the empty state.
+    screen.getByTestId('manage-branches-menu-item').focus()
+    await userEvent.keyboard('{ArrowDown}')
+    expect(document.activeElement).toBe(empty)
+  })
+
+  it('offers the entry menu empty state as a blocked item that arrow keys reach', async () => {
     renderHeader({ editedFiles: [] })
 
     await userEvent.click(screen.getByTestId('file-dropdown-button'))
 
-    const note = await screen.findByText('No recently modified entries')
-    expect(note.closest('[role="menuitem"]')).toBeNull()
+    const empty = await screen.findByTestId('recent-entries-empty')
+    expect(empty.textContent).toContain('No recently modified entries')
+    expect(empty.getAttribute('role')).toBe('menuitem')
+    expect(empty.getAttribute('aria-disabled')).toBe('true')
+    expect(empty.hasAttribute('disabled')).toBe(false)
+    expect(empty.hasAttribute('data-disabled')).toBe(false)
+    expect(within(empty).getByText('Entries you edit on this branch appear here.')).toBeTruthy()
     expect(screen.queryByText('<none>')).toBeNull()
+
+    screen.getByTestId('all-files-menu-item').focus()
+    await userEvent.keyboard('{ArrowDown}')
+    expect(document.activeElement).toBe(empty)
   })
 })
 

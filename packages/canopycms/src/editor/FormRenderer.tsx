@@ -110,7 +110,7 @@ const ReadOnlyFormStyles: React.FC = () => (
       background-color: var(--input-disabled-bg);
     }
     .${READ_ONLY_FORM_CLASS} .canopy-mdx-content {
-      background-color: var(--mantine-color-gray-1);
+      background-color: var(--canopy-surface-muted);
     }
     .${READ_ONLY_FORM_CLASS} .mantine-Switch-label {
       color: var(--mantine-color-text);
@@ -293,7 +293,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           )}
         />
         {error && (
-          <Text size="xs" c="red.8" data-testid={`field-error-${fieldKey(path)}`}>
+          <Text
+            size="xs"
+            c="var(--canopy-danger-text)"
+            data-testid={`field-error-${fieldKey(path)}`}
+          >
             {error}
           </Text>
         )}
@@ -651,14 +655,10 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           )
         }
 
-        // Unlike the list branch above (each item has its own Remove button), a
-        // non-list object has no other way back to `undefined`: a required child
-        // filled and cleared to `''` reads as empty via `isEmptyForRequired`
-        // (entry-validator.ts), but the object itself only reads "absent" when
-        // `undefined`/`null`. The Clear button (ObjectField's `onRemove`) resets to
-        // `undefined`, never `{}` -- shown only when the field is optional and
-        // already has a value, and labeled "Clear" rather than "Remove" so it
-        // doesn't read as deleting the field from the schema.
+        // A non-list object has no list item to remove, so its only way back to `undefined` is
+        // the Clear button (`onRemove`): shown only for an optional field that has a value.
+        // Reset to `undefined`, never `{}`, which `isEmptyForRequired` (entry-validator.ts) reads
+        // as present. The label is "Clear" (docs/ux-guidelines.md, Vocabulary).
         const hasValue = currentValue !== undefined && currentValue !== null
         const canClear = !readOnly && objectField.required !== true && hasValue
 
