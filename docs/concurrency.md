@@ -296,19 +296,18 @@ waiting on a save:
 **A content write is a read-modify-write of the content file itself.** To stop editor
 saves deleting the file's comments, `ContentStore.write` re-serialises onto the file's own
 parsed YAML document rather than a fresh one (`utils/content-serialize.ts`), which means it
-reads the current bytes before writing. That read sits _inside_ `withLock(lockKey)`, inside
-this lock, and _after_ the `expectedVersion` stat — so the bytes it reconciles against are
-the bytes OCC validated, and no rebase can be replaying against the branch while it happens.
-It adds no lock and no cached state; the only requirement is that it never be hoisted out of
-the critical section.
+reads the current bytes before writing, inside `withLock(lockKey)` and this lock, in the same
+open the `expectedVersion` check takes its mtime from — so the bytes it reconciles against are
+the bytes OCC validated, and no rebase can be replaying against the branch. It must never be
+hoisted out of the critical section.
 
 **Editor saves are OCC-checked against the file's mtime, and the API has no blind update.**
 A read returns `version` (the mtime), and an update must send it back as `expectedVersion`.
 An omitted token means create-only (`null`), so a write that lost its token gets a 409, never
-an unchecked overwrite. A token whose file is gone is a 409 too (`EntryGoneError`, API code
-`ENTRY_GONE`): the entry was deleted or moved since the read, and only a create brings it back.
-The check is the in-lock stat above, ahead of `mkdir` and the create-only guards. `ContentStore.write`'s
-`undefined` (skip the check) is for direct store callers only. The editor keys tokens by
+an unchecked overwrite. A token whose file is gone is a 409 too (`ENTRY_GONE`): only a create
+brings a deleted entry back. The check is that in-lock open, ahead of `mkdir` and the create-only
+guards; an open, not a `stat`, because opening revalidates against the NFS server (fact 2).
+`ContentStore.write`'s `undefined` (skip the check) is for direct store callers only. The editor keys tokens by
 branch + contentId, the same key as its drafts, and `saveEntry` refuses a save it holds no
 token for (api/content.ts, editor/hooks/useEntryManager.ts).
 
