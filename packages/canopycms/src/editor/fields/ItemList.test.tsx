@@ -533,12 +533,12 @@ describe('an object list with no items', () => {
 })
 
 describe('the Remove menu item', () => {
-  it("is drawn in red.8, which reads at 4.5:1 on white where Mantine's red.6 does not", async () => {
+  it("takes the danger text colour, which reads at 4.5:1 where Mantine's red.6 does not", async () => {
     const user = userEvent.setup()
     render(<ListHarness initial={people('Ada')} />)
     await openRowMenu(user, rows()[0])
     const remove = await screen.findByTestId('item-row-remove')
-    expect(remove.getAttribute('style')).toContain('--mantine-color-red-8')
+    expect(remove.getAttribute('style')).toContain('--canopy-danger-text')
   })
 })
 

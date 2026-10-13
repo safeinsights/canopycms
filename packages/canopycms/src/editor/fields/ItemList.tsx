@@ -37,6 +37,7 @@ import { IconAlertCircle, IconChevronRight, IconDots, IconGripVertical } from '@
 
 import { formatCanopyPath } from '../canopy-path'
 import { EDITOR_ACTIONS } from '../copy'
+import { DestructiveMenuItem } from '../components/DestructiveMenuItem'
 import { ReasonedMenuItem } from '../components/ReasonedMenuItem'
 import { REVEAL_FIELD_EVENT, focusFieldTarget } from '../field-target'
 import { FieldDescription, fieldDescriptionId } from './FieldDescription'
@@ -362,8 +363,8 @@ const ItemRow: React.FC<ItemRowProps> = ({
             )}
             {hasErrors && !expanded && (
               <Group gap={2} wrap="nowrap" ml="auto" style={{ flexShrink: 0 }}>
-                <IconAlertCircle size={14} color="var(--mantine-color-red-8)" aria-hidden />
-                <Text size="xs" c="red.8">
+                <IconAlertCircle size={14} color="var(--canopy-danger-text)" aria-hidden />
+                <Text size="xs" c="var(--canopy-danger-text)">
                   Has errors
                 </Text>
               </Group>
@@ -404,15 +405,9 @@ const ItemRow: React.FC<ItemRowProps> = ({
                 Duplicate
               </Menu.Item>
               <Menu.Divider />
-              <Menu.Item
-                color="red"
-                // Mantine draws a red item at red.6, 3.3:1 on white.
-                c="red.8"
-                onClick={onRemove}
-                data-testid="item-row-remove"
-              >
+              <DestructiveMenuItem onClick={onRemove} data-testid="item-row-remove">
                 {EDITOR_ACTIONS.remove}
-              </Menu.Item>
+              </DestructiveMenuItem>
             </Menu.Dropdown>
           </Menu>
         )}

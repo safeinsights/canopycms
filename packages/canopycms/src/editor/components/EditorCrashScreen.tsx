@@ -36,7 +36,7 @@ export const EditorCrashBoundary: React.FC<{
           <Paper withBorder p="xl" maw={560}>
             <Stack gap="md">
               <Group gap="sm">
-                <IconAlertTriangle size={24} color="var(--mantine-color-red-6)" />
+                <IconAlertTriangle size={24} color="var(--canopy-danger-text)" />
                 <Title order={3}>The editor stopped working</Title>
               </Group>
               <Text size="sm">

@@ -2,7 +2,7 @@
 
 import React, { Suspense, useId, useRef, useCallback, useEffect, useReducer, useState } from 'react'
 
-import { Alert, Box, Button, Text, Textarea } from '@mantine/core'
+import { Alert, Box, Button, Text, Textarea, useComputedColorScheme } from '@mantine/core'
 
 import type { EditorSubscription, MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
@@ -16,6 +16,7 @@ import { uploadAsset } from '../media/upload-asset'
 import { useFieldCommentControl } from '../comments/field-comment-context'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 import { FieldLabel } from './FieldLabel'
+import { watchToolbarWrap } from './toolbar-wrap'
 import { EditorErrorBoundary, type CaughtEditorError } from '../components/EditorErrorBoundary'
 import { getErrorMessage, sanitizeErrorMessage } from '../../utils/error'
 import {
@@ -190,6 +191,8 @@ export const MDXEditorLazy = React.lazy(async () => {
     readOnly?: boolean
     /** Names the content area for assistive tech; MDXEditor's default is "editable markdown". */
     contentLabel?: string
+    /** Draws the editor and its popups in MDXEditor's dark theme. */
+    dark?: boolean
   }> = ({
     markdown,
     onChange,
@@ -201,6 +204,7 @@ export const MDXEditorLazy = React.lazy(async () => {
     htmlTags,
     readOnly,
     contentLabel,
+    dark,
   }) => {
     const underline = htmlTags?.has('u') ?? true
     const translation = (
@@ -217,6 +221,7 @@ export const MDXEditorLazy = React.lazy(async () => {
     return (
       <MDXEditor
         ref={editorRef}
+        className={dark ? 'dark-theme' : undefined}
         markdown={markdown}
         readOnly={readOnly}
         translation={translation}
@@ -300,8 +305,8 @@ export const MDXEditorLazy = React.lazy(async () => {
 })
 
 const editorWrapperStyle: React.CSSProperties = {
-  background: 'var(--mantine-color-white)',
-  border: '1px solid var(--mantine-color-gray-4, #ced4da)',
+  background: 'var(--mantine-color-body)',
+  border: '1px solid var(--canopy-input-border)',
   borderRadius: 'var(--mantine-radius-sm, 4px)',
   overflow: 'hidden',
 }
@@ -309,7 +314,7 @@ const editorWrapperStyle: React.CSSProperties = {
 /**
  * Mantine's global CSS reset strips styles from semantic HTML elements.
  * Restore them inside the MDXEditor content area so formatting is visible. The toolbar wraps
- * rather than scrolling sideways, so a narrow form hides none of its buttons.
+ * rather than scrolling sideways (`toolbar-wrap.ts` hides a separator left at a row's edge).
  */
 const EditorContentStyles: React.FC = () => (
   <style>{`
@@ -327,17 +332,17 @@ const EditorContentStyles: React.FC = () => (
     .canopy-mdx-content h5 { font-size: 0.83em; font-weight: 600; margin: 1.67em 0; }
     .canopy-mdx-content h6 { font-size: 0.67em; font-weight: 600; margin: 2.33em 0; }
     .canopy-mdx-content blockquote {
-      border-left: 3px solid var(--mantine-color-gray-4, #ced4da);
+      border-left: 3px solid var(--mantine-color-default-border);
       padding-left: 1em;
       margin: 0.5em 0;
-      color: var(--mantine-color-gray-7, #495057);
+      color: var(--mantine-color-dimmed);
     }
-    .canopy-mdx-content hr { border: none; border-top: 1px solid var(--mantine-color-gray-4, #ced4da); margin: 1em 0; }
+    .canopy-mdx-content hr { border: none; border-top: 1px solid var(--mantine-color-default-border); margin: 1em 0; }
     .canopy-mdx-content p { margin: 0.75em 0; }
-    .canopy-mdx-content a { color: var(--mantine-color-blue-6, #228be6); text-decoration: underline; }
+    .canopy-mdx-content a { color: var(--mantine-color-anchor); text-decoration: underline; }
     .canopy-mdx-content img { max-width: 100%; height: auto; }
     .canopy-mdx-content .canopy-mdx-jsx {
-      border: 1px dashed var(--mantine-color-gray-4, #ced4da);
+      border: 1px dashed var(--mantine-color-default-border);
       border-radius: 4px;
       padding: 2px 8px;
       margin: 0.5em 0;
@@ -346,7 +351,7 @@ const EditorContentStyles: React.FC = () => (
     .canopy-mdx-content .canopy-mdx-jsx-tag {
       font-family: var(--mantine-font-family-monospace, monospace);
       font-size: 0.8em;
-      color: var(--mantine-color-gray-6, #868e96);
+      color: var(--mantine-color-dimmed);
     }
   `}</style>
 )
@@ -426,6 +431,12 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const [rejectedInsert, setRejectedInsert] = useState<string | null>(null)
   const [editorGeneration, setEditorGeneration] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
+  const dark = useComputedColorScheme('light') === 'dark'
+
+  useEffect(() => {
+    const root = rootRef.current
+    return root ? watchToolbarWrap(root, '.canopy-mdx-toolbar') : undefined
+  }, [])
 
   // A read-only content area stays reachable by keyboard, like the read-only inputs beside it.
   // Lexical drops it from the tab order once it is not editable, and mounts it after this runs.
@@ -630,6 +641,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
                 htmlTags={htmlTags}
                 readOnly={readOnly}
                 contentLabel={label}
+                dark={dark}
               />
             </Suspense>
           </EditorErrorBoundary>

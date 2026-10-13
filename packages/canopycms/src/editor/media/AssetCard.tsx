@@ -95,7 +95,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'var(--mantine-color-gray-1)',
+              background: 'var(--canopy-surface-muted)',
             }}
           >
             <IconFileTypePdf size={compact ? 28 : 40} stroke={1.5} />
@@ -111,13 +111,13 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               alignItems: 'center',
               justifyContent: 'center',
               gap: 4,
-              background: 'var(--mantine-color-gray-1)',
+              background: 'var(--canopy-surface-muted)',
             }}
           >
             <IconPhotoOff
               size={compact ? 20 : 28}
               stroke={1.5}
-              color="var(--mantine-color-gray-5)"
+              color="var(--mantine-color-dimmed)"
             />
             <Text size="xs" c="dimmed">
               Preview unavailable

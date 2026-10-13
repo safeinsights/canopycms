@@ -2,9 +2,11 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Code item for docs/ux-guidelines.md's `--canopy-danger-text` rule: a red Mantine `Menu.Item` draws its text at red.6 (3.3:1 on white), and `c="red.8"` error text fails on gray.0 and in dark mode. Add the per-scheme variable (red.9 light, red.3 dark) and a shared destructive menu item, and move all error text onto it
+  RESOLVED (2026-10-13) — `--canopy-danger-text` (red.9 light, red.3 dark) is set in the theme with its ratios pinned in `theme.test.tsx`; `components/DestructiveMenuItem.tsx` draws the navigator's Delete items, ItemList's Remove, the Branches "Delete branch" item and the entry-type Remove with it, and every red error text uses the variable
 ---
 # Destructive menu items and error text fail contrast
+
+## Status: RESOLVED 2026-10-13
 
 ## The gap
 
@@ -19,7 +21,7 @@ covers that Remove item, "Has errors" and every `c="red.8"` error text.
 
 ## Fix
 
-[docs/ux-guidelines.md](../../docs/ux-guidelines.md#colour-and-contrast) names the rule:
+[docs/ux-guidelines.md](../../../docs/ux-guidelines.md#colour-and-contrast) names the rule:
 
 - Add `--canopy-danger-text` to `canopyCssVariablesResolver` (`theme.tsx`): `red.9` light,
   `red.3` dark. Measure it on each surface it sits on (white, `gray.0`, `gray.1`, the light red

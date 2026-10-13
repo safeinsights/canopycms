@@ -255,7 +255,7 @@ export function EntryTypeEditor({
         <TextInput
           label="Label"
           description="Human-readable display name"
-          placeholder="Blog Post"
+          placeholder="Blog post"
           value={formData.label}
           onChange={(e) => updateField('label', e.target.value)}
         />

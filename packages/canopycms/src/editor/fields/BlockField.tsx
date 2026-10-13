@@ -134,7 +134,7 @@ const InsertBetween: React.FC<{
         right={0}
         top="50%"
         h={2}
-        bg="blue.4"
+        bg="var(--mantine-primary-color-filled)"
         style={{ opacity: shown ? 1 : 0, transition: 'opacity 120ms ease' }}
       />
       <Group justify="center" h="100%" style={{ position: 'relative' }}>
@@ -211,7 +211,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
     <Paper
       withBorder
       p="md"
-      bg="gray.0"
+      bg="var(--canopy-surface-subtle)"
       data-canopy-field={dataCanopyField ?? formatCanopyPath(path)}
       role="group"
       aria-label={label ?? 'Blocks'}
@@ -281,7 +281,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
             const currentPath = [...path, idx]
             if (!template) {
               return (
-                <Text size="sm" c="red.8">
+                <Text size="sm" c="var(--canopy-danger-text)">
                   No template found for &quot;{block.template}&quot;
                 </Text>
               )

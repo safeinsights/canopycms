@@ -42,7 +42,7 @@ const thumbnailBoxStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   borderRadius: 'var(--mantine-radius-sm)',
-  background: 'var(--mantine-color-gray-1)',
+  background: 'var(--canopy-surface-muted)',
   overflow: 'hidden',
 }
 
@@ -66,7 +66,7 @@ export const AssetListRow: React.FC<AssetListRowProps> = ({
           <IconPhotoOff
             size={20}
             stroke={1.5}
-            color="var(--mantine-color-gray-5)"
+            color="var(--mantine-color-dimmed)"
             data-testid={`asset-row-thumbnail-fallback-${asset.hash32}`}
             aria-label="Preview unavailable"
           />

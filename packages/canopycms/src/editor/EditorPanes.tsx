@@ -71,11 +71,11 @@ export const EditorPanes: React.FC<EditorPanesProps> = ({
     () => ({
       background:
         layout === 'side'
-          ? 'linear-gradient(90deg, var(--mantine-color-gray-0), var(--mantine-color-gray-1))'
-          : 'linear-gradient(180deg, var(--mantine-color-gray-0), var(--mantine-color-gray-1))',
+          ? 'linear-gradient(90deg, var(--canopy-surface-subtle), var(--canopy-surface-muted))'
+          : 'linear-gradient(180deg, var(--canopy-surface-subtle), var(--canopy-surface-muted))',
       boxShadow: isDragging
         ? 'inset 0 0 0 1px var(--mantine-color-brand-4), 0 0 0 1px var(--mantine-color-brand-1)'
-        : 'inset 0 0 0 1px var(--mantine-color-gray-3)',
+        : 'inset 0 0 0 1px var(--mantine-color-default-border)',
       cursor: layout === 'side' ? 'col-resize' : 'row-resize',
       width: layout === 'side' ? rem(12) : '100%',
       height: layout === 'side' ? '100%' : rem(12),
@@ -204,7 +204,7 @@ export const EditorPanes: React.FC<EditorPanesProps> = ({
                   overflow: 'auto',
                   flex: 1,
                   pointerEvents: isDragging ? 'none' : undefined,
-                  backgroundColor: 'var(--mantine-color-gray-1)',
+                  backgroundColor: 'var(--canopy-surface-muted)',
                 }}
               >
                 {form ?? 'Form'}

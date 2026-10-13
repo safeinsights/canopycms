@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import React, { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -297,6 +297,54 @@ describe('FormHeader', () => {
 
     await waitFor(() => expect(screen.queryByRole('navigation', { name: 'Outline' })).toBeNull())
     expect(document.activeElement).toBe(button)
+  })
+
+  describe('in a narrow pane', () => {
+    const originalWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+
+    /** jsdom lays nothing out, so the header's width is whatever the test says. */
+    const fakeHeaderWidth = (width: number) => {
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.dataset.testid === 'form-header' ? width : 0
+        },
+      })
+    }
+
+    afterEach(() => {
+      if (originalWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalWidth)
+      else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth
+    })
+
+    const renderHeader = () =>
+      render(
+        <CanopyCMSProvider>
+          <FormHeader title="T" outline={[{ label: 'Title', path: 'title' }]} onSelect={vi.fn()} />
+        </CanopyCMSProvider>,
+      )
+
+    it('shows "Outline" as an icon named Outline, with a tooltip that opens on focus', async () => {
+      fakeHeaderWidth(200)
+      renderHeader()
+      const button = screen.getByRole('button', { name: 'Outline' })
+      expect(button.textContent).toBe('')
+      act(() => button.focus())
+      await waitFor(() => expect(screen.getByRole('tooltip').textContent).toBe('Outline'))
+    })
+
+    it('still opens the outline from the icon', async () => {
+      fakeHeaderWidth(200)
+      const user = userEvent.setup()
+      renderHeader()
+      await openOutline(user)
+    })
+
+    it('keeps the label in a wider pane', () => {
+      fakeHeaderWidth(400)
+      renderHeader()
+      expect(screen.getByRole('button', { name: 'Outline' }).textContent).toBe('Outline')
+    })
   })
 })
 
@@ -598,14 +646,18 @@ describe('FormHeader icon buttons', () => {
     expect((await screen.findByRole('tooltip')).textContent).toBe('Collapse all lists')
   })
 
-  it('are drawn in gray 7, dark enough to read on the header', () => {
+  it("are drawn in gray's light colour, which the theme makes readable on the header", () => {
     render(
       <CanopyCMSProvider>
         <FormHeader title="T" outline={[]} onSelect={vi.fn()} onExpandAll={vi.fn()} />
       </CanopyCMSProvider>,
     )
     for (const name of ['Expand all lists', 'Collapse all lists']) {
-      expect(screen.getByRole('button', { name }).style.color).toBe('var(--mantine-color-gray-7)')
+      const button = screen.getByRole('button', { name })
+      expect(button.style.color).toBe('')
+      expect(button.style.getPropertyValue('--ai-color')).toBe(
+        'var(--mantine-color-gray-light-color)',
+      )
     }
   })
 })

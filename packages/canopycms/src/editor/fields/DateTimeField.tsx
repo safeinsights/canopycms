@@ -18,7 +18,15 @@ export interface DateTimeFieldProps {
   readOnly?: boolean
 }
 
-const VALUE_FORMAT = 'D MMM YYYY, HH:mm:ss'
+/** Whether the locale uses a 12-hour clock, as the dropdown's native time input then does. */
+const usesTwelveHourClock = (): boolean => {
+  const { hour12, hourCycle } = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+  }).resolvedOptions()
+  return hour12 ?? (hourCycle === 'h11' || hourCycle === 'h12')
+}
+
+const valueFormat = (): string => `D MMM YYYY, ${usesTwelveHourClock() ? 'h:mm:ss A' : 'HH:mm:ss'}`
 const REMOVE_LABEL = 'Remove date and time'
 
 // The picker's own controls are icon-only or unlabelled without these.
@@ -33,10 +41,18 @@ const CALENDAR_LABELS = {
   yearLevelControl: 'Choose a year',
 }
 
-/** The stored ISO string as a Date, or null for '' or an unparsable value. */
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/
+
+/**
+ * The stored ISO string as a Date, or null for '' or an unparsable value. A date-only value is
+ * local midnight; `Date` reads it as UTC midnight, the previous evening west of UTC.
+ */
 const toDate = (iso: string): Date | null => {
   if (!iso) return null
-  const date = new Date(iso)
+  const dateOnly = DATE_ONLY.exec(iso)
+  const date = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(iso)
   return Number.isNaN(date.getTime()) ? null : date
 }
 
@@ -72,6 +88,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
   const date = toDate(value)
   const zone = zoneName(date ?? new Date())
   const zoneNote = zone ? `In your time zone (${zone}).` : undefined
+  const format = valueFormat()
 
   return (
     <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
@@ -79,7 +96,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
         ref={triggerRef}
         id={inputId}
         // The label alone would name the trigger; a screen reader also needs the value.
-        aria-label={`${label ?? 'Date and time'}, ${date ? dayjs(date).format(VALUE_FORMAT) : 'not set'}`}
+        aria-label={`${label ?? 'Date and time'}, ${date ? dayjs(date).format(format) : 'not set'}`}
         description={[description, zoneNote].filter(Boolean).join(' ') || undefined}
         size="sm"
         value={date}
@@ -87,7 +104,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
           if (!readOnly) onChange(next ? next.toISOString() : '')
         }}
         withSeconds
-        valueFormat={VALUE_FORMAT}
+        valueFormat={format}
         placeholder={readOnly ? undefined : 'Pick a date and time'}
         ariaLabels={CALENDAR_LABELS}
         timeInputProps={{ 'aria-label': 'Time' }}

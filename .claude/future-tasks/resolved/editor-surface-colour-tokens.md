@@ -2,11 +2,13 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Editor surfaces still name fixed palette colours (`bg="white"` in Editor.tsx, plus `gray.0`/`gray.1` backgrounds in ObjectField, BlockField and EditorPanes), which docs/ux-guidelines.md now forbids: text and backgrounds use scheme-aware tokens. Under `colorScheme="dark"` these surfaces stay light
+  RESOLVED (2026-10-13) — editor surfaces use `--mantine-color-body`, `--canopy-surface-subtle`, `--canopy-surface-muted` and `--mantine-color-default-border`; the MDX editor takes MDXEditor's dark theme in dark mode, and Storybook has a colour-scheme toolbar switch
 ---
 # Editor surfaces use fixed colours
 
-[Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast) has text and backgrounds
+## Status: RESOLVED 2026-10-13
+
+[Colour and contrast](../../../docs/ux-guidelines.md#colour-and-contrast) has text and backgrounds
 use scheme-aware tokens, never a fixed shade. `CanopyCMSProvider` accepts `colorScheme`, but
 these call sites hard-code light palette steps:
 

@@ -1,12 +1,32 @@
 import React, { useState } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CanopyCMSProvider } from '../theme'
 import { DateTimeField } from './DateTimeField'
 
+const resolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions
+
+/** Has the machine's locale write times on a 12-hour clock, or a 24-hour one. */
+const clockOf = (hours: 12 | 24) =>
+  vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockImplementation(function (
+    this: Intl.DateTimeFormat,
+  ) {
+    return {
+      ...resolvedOptions.call(this),
+      hour12: hours === 12,
+      hourCycle: hours === 12 ? 'h12' : 'h23',
+    }
+  })
+
+// A 24-hour clock unless a test says otherwise, so what the field shows is the same on any machine.
+beforeEach(() => {
+  clockOf(24)
+})
+
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
   cleanup()
 })
 
@@ -227,6 +247,33 @@ describe('DateTimeField', () => {
     render(<Harness initial={STORED} />)
     expect(pickerButton().textContent).toBe(displayed(STORED))
     expect(pickerButton().textContent).toMatch(/^\d{1,2} [A-Z][a-z]{2} 2024, \d{2}:\d{2}:\d{2}$/)
+  })
+
+  it('shows the time on a 12-hour clock, with AM or PM, where the locale uses one', () => {
+    clockOf(12)
+    render(<Harness initial={new Date(2024, 5, 15, 8, 30, 20).toISOString()} />)
+    expect(pickerButton().textContent).toBe('15 Jun 2024, 8:30:20 AM')
+    expect(pickerButton().getAttribute('aria-label')).toBe('Published at, 15 Jun 2024, 8:30:20 AM')
+  })
+
+  it('shows the time on a 24-hour clock where the locale uses one', () => {
+    render(<Harness initial={new Date(2024, 5, 15, 20, 30, 20).toISOString()} />)
+    expect(pickerButton().textContent).toBe('15 Jun 2024, 20:30:20')
+  })
+
+  it('reads a date-only value as local midnight on that day, and writes nothing', () => {
+    // West of UTC, where UTC midnight is the previous evening.
+    const zone = process.env.TZ
+    process.env.TZ = 'America/Los_Angeles'
+    try {
+      const onChange = vi.fn()
+      render(<Harness initial="2024-05-01" onChange={onChange} />)
+      expect(pickerButton().textContent).toBe('1 May 2024, 00:00:00')
+      expect(onChange).not.toHaveBeenCalled()
+    } finally {
+      if (zone === undefined) delete process.env.TZ
+      else process.env.TZ = zone
+    }
   })
 
   it('shows the placeholder when nothing is stored', () => {
