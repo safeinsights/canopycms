@@ -276,6 +276,21 @@ describe('DateTimeField', () => {
     }
   })
 
+  it('shows a date-only value with an out-of-range month or day as not set, and writes nothing', () => {
+    const onChange = vi.fn()
+    for (const stored of ['2024-13-01', '2024-00-10', '2024-02-30']) {
+      render(<Harness initial={stored} onChange={onChange} />)
+      expect(pickerButton().textContent).toBe('Pick a date and time')
+      cleanup()
+    }
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps a date-only year below 100 as written, not as a 1900s year', () => {
+    render(<Harness initial="0099-01-01" />)
+    expect(pickerButton().textContent).toMatch(/^1 Jan 0099, /)
+  })
+
   it('shows the placeholder when nothing is stored', () => {
     render(<Harness />)
     expect(pickerButton().textContent).toBe('Pick a date and time')

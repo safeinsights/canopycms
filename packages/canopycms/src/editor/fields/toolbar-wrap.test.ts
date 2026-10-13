@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { hideSeparatorsAtWrap } from './toolbar-wrap'
+import { hideSeparatorsAtWrap, watchToolbarWrap } from './toolbar-wrap'
 
 /** A toolbar of buttons and separators, each laid out on the row given (0, 1, …). */
 const toolbarOf = (items: Array<['button' | 'separator', number]>): HTMLElement => {
@@ -70,5 +70,66 @@ describe('hideSeparatorsAtWrap', () => {
     toolbar.prepend(unlaid)
     hideSeparatorsAtWrap(toolbar)
     expect(visibility(toolbar)).toEqual(['visible', 'hidden'])
+  })
+})
+
+describe('watchToolbarWrap', () => {
+  /** A ResizeObserver whose callback the test fires, recording what it watches. */
+  const fakeObserver = () => {
+    const state = {
+      fire: () => {},
+      observed: new Set<Element>(),
+      disconnected: false,
+    }
+    class FakeResizeObserver {
+      constructor(callback: () => void) {
+        state.fire = callback
+      }
+      observe(el: Element) {
+        state.observed.add(el)
+      }
+      unobserve(el: Element) {
+        state.observed.delete(el)
+      }
+      disconnect() {
+        state.disconnected = true
+      }
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    return state
+  }
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  const toolbarIn = (root: HTMLElement) => {
+    const toolbar = toolbarOf([
+      ['button', 0],
+      ['separator', 0],
+      ['button', 1],
+    ])
+    toolbar.className = 'tb'
+    root.append(toolbar)
+    return toolbar
+  }
+
+  it('picks up a toolbar that mounts after the root, and a new one after a remount', () => {
+    const observer = fakeObserver()
+    const root = document.createElement('div')
+    const stop = watchToolbarWrap(root, '.tb')
+    expect(observer.observed).toEqual(new Set([root]))
+
+    const first = toolbarIn(root)
+    observer.fire()
+    expect(observer.observed).toEqual(new Set([root, first]))
+    expect(visibility(first)).toEqual(['hidden'])
+
+    first.remove()
+    const second = toolbarIn(root)
+    observer.fire()
+    expect(observer.observed).toEqual(new Set([root, second]))
+    expect(visibility(second)).toEqual(['hidden'])
+
+    stop()
+    expect(observer.disconnected).toBe(true)
   })
 })

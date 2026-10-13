@@ -50,9 +50,18 @@ const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/
 const toDate = (iso: string): Date | null => {
   if (!iso) return null
   const dateOnly = DATE_ONLY.exec(iso)
-  const date = dateOnly
-    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
-    : new Date(iso)
+  if (dateOnly) {
+    const [year, month, day] = dateOnly.slice(1).map(Number)
+    // setFullYear, since the constructor maps years 0-99 to 1900-1999; a month or day out of range
+    // rolls over, so it must read back unchanged.
+    const local = new Date(0)
+    local.setFullYear(year, month - 1, day)
+    local.setHours(0, 0, 0, 0)
+    const same =
+      local.getFullYear() === year && local.getMonth() === month - 1 && local.getDate() === day
+    return same ? local : null
+  }
+  const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? null : date
 }
 

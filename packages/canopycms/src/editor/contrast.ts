@@ -1,5 +1,15 @@
 import { darken, lighten, luminance, toRgba } from '@mantine/core'
 
+const MEASURABLE = [
+  /^#([0-9a-f]{3}){1,2}([0-9a-f]{2})?$/i,
+  /^rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*(,\s*[\d.]+\s*)?\)$/i,
+  /^hsla?\(\s*\d+\s*,\s*\d+%\s*,\s*\d+%\s*(,\s*[\d.]+\s*)?\)$/i,
+]
+
+/** Whether Mantine's `toRgba` parses `colour`; it reads anything else, such as `oklch()`, as black. */
+export const isMeasurable = (colour: string): boolean =>
+  MEASURABLE.some((pattern) => pattern.test(colour.trim()))
+
 /** WCAG 2's minimum for body text. */
 const TEXT_CONTRAST = 4.5
 

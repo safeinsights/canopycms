@@ -27,7 +27,7 @@ import { Notifications } from '@mantine/notifications'
 import { ModalsProvider } from '@mantine/modals'
 import { generateColors } from '@mantine/colors-generator'
 
-import { composite, readableOnScale } from './contrast'
+import { composite, isMeasurable, readableOnScale } from './contrast'
 
 import '@mantine/core/styles.css'
 import '@mantine/dates/styles.css'
@@ -163,13 +163,14 @@ export const createCanopyTheme = (
 /**
  * A colour's text, light and subtle variants and outline take the step nearest Mantine's default
  * that reaches 4.5:1 on its hovered light tint over the lightest light surface (gray.1) or dark
- * one (dark.4); past the scale's end, the end shade darkened or lightened until it does.
+ * one (dark.4); past the scale's end, the end shade darkened or lightened until it does. A colour
+ * in a notation it cannot measure, a virtual colour's `var()` steps included, keeps Mantine's.
  */
 const readableColourVariables = (theme: MantineTheme, scheme: 'light' | 'dark') => {
   const variables: Record<string, string> = {}
   const shade = getPrimaryShade(theme, scheme)
   for (const [name, scale] of Object.entries(theme.colors)) {
-    if (!Array.isArray(scale) || scale.length !== 10) continue
+    if (scale.length !== 10 || !scale.every(isMeasurable)) continue
     const { shade: step, value } =
       scheme === 'light'
         ? readableOnScale(scale, {

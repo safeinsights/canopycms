@@ -16,6 +16,8 @@ import {
   defaultCssVariablesResolver,
   getPrimaryShade,
   mergeMantineTheme,
+  virtualColor,
+  type MantineColorsTuple,
 } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
@@ -583,6 +585,38 @@ describe('CanopyCMSProvider colour and contrast', () => {
         getByText('Withdraw').closest('button')?.style.getPropertyValue('--button-color'),
       ).toBe('var(--mantine-color-orange-light-color)')
     })
+  })
+})
+
+describe('CanopyCMSProvider adopter palettes it cannot measure', () => {
+  it("leaves a virtual colour's and an oklch palette's variables to Mantine", () => {
+    const oklch = Array.from(
+      { length: 10 },
+      (_, i) => `oklch(${90 - i * 7}% 0.16 250)`,
+    ) as unknown as MantineColorsTuple
+    render(
+      <CanopyCMSProvider
+        themeOverride={{
+          colors: { virt: virtualColor({ name: 'virt', light: 'blue', dark: 'orange' }), oklch },
+        }}
+      >
+        <span>text</span>
+      </CanopyCMSProvider>,
+    )
+    const css = Array.from(document.querySelectorAll('style'))
+      .map((style) => style.textContent ?? '')
+      .join('\n')
+    for (const name of ['virt', 'oklch']) {
+      for (const suffix of ['text', 'light-color', 'outline']) {
+        const written = css.match(new RegExp(`--mantine-color-${name}-${suffix}:\\s*([^;]+);`, 'g'))
+        // Only Mantine's own value, one of the colour's variables, never a computed black or grey.
+        for (const declaration of written ?? []) {
+          expect(declaration).toMatch(new RegExp(`:\\s*var\\(--mantine-color-${name}-[\\w]+\\);$`))
+        }
+      }
+    }
+    // The measurable default palette is still computed alongside them.
+    expect(css).toMatch(/--mantine-color-orange-light-color:\s*rgba\(/)
   })
 })
 
