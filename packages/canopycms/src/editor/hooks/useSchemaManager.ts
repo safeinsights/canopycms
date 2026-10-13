@@ -37,6 +37,11 @@ type SchemaOpFailure = { ok: false; error: string; unanswered?: true }
 const SCHEMA_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-schema-outcome-unknown'
 const CHECK_CONTENT_PANEL = 'Check the "Content" panel'
 
+/** Takes down the unknown-outcome toast, once a caller has seen the write land. */
+export const hideSchemaOutcomeUnknown = (): void => {
+  notifications.hide(SCHEMA_OUTCOME_UNKNOWN_TOAST_ID)
+}
+
 /** @internal Exported for tests. */
 export const schemaChangeOutcomeUnknown = (action: string, check: string) =>
   `${action} may have gone through even though the server didn't answer. ${check} before trying again.`

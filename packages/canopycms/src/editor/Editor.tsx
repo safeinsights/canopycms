@@ -87,7 +87,18 @@ import { ReadOnlyDraftNotice } from './components/ReadOnlyDraftNotice'
 import { UnavailableEntryNotice } from './components/UnavailableEntryNotice'
 import { unavailableSchemaRefs } from './unavailable-entry-type'
 import { EditorCrashBoundary } from './components/EditorCrashScreen'
-import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
+import {
+  CollectionEditor,
+  type ExistingCollection,
+  type ExistingEntryType,
+  type RestoredCollectionInput,
+} from './schema-editor'
+import {
+  detailsLanded,
+  findCollectionByName,
+  type CollectionDraft,
+} from './schema-editor/collection-draft'
+import { hideSchemaOutcomeUnknown } from './hooks/useSchemaManager'
 import type { LogicalPath, ContentId } from '../paths/types'
 import {
   AssetContextProvider,
@@ -262,6 +273,9 @@ const EditorContent: React.FC<EditorProps> = ({
     LogicalPath | undefined
   >(undefined)
   const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
+  const [collectionDraft, setCollectionDraft] = useState<CollectionDraft | null>(null)
+  // Each open or close of the collection dialog moves it on, so a slow open answers only if current.
+  const collectionOpeningRef = useRef(0)
 
   const [quickOpenOpen, setQuickOpenOpen] = useState(false)
   const [quickOpenFromDrawer, setQuickOpenFromDrawer] = useState(false)
@@ -940,10 +954,13 @@ const EditorContent: React.FC<EditorProps> = ({
     collection: EditorCollection | null,
     parentPath?: LogicalPath,
   ) => {
+    const opening = ++collectionOpeningRef.current
     if (collection) {
       // The tree's entry types, the fallback, carry no schema or usage.
+      const read = await readEntryTypes(collection.path).catch(() => null)
+      if (opening !== collectionOpeningRef.current) return
       const entries =
-        (await readEntryTypes(collection.path).catch(() => null)) ??
+        read ??
         (collection.entryTypes ?? []).map(
           (et): ExistingEntryType => ({
             name: et.name,
@@ -970,6 +987,7 @@ const EditorContent: React.FC<EditorProps> = ({
   }
 
   const handleCloseCollectionEditor = () => {
+    collectionOpeningRef.current++
     setCollectionEditorOpen(false)
     setEditingCollection(null)
     setCollectionEditorParentPath(undefined)
@@ -985,28 +1003,72 @@ const EditorContent: React.FC<EditorProps> = ({
     // return result objects — see useSchemaManager), so branch on `result.ok`
     // instead of try/catch.
     if (isNew) {
-      const result = await createCollection(data as Parameters<typeof createCollection>[0])
+      const input = data as Parameters<typeof createCollection>[0]
+      const result = await createCollection(input)
       // A retried create that had landed makes a second collection, so an unanswered one closes
-      // the dialog too, leaving the hook's toast to say to check the "Content" panel first.
+      // the dialog too, leaving the hook's toast to say to check the "Content" panel first. What
+      // was entered comes back on the next "New collection" here, unless the collection shows up.
       if (result.ok || result.unanswered) {
+        setCollectionDraft(result.ok ? null : { kind: 'create', input })
         handleCloseCollectionEditor()
       } else {
         setCollectionEditorError(result.error)
       }
     } else if (editingCollection) {
-      const result = await updateCollection(
-        editingCollection.logicalPath,
-        data as Parameters<typeof updateCollection>[1],
-      )
+      const updates = data as Parameters<typeof updateCollection>[1]
+      const result = await updateCollection(editingCollection.logicalPath, updates)
       // An unanswered save may have renamed the collection, leaving `editingCollection`'s path
-      // stale, so the dialog closes; the hook's toast says to reopen it and check.
+      // stale, so the dialog closes; the hook's toast says to reopen it and check. Reopened while
+      // the collection doesn't show the save, it fills the changes in again.
       if (result.ok || result.unanswered) {
+        setCollectionDraft(
+          result.ok
+            ? null
+            : { kind: 'details', collectionPath: editingCollection.logicalPath, updates },
+        )
         handleCloseCollectionEditor()
       } else {
         setCollectionEditorError(result.error)
       }
     }
   }
+
+  // An unanswered collection write settles once the content tree shows it: the create's
+  // collection under its parent, or the details save's values on its collection (or the
+  // collection gone from its old path, which only a slug change that landed does).
+  useEffect(() => {
+    if (!collectionDraft) return
+    const landed =
+      collectionDraft.kind === 'create'
+        ? !!findCollectionByName(
+            activeCollections ?? [],
+            collectionDraft.input.parentPath,
+            collectionDraft.input.name,
+          )
+        : detailsLanded(activeCollections ?? [], collectionDraft)
+    if (!landed) return
+    setCollectionDraft(null)
+    hideSchemaOutcomeUnknown()
+    notifications.show({
+      message:
+        collectionDraft.kind === 'create'
+          ? `Collection "${collectionDraft.input.name}" created`
+          : 'Collection updated',
+      color: 'green',
+    })
+  }, [collectionDraft, activeCollections])
+
+  const restoredCollectionInput = ((): RestoredCollectionInput | null => {
+    if (!collectionDraft) return null
+    if (collectionDraft.kind === 'create') {
+      return !editingCollection && collectionEditorParentPath === collectionDraft.input.parentPath
+        ? collectionDraft.input
+        : null
+    }
+    return editingCollection?.logicalPath === collectionDraft.collectionPath
+      ? collectionDraft.updates
+      : null
+  })()
 
   const handleDeleteCollection = (collectionPath: LogicalPath) => {
     setDeletingCollectionPath(collectionPath)
@@ -1927,6 +1989,8 @@ const EditorContent: React.FC<EditorProps> = ({
               onClose={handleCloseCollectionEditor}
               isSaving={schemaLoading}
               error={collectionEditorError}
+              restored={restoredCollectionInput}
+              onDiscardRestored={() => setCollectionDraft(null)}
             />
           )}
 

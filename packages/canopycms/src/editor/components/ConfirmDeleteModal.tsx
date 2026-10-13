@@ -30,7 +30,14 @@ export function ConfirmDeleteModal({
   children,
 }: ConfirmDeleteModalProps) {
   return (
-    <Modal opened={isOpen} onClose={onClose} title={title} centered size="md">
+    <Modal
+      opened={isOpen}
+      onClose={onClose}
+      title={title}
+      centered
+      size="md"
+      closeButtonProps={{ disabled: loading }}
+    >
       <Stack gap="md" data-testid="confirm-delete-modal">
         <Text size="sm">{message}</Text>
         {children}

@@ -859,3 +859,161 @@ describe('branches drawer', () => {
     expect(screen.queryByTestId('switch-to-branch-button-feature-x')).toBeNull()
   })
 })
+
+describe('a collection write with no answer', () => {
+  let consoleSpy: MockConsole
+  beforeEach(() => {
+    consoleSpy = mockConsole()
+  })
+  afterEach(() => consoleSpy.restore())
+
+  const gatewayPage = () =>
+    new Response('<html>Gateway Time-out</html>', {
+      status: 504,
+      headers: { 'Content-Type': 'text/html' },
+    })
+  const urlOf = (input: RequestInfo | URL) =>
+    typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+
+  /**
+   * Answers the collection create with a gateway's 5xx page. With `lands`, it reached the server
+   * anyway, so the schema lists "notes" under "posts" from then on.
+   */
+  const stubUnansweredCreate = ({ lands }: { lands: boolean }) => {
+    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+    const answerOthers = fetchMock.getMockImplementation()!
+    let created = false
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = urlOf(input)
+      if (init?.method === 'POST' && url.endsWith('/schema/collections')) {
+        created = lands
+        return gatewayPage()
+      }
+      const response = await answerOthers(input, init)
+      if (!created || !url.includes('/schema') || url.includes('/schema/')) return response
+      const body = await response.json()
+      body.data.flatSchema.push({
+        type: 'collection',
+        logicalPath: 'content/posts/notes',
+        name: 'notes',
+        parentPath: 'content/posts',
+        entries: [{ name: 'note', format: 'json', schema }],
+      })
+      return okJson(body.data)
+    })
+  }
+
+  const createNotesCollection = async (user: ReturnType<typeof userEvent.setup>) => {
+    fireEvent.click(screen.getByTestId('collection-menu-posts'))
+    fireEvent.click(await screen.findByText('Add sub-collection…'))
+    const dialog = await screen.findByRole('dialog', { name: 'Create collection' })
+    await user.type(within(dialog).getByLabelText(/^Name/), 'notes')
+    await user.click(within(dialog).getByRole('button', { name: 'Add entry type…' }))
+    const addDialog = await screen.findByRole('dialog', { name: 'Add entry type' })
+    await user.type(within(addDialog).getByLabelText(/^Name/), 'note')
+    await user.click(within(addDialog).getByRole('button', { name: 'Add entry type' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add entry type' })).toBeNull())
+    await user.click(within(dialog).getByRole('button', { name: 'Create collection' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Create collection' })).toBeNull(),
+    )
+  }
+
+  const reopenCreate = async () => {
+    fireEvent.click(screen.getByTestId('collection-menu-posts'))
+    fireEvent.click(await screen.findByText('Add sub-collection…'))
+    return screen.findByRole('dialog', { name: 'Create collection' })
+  }
+
+  it('fills the create dialog in again while the collection is not listed', async () => {
+    stubUnansweredCreate({ lands: false })
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const user = userEvent.setup()
+
+    await createNotesCollection(user)
+    const dialog = await reopenCreate()
+
+    expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('notes')
+    expect(within(dialog).getByText('note')).toBeTruthy()
+    expect(within(dialog).getByText('Restored what you entered')).toBeTruthy()
+  })
+
+  it('says the create went through once the content tree lists it, and fills nothing in', async () => {
+    stubUnansweredCreate({ lands: true })
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const user = userEvent.setup()
+
+    await createNotesCollection(user)
+
+    await waitFor(() =>
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Collection "notes" created', color: 'green' }),
+      ),
+    )
+    expect(vi.mocked(notifications.hide)).toHaveBeenCalledWith('canopy-schema-outcome-unknown')
+    const dialog = await reopenCreate()
+    expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('')
+  })
+
+  it('fills a details save in again when the collection is reopened', async () => {
+    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+    const answerOthers = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((input, init) =>
+      init?.method === 'PATCH' && urlOf(input).includes('/schema/collection/')
+        ? Promise.resolve(gatewayPage())
+        : answerOthers(input, init),
+    )
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const openEdit = async () => {
+      fireEvent.click(screen.getByTestId('collection-menu-posts'))
+      fireEvent.click(await screen.findByText('Edit collection…'))
+      return screen.findByRole('dialog', { name: /^Edit collection:/ })
+    }
+    const first = await openEdit()
+    fireEvent.change(within(first).getByLabelText(/^Label/), { target: { value: 'Articles' } })
+    fireEvent.click(within(first).getByRole('button', { name: 'Save collection details' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: /^Edit collection:/ })).toBeNull(),
+    )
+
+    const dialog = await openEdit()
+
+    expect((within(dialog).getByLabelText(/^Label/) as HTMLInputElement).value).toBe('Articles')
+  })
+
+  it('ignores a slow edit opening once another opening has replaced it', async () => {
+    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+    const answerOthers = fetchMock.getMockImplementation()!
+    let answerRead: () => void = () => {}
+    fetchMock.mockImplementation((input, init) =>
+      (init?.method ?? 'GET') === 'GET' && urlOf(input).includes('/schema/collection/')
+        ? new Promise<Response>((resolve) => {
+            answerRead = () =>
+              resolve(okJson({ collection: { name: 'posts' }, entryTypesWithUsage: [] }))
+          })
+        : answerOthers(input, init),
+    )
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    fireEvent.click(screen.getByTestId('collection-menu-posts'))
+    fireEvent.click(await screen.findByText('Edit collection…'))
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) => String(url).includes('/schema/collection/')),
+      ).toBe(true),
+    )
+
+    await reopenCreate()
+    await act(async () => answerRead())
+
+    expect(screen.getByRole('dialog', { name: 'Create collection' })).toBeTruthy()
+    expect(screen.queryByRole('dialog', { name: /^Edit collection:/ })).toBeNull()
+  })
+})
