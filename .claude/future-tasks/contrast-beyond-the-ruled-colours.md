@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  What is left of docs/ux-guidelines.md "Colour and contrast" after the theme pass: filled badges in colours other than the primary put white text on a fill under 4.5:1; in dark mode a combobox's armed option and the date picker's selected day put white on primary shade 5 (3.67:1); and Checkbox, Radio and Switch borders are still Mantine's gray.4, under 3:1
+  What is left of docs/ux-guidelines.md "Colour and contrast" after the theme pass: filled colours other than the primary put white text on a fill under 4.5:1 (shade 5 in dark); in dark mode a combobox's armed option and the date picker's selected day put white on primary shade 5 (3.67:1); and Checkbox, Radio and Switch borders are still Mantine's gray.4, under 3:1
 ---
 # Contrast beyond the ruled colours
 
@@ -11,12 +11,17 @@ subtle variants and outline at 4.5:1, fills primary Buttons and Badges with `--c
 and sets the dimmed, placeholder, danger-text, input-border, surface and count-badge tokens, with
 the ratios pinned in `theme.test.tsx`. Three gaps remain.
 
-## Filled badges in other colours
+## Filled colours other than the primary
 
-`variant="filled"` puts white text on the colour's `primaryShade` step: blue.7 is 4.20:1, green.7
-2.75:1. Used by `permission-manager/PermissionLevelBadge.tsx` and `PermissionEditor.tsx` (colours
-from `LEVEL_CONFIG` in `permission-manager/constants.tsx`: blue, green, grape) and
-`group-manager/MemberList.tsx` (blue). Either make them light badges, which the theme already
+`variant="filled"` puts white text or icons on the colour's `primaryShade` step: shade 7 in light
+(blue 4.20:1, green 2.75:1) and shade 5 in dark (green 2.01, blue 2.99, grape 3.33, gray 2.07,
+red 2.78, orange 2.23), as on the base. Surfaces: `permission-manager/PermissionLevelBadge.tsx` and
+`PermissionEditor.tsx` (colours from `LEVEL_CONFIG` in `permission-manager/constants.tsx`),
+`group-manager/MemberList.tsx` and filled `UserBadge`, `schema-editor/CollectionEditor.tsx`'s
+"Default" and "Singleton" badges, `media/AssetCard.tsx`'s red "Remove from library" ActionIcon
+(an icon, 3:1), and `components/EditorSidebar.tsx`'s orange Indicator. The guideline rules only
+filled red, orange and primary; a rule for other filled colours is needed too ("light variant, or
+a measured fill", as `--canopy-primary-fill` does for the primary). Either make them light badges, which the theme already
 makes readable, or give filled badges Mantine's `autoContrast` (black text on light fills) without
 breaking the filled red and orange Button resolver in `theme.tsx`.
 
@@ -31,6 +36,12 @@ on dark surfaces. Each needs the fill token through a scoped rule or the compone
 Shade 5 measures 3:1 for the default brand only: darker adopter brands (`#1e3a8a` 2.21:1 on
 dark.5) fall short, as on the base; a measured indicator token would need routing through every
 focus and checked-state selector Mantine draws.
+
+## Dark light-variant hue
+
+Dark light and subtle variants are measured on their hover tint over dark.4 (a hovered menu item),
+the strictest case, which pushes brand to brand.1, close to neutral: "Editing" beside "Archived"
+reads nearly the same. Measuring on dark.6 keeps brand.2 but drops to 4.1-4.4:1 on dark.4.
 
 ## Checkbox, Radio and Switch borders
 

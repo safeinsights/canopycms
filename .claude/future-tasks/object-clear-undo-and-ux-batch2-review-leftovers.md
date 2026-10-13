@@ -32,6 +32,11 @@ compact "Outline"). None was in that PR's scope.
   announced twice (name and description).
 - **MDX popups have no edge** in dark mode where they open over a `--canopy-surface-subtle` panel
   (`fields/MarkdownField.tsx`); a border or Mantine's dropdown shadow would separate them.
+- **Required asterisk** is `--mantine-color-error` (red.6 on white 3.28:1, red.8 on dark.7 3.44:1);
+  the theme sets `--canopy-danger-text` but not the error colour (EntryCreateModal,
+  RenameEntryModal, CollectionEditor, the new-branch form).
+- **Validation errors not linked**: in the FormRenderer "with validation errors" story the Title
+  input has `aria-invalid="false"` and no `aria-describedby` pointing at its error text.
 - **Raw schema names**: an unlabelled block field shows "blocks" in the outline and "headline",
   "body" as labels in the block story fixture; `entryTypeLabel`-style humanising would cover them.
 
