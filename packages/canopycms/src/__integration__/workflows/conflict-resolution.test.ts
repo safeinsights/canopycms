@@ -10,7 +10,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
-import type { BranchResponse } from '../../api/branch'
+import type { BranchListItemResponse } from '../../api/branch'
 import type { ApiResponse } from '../../api/types'
 
 describe('Conflict Resolution Integration', () => {
@@ -254,7 +254,7 @@ describe('Conflict Resolution Integration', () => {
     // Get branch status
     const statusResponse = await editor1Client.get('/api/canopycms/feature-stale-state/status')
     expect(statusResponse.status).toBe(200)
-    const status = await statusResponse.json<BranchResponse>()
+    const status = await statusResponse.json<BranchListItemResponse>()
 
     // Branch should be in editing state
     expect(status.data?.branch?.status).toBeDefined()

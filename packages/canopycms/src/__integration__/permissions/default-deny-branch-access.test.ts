@@ -16,7 +16,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-user'
 import { createApiClient, saveSamplePost } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
-import type { BranchResponse } from '../../api/branch'
+import type { BranchListItemResponse } from '../../api/branch'
 
 describe('defaultBranchAccess: deny', () => {
   let workspace: TestWorkspace
@@ -68,7 +68,7 @@ describe('defaultBranchAccess: deny', () => {
       title: 'Editor owned',
     })
     expect(createRes.status).toBe(200)
-    const created = await createRes.json<BranchResponse>()
+    const created = await createRes.json<BranchListItemResponse>()
     expect(created.data?.branch.createdBy).toBe('test-editor')
 
     // Reading the branch must work -- under the old behavior every one of

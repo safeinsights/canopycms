@@ -9,7 +9,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
-import type { BranchResponse, BranchListResponse } from '../../api/branch'
+import type { BranchListItemResponse, BranchListResponse } from '../../api/branch'
 import type { EntriesResponse } from '../../api/entries'
 import type { ApiResponse } from '../../api/types'
 
@@ -50,7 +50,7 @@ describe('API Editing Workflow Integration', () => {
 
     expect(createResponse.status).toBe(200)
     expect(createResponse.ok).toBe(true)
-    const createData = await createResponse.json<BranchResponse>()
+    const createData = await createResponse.json<BranchListItemResponse>()
     expect(createData.data?.branch.name).toBe('feature-new-post')
     expect(createData.data?.branch.status).toBe('editing')
 
@@ -108,7 +108,7 @@ describe('API Editing Workflow Integration', () => {
     const statusResponse = await editorClient.get('/api/canopycms/feature-new-post/status')
 
     expect(statusResponse.status).toBe(200)
-    const status = await statusResponse.json<BranchResponse>()
+    const status = await statusResponse.json<BranchListItemResponse>()
     expect(status.data?.branch.status).toBe('editing')
   })
 

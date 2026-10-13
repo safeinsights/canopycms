@@ -35,9 +35,6 @@ import { lookupUserProfiles } from '../auth/user-metadata-lookup'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
 
-/** Response type for single branch operations (create, update, status) */
-export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
-
 /**
  * A listed branch plus server-computed protected-base-branch flags (see
  * authorization/protected-branch.ts). Optional on the wire, matching the

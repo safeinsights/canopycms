@@ -21,7 +21,7 @@ import { createApiClient } from '../test-utils/api-client'
 import { defineCanopyTestConfig } from '../../config-test'
 import { initTestRepo } from '../../test-utils'
 import { GITHUB_TRACKING_REF_PREFIX } from '../../git-manager'
-import type { BranchResponse } from '../../api/branch'
+import type { BranchListItemResponse } from '../../api/branch'
 
 describe('Branch creation: remote-mirror collision guard (L2)', () => {
   describe('with a real remote.git configured', () => {
@@ -74,14 +74,14 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
 
       const res = await client.post('/api/canopycms/branches', { branch: 'tracked-only-branch' })
       expect(res.status).toBe(409)
-      const body = await res.json<BranchResponse>()
+      const body = await res.json<BranchListItemResponse>()
       expect(body.error).toMatch(/already exists on the remote/)
     })
 
     it('proceeds (200) when the requested name is absent from both namespaces', async () => {
       const res = await client.post('/api/canopycms/branches', { branch: 'brand-new-branch' })
       expect(res.status).toBe(200)
-      const body = await res.json<BranchResponse>()
+      const body = await res.json<BranchListItemResponse>()
       expect(body.data?.branch.name).toBe('brand-new-branch')
     })
 
@@ -225,7 +225,7 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
       // fail this await outright -- there is no try/catch masking it.
       const res = await client.post('/api/canopycms/branches', { branch: 'no-remote-branch' })
       expect(res.status).toBe(200)
-      const body = await res.json<BranchResponse>()
+      const body = await res.json<BranchListItemResponse>()
       expect(body.data?.branch.name).toBe('no-remote-branch')
     })
   })
