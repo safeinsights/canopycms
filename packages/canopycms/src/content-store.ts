@@ -61,7 +61,7 @@ import { isPlainRecord } from './validation/field-traversal'
 import { bumpContentIndexGeneration, readContentIndexGeneration } from './content-index-generation'
 import { generateId } from './id'
 import { isNodeError } from './utils/error'
-import { filePathExists, readFileIfExists } from './utils/fs'
+import { filePathExists, readFileWithMtimeIfExists } from './utils/fs'
 import { asRecord, getFormatExtension } from './utils/format'
 import {
   entryLogicalPath,
@@ -1162,31 +1162,31 @@ export class ContentStore {
             }
           }
 
+          // The target as it is now, from one open: its mtime is the OCC version checked below,
+          // and its bytes are what the comment-preserving serialisation further down re-applies
+          // the payload onto, so the bytes kept are the bytes OCC validated. One open rather
+          // than a path `stat` plus a later read because opening revalidates against the NFS
+          // server, where a `stat` can answer from another host's cached view of a file since
+          // replaced or deleted (docs/concurrency.md). Inside withLock(lockKey) and
+          // withContentWriteExclusion ([SYNC-C1]), so no writer or rebase moves it after this.
+          const current = await readFileWithMtimeIfExists(absolutePath)
+
           // OCC: undefined means no opinion (skip entirely, a blind write). A number means
           // "must match this mtime", and a missing file fails it too: the entry was deleted or
           // moved since the read, and writing would re-create it (`EntryGoneError`). `null`
           // means "must NOT exist yet" — the create-intent guard, without which a create
           // request against a slug that already has content falls through to an ordinary
-          // blind overwrite. This is the authoritative check: it runs inside the per-entry lock
-          // and the content-write lock against a fresh stat, so it holds even if a caller's own
-          // pre-write existence check (e.g. the API layer's `documentExists`) went stale under
-          // concurrency. It runs before the create-only guards below and before `mkdir`, so a
-          // refused update neither re-creates a deleted collection directory nor reports a
-          // create-only failure for a write that was never a create.
-          if (input.expectedVersion !== undefined) {
-            try {
-              const existing = await fs.stat(absolutePath)
-              if (input.expectedVersion === null) {
-                throw new ContentConflictError('An entry with this slug already exists')
-              }
-              if (existing.mtimeMs !== input.expectedVersion) {
-                throw new ContentConflictError()
-              }
-            } catch (err) {
-              if (err instanceof ContentConflictError) throw err
-              if (!isNodeError(err) || err.code !== 'ENOENT') throw err
-              if (input.expectedVersion !== null) throw new EntryGoneError()
-            }
+          // blind overwrite. This is the authoritative check, so it holds even if a caller's
+          // own pre-write existence check (e.g. the API layer's `documentExists`) went stale
+          // under concurrency. It runs before the create-only guards below and before `mkdir`,
+          // so a refused update neither re-creates a deleted collection directory nor reports
+          // a create-only failure for a write that was never a create.
+          if (input.expectedVersion === null && current) {
+            throw new ContentConflictError('An entry with this slug already exists')
+          }
+          if (typeof input.expectedVersion === 'number') {
+            if (!current) throw new EntryGoneError()
+            if (current.mtimeMs !== input.expectedVersion) throw new ContentConflictError()
           }
 
           // [URL] Contested-URL guard, create only: an ordinary save cannot contest a URL it
@@ -1206,7 +1206,7 @@ export class ContentStore {
           // Serialization comes from `withContentWriteExclusion` (the branch-wide, cross-host
           // lock wrapping this whole loop), NOT the per-entry lock: the two halves of a
           // contested pair live in DIFFERENT collections and take different entry-lock keys.
-          if (!(await filePathExists(absolutePath))) {
+          if (!current) {
             const chosenSlug = extractSlugFromFilename(path.basename(absolutePath))
 
             // [SLUG] Routability guard, create only. `validateSlug` (in buildPaths) is the
@@ -1283,20 +1283,18 @@ export class ContentStore {
           // untouched lines' formatting. See utils/content-serialize.ts and
           // utils/json-source-splice.ts.
           //
-          // This makes the write a genuine read-modify-write of the content file, so WHERE
-          // the read happens matters: inside withLock(lockKey), inside
-          // withContentWriteExclusion ([SYNC-C1]), and after the expectedVersion stat -- so
-          // the bytes read here are the bytes that OCC check validated, and no rebase can be
-          // running against this branch. Do not hoist it out of the critical section.
+          // This makes the write a genuine read-modify-write of the content file. The bytes are
+          // `current`'s, read in the same open the OCC check took its version from, inside
+          // both locks; do not replace them with a read outside the critical section.
           //
-          // INVARIANT, and the one case that does NOT preserve comments: this reads the path
+          // INVARIANT, and the one case that does NOT preserve comments: `current` is the path
           // being WRITTEN. A relocating write -- the ID resolves to a different relativePath,
           // so the block below unlinks `staleOldAbsPath` -- finds nothing at the new path and
           // falls back to a plain stringify, losing the old file's comments. Unreachable
           // today: the editor renames through renameEntry(), which link()s the bytes across
           // intact, and no caller passes `existingId`. If a relocating write becomes
-          // reachable, read the ID's current path here instead of `absolutePath`.
-          const existingRaw = await readFileIfExists(absolutePath)
+          // reachable, read the ID's current path instead of `absolutePath`.
+          const existingRaw = current?.content
 
           let content: string
           if (input.format === 'json') {

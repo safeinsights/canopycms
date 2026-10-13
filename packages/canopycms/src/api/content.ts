@@ -321,6 +321,12 @@ const writeContentHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
+  // Update guard: an update whose entry is gone is refused before anything below judges it,
+  // since its entry type can no longer be read off the file and every check that follows would
+  // treat it as a create. store.write() re-enforces it in-lock (EntryGoneError).
+  const exists = await store.documentExists(schemaItem.logicalPath, slug)
+  if (body.expectedVersion != null && !exists) return entryGoneResponse()
+
   // Authoritative schema validation at the write boundary (COMPOUND-2): the server re-checks
   // required fields, type/format correctness, and non-empty required references (rules shared
   // with the editor via validation/entry-validator), plus reference EXISTENCE and
@@ -408,8 +414,6 @@ const writeContentHandler = async (
 
   const keptWarnings: EntryValidationIssue[] = []
   try {
-    const exists = await store.documentExists(schemaItem.logicalPath, slug)
-
     // Create guard: a create against a slug that already has content must never silently
     // overwrite it — short-circuit with 409 before field validation runs, so the error names the
     // real problem instead of "field is required" or a bare conflict. store.write() re-enforces
@@ -417,12 +421,6 @@ const writeContentHandler = async (
     // check); this is just a cheaper fast path for the common case.
     if (expectedVersion === null && exists) {
       return { ok: false, status: 409, error: createConflictError }
-    }
-    // Update guard, the same fast path for the converse: an update whose entry is gone is
-    // refused before the create-only checks below, which would otherwise judge it as a create.
-    // store.write() re-enforces it in-lock (EntryGoneError).
-    if (expectedVersion !== null && !exists) {
-      return entryGoneResponse()
     }
 
     // [SLUG] Create-only routability check: `writeContentParamsSchema.path`'s `parseLogicalPath`

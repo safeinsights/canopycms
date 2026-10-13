@@ -2054,16 +2054,16 @@ describe('ContentStore OCC', () => {
     expect(read.version).toBe(written.version)
   })
 
-  it('write rethrows non-ENOENT stat errors, does not silently bypass OCC', async () => {
+  it('write rethrows non-ENOENT open errors, does not silently bypass OCC', async () => {
     const store = await makeStore()
     const written = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('g'), {
       format: 'json',
       data: { v: 1 },
     })
 
-    // Simulate a filesystem error (e.g. EACCES) on the OCC stat call
+    // A filesystem error (e.g. EACCES) opening the target for its OCC version
     const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
-    const statSpy = vi.spyOn(fs, 'stat').mockRejectedValueOnce(eacces)
+    const openSpy = vi.spyOn(fs, 'open').mockRejectedValueOnce(eacces)
 
     try {
       await expect(
@@ -2073,8 +2073,9 @@ describe('ContentStore OCC', () => {
           expectedVersion: written.version,
         }),
       ).rejects.toThrow('EACCES')
+      expect(openSpy).toHaveBeenCalledTimes(1)
     } finally {
-      statSpy.mockRestore()
+      openSpy.mockRestore()
     }
   })
 })
@@ -2185,11 +2186,13 @@ describe('ContentStore update of an entry that is gone (numeric expectedVersion,
       release = resolve
     })
     const real = (fs[name] as (...args: unknown[]) => Promise<void>).bind(fs)
+    let parked = false
     const spy = vi.spyOn(fs, name).mockImplementationOnce(async (...args: unknown[]) => {
+      parked = true
       await gate
       return real(...args)
     })
-    return { release, spy }
+    return { release, spy, isParked: () => parked }
   }
   const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -2250,9 +2253,10 @@ describe('ContentStore update of an entry that is gone (numeric expectedVersion,
 
     // The delete parks inside its critical section, holding the entry's ID lock; the save's
     // pre-pass still sees the file, so it queues on that same key and resolves again in-lock.
-    const { release, spy } = gateFsCall('unlink')
+    const { release, spy, isParked } = gateFsCall('unlink')
     const deleting = store.delete(posts, unsafeAsSlug('raced'))
     await tick()
+    let settled = false
     const saving = store
       .write(posts, unsafeAsSlug('raced'), {
         format: 'json',
@@ -2260,7 +2264,13 @@ describe('ContentStore update of an entry that is gone (numeric expectedVersion,
         expectedVersion: read.version,
       })
       .catch((e: unknown) => e)
+      .finally(() => {
+        settled = true
+      })
     await tick()
+    // The delete is parked at its unlink and the save is waiting behind it.
+    expect(isParked()).toBe(true)
+    expect(settled).toBe(false)
     release()
     await deleting
     const result = await saving
@@ -2279,9 +2289,10 @@ describe('ContentStore update of an entry that is gone (numeric expectedVersion,
     })
     const id = await store.getIdForEntry(posts, unsafeAsSlug('foo'))
 
-    const { release, spy } = gateFsCall('link')
+    const { release, spy, isParked } = gateFsCall('link')
     const renaming = store.renameEntry(posts, unsafeAsSlug('foo'), unsafeAsSlug('bar'))
     await tick()
+    let settled = false
     const saving = store
       .write(posts, unsafeAsSlug('foo'), {
         format: 'json',
@@ -2289,7 +2300,13 @@ describe('ContentStore update of an entry that is gone (numeric expectedVersion,
         expectedVersion: read.version,
       })
       .catch((e: unknown) => e)
+      .finally(() => {
+        settled = true
+      })
     await tick()
+    // The rename is parked at its link and the save is waiting behind it.
+    expect(isParked()).toBe(true)
+    expect(settled).toBe(false)
     release()
     await renaming
     const result = await saving
@@ -2299,6 +2316,76 @@ describe('ContentStore update of an entry that is gone (numeric expectedVersion,
     const files = await postFiles(root)
     expect(files).toHaveLength(1)
     expect(files[0]).toContain(`.bar.${id}.`)
+  })
+
+  // Another host's delete or replace can be invisible to a path `stat` and a directory listing
+  // for the NFS cache window; opening the file revalidates against the server. Simulated by
+  // answering both for the target from what this host saw when the editor read it.
+  const answerFromCache = async (absolutePath: string, mtimeMs: number) => {
+    const dir = path.dirname(absolutePath)
+    const listing = await fs.readdir(dir, { withFileTypes: true })
+    const realStat = fs.stat.bind(fs)
+    const realReaddir = fs.readdir.bind(fs) as (...args: unknown[]) => Promise<unknown>
+    const statSpy = vi.spyOn(fs, 'stat').mockImplementation(async (p, ...rest) => {
+      if (String(p) === absolutePath) return { mtimeMs } as Awaited<ReturnType<typeof fs.stat>>
+      return realStat(p, ...(rest as []))
+    })
+    const readdirSpy = vi
+      .spyOn(fs, 'readdir')
+      .mockImplementation((async (p: unknown, ...rest: unknown[]) =>
+        String(p) === dir ? listing : realReaddir(p, ...rest)) as unknown as typeof fs.readdir)
+    return () => {
+      statSpy.mockRestore()
+      readdirSpy.mockRestore()
+    }
+  }
+
+  it('refuses a save of an entry deleted on another host while its stat is still cached', async () => {
+    const root = await makeRoot()
+    const editor = storeAt(root)
+    const read = await editor.write(posts, unsafeAsSlug('cached'), {
+      format: 'json',
+      data: { title: 'v1' },
+    })
+    const restore = await answerFromCache(read.absolutePath, read.version!)
+    await fs.rm(read.absolutePath)
+    try {
+      await expect(
+        editor.write(posts, unsafeAsSlug('cached'), {
+          format: 'json',
+          data: { title: 'v2' },
+          expectedVersion: read.version,
+        }),
+      ).rejects.toBeInstanceOf(EntryGoneError)
+    } finally {
+      restore()
+    }
+    expect(await postFiles(root)).toEqual([])
+  })
+
+  it('refuses a save over an entry replaced on another host while its stat is still cached', async () => {
+    const root = await makeRoot()
+    const editor = storeAt(root)
+    const read = await editor.write(posts, unsafeAsSlug('replaced'), {
+      format: 'json',
+      data: { title: 'v1' },
+    })
+    await fs.writeFile(read.absolutePath, '{"title":"theirs"}\n')
+    await fs.utimes(read.absolutePath, new Date(), new Date(read.version! + 5_000))
+
+    const restore = await answerFromCache(read.absolutePath, read.version!)
+    try {
+      await expect(
+        editor.write(posts, unsafeAsSlug('replaced'), {
+          format: 'json',
+          data: { title: 'mine' },
+          expectedVersion: read.version,
+        }),
+      ).rejects.toBeInstanceOf(ContentConflictError)
+    } finally {
+      restore()
+    }
+    expect(await fs.readFile(read.absolutePath, 'utf8')).toBe('{"title":"theirs"}\n')
   })
 
   it('does not re-create a collection directory removed under the entry', async () => {
