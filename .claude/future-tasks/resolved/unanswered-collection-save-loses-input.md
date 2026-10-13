@@ -2,10 +2,14 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-12. An unanswered collection create or details save closes the collection dialog, so if the write did not land the user re-enters the name, label and every staged entry type. docs/ux-guidelines.md now rules that a create closed after no answer prefills its dialog's next open; the details save follows the same pattern
+  RESOLVED (2026-10-13). `Editor.tsx` keeps an unanswered collection create or details save as a `CollectionDraft` (`schema-editor/collection-draft.ts`). The next "New collection" under that parent, or that collection's Edit, fills it in again with a "Discard changes" way out; once the content tree shows the write landed, the draft goes and a green toast says so
 ---
 
 # An unanswered collection create or details save loses what was entered
+
+## Status: RESOLVED 2026-10-13
+
+Tests: `Editor.admin-and-undo.test.tsx` ("a collection write with no answer") and `CollectionEditor.test.tsx` ("input restored after a write with no answer").
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-12 from the UX review of the phase 3
 final-review fixes.
@@ -29,7 +33,7 @@ only because a retry could duplicate the write.
 
 ## Fix
 
-[docs/ux-guidelines.md](../../docs/ux-guidelines.md#loading-empty-and-error-states) rules that a
+[docs/ux-guidelines.md](../../../docs/ux-guidelines.md#loading-empty-and-error-states) rules that a
 create closed after no answer prefills that dialog's next open with what was typed. Keep the
 staged `CreateCollectionInput` (or the details update) in `Editor.tsx` and prefill the dialog
 the next time "New collection" (or that collection's Edit) opens for the same parent, with a way
