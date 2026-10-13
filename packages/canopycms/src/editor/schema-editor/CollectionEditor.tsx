@@ -117,8 +117,8 @@ export interface CollectionEditorProps {
   isSaving?: boolean
   error?: string | null
   /**
-   * What was entered for a create or details save that got no answer and has not shown up since,
-   * filled in when the dialog opens (docs/ux-guidelines.md: a create closed after no answer
+   * What was entered for a create or details save that got no answer and that the opener's fresh
+   * read did not show landed, filled in when the dialog opens (docs/ux-guidelines.md: a create closed after no answer
    * prefills its dialog's next open).
    */
   restored?: RestoredCollectionInput | null

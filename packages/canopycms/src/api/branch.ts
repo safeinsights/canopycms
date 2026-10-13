@@ -246,8 +246,8 @@ const accessForViewer = (
 
 /**
  * A branch as `viewer` may see it, with server-computed protected-base-branch flags. Every
- * branch response goes through here. Reads config per call so dev-mode refreshActiveBranch()
- * updates are reflected.
+ * branch response outside the admin-only repairs goes through here. Reads config per call so
+ * dev-mode refreshActiveBranch() updates are reflected.
  */
 export const toBranchListItem = (
   config: ApiContext['services']['config'],

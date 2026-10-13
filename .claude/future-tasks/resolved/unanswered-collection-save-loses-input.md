@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  RESOLVED (2026-10-13). `Editor.tsx` keeps an unanswered collection create or details save as a `CollectionDraft` (`schema-editor/collection-draft.ts`). The next "New collection" under that parent, or that collection's Edit, fills it in again with a "Discard changes" way out; once the content tree shows the write landed, the draft goes and a green toast says so
+  RESOLVED (2026-10-13). `Editor.tsx` keeps an unanswered collection create or details save as a `CollectionDraft` (`schema-editor/collection-draft.ts`). The next "New collection" under that parent, or that collection's Edit, fills it in again with a "Discard changes" way out; when the dialog's opener reads a fresh tree that shows the write landed, the draft goes and a green toast says so; a create no read has ruled out is not refilled
 ---
 
 # An unanswered collection create or details save loses what was entered

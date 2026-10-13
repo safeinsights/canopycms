@@ -3,8 +3,9 @@ import type { CreateCollectionInput, UpdateCollectionInput } from '../../schema/
 import type { EditorCollection } from '../Editor'
 
 /**
- * What was sent by a collection create or details save that got no answer, kept until the content
- * tree shows it landed or the user discards it, so the dialog can fill it in again.
+ * What was sent by a collection create or details save that got no answer, so the dialog can fill
+ * it in again. `Editor.tsx` keeps it until the dialog's opener reads it landed, a save of the same
+ * thing succeeds, or the user discards it.
  */
 export type CollectionDraft = { branch: string } & (
   | { kind: 'create'; input: CreateCollectionInput }

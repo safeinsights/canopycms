@@ -73,7 +73,7 @@ const confirmModalHandlers = (onConfirm: () => Promise<void>, onDismiss: () => v
 
 /**
  * With `unsaved` edits on the branch, the dialog says they are left out: a submit sends only what
- * is saved, and the branch is read-only in review, so they wait as drafts until it is withdrawn.
+ * is saved, and the branch is read-only in review, so they wait as drafts until it is editable.
  */
 const showSubmitConfirmation = (
   branchName: string,

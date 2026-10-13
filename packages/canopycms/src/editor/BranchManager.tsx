@@ -208,7 +208,7 @@ export interface BranchManagerProps {
   ) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
   highlightThreadId?: string
-  /** Names people without `onGetOwnerMetadata`; with neither, access users are unnamed, owners ids */
+  /** Names people without `onGetOwnerMetadata`; with neither, access users are counted, owners ids */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Names branch owners and access users; the branch listing seeds owners only */
   onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>

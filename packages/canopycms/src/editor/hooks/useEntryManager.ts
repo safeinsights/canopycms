@@ -83,7 +83,7 @@ export interface UseEntryManagerReturn {
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
   refreshEntries: (branch?: string) => Promise<EditorEntry[]>
-  /** `refreshEntries`, resolving to the collections it committed too. */
+  /** `refreshEntries`, resolving to the collections it read too. */
   refreshContent: (
     branch?: string,
   ) => Promise<{ entries: EditorEntry[]; collections: EditorCollection[] }>
