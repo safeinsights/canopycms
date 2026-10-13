@@ -775,7 +775,11 @@ describe('permissions API', () => {
     const admin: ApiRequest<undefined> = {
       user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
     }
-    const userFor = (id: string): UserSearchResult => ({ id, name: id, email: `${id}@x.test` })
+    const userFor = (id: string): UserSearchResult => ({
+      id,
+      name: `Name ${id}`,
+      email: `${id}@x.test`,
+    })
 
     it('answers from getUsersMetadata in one plugin call, omitting unknown ids', async () => {
       mockAuthPlugin.getUsersMetadata = vi.fn(async (ids: string[]) =>

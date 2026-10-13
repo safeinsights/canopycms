@@ -15,6 +15,7 @@ import {
 import { IconSearch, IconX } from '@tabler/icons-react'
 import type { UserSearchResult, CanopyGroupId, CanopyUserId } from './types'
 import { UserBadge } from '../components/UserBadge'
+import { personName } from '../../auth/person-name'
 
 export interface MemberListProps {
   groupId: CanopyGroupId
@@ -142,9 +143,15 @@ export const MemberList: React.FC<MemberListProps> = ({
                       />
                     ) : (
                       <>
-                        <Text size="sm" fw={500}>
-                          {user.name}
-                        </Text>
+                        {personName(user.id, user.name) ? (
+                          <Text size="sm" fw={500}>
+                            {personName(user.id, user.name)}
+                          </Text>
+                        ) : (
+                          <Text size="sm" c="dimmed" fs="italic">
+                            Name unavailable
+                          </Text>
+                        )}
                         <Text size="xs" c="dimmed">
                           {user.email}
                         </Text>

@@ -6,6 +6,7 @@ import { CachingAuthPlugin } from './caching-auth-plugin'
 import { MAX_USER_METADATA_BATCH } from '../api/users-constants'
 import { isSystemUserId } from '../system-users'
 import { ANONYMOUS_USER } from '../user'
+import { personName } from './person-name'
 
 /**
  * How long a looked-up user, or the fact that an id is unknown, is served without asking again.
@@ -69,6 +70,10 @@ export async function lookupUsersMetadata(
   return result
 }
 
+/** Every lookup answers with the same name the editor shows: blank or id-equal names become ''. */
+const withPersonName = (user: UserSearchResult | null): UserSearchResult | null =>
+  user && { ...user, name: personName(user.id, user.name) ?? '' }
+
 async function fetchFromPlugin(
   plugin: AuthPlugin,
   ids: CanopyUserId[],
@@ -79,7 +84,7 @@ async function fetchFromPlugin(
     for (let i = 0; i < ids.length; i += MAX_USER_METADATA_BATCH) {
       const users = await getUsersMetadata(ids.slice(i, i + MAX_USER_METADATA_BATCH))
       // A provider answering for an id nobody asked about must not plant it in the cache.
-      for (const user of users) if (result.has(user.id)) result.set(user.id, user)
+      for (const user of users) if (result.has(user.id)) result.set(user.id, withPersonName(user))
     }
     return result
   }
@@ -88,7 +93,7 @@ async function fetchFromPlugin(
   const worker = async () => {
     while (next < ids.length) {
       const id = ids[next++]
-      result.set(id, await plugin.getUserMetadata(id))
+      result.set(id, withPersonName(await plugin.getUserMetadata(id)))
     }
   }
   await Promise.all(Array.from({ length: Math.min(SINGLE_LOOKUP_CONCURRENCY, ids.length) }, worker))

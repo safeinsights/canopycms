@@ -2,6 +2,7 @@ import type { AuthPlugin } from './plugin'
 import type { UserSearchResult, GroupMetadata, AuthenticationResult } from './types'
 import type { CanopyUserId, CanopyGroupId } from '../types'
 import { createDebugLogger } from '../utils/debug'
+import { personName } from './person-name'
 
 const log = createDebugLogger({ prefix: 'CachingAuthPlugin' })
 
@@ -70,7 +71,7 @@ export class CachingAuthPlugin implements AuthPlugin {
         success: true,
         user: {
           userId: identity.userId,
-          name: user?.name ?? identity.userId,
+          name: personName(identity.userId, user?.name),
           email: user?.email,
           avatarUrl: user?.avatarUrl,
           externalGroups,
@@ -86,7 +87,6 @@ export class CachingAuthPlugin implements AuthPlugin {
         success: true,
         user: {
           userId: identity.userId,
-          name: identity.userId,
           externalGroups: [],
         },
       }

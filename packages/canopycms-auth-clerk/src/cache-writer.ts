@@ -1,19 +1,6 @@
 import { createClerkClient } from '@clerk/backend'
 import { writeAuthSnapshot, type AuthCacheSnapshot } from 'canopycms/auth/cache'
-
-/**
- * Response types that handle both camelCase and snake_case Clerk SDK variants.
- */
-interface ClerkUserData {
-  id: string
-  username?: string
-  fullName?: string | null
-  full_name?: string | null
-  imageUrl?: string | null
-  image_url?: string | null
-  primaryEmailAddress?: { emailAddress: string } | null
-  email_addresses?: Array<{ email_address: string }> | null
-}
+import { toUserSearchResult, type ClerkUserData } from './clerk-user'
 
 interface ClerkOrganization {
   id: string
@@ -95,12 +82,7 @@ export async function fetchClerkSnapshot(
     offset += pageSize
   }
 
-  const users = clerkUsers.map((u) => ({
-    id: u.id,
-    name: u.fullName ?? u.full_name ?? u.username ?? u.id,
-    email: u.primaryEmailAddress?.emailAddress ?? u.email_addresses?.[0]?.email_address ?? '',
-    avatarUrl: u.imageUrl ?? u.image_url ?? undefined,
-  }))
+  const users = clerkUsers.map(toUserSearchResult)
 
   let groups: Array<{ id: string; name: string; memberCount?: number }> = []
   const memberships: Record<string, string[]> = {}

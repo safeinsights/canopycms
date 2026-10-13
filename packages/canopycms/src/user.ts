@@ -3,6 +3,7 @@ import type { AuthenticationResult } from './auth/types'
 // Import from client-safe subpaths to avoid pulling in server-only loader code
 import { RESERVED_GROUPS, stripReservedGroups } from './authorization/helpers'
 import type { InternalGroup } from './authorization/groups/schema'
+import { personName } from './auth/person-name'
 
 /** Anonymous user — explicit public/unauthenticated access. */
 export interface AnonymousUser {
@@ -70,7 +71,7 @@ export function authResultToCanopyUser(
     type: 'authenticated',
     userId: authResult.user.userId,
     email: authResult.user.email,
-    name: authResult.user.name,
+    name: personName(authResult.user.userId, authResult.user.name),
     avatarUrl: authResult.user.avatarUrl,
     groups,
   }
