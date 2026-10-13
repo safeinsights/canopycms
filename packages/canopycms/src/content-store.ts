@@ -1166,8 +1166,8 @@ export class ContentStore {
           // and its bytes are what the comment-preserving serialisation further down re-applies
           // the payload onto, so the bytes kept are the bytes OCC validated. One open rather
           // than a path `stat` plus a later read because opening revalidates against the NFS
-          // server, where a `stat` can answer from another host's cached view of a file since
-          // replaced or deleted (docs/concurrency.md). Inside withLock(lockKey) and
+          // server, where a `stat` can answer from this host's cache for a file another host has
+          // since replaced or deleted (utils/fs.ts, docs/concurrency.md). Inside withLock(lockKey) and
           // withContentWriteExclusion ([SYNC-C1]), so no writer or rebase moves it after this.
           const current = await readFileWithMtimeIfExists(absolutePath)
 

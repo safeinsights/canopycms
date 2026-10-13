@@ -17,9 +17,9 @@ export async function filePathExists(filePath: string): Promise<boolean> {
  * is swallowed — a permissions or I/O failure still throws, so a caller cannot mistake
  * "unreadable" for "not there yet".
  *
- * The mtime comes from the open handle, not a path `stat`: opening a file on NFS revalidates its
- * attributes against the server (close-to-open), where a path `stat` can be answered from the
- * client's attribute cache for a file another host has since replaced or deleted. So the mtime
+ * The mtime comes from the open handle, not a path `stat`: opening a file on NFS checks it against
+ * the server (close-to-open, nfs(5)), where a path `stat` can be answered from the client's
+ * attribute cache for a file another host has since replaced or deleted. So the mtime
  * and the bytes describe the same file, as the server has it.
  */
 export async function readFileWithMtimeIfExists(

@@ -29,27 +29,27 @@ const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${cont
 
 /** @internal Exported for tests. A save refused because the entry was deleted. */
 export const ENTRY_DELETED_MESSAGE =
-  'This entry was deleted since you opened it. Your changes are still in the form, but only until the content list next refreshes: choose "Save as new entry" to keep them.'
+  'This entry was deleted since you opened it, so it was not saved. Your changes are still in the form until the content list next refreshes and closes it: choose "Save as new entry" to keep them.'
 
 /** @internal Exported for tests. A save refused because the entry was renamed; the editor has opened it. */
 export const ENTRY_RENAMED_MESSAGE =
   'This entry was renamed since you opened it, so it was not saved. Your changes moved with it and are still in the form: save again to keep them.'
 
-/** @internal Exported for tests. "Save as new entry" refused because another entry now holds the path. */
+/** @internal Exported for tests. "Save as new entry" refused because an entry, possibly the user's own earlier attempt, now holds the path. */
 export const RECREATE_TAKEN_MESSAGE =
-  "Another entry now has this entry's name, so it was not saved as a new entry. Your changes are still in the form: copy what you want to keep into that entry."
+  "An entry with this entry's name already exists, perhaps from your own earlier attempt, so it was not saved as a new entry. Your changes are still in the form: copy what you want to keep into that entry."
 
 /** @internal Exported for tests. The save was refused as gone, and the check for a rename failed. */
 export const ENTRY_GONE_UNCHECKED_MESSAGE =
-  'This entry was deleted or renamed since you opened it, and the editor could not check which. Your changes are still in the form, but only until the content list next refreshes: copy what you want to keep.'
+  'This entry was deleted or renamed since you opened it, so it was not saved, and the editor could not check which. Your changes are still in the form until the content list next refreshes and closes it: copy what you want to keep.'
 
 /** @internal Exported for tests. "Save as new entry" landed, but the content list does not show it yet. */
 export const RECREATED_NOT_LISTED_MESSAGE =
-  'Saved as a new entry. It will open once the content list shows it; until then your changes stay in the form.'
+  "Saved as a new entry, but the content list doesn't show it yet. Reload the page in a moment to open it."
 
 /** @internal Exported for tests. "Save as new entry" got no answer. */
 export const RECREATE_TIMED_OUT_MESSAGE =
-  "Saving as a new entry may have gone through even though the server didn't answer. Choose \"Save as new entry\" to try again: if it went through, you'll be told another entry has this entry's name."
+  'Saving as a new entry may have gone through even though the server didn\'t answer. Choose "Save as new entry" to try again: if it went through, you\'ll be told an entry with this name already exists.'
 
 const entryGoneToastId = (contentId: string) => `canopy-entry-gone:${contentId}`
 
@@ -679,7 +679,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   /**
-   * Sticky: the form is the only copy of the changes until the list next refreshes. Offers the
+   * Sticky: the form shows the changes only until the list next refreshes and closes it. Offers the
    * deliberate create on the save's branch. Hidden first so a repeat is announced again.
    */
   const showEntryGone = (

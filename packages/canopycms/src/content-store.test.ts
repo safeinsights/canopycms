@@ -2251,8 +2251,9 @@ describe('ContentStore update of an entry that is gone (numeric expectedVersion,
       data: { title: 'v1' },
     })
 
-    // The delete parks inside its critical section, holding the entry's ID lock; the save's
-    // pre-pass still sees the file, so it queues on that same key and resolves again in-lock.
+    // The delete parks inside its critical section, holding the branch's content-write lock; the
+    // save's pre-pass still sees the file, so it waits for that lock and then resolves the path
+    // again in-lock, where the file is gone.
     const { release, spy, isParked } = gateFsCall('unlink')
     const deleting = store.delete(posts, unsafeAsSlug('raced'))
     await tick()
