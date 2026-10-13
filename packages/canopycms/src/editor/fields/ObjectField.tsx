@@ -27,10 +27,7 @@ export interface ObjectFieldProps {
   renderField: RenderField
   path: Array<string | number>
   dataCanopyField?: string
-  /**
-   * Set, shows a gray "Clear" that resets the field to `undefined`; it deletes nothing, so it is
-   * not red. Omitted for object-list items, which the list removes.
-   */
+  /** Set, shows a gray "Clear" resetting the field to `undefined`; omitted for list items. */
   onRemove?: () => void
 }
 
