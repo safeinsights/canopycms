@@ -79,22 +79,31 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
   // render, where setting another component's state draws a React warning. While the confirm is open the
   // drawer still hears Escape, so requestClose must ignore it.
   const confirmOpenRef = useRef(false)
+  const titleRef = useRef<HTMLHeadingElement>(null)
   useBeforeUnloadWhileDirty(isDirty)
 
-  const confirmDiscard = useCallback((body: string, onConfirm: () => void) => {
-    confirmOpenRef.current = true
-    openConfirm({
-      title: 'Discard unsaved changes?',
-      children: <Text size="sm">{body}</Text>,
-      labels: { confirm: 'Discard changes', cancel: 'Keep editing' },
-      confirmProps: { color: 'red' },
-      onConfirm,
-      // Mantine calls onClose for every exit, the confirm included.
-      onClose: () => {
-        confirmOpenRef.current = false
-      },
-    })
-  }, [])
+  const confirmDiscard = useCallback(
+    (
+      body: string,
+      onConfirm: () => void,
+      focusReturn: ReturnType<typeof focusReturnProps> = {},
+    ) => {
+      confirmOpenRef.current = true
+      openConfirm({
+        ...focusReturn,
+        title: 'Discard unsaved changes?',
+        children: <Text size="sm">{body}</Text>,
+        labels: { confirm: 'Discard changes', cancel: 'Keep editing' },
+        confirmProps: { color: 'red' },
+        onConfirm,
+        // Mantine calls onClose for every exit, the confirm included.
+        onClose: () => {
+          confirmOpenRef.current = false
+        },
+      })
+    },
+    [],
+  )
 
   const requestClose = useCallback(() => {
     // The save is already on its way to the server; discarding now could not stop it.
@@ -111,7 +120,12 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
 
   const requestDiscard = useCallback(() => {
     if (isSaving || confirmOpenRef.current) return
-    confirmDiscard('Discarding drops the changes you have not saved.', onDiscard)
+    // The save bar, and the button that opened this, go with the changes, so focus goes to the title.
+    confirmDiscard(
+      'Discarding drops the changes you have not saved.',
+      onDiscard,
+      focusReturnProps(() => titleRef.current),
+    )
   }, [isSaving, onDiscard, confirmDiscard])
 
   const { onExitTransitionEnd: returnFocus, ...focusReturn } = focusReturnProps(returnFocusTo)
@@ -130,7 +144,9 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
       title={
         <div>
           <Group gap="xs">
-            <Title order={4}>{title}</Title>
+            <Title order={4} ref={titleRef} tabIndex={-1}>
+              {title}
+            </Title>
             {isDirty && (
               <Badge color="orange" variant="light">
                 Unsaved changes

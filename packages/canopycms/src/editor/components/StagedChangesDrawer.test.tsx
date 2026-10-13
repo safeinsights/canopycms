@@ -14,6 +14,7 @@ vi.mock('@mantine/modals', () => ({
 type ConfirmOptions = {
   onConfirm?: () => void
   onClose?: () => void
+  onExitTransitionEnd?: () => void
   labels?: { confirm?: string; cancel?: string }
 }
 const openConfirmModal = vi.mocked(modals.openConfirmModal)
@@ -132,6 +133,19 @@ describe('StagedChangesDrawer', () => {
       act(() => lastConfirm().onConfirm?.())
       expect(props.onDiscard).toHaveBeenCalledTimes(1)
       expect(props.onClose).not.toHaveBeenCalled()
+    })
+
+    it('moves focus to the title once a confirmed save-bar discard takes the save bar away', () => {
+      const { rerenderWith } = renderDrawer({ isDirty: true })
+      const discard = screen.getByRole('button', { name: 'Discard changes' })
+      discard.focus()
+      fireEvent.click(discard)
+
+      act(() => lastConfirm().onConfirm?.())
+      rerenderWith({ isDirty: false })
+      act(() => lastConfirm().onExitTransitionEnd?.())
+
+      expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Groups' }))
     })
 
     it('keeps the staged changes when the save bar discard is dismissed', () => {
