@@ -6,7 +6,7 @@ const MEASURABLE = [
   /^hsla?\(\s*\d+\s*,\s*\d+%\s*,\s*\d+%\s*(,\s*[\d.]+\s*)?\)$/i,
 ]
 
-/** Whether Mantine's `toRgba` parses `colour`; it reads anything else, such as `oklch()`, as black. */
+/** Whether Mantine's `toRgba` parses `colour`; it misreads anything else, `oklch()` as black. */
 export const isMeasurable = (colour: string): boolean =>
   MEASURABLE.some((pattern) => pattern.test(colour.trim()))
 

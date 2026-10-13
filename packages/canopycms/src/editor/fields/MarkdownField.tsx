@@ -315,7 +315,7 @@ const editorWrapperStyle: React.CSSProperties = {
  * Mantine's global CSS reset strips styles from semantic HTML elements.
  * Restore them inside the MDXEditor content area so formatting is visible. The toolbar wraps
  * rather than scrolling sideways (`toolbar-wrap.ts` hides a separator left at a row's edge).
- * MDXEditor's dark theme leaves its page background white; the body colour replaces it.
+ * MDXEditor's dark theme leaves its page background white, so editor and popups take tokens.
  */
 const EditorContentStyles: React.FC = () => (
   <style>{`

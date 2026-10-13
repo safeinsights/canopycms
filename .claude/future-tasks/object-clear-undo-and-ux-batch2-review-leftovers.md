@@ -44,8 +44,8 @@ compact "Outline"). None was in that PR's scope.
 
 - Placeholders have a 4.5:1 floor but no rule keeping them distinct from entered text; the theme
   now holds them at 4.5:1 from the text colour in light mode.
-- Focus-ring and focused-border contrast is not among the tokens the guideline lists; the theme
-  sets dark `--mantine-primary-color-filled` to 3:1 on dark.5.
+- Focus-ring and focused-border contrast is not among the tokens the guideline lists; dark primary
+  shade 5 gives 3.05:1 on dark.5 for the default brand only.
 - The ruled dark dimmed colour is about 1.3:1 from body text, so dimmed content (outside-month
   days in the date picker) looks like normal content.
 - Whether an empty section inside an otherwise non-empty menu is a reasoned item or plain text.

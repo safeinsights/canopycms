@@ -51,8 +51,8 @@ const isCalendarDate = (year: number, month: number, day: number): boolean => {
 }
 
 /**
- * The stored ISO string as a Date, or null for '' or an unparsable value. A date-only value is
- * local midnight; `Date` reads it as UTC midnight, the previous evening west of UTC.
+ * The stored value as a Date, or null for '', an unparsable value or a day that does not exist. A
+ * date-only value is local midnight; `Date` reads UTC midnight, the evening before west of UTC.
  */
 const toDate = (iso: string): Date | null => {
   if (!iso) return null
@@ -86,7 +86,7 @@ const zoneName = (at: Date): string | undefined =>
  * `Date.prototype.toISOString()` produces and `validation/entry-validator.ts`'s
  * datetime check (`Date.parse`) accepts. Empty string means "not set".
  *
- * Only a pick or Remove writes, so a loaded value saves back unchanged, unparsable ones included.
+ * Only a pick or Remove writes, so a loaded value, date-only or unparsable, saves back unchanged.
  * A pick keeps seconds (`withSeconds`).
  */
 export const DateTimeField: React.FC<DateTimeFieldProps> = ({

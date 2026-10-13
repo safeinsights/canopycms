@@ -187,10 +187,10 @@ export const createCanopyTheme = (
 }
 
 /**
- * A colour's text, light and subtle variants and outline take the step nearest Mantine's default
- * that reaches 4.5:1 on its hovered light tint over the lightest light surface (gray.1) or dark
- * one (dark.4); past the scale's end, the end shade darkened or lightened until it does. A colour
- * in a notation it cannot measure, a virtual colour's `var()` steps included, keeps Mantine's.
+ * A colour's text, light and subtle variants and outline take the first step, from the primary
+ * shade in light mode or Mantine's dark text shade 4, reaching 4.5:1 on its hovered light tint
+ * over the lowest-contrast surface (gray.1, dark.4); past the scale's end, the end shade darkened
+ * or lightened. A colour, gray or dark scale it cannot measure (`var()`, oklch) keeps Mantine's.
  */
 const readableColourVariables = (theme: MantineTheme, scheme: 'light' | 'dark') => {
   const variables: Record<string, string> = {}
@@ -220,7 +220,7 @@ const readableColourVariables = (theme: MantineTheme, scheme: 'light' | 'dark') 
   return variables
 }
 
-/** `--canopy-primary-fill`: the first primary step, from the primary shade, under which white reaches 4.5:1. */
+/** `--canopy-primary-fill`: the first step from the primary shade with white at 4.5:1 on it. */
 const primaryFill = (theme: MantineTheme, scheme: 'light' | 'dark') => {
   const scale = theme.colors[theme.primaryColor]
   if (!scale.every(isMeasurable)) {
