@@ -23,6 +23,11 @@ summary: >-
   its old path, so `useEntryManager.followMovedEntry` finds no move and the toast offers "Save as
   new entry", which would create a copy beside the renamed entry. The notice could check the
   content ID again before creating.
+- When "Save as new entry" lands but the list does not show the new entry yet, edits typed during
+  the create stay under the old content ID. Once a later list shows the new entry at that path,
+  the form switches to it without them and the old draft drops out of view. Remembering the
+  pending move (old ID to path) and applying it on the first list that shows a new ID there
+  would carry them over.
 
 ## Done when
 

@@ -1243,6 +1243,39 @@ describe('useDraftManager', () => {
           expect(mockRecreateEntry).toHaveBeenCalledTimes(2)
         })
 
+        it('sends a create for the same content ID on another branch while one is in flight on the first', async () => {
+          const create = deferred<EditorEntry | undefined>()
+          mockRecreateEntry.mockReturnValueOnce(create.promise)
+          const { result, rerender } = await renderAfterGone()
+          const firstBody = goneToastBody(await lastGoneToast())
+          await act(async () => {
+            firstBody.onRetry()
+          })
+          expect(mockRecreateEntry).toHaveBeenCalledTimes(1)
+
+          // The same content ID is refused as gone on branch `feature`, while main's create is held.
+          rerender({ ...versionedOptions, branchName: 'feature' })
+          act(() => {
+            result.current.setDrafts({ abc123def456: { title: 'Feature draft' } })
+          })
+          mockSaveEntry.mockRejectedValueOnce(goneError())
+          await act(async () => {
+            await result.current.handleSave()
+          })
+          const featureBody = goneToastBody(await lastGoneToast())
+          await act(async () => {
+            featureBody.onRetry()
+          })
+
+          expect(mockRecreateEntry).toHaveBeenCalledTimes(2)
+          expect(mockRecreateEntry.mock.calls[1]).toEqual([mockEntry, { title: 'Feature draft' }])
+
+          await act(async () => {
+            create.resolve(undefined)
+          })
+          await waitFor(() => expect(mockSetBusy).toHaveBeenLastCalledWith(false))
+        })
+
         describe('a draft edited while the create is in flight', () => {
           const created: EditorEntry = {
             ...mockEntry,

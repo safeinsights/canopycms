@@ -710,7 +710,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const recreateGoneEntry = async (entry: EditorEntry, branch: string) => {
     const id = entry.contentId
     const onBranch = () => latestOptionsRef.current.branchName === branch
-    if (recreatingRef.current.has(id)) return
+    const inFlightKey = `${branch}:${id}`
+    if (recreatingRef.current.has(inFlightKey)) return
     if (!onBranch()) {
       notifications.hide(entryGoneToastId(id))
       return
@@ -719,7 +720,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     const value = latestDrafts[id] ?? latestLoaded[id]
     const recreate = latestOptionsRef.current.recreateEntry
     if (!value || !recreate) return
-    recreatingRef.current.add(id)
+    recreatingRef.current.add(inFlightKey)
     hideEntryGone(id)
     options.setBusy(true)
     try {
@@ -757,7 +758,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         )
       }
     } finally {
-      recreatingRef.current.delete(id)
+      recreatingRef.current.delete(inFlightKey)
       options.setBusy(false)
     }
   }

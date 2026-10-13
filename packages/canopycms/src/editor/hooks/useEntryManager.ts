@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import type { WriteContentBody } from '../../api/content'
@@ -208,6 +208,12 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const [selectedPath, setSelectedPath] = useState<string>(options.initialSelectedId ?? '')
   const selectedPathRef = useRef(selectedPath)
   selectedPathRef.current = selectedPath
+  // Counts selections through the returned setter, not this hook's own fallbacks.
+  const selectionsByCallerRef = useRef(0)
+  const selectEntryPath = useCallback((path: string) => {
+    selectionsByCallerRef.current += 1
+    setSelectedPath(path)
+  }, [])
   const [navigatorOpen, setNavigatorOpen] = useState(() => readUrlEntry() === '')
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
@@ -441,18 +447,19 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       })
     ).entries
 
-  // Commits a fresh list and opens the entry `pick` finds in it, unless the user had left
-  // `fromPath` or the branch. Judged before the refresh: committing a list without `fromPath`
-  // moves the selection to the first entry on its own. Returns what `pick` found, opened or not.
+  // Commits a fresh list and opens what `pick` finds (returned either way), unless the user was
+  // off `fromPath` or chose another entry or branch since. Not judged after the refresh, which
+  // moves the selection off a vanished `fromPath` on its own.
   const refreshAndOpen = async (
     branch: string,
     fromPath: string,
     pick: (e: EditorEntry) => boolean,
   ): Promise<EditorEntry | undefined> => {
     const stillOnIt = selectedPathRef.current === fromPath
+    const selections = selectionsByCallerRef.current
     const found = (await refreshEntries(branch)).find(pick)
     if (!found || branch !== currentBranchRef.current) return undefined
-    if (stillOnIt) setSelectedPath(found.path)
+    if (stillOnIt && selections === selectionsByCallerRef.current) setSelectedPath(found.path)
     return found
   }
 
@@ -462,6 +469,13 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (!(await listEntriesUncommitted(branch)).some(movedHere)) return undefined
     return refreshAndOpen(branch, entry.path, movedHere)
   }
+
+  // After a create that landed, a failed refresh is "not listed yet", never a failed create.
+  const openCreated = (branch: string, fromPath: string, pick: (e: EditorEntry) => boolean) =>
+    refreshAndOpen(branch, fromPath, pick).catch((err: unknown) => {
+      console.error(err)
+      return undefined
+    })
 
   const recreateEntry = async (
     entry: EditorEntry,
@@ -488,11 +502,14 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       if (!isUnanswered(err)) throw err
       const listed = await listEntriesUncommitted(branch).catch(() => [])
       if (!listed.some(createdHere)) throw err
-      return refreshAndOpen(branch, entry.path, createdHere)
+      const landed = await openCreated(branch, entry.path, createdHere)
+      // No answer, so no version: read it, as a draft moved onto the entry needs it as its base.
+      if (landed) await loadEntry(landed).catch(console.error)
+      return landed
     }
     if (!result.ok)
       throw new SaveApiError(result.status, result.error, result.fieldErrors, result.code)
-    const created = await refreshAndOpen(branch, entry.path, createdHere)
+    const created = await openCreated(branch, entry.path, createdHere)
     if (created && typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(versionKey(branch, created.contentId), result.data.version)
     }
@@ -836,7 +853,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   return {
     selectedPath,
-    setSelectedPath,
+    setSelectedPath: selectEntryPath,
     entries: entriesState,
     setEntries,
     collections: collectionsState,
