@@ -13,6 +13,8 @@ import { parseLogicalPath } from '../paths/validation'
 import type { LogicalPath } from '../paths/types'
 import { normalizeFilesystemPath } from '../paths/normalize'
 import { defineEndpoint } from './route-builder'
+import { isItemKey } from '../item-keys'
+import { parseCanopyPath } from '../editor/canopy-path'
 import { branchParamSchema, branchNameSchema, logicalPathSchema } from './validators'
 
 export interface AddCommentBody {
@@ -21,6 +23,8 @@ export interface AddCommentBody {
   type: CommentType
   entryPath?: string
   canopyPath?: string
+  /** For a new field thread: the key of each list item on `canopyPath` (`CommentThread.itemKeys`). */
+  itemKeys?: string[]
 }
 
 interface ListCommentsResponse {
@@ -56,6 +60,7 @@ const addCommentBodySchema = z.object({
   type: z.enum(['field', 'entry', 'branch']),
   entryPath: logicalPathSchema.optional(),
   canopyPath: z.string().optional(), // Canopy field path, not a file path
+  itemKeys: z.array(z.string().refine(isItemKey, 'not an item key')).max(32).optional(),
 })
 
 /**
@@ -169,6 +174,20 @@ const addCommentHandler = async (
     }
   }
 
+  // A new field thread inside list items names each item on its path by key, one per list index,
+  // so it follows the item rather than the index. A reply lands on its thread and needs none.
+  const listIndexes =
+    body.type === 'field' && body.canopyPath && !body.threadId
+      ? parseCanopyPath(body.canopyPath).filter((s) => typeof s === 'number').length
+      : 0
+  if ((body.itemKeys?.length ?? 0) !== listIndexes) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'itemKeys must name one item per list index in a new field comment’s canopyPath',
+    }
+  }
+
   if ((body.type === 'field' || body.type === 'entry') && !body.entryPath) {
     return {
       ok: false,
@@ -211,6 +230,7 @@ const addCommentHandler = async (
     type: body.type,
     entryPath: body.entryPath,
     canopyPath: body.canopyPath,
+    itemKeys: body.itemKeys,
   })
 
   return { ok: true, status: 201, data: result }

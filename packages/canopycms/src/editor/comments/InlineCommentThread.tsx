@@ -8,6 +8,7 @@ import { UserBadge } from '../components/UserBadge'
 import { userIdLabel } from '../user-display'
 import { RelativeTime } from '../components/RelativeTime'
 import { ThreadReplyControls } from './ThreadReplyControls'
+import { ON_REMOVED_ITEM } from './item-anchor-copy'
 
 export interface InlineCommentThreadProps {
   /** The thread to display */
@@ -27,6 +28,8 @@ export interface InlineCommentThreadProps {
   /** The reply draft, when the caller keeps it, so it outlives this component; with `onReplyTextChange`. */
   replyText?: string
   onReplyTextChange?: (text: string) => void
+  /** The field a thread shown away from it is on, such as one on a removed item. */
+  fieldLabel?: string
 }
 
 /**
@@ -43,6 +46,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
   onGetUserMetadata,
   replyText,
   onReplyTextChange,
+  fieldLabel,
 }) => {
   return (
     <Paper
@@ -69,7 +73,17 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
               Resolved
             </Badge>
           )}
+          {thread.onRemovedItem && (
+            <Badge size="xs" color="gray" variant="light" c="var(--mantine-color-text)">
+              {ON_REMOVED_ITEM}
+            </Badge>
+          )}
         </Group>
+        {fieldLabel && (
+          <Text size="xs" c="dimmed" data-testid="inline-comment-thread-field">
+            {fieldLabel}
+          </Text>
+        )}
 
         <Stack gap="md">
           {thread.comments.map((comment, idx) => (

@@ -42,6 +42,17 @@ export interface CommentThread {
   // Addressing (all optional based on type)
   entryPath?: string // Required for field/entry, undefined for branch
   canopyPath?: string // Required for field, undefined for entry/branch
+  /**
+   * For a field thread inside list items or blocks: the key (`item-keys.ts`) of each item on
+   * `canopyPath`, outermost first. The thread follows those items wherever they move; the
+   * indexes in `canopyPath` are only where they were when it was made.
+   */
+  itemKeys?: string[]
+  /**
+   * Set by the editor, never stored: an item named by `itemKeys` is gone from the value it shows,
+   * so the thread stays on the entry rather than on whichever item holds its old index.
+   */
+  onRemovedItem?: boolean
 }
 
 export interface CommentsFile {
@@ -176,6 +187,7 @@ export class CommentStore {
     type: CommentType
     entryPath?: string
     canopyPath?: string
+    itemKeys?: string[]
   }): Promise<{ threadId: string; commentId: string }> {
     // Generate IDs outside the mutation so they stay stable across retries
     const threadId = options.threadId || randomUUID()
@@ -203,6 +215,7 @@ export class CommentStore {
           authorId: options.userId,
           entryPath: options.entryPath,
           canopyPath: options.canopyPath,
+          ...(options.itemKeys?.length ? { itemKeys: options.itemKeys } : {}),
         }
       } else {
         existing.comments.push(comment)

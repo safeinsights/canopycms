@@ -50,12 +50,14 @@ export interface UseCommentSystemReturn {
   ) => void
   activeThreads: CommentThread[]
   activeContextLabel: string
+  /** `itemKeys`: for a new field thread, the keys of the list items on `canopyPath`. */
   handleAddComment: (
     text: string,
     type: 'field' | 'entry' | 'branch',
     entryPath?: string,
     canopyPath?: string,
     threadId?: string,
+    itemKeys?: string[],
   ) => Promise<void>
   handleResolveThread: (threadId: string) => Promise<void>
   loadComments: (branch: string) => Promise<void>
@@ -134,11 +136,12 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
     entryPath?: string,
     canopyPath?: string,
     threadId?: string,
+    itemKeys?: string[],
   ) => {
     const branch = options.branchName
     if (!branch) return
     const result = await apiClient.comments
-      .add({ branch }, { text, threadId, type, entryPath, canopyPath })
+      .add({ branch }, { text, threadId, type, entryPath, canopyPath, itemKeys })
       .catch((err: unknown) => (isUnanswered(err) ? 'unanswered' : null))
     if (result === 'unanswered' || (result && isGatewayFailure(result))) {
       // An unanswered post may have landed: reload so the thread shows it if it did.
@@ -167,7 +170,8 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
         (t) =>
           t.type === 'field' &&
           t.entryPath === options.selectedPath &&
-          t.canopyPath === activeCommentContext.canopyPath,
+          t.canopyPath === activeCommentContext.canopyPath &&
+          !t.onRemovedItem,
       )
     } else if (activeCommentContext.type === 'entry') {
       return comments.filter((t) => t.type === 'entry' && t.entryPath === options.selectedPath)

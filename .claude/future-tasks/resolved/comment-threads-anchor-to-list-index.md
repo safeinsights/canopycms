@@ -2,12 +2,12 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-10-12. Field comment threads anchor to an index path (`team[1].name`), so reordering, Duplicate, insert-between, Remove or a block move leaves a thread on whichever list item now holds that index. Anchor threads to a stable list-item id, or remap thread paths when items move
+  RESOLVED (2026-10-12) — JP chose option 1, a persisted item id. Every object-list item and block carries a `_key` (`item-keys.ts`): minted on Add/insert, fresh on Duplicate, kept by moves, edits and Undo, written on save, and filled from a content hash at read for items saved before keys existed. Field threads store the `_key` of each item on their path and follow it through reorders, saves, other editors' edits, merges and rebases; one whose item is gone shows on its entry, marked "On a removed item"
 ---
 
 # Field comment threads follow the list index, not the list item
 
-**Status:** Open. **Priority: P2.** Filed 2026-10-12 from the final review of the editor UI
+**Status:** RESOLVED 2026-10-12 (persisted `_key`; see the summary). **Priority: P2.** Filed 2026-10-12 from the final review of the editor UI
 epic's phase 3.
 
 ## State

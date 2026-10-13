@@ -229,6 +229,55 @@ describe('createEntrySchemaRegistry', () => {
     )
   })
 
+  it.each([
+    ['at the top level', [{ type: 'string', name: '_key' }]],
+    [
+      'inside an object',
+      [{ type: 'object', name: 'stats', fields: [{ type: 'string', name: '_key' }] }],
+    ],
+    [
+      'inside a list object',
+      [{ type: 'object', name: 'cards', list: true, fields: [{ type: 'string', name: '_key' }] }],
+    ],
+    [
+      'inside a block template',
+      [
+        {
+          type: 'block',
+          name: 'sections',
+          templates: [{ name: 'hero', fields: [{ type: 'string', name: '_key' }] }],
+        },
+      ],
+    ],
+    [
+      'inside an inline group',
+      [{ type: 'group', name: 'seo', fields: [{ type: 'string', name: '_key' }] }],
+    ],
+  ] as const)(
+    'throws for a field named _key %s, the name list items and blocks carry',
+    (_, fields) => {
+      expect(() =>
+        createEntrySchemaRegistry({
+          page: [{ type: 'string', name: 'title' }, ...fields] as EntrySchema,
+        }),
+      ).toThrow(
+        'Field "_key": the name is reserved for the key CanopyCMS gives each list item and block. Rename the field, and the key in your content files with it.',
+      )
+    },
+  )
+
+  it('allows a field whose name only contains _key', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        page: [
+          { type: 'string', name: 'title' },
+          { type: 'string', name: 'monkey_key' },
+          { type: 'string', name: 'key' },
+        ],
+      }),
+    ).not.toThrow()
+  })
+
   it("allows an inline group's own name to be anything, since no path spells it", () => {
     expect(() =>
       createEntrySchemaRegistry({

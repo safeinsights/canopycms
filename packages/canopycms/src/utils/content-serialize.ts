@@ -37,6 +37,7 @@ import {
 } from 'yaml'
 
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
+import { ITEM_KEY, isItemKey } from '../item-keys'
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
 import { preserveMarkdownSource, type MarkdownBodyFormat } from './markdown-body-splice'
@@ -146,6 +147,21 @@ function identityKey(value: unknown): string | undefined {
   }
 }
 
+/** {@link identityKey} with every `ITEM_KEY` left out, or undefined when there were none. */
+function unkeyedIdentityKey(value: unknown): string | undefined {
+  let found = false
+  try {
+    const key = JSON.stringify(value, (name: string, v: unknown) => {
+      if (name !== ITEM_KEY) return v
+      found = true
+      return undefined
+    })
+    return found ? key : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function nodePlainValue(node: unknown): unknown {
   if (!isNode(node)) return node
   try {
@@ -245,6 +261,11 @@ function looksLikeSameItem(node: unknown, value: unknown): boolean {
   const existing = nodePlainValue(node)
   // No record evidence available on either side — fall back to position.
   if (!isPlainRecord(existing) || !isPlainRecord(value)) return true
+
+  // Two keyed list items are the same item exactly when their keys match (`item-keys.ts`).
+  const before = existing[ITEM_KEY]
+  const after = value[ITEM_KEY]
+  if (isItemKey(before) && isItemKey(after)) return before === after
 
   return sharesFieldEvidence(existing, value, 0)
 }
@@ -379,10 +400,8 @@ function reconcileSeq(
   })
 
   const consumed = new Set<number>()
-  const matches = value.map((item) => {
-    const key = identityKey(item)
-    if (key === undefined) return undefined
-    const bucket = byIdentity.get(key)
+  const claim = (key: string | undefined): number | undefined => {
+    const bucket = key === undefined ? undefined : byIdentity.get(key)
     while (bucket && bucket.length > 0) {
       const index = bucket.shift()
       if (index !== undefined && !consumed.has(index)) {
@@ -391,7 +410,10 @@ function reconcileSeq(
       }
     }
     return undefined
-  })
+  }
+  // The save that first writes item keys (`item-keys.ts`) adds them to items the file holds
+  // without, so an item is also the same as an un-keyed one equal to it but for its keys.
+  const matches = value.map((item) => claim(identityKey(item)) ?? claim(unkeyedIdentityKey(item)))
 
   seq.items = value.map((item, index) => {
     const matched = matches[index]

@@ -12,6 +12,7 @@ import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
 import { isUnanswered } from '../unanswered'
+import { withItemKeys } from '../../item-keys'
 
 /** @internal Exported for tests. */
 export const SAVE_TIMED_OUT_MESSAGE =
@@ -479,6 +480,23 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
   }, [leaveLosesWork])
+
+  // A draft stored before list items had keys gains the keys a read of its file gives them
+  // (`item-keys.ts`), so one left unchanged matches its entry again and drops out below.
+  useEffect(() => {
+    const keyed = new Map<string, FormValue>()
+    for (const [id, draft] of Object.entries(drafts)) {
+      const schema = entryById.get(id)?.schema
+      const next = schema ? withItemKeys(schema, draft, 'content') : draft
+      if (next !== draft) keyed.set(id, next)
+    }
+    if (keyed.size === 0) return
+    setDrafts((prev) => {
+      const next = { ...prev }
+      for (const [id, value] of keyed) if (prev[id] === drafts[id]) next[id] = value
+      return next
+    })
+  }, [drafts, entryById])
 
   // A draft equal to its entry's loaded value is not an edit. Drops it so it
   // neither counts as dirty nor lingers in storage.

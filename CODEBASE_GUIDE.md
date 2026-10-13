@@ -84,7 +84,7 @@ Content, git and branch files have their own sections below; the rest:
 - `user.ts` — user utilities
 - `system-users.ts` — dependency-free ids CanopyCMS acts as: `SYSTEM_USER_ID`, `CONTENT_READER_USER_ID`, `isSystemUserId`
 - `resolve-canopy-user.ts` — shared authenticate-then-merge-internal-groups pipeline for both request entry points
-- `comment-store.ts` — field, entry and branch comment persistence under layered concurrency; see [ARCHITECTURE.md](ARCHITECTURE.md#comments--collaboration)
+- `comment-store.ts` — comment persistence; field threads follow `item-keys.ts`' `_key`; see [ARCHITECTURE.md](ARCHITECTURE.md#comments--collaboration)
 - `entry-schema.ts` — `defineEntrySchema`, `TypeFromEntrySchema`, block templates, `buildResolvedReference`, `buildRestrictedReference`, `buildMissingReference`, `isResolvedReference`
 - `entry-schema-registry.ts` — registry for reusable field definitions; validates `isTitle` and `isBody`
 - `reference-resolver.ts` — `loadReferenceOptions`, scoped by collections and entry types

@@ -26,6 +26,7 @@ import type {
 import { fieldTypes } from '../config'
 import { isValidCropRect, roundCropRect } from '../assets/transform-directives'
 import { BLOCK_STRUCTURAL_KEYS } from './block-structural-keys'
+import { ITEM_KEY } from '../item-keys'
 import { referenceValueId, resolveBlockItem, traverseFields } from './field-traversal'
 import { findBodyFieldName } from '../utils/body-field'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
@@ -338,7 +339,7 @@ export function validateEntryFormValue(
  * a save, and the write path now preserves it and its comments), so this feeds the
  * non-blocking `validationWarnings` channel, not the 422 path.
  *
- * Deliberately not reported: a container with no fields at all (`api/content.ts`
+ * Deliberately not reported: a list item's `ITEM_KEY`, a container with no fields at all (`api/content.ts`
  * falls back to `[]` for a collection with no configured entry type — "no schema"
  * isn't "every key is unknown"), and anything inside a `reference` value (a resolved
  * reference's value is `{ ...target data, id, slug, collection, urlPath }`; the
@@ -354,7 +355,7 @@ export function findUnknownKeys(fields: EntrySchema, data: Record<string, unknow
       if (containerFields.length === 0) return []
       const known = new Set(flattenGroupFields(containerFields).map((field) => field.name))
       return Object.keys(record)
-        .filter((key) => !known.has(key) && !BLOCK_STRUCTURAL_KEYS.has(key))
+        .filter((key) => !known.has(key) && !BLOCK_STRUCTURAL_KEYS.has(key) && key !== ITEM_KEY)
         .map((key) => (path ? `${path}.${key}` : key))
     },
   )

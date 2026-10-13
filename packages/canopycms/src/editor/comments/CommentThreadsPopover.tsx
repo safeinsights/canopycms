@@ -56,6 +56,8 @@ export interface CommentThreadsPopoverProps {
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** A thread here with this id opens the popover and is highlighted in it. */
   highlightThreadId?: string
+  /** Names the field of a thread shown away from it, such as one on a removed item. */
+  threadFieldLabel?: (thread: CommentThread) => string | undefined
   testId: string
 }
 
@@ -93,6 +95,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   onResolveThread,
   onGetUserMetadata,
   highlightThreadId,
+  threadFieldLabel,
   testId,
 }) => {
   const [opened, setOpened] = useState(false)
@@ -422,6 +425,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
                       currentUserId={currentUserId}
                       canResolve={canResolve}
                       onGetUserMetadata={onGetUserMetadata}
+                      fieldLabel={threadFieldLabel?.(thread)}
                     />
                   </div>
                 ))}

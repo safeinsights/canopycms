@@ -24,6 +24,7 @@ import { RelativeTime } from './components/RelativeTime'
 import { ThreadReplyControls } from './comments/ThreadReplyControls'
 import { useTrackedWrites } from './comments/use-tracked-writes'
 import { CloseRefusedNotice } from './comments/CloseRefusedNotice'
+import { ON_REMOVED_ITEM } from './comments/item-anchor-copy'
 import { getErrorMessage } from '../utils/error'
 
 export interface CommentsPanelProps {
@@ -59,8 +60,15 @@ export interface CommentsPanelProps {
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** An entry's title for a thread's heading; without an answer the heading shows its path. */
   entryLabel?: (entryPath: string) => string | undefined
-  /** A field's breadcrumb for a thread's heading; without an answer the heading shows its path. */
-  fieldLabel?: (entryPath: string, canopyPath: string) => string | undefined
+  /**
+   * A field's breadcrumb for a thread's heading; without an answer the heading shows its path.
+   * `onRemovedItem`: the thread's item was removed, so no item's content names it.
+   */
+  fieldLabel?: (
+    entryPath: string,
+    canopyPath: string,
+    onRemovedItem?: boolean,
+  ) => string | undefined
 }
 
 /**
@@ -159,7 +167,8 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     if (!thread.entryPath) return kind
     const entry = entryLabel?.(thread.entryPath) ?? thread.entryPath
     const field = thread.canopyPath
-      ? (fieldLabel?.(thread.entryPath, thread.canopyPath) ?? thread.canopyPath)
+      ? (fieldLabel?.(thread.entryPath, thread.canopyPath, thread.onRemovedItem) ??
+        thread.canopyPath)
       : undefined
     return `${kind} · ${field ? `${entry} › ${field}` : entry}`
   }
@@ -264,12 +273,18 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                           Resolved
                         </Badge>
                       )}
+                      {thread.onRemovedItem && (
+                        <Badge size="xs" color="gray" variant="light" c="var(--mantine-color-text)">
+                          {ON_REMOVED_ITEM}
+                        </Badge>
+                      )}
                     </Group>
 
                     <Group gap="xs">
                       {thread.type === 'field' &&
                         thread.entryPath &&
                         thread.canopyPath &&
+                        !thread.onRemovedItem &&
                         onJumpToField && (
                           <JumpButton
                             blocked={inFlight > 0}
@@ -282,14 +297,17 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                             Jump to field
                           </JumpButton>
                         )}
-                      {thread.type === 'entry' && thread.entryPath && onJumpToEntry && (
-                        <JumpButton
-                          blocked={inFlight > 0}
-                          onClick={() => jump(() => onJumpToEntry(thread.entryPath!, thread.id))}
-                        >
-                          Jump to entry
-                        </JumpButton>
-                      )}
+                      {/* A removed item's thread lives on its entry. */}
+                      {(thread.type === 'entry' || thread.onRemovedItem) &&
+                        thread.entryPath &&
+                        onJumpToEntry && (
+                          <JumpButton
+                            blocked={inFlight > 0}
+                            onClick={() => jump(() => onJumpToEntry(thread.entryPath!, thread.id))}
+                          >
+                            Jump to entry
+                          </JumpButton>
+                        )}
                       {thread.type === 'branch' && onJumpToBranch && (
                         <JumpButton
                           blocked={inFlight > 0}

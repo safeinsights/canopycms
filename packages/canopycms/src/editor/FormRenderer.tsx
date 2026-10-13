@@ -313,7 +313,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             (thread) =>
               thread.type === 'field' &&
               thread.entryPath === currentEntryPath &&
-              thread.canopyPath === canopyPath,
+              thread.canopyPath === canopyPath &&
+              !thread.onRemovedItem,
           )
         : []
 
@@ -733,6 +734,10 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               highlightThreadId={highlightThreadId}
               onGetUserMetadata={onGetUserMetadata}
               resetKey={boundaryResetKey}
+              // From the schema alone, without the items: no item holds this path any more.
+              removedItemFieldLabel={(path) =>
+                fieldBreadcrumb(fields, undefined, path, { items: false }).join(' › ')
+              }
             />
           )}
 

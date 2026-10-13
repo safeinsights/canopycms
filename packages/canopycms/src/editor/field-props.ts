@@ -42,9 +42,12 @@ type IsLeaf<V> = V extends string | number | boolean | bigint | symbol
         : false
       : false
 
-/** A block item's fields are its template's, under `value`; the form's paths skip `value`. */
+/**
+ * A block item's fields are its template's, under `value`; the form's paths skip `value`. Its
+ * `_key` (`ITEM_KEY`, item-keys.ts) is structure, not a field.
+ */
 type ListItem<E> = E extends { template: string; value: infer W }
-  ? [Exclude<keyof E, 'template' | 'value'>] extends [never]
+  ? [Exclude<keyof E, 'template' | 'value' | '_key'>] extends [never]
     ? W
     : E
   : E
@@ -57,7 +60,7 @@ type NextSegment<V> = unknown extends V
       : V extends readonly unknown[]
         ? number
         : V extends object
-          ? keyof V & string
+          ? Exclude<keyof V & string, '_key'>
           : never
     : never
 

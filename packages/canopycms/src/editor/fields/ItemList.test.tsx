@@ -14,6 +14,7 @@ import { BlockField, type BlockInstance } from './BlockField'
 import type { RenderField } from './ObjectField'
 import { ObjectListField } from './ObjectListField'
 import { useListItemKeys } from './list-item-keys'
+import { ITEM_KEY, isItemKey } from '../../item-keys'
 
 afterEach(() => cleanup())
 
@@ -336,7 +337,7 @@ describe('the row menu', () => {
   it('duplicates a row as a deep copy placed after it, and opens the copy', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
-    const original = { name: 'Cy', tags: ['x'], address: { town: 'Leeds' } }
+    const original = { [ITEM_KEY]: 'cy-key', name: 'Cy', tags: ['x'], address: { town: 'Leeds' } }
     const initial: Item[] = [...people('Ada', 'Bo'), original, ...people('Di', 'Ed')]
     render(<ListHarness initial={initial} onChange={onChange} />)
     expect(expandedStates()).toEqual(['true', 'false', 'false', 'false', 'false'])
@@ -347,7 +348,11 @@ describe('the row menu', () => {
     const next = onChange.mock.calls[0][0] as Item[]
     expect(next).toHaveLength(6)
     expect(next[2]).toBe(original)
-    expect(next[3]).toEqual(original)
+    // The copy is the original but for its key, which is a new, usable one.
+    expect(next[3]).toEqual({ ...original, [ITEM_KEY]: expect.any(String) })
+    expect(isItemKey(next[3][ITEM_KEY])).toBe(true)
+    expect(next[3][ITEM_KEY]).not.toBe('cy-key')
+    expect(next[2][ITEM_KEY]).toBe('cy-key')
     expect(next[3]).not.toBe(original)
     expect(next[3].tags).not.toBe(original.tags)
     expect(next[3].address).not.toBe(original.address)
@@ -409,7 +414,9 @@ describe('adding an item', () => {
     expect(screen.getByRole('button', { name: 'Add item' })).toBe(add)
 
     await user.click(add)
-    expect(onChange).toHaveBeenCalledWith([{ name: 'Ada' }, {}])
+    expect(onChange).toHaveBeenCalledWith([{ name: 'Ada' }, { [ITEM_KEY]: expect.any(String) }])
+    const added = onChange.mock.calls[0][0][1] as Item
+    expect(isItemKey(added[ITEM_KEY])).toBe(true)
   })
 
   it('reads "Add <itemLabel>" when the schema names what one item is', () => {
@@ -572,7 +579,13 @@ describe('a block list', () => {
     await user.click(within(await sectionMenu()).getByTestId('block-template-cta'))
 
     expect(onChange).toHaveBeenCalledTimes(1)
-    expect(onChange).toHaveBeenCalledWith([first, { template: 'cta', value: {} }])
+    expect(onChange).toHaveBeenCalledWith([
+      first,
+      { [ITEM_KEY]: expect.any(String), template: 'cta', value: {} },
+    ])
+    // The key sits on the block, beside `template`, never inside its `value`.
+    const appended = onChange.mock.calls[0][0][1] as Record<string, unknown>
+    expect(isItemKey(appended[ITEM_KEY])).toBe(true)
     expect(rowTitles()).toEqual(['Hero, Welcome', 'Call to action'])
     expect(expandedStates()).toEqual(['true', 'true'])
     await waitFor(() =>
@@ -606,8 +619,10 @@ describe('a block list', () => {
     await user.click(within(await sectionMenu()).getByTestId('block-template-cta'))
 
     const expected = [...blocks]
-    expected.splice(index, 0, { template: 'cta', value: {} })
+    expected.splice(index, 0, { [ITEM_KEY]: expect.any(String), template: 'cta', value: {} })
     expect(onChange).toHaveBeenCalledWith(expected)
+    const inserted = onChange.mock.calls[0][0][index] as Record<string, unknown>
+    expect(isItemKey(inserted[ITEM_KEY])).toBe(true)
     expect(rowTitles()).toEqual(
       expected.map((b) =>
         b.template === 'cta' ? 'Call to action' : `Hero, ${String(b.value.headline)}`,
@@ -669,14 +684,19 @@ describe('a block list', () => {
   it('duplicates a block as a deep copy after it', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
-    const blocks = [hero('One'), cta('Two')]
+    const blocks = [{ ...hero('One'), [ITEM_KEY]: 'hero-key' }, cta('Two')]
     render(<BlockHarness initial={blocks} onChange={onChange} />)
 
     await chooseFromRowMenu(user, rows()[0], 'Duplicate')
 
     const next = onChange.mock.calls[0][0] as BlockInstance[]
     expect(next).toHaveLength(3)
-    expect(next[1]).toEqual(blocks[0])
+    // The copy is the original but for its key, which is a new, usable one on the block itself.
+    expect(next[1]).toEqual({ ...blocks[0], [ITEM_KEY]: expect.any(String) })
+    const copyKey = next[1][ITEM_KEY]
+    expect(isItemKey(copyKey)).toBe(true)
+    expect(copyKey).not.toBe('hero-key')
+    expect(next[1].value).not.toHaveProperty(ITEM_KEY)
     expect(next[1]).not.toBe(blocks[0])
     expect(next[1].value).not.toBe(blocks[0].value)
     expect(next[2]).toBe(blocks[1])

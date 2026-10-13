@@ -26,6 +26,7 @@ import {
   type ReferenceTargetAccess,
 } from './content-store'
 import { isBuildMode } from './build-mode'
+import { withItemKeys } from './item-keys'
 
 const log = createDebugLogger({ prefix: 'ContentListing' })
 
@@ -579,10 +580,12 @@ export const listCollectionEntries = async (
       const format: ContentFormat = entryType?.format || 'json'
       const bodyField = entryType?.schema ? findBodyFieldName(entryType.schema) : 'body'
 
-      const [stats, data] = await Promise.all([
+      const [stats, rawData] = await Promise.all([
         fs.stat(absolutePath),
         readEntryData(absolutePath, format, bodyField),
       ])
+      // Keyed as `ContentStore.read` keys it, so every reader names an item alike.
+      const data = withItemKeys(entryType?.schema ?? [], rawData, 'content')
 
       const item: CollectionListItem = {
         logicalPath: entryLogicalPath(collection.logicalPath, slug),

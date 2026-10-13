@@ -17,7 +17,8 @@ import {
 import { useMediaQuery } from '@mantine/hooks'
 import { IconPlus } from '@tabler/icons-react'
 
-import type { BlockConfig, FieldConfig } from '../../config'
+import type { BlockConfig, BlockFieldConfig, FieldConfig } from '../../config'
+import { ITEM_KEY, mintItemKey, withFreshItemKeys } from '../../item-keys'
 import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
 import { useFieldCommentControl } from '../comments/field-comment-context'
@@ -32,6 +33,8 @@ import { listItemSecondary } from './list-item-title'
 export interface BlockInstance {
   template: string
   value: Record<string, unknown>
+  /** The block's key (`item-keys.ts`). */
+  [ITEM_KEY]?: string
 }
 
 type RenderField = (
@@ -195,7 +198,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
 
   const addAt = (index: number) => (templateName: string) => {
     if (findTemplate(templates, templateName))
-      insertAt(index, { template: templateName, value: {} })
+      insertAt(index, { template: templateName, value: {}, [ITEM_KEY]: mintItemKey() })
   }
 
   const updateBlockValue = (index: number, val: Record<string, unknown>) => {
@@ -251,8 +254,16 @@ export const BlockField: React.FC<BlockFieldProps> = ({
             emit(next)
           }}
           onDuplicate={(idx) =>
-            // Focus stays on the row's menu, which stands in for the item that acted.
-            emit([...value.slice(0, idx + 1), structuredClone(value[idx]), ...value.slice(idx + 1)])
+            // Focus stays on the row's menu, which stands in for the item that acted. The copy
+            // gets new keys, so no comment thread follows it.
+            emit([
+              ...value.slice(0, idx + 1),
+              withFreshItemKeys(
+                { type: 'block', name: 'blocks', templates } satisfies BlockFieldConfig,
+                structuredClone(value[idx]),
+              ),
+              ...value.slice(idx + 1),
+            ])
           }
           onRemove={(idx) => {
             if (readOnly) return

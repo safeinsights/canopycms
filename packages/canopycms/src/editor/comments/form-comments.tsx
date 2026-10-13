@@ -135,7 +135,14 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
   const counts = useMemo(() => {
     const byPath = new Map<string, { open: number; total: number }>()
     for (const thread of comments) {
-      if (thread.type !== 'field' || thread.entryPath !== entryPath || !thread.canopyPath) continue
+      if (
+        thread.type !== 'field' ||
+        thread.entryPath !== entryPath ||
+        !thread.canopyPath ||
+        thread.onRemovedItem
+      ) {
+        continue
+      }
       const count = byPath.get(thread.canopyPath) ?? { open: 0, total: 0 }
       count.total += 1
       if (!thread.resolved) count.open += 1

@@ -175,6 +175,48 @@ describe('CommentsPanel', () => {
   const card = (id: string) =>
     screen.getByText(`Comment in ${id}`).closest('[data-testid="comment-thread"]') as HTMLElement
 
+  describe('a field thread on a removed item', () => {
+    const onItem = fieldThread('on-item', { canopyPath: 'team[1].name', itemKeys: ['k-bo'] })
+    const removed = fieldThread('removed', {
+      canopyPath: 'team[1].name',
+      itemKeys: ['k-gone'],
+      onRemovedItem: true,
+    })
+
+    it('is marked, and jumps to its entry, not to a field no item holds', async () => {
+      const onJumpToEntry = vi.fn()
+      const onJumpToField = vi.fn()
+      const user = userEvent.setup()
+      renderPanel({ comments: [onItem, removed], onJumpToEntry, onJumpToField })
+
+      expect(within(card('removed')).getByText('On a removed item')).toBeTruthy()
+      expect(within(card('removed')).getByRole('button', { name: 'Jump to entry' })).toBeTruthy()
+      expect(within(card('removed')).queryByRole('button', { name: 'Jump to field' })).toBeNull()
+
+      // The thread on its item is the other way round.
+      expect(within(card('on-item')).queryByText('On a removed item')).toBeNull()
+      expect(within(card('on-item')).getByRole('button', { name: 'Jump to field' })).toBeTruthy()
+      expect(within(card('on-item')).queryByRole('button', { name: 'Jump to entry' })).toBeNull()
+
+      await user.click(within(card('removed')).getByRole('button', { name: 'Jump to entry' }))
+      expect(onJumpToEntry).toHaveBeenCalledWith('posts/hello', 'removed')
+      expect(onJumpToField).not.toHaveBeenCalled()
+    })
+
+    it('says so once resolved, and still jumps only to its entry', () => {
+      renderPanel({
+        comments: [{ ...removed, resolved: true }],
+        onJumpToEntry: vi.fn(),
+        onJumpToField: vi.fn(),
+      })
+      fireEvent.click(screen.getByLabelText('Show resolved'))
+
+      expect(within(card('removed')).getByText('On a removed item')).toBeTruthy()
+      expect(within(card('removed')).getByText('Resolved')).toBeTruthy()
+      expect(within(card('removed')).queryByRole('button', { name: 'Jump to field' })).toBeNull()
+    })
+  })
+
   describe('top composer', () => {
     it('only starts branch comments, with no reply mode', async () => {
       const onAddComment = vi.fn().mockResolvedValue(undefined)

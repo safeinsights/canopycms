@@ -15,6 +15,7 @@ import { normalizePathValue } from './flatten'
 // `canopycms/client` (the generated editor page imports the adopter's config).
 import { resolveOperatingMode } from '../operating-mode/mode-env'
 import { isPathFieldName } from '../editor/canopy-path'
+import { ITEM_KEY } from '../item-keys'
 import type { CanopyConfig, FieldConfig } from './types'
 
 /**
@@ -47,6 +48,7 @@ export const ensureSelectFieldsHaveOptions = (fields: unknown): void => {
  * Check that every data field's name can be spelled as a field path segment (`isPathFieldName`):
  * the form, the preview's marks, validation errors and comment threads all name a field by its
  * path. An inline group's own name is not part of any path, so only its children are checked.
+ * `ITEM_KEY` is reserved too, since every list item and block carries it.
  */
 export const ensureFieldNamesSpellInPaths = (fields: unknown): void => {
   if (!Array.isArray(fields)) return
@@ -55,6 +57,11 @@ export const ensureFieldNamesSpellInPaths = (fields: unknown): void => {
     if (f?.type !== 'group' && typeof f?.name === 'string' && !isPathFieldName(f.name)) {
       throw new Error(
         `Field "${f.name}": field names can't be empty, all digits, or contain '.', '[' or ']'; they're used in field paths`,
+      )
+    }
+    if (f?.type !== 'group' && f?.name === ITEM_KEY) {
+      throw new Error(
+        `Field "${ITEM_KEY}": the name is reserved for the key CanopyCMS gives each list item and block. Rename the field, and the key in your content files with it.`,
       )
     }
     if (f?.type === 'group' || f?.type === 'object') {

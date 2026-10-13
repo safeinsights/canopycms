@@ -1190,3 +1190,105 @@ describe('serializeFrontmatter keeps the source text of everything it did not ch
     )
   })
 })
+
+describe('serializeYaml follows a comment with a keyed list item', () => {
+  // The first item carries no comment: one above it belongs to the list, not to the item.
+  const keyed = `items:
+  - _key: ka
+    name: a
+    role: x
+  # about B -- do not delete
+  - _key: kb
+    name: b
+    role: y
+  # about C
+  - _key: kc
+    name: c
+    role: z
+`
+  const A = { _key: 'ka', name: 'a', role: 'x' }
+  const B = { _key: 'kb', name: 'b', role: 'y' }
+  const C = { _key: 'kc', name: 'c', role: 'z' }
+  const at = (out: string, text: string) => {
+    const index = out.indexOf(text)
+    // Presence first: an absent text gives -1, which would satisfy a position check.
+    expect(index).toBeGreaterThanOrEqual(0)
+    return index
+  }
+
+  it('moves each comment with its item when the list is reordered', () => {
+    const out = serializeYaml({ items: [C, A, B] }, keyed)
+
+    expect(at(out, '# about C')).toBeLessThan(at(out, '_key: kc'))
+    expect(at(out, '_key: kc')).toBeLessThan(at(out, '_key: ka'))
+    expect(at(out, '_key: ka')).toBeLessThan(at(out, '# about B -- do not delete'))
+    expect(at(out, '# about B -- do not delete')).toBeLessThan(at(out, '_key: kb'))
+  })
+
+  it('keeps the comment on an item edited in place, its key unchanged', () => {
+    const out = serializeYaml({ items: [A, { ...B, name: 'b, edited' }, C] }, keyed)
+
+    expect(at(out, '_key: ka')).toBeLessThan(at(out, '# about B -- do not delete'))
+    expect(at(out, '# about B -- do not delete')).toBeLessThan(at(out, 'name: b, edited'))
+    expect(at(out, 'name: b, edited')).toBeLessThan(at(out, '# about C'))
+  })
+
+  it('does not move the comment onto a different item that shifts into a removed item slot', () => {
+    // D shares `role: y` with B, the field evidence that would pair them if the keys did not
+    // decide: B is removed, and D lands on the index B held.
+    const D = { _key: 'kd', name: 'd', role: 'y' }
+
+    const out = serializeYaml({ items: [A, D, C] }, keyed)
+
+    expect(at(out, 'name: d')).toBeGreaterThan(at(out, '_key: ka'))
+    expect(out).not.toContain('do not delete')
+    expect(at(out, '# about C')).toBeGreaterThan(at(out, 'name: d'))
+    expect(at(out, '# about C')).toBeLessThan(at(out, '_key: kc'))
+  })
+
+  // The first save of a file that has no keys yet writes them all at once; an item still matches
+  // its un-keyed self, so a comment moves with it.
+  it('keeps the comment when the first save writes keys and reorders the list', () => {
+    const unkeyed = `items:
+  - name: a
+    role: x
+  # about B -- do not delete
+  - name: b
+    role: y
+`
+    const out = serializeYaml(
+      {
+        items: [
+          { _key: 'kb', name: 'b', role: 'y' },
+          { _key: 'ka', name: 'a', role: 'x' },
+        ],
+      },
+      unkeyed,
+    )
+
+    expect(out).toContain('# about B -- do not delete')
+  })
+
+  it('keeps the comment when the first save writes keys without moving anything', () => {
+    const unkeyed = `items:
+  - name: a
+    role: x
+  # about B -- do not delete
+  - name: b
+    role: y
+`
+    const out = serializeYaml(
+      {
+        items: [
+          { name: 'a', role: 'x', _key: 'ka' },
+          { name: 'b', role: 'y', _key: 'kb' },
+        ],
+      },
+      unkeyed,
+    )
+
+    expect(out).toContain('# about B -- do not delete')
+    expect(out.indexOf('do not delete')).toBeLessThan(out.indexOf('name: b'))
+    expect(out.indexOf('do not delete')).toBeGreaterThan(out.indexOf('_key: ka'))
+  })
+})

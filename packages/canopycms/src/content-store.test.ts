@@ -4015,9 +4015,10 @@ describe('ContentStore read of a block or object value that is null or an array'
 
     const doc = await store.read(postsPath, slug)
 
+    // A read keys each block, beside `template`; the odd `value` is passed through as it is.
     expect(doc.data.blocks).toEqual([
-      { template: 'hero', value: null },
-      { template: 'hero', value: ['item1', 'item2'] },
+      { _key: expect.any(String), template: 'hero', value: null },
+      { _key: expect.any(String), template: 'hero', value: ['item1', 'item2'] },
     ])
     expect(doc.data.meta).toEqual(['a'])
     expect(doc.data.items).toEqual([['x']])
@@ -4030,9 +4031,14 @@ describe('ContentStore read of a block or object value that is null or an array'
     await store.write(postsPath, slug, { format: 'md', data: doc.data, body: '' })
 
     const saved = await store.read(postsPath, slug, { resolveReferences: false })
+    // The keys the first read named the blocks by are the keys the file now holds.
     expect(saved.data.blocks).toEqual([
-      { template: 'hero', value: null },
-      { template: 'hero', value: ['item1', 'item2'] },
+      { _key: (doc.data.blocks as Array<{ _key: string }>)[0]._key, template: 'hero', value: null },
+      {
+        _key: (doc.data.blocks as Array<{ _key: string }>)[1]._key,
+        template: 'hero',
+        value: ['item1', 'item2'],
+      },
     ])
     expect(saved.data.meta).toEqual(['a'])
     expect(saved.data.items).toEqual([['x']])
