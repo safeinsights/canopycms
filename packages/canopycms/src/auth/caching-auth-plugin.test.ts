@@ -67,7 +67,7 @@ describe('CachingAuthPlugin', () => {
       expect(result.error).toBe('No valid authentication token')
     })
 
-    it('returns userId as name when user not in cache', async () => {
+    it('returns no name when user not in cache, never the id', async () => {
       mockVerifier = vi.fn(async () => ({ userId: 'unknown_user' }))
       plugin = new CachingAuthPlugin(mockVerifier, mockCache)
 
@@ -75,8 +75,27 @@ describe('CachingAuthPlugin', () => {
 
       expect(result.success).toBe(true)
       expect(result.user?.userId).toBe('unknown_user')
-      expect(result.user?.name).toBe('unknown_user')
+      expect(result.user?.name).toBeUndefined()
       expect(result.user?.externalGroups).toEqual([])
+    })
+
+    it.each([
+      ['empty', ''],
+      ['blank', '   '],
+      ['the id', 'user_9'],
+    ])('returns no name for a cached user whose name is %s', async (_label, name) => {
+      const cache = createMockCache({
+        getUser: vi.fn(async () => ({ id: 'user_9', name, email: 'nameless@example.com' })),
+      })
+      plugin = new CachingAuthPlugin(
+        vi.fn(async () => ({ userId: 'user_9' })),
+        cache,
+      )
+
+      const result = await plugin.authenticate({})
+
+      expect(result.user?.name).toBeUndefined()
+      expect(result.user?.email).toBe('nameless@example.com')
     })
 
     it('passes context to verifier', async () => {
@@ -97,7 +116,7 @@ describe('CachingAuthPlugin', () => {
 
       expect(result.success).toBe(true)
       expect(result.user?.userId).toBe('user_1')
-      expect(result.user?.name).toBe('user_1') // falls back to userId
+      expect(result.user?.name).toBeUndefined()
       expect(result.user?.externalGroups).toEqual([])
     })
   })

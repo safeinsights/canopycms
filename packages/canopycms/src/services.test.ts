@@ -344,6 +344,16 @@ describe('getBootstrapAdminIds', () => {
 })
 
 describe('authResultToCanopyUser with bootstrap admins', () => {
+  it.each([
+    ['the id', 'user_x'],
+    ['blank', '  '],
+  ])('gives a user whose provider name is %s no name', (_label, name) => {
+    const authResult: AuthenticationResult = { success: true, user: { userId: 'user_x', name } }
+    const user = authResultToCanopyUser(authResult, new Set())
+
+    expect(user.type === 'authenticated' && user.name).toBeUndefined()
+  })
+
   it('returns ANONYMOUS_USER when auth fails', () => {
     const bootstrapAdminIds = new Set(['admin_1'])
     const authResult: AuthenticationResult = { success: false }

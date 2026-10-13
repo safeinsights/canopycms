@@ -190,7 +190,7 @@ describe('Worker integration: task queue + auth cache', () => {
       const authResult = await plugin.authenticate({})
       expect(authResult.success).toBe(true)
       expect(authResult.user?.userId).toBe('new_user')
-      expect(authResult.user?.name).toBe('new_user') // Falls back to userId
+      expect(authResult.user?.name).toBeUndefined()
       expect(authResult.user?.externalGroups).toEqual([])
     })
 
@@ -201,7 +201,7 @@ describe('Worker integration: task queue + auth cache', () => {
 
       // Initial: no cache
       const result1 = await plugin.authenticate({})
-      expect(result1.user?.name).toBe('user_1') // fallback
+      expect(result1.user?.name).toBeUndefined()
 
       // Worker writes cache
       await fs.mkdir(cachePath, { recursive: true })

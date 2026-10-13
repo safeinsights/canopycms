@@ -474,4 +474,152 @@ describe('UserBadge', () => {
     expect(avatar()?.getAttribute('aria-hidden')).toBeNull()
     expect(container.querySelector('img')?.getAttribute('alt')).toBe('Alice Johnson')
   })
+
+  describe('a person whose name is empty or is their id', () => {
+    const ID = 'user_2abNameless'
+    const nameless = (name: string, extra: Partial<UserSearchResult> = {}): UserSearchResult => ({
+      id: ID,
+      name,
+      email: '',
+      ...extra,
+    })
+    const unusableNames = [
+      ['their id', ID],
+      ['padded with their id', `  ${ID} `],
+      ['empty', ''],
+      ['blank', '   '],
+    ] as const
+
+    // Every attribute a screen reader or a hover can reach, as well as the text.
+    const reachable = (container: HTMLElement): string =>
+      [
+        container.textContent,
+        ...Array.from(container.querySelectorAll('[aria-label], [title], img[alt]')).flatMap(
+          (el) => [el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('alt')],
+        ),
+      ].join('|')
+
+    it.each(unusableNames)('says the name is unavailable when it is %s', async (_label, name) => {
+      const { container } = render(
+        <UserBadge userId={ID} getUserMetadata={vi.fn()} cachedUser={nameless(name)} />,
+        { wrapper: Wrapper },
+      )
+      const fallback = screen.getByText('Name unavailable')
+      expect(fallback.style.fontStyle).toBe('italic')
+      expect(fallback.style.color).toBe('var(--mantine-color-dimmed)')
+      expect(reachable(container)).not.toContain(ID)
+    })
+
+    it('treats a fetched record the same as a cached one', async () => {
+      const { container } = render(
+        <UserBadge userId={ID} getUserMetadata={async () => nameless(ID)} />,
+        { wrapper: Wrapper },
+      )
+      expect(await screen.findByText('Name unavailable')).toBeTruthy()
+      expect(reachable(container)).not.toContain(ID)
+    })
+
+    it('shows no initials for it', () => {
+      const { container } = render(
+        <UserBadge userId={ID} getUserMetadata={vi.fn()} cachedUser={nameless('')} />,
+        { wrapper: Wrapper },
+      )
+      expect(container.querySelector('.mantine-Avatar-root')?.textContent).toBe('')
+    })
+
+    it('hides the id from an avatar-only badge, which names itself by the fallback', () => {
+      const { container } = render(
+        <UserBadge
+          userId={ID}
+          getUserMetadata={vi.fn()}
+          cachedUser={nameless(ID)}
+          variant="avatar-only"
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(screen.getByText('Name unavailable')).toBeTruthy()
+      expect(reachable(container)).not.toContain(ID)
+    })
+
+    it('hides the id from the full variant, which keeps the email it has', () => {
+      const { container } = render(
+        <UserBadge
+          userId={ID}
+          getUserMetadata={vi.fn()}
+          cachedUser={nameless(ID, { email: 'private.person@example.com' })}
+          variant="full"
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(screen.getByText('Name unavailable')).toBeTruthy()
+      expect(screen.getByText('private.person@example.com')).toBeTruthy()
+      expect(reachable(container)).not.toContain(ID)
+    })
+
+    it('keeps its avatar image and puts its email in the tooltip and the hidden text', async () => {
+      const { container } = render(
+        <UserBadge
+          userId={ID}
+          getUserMetadata={vi.fn()}
+          cachedUser={nameless(ID, {
+            email: 'private.person@example.com',
+            avatarUrl: 'https://example.com/face.jpg',
+          })}
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(
+        'https://example.com/face.jpg',
+      )
+      expect(screen.getByText(', private.person@example.com').className).toContain(
+        'mantine-VisuallyHidden-root',
+      )
+      await userEvent.hover(container.querySelector('.mantine-Avatar-root') as HTMLElement)
+      expect((await screen.findByRole('tooltip')).textContent).toBe('private.person@example.com')
+      expect(reachable(container)).not.toContain(ID)
+    })
+
+    it('names an avatar-only badge by the fallback and the email it has', () => {
+      render(
+        <UserBadge
+          userId={ID}
+          getUserMetadata={vi.fn()}
+          cachedUser={nameless('', { email: 'private.person@example.com' })}
+          variant="avatar-only"
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(screen.getByText('Name unavailable, private.person@example.com')).toBeTruthy()
+    })
+
+    it('labels the Remove button by the fallback, adding the id only for an admin surface', async () => {
+      const { unmount } = render(
+        <UserBadge
+          userId={ID}
+          getUserMetadata={vi.fn()}
+          cachedUser={nameless(ID)}
+          onRemove={vi.fn()}
+        />,
+        { wrapper: Wrapper },
+      )
+      const remove = screen.getByRole('button', { name: 'Remove Name unavailable' })
+      await userEvent.hover(remove)
+      for (const tooltip of await screen.findAllByRole('tooltip')) {
+        expect(tooltip.textContent).not.toContain(ID)
+      }
+      unmount()
+
+      render(
+        <UserBadge
+          userId={ID}
+          getUserMetadata={vi.fn()}
+          cachedUser={nameless(ID)}
+          onRemove={vi.fn()}
+          revealIdOnFallback
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(screen.getByRole('button', { name: `Remove Name unavailable · ${ID}` })).toBeTruthy()
+    })
+  })
 })

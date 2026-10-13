@@ -28,18 +28,23 @@ state, a missing Undo, a wrong word that is still sentence case.
 
 Check each changed surface against these rules:
 
-- comment control: Tab order, and no badge at zero ([Fields](../../docs/ux-guidelines.md#fields))
-- disabled reasons on focus and touch, and `aria-disabled` menu items
+- comment control: Tab order, and no badge at zero; read-only forms' row handles and menus;
+  date-time inputs ([Fields](../../docs/ux-guidelines.md#fields))
+- disabled reasons as sentences, on focus and touch; `aria-disabled` menu items and empty menus
   ([Disabled controls](../../docs/ux-guidelines.md#disabled-controls))
-- focus when the opener is gone ([Keyboard](../../docs/ux-guidelines.md#keyboard))
+- focus when the opener is gone, and behind sticky regions
+  ([Keyboard](../../docs/ux-guidelines.md#keyboard))
+- dismiss wording, placeholders, `…` on menu buttons, schema names
+  ([Copy](../../docs/ux-guidelines.md#copy)); Remove, Delete and Clear
+  ([Vocabulary](../../docs/ux-guidelines.md#vocabulary))
 - toast pause, and focus after Undo
   ([Choosing a surface](../../docs/ux-guidelines.md#choosing-a-surface),
   [Destructive actions](../../docs/ux-guidelines.md#destructive-actions))
-- names, fallbacks and avatars ([People](../../docs/ux-guidelines.md#people)), and tooltip-only
-  details ([Accessibility](../../docs/ux-guidelines.md#accessibility))
-- named colour tokens
-  ([Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast))
-- no reorder under the pointer
+- names, fallbacks, avatars and access lists ([People](../../docs/ux-guidelines.md#people)),
+  and tooltip-only details ([Accessibility](../../docs/ux-guidelines.md#accessibility))
+- contrast of controls, badges, icons and borders in both schemes; no fixed shades; danger and
+  success text ([Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast))
+- no reorder under the pointer; unknown outcomes in yellow, named, with input kept
   ([Loading, empty and error states](../../docs/ux-guidelines.md#loading-empty-and-error-states))
 
 ## 3. Render the stories
@@ -48,7 +53,8 @@ Find the `*.stories.tsx` covering each changed component. A changed component wi
 a finding (LOW, or MEDIUM for a new surface). Start Storybook with `preview_start` using the
 `storybook` entry in `.claude/launch.json`, open each affected story alone at
 `/iframe.html?id=<id>&viewMode=story` (ids are in `/index.json`), and take a screenshot of each. Check
-layout at 1280px and at 390px with `resize_window`, then reset to `desktop`. Read the console
+layout at 1280px and at 390px with `resize_window`, then reset to `desktop`. For colour, also
+screenshot with `data-mantine-color-scheme="dark"` set on `<html>` via `javascript_tool` after each load. Read the console
 for React warnings.
 
 ## 4. Walk the flow

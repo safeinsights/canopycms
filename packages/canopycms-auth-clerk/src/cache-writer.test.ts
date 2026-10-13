@@ -69,8 +69,26 @@ describe('fetchClerkSnapshot', () => {
         avatarUrl: 'https://img/snake',
       },
       { id: 'user_bare', name: 'barely', email: '', avatarUrl: undefined },
-      { id: 'user_nameless', name: 'user_nameless', email: '', avatarUrl: undefined },
+      { id: 'user_nameless', name: '', email: '', avatarUrl: undefined },
     ])
+  })
+
+  it('names a user by the same rule as the live lookups, never by the id or the email', async () => {
+    mockGetUserList.mockResolvedValue({
+      data: [
+        { id: 'user_full', fullName: '  Full Name  ', username: 'ignored' },
+        { id: 'user_blank_full', fullName: '   ', full_name: '', username: ' handle ' },
+        { id: 'user_none', email_addresses: [{ email_address: 'private.person@test.com' }] },
+      ],
+    })
+
+    const { users } = await fetchClerkSnapshot({ secretKey })
+
+    expect(users.map((u) => u.name)).toEqual(['Full Name', 'handle', ''])
+    const nameless = users[2]
+    expect(nameless.name).not.toBe('user_none')
+    expect(nameless.name).not.toContain('private')
+    expect(nameless.email).toBe('private.person@test.com')
   })
 
   it('fetches a second page when the first is full', async () => {

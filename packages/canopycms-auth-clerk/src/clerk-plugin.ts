@@ -2,6 +2,7 @@ import { createClerkClient, verifyToken as clerkVerifyToken } from '@clerk/backe
 import type { AuthPlugin, AuthPluginFactory } from 'canopycms/auth'
 import type { UserSearchResult, GroupMetadata, AuthenticationResult } from 'canopycms/auth'
 import { extractHeaders, type HeadersLike } from 'canopycms/auth'
+import { clerkDisplayName, toUserSearchResult, type ClerkUserData } from './clerk-user'
 
 export interface ClerkAuthConfig {
   /**
@@ -28,19 +29,6 @@ export interface ClerkAuthConfig {
   authorizedParties?: string[]
 }
 
-// These handle both camelCase and snake_case variants from different Clerk SDK versions
-
-interface ClerkUserData {
-  id: string
-  username?: string
-  fullName?: string | null
-  full_name?: string | null
-  imageUrl?: string | null
-  image_url?: string | null
-  primaryEmailAddress?: { emailAddress: string } | null
-  email_addresses?: Array<{ email_address: string }> | null
-}
-
 interface ClerkOrganization {
   id: string
   name: string
@@ -64,30 +52,6 @@ type ClerkResponse<T> = T[] | ClerkPaginatedResponse<T>
  */
 function unwrapClerkResponse<T>(response: ClerkResponse<T>): T[] {
   return Array.isArray(response) ? response : response.data
-}
-
-function mapClerkUserData(clerkUser: ClerkUserData): {
-  email?: string
-  name: string
-  avatarUrl?: string
-} {
-  const avatarUrl = clerkUser.imageUrl ?? clerkUser.image_url
-  return {
-    email:
-      clerkUser.primaryEmailAddress?.emailAddress ?? clerkUser.email_addresses?.[0]?.email_address,
-    name: clerkUser.fullName ?? clerkUser.full_name ?? clerkUser.username ?? clerkUser.id,
-    avatarUrl: avatarUrl ?? undefined,
-  }
-}
-
-function toUserSearchResult(clerkUser: ClerkUserData): UserSearchResult {
-  const mapped = mapClerkUserData(clerkUser)
-  return {
-    id: clerkUser.id,
-    name: mapped.name,
-    email: mapped.email ?? '',
-    avatarUrl: mapped.avatarUrl,
-  }
 }
 
 /** Most ids Clerk's user list accepts in one `userId` filter. */
@@ -244,13 +208,15 @@ export class ClerkAuthPlugin implements AuthPlugin {
         externalGroups = memberships.map((m) => m.organization.id)
       }
 
-      const userData = mapClerkUserData(clerkUser)
+      const profile = toUserSearchResult(clerkUser)
 
       return {
         success: true,
         user: {
           userId: clerkUser.id,
-          ...userData,
+          name: clerkDisplayName(clerkUser),
+          email: profile.email || undefined,
+          avatarUrl: profile.avatarUrl,
           externalGroups,
         },
       }
