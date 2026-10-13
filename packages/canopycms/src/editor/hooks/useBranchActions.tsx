@@ -36,7 +36,7 @@ export interface UseBranchActionsReturn {
 const MAX_LISTED_LABELS = 5
 
 /** "Unsaved changes in: A, B." */
-const describeUnsaved = ({ labels }: UnsavedSummary): string => {
+export const describeUnsaved = ({ labels }: UnsavedSummary): string => {
   if (labels.length === 0) return 'You have unsaved changes.'
   const shown = labels.slice(0, MAX_LISTED_LABELS).join(', ')
   const rest = labels.length - MAX_LISTED_LABELS

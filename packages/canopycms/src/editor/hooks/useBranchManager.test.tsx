@@ -2,7 +2,8 @@ import type React from 'react'
 import { ApiTimeoutError } from '../../api/request-deadline'
 import { CanopyApiClient } from '../../api/client'
 import type { RetryToastMessageProps } from '../components/RetryToastMessage'
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, render, renderHook, waitFor } from '@testing-library/react'
+import { MantineProvider } from '@mantine/core'
 import { useSWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -892,16 +893,23 @@ describe('useBranchManager', () => {
       const { modals } = await import('@mantine/modals')
       const options = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
       if (!options) throw new Error('no confirm dialog was opened')
-      const body = (options.children as React.ReactElement<{ children: string }>).props.children
+      const shown = render(<MantineProvider>{options.children}</MantineProvider>)
+      const body = shown.container.textContent ?? ''
+      shown.unmount()
       return { options, body }
     }
-    const loaded = async (branches: BranchMetadata[]) => {
+    const loaded = async (
+      branches: BranchMetadata[],
+      overrides: Partial<UseBranchManagerOptions> = {},
+    ) => {
       mockClient.branches.list.mockResolvedValue({
         ok: true,
         status: 200,
         data: { branches, users: [] },
       })
-      const hook = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      const hook = renderHook(() => useBranchManager({ ...defaultOptions, ...overrides }), {
+        wrapper,
+      })
       await waitFor(() => {
         expect(hook.result.current.branches).toHaveLength(2)
       })
@@ -925,6 +933,37 @@ describe('useBranchManager', () => {
       expect(body).toContain('Submit "feature" for review?')
       expect(body).toContain('• Create a pull request for review')
       expect(body).not.toContain('Are you sure')
+    })
+
+    it('names unsaved entries on the open branch, which the submit leaves out', async () => {
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+      const getUnsaved = vi.fn(async () => ({ count: 2, labels: ['Home', 'About'] }))
+      const { result } = await loaded(editingFeature, { initialBranch: 'feature', getUnsaved })
+
+      await act(async () => {
+        await result.current.handleSubmit('feature')
+      })
+
+      const { options, body } = await lastDialog()
+      expect(options.labels).toEqual({ confirm: 'Submit anyway', cancel: 'Cancel' })
+      expect(body).toContain("2 entries have unsaved changes that won't be submitted")
+      expect(body).toContain('Unsaved changes in: Home, About.')
+      expect(body).toContain('Submit "feature" for review?')
+    })
+
+    it("asks nothing about another branch's drafts", async () => {
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+      const getUnsaved = vi.fn(async () => ({ count: 1, labels: ['Home'] }))
+      const { result } = await loaded(editingFeature, { getUnsaved })
+
+      await act(async () => {
+        await result.current.handleSubmit('feature')
+      })
+
+      const { options, body } = await lastDialog()
+      expect(getUnsaved).not.toHaveBeenCalled()
+      expect(options.labels).toEqual({ confirm: 'Submit for review', cancel: 'Cancel' })
+      expect(body).not.toContain('unsaved')
     })
 
     it('asks to withdraw from review, with a labelled confirm button', async () => {

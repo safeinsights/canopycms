@@ -68,6 +68,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
+import type { UnsavedSummary } from './hooks/useDraftManager'
 import { editorLayoutStorageKey } from './hooks/useEditorLayout'
 import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
@@ -342,6 +343,10 @@ const EditorContent: React.FC<EditorProps> = ({
   const [commentsForBranchSummaries, setCommentsForBranchSummaries] = useState<CommentThread[]>([])
 
   // 1. Branch manager (provides branchNameState, no dependencies)
+  const resolveUnsavedRef = useRef<() => Promise<UnsavedSummary>>(async () => ({
+    count: 0,
+    labels: [],
+  }))
   const {
     branchName: branchNameState,
     setBranchName,
@@ -359,6 +364,8 @@ const EditorContent: React.FC<EditorProps> = ({
     operatingMode,
     setBusy: setBranchesLoading,
     comments: commentsForBranchSummaries,
+    // The draft manager comes later, as it depends on this hook's branch.
+    getUnsaved: () => resolveUnsavedRef.current(),
   })
 
   // Content mutations (add/delete/rename/reorder entries) are locked whenever the
@@ -491,6 +498,7 @@ const EditorContent: React.FC<EditorProps> = ({
     // An Undo built on a discarded draft would put back an item the server's copy already has.
     onDraftsReset: (contentId) => dismissUndoToasts(contentId),
   })
+  resolveUnsavedRef.current = resolveUnsaved
 
   // 4. Branch actions (depends on resolveUnsaved, setBranchName)
   const {
@@ -1006,8 +1014,7 @@ const EditorContent: React.FC<EditorProps> = ({
       const input = data as Parameters<typeof createCollection>[0]
       const result = await createCollection(input)
       // A retried create that had landed makes a second collection, so an unanswered one closes
-      // the dialog too, leaving the hook's toast to say to check the "Content" panel first. What
-      // was entered comes back on the next "New collection" here, unless the collection shows up.
+      // the dialog too, leaving the hook's toast to say to check the "Content" panel first.
       if (result.ok || result.unanswered) {
         setCollectionDraft(result.ok ? null : { kind: 'create', input })
         handleCloseCollectionEditor()
@@ -1018,8 +1025,7 @@ const EditorContent: React.FC<EditorProps> = ({
       const updates = data as Parameters<typeof updateCollection>[1]
       const result = await updateCollection(editingCollection.logicalPath, updates)
       // An unanswered save may have renamed the collection, leaving `editingCollection`'s path
-      // stale, so the dialog closes; the hook's toast says to reopen it and check. Reopened while
-      // the collection doesn't show the save, it fills the changes in again.
+      // stale, so the dialog closes; the hook's toast says to reopen it and check.
       if (result.ok || result.unanswered) {
         setCollectionDraft(
           result.ok
