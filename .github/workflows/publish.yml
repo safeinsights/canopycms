@@ -46,6 +46,10 @@ jobs:
     name: Release commit
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Holds RELEASE_BOT_PRIVATE_KEY. The environment deploys from `main` only,
+    # so a workflow on any other branch cannot mint the release-bot token.
+    # The only job that names it: `publish` needs npm's id-token, not the key.
+    environment: release
     env:
       # `pnpm install`'s `prepare: husky` installs no hooks here.
       HUSKY: '0'
@@ -171,9 +175,10 @@ jobs:
 
       # Mint a short-lived token for the dedicated release app. Its bypass of the
       # "changes must go through a PR" rule is gated by RELEASE_BOT_PRIVATE_KEY,
-      # which only exists in this repo — unlike the generic GITHUB_TOKEN, which
-      # cannot be granted bypass at all. The client ID is a public identifier,
-      # hence a variable rather than a secret; v3.1.0 deprecated `app-id` for it.
+      # a secret of the job's `release` environment — unlike the generic
+      # GITHUB_TOKEN, which cannot be granted bypass at all. The client ID is a
+      # public identifier, hence a variable rather than a secret; v3.1.0
+      # deprecated `app-id` for it.
       - name: Generate release-bot app token
         id: app-token
         if: steps.prepare.outputs.release == 'true'

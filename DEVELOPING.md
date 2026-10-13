@@ -1173,6 +1173,20 @@ stable release's `--promote` moves them under `## Released`, marking each
 `<!-- changeset: <slug> -->`, and `changeset version` deletes them. CI's `release-dry-run` job
 rehearses all of it on every PR into `main` and on any PR touching the release path.
 
+**The release-bot key.** The bot's token bypasses PR review on `main`, so its private key is a
+secret of the `release` environment, which only `release-commit` names. In **Settings →
+Environments**:
+
+1. Open or create `release`.
+2. **Deployment branches and tags**: **Selected branches and tags**, plus a rule of ref type
+   **Branch**, pattern `main`. No tag rule: `publish` runs on tags but never reads the key.
+3. Clear **Allow administrators to bypass configured protection rules**; **Save protection rules**.
+4. **Environment secrets**: add `RELEASE_BOT_PRIVATE_KEY`, the app's PEM key. Secrets cannot be
+   read back, so lacking the file, generate a new key in the app's settings, and delete the old
+   one once a release works.
+5. In **Settings → Secrets and variables → Actions**, delete any repository secret
+   `RELEASE_BOT_PRIVATE_KEY`: a repository secret reaches every branch.
+
 **Tags.** Rulesets make every `v*` tag immutable, and only the release bot (or an admin) creates a stable one.
 `scripts/backfill-int-tags.mjs` tags any int published without one, at its attested commit.
 

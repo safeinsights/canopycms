@@ -2,7 +2,7 @@
 priority: P2
 adopters: NEITHER
 summary: >-
-  RELEASE_BOT_PRIVATE_KEY is a plain repository secret, so any workflow on any branch can mint the release-bot app token, which the org's require-pr ruleset lets bypass PR review on main and stable-tags-release-bot-only lets create vX.Y.Z. Gate it behind a `release` environment restricted to main (JP settings action plus one line in publish.yml)
+  CODE HALF DONE (branch chore/release-bot-key-environment): publish.yml's release-commit job, the only user of RELEASE_BOT_PRIVATE_KEY, names `environment: release`. OPEN, JP's settings: create the `release` environment limited to branch main, move the key into it, delete the repository secret (steps in DEVELOPING.md "Releasing"). Move to resolved/ once JP confirms
 ---
 # Gate the release-bot key behind a main-only environment
 
@@ -21,12 +21,19 @@ which only narrowed where the token is minted.
 
 ## Fix
 
-1. **JP, in repository settings:**
-   - create an environment `release` with a deployment-branch policy of `main` only;
-   - move `RELEASE_BOT_PRIVATE_KEY` into it;
-   - delete the repository-level secret.
-2. **In `.github/workflows/publish.yml`:** add `environment: release` to the `release-commit`
-   job. Nothing else uses the key.
-3. **Optionally:** bind each package's npm trusted publisher to the same environment name.
+1. **Done, in code.** `release-commit` in `.github/workflows/publish.yml` names
+   `environment: release`. Nothing else reads the key: `publish` holds only npm's id-token, and
+   the prerelease and `tag-prerelease` jobs use `GITHUB_TOKEN`. Landing this first breaks nothing,
+   because a job in an environment still sees repository secrets, and a run that names a missing
+   environment creates it, unprotected.
+2. **Open, JP, in repository settings:** the numbered steps under "The release-bot key" in
+   [DEVELOPING.md](../../DEVELOPING.md#releasing). In short: environment `release`, deployment
+   branches **Selected branches and tags** with one **Branch** rule `main` (no tag rule, since
+   `release-commit` only runs on a push to `main`), the key as an environment secret, and the
+   repository secret deleted.
+3. **Optionally:** bind each package's npm trusted publisher to an environment too. That needs
+   `publish` to name one that allows `v*` tags, so it is a separate change.
 
-Check afterwards that a branch workflow can no longer read the secret.
+Check afterwards: `gh api repos/safeinsights/canopycms/actions/secrets` no longer lists the key,
+`gh api repos/safeinsights/canopycms/environments/release/secrets` does, and the next stable
+release's `release-commit` still pushes.
