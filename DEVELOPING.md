@@ -1180,11 +1180,10 @@ Environments**:
 1. Open or create `release`.
 2. **Deployment branches and tags**: **Selected branches and tags**, plus a rule of ref type
    **Branch**, pattern `main`. No tag rule: `publish` runs on tags but never reads the key.
-3. Clear **Allow administrators to bypass configured protection rules**; **Save protection rules**.
-4. **Environment secrets**: add `RELEASE_BOT_PRIVATE_KEY`, the app's PEM key. Secrets cannot be
+3. **Environment secrets**: add `RELEASE_BOT_PRIVATE_KEY`, the app's PEM key. Secrets cannot be
    read back, so lacking the file, generate a new key in the app's settings, and delete the old
    one once a release works.
-5. In **Settings → Secrets and variables → Actions**, delete any repository secret
+4. In **Settings → Secrets and variables → Actions**, delete any repository secret
    `RELEASE_BOT_PRIVATE_KEY`: a repository secret reaches every branch.
 
 **Tags.** Rulesets make every `v*` tag immutable, and only the release bot (or an admin) creates a stable one.

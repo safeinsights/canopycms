@@ -22,15 +22,16 @@ which only narrowed where the token is minted.
 ## Fix
 
 1. **Done, in code.** `release-commit` in `.github/workflows/publish.yml` names
-   `environment: release`. Nothing else reads the key: `publish` holds only npm's id-token, and
-   the prerelease and `tag-prerelease` jobs use `GITHUB_TOKEN`. Landing this first breaks nothing,
+   `environment: release`. Nothing else reads the key: `publish` holds only npm's id-token,
+   `prerelease` uses no secrets, and `tag-prerelease` uses `GITHUB_TOKEN`. Landing this first breaks nothing,
    because a job in an environment still sees repository secrets, and a run that names a missing
    environment creates it, unprotected.
 2. **Open, JP, in repository settings:** the numbered steps under "The release-bot key" in
    [DEVELOPING.md](../../DEVELOPING.md#releasing). In short: environment `release`, deployment
    branches **Selected branches and tags** with one **Branch** rule `main` (no tag rule, since
    `release-commit` only runs on a push to `main`), the key as an environment secret, and the
-   repository secret deleted.
+   repository secret deleted. Delete it only once this change is on `main`: until then, `main`'s
+   `release-commit` names no environment and reads the repository secret.
 3. **Optionally:** bind each package's npm trusted publisher to an environment too. That needs
    `publish` to name one that allows `v*` tags, so it is a separate change.
 

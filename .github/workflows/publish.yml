@@ -46,8 +46,9 @@ jobs:
     name: Release commit
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    # Holds RELEASE_BOT_PRIVATE_KEY. The environment deploys from `main` only,
-    # so a workflow on any other branch cannot mint the release-bot token.
+    # Holds RELEASE_BOT_PRIVATE_KEY. Its deployment-branch rule allows `main`
+    # only (DEVELOPING.md, "Releasing"), so a workflow on any other branch
+    # cannot mint the release-bot token.
     # The only job that names it: `publish` needs npm's id-token, not the key.
     environment: release
     env:
