@@ -5,7 +5,7 @@ import type { UserSearchResult } from '../../auth/types'
 import type { EditorEntry } from '../Editor'
 import { findFieldTarget, whenRevealed } from '../field-target'
 import { useApiClient } from '../context'
-import { isGatewayFailure, isUnanswered } from '../unanswered'
+import { isGatewayFailure, isUnanswered, MayHaveLandedError } from '../unanswered'
 import { resolveMessageOrigin } from '../preview-bridge'
 import { isSamePreviewPath } from '../preview-path'
 import { commentsKey, fetchCommentsSeedingUsers, useCommentsData } from './useCommentsData'
@@ -146,7 +146,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
     if (result === 'unanswered' || (result && isGatewayFailure(result))) {
       // An unanswered post may have landed: reload so the thread shows it if it did.
       void loadComments(branch)
-      throw new Error(COMMENT_MAY_BE_ADDED)
+      throw new MayHaveLandedError(COMMENT_MAY_BE_ADDED)
     }
     if (!result?.ok) throw new Error(COMMENT_NOT_ADDED)
     await loadComments(branch)

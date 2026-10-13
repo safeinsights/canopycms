@@ -7,6 +7,7 @@ import {
   useCommentSystem,
 } from './useCommentSystem'
 import { ApiTimeoutError } from '../../api/request-deadline'
+import { MayHaveLandedError } from '../unanswered'
 import { useUserMetadata } from './useUserMetadata'
 import { createUserMetadataBatcher } from './user-metadata-batcher'
 import type { ApiClient } from '../context'
@@ -425,9 +426,9 @@ describe('useCommentSystem', () => {
     await waitFor(() => expect(mockClient.comments.list).toHaveBeenCalledTimes(1))
 
     await act(async () => {
-      await expect(result.current.handleAddComment('Test comment', 'branch')).rejects.toThrow(
-        COMMENT_MAY_BE_ADDED,
-      )
+      const err = await result.current.handleAddComment('Test comment', 'branch').catch((e) => e)
+      expect(err).toBeInstanceOf(MayHaveLandedError)
+      expect(err).toHaveProperty('message', COMMENT_MAY_BE_ADDED)
     })
 
     await waitFor(() => expect(result.current.comments).toEqual([landed]))
@@ -438,9 +439,9 @@ describe('useCommentSystem', () => {
     const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
 
     await act(async () => {
-      await expect(result.current.handleAddComment('Test comment', 'branch')).rejects.toThrow(
-        COMMENT_MAY_BE_ADDED,
-      )
+      const err = await result.current.handleAddComment('Test comment', 'branch').catch((e) => e)
+      expect(err).toBeInstanceOf(MayHaveLandedError)
+      expect(err).toHaveProperty('message', COMMENT_MAY_BE_ADDED)
     })
   })
 

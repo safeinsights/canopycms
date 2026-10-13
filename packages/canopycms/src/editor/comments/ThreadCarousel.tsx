@@ -1,22 +1,17 @@
 'use client'
 
 import React, { useState, useMemo, useEffect, useRef } from 'react'
-import {
-  ActionIcon,
-  Alert,
-  Button,
-  Group,
-  Paper,
-  Stack,
-  Text,
-  Textarea,
-  Tooltip,
-} from '@mantine/core'
-import { IconChevronLeft, IconChevronRight, IconAlertCircle } from '@tabler/icons-react'
+import { ActionIcon, Button, Group, Paper, Stack, Text, Textarea, Tooltip } from '@mantine/core'
+import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { InlineCommentThread } from './InlineCommentThread'
 import { useTrackedWrites } from './use-tracked-writes'
+import {
+  CommentWriteAlert,
+  toCommentWriteFailure,
+  type CommentWriteFailure,
+} from './CommentWriteAlert'
 
 /**
  * ## Purpose
@@ -89,7 +84,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   const [carouselHeight, setCarouselHeight] = useState(400)
   const [isResizing, setIsResizing] = useState(false)
   const [highlightedThreadId, setHighlightedThreadId] = useState<string | undefined>(undefined)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<CommentWriteFailure | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const resizeStartY = useRef<number>(0)
   const resizeStartHeight = useRef<number>(0)
@@ -219,7 +214,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
       setNewThreadText('')
       setShowNewThreadBox(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create comment')
+      setError(toCommentWriteFailure(err))
     } finally {
       setIsSubmitting(false)
     }
@@ -285,17 +280,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
           </Group>
         </Group>
 
-        {error && (
-          <Alert
-            icon={<IconAlertCircle size={16} />}
-            color="red"
-            variant="light"
-            onClose={() => setError(null)}
-            withCloseButton
-          >
-            {error}
-          </Alert>
-        )}
+        {error && <CommentWriteAlert failure={error} onClose={() => setError(null)} />}
 
         {showNewThreadBox && (
           <Paper withBorder p="sm" bg="var(--mantine-color-body)">

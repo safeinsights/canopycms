@@ -15,6 +15,7 @@ import { TextField } from '../fields/TextField'
 import { FieldCommentContext } from './field-comment-context'
 import { DEFAULT_THEME, defaultCssVariablesResolver } from '@mantine/core'
 import { CanopyCMSProvider } from '../theme'
+import { MayHaveLandedError } from '../unanswered'
 
 // ImageField and ReferenceField reach the API client through context; one mocked factory keeps
 // createApiClientWrapper's provider and the hooks' own createApiClient() on the same instance.
@@ -220,6 +221,24 @@ describe('field comment control', () => {
     expect((screen.getByTestId('new-thread-textarea') as HTMLTextAreaElement).value).toBe('Keep me')
     // Shown where it was written, so not again as a toast.
     expect(showNotification).not.toHaveBeenCalled()
+  })
+
+  it('warns in yellow, not as a field error, when a new comment may have been posted', async () => {
+    const user = userEvent.setup()
+    renderForm({
+      onAddComment: vi.fn(async () => {
+        throw new MayHaveLandedError('Your comment may have been posted.')
+      }),
+    })
+    await user.click(control('title'))
+    await user.type(await screen.findByTestId('new-thread-textarea'), 'Keep me')
+    await user.click(screen.getByTestId('create-thread-button'))
+    const warning = await screen.findByRole('alert')
+    expect(warning.textContent).toContain('Your comment may have been posted.')
+    expect(warning.getAttribute('style')).toContain('yellow')
+    const box = screen.getByTestId('new-thread-textarea') as HTMLTextAreaElement
+    expect(box.getAttribute('aria-invalid')).not.toBe('true')
+    expect(box.value).toBe('Keep me')
   })
 
   it('moves focus to "New thread" once a new thread is posted', async () => {

@@ -1,11 +1,14 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Group, Stack, Textarea } from '@mantine/core'
-import { IconAlertCircle } from '@tabler/icons-react'
+import { Button, Group, Stack, Textarea } from '@mantine/core'
 import type { CommentThread } from '../../comment-store'
-import { getErrorMessage } from '../../utils/error'
 import { moveFocusIfUnmoved } from './move-focus-if-unmoved'
+import {
+  CommentWriteAlert,
+  toCommentWriteFailure,
+  type CommentWriteFailure,
+} from './CommentWriteAlert'
 
 export interface ThreadReplyControlsProps {
   /** An unresolved thread; a resolved one has nothing to reply to. */
@@ -59,7 +62,7 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
   const [expanded, setExpanded] = useState(replyText.length > 0)
   const [replying, setReplying] = useState(false)
   const [resolving, setResolving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<CommentWriteFailure | null>(null)
   const boxRef = useRef<HTMLTextAreaElement>(null)
   const replyButtonRef = useRef<HTMLButtonElement>(null)
   // Where focus goes once the next expand or collapse has rendered.
@@ -92,7 +95,7 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
       setReplyText('')
       collapse()
     } catch (err) {
-      setError(getErrorMessage(err))
+      setError(toCommentWriteFailure(err))
     } finally {
       setReplying(false)
     }
@@ -114,7 +117,7 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
       await onResolve()
       if (focusAfterResolve) moveFocusIfUnmoved(origin, focusAfterResolve())
     } catch (err) {
-      setError(getErrorMessage(err))
+      setError(toCommentWriteFailure(err))
     } finally {
       setResolving(false)
     }
@@ -136,17 +139,7 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
 
   return (
     <Stack gap="xs">
-      {error && (
-        <Alert
-          icon={<IconAlertCircle size={16} />}
-          color="red"
-          variant="light"
-          onClose={() => setError(null)}
-          withCloseButton
-        >
-          {error}
-        </Alert>
-      )}
+      {error && <CommentWriteAlert failure={error} onClose={() => setError(null)} />}
       {expanded ? (
         <>
           <Textarea
