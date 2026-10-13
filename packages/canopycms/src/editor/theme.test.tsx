@@ -327,6 +327,23 @@ describe('CanopyCMSProvider filled button contrast', () => {
     )
   })
 
+  it('keeps white text on the primary fill when autoContrast would pick black for a light brand', () => {
+    const { getByText } = render(
+      <CanopyCMSProvider colors={{ brand: '#facc15' }} themeOverride={{ autoContrast: true }}>
+        <Button>Save</Button>
+        <Badge color="brand">Current</Badge>
+      </CanopyCMSProvider>,
+    )
+    expect(buttonVar(getByText('Save').closest('button'), '--button-color')).toBe(
+      'var(--mantine-color-white)',
+    )
+    expect(
+      (getByText('Current').closest('.mantine-Badge-root') as HTMLElement).style.getPropertyValue(
+        '--badge-color',
+      ),
+    ).toBe('var(--mantine-color-white)')
+  })
+
   it('fills a primary Button and Badge, named or by default, with the primary fill', () => {
     const { getByText } = render(
       <CanopyCMSProvider>
@@ -337,6 +354,7 @@ describe('CanopyCMSProvider filled button contrast', () => {
         </Button>
         <Badge>Current</Badge>
         <Badge variant="light">Editing</Badge>
+        <Button color="brand.6">Shaded</Button>
       </CanopyCMSProvider>,
     )
     for (const name of ['Save', 'Submit for review']) {
@@ -353,6 +371,10 @@ describe('CanopyCMSProvider filled button contrast', () => {
       )
     expect(badgeBg('Current')).toBe('var(--canopy-primary-fill)')
     expect(badgeBg('Editing')).not.toBe('var(--canopy-primary-fill)')
+    // A named shade is the caller's choice.
+    expect(buttonVar(getByText('Shaded').closest('button'), '--button-bg')).toBe(
+      'var(--mantine-color-brand-6)',
+    )
   })
 
   it('keeps the shades when an adopter overrides another Button prop, not its vars', () => {
@@ -641,6 +663,23 @@ describe('CanopyCMSProvider colour and contrast', () => {
 })
 
 describe('CanopyCMSProvider adopter palettes it cannot measure', () => {
+  it('leaves every colour to Mantine in dark mode when the dark scale is oklch', () => {
+    const oklchDark = Array.from(
+      { length: 10 },
+      (_, i) => `oklch(${80 - i * 8}% 0.003 264)`,
+    ) as unknown as MantineColorsTuple
+    render(
+      <CanopyCMSProvider themeOverride={{ colors: { dark: oklchDark } }}>
+        <span>text</span>
+      </CanopyCMSProvider>,
+    )
+    const css = Array.from(document.querySelectorAll('style'))
+      .map((style) => style.textContent ?? '')
+      .join('\n')
+    expect(css).not.toMatch(/--mantine-color-[a-z]+-light-color:\s*(rgba?\(|#)/)
+    cleanup()
+  })
+
   it('leaves every colour to Mantine when the gray scale it measures against is oklch', () => {
     const oklchGray = Array.from(
       { length: 10 },

@@ -41,7 +41,7 @@ const CALENDAR_LABELS = {
   yearLevelControl: 'Choose a year',
 }
 
-const DATE_PART = /^(\d{4})-(\d{2})-(\d{2})(T|$)/
+const DATE_PART = /^(\d{4})-(\d{2})-(\d{2})([Tt ]|$)/
 
 /** Whether the written year, month and day name a real day; `Date` rolls 30 Feb on to 1 Mar. */
 const isCalendarDate = (year: number, month: number, day: number): boolean => {

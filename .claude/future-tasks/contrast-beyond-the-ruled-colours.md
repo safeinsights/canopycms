@@ -28,6 +28,9 @@ still miss 4.5:1: a combobox's armed option (Select, Tags, the quick-open palett
 also has `opacity: 0.75`, 3.53:1 even in light mode), the date picker's selected day and focused
 time segment. Shade 5 stays because focus rings, focused borders and checked controls need 3:1
 on dark surfaces. Each needs the fill token through a scoped rule or the component's `styles`.
+Shade 5 measures 3:1 for the default brand only: darker adopter brands (`#1e3a8a` 2.21:1 on
+dark.5) fall short, as on the base; a measured indicator token would need routing through every
+focus and checked-state selector Mantine draws.
 
 ## Checkbox, Radio and Switch borders
 

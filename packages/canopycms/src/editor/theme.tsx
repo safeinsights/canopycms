@@ -23,6 +23,7 @@ import {
   type MantineTheme,
   type MantineThemeOverride,
   createTheme,
+  darken,
 } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import { ModalsProvider } from '@mantine/modals'
@@ -120,6 +121,7 @@ const canopyComponents = {
           root: {
             '--button-bg': 'var(--canopy-primary-fill)',
             '--button-hover': 'var(--canopy-primary-fill-hover)',
+            '--button-color': 'var(--mantine-color-white)',
           },
         }
       }
@@ -129,7 +131,12 @@ const canopyComponents = {
   Badge: Badge.extend({
     vars: (theme, props) =>
       (props.variant ?? 'filled') === 'filled' && isPrimary(theme, props.color)
-        ? { root: { '--badge-bg': 'var(--canopy-primary-fill)' } }
+        ? {
+            root: {
+              '--badge-bg': 'var(--canopy-primary-fill)',
+              '--badge-color': 'var(--mantine-color-white)',
+            },
+          }
         : { root: {} },
   }),
   ActionIcon: ActionIcon.extend({ defaultProps: { size: 'sm' } }),
@@ -213,7 +220,7 @@ const readableColourVariables = (theme: MantineTheme, scheme: 'light' | 'dark') 
   return variables
 }
 
-/** `--canopy-primary-fill`: the first primary step from its shade on that white reaches 4.5:1. */
+/** `--canopy-primary-fill`: the first primary step, from the primary shade, under which white reaches 4.5:1. */
 const primaryFill = (theme: MantineTheme, scheme: 'light' | 'dark') => {
   const scale = theme.colors[theme.primaryColor]
   if (!scale.every(isMeasurable)) {
@@ -229,10 +236,10 @@ const primaryFill = (theme: MantineTheme, scheme: 'light' | 'dark') => {
   })
   const step = (n: number) => `var(--mantine-color-${theme.primaryColor}-${n})`
   return shade === undefined
-    ? { '--canopy-primary-fill': value, '--canopy-primary-fill-hover': value }
+    ? { '--canopy-primary-fill': value, '--canopy-primary-fill-hover': darken(value, 0.1) }
     : {
         '--canopy-primary-fill': step(shade),
-        '--canopy-primary-fill-hover': step(Math.min(shade + 1, 9)),
+        '--canopy-primary-fill-hover': step(shade === 9 ? 8 : shade + 1),
       }
 }
 
