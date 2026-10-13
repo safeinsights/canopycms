@@ -32,8 +32,10 @@ Red menu items belong to [destructive-menu-item-contrast.md](destructive-menu-it
 ## Theme tokens
 
 - **Dark dimmed.** `canopyCssVariablesResolver` sets dark `--mantine-color-dimmed` to `dark.1`,
-  1.2:1 under body text. Set it to the guideline's `color-mix` of `dark.1` and `dark.2`
-  (`#a8a8a8`, 4.7:1 on `dark.5`), and update the measurements in its comment.
+  1.2:1 under body text. Set it to the guideline's 85/15 `color-mix` of `dark.1` and `dark.2`
+  (`#b0b0b0`: 4.6:1 on `dark.4`, the menu hover, and 1.3:1 under body text), and update the
+  measurements in its comment. A blocked `ReasonedMenuItem`'s reason sits on `dark.4` when
+  arrowed to.
 - **Placeholders.** Mantine's placeholder colour is 2.1:1 on white (gray.5) and dark.3 in dark
   mode. Set `--mantine-color-placeholder` in the resolver to a step reaching 4.5:1 on every
   input background in both schemes (`gray.6` is 3.3:1 on white, so light needs `gray.7`).

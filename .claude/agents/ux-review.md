@@ -54,7 +54,7 @@ a finding (LOW, or MEDIUM for a new surface). Start Storybook with `preview_star
 `storybook` entry in `.claude/launch.json`, open each affected story alone at
 `/iframe.html?id=<id>&viewMode=story` (ids are in `/index.json`), and take a screenshot of each. Check
 layout at 1280px and at 390px with `resize_window`, then reset to `desktop`. For colour, also
-screenshot with `data-mantine-color-scheme="dark"` set on `<html>` via `javascript_tool`. Read the console
+screenshot with `data-mantine-color-scheme="dark"` set on `<html>` via `javascript_tool` after each load. Read the console
 for React warnings.
 
 ## 4. Walk the flow

@@ -42,7 +42,8 @@ Branch status labels and colours come from `packages/canopycms/src/editor/branch
 - **Quote a named control**: the "Tasks" tab.
 - **No "successfully"**: "Branch created".
 - **Human labels, never internal names**: "Page sections › Hero › Heading", never
-  `blocks[0].title`. An unlabelled schema name is humanised, as `entryTypeLabel` does.
+  `blocks[0].title`. An unlabelled schema name is humanised, as `entryTypeLabel`
+  (`packages/canopycms/src/editor/editor-utils.ts`) does.
 - **Developer diagnostics** go behind a "Details" disclosure or are shown to admins only.
 - **Dates** are relative, with the absolute date in a tooltip
   (`packages/canopycms/src/editor/relative-time.ts`).
@@ -82,14 +83,15 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
 - **Disabled says why.** A control that can't act now stays visible, disabled, with a Tooltip
   giving the reason as a full sentence with the way forward ("This branch is in review.
   Withdraw it to make changes."). One reason blocking controls with different verbs names the
-  blocking condition, not a verb. Mantine's `data-disabled` keeps the Tooltip working; it also
-  opens on focus and touch.
+  blocking condition, not a verb. Mantine's `data-disabled` keeps the Tooltip working, which
+  must also open on focus and touch.
 - A submit button disabled only because its adjacent input is empty, such as Reply, needs no
   reason.
 - A disabled menu item stays focusable (`aria-disabled`, not `disabled`) and shows the reason
   inline (`ReasonedMenuItem`). An empty menu shows one such item saying why, so arrow keys reach
   it.
-- **Hide** a control that can never apply for this user, such as admin items for an editor.
+- **Hide** a control that can never apply for this user, such as admin items for an editor, and
+  a read-only form's row actions ([Fields](#fields)).
 
 ## Loading, empty and error states
 
@@ -139,7 +141,8 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 - Every action is reachable by keyboard, focus follows visual order, and closing an overlay
   returns focus to the control that opened it. A menu item is gone once it acts, so its menu's
   trigger stands in (`packages/canopycms/src/editor/utils/focus-return.ts`). Any other opener that
-  is gone or hidden hands focus to the menu trigger offering the same action (`returnTarget`).
+  is gone hands focus to the menu trigger offering the same action (`returnTarget`), else the
+  nearest heading.
 - Sticky regions reserve scroll padding so focus is never hidden behind them (WCAG 2.4.11), as
   `FormHeader` does.
 
@@ -161,15 +164,18 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 Colour carries meaning: green success, blue info, yellow warning, red error. State is never
 shown by colour alone. Text, including on controls and status badges, is at least 4.5:1, or 3:1
 for large text; icons and control borders at least 3:1. Text and backgrounds use scheme-aware
-tokens (`--mantine-color-text`, `light-dark(…)`), never a fixed shade (`gray.0`, `dark.7`,
-`bg="white"`). The theme (`packages/canopycms/src/editor/theme.tsx`) sets three of them:
+tokens (`--mantine-color-text`, `light-dark(…)`), never a fixed shade outside the theme
+(`gray.0`, `dark.7`, `bg="white"`). The theme (`packages/canopycms/src/editor/theme.tsx`) owns
+three, measured on every surface they sit on, menu hover included; it does not yet set the
+placeholder, the danger text or the dark dimmed value:
 
 - `--mantine-color-dimmed`, the only dimmed colour: `gray.7` in light mode; in dark mode
-  `color-mix(in srgb, var(--mantine-color-dark-1) 70%, var(--mantine-color-dark-2))`, 4.7:1 on
-  `dark.5`, since `dark.1` reads as body text.
+  `color-mix(in srgb, var(--mantine-color-dark-1) 85%, var(--mantine-color-dark-2))`, 4.6:1 on
+  `dark.4`, since `dark.1` reads as body text.
 - `--mantine-color-placeholder`, at least 4.5:1.
 - `--canopy-danger-text`, for all destructive and error text, menu items included: `red.9` in
-  light mode (`red.8` is 4.3:1 on `gray.0`) and `red.4` in dark mode.
+  light mode (`red.8` is 4.3:1 on `gray.0`) and `red.3` in dark mode (`red.4` is 4.3:1 on
+  `dark.4`).
 
 Success text is the default colour beside a green icon; `green.8` and `green.9` miss 4.5:1 on
 white. Count badges put text colour on a tinted background. A light yellow `Alert`'s title, icon

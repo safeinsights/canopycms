@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Code item for docs/ux-guidelines.md's `--canopy-danger-text` rule: a red Mantine `Menu.Item` draws its text at red.6 (3.3:1 on white), and `c="red.8"` error text fails on gray.0 and in dark mode. Add the per-scheme variable (red.9 light, red.4 dark) and a shared destructive menu item, and move all error text onto it
+  Code item for docs/ux-guidelines.md's `--canopy-danger-text` rule: a red Mantine `Menu.Item` draws its text at red.6 (3.3:1 on white), and `c="red.8"` error text fails on gray.0 and in dark mode. Add the per-scheme variable (red.9 light, red.3 dark) and a shared destructive menu item, and move all error text onto it
 ---
 # Destructive menu items and error text fail contrast
 
@@ -22,8 +22,9 @@ covers that Remove item, "Has errors" and every `c="red.8"` error text.
 [docs/ux-guidelines.md](../../docs/ux-guidelines.md#colour-and-contrast) names the rule:
 
 - Add `--canopy-danger-text` to `canopyCssVariablesResolver` (`theme.tsx`): `red.9` light,
-  `red.4` dark. Measure it on each surface it sits on (white, `gray.0`, `gray.1`, the red hover
-  tint; `dark.5`-`dark.7`) and pin the ratios in `theme.test.tsx`.
+  `red.3` dark. Measure it on each surface it sits on (white, `gray.0`, `gray.1`, the light red
+  hover tint; `dark.4`-`dark.7` and the dark red hover tint, where `red.4` is 4.3:1 and 3.8:1)
+  and pin the ratios in `theme.test.tsx`.
 - A shared destructive menu item (next to `components/ReasonedMenuItem.tsx`) uses it; switch the
   navigator's Delete items and `ItemList`'s Remove to it.
 - Move every `c="red.8"` error text onto the variable.

@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-12. An unanswered collection create or details save closes the collection dialog, so if the write did not land the user re-enters the name, label and every staged entry type. docs/ux-guidelines.md now rules that the next open of that dialog is prefilled with what was typed
+  New 2026-10-12. An unanswered collection create or details save closes the collection dialog, so if the write did not land the user re-enters the name, label and every staged entry type. docs/ux-guidelines.md now rules that a create closed after no answer prefills its dialog's next open; the details save follows the same pattern
 ---
 
 # An unanswered collection create or details save loses what was entered
