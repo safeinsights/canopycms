@@ -8,38 +8,41 @@ The standard for every change to the CanopyCMS editor (`packages/canopycms/src/e
 One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 `packages/canopycms/src/editor/copy.ts`.
 
-| Say                       | For                                                    | Not                                         |
-| ------------------------- | ------------------------------------------------------ | ------------------------------------------- |
-| **Save**                  | Writing the open entry to the branch                   | Save file, Commit                           |
-| **Submit for review**     | Committing the branch and opening its pull request     | Submit branch, Publish                      |
-| **Withdraw from review**  | Taking a submitted branch back for editing             | Withdraw branch                             |
-| **Request changes**       | A reviewer sending a branch back to its editor         | Reject                                      |
-| **Switch branch**         | Opening another branch                                 | Change branch, Change / Manage              |
-| **New branch**            | Creating a branch                                      | Create branch, except as its form's confirm |
-| **Remove**                | Taking an item out of a list, block list or field      | Clear, Delete                               |
-| **Delete**                | Destroying a stored entry, collection, branch or group | Remove                                      |
-| **Discard changes**       | Throwing away unsaved edits                            | Discard drafts, Revert                      |
-| **entry**, **collection** | A content item, and the folder that holds entries      | file, page, item; folder                    |
-| **file**                  | An item in the media library                           | asset, media item                           |
+| Say                       | For                                                            | Not                                         |
+| ------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
+| **Save**                  | Writing the open entry to the branch                           | Save file, Commit                           |
+| **Submit for review**     | Committing the branch and opening its pull request             | Submit branch, Publish                      |
+| **Withdraw from review**  | Taking a submitted branch back for editing                     | Withdraw branch                             |
+| **Request changes**       | A reviewer sending a branch back to its editor                 | Reject                                      |
+| **Switch branch**         | Opening another branch                                         | Change branch, Change / Manage              |
+| **New branch**            | Creating a branch                                              | Create branch, except as its form's confirm |
+| **Remove**                | Taking an item out of a list or field; unlisting an entry type | Clear, Delete                               |
+| **Clear**                 | Resetting an optional object field to unset                    | Remove                                      |
+| **Delete**                | Destroying a stored entry, collection, branch or group         | Remove                                      |
+| **Discard changes**       | Throwing away unsaved edits                                    | Discard drafts, Revert                      |
+| **entry**, **collection** | A content item, and the folder that holds entries              | file, page, item; folder                    |
+| **file**                  | An item in the media library                                   | asset, media item                           |
 
 Branch status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`.
 
 ## Copy
 
-- **Sentence case** for every label, title, menu item, tab and toast: "Delete branch", "Open
-  in GitHub".
+- **Sentence case** for every label, title, menu item, tab, toast and placeholder: "Delete
+  branch", "Open in GitHub".
 - **Buttons start with a verb** and name the result. A confirm repeats the action's verb
   ("Delete entry"), never "OK" or "Yes"; a form's confirm may add its noun ("Create branch").
 - **`…`, the single character,** marks an in-progress state ("Saving…") or a command that
   asks for more input ("Rename…"). None on a command that acts at once or only opens a
-  confirm ("Delete branch"); never three ASCII dots.
+  confirm or a menu ("Delete branch", "Add section"); never three ASCII dots.
 - **One primary action per card, by role**: on the open branch's card, a reviewer of someone
   else's submission sees "Request changes" and anyone else its workflow action; other cards
   show "Open".
+- **Dismissing a dialog** that mixes staged and immediate changes: "Discard changes" while edits
+  are staged, "Close" after an immediate save, otherwise "Cancel".
 - **Quote a named control**: the "Tasks" tab.
 - **No "successfully"**: "Branch created".
 - **Human labels, never internal names**: "Page sections › Hero › Heading", never
-  `blocks[0].title`.
+  `blocks[0].title`. An unlabelled schema name is humanised, as `entryTypeLabel` does.
 - **Developer diagnostics** go behind a "Details" disclosure or are shown to admins only.
 - **Dates** are relative, with the absolute date in a tooltip
   (`packages/canopycms/src/editor/relative-time.ts`).
@@ -77,13 +80,15 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
 ## Disabled controls
 
 - **Disabled says why.** A control that can't act now stays visible, disabled, with a Tooltip
-  giving the reason and the way forward ("This branch is in review. Withdraw it to make
-  changes."). Mantine's `data-disabled` keeps the Tooltip working. It also opens on keyboard
-  focus and touch; Mantine's default is hover only.
+  giving the reason as a full sentence with the way forward ("This branch is in review.
+  Withdraw it to make changes."). One reason blocking controls with different verbs names the
+  blocking condition, not a verb. Mantine's `data-disabled` keeps the Tooltip working; it also
+  opens on focus and touch.
 - A submit button disabled only because its adjacent input is empty, such as Reply, needs no
   reason.
 - A disabled menu item stays focusable (`aria-disabled`, not `disabled`) and shows the reason
-  inline.
+  inline (`ReasonedMenuItem`). An empty menu shows one such item saying why, so arrow keys reach
+  it.
 - **Hide** a control that can never apply for this user, such as admin items for an editor.
 
 ## Loading, empty and error states
@@ -98,9 +103,10 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
 - **Errors** say what failed in plain words, keep the user's input and offer Retry.
 - **A write with no answer** (a timeout or a gateway's 5xx page) may have gone through
   (`packages/canopycms/src/editor/unanswered.ts`). Reload what it touched; if that settles the
-  outcome, say so. Otherwise warn in yellow until dismissed or acted on: "… may have gone
-  through even though the server didn't answer", then where to check, quoted. Keep the input,
-  unless a retry could duplicate the write (a create): then close, saying where to check.
+  outcome, say so. Otherwise warn in yellow, comment posts included, until dismissed or acted on:
+  "… may have gone through even though the server didn't answer", naming the entry and where
+  to check, quoted. Keep the input, unless a retry could duplicate the write (a create): then
+  close, saying where to check, and prefill that dialog's next open with what was typed.
 - An inline alert about a list sits above the list, under its heading.
 - A placeholder takes the height of what replaces it, so nothing shifts.
 
@@ -110,9 +116,11 @@ Every field's label row has the same anatomy, rendered by
 `packages/canopycms/src/editor/fields/FieldLabel.tsx`: label, required marker and comment
 control on the left, field actions on the right, and the description beneath. No hand-rolled
 label styles. A read-only form's inputs are read-only, not disabled; one notice explains once;
-no lock icon per field. List and block rows collapse, take their title from the content, and
+no lock icon per field, row drag handle or item menu. List and block rows collapse, take their title from the content, and
 carry a drag handle and a "…" menu (Move up, Move down, Duplicate, Remove). Validation shows
-inline and in a summary of labelled breadcrumbs that focus the field.
+inline and in a summary of labelled breadcrumbs that focus the field. A date-time input takes
+12- or 24-hour time from the locale and shows the time zone; a date-only value is read as local
+midnight.
 
 The comment control hides until its field is hovered or focused, unless the field has open
 threads: then it shows their count, never a zero badge. Idle, it is not a Tab stop
@@ -130,12 +138,14 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 - Tooltips and the shortcut sheet show the platform's modifier.
 - Every action is reachable by keyboard, focus follows visual order, and closing an overlay
   returns focus to the control that opened it. A menu item is gone once it acts, so its menu's
-  trigger stands in (`packages/canopycms/src/editor/utils/focus-return.ts`). If the opener is otherwise gone or hidden, focus goes to the nearest list
-  heading or search field.
+  trigger stands in (`packages/canopycms/src/editor/utils/focus-return.ts`). Any other opener that
+  is gone or hidden hands focus to the menu trigger offering the same action (`returnTarget`).
+- Sticky regions reserve scroll padding so focus is never hidden behind them (WCAG 2.4.11), as
+  `FormHeader` does.
 
 ## Accessibility
 
-- An icon-only `ActionIcon` has an `aria-label` and a Tooltip with the same text.
+- An icon-only control has an `aria-label` and a same-text Tooltip that also opens on focus.
 - Anything clickable is a button or link (`UnstyledButton` when it must look bare), never a
   `div` with `onClick`.
 - An `iframe` has a `title`; an input has a label or `aria-label`.
@@ -149,21 +159,30 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 ## Colour and contrast
 
 Colour carries meaning: green success, blue info, yellow warning, red error. State is never
-shown by colour alone. Text contrast is at least 4.5:1, or 3:1 for large text.
+shown by colour alone. Text, including on controls and status badges, is at least 4.5:1, or 3:1
+for large text; icons and control borders at least 3:1. Text and backgrounds use scheme-aware
+tokens (`--mantine-color-text`, `light-dark(…)`), never a fixed shade (`gray.0`, `dark.7`,
+`bg="white"`). The theme (`packages/canopycms/src/editor/theme.tsx`) sets three of them:
 
-- Dimmed text uses only the `--mantine-color-dimmed` token, never a per-component colour; the
-  theme must set it to `gray.7` in light mode.
-- Count badges: text colour on a tinted background, at least 4.5:1.
-- A light yellow `Alert`'s title, icon and close button take the text colour
-  (`packages/canopycms/src/editor/theme.tsx`); yellow on its own tint is under 2:1.
-- Filled destructive buttons are `red.8`, 4.5:1 under white. No orange shade reaches that under
-  white, so filled orange buttons, such as a "Withdraw from review" confirm, are `orange.6` with black
-  text.
+- `--mantine-color-dimmed`, the only dimmed colour: `gray.7` in light mode; in dark mode
+  `color-mix(in srgb, var(--mantine-color-dark-1) 70%, var(--mantine-color-dark-2))`, 4.7:1 on
+  `dark.5`, since `dark.1` reads as body text.
+- `--mantine-color-placeholder`, at least 4.5:1.
+- `--canopy-danger-text`, for all destructive and error text, menu items included: `red.9` in
+  light mode (`red.8` is 4.3:1 on `gray.0`) and `red.4` in dark mode.
+
+Success text is the default colour beside a green icon; `green.8` and `green.9` miss 4.5:1 on
+white. Count badges put text colour on a tinted background. A light yellow `Alert`'s title, icon
+and close button take the text colour; yellow on its own tint is under 2:1. Filled destructive
+buttons are `red.8`, 4.5:1 under white; no orange shade reaches that, so filled orange buttons
+are `orange.6` with black text.
 
 ## People
 
 - Show a person's name or a fallback ("Name unavailable"), never a raw user id: an id is an
   internal name.
+- A branch card's access list shows the names the viewer can resolve, then "and N others". A
+  caller without the privileged lookup never receives `access.allowedUsers` ids.
 - An avatar beside a name has empty `alt`.
 
 ## Shell regions

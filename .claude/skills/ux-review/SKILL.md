@@ -12,11 +12,13 @@ description: Review a CanopyCMS PR or branch's editor UI changes against docs/ux
 2. **Spawn the `ux-review` agent** (`.claude/agents/ux-review.md`, Opus) with the base ref and,
    for a PR, its number. In a `/review-rounds` run, alternate it with Fable between rounds, and
    point a later round at the previous round's fixes. Pass through anything the user named:
-   flows, users, breakpoints. The agent's step 2 lists the guideline rules reviews most often
+   flows, users, breakpoints, colour schemes. The agent's step 2 lists the guideline rules reviews most often
    miss, by section; when a ruling that reviews keep missing lands in `docs/ux-guidelines.md`,
    add it to that list.
 3. **Relay its report** unchanged in shape: severity-ordered findings, each with a
-   recommendation and screenshot, then the consolidated fix set and any guideline gaps. Attach
+   recommendation and screenshot, then the consolidated fix set and any guideline gaps. A
+   contrast finding gives its measured ratio, its colour scheme and the token
+   [Colour and contrast](../../../docs/ux-guidelines.md#colour-and-contrast) names for it. Attach
    the screenshots with `SendUserFile`.
 4. **Guideline gaps are not fixes.** A gap means `docs/ux-guidelines.md` is silent or wrong;
    propose the wording change separately, since the doc is word-budgeted (`pnpm lint:docs`).
