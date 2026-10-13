@@ -6,9 +6,10 @@ import type { EditorCollection } from '../Editor'
  * What was sent by a collection create or details save that got no answer, kept until the content
  * tree shows it landed or the user discards it, so the dialog can fill it in again.
  */
-export type CollectionDraft =
+export type CollectionDraft = { branch: string } & (
   | { kind: 'create'; input: CreateCollectionInput }
   | { kind: 'details'; collectionPath: LogicalPath; updates: UpdateCollectionInput }
+)
 
 /** The directory name in a logical path, without its embedded id ("posts.abc123" -> "posts"). */
 export function slugOf(logicalPath: LogicalPath): string {
@@ -30,7 +31,7 @@ function findByPath(
 }
 
 /** The collection named `name` directly under `parentPath`, or at the top level without one. */
-export function findCollectionByName(
+function findCollectionByName(
   collections: readonly EditorCollection[],
   parentPath: LogicalPath | undefined,
   name: string,
@@ -43,7 +44,7 @@ export function findCollectionByName(
  * Whether the tree shows a details save: its collection holds every value it sent, or, for a save
  * that changed the slug, is gone from its old path.
  */
-export function detailsLanded(
+function detailsLanded(
   collections: readonly EditorCollection[],
   draft: Extract<CollectionDraft, { kind: 'details' }>,
 ): boolean {
@@ -55,4 +56,14 @@ export function detailsLanded(
     (updates.label === undefined || (collection.label ?? '') === updates.label) &&
     (updates.slug === undefined || slugOf(collection.path) === updates.slug)
   )
+}
+
+/** Whether `collections`, read from the draft's branch, show the draft's write. */
+export function collectionDraftLanded(
+  collections: readonly EditorCollection[],
+  draft: CollectionDraft,
+): boolean {
+  return draft.kind === 'create'
+    ? !!findCollectionByName(collections, draft.input.parentPath, draft.input.name)
+    : detailsLanded(collections, draft)
 }

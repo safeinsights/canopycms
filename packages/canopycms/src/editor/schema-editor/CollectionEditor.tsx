@@ -169,6 +169,7 @@ export function CollectionEditor({
   // Counts openings, so an Undo from a toast that outlived its dialog does nothing.
   const openingRef = useRef(0)
   const undoToastIds = useRef(new Set<string>())
+  const removalSeq = useRef(0)
 
   const [formData, setFormData] = useState<CollectionFormData>({
     name: '',
@@ -528,7 +529,7 @@ export function CollectionEditor({
       setFocusRequest({ row: neighbour })
 
       const opening = openingRef.current
-      const id = `canopy-staged-entry-type-removed:${opening}:${entryType.name}`
+      const id = `canopy-staged-entry-type-removed:${++removalSeq.current}`
       const label = `"${entryType.name}"`
       const undo = () => {
         notifications.hide(id)
@@ -879,7 +880,7 @@ export function CollectionEditor({
         size="lg"
       >
         <Stack gap="md">
-          {showingRestored && (
+          {showingRestored && restored && (
             <Alert icon={<IconRestore size={16} />} color="blue" title="Restored what you entered">
               <Stack gap="xs" align="flex-start">
                 <Text size="sm">

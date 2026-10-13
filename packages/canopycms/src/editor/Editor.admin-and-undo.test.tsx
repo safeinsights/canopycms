@@ -390,7 +390,7 @@ describe('saving collection details', () => {
     )
     await waitFor(() => expect(entryListReads(fetchMock)).toBeGreaterThan(readsBefore))
     expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'canopy-schema-outcome-unknown', color: 'yellow' }),
+      expect.objectContaining({ id: 'canopy-collection-outcome-unknown', color: 'yellow' }),
     )
   })
 
@@ -429,7 +429,7 @@ describe('saving collection details', () => {
       expect(screen.queryByRole('dialog', { name: 'Create collection' })).toBeNull(),
     )
     expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'canopy-schema-outcome-unknown', color: 'yellow' }),
+      expect.objectContaining({ id: 'canopy-collection-outcome-unknown', color: 'yellow' }),
     )
   })
 
@@ -452,7 +452,7 @@ describe('saving collection details', () => {
     expect(await within(dialog).findByText('Name already taken')).toBeTruthy()
     expect(entryListReads(fetchMock)).toBe(readsBefore)
     expect(vi.mocked(notifications.show)).not.toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'canopy-schema-outcome-unknown' }),
+      expect.objectContaining({ id: 'canopy-collection-outcome-unknown' }),
     )
   })
 
@@ -954,7 +954,7 @@ describe('a collection write with no answer', () => {
         expect.objectContaining({ message: 'Collection "notes" created', color: 'green' }),
       ),
     )
-    expect(vi.mocked(notifications.hide)).toHaveBeenCalledWith('canopy-schema-outcome-unknown')
+    expect(vi.mocked(notifications.hide)).toHaveBeenCalledWith('canopy-collection-outcome-unknown')
     const dialog = await reopenCreate()
     expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('')
   })
@@ -985,6 +985,108 @@ describe('a collection write with no answer', () => {
     const dialog = await openEdit()
 
     expect((within(dialog).getByLabelText(/^Label/) as HTMLInputElement).value).toBe('Articles')
+  })
+
+  it("keeps an unanswered create's draft to its branch", async () => {
+    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+    const answerOthers = fetchMock.getMockImplementation()!
+    const listedBranch = (name: string) => ({
+      name,
+      status: 'editing',
+      access: {},
+      createdBy: 'user-1',
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-01',
+      isProtected: false,
+      readOnly: false,
+      writeBlocked: false,
+      submitBlocked: false,
+    })
+    // "feature" already has a collection named "notes" under "posts"; "main" never gets one.
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/canopycms/branches')) {
+        return okJson({
+          branches: [listedBranch('main'), listedBranch('feature')],
+          defaultBranch: 'main',
+          users: [],
+        })
+      }
+      if (init?.method === 'POST' && url.endsWith('/schema/collections')) return gatewayPage()
+      const response = await answerOthers(input, init)
+      if (!url.includes('/feature/schema') || url.includes('/schema/')) return response
+      const body = await response.json()
+      body.data.flatSchema.push({
+        type: 'collection',
+        logicalPath: 'content/posts/notes',
+        name: 'notes',
+        parentPath: 'content/posts',
+        entries: [{ name: 'note', format: 'json', schema }],
+      })
+      return okJson(body.data)
+    })
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const user = userEvent.setup()
+    await createNotesCollection(user)
+
+    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+    fireEvent.click(await screen.findByTestId('switch-to-branch-button-feature'))
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([u]) => urlOf(u).includes('/feature/schema'))).toBe(true),
+    )
+    await openNavigator()
+    await screen.findByTestId('collection-menu-notes')
+
+    expect(vi.mocked(notifications.show)).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Collection "notes" created' }),
+    )
+    const dialog = await reopenCreate()
+    expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('')
+  })
+
+  it('checks a fresh tree before filling a create in again, and says it landed', async () => {
+    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+    const answerOthers = fetchMock.getMockImplementation()!
+    // The create lands only after the reload its failure triggers has already read the schema.
+    let schemaReads = 0
+    let createAnswered = false
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = urlOf(input)
+      if (init?.method === 'POST' && url.endsWith('/schema/collections')) {
+        createAnswered = true
+        return gatewayPage()
+      }
+      const response = await answerOthers(input, init)
+      if (!url.includes('/schema') || url.includes('/schema/')) return response
+      if (createAnswered) schemaReads++
+      if (schemaReads < 2) return response
+      const body = await response.json()
+      body.data.flatSchema.push({
+        type: 'collection',
+        logicalPath: 'content/posts/notes',
+        name: 'notes',
+        parentPath: 'content/posts',
+        entries: [{ name: 'note', format: 'json', schema }],
+      })
+      return okJson(body.data)
+    })
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const user = userEvent.setup()
+    await createNotesCollection(user)
+    await waitFor(() => expect(schemaReads).toBe(1))
+
+    const dialog = await reopenCreate()
+
+    expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('')
+    expect(within(dialog).queryByText('Restored what you entered')).toBeNull()
+    expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Collection "notes" created', color: 'green' }),
+    )
   })
 
   it('ignores a slow edit opening once another opening has replaced it', async () => {

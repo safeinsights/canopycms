@@ -1287,6 +1287,27 @@ describe('useEntryManager', () => {
         expect(result.current.currentEntry?.contentId).toBe(mockEntry.contentId)
       })
 
+      it('does not count a rename to another slug as this one landing', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        act(() => result.current.setSelectedPath(opened.path))
+        mockClient.content.renameEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
+        )
+        mockClient.entries.list.mockResolvedValue(
+          listOf({
+            contentId: mockEntry.contentId,
+            logicalPath: unsafeAsLogicalPath('entry1-elsewhere'),
+            slug: unsafeAsSlug('elsewhere'),
+          }),
+        )
+
+        await act(async () => {
+          await expect(result.current.renameEntry(opened.path, 'renamed')).rejects.toThrow(
+            WRITE_TIMED_OUT_MESSAGE,
+          )
+        })
+      })
+
       it('rejects with the unknown outcome when the entry is still at its old path', async () => {
         const { result, opened } = await mountWithOpenedEntry()
         mockClient.content.renameEntry.mockRejectedValueOnce(

@@ -1,12 +1,12 @@
 import React from 'react'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ConfirmDeleteModal } from './ConfirmDeleteModal'
 import { CanopyCMSProvider } from '../theme'
 
 afterEach(cleanup)
 
-const renderModal = (loading: boolean) =>
+const renderModal = (loading: boolean, onClose = vi.fn()) =>
   render(
     <CanopyCMSProvider>
       <ConfirmDeleteModal
@@ -14,7 +14,7 @@ const renderModal = (loading: boolean) =>
         title="Delete entry"
         message="Delete it?"
         onConfirm={vi.fn()}
-        onClose={vi.fn()}
+        onClose={onClose}
         loading={loading}
       />
     </CanopyCMSProvider>,
@@ -32,5 +32,15 @@ describe('ConfirmDeleteModal', () => {
     const cancel = within(dialog).getByRole('button', { name: 'Cancel' })
     expect(close.hasAttribute('disabled')).toBe(loading)
     expect(cancel.hasAttribute('disabled')).toBe(loading)
+  })
+
+  it('ignores Escape while loading, and closes on it otherwise', () => {
+    for (const loading of [true, false]) {
+      const onClose = vi.fn()
+      renderModal(loading, onClose)
+      fireEvent.keyDown(screen.getByRole('dialog', { name: 'Delete entry' }), { key: 'Escape' })
+      expect(onClose).toHaveBeenCalledTimes(loading ? 0 : 1)
+      cleanup()
+    }
   })
 })

@@ -748,6 +748,34 @@ describe('CollectionEditor', () => {
       )
     })
 
+    it('create mode: gives each removal its own Undo, even of a re-added name', async () => {
+      const user = userEvent.setup()
+      renderCollectionEditor()
+      await addEntryTypeViaUi(user, 'article')
+      await addEntryTypeViaUi(user, 'page')
+      await screen.findByText('page')
+      const removePage = async () => {
+        await openRowMenu(user, 'page')
+        await user.click(await screen.findByRole('menuitem', { name: 'Remove' }))
+        await waitFor(() => expect(screen.queryByText('page')).toBeNull())
+        // Focus moves to the neighbouring row after the removal; typing before then loses keys.
+        await waitFor(() =>
+          expect(document.activeElement).toBe(
+            screen.getByRole('button', { name: 'Actions for article' }),
+          ),
+        )
+      }
+
+      await removePage()
+      await addEntryTypeViaUi(user, 'page')
+      await screen.findByText('page')
+      await removePage()
+
+      await waitFor(() =>
+        expect(screen.getAllByRole('button', { name: 'Undo removing "page"' })).toHaveLength(2),
+      )
+    })
+
     it("create mode: an Undo toast goes with its dialog's input", async () => {
       const user = userEvent.setup()
       const { rerender, props } = renderCollectionEditor()

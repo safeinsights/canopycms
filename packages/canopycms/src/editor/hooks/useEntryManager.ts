@@ -83,6 +83,10 @@ export interface UseEntryManagerReturn {
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
   refreshEntries: (branch?: string) => Promise<EditorEntry[]>
+  /** `refreshEntries`, resolving to the collections it committed too. */
+  refreshContent: (
+    branch?: string,
+  ) => Promise<{ entries: EditorEntry[]; collections: EditorCollection[] }>
   handleCreateEntry: (collectionPath: LogicalPath, entryTypeName?: string) => Promise<void>
   renameEntry: (path: string, newSlug: string) => Promise<void>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
@@ -523,8 +527,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // refreshSeqRef doc comment above; also warms the SWR cache for `branch`
   // so a later automatic re-fetch of the same key (e.g. switching away and
   // back) can reuse it instead of refetching.
-  const refreshEntries = async (branch: string = options.branchName): Promise<EditorEntry[]> => {
-    if (!branch) return []
+  const refreshContent = async (
+    branch: string = options.branchName,
+  ): Promise<{ entries: EditorEntry[]; collections: EditorCollection[] }> => {
+    if (!branch) return { entries: [], collections: [] }
     const seq = claimRefreshSeq(branch)
     const fetched = await fetchEntriesAndSchema(apiClient, branch, {
       resolvePreviewSrc: options.resolvePreviewSrc,
@@ -542,8 +548,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         setView({ branch, ...fetched })
       }
     }
-    return fetched.entries
+    return fetched
   }
+
+  const refreshEntries = async (branch: string = options.branchName): Promise<EditorEntry[]> =>
+    (await refreshContent(branch)).entries
 
   const handleCreateEntry = async (collectionPath: LogicalPath, _?: string) => {
     const col = collectionByPath.get(collectionPath)
@@ -661,9 +670,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         notifications.show({ message: getErrorMessage(err), color: 'red' })
         throw err
       }
-      // An unanswered rename that landed lists the entry, by content ID, at another path.
+      // An unanswered rename that landed lists the entry, by content ID, under the new slug.
       const listed = await listEntriesUncommitted(options.branchName).catch(() => [])
-      const moved = listed.find((e) => e.contentId === contentId && e.path !== path)
+      const moved = listed.find(
+        (e) => e.contentId === contentId && e.path !== path && e.slug === newSlug,
+      )
       if (!contentId || !moved) {
         void refreshEntries().catch(console.error)
         throw err
@@ -866,6 +877,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,
+    refreshContent,
     handleCreateEntry,
     renameEntry,
     loadEntry,

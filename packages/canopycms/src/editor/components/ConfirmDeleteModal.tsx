@@ -37,6 +37,8 @@ export function ConfirmDeleteModal({
       centered
       size="md"
       closeButtonProps={{ disabled: loading }}
+      closeOnEscape={!loading}
+      closeOnClickOutside={!loading}
     >
       <Stack gap="md" data-testid="confirm-delete-modal">
         <Text size="sm">{message}</Text>

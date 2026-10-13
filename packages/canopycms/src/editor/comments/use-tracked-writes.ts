@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import { getErrorMessage } from '../../utils/error'
+import { MayHaveLandedError } from '../unanswered'
 
 /** Shown while a surface refuses to close because a comment write is still in flight. */
 export const CLOSE_WAITS_FOR_WRITE = 'Still saving… You can close this once it finishes.'
@@ -41,7 +42,11 @@ export function useTrackedWrites(): {
         await write(...args)
       } catch (err) {
         if (!mountedRef.current) {
-          notifications.show({ color: 'red', message: getErrorMessage(err), autoClose: false })
+          notifications.show({
+            color: err instanceof MayHaveLandedError ? 'yellow' : 'red',
+            message: getErrorMessage(err),
+            autoClose: false,
+          })
         }
         throw err
       } finally {

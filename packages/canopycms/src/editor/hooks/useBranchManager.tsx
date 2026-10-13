@@ -598,13 +598,15 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       // Drafts belong to the open branch, so only its submit can leave edits behind. Without
       // that check the dialog opens in this same tick.
       const checking =
-        branchNameToSubmit === latest.current.branchName
+        branchNameToSubmit === listedName(latest.current.branchName)
           ? options.getUnsaved?.().catch((err: unknown) => {
               console.error(err)
               return undefined
             })
           : undefined
-      const unsaved = checking && (await checking)
+      // Checking can wait on draft verification, so the busy state shows it is working meanwhile.
+      if (checking) options.setBusy(true)
+      const unsaved = checking && (await checking.finally(() => options.setBusy(false)))
       return new Promise<void>((resolve, reject) => {
         showSubmitConfirmation(
           branchNameToSubmit,

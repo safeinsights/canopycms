@@ -94,12 +94,8 @@ import {
   type ExistingEntryType,
   type RestoredCollectionInput,
 } from './schema-editor'
-import {
-  detailsLanded,
-  findCollectionByName,
-  type CollectionDraft,
-} from './schema-editor/collection-draft'
-import { hideSchemaOutcomeUnknown } from './hooks/useSchemaManager'
+import { collectionDraftLanded, type CollectionDraft } from './schema-editor/collection-draft'
+import { hideCollectionOutcomeUnknown } from './hooks/useSchemaManager'
 import type { LogicalPath, ContentId } from '../paths/types'
 import {
   AssetContextProvider,
@@ -274,7 +270,16 @@ const EditorContent: React.FC<EditorProps> = ({
     LogicalPath | undefined
   >(undefined)
   const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
-  const [collectionDraft, setCollectionDraft] = useState<CollectionDraft | null>(null)
+  const [collectionDraft, setCollectionDraftState] = useState<CollectionDraft | null>(null)
+  // Read by the opener after its awaits, so written here alongside the state, never in render.
+  const collectionDraftRef = useRef<CollectionDraft | null>(null)
+  const setCollectionDraft = (draft: CollectionDraft | null) => {
+    collectionDraftRef.current = draft
+    setCollectionDraftState(draft)
+  }
+  // What the dialog fills in, decided by its opener against a fresh tree.
+  const [restoredCollectionInput, setRestoredCollectionInput] =
+    useState<RestoredCollectionInput | null>(null)
   // Each open or close of the collection dialog moves it on, so a slow open answers only if current.
   const collectionOpeningRef = useRef(0)
 
@@ -393,6 +398,7 @@ const EditorContent: React.FC<EditorProps> = ({
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,
+    refreshContent,
     handleCreateEntry,
     renameEntry,
     loadEntry,
@@ -963,6 +969,25 @@ const EditorContent: React.FC<EditorProps> = ({
     parentPath?: LogicalPath,
   ) => {
     const opening = ++collectionOpeningRef.current
+    // A draft is checked on a fresh tree first: refilling a create that landed would duplicate it.
+    const draft = collectionDraftRef.current
+    const refills =
+      draft?.branch === branchNameState &&
+      (draft.kind === 'create'
+        ? !collection && draft.input.parentPath === parentPath
+        : collection?.path === draft.collectionPath)
+    let restore: RestoredCollectionInput | null = null
+    if (draft && refills) {
+      const fresh = await refreshContent(branchNameState).catch((err: unknown) => {
+        console.error(err)
+        return null
+      })
+      if (opening !== collectionOpeningRef.current) return
+      if (fresh && collectionDraftLanded(fresh.collections, draft)) settleCollectionDraft(draft)
+      else if (collectionDraftRef.current === draft) {
+        restore = draft.kind === 'create' ? draft.input : draft.updates
+      }
+    }
     if (collection) {
       // The tree's entry types, the fallback, carry no schema or usage.
       const read = await readEntryTypes(collection.path).catch(() => null)
@@ -990,6 +1015,7 @@ const EditorContent: React.FC<EditorProps> = ({
       setEditingCollection(null)
       setCollectionEditorParentPath(parentPath)
     }
+    setRestoredCollectionInput(restore)
     setCollectionEditorError(null)
     setCollectionEditorOpen(true)
   }
@@ -1016,7 +1042,7 @@ const EditorContent: React.FC<EditorProps> = ({
       // A retried create that had landed makes a second collection, so an unanswered one closes
       // the dialog too, leaving the hook's toast to say to check the "Content" panel first.
       if (result.ok || result.unanswered) {
-        setCollectionDraft(result.ok ? null : { kind: 'create', input })
+        setCollectionDraft(result.ok ? null : { branch: branchNameState, kind: 'create', input })
         handleCloseCollectionEditor()
       } else {
         setCollectionEditorError(result.error)
@@ -1027,10 +1053,16 @@ const EditorContent: React.FC<EditorProps> = ({
       // An unanswered save may have renamed the collection, leaving `editingCollection`'s path
       // stale, so the dialog closes; the hook's toast says to reopen it and check.
       if (result.ok || result.unanswered) {
+        // An empty update sent nothing worth filling in again.
         setCollectionDraft(
-          result.ok
+          result.ok || Object.keys(updates).length === 0
             ? null
-            : { kind: 'details', collectionPath: editingCollection.logicalPath, updates },
+            : {
+                branch: branchNameState,
+                kind: 'details',
+                collectionPath: editingCollection.logicalPath,
+                updates,
+              },
         )
         handleCloseCollectionEditor()
       } else {
@@ -1039,42 +1071,29 @@ const EditorContent: React.FC<EditorProps> = ({
     }
   }
 
-  // An unanswered collection write settles once the content tree shows it: the create's
+  /** The draft's write landed: drop it, take its warning down and say so, once. */
+  const settleCollectionDraft = (draft: CollectionDraft) => {
+    if (collectionDraftRef.current !== draft) return
+    setCollectionDraft(null)
+    setRestoredCollectionInput(null)
+    hideCollectionOutcomeUnknown()
+    notifications.show({
+      message:
+        draft.kind === 'create' ? `Collection "${draft.input.name}" created` : 'Collection updated',
+      color: 'green',
+    })
+  }
+
+  // An unanswered collection write settles once its branch's content tree shows it: the create's
   // collection under its parent, or the details save's values on its collection (or the
   // collection gone from its old path, which only a slug change that landed does).
   useEffect(() => {
-    if (!collectionDraft) return
-    const landed =
-      collectionDraft.kind === 'create'
-        ? !!findCollectionByName(
-            activeCollections ?? [],
-            collectionDraft.input.parentPath,
-            collectionDraft.input.name,
-          )
-        : detailsLanded(activeCollections ?? [], collectionDraft)
-    if (!landed) return
-    setCollectionDraft(null)
-    hideSchemaOutcomeUnknown()
-    notifications.show({
-      message:
-        collectionDraft.kind === 'create'
-          ? `Collection "${collectionDraft.input.name}" created`
-          : 'Collection updated',
-      color: 'green',
-    })
-  }, [collectionDraft, activeCollections])
-
-  const restoredCollectionInput = ((): RestoredCollectionInput | null => {
-    if (!collectionDraft) return null
-    if (collectionDraft.kind === 'create') {
-      return !editingCollection && collectionEditorParentPath === collectionDraft.input.parentPath
-        ? collectionDraft.input
-        : null
+    if (collectionDraft?.branch !== branchNameState) return
+    if (collectionDraftLanded(activeCollections ?? [], collectionDraft)) {
+      settleCollectionDraft(collectionDraft)
     }
-    return editingCollection?.logicalPath === collectionDraft.collectionPath
-      ? collectionDraft.updates
-      : null
-  })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- settleCollectionDraft is recreated every render and reads only the ref
+  }, [collectionDraft, activeCollections, branchNameState])
 
   const handleDeleteCollection = (collectionPath: LogicalPath) => {
     setDeletingCollectionPath(collectionPath)
@@ -1996,7 +2015,10 @@ const EditorContent: React.FC<EditorProps> = ({
               isSaving={schemaLoading}
               error={collectionEditorError}
               restored={restoredCollectionInput}
-              onDiscardRestored={() => setCollectionDraft(null)}
+              onDiscardRestored={() => {
+                setCollectionDraft(null)
+                setRestoredCollectionInput(null)
+              }}
             />
           )}
 

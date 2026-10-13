@@ -951,6 +951,33 @@ describe('useBranchManager', () => {
       expect(body).toContain('Submit "feature" for review?')
     })
 
+    it('checks the open branch opened by its unsanitized name, showing busy meanwhile', async () => {
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+      let answer: (summary: { count: number; labels: string[] }) => void = () => {}
+      const getUnsaved = vi.fn(
+        () => new Promise<{ count: number; labels: string[] }>((resolve) => (answer = resolve)),
+      )
+      const { result } = await loaded(
+        [mockBranches[0], { ...mockBranches[1], name: 'feature-x', status: 'editing' }],
+        { initialBranch: 'feature/x', getUnsaved },
+      )
+      mockSetBusy.mockClear()
+
+      let pending!: Promise<void>
+      act(() => {
+        pending = result.current.handleSubmit('feature/x')
+      })
+      await waitFor(() => expect(getUnsaved).toHaveBeenCalled())
+      expect(mockSetBusy).toHaveBeenLastCalledWith(true)
+      await act(async () => {
+        answer({ count: 1, labels: ['Home'] })
+        await pending
+      })
+
+      const { options } = await lastDialog()
+      expect(options.labels).toEqual({ confirm: 'Submit anyway', cancel: 'Cancel' })
+    })
+
     it("asks nothing about another branch's drafts", async () => {
       mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
       const getUnsaved = vi.fn(async () => ({ count: 1, labels: ['Home'] }))
