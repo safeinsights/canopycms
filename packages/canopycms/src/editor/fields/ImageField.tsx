@@ -220,7 +220,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
             </Alert>
           )}
           {errors?.src && (
-            <Text size="xs" c="red">
+            <Text size="xs" c="var(--canopy-danger-text)">
               {errors.src}
             </Text>
           )}
@@ -239,10 +239,10 @@ export const ImageField: React.FC<ImageFieldProps> = ({
                 justifyContent: 'center',
                 gap: 4,
                 borderRadius: 'var(--mantine-radius-sm)',
-                background: 'var(--mantine-color-gray-1)',
+                background: 'var(--canopy-surface-muted)',
               }}
             >
-              <IconPhotoOff size={28} stroke={1.5} color="var(--mantine-color-gray-5)" />
+              <IconPhotoOff size={28} stroke={1.5} color="var(--mantine-color-dimmed)" />
               <Text size="xs" c="dimmed">
                 Preview unavailable
               </Text>
@@ -261,7 +261,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
             />
           )}
           {errors?.src && (
-            <Text size="xs" c="red">
+            <Text size="xs" c="var(--canopy-danger-text)">
               {errors.src}
             </Text>
           )}
@@ -306,7 +306,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
             </Group>
           )}
           {errors?.crop && (
-            <Text size="xs" c="red">
+            <Text size="xs" c="var(--canopy-danger-text)">
               {errors.crop}
             </Text>
           )}

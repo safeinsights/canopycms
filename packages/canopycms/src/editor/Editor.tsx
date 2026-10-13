@@ -1501,7 +1501,7 @@ const EditorContent: React.FC<EditorProps> = ({
           style={{
             width: '100%',
             height: '100%',
-            border: '1px solid var(--mantine-color-gray-3)',
+            border: '1px solid var(--mantine-color-default-border)',
           }}
           highlightEnabled={highlightEnabled}
           onPreviewError={setPreviewError}
@@ -1514,7 +1514,7 @@ const EditorContent: React.FC<EditorProps> = ({
         withBorder
         shadow="xs"
         h="100%"
-        bg="white"
+        bg="var(--mantine-color-body)"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -1545,7 +1545,7 @@ const EditorContent: React.FC<EditorProps> = ({
   return (
     <CanopyCMSProvider {...(themeOptions ?? {})}>
       <AssetContextProvider basePath={basePath}>
-        <Box bg="gray.0" style={{ minHeight: '100vh', width: '100%' }}>
+        <Box bg="var(--canopy-surface-subtle)" style={{ minHeight: '100vh', width: '100%' }}>
           <EditorHeader
             ref={headerRef}
             siteTitle={siteTitle}

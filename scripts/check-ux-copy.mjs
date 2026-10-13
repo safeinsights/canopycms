@@ -8,14 +8,14 @@
  * console.* arguments. Three rules:
  * - `ellipsis`: three ASCII dots where `…` is meant.
  * - `successfully`: the word, in any casing. A result reads as done without it.
- * - `title-case`: a label written in Title Case. A label is the text of a
- *   button-like or menu element (LABEL_ELEMENTS), a LABEL_KEYS attribute, or
- *   a LABEL_KEYS property in an object literal. Sentence case allows a capital
- *   only on the first word of each phrase (phrases break after . ! ? : and at
- *   · | — –), on proper nouns (PROPER_NOUNS, all-caps words, and words with
- *   a capital after their first letter, like GitHub) and inside double
- *   quotes, which hold a name rather than copy. A false positive is fixed by
- *   adding its proper noun to PROPER_NOUNS.
+ * - `title-case`: a label or placeholder in Title Case: the text of a button-like
+ *   or menu element (LABEL_ELEMENTS), or a LABEL_KEYS attribute or object-literal
+ *   property (`placeholder` included). Sentence case allows a capital only on
+ *   the first word of each phrase (phrases break after . ! ? : and at · | — –),
+ *   on proper nouns (PROPER_NOUNS, all-caps words, and words with a capital
+ *   after their first letter, like GitHub) and inside double quotes, which
+ *   hold a name rather than copy. A false positive is fixed by adding its
+ *   proper noun to PROPER_NOUNS.
  *
  * The baseline holds each file's count per rule. A count above its baseline
  * fails and lists that file's findings for the rule; a count below it fails
@@ -48,6 +48,7 @@ const LABEL_ELEMENTS = new Set([
   'Anchor',
   'Button',
   'Chip',
+  'DestructiveMenuItem',
   'Drawer.Title',
   'Menu.Item',
   'Menu.Label',
@@ -66,6 +67,7 @@ const LABEL_KEYS = new Set([
   'confirm',
   'confirmLabel',
   'label',
+  'placeholder',
   'title',
 ])
 const PROPER_NOUNS = new Set([
@@ -330,6 +332,9 @@ function selfTest() {
     ['<Button>Delete {name} Group</Button>', ['title-case']],
     ['<Text>Some Heading Text</Text>', []],
     ['<TextInput label="Branch Name" />', ['title-case']],
+    ['<TextInput placeholder="Blog Posts" />', ['title-case']],
+    ['<TextInput placeholder="Blog posts" />', []],
+    ['<DestructiveMenuItem>Delete Branch</DestructiveMenuItem>', ['title-case']],
     ['<Tooltip label={open ? "Hide Panel" : "Show panel"} />', ['title-case']],
     [
       'notifications.show({ title: "Branch Created", message: "Saved successfully" })',

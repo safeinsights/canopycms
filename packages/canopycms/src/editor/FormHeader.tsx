@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useRef, useState } from 'react'
 
 import {
   ActionIcon,
@@ -13,14 +13,16 @@ import {
   Text,
   Tooltip,
   UnstyledButton,
+  VisuallyHidden,
 } from '@mantine/core'
+import { useIsomorphicEffect } from '@mantine/hooks'
 import { IconChevronsDown, IconChevronsUp, IconListTree } from '@tabler/icons-react'
 
 /** The padding of the scroller the form sits in, which `EditorPanes` sets; 0 where unset. */
 const PANE_PADDING = 'var(--canopy-form-pane-padding, 0px)'
 
-/** Icon-only controls name themselves on keyboard focus and touch too, not on hover alone. */
-const TOOLTIP_EVENTS = { hover: true, focus: true, touch: true }
+/** Below this header width "Outline" shows its icon alone, so the controls never clip. */
+const COMPACT_WIDTH = 280
 
 /** Space kept between the header and a field scrolled up to it. */
 const SCROLL_GAP = 8
@@ -124,24 +126,26 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
   onExpandAll,
 }) => {
   const [outlineOpen, setOutlineOpen] = useState(false)
+  const [compact, setCompact] = useState(false)
   const headerRef = useRef<HTMLDivElement>(null)
 
   // Its scroller pads its scroll edge by the header's height and a gap, so a field scrolled to the
   // top, as `scrollIntoView` does, lands below the header rather than under it.
-  useEffect(() => {
+  useIsomorphicEffect(() => {
     const header = headerRef.current
-    const scroller = header ? scrollerOf(header) : undefined
-    if (!header || !scroller) return
-    const previous = scroller.style.scrollPaddingTop
-    const pad = () => {
-      scroller.style.scrollPaddingTop = `${header.offsetHeight + SCROLL_GAP}px`
+    if (!header) return
+    const scroller = scrollerOf(header)
+    const previous = scroller?.style.scrollPaddingTop ?? ''
+    const measure = () => {
+      if (scroller) scroller.style.scrollPaddingTop = `${header.offsetHeight + SCROLL_GAP}px`
+      setCompact(header.clientWidth > 0 && header.clientWidth < COMPACT_WIDTH)
     }
-    pad()
-    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(pad) : undefined
+    measure()
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : undefined
     observer?.observe(header)
     return () => {
       observer?.disconnect()
-      scroller.style.scrollPaddingTop = previous
+      if (scroller) scroller.style.scrollPaddingTop = previous
     }
   }, [])
 
@@ -156,8 +160,8 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
         zIndex: 3,
         margin: `calc(-1 * ${PANE_PADDING}) calc(-1 * ${PANE_PADDING}) 0`,
         padding: `8px ${PANE_PADDING}`,
-        backgroundColor: 'var(--mantine-color-gray-1)',
-        borderBottom: '1px solid var(--mantine-color-gray-3)',
+        backgroundColor: 'var(--canopy-surface-muted)',
+        borderBottom: '1px solid var(--mantine-color-default-border)',
       }}
     >
       <Group gap="xs" wrap="nowrap">
@@ -168,7 +172,6 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
           <Badge
             variant="light"
             color="gray"
-            c="gray.8"
             size="sm"
             tt="none"
             // Gives way before the title in a narrow pane.
@@ -190,19 +193,24 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
             trapFocus
             returnFocus={false}
           >
-            <Popover.Target>
-              <Button
-                variant="subtle"
-                color="gray"
-                c="dimmed"
-                size="compact-sm"
-                leftSection={<IconListTree size={14} aria-hidden />}
-                onClick={() => setOutlineOpen((open) => !open)}
-                data-testid="form-outline-button"
-              >
-                Outline
-              </Button>
-            </Popover.Target>
+            {/* One element either way, so focus survives the pane crossing the width. */}
+            <Tooltip label="Outline" disabled={!compact}>
+              <Popover.Target>
+                <Button
+                  variant="subtle"
+                  color="gray"
+                  c="dimmed"
+                  size="compact-sm"
+                  px={compact ? 6 : undefined}
+                  leftSection={<IconListTree size={14} aria-hidden />}
+                  styles={compact ? { section: { marginInlineEnd: 0 } } : undefined}
+                  onClick={() => setOutlineOpen((open) => !open)}
+                  data-testid="form-outline-button"
+                >
+                  {compact ? <VisuallyHidden>Outline</VisuallyHidden> : 'Outline'}
+                </Button>
+              </Popover.Target>
+            </Tooltip>
             <Popover.Dropdown p={4}>
               <ScrollArea.Autosize mah={400} type="auto">
                 <nav aria-label="Outline" data-testid="form-outline">
@@ -219,11 +227,10 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
           </Popover>
           {onExpandAll && (
             <>
-              <Tooltip label="Expand all lists" events={TOOLTIP_EVENTS}>
+              <Tooltip label="Expand all lists">
                 <ActionIcon
                   variant="subtle"
                   color="gray"
-                  c="gray.7"
                   aria-label="Expand all lists"
                   onClick={() => onExpandAll(true)}
                   data-testid="form-expand-all"
@@ -231,11 +238,10 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
                   <IconChevronsDown size={16} aria-hidden />
                 </ActionIcon>
               </Tooltip>
-              <Tooltip label="Collapse all lists" events={TOOLTIP_EVENTS}>
+              <Tooltip label="Collapse all lists">
                 <ActionIcon
                   variant="subtle"
                   color="gray"
-                  c="gray.7"
                   aria-label="Collapse all lists"
                   onClick={() => onExpandAll(false)}
                   data-testid="form-collapse-all"
@@ -249,7 +255,7 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
       </Group>
       <style>{`
         .canopy-outline-item:hover, .canopy-outline-item:focus-visible {
-          background-color: var(--mantine-color-gray-1);
+          background-color: var(--canopy-surface-muted);
         }
       `}</style>
     </Box>

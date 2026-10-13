@@ -345,7 +345,7 @@ function DefaultSignedOutNotice({ onSignedIn, sessionRejected }: EditorSignInPro
           continue.
         </Text>
         {sessionRejected && (
-          <Text size="sm" c="red">
+          <Text size="sm" c="var(--canopy-danger-text)">
             Still not signed in.
           </Text>
         )}

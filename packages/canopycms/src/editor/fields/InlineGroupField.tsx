@@ -34,7 +34,7 @@ export const InlineGroupField: React.FC<InlineGroupFieldProps> = ({
     <Paper
       withBorder
       p="md"
-      bg="gray.0"
+      bg="var(--canopy-surface-subtle)"
       shadow="xs"
       {...groupDescriptionProps(descriptionBaseId, description)}
     >

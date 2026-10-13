@@ -118,7 +118,7 @@ export const MemberList: React.FC<MemberListProps> = ({
             />
             {isSearching && <Loader size="xs" />}
             {searchError && (
-              <Text size="xs" c="red">
+              <Text size="xs" c="var(--canopy-danger-text)">
                 {searchError}
               </Text>
             )}

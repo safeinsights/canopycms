@@ -29,7 +29,7 @@ export const GroupForm: React.FC<GroupFormProps> = ({
             <Text size="sm" fw={500} mb={4}>
               ID (system-generated)
             </Text>
-            <Paper p="xs" withBorder bg="gray.0">
+            <Paper p="xs" withBorder bg="var(--canopy-surface-subtle)">
               <Text size="sm" ff="monospace" c="dimmed">
                 {editingGroup.id}
               </Text>
@@ -38,7 +38,7 @@ export const GroupForm: React.FC<GroupFormProps> = ({
         )}
         <TextInput
           label="Group Name"
-          placeholder="e.g., Content Editors"
+          placeholder="e.g. Content editors"
           value={formData.name}
           onChange={(e) => onFormChange({ name: e.target.value })}
           required

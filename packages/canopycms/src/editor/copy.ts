@@ -11,4 +11,5 @@ export const EDITOR_ACTIONS = {
   switchBranch: 'Switch branch',
   newBranch: 'New branch',
   remove: 'Remove',
+  clear: 'Clear',
 } as const

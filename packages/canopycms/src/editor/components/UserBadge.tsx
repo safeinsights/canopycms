@@ -223,10 +223,9 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
 
     if (inBadge) {
       if (badgeVariant === 'filled') {
-        // Filled badges: white background with dark text for maximum contrast
         avatarStyles = {
-          backgroundColor: 'var(--mantine-color-white)',
-          color: 'var(--mantine-color-dark-6)',
+          backgroundColor: 'var(--mantine-color-body)',
+          color: 'var(--mantine-color-text)',
         }
       } else if (badgeVariant === 'light') {
         // Light badges: use dark avatar for contrast

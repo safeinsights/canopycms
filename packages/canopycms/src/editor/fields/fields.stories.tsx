@@ -48,6 +48,14 @@ export const DateTime: StoryObj = {
   },
 }
 
+/** A stored date-only value reads as local midnight on that day. */
+export const DateOnlyValue: StoryObj = {
+  render: () => {
+    const [value, setValue] = useState('2026-10-12')
+    return <DateTimeField label="Published on" value={value} onChange={setValue} />
+  },
+}
+
 export const DateTimeReadOnly: StoryObj = {
   render: () => (
     <DateTimeField

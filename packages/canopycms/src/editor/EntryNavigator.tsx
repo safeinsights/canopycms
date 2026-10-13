@@ -39,6 +39,7 @@ import {
 
 import { calculatePathToEntry } from './editor-utils'
 import { matchesEntryQuery } from './entry-search'
+import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { UnavailableTypeMessage } from './components/UnavailableTypeMessage'
 
@@ -46,10 +47,10 @@ type TreeController = ReturnType<typeof useTree>
 
 const UnavailableTypeRow: React.FC<{ schemaRefs: readonly string[] }> = ({ schemaRefs }) => (
   <Group gap={6} wrap="nowrap" align="flex-start" mt={4} data-testid="unavailable-type-message">
-    <Box c="orange.8" style={{ display: 'flex', flexShrink: 0, paddingTop: 2 }}>
+    <Box c="orange" style={{ display: 'flex', flexShrink: 0, paddingTop: 2 }}>
       <IconAlertTriangle size={14} aria-hidden />
     </Box>
-    <Text size="xs" c="orange.8">
+    <Text size="xs" c="orange">
       <UnavailableTypeMessage schemaRefs={schemaRefs} />
     </Text>
   </Group>
@@ -705,8 +706,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           paddingInline: 10,
           paddingBlock: 6,
           paddingLeft: `calc(${rem(8)} + ${rem(level * 12)})`,
-          backgroundColor: selected ? 'var(--mantine-color-brand-0)' : undefined,
-          border: selected ? '1px solid var(--mantine-color-brand-3)' : '1px solid transparent',
+          backgroundColor: selected ? 'var(--mantine-primary-color-light)' : undefined,
+          color: selected ? 'var(--mantine-primary-color-light-color)' : undefined,
+          border: selected
+            ? '1px solid var(--mantine-primary-color-light-color)'
+            : '1px solid transparent',
           transition: 'background-color 120ms ease, border-color 120ms ease',
         }}
       >
@@ -848,16 +852,15 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                     </Menu.Item>
                   )}
                   {onDelete && (
-                    <Menu.Item
+                    <DestructiveMenuItem
                       leftSection={<IconTrash size={14} />}
-                      color="red"
                       onClick={(event) => {
                         event.stopPropagation()
                         onDelete()
                       }}
                     >
-                      Delete collection…
-                    </Menu.Item>
+                      Delete collection
+                    </DestructiveMenuItem>
                   )}
                 </Menu.Dropdown>
               </Menu>
@@ -918,17 +921,16 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                       {(onRenameEntry || (onReorderEntry && contentId && parentCollectionPath)) && (
                         <Menu.Divider />
                       )}
-                      <Menu.Item
+                      <DestructiveMenuItem
                         leftSection={<IconTrash size={14} />}
-                        color="red"
                         onClick={(event) => {
                           event.stopPropagation()
                           onDeleteEntry(entryPath)
                         }}
                         data-testid="delete-entry-menu-item"
                       >
-                        Delete…
-                      </Menu.Item>
+                        Delete entry
+                      </DestructiveMenuItem>
                     </>
                   )}
                 </Menu.Dropdown>

@@ -340,7 +340,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
           ) : (
             <IconMessage
               size={14}
-              color={openCount > 0 ? 'var(--mantine-color-orange-7)' : undefined}
+              color={openCount > 0 ? 'var(--mantine-color-orange-text)' : undefined}
               aria-hidden
             />
           )}
@@ -549,12 +549,7 @@ const NewThreadComposer: React.FC<{
   // `aria-disabled` keeps it focusable for its reason. Unblocked it isn't wrapped: around a focused
   // button the Tooltip keeps Escape from the listener that refuses a close mid-post.
   const commentButton = blockedReason ? (
-    <Tooltip
-      label={blockedReason}
-      events={{ hover: true, focus: true, touch: true }}
-      multiline
-      maw={280}
-    >
+    <Tooltip label={blockedReason} multiline maw={280}>
       {button}
     </Tooltip>
   ) : (

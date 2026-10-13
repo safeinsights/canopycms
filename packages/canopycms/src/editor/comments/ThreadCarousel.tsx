@@ -414,7 +414,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                 justifyContent: 'center',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--mantine-color-gray-3)'
+                e.currentTarget.style.background = 'var(--mantine-color-default-hover)'
               }}
               onMouseLeave={(e) => {
                 if (!isResizing) {
@@ -427,7 +427,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                   width: 40,
                   height: 3,
                   borderRadius: 2,
-                  background: 'var(--mantine-color-gray-5)',
+                  background: 'var(--mantine-color-dimmed)',
                 }}
               />
             </div>

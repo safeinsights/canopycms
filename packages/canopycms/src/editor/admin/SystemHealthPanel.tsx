@@ -117,11 +117,7 @@ function PurgeButton({
   onPurge: (dirName: string) => void
 }) {
   return (
-    <Tooltip
-      label={gate.tooltip}
-      disabled={!gate.disabled}
-      events={{ hover: true, focus: true, touch: true }}
-    >
+    <Tooltip label={gate.tooltip} disabled={!gate.disabled}>
       <Button
         variant="light"
         color="red"
@@ -638,7 +634,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
             >
               <Stack gap={4} mt={4}>
                 {lastGitSync.failed.map((f) => (
-                  <Text size="xs" c="red" key={f.branch}>
+                  <Text size="xs" c="var(--canopy-danger-text)" key={f.branch}>
                     {f.branch}: {f.error}
                   </Text>
                 ))}
@@ -658,7 +654,9 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
               size="lg"
               fw={700}
               c={
-                (key === 'failed' || key === 'corrupt') && status.queue[key] > 0 ? 'red' : undefined
+                (key === 'failed' || key === 'corrupt') && status.queue[key] > 0
+                  ? 'var(--canopy-danger-text)'
+                  : undefined
               }
             >
               {status.queue[key]}
@@ -1196,7 +1194,7 @@ function BranchHealthRow({
         </Table.Td>
         <Table.Td colSpan={3}>
           <Tooltip label={entry.parseError} multiline maw={400}>
-            <Text size="xs" c="red">
+            <Text size="xs" c="var(--canopy-danger-text)">
               {truncate(entry.parseError ?? 'Unknown parse error', 60)}
             </Text>
           </Tooltip>

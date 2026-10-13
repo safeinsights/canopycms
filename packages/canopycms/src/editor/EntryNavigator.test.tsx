@@ -223,9 +223,9 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('collection-menu-posts'))
 
       await waitFor(() => {
-        expect(screen.getByText('Delete collection…')).toBeTruthy()
+        expect(screen.getByText('Delete collection')).toBeTruthy()
       })
-      await user.click(screen.getByText('Delete collection…'))
+      await user.click(screen.getByText('Delete collection'))
 
       expect(onDelete).toHaveBeenCalled()
     })
@@ -269,9 +269,9 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('entry-menu-hello-world'))
 
       await waitFor(() => {
-        expect(screen.getByText('Delete…')).toBeTruthy()
+        expect(screen.getByText('Delete entry')).toBeTruthy()
       })
-      await user.click(screen.getByText('Delete…'))
+      await user.click(screen.getByText('Delete entry'))
 
       expect(onDeleteEntry).toHaveBeenCalledWith('posts/hello')
     })
@@ -514,7 +514,7 @@ describe('EntryNavigator', () => {
 
       // Delete Entry should be visible
       await waitFor(() => {
-        expect(screen.getByText('Delete…')).toBeTruthy()
+        expect(screen.getByText('Delete entry')).toBeTruthy()
       })
 
       // But Move Up/Down should NOT be visible since contentId is missing
@@ -1296,7 +1296,7 @@ describe('EntryNavigator', () => {
       const admin = screen.getByText('Admin')
       const sub = screen.getByText('Add sub-collection…')
       const edit = screen.getByText('Edit collection…')
-      const del = screen.getByText('Delete collection…')
+      const del = screen.getByText('Delete collection')
       expect(precedes(add, admin)).toBe(true)
       expect(precedes(admin, sub)).toBe(true)
       expect(precedes(sub, edit)).toBe(true)
@@ -1349,7 +1349,7 @@ describe('EntryNavigator', () => {
       const rename = screen.getByText('Rename…')
       const up = screen.getByText('Move up')
       const down = screen.getByText('Move down')
-      const del = screen.getByText('Delete…')
+      const del = screen.getByText('Delete entry')
       expect(precedes(rename, up)).toBe(true)
       expect(precedes(up, down)).toBe(true)
       expect(precedes(down, del)).toBe(true)
@@ -1368,7 +1368,7 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('entry-menu-first'))
       await screen.findByRole('menu')
 
-      expect(screen.getByText('Delete…')).toBeTruthy()
+      expect(screen.getByText('Delete entry')).toBeTruthy()
       expect(dividers()).toHaveLength(0)
     })
   })

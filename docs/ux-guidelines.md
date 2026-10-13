@@ -165,9 +165,8 @@ Colour carries meaning: green success, blue info, yellow warning, red error. Sta
 shown by colour alone. Text, including on controls and status badges, is at least 4.5:1, or 3:1
 for large text; icons and control borders at least 3:1. Text and backgrounds use scheme-aware
 tokens (`--mantine-color-text`, `light-dark(…)`), never a fixed shade outside the theme
-(`gray.0`, `dark.7`, `bg="white"`). The theme (`packages/canopycms/src/editor/theme.tsx`) owns
-three, measured on every surface they sit on, menu hover included; it does not yet set the
-placeholder, the danger text or the dark dimmed value:
+(`gray.0`, `dark.7`, `bg="white"`). The theme (`packages/canopycms/src/editor/theme.tsx`) sets
+these, measured on every surface, menu hover included:
 
 - `--mantine-color-dimmed`, the only dimmed colour: `gray.7` in light mode; in dark mode
   `color-mix(in srgb, var(--mantine-color-dark-1) 85%, var(--mantine-color-dark-2))`, 4.6:1 on
@@ -176,12 +175,13 @@ placeholder, the danger text or the dark dimmed value:
 - `--canopy-danger-text`, for all destructive and error text, menu items included: `red.9` in
   light mode (`red.8` is 4.3:1 on `gray.0`) and `red.3` in dark mode (`red.4` is 4.3:1 on
   `dark.4`).
+- `--canopy-input-border` (3:1), `--canopy-surface-subtle` and `--canopy-surface-muted`.
 
-Success text is the default colour beside a green icon; `green.8` and `green.9` miss 4.5:1 on
-white. Count badges put text colour on a tinted background. A light yellow `Alert`'s title, icon
-and close button take the text colour; yellow on its own tint is under 2:1. Filled destructive
-buttons are `red.8`, 4.5:1 under white; no orange shade reaches that, so filled orange buttons
-are `orange.6` with black text.
+Pass a plain colour; the theme brings its text and light variant to 4.5:1. Success text is the
+default colour beside a green icon; `green.8` and `green.9` miss 4.5:1 on white. Count badges put
+text colour on a tinted background. A light yellow `Alert`'s title, icon and close button take the
+text colour; yellow on its own tint is under 2:1. Filled destructive buttons are `red.8`, 4.5:1
+under white; no orange shade reaches that, so filled orange buttons are `orange.6` with black text.
 
 ## People
 
@@ -203,8 +203,8 @@ icon-only below `lg`; its presentation is provisional until the shell redesign s
 ## Enforcement
 
 - `pnpm lint:ux-copy` ([scripts/check-ux-copy.mjs](../scripts/check-ux-copy.mjs)) flags Title
-  Case labels, ASCII `...` and "successfully" against a per-file baseline. After a fix, record
-  it with `node scripts/check-ux-copy.mjs --write-baseline`.
+  Case labels and placeholders, ASCII `...` and "successfully" against a per-file baseline.
+  After a fix, record it with `node scripts/check-ux-copy.mjs --write-baseline`.
 - `pnpm lint:a11y` runs `eslint-plugin-jsx-a11y` on the editor as errors against ESLint's
   suppressions in `scripts/a11y-suppressions.json`; `pnpm lint` shows the same rules as
   warnings. After a fix, run `pnpm lint:a11y --prune-suppressions`.

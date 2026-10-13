@@ -80,7 +80,6 @@ const JumpButton: React.FC<{
   <Tooltip
     label="Your change is still saving. Try again once it finishes."
     disabled={!blocked}
-    events={{ hover: true, focus: true, touch: true }}
     multiline
     maw={280}
   >

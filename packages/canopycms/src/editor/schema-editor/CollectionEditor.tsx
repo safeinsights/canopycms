@@ -51,7 +51,7 @@ import type {
 import type { LogicalPath } from '../../paths/types'
 import { EntryTypeEditor } from './EntryTypeEditor'
 import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal'
-import { ReasonedMenuItem } from '../components/ReasonedMenuItem'
+import { DestructiveMenuItem } from '../components/DestructiveMenuItem'
 import { getErrorMessage } from '../../utils/error'
 import type { SchemaOpResult } from '../hooks/useSchemaManager'
 import { slugOf } from './collection-draft'
@@ -775,14 +775,13 @@ export function CollectionEditor({
                       Edit…
                     </Menu.Item>
                     <Menu.Divider />
-                    <ReasonedMenuItem
+                    <DestructiveMenuItem
                       leftSection={<IconTrash size={14} />}
-                      color="red"
                       onClick={() => handleRemoveEntryType(entryType, index)}
                       blockedReason={removeBlockedReason(entryType)}
                     >
                       Remove
-                    </ReasonedMenuItem>
+                    </DestructiveMenuItem>
                   </Menu.Dropdown>
                 </Menu>
               </Group>
@@ -802,7 +801,7 @@ export function CollectionEditor({
       >
         {isEditMode && entryTypeStatus && (
           <>
-            <IconCheck size={14} color="var(--mantine-color-green-8)" aria-hidden />
+            <IconCheck size={14} color="var(--mantine-color-green-text)" aria-hidden />
             <Text size="sm">{entryTypeStatus}</Text>
           </>
         )}
@@ -875,13 +874,7 @@ export function CollectionEditor({
       >
         <Stack gap="md">
           {showingRestored && restored && (
-            <Alert
-              icon={<IconRestore size={16} />}
-              color="blue"
-              title="Restored what you entered"
-              // Blue on its own tint misses 4.5:1 for the title text.
-              styles={{ title: { color: 'var(--mantine-color-text)' } }}
-            >
+            <Alert icon={<IconRestore size={16} />} color="blue" title="Restored what you entered">
               <Stack gap="xs" align="flex-start">
                 <Text size="sm">
                   {isEditMode
@@ -924,7 +917,7 @@ export function CollectionEditor({
             ref={nameInputRef}
             label="Name"
             description="Machine-readable identifier (e.g., posts, pages, articles)"
-            placeholder="posts"
+            placeholder="e.g. posts"
             value={formData.name}
             onChange={(e) => updateField('name', e.target.value)}
             required
@@ -933,7 +926,7 @@ export function CollectionEditor({
           <TextInput
             label="Label"
             description="Human-readable display name"
-            placeholder="Blog Posts"
+            placeholder="e.g. Blog posts"
             value={formData.label}
             onChange={(e) => updateField('label', e.target.value)}
           />
@@ -942,7 +935,7 @@ export function CollectionEditor({
             <TextInput
               label="Slug"
               description="Directory name (filesystem path). Changing this renames the directory."
-              placeholder="posts"
+              placeholder="e.g. posts"
               value={slug}
               onChange={(e) => {
                 setSlug(e.target.value)
