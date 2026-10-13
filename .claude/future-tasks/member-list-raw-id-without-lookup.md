@@ -12,9 +12,10 @@ member. With `onGetUserMetadata` it renders `UserBadge` (`revealIdOnFallback`, s
 member reads "Name unavailable" with the id as secondary detail). Without it, it renders a plain
 `Badge` whose label is the user id itself.
 
-`onGetUserMetadata` is optional all the way up (`GroupCard`, `group-manager/index.tsx`), so the
-bare-id branch is reachable for any embedder that omits it. The group manager is admin-only, but the
-People rule still treats an id as an internal name, not a person's name.
+`onGetUserMetadata` is optional at every level (`GroupManagerProps` in `group-manager/types.ts`,
+`InternalGroupsTab`, `GroupCard`, `MemberList`), so any caller that omits it reaches the bare-id
+branch. Today the only caller, `Editor.tsx`, always passes it, so only stories and tests render it.
+The group manager is admin-only, but the People rule still treats an id as an internal name.
 
 ## Fix
 

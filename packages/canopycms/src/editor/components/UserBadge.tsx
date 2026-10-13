@@ -49,7 +49,7 @@ export interface UserBadgeProps {
   /** Cached user data to avoid fetching (e.g., from search results) */
   cachedUser?: UserSearchResult
 
-  /** Admin-only surfaces: an unresolved person's id joins the tooltip, remove label and hidden text. */
+  /** Admin-only surfaces: a person with no name to show has their id in the tooltip, remove label and hidden text. */
   revealIdOnFallback?: boolean
 }
 

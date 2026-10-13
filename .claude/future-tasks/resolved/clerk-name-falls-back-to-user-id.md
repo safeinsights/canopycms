@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  RESOLVED 2026-10-12. The Clerk plugin leaves a nameless user's name empty instead of using their Clerk id (live lookups and the worker-written cache share clerk-user.ts); personName() makes lookupUserProfiles, CachingAuthPlugin and UserBadge/UserSelector/MemberList treat a blank or id-equal name as no name, so the editor shows "Name unavailable".
+  RESOLVED 2026-10-12. The Clerk plugin leaves a nameless user's name empty instead of using their Clerk id (live lookups and the worker-written cache share clerk-user.ts); personName() makes lookupUsersMetadata (and so lookupUserProfiles, /users/:userId and /users/batch), authResultToCanopyUser, CachingAuthPlugin.authenticate, describeEditors and UserBadge/UserSelector/MemberList treat a blank or id-equal name as no name, so the editor shows "Name unavailable".
 ---
 
 # The Clerk plugin uses a user id as their name

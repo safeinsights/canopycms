@@ -12,7 +12,7 @@ export interface ClerkUserData {
   email_addresses?: Array<{ email_address: string }> | null
 }
 
-/** The first usable name, else undefined: never the id or any email part, which not all readers see. */
+/** The first non-blank name, else undefined: never the id (an internal name) or any email part. */
 export function clerkDisplayName(user: ClerkUserData): string | undefined {
   for (const candidate of [user.fullName, user.full_name, user.username]) {
     const trimmed = candidate?.trim()

@@ -122,8 +122,8 @@ export function submissionEditorFromUser(user: CanopyUser): SubmissionEditor | u
 export type EditorLookup = (userId: string) => Promise<UserSearchResult | null>
 
 /**
- * Recorded editor ids as SubmissionEditors, with the name and email the auth provider gives
- * now. A user the lookup cannot find, or a lookup that throws, keeps just the id.
+ * Recorded editor ids as SubmissionEditors, with the email and usable name (see personName) the
+ * auth provider gives now. A user the lookup cannot find, or a lookup that throws, keeps just the id.
  */
 export async function describeEditors(
   userIds: readonly string[],

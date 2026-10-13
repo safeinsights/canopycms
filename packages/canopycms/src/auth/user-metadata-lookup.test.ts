@@ -180,6 +180,23 @@ describe('lookupUsersMetadata names', () => {
       expect(result.get('id-named')?.email).toBe('id-named@x.test')
     },
   )
+
+  it('normalizes a CachingAuthPlugin snapshot name the same way', async () => {
+    const fileCache: AuthCacheProvider = {
+      getUser: vi.fn(),
+      getGroup: vi.fn(),
+      getAllUsers: vi.fn(async () => [{ id: 'user_x', name: 'user_x', email: 'x@x.test' }]),
+      getAllGroups: vi.fn(),
+      getUserExternalGroups: vi.fn(),
+    }
+    const plugin = new CachingAuthPlugin(vi.fn(), fileCache)
+
+    expect((await lookupUsersMetadata(plugin, ['user_x'])).get('user_x')).toEqual({
+      id: 'user_x',
+      name: '',
+      email: 'x@x.test',
+    })
+  })
 })
 
 describe('lookupUserProfiles names', () => {
