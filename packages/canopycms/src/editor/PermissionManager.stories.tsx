@@ -9,7 +9,12 @@ import { unsafeAsLogicalPath } from '../paths/test-utils'
 const meta: Meta<typeof PermissionManager> = {
   title: 'Editor/PermissionManager',
   component: PermissionManager,
-  args: { opened: true, onClose: () => {} },
+  args: {
+    opened: true,
+    onClose: () => {},
+    // An id with no match reads "Name unavailable".
+    onGetUserMetadata: async (userId) => mockUserSearchResults.find((u) => u.id === userId) ?? null,
+  },
 }
 
 export default meta

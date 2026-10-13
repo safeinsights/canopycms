@@ -11,7 +11,11 @@ vi.mock('@mantine/modals', () => ({
   modals: { openConfirmModal: vi.fn() },
 }))
 
-type ConfirmOptions = { onConfirm?: () => void; onClose?: () => void }
+type ConfirmOptions = {
+  onConfirm?: () => void
+  onClose?: () => void
+  labels?: { confirm?: string; cancel?: string }
+}
 const openConfirmModal = vi.mocked(modals.openConfirmModal)
 const lastConfirm = (): ConfirmOptions =>
   openConfirmModal.mock.calls[openConfirmModal.mock.calls.length - 1][0] as ConfirmOptions
@@ -93,7 +97,7 @@ describe('StagedChangesDrawer', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save Groups' }))
       expect(props.onSave).toHaveBeenCalledTimes(1)
       fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
-      expect(props.onDiscard).toHaveBeenCalledTimes(1)
+      expect(openConfirmModal).toHaveBeenCalledTimes(1)
     })
 
     it('hides the save bar from a viewer who cannot edit', () => {
@@ -110,6 +114,31 @@ describe('StagedChangesDrawer', () => {
       act(() => lastConfirm().onConfirm?.())
       expect(props.onDiscard).toHaveBeenCalledTimes(1)
       expect(props.onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('words the close confirm\'s red button as the action, "Discard changes"', () => {
+      renderDrawer({ isDirty: true })
+      pressEscape()
+      expect(lastConfirm().labels).toEqual({ confirm: 'Discard changes', cancel: 'Keep editing' })
+    })
+
+    it('asks before the save bar discards, and discards only once confirmed, leaving the drawer open', () => {
+      const { props } = renderDrawer({ isDirty: true })
+      fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+      expect(openConfirmModal).toHaveBeenCalledTimes(1)
+      expect(lastConfirm().labels).toEqual({ confirm: 'Discard changes', cancel: 'Keep editing' })
+      expect(props.onDiscard).not.toHaveBeenCalled()
+
+      act(() => lastConfirm().onConfirm?.())
+      expect(props.onDiscard).toHaveBeenCalledTimes(1)
+      expect(props.onClose).not.toHaveBeenCalled()
+    })
+
+    it('keeps the staged changes when the save bar discard is dismissed', () => {
+      const { props } = renderDrawer({ isDirty: true })
+      fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+      act(() => lastConfirm().onClose?.())
+      expect(props.onDiscard).not.toHaveBeenCalled()
     })
 
     it('keeps the drawer and the changes when the confirm is dismissed', () => {

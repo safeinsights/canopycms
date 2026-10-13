@@ -22,7 +22,7 @@ export const GroupForm: React.FC<GroupFormProps> = ({
   onClose,
 }) => {
   return (
-    <Modal opened={isOpen} onClose={onClose} title={editingGroup ? 'Edit Group' : 'Create Group'}>
+    <Modal opened={isOpen} onClose={onClose} title={editingGroup ? 'Edit group' : 'Create group'}>
       <Stack gap="md">
         {editingGroup && (
           <div>
@@ -37,7 +37,7 @@ export const GroupForm: React.FC<GroupFormProps> = ({
           </div>
         )}
         <TextInput
-          label="Group Name"
+          label="Group name"
           placeholder="e.g. Content editors"
           value={formData.name}
           onChange={(e) => onFormChange({ name: e.target.value })}

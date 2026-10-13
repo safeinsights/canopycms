@@ -37,7 +37,7 @@ describe('NoEditPermissionNotice', () => {
     renderNotice()
 
     expect(noticeText()).toBe(
-      'You don\'t have edit access to "docs/guide". Ask a CanopyCMS admin to grant it in Manage Permissions.',
+      'You don\'t have edit access to "docs/guide". Ask a CanopyCMS admin to grant it in "Manage permissions".',
     )
   })
 })

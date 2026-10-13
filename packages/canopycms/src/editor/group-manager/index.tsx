@@ -181,8 +181,8 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
             style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
           >
             <Tabs.List>
-              <Tabs.Tab value="internal">Internal Groups</Tabs.Tab>
-              <Tabs.Tab value="external">External Groups</Tabs.Tab>
+              <Tabs.Tab value="internal">Internal groups</Tabs.Tab>
+              <Tabs.Tab value="external">External groups</Tabs.Tab>
             </Tabs.List>
 
             <Tabs.Panel value="internal" style={{ flex: 1, overflow: 'auto' }}>

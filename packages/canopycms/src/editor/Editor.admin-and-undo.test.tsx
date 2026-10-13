@@ -1331,3 +1331,45 @@ describe('a collection write with no answer', () => {
     expect(screen.queryByRole('dialog', { name: /^Edit collection:/ })).toBeNull()
   })
 })
+
+describe('adding entries the path permissions allow', () => {
+  const urlOf = (input: RequestInfo | URL) =>
+    typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+
+  /** The listing says whether this editor may add an entry to "posts". */
+  const stubAddAccess = (canAddEntry: boolean) => {
+    const fetchMock = stubApi(['editors'])
+    const answerOthers = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (input, init) => {
+      const response = await answerOthers(input, init)
+      if (!urlOf(input).includes('/entries')) return response
+      const data = (await response.json()).data
+      return okJson({
+        ...data,
+        collectionAccess: [{ logicalPath: 'content/posts', canAddEntry }],
+      })
+    })
+  }
+
+  it('offers "Add entry…" where the listing allows it', async () => {
+    stubAddAccess(true)
+    renderEditor()
+    await loaded()
+    await openNavigator()
+
+    fireEvent.click(await screen.findByTestId('collection-menu-posts'))
+    expect(await screen.findByText('Add entry…')).toBeTruthy()
+  })
+
+  it('offers no "Add entry…" where the listing refuses it', async () => {
+    stubAddAccess(false)
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    // The navigator has listed the collection's entries.
+    expect((await screen.findAllByText('Other')).length).toBeGreaterThan(0)
+
+    // "Add entry…" was the only item a non-admin had, so the collection has no menu.
+    expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
+  })
+})

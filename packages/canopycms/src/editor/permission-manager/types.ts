@@ -16,7 +16,7 @@ export interface PermissionManagerProps {
   canEdit: boolean
   onSave?: (permissions: PathPermission[]) => Promise<void>
   onSearchUsers?: (query: string, limit?: number) => Promise<UserSearchResult[]>
-  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  onGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
   /** Handler to list groups (internal + external, tagged by `source`) */
   onListGroups?: () => Promise<PermissionGroupOption[]>
   loading?: boolean

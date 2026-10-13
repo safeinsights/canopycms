@@ -1,11 +1,12 @@
 /**
  * A read-only form takes no edit through any field type: every built-in input is read-only yet
- * focusable (the Switch is disabled), a custom renderer sits in a disabled fence, no add/remove/reorder affordance
+ * focusable (the Switch is `aria-readonly`), a custom renderer sits in a disabled fence, no add/remove/reorder affordance
  * renders, and `onChange` is never called, MDXEditor's mount-time normalisation included.
  * Comments stay usable. Each field also refuses edits on its own, without FormRenderer's gate.
  */
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import React from 'react'
+import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 // See FormRenderer.test.tsx: preloading MarkdownField's lazy chunk keeps mount timing honest.
@@ -103,14 +104,20 @@ describe('FormRenderer readOnly', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('boolean: the switch is disabled and a click writes nothing', () => {
+  it('boolean: the switch is read-only yet focusable, and a click or Space writes nothing', async () => {
     const { onChange } = renderReadOnly([{ name: 'draft', type: 'boolean', label: 'Draft' }], {
       draft: false,
     })
     const input = screen.getByRole('switch', { name: 'Draft' }) as HTMLInputElement
-    expect(input.disabled).toBe(true)
+    expect(input.disabled).toBe(false)
+    expect(input.getAttribute('aria-readonly')).toBe('true')
     expect(screen.getByText('Off')).toBeTruthy()
+
+    await userEvent.tab()
+    expect(document.activeElement).toBe(input)
+    await userEvent.keyboard(' ')
     fireEvent.click(input)
+    expect(input.checked).toBe(false)
     expect(onChange).not.toHaveBeenCalled()
   })
 
@@ -588,11 +595,20 @@ describe('each field refuses edits on its own', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('ToggleField: a click calls no onChange', () => {
+  it('ToggleField: a click calls no onChange and leaves the value as it was', () => {
     const onChange = vi.fn()
     renderField(<ToggleField label="F" value={false} onChange={onChange} readOnly />)
     fireEvent.click(screen.getByRole('switch'))
+    expect((screen.getByRole('switch') as HTMLInputElement).checked).toBe(false)
     expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('ToggleField: an editable switch carries no aria-readonly and still toggles', () => {
+    const onChange = vi.fn()
+    renderField(<ToggleField label="F" value={false} onChange={onChange} />)
+    expect(screen.getByRole('switch').hasAttribute('aria-readonly')).toBe(false)
+    fireEvent.click(screen.getByRole('switch'))
+    expect(onChange).toHaveBeenCalledWith(true)
   })
 
   it('ImageField: an alt-text change calls no onChange', () => {

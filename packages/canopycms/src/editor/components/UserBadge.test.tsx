@@ -5,6 +5,7 @@ import { MantineProvider } from '@mantine/core'
 import { SWRConfig } from 'swr'
 import { UserBadge } from './UserBadge'
 import type { UserSearchResult } from '../../auth/types'
+import { CanopyCMSProvider } from '../theme'
 
 // Setup for Mantine components
 beforeAll(() => {
@@ -31,6 +32,10 @@ beforeAll(() => {
       ResizeObserver as typeof ResizeObserver
   }
 })
+
+const SWRWrapper = ({ children }: { children: React.ReactNode }) => (
+  <SWRConfig value={{ provider: () => new Map() }}>{children}</SWRConfig>
+)
 
 // A fresh SWR cache per render, so one test's user never answers another's.
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -224,6 +229,50 @@ describe('UserBadge', () => {
       expect(tooltips.map((t) => t.textContent)).toContain('Remove Alice Johnson')
       await userEvent.click(remove)
       expect(onRemove).toHaveBeenCalledWith('user-1')
+    })
+
+    it("opens only the X's tooltip, not the badge's email one as well, while the pointer is on the X", async () => {
+      render(
+        <UserBadge
+          userId="user-1"
+          getUserMetadata={vi.fn()}
+          cachedUser={mockUser}
+          onRemove={vi.fn()}
+        />,
+        { wrapper: Wrapper },
+      )
+      await userEvent.hover(screen.getByText('Alice Johnson'))
+      expect((await screen.findByRole('tooltip')).textContent).toBe('alice@example.com')
+
+      await userEvent.hover(screen.getByRole('button', { name: 'Remove Alice Johnson' }))
+      await waitFor(() =>
+        expect(screen.getAllByRole('tooltip').map((t) => t.textContent)).toEqual([
+          'Remove Alice Johnson',
+        ]),
+      )
+    })
+
+    it("keeps the badge's email tooltip shut while focus is on the X", async () => {
+      render(
+        <CanopyCMSProvider>
+          <UserBadge
+            userId="user-1"
+            getUserMetadata={vi.fn()}
+            cachedUser={mockUser}
+            onRemove={vi.fn()}
+          />
+        </CanopyCMSProvider>,
+        { wrapper: SWRWrapper },
+      )
+      await userEvent.tab()
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Remove Alice Johnson' }),
+      )
+      await waitFor(() =>
+        expect(screen.getAllByRole('tooltip').map((t) => t.textContent)).toEqual([
+          'Remove Alice Johnson',
+        ]),
+      )
     })
 
     it('names the fallback for an unresolved person, adding the id only for an admin surface', async () => {

@@ -136,7 +136,7 @@ Use existing fixtures:
 **Spec file:** `draft-behavior.spec.ts` (new file)
 **Scenario:** Make edits to an entry. Verify the save button is enabled and a "discard" or "revert" action is available. Click discard. Verify the field values revert to their last-saved state without a page reload.
 **data-testids added:** `data-testid="discard-file-draft-menu-item"` on the "Discard changes" `<Menu.Item>` in `EditorHeader.tsx`.
-**Notes:** Discarding a dirty draft asks for confirmation; confirming clears the draft from state and localStorage and shows "Draft cleared for file" (blue Mantine notification). Save is `aria-disabled` when there are no unsaved changes, and Playwright's `toBeDisabled()` reads that, so it verifies clean state before and after. "Discard changes" is inside the file dropdown menu (same menu as "All Files" / `file-dropdown-button`).
+**Notes:** Discarding a dirty draft asks for confirmation; confirming clears the draft from state and localStorage and shows "Draft cleared for <entry label>" (blue Mantine notification). Save is `aria-disabled` when there are no unsaved changes, and Playwright's `toBeDisabled()` reads that, so it verifies clean state before and after. "Discard changes" is inside the file dropdown menu (same menu as "All entries" / `file-dropdown-button`).
 
 ---
 

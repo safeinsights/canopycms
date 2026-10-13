@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  From the UX review of the batch 2 visual PR: an object field's "Clear" wipes every subfield with no Undo; a date-only value is presented as a midnight date-time; empty menu-section items show a not-allowed cursor; the header's "All Files" item is Title Case and says "file"; unlabelled schema names show raw; and four guideline gaps need rulings
+  From the UX review of the batch 2 visual PR: an object field's "Clear" wipes every subfield with no Undo; a date-only value is presented as a midnight date-time; empty menu-section items show a not-allowed cursor; unlabelled schema names show raw; and four guideline gaps need rulings
 ---
 # Object "Clear" Undo, and other UX batch 2 review leftovers
 
@@ -24,8 +24,6 @@ compact "Outline"). None was in that PR's scope.
 - **Empty-section cursor.** `components/ReasonedMenuItem.tsx` gives every blocked item a
   `not-allowed` cursor, including EditorHeader's "No recently modified entries", which is
   information rather than a blocked action.
-- **"All Files"** in `components/EditorHeader.tsx`'s entry menu is Title Case and says "file" for
-  entries ([Vocabulary](../../docs/ux-guidelines.md#vocabulary)).
 - **Compact "Outline" tooltip.** `FormHeader.tsx` keeps the Tooltip mounted (`disabled` when the
   pane is wide) so the button keeps focus across the width change; if the pane widens while it is
   open, the button keeps a stale `aria-describedby` until blur, and when compact the name is

@@ -243,3 +243,37 @@ export const HumanLabels: Story = {
     fieldLabel: (thread) => fieldLabels[thread.canopyPath ?? ''],
   },
 }
+
+/** Each open thread offers the jump its kind allows, and the branch thread its discussion. */
+export const WithJumpButtons: Story = {
+  args: {
+    ...HumanLabels.args,
+    onJumpToField: (entryPath, canopyPath, threadId) =>
+      console.log('Jump to field:', { entryPath, canopyPath, threadId }),
+    onJumpToEntry: (entryPath, threadId) => console.log('Jump to entry:', { entryPath, threadId }),
+    onJumpToBranch: (threadId) => console.log('Open branch discussion:', threadId),
+  },
+}
+
+async function typeInto(textarea: HTMLTextAreaElement, text: string): Promise<void> {
+  const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+  setValue?.call(textarea, text)
+  textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+/** A comment write that never settles: the jumps are blocked, and Esc says why the panel stays. */
+export const WriteInFlight: Story = {
+  args: {
+    ...WithJumpButtons.args,
+    onAddComment: () => new Promise<void>(() => {}),
+  },
+  play: async () => {
+    const textarea = document.querySelector<HTMLTextAreaElement>('[data-testid="comment-textarea"]')
+    if (!textarea) return
+    await typeInto(textarea, 'Waiting on the server')
+    document.querySelector<HTMLButtonElement>('[data-testid="comment-submit"]')?.click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  },
+}

@@ -2,10 +2,11 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-12. `MemberList` renders a group member as a bare `{userId}` badge when it gets no `onGetUserMetadata`, showing a raw id as person text against docs/ux-guidelines.md's People rule. Use UserBadge's "Name unavailable" fallback (with the id only as admin-surface detail), or make the lookup prop required.
+  RESOLVED (2026-10-13). `onGetUserMetadata` is required through the group manager (`GroupManagerProps`, `InternalGroupsTab`, `GroupCard`, `MemberList`) and the permission manager (`PermissionManagerProps`, `PermissionTree`, `PermissionEditor`, `UserSelector`); `Editor.tsx` always passes it. The bare-id `Badge` branches and the unreachable search-result fallbacks are deleted, so an unresolved person reads "Name unavailable" (id only as admin detail via `revealIdOnFallback`). Group badges show group names, which is not a person label.
 ---
-
 # MemberList shows a raw user id when it has no lookup
+
+## Status: RESOLVED 2026-10-13
 
 `packages/canopycms/src/editor/group-manager/MemberList.tsx` has two branches for each group
 member. With `onGetUserMetadata` it renders `UserBadge` (`revealIdOnFallback`, so an unresolved

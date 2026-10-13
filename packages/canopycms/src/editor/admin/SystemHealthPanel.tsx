@@ -28,7 +28,10 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
+  UnstyledButton,
+  VisuallyHidden,
 } from '@mantine/core'
+import { useId } from 'react'
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
@@ -1001,6 +1004,28 @@ function DuplicateRepairDetails({
   )
 }
 
+/** The reason is hidden text for assistive tech and a Tooltip that opens on hover, focus and touch. */
+function SyncFailedBadge({ reason }: { reason: string }) {
+  const reasonId = useId()
+  return (
+    <>
+      <Tooltip
+        label={reason}
+        multiline
+        maw={320}
+        events={{ hover: true, focus: true, touch: true }}
+      >
+        <UnstyledButton type="button" aria-describedby={reasonId}>
+          <Badge color="red" variant="light">
+            sync-failed
+          </Badge>
+        </UnstyledButton>
+      </Tooltip>
+      <VisuallyHidden id={reasonId}>{reason}</VisuallyHidden>
+    </>
+  )
+}
+
 function BranchHealthRow({
   entry,
   baseWarning,
@@ -1076,19 +1101,13 @@ function BranchHealthRow({
         </Table.Td>
         <Table.Td>
           {b.syncStatus === 'sync-failed' ? (
-            <Tooltip
-              label={
+            <SyncFailedBadge
+              reason={
                 b.syncFailureReason
                   ? `${b.syncFailureReason} — retry from the "Tasks" tab`
                   : 'GitHub sync failed — retry from the "Tasks" tab'
               }
-              multiline
-              maw={320}
-            >
-              <Badge color="red" variant="light">
-                sync-failed
-              </Badge>
-            </Tooltip>
+            />
           ) : b.syncStatus === 'pending-sync' ? (
             <Badge color="gray" variant="light">
               pending-sync

@@ -281,14 +281,14 @@ export const entryTypeLabel = (
  *
  * @param currentEntry - The entry to build breadcrumbs for (or undefined for root)
  * @param collectionLabels - Map of collection IDs to labels
- * @returns Array of breadcrumb segment strings, starting with 'All Files'
+ * @returns Array of breadcrumb segment strings, starting with 'All entries'
  */
 export const buildBreadcrumbSegments = (
   currentEntry: EditorEntry | undefined,
   collectionLabels: Map<string, string>,
 ): string[] => {
-  if (!currentEntry) return ['All Files']
-  const segments = ['All Files']
+  if (!currentEntry) return ['All entries']
+  const segments = ['All entries']
 
   // Show collection hierarchy for entries that belong to a collection
   if (currentEntry.collectionPath) {

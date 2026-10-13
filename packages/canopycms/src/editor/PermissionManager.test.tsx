@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within, cleanup } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
-import { PermissionManager } from './PermissionManager'
+import { SWRConfig } from 'swr'
+import { PermissionManager as RealPermissionManager } from './PermissionManager'
+import type { PermissionManagerProps } from './PermissionManager'
 import type { PathPermission } from '../config'
 import type { UserSearchResult, PermissionGroupOption } from '../auth/types'
 import type { EditorCollection } from './Editor'
@@ -26,9 +28,28 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+const knownUsers: UserSearchResult[] = [
+  { id: 'alice', name: 'Alice Johnson', email: 'alice@example.com' },
+  { id: 'bob', name: 'Bob Smith', email: 'bob@example.com' },
+]
+
+// The manager requires a name lookup; a test passes its own to override this one.
+const PermissionManager = (
+  props: Omit<PermissionManagerProps, 'onGetUserMetadata'> &
+    Partial<Pick<PermissionManagerProps, 'onGetUserMetadata'>>,
+) => (
+  <RealPermissionManager
+    onGetUserMetadata={async (id) => knownUsers.find((u) => u.id === id) ?? null}
+    {...props}
+  />
+)
+
 // Wrapper for Mantine components
+// A fresh SWR cache per render, so one test's resolved names never answer another's.
 const wrapper = ({ children }: { children: React.ReactNode }) => (
-  <MantineProvider>{children}</MantineProvider>
+  <SWRConfig value={{ provider: () => new Map() }}>
+    <MantineProvider>{children}</MantineProvider>
+  </SWRConfig>
 )
 
 describe('PermissionManager', () => {
@@ -497,6 +518,27 @@ describe('PermissionManager', () => {
       })
     })
 
+    it("names each group badge's Remove button by its group", async () => {
+      render(
+        <PermissionManager
+          opened
+          onClose={vi.fn()}
+          collections={mockCollections}
+          permissions={mockPermissions}
+          canEdit={true}
+          onSave={mockOnSave}
+          onSearchUsers={mockOnSearchUsers}
+          onListGroups={mockOnListGroups}
+        />,
+        { wrapper },
+      )
+
+      fireEvent.click(screen.getByText('Posts'))
+      fireEvent.click(await screen.findByRole('button', { name: 'Remove Editors' }))
+
+      await waitFor(() => expect(screen.getByText('Save Permissions')).toBeTruthy())
+    })
+
     it('shows user badges on nodes with user permissions', async () => {
       render(
         <PermissionManager
@@ -520,7 +562,7 @@ describe('PermissionManager', () => {
 
       // Wait for user badges to appear in the permission editor
       await waitFor(() => {
-        const badges = screen.getAllByText('alice')
+        const badges = screen.getAllByText('Alice Johnson')
         expect(badges.length).toBeGreaterThan(0)
       })
     })
@@ -972,9 +1014,11 @@ describe('PermissionManager', () => {
       let aliceElement: HTMLElement
       await waitFor(
         () => {
-          const aliceMatches = screen.getAllByText('Alice Johnson')
-          expect(aliceMatches.length).toBeGreaterThan(0)
-          aliceElement = aliceMatches[0]
+          const result = screen
+            .getAllByText('Alice Johnson')
+            .find((el) => el.closest('[style*="cursor: pointer"]'))
+          expect(result).toBeTruthy()
+          aliceElement = result!
         },
         { timeout: 2000 },
       )

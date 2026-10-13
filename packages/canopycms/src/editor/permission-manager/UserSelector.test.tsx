@@ -32,11 +32,12 @@ const renderWith = (searchResults: UserSearchResult[]) =>
         isSearching={false}
         searchError={null}
         onSelectUser={vi.fn()}
+        onGetUserMetadata={async () => null}
       />
     </MantineProvider>,
   )
 
-describe('UserSelector without a metadata lookup', () => {
+describe('UserSelector, with a lookup that knows no one', () => {
   it('shows a real name and the email', () => {
     renderWith([{ id: 'user_1', name: 'Alice Smith', email: 'alice@example.com' }])
     expect(screen.getByText('Alice Smith')).toBeTruthy()

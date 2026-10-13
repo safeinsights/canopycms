@@ -271,6 +271,18 @@ describe('EditorHeader - no leftover placeholder copy', () => {
   })
 })
 
+describe('EditorHeader - entry menu vocabulary', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('calls the navigator item "All entries", in sentence case', async () => {
+    renderHeader()
+    await userEvent.click(screen.getByTestId('file-dropdown-button'))
+    expect((await screen.findByTestId('all-files-menu-item')).textContent).toBe('All entries')
+  })
+})
+
 describe('EditorHeader - status badge', () => {
   afterEach(() => {
     cleanup()

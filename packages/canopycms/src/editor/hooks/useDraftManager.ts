@@ -836,9 +836,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         title: 'Unsaved draft from an older editor version',
         children:
           'This draft was saved by an earlier version of the editor, which did not record ' +
-          'which version of the file it was based on. Saving it will overwrite the copy ' +
+          'which version of the entry it was based on. Saving it will overwrite the copy ' +
           'currently on the server, including any changes made by someone else since. ' +
-          'Reload or Discard this file instead if you would rather not risk that.',
+          'Choose "Reload entry" or "Discard changes" in the entry menu instead if you would ' +
+          'rather not risk that.',
         labels: { confirm: 'Save anyway', cancel: 'Cancel' },
         confirmProps: { color: 'red' },
         onConfirm: () => settle(true),
@@ -1080,7 +1081,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   const performDiscardFileDraft = () => {
-    if (!currentId) return
+    const entry = options.currentEntry
+    if (!entry || !currentId) return
     options.onDraftsReset?.(currentId)
     hideEntryGone(currentId)
     setErrorState(null)
@@ -1105,10 +1107,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         }
       }
     } catch (err) {
-      console.warn('Failed to clear draft for file', err)
+      console.warn('Failed to clear draft for entry', err)
     }
     notifications.show({
-      message: 'Draft cleared for file',
+      message: `Draft cleared for "${entry.label}"`,
       color: 'blue',
       autoClose: getNotificationDuration(3000),
       withCloseButton: true,

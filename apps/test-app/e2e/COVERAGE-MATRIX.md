@@ -178,7 +178,7 @@ nothing exercised these paths:
    ships from `dist/`.
 2. **Internal groups are unreachable from the Permission Manager**: the "Add
    Groups" picker reads `authPlugin.listGroups()` (external groups only) and
-   never `groups.json`, so a group created in Manage Groups can never be
+   never `groups.json`, so a group created in Manage groups can never be
    assigned a permission — even though the authorization check treats internal
    and external groups identically. Filed as
    `permission-manager-internal-groups-unreachable.md`. **FIXED 2026-08-12**

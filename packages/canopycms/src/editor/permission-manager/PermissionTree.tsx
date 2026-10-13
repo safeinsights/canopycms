@@ -41,7 +41,7 @@ export interface PermissionTreeProps {
     updates: Partial<PermissionTarget>,
   ) => void
   onSearchUsers: (query: string) => void
-  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  onGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
   onToggleUserSearch: (show: boolean) => void
   onAddUser: (path: string, level: PermissionLevel, userId: string) => void
   onRemoveUser: (path: string, level: PermissionLevel, userId: string) => void

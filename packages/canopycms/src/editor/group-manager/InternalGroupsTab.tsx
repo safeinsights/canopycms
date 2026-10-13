@@ -4,7 +4,7 @@ import React from 'react'
 import { Button, Group, Paper, ScrollArea, Stack, Text } from '@mantine/core'
 import { IconPlus, IconUsers } from '@tabler/icons-react'
 import type { InternalGroup, UserSearchResult, CanopyGroupId, CanopyUserId } from './types'
-import { GroupCard } from './GroupCard'
+import { GroupCard, memberCountLabel } from './GroupCard'
 
 export interface InternalGroupsTabProps {
   groups: InternalGroup[]
@@ -15,7 +15,7 @@ export interface InternalGroupsTabProps {
   onDeleteGroup: (groupId: CanopyGroupId) => void
   onAddMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
   onRemoveMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
-  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  onGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
   // User search state (shared across all groups)
   activeSearchGroupId: string | null
   searchQuery: string
@@ -80,7 +80,7 @@ export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
                     )}
                   </div>
                   <Text size="sm" variant="light">
-                    {group.members?.length || 0} members
+                    {memberCountLabel(group.members?.length ?? 0)}
                   </Text>
                 </Group>
               </Paper>
@@ -99,7 +99,7 @@ export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
             Manage your internal groups
           </Text>
           <Button variant="light" leftSection={<IconPlus size={14} />} onClick={onCreateGroup}>
-            Create Group
+            Create group
           </Button>
         </Group>
 

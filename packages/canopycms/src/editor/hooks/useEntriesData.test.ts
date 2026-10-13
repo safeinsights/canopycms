@@ -76,3 +76,36 @@ describe('fetchEntriesAndSchema: unavailable entry types', () => {
     expect(data.entries[0].schema).toEqual([])
   })
 })
+
+describe('fetchEntriesAndSchema: adding entries', () => {
+  it('marks a collection the listing says this user may not add an entry to', async () => {
+    const client = clientWithUnavailableWidget()
+    vi.mocked(client.entries.list).mockResolvedValue(
+      mockSuccess({
+        entries: [],
+        collectionAccess: [{ logicalPath: unsafeAsLogicalPath('widgets'), canAddEntry: false }],
+        pagination: { hasMore: false, limit: 200 },
+      }),
+    )
+
+    const data = await fetchEntriesAndSchema(client, 'main', { resolvePreviewSrc: () => undefined })
+
+    expect(data.collections[0].canAddEntry).toBe(false)
+  })
+
+  it('leaves a collection unmarked when the listing allows it or says nothing', async () => {
+    for (const collectionAccess of [
+      [{ logicalPath: unsafeAsLogicalPath('widgets'), canAddEntry: true }],
+      undefined,
+    ]) {
+      const client = clientWithUnavailableWidget()
+      vi.mocked(client.entries.list).mockResolvedValue(
+        mockSuccess({ entries: [], collectionAccess, pagination: { hasMore: false, limit: 200 } }),
+      )
+      const data = await fetchEntriesAndSchema(client, 'main', {
+        resolvePreviewSrc: () => undefined,
+      })
+      expect(data.collections[0].canAddEntry).toBeUndefined()
+    }
+  })
+})

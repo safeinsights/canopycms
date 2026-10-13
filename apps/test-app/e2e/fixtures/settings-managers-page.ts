@@ -4,7 +4,7 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 
 /**
  * Page objects for the Group Manager and Permission Manager drawers
- * (Settings gear -> "Manage Groups" / "Manage Permissions").
+ * (Settings gear -> "Manage groups" / "Manage permissions").
  *
  * The Settings entry point goes through `EditorPage.openSettingsItem`
  * (testid-based, shared with the other Settings surfaces). Inside the
@@ -21,7 +21,7 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
  *    substring match on just "Groups" / "Permissions" is deliberate, not a
  *    shortcut.
  *  - GroupForm's modal fields are real `<label>`-associated Mantine
- *    TextInput/Textarea ("Group Name" / "Description") — `getByLabel`.
+ *    TextInput/Textarea ("Group name" / "Description") — `getByLabel`.
  *  - PermissionEditor's group-search input is a raw `<input
  *    aria-label="Search groups">` (GroupSelector.tsx).
  */
@@ -37,7 +37,7 @@ export class GroupManagerPage {
     this.drawer = page.getByRole('dialog', { name: 'Groups' })
   }
 
-  /** Open via Settings -> "Manage Groups" and wait for the drawer. */
+  /** Open via Settings -> "Manage groups" and wait for the drawer. */
   async open(): Promise<void> {
     await new EditorPage(this.page).openSettingsItem('Groups')
     await expect(this.drawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
@@ -49,7 +49,7 @@ export class GroupManagerPage {
   }
 
   get createGroupButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Create Group' })
+    return this.drawer.getByRole('button', { name: 'Create group' })
   }
 
   get saveButton(): Locator {
@@ -60,7 +60,7 @@ export class GroupManagerPage {
     return this.drawer.getByRole('button', { name: 'Discard changes' })
   }
 
-  /** The (unique) group name text within the drawer's Internal Groups list. */
+  /** The (unique) group name text within the drawer's Internal groups list. */
   groupEntry(name: string): Locator {
     return this.drawer.getByText(name, { exact: true })
   }
@@ -78,15 +78,15 @@ export class GroupManagerPage {
   }
 
   /**
-   * Fill and submit the "Create Group" modal. Leaves the modal closed and
+   * Fill and submit the "Create group" modal. Leaves the modal closed and
    * the new group listed (but NOT yet saved to the server) in the Internal
    * Groups tab.
    */
   async createGroup(name: string, description: string): Promise<void> {
     await this.createGroupButton.click()
-    const modal = this.page.getByRole('dialog', { name: 'Create Group' })
+    const modal = this.page.getByRole('dialog', { name: 'Create group' })
     await expect(modal).toBeVisible({ timeout: SHORT_TIMEOUT })
-    await modal.getByLabel('Group Name').fill(name)
+    await modal.getByLabel('Group name').fill(name)
     await modal.getByLabel('Description').fill(description)
     await modal.getByRole('button', { name: 'Add', exact: true }).click()
     await expect(modal).toBeHidden({ timeout: SHORT_TIMEOUT })
@@ -119,7 +119,7 @@ export class PermissionManagerPage {
     this.drawer = page.getByRole('dialog', { name: 'Permissions' })
   }
 
-  /** Open via Settings -> "Manage Permissions" and wait for the drawer. */
+  /** Open via Settings -> "Manage permissions" and wait for the drawer. */
   async open(): Promise<void> {
     await new EditorPage(this.page).openSettingsItem('Permissions')
     await expect(this.drawer).toBeVisible({ timeout: STANDARD_TIMEOUT })

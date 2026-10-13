@@ -76,8 +76,16 @@ export interface ListEntriesParams {
   recursive?: boolean
 }
 
+/** Whether the caller may add an entry to a listed collection. */
+export interface CollectionAccess {
+  logicalPath: LogicalPath
+  canAddEntry: boolean
+}
+
 export interface ListEntriesResponse {
   entries: CollectionItem[]
+  /** One per listed collection, on every page. */
+  collectionAccess?: CollectionAccess[]
   pagination: {
     cursor?: string
     hasMore: boolean
@@ -237,12 +245,21 @@ const listEntriesHandler = async (
   const recursive = params.recursive ?? false
 
   let entries: CollectionItem[] = []
+  let collectionAccess: CollectionAccess[] = []
 
   try {
     // Build the access checker once per request: permissions (and, in modes with a
     // separate settings branch, the settings workspace) are loaded a single time and
     // reused for every entry, instead of re-loading per entry inside the loop.
     const checkAccess = await ctx.services.createContentAccessChecker(branchContext, root, req.user)
+    // A new entry's slug is unknown, so the probe is one no slug can be: a rule for the whole
+    // collection decides, never one for a particular entry. The create itself is checked again.
+    collectionAccess = targetCollections
+      .filter((item) => item.type === 'collection')
+      .map((item) => ({
+        logicalPath: item.logicalPath,
+        canAddEntry: checkAccess(`${item.logicalPath}/*` as LogicalPath, 'edit').allowed,
+      }))
 
     if (recursive && targetPath) {
       // Recursive mode: list entries from target collection and all its children
@@ -283,6 +300,7 @@ const listEntriesHandler = async (
     status: 200,
     data: {
       entries: paged,
+      collectionAccess,
       pagination: {
         cursor: nextCursor,
         hasMore: Boolean(nextCursor),

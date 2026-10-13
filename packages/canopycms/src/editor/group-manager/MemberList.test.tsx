@@ -30,6 +30,7 @@ const renderWith = (searchResults: UserSearchResult[]) =>
         members={[]}
         onRemoveMember={vi.fn()}
         onAddMember={vi.fn()}
+        onGetUserMetadata={async () => null}
         showUserSearch
         searchQuery="a"
         searchResults={searchResults}
@@ -43,7 +44,7 @@ const renderWith = (searchResults: UserSearchResult[]) =>
     </MantineProvider>,
   )
 
-describe('MemberList search results without a metadata lookup', () => {
+describe('MemberList search results, with a lookup that knows no one', () => {
   it('shows a real name and the email', () => {
     renderWith([{ id: 'user_1', name: 'Alice Smith', email: 'alice@example.com' }])
     expect(screen.getByText('Alice Smith')).toBeTruthy()

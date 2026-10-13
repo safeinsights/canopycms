@@ -1773,6 +1773,23 @@ describe('useDraftManager', () => {
     })
   })
 
+  it('names the entry in the toast that confirms a discard', async () => {
+    const { notifications } = await import('@mantine/notifications')
+    vi.mocked(notifications.show).mockClear()
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+    act(() => {
+      result.current.setDrafts({ abc123def456: { title: 'Draft 1' } })
+    })
+
+    act(() => {
+      result.current.handleDiscardFileDraft()
+    })
+
+    expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
+      message: 'Draft cleared for "Test Entry"',
+    })
+  })
+
   describe('discard confirmation', () => {
     it('opens a confirm modal before discarding a file draft that differs from the loaded value', async () => {
       const { modals } = await import('@mantine/modals')
@@ -2425,6 +2442,11 @@ describe('useDraftManager', () => {
         expect(modals.openConfirmModal).toHaveBeenCalledWith(
           expect.objectContaining({ title: 'Unsaved draft from an older editor version' }),
         )
+        const { children } = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)![0] as {
+          children: string
+        }
+        expect(children).toContain('Choose "Reload entry" or "Discard changes" in the entry menu')
+        expect(children).not.toMatch(/\bfile\b/)
       })
 
       // The defect: `null` was treated exactly like a known-stale base, and

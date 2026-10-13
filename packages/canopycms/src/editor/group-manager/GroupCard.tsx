@@ -5,6 +5,12 @@ import { ActionIcon, Badge, Group, Paper, Text, Tooltip } from '@mantine/core'
 import { IconEdit, IconTrash } from '@tabler/icons-react'
 import type { InternalGroup, UserSearchResult, CanopyGroupId, CanopyUserId } from './types'
 import { MemberList } from './MemberList'
+import { isReservedGroup } from '../../authorization/helpers'
+
+export const memberCountLabel = (count: number): string =>
+  `${count} ${count === 1 ? 'member' : 'members'}`
+
+const RESERVED_DELETE_REASON = "Built-in group; it can't be deleted."
 
 export interface GroupCardProps {
   group: InternalGroup
@@ -14,7 +20,7 @@ export interface GroupCardProps {
   onDelete: (groupId: CanopyGroupId) => void
   onAddMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
   onRemoveMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
-  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  onGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
   showUserSearch: boolean
   searchQuery: string
   searchResults: UserSearchResult[]
@@ -44,6 +50,7 @@ export const GroupCard: React.FC<GroupCardProps> = ({
   onHideSearch,
   canSearch,
 }) => {
+  const reserved = isReservedGroup(group.id)
   return (
     <Paper withBorder p="sm" mb="xs">
       <Group justify="space-between" mb="sm">
@@ -53,7 +60,7 @@ export const GroupCard: React.FC<GroupCardProps> = ({
               {group.name}
             </Text>
             <Badge size="sm" variant="light">
-              {group.members?.length || 0} members
+              {memberCountLabel(group.members?.length ?? 0)}
             </Badge>
             {isUnsaved && (
               <Badge size="sm" variant="light" color="orange">
@@ -76,12 +83,19 @@ export const GroupCard: React.FC<GroupCardProps> = ({
               <IconEdit size={16} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Delete group">
+          <Tooltip
+            label={reserved ? RESERVED_DELETE_REASON : 'Delete group'}
+            events={{ hover: true, focus: true, touch: true }}
+          >
             <ActionIcon
               variant="subtle"
               color="red"
               aria-label="Delete group"
-              onClick={() => onDelete(group.id)}
+              data-disabled={reserved ? true : undefined}
+              aria-disabled={reserved ? true : undefined}
+              onClick={() => {
+                if (!reserved) onDelete(group.id)
+              }}
             >
               <IconTrash size={16} />
             </ActionIcon>

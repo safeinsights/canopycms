@@ -472,8 +472,8 @@ describe('Settings menu', () => {
   it.each([
     ['Media library', 'settings-menu-media-library'],
     ['System health', 'settings-menu-system-health'],
-    ['Manage Permissions', 'settings-menu-permissions'],
-    ['Manage Groups', 'settings-menu-groups'],
+    ['Manage permissions', 'settings-menu-permissions'],
+    ['Manage groups', 'settings-menu-groups'],
   ])(
     'returns focus to the Settings button when %s is closed with Escape',
     async (_name, itemTestId) => {

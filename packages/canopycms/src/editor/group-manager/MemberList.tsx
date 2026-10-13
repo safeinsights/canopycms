@@ -1,28 +1,18 @@
 'use client'
 
 import React from 'react'
-import {
-  ActionIcon,
-  Badge,
-  Button,
-  Group,
-  Loader,
-  Paper,
-  Stack,
-  Text,
-  TextInput,
-} from '@mantine/core'
-import { IconSearch, IconX } from '@tabler/icons-react'
+import { Button, Group, Loader, Paper, Stack, Text, TextInput } from '@mantine/core'
+import { IconSearch } from '@tabler/icons-react'
 import type { UserSearchResult, CanopyGroupId, CanopyUserId } from './types'
 import { UserBadge } from '../components/UserBadge'
-import { personName } from '../../auth/person-name'
 
 export interface MemberListProps {
   groupId: CanopyGroupId
   members: CanopyUserId[]
   onRemoveMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
   onAddMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
-  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** Names each member; an id never shows as the label, since an unresolved one reads "Name unavailable". */
+  onGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
   showUserSearch: boolean
   searchQuery: string
   searchResults: UserSearchResult[]
@@ -62,42 +52,20 @@ export const MemberList: React.FC<MemberListProps> = ({
       </Text>
       <Group gap="xs" mb="xs">
         {members.length > 0 ? (
-          members.map((userId) =>
-            onGetUserMetadata ? (
-              <UserBadge
-                key={userId}
-                userId={userId}
-                getUserMetadata={onGetUserMetadata}
-                variant="avatar-name"
-                size="xs"
-                badgeVariant="filled"
-                color="blue"
-                onRemove={() => onRemoveMember(groupId, userId)}
-                showEmailTooltip={true}
-                revealIdOnFallback
-              />
-            ) : (
-              <Badge
-                key={userId}
-                variant="filled"
-                color="blue"
-                pr={3}
-                rightSection={
-                  <ActionIcon
-                    size="xs"
-                    color="blue"
-                    radius="xl"
-                    variant="transparent"
-                    onClick={() => onRemoveMember(groupId, userId)}
-                  >
-                    <IconX size={10} style={{ color: 'var(--mantine-color-white)' }} />
-                  </ActionIcon>
-                }
-              >
-                {userId}
-              </Badge>
-            ),
-          )
+          members.map((userId) => (
+            <UserBadge
+              key={userId}
+              userId={userId}
+              getUserMetadata={onGetUserMetadata}
+              variant="avatar-name"
+              size="xs"
+              badgeVariant="filled"
+              color="blue"
+              onRemove={() => onRemoveMember(groupId, userId)}
+              showEmailTooltip={true}
+              revealIdOnFallback
+            />
+          ))
         ) : (
           <Text size="xs" c="dimmed">
             No members
@@ -105,7 +73,6 @@ export const MemberList: React.FC<MemberListProps> = ({
         )}
       </Group>
 
-      {/* Add member search panel */}
       {showUserSearch ? (
         <Paper withBorder p="sm" mt="xs">
           <Stack gap="xs">
@@ -132,31 +99,14 @@ export const MemberList: React.FC<MemberListProps> = ({
                     style={{ cursor: 'pointer' }}
                     onClick={() => handleAddMember(user.id)}
                   >
-                    {onGetUserMetadata ? (
-                      <UserBadge
-                        userId={user.id}
-                        getUserMetadata={onGetUserMetadata}
-                        variant="full"
-                        size="sm"
-                        cachedUser={user}
-                        showEmailTooltip={false}
-                      />
-                    ) : (
-                      <>
-                        {personName(user.id, user.name) ? (
-                          <Text size="sm" fw={500}>
-                            {personName(user.id, user.name)}
-                          </Text>
-                        ) : (
-                          <Text size="sm" c="dimmed" fs="italic">
-                            Name unavailable
-                          </Text>
-                        )}
-                        <Text size="xs" c="dimmed">
-                          {user.email}
-                        </Text>
-                      </>
-                    )}
+                    <UserBadge
+                      userId={user.id}
+                      getUserMetadata={onGetUserMetadata}
+                      variant="full"
+                      size="sm"
+                      cachedUser={user}
+                      showEmailTooltip={false}
+                    />
                   </Paper>
                 ))}
               </Stack>
@@ -178,7 +128,7 @@ export const MemberList: React.FC<MemberListProps> = ({
           onClick={onShowSearch}
           disabled={!canSearch}
         >
-          Add Member
+          Add member
         </Button>
       )}
     </div>

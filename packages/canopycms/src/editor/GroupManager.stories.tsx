@@ -7,7 +7,12 @@ import type { UserSearchResult } from '../auth/types'
 const meta: Meta<typeof GroupManager> = {
   title: 'Editor/GroupManager',
   component: GroupManager,
-  args: { opened: true, onClose: () => {} },
+  args: {
+    opened: true,
+    onClose: () => {},
+    // An id with no match reads "Name unavailable".
+    onGetUserMetadata: async (userId) => mockUserSearchResults.find((u) => u.id === userId) ?? null,
+  },
 }
 
 export default meta

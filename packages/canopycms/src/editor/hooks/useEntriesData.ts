@@ -17,7 +17,7 @@
 
 import { notifications } from '@mantine/notifications'
 import { MAX_ENTRIES_PER_PAGE } from '../../api/entries-constants'
-import type { CollectionItem, ListEntriesResponse } from '../../api/entries'
+import type { CollectionAccess, CollectionItem, ListEntriesResponse } from '../../api/entries'
 import type { ApiClient } from '../context'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import { buildEntriesFromListResponse } from '../editor-utils'
@@ -52,8 +52,13 @@ export interface FetchEntriesParams {
 export async function listAllEntries(
   apiClient: { entries: Pick<ApiClient['entries'], 'list'> },
   branch: string,
-): Promise<{ entries: CollectionItem[]; truncated: boolean }> {
+): Promise<{
+  entries: CollectionItem[]
+  truncated: boolean
+  collectionAccess: CollectionAccess[]
+}> {
   const byPath = new Map<string, CollectionItem>()
+  let collectionAccess: CollectionAccess[] = []
   let cursor: string | undefined
   for (let page = 0; page < MAX_ENTRY_PAGES; page++) {
     const result = await apiClient.entries.list({
@@ -65,12 +70,28 @@ export async function listAllEntries(
       throw new Error(`Refresh failed: ${result.status}${result.error ? ` — ${result.error}` : ''}`)
     const data = result.data as ListEntriesResponse
     for (const entry of data.entries) byPath.set(entry.logicalPath, entry)
+    collectionAccess = data.collectionAccess ?? collectionAccess
     if (!data.pagination?.hasMore || !data.pagination.cursor) {
-      return { entries: [...byPath.values()], truncated: false }
+      return { entries: [...byPath.values()], truncated: false, collectionAccess }
     }
     cursor = data.pagination.cursor
   }
-  return { entries: [...byPath.values()], truncated: true }
+  return { entries: [...byPath.values()], truncated: true, collectionAccess }
+}
+
+/** Marks each collection the listing says this user may not add an entry to. */
+function withAddAccess(
+  collections: EditorCollection[],
+  access: readonly CollectionAccess[],
+): EditorCollection[] {
+  if (access.length === 0) return collections
+  const canAdd = new Map(access.map((a) => [a.logicalPath as string, a.canAddEntry]))
+  const mark = (c: EditorCollection): EditorCollection => ({
+    ...c,
+    ...(canAdd.get(c.path) === false && { canAddEntry: false }),
+    ...(c.children && { children: c.children.map(mark) }),
+  })
+  return collections.map(mark)
 }
 
 /**
@@ -100,10 +121,13 @@ export async function fetchEntriesAndSchema(
   // Build editor collections from hydrated flatSchema
   // Dynamic import: lazy-load heavier editor config; only needed after API data arrives
   const { buildEditorCollections } = await import('../editor-config')
-  const collections = buildEditorCollections(hydratedFlatSchema)
-
   // Fetch ALL entries, following the pagination cursor
-  const { entries: allEntries, truncated } = await listAllEntries(apiClient, branch)
+  const {
+    entries: allEntries,
+    truncated,
+    collectionAccess,
+  } = await listAllEntries(apiClient, branch)
+  const collections = withAddAccess(buildEditorCollections(hydratedFlatSchema), collectionAccess)
   if (truncated) {
     console.warn(
       `Entry list truncated at ${MAX_ENTRY_PAGES * ENTRIES_PAGE_LIMIT} entries for branch "${branch}"`,

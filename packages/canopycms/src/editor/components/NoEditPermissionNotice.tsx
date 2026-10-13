@@ -27,7 +27,7 @@ export function NoEditPermissionNotice({ entryPath }: NoEditPermissionNoticeProp
     >
       <Text size="sm" c="dimmed">
         You don&apos;t have edit access to &quot;{entryPath}&quot;. Ask a CanopyCMS admin to grant
-        it in Manage Permissions.
+        it in &quot;Manage permissions&quot;.
       </Text>
     </div>
   )

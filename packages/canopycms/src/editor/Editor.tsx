@@ -166,6 +166,8 @@ export interface EditorCollection {
   entryTypes?: EditorEntryType[] // All entry types in this collection
   order?: readonly string[] // Embedded IDs for ordering entries and children
   children?: EditorCollection[]
+  /** False when this user's path permissions refuse a new entry here (the entries listing). */
+  canAddEntry?: boolean
 }
 
 export interface EditorProps {
@@ -1311,7 +1313,10 @@ const EditorContent: React.FC<EditorProps> = ({
       // A collection that holds only collections has no entry type to add (`entryTypes` is
       // undefined when its list is empty).
       const canAddEntry =
-        node.type !== 'entry' && !allUnavailable && (node.entryTypes?.length ?? 0) > 0
+        node.type !== 'entry' &&
+        !allUnavailable &&
+        (node.entryTypes?.length ?? 0) > 0 &&
+        node.canAddEntry !== false
 
       return {
         path: node.path,

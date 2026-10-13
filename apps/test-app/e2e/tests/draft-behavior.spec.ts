@@ -43,7 +43,7 @@ test.describe('Draft Behavior', () => {
       await editorPage.confirmDiscard(confirmDialog)
 
       // Verify notification appears
-      await expect(editorPage.notification('Draft cleared for file')).toBeVisible({
+      await expect(editorPage.notification('Draft cleared for')).toBeVisible({
         timeout: 5000,
       })
     })
