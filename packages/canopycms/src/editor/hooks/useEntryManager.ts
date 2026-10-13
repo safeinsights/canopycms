@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import type { WriteContentBody } from '../../api/content'
@@ -103,6 +103,18 @@ export interface UseEntryManagerReturn {
    * server's conflict check and revert whoever wrote that newer version).
    */
   getEntryVersion: (contentId: string) => number | undefined
+  /**
+   * Opens an entry a save reported gone (`ENTRY_GONE`) at its new path, found by content ID,
+   * which a rename keeps. Undefined if deleted; the list is then not refreshed, which would close
+   * the form holding its unsaved changes.
+   */
+  followMovedEntry: (entry: EditorEntry) => Promise<EditorEntry | undefined>
+  /**
+   * Creates `entry` again at its path from `value` (`expectedVersion: null`, so refused if the
+   * path is taken) and opens the new entry. An unanswered create counts as created when the list
+   * then shows it. Undefined when the list does not show it yet, or the branch changed.
+   */
+  recreateEntry: (entry: EditorEntry, value: FormValue) => Promise<EditorEntry | undefined>
   collectionByPath: Map<LogicalPath, EditorCollection>
   // Entry create modal state
   createModalOpen: boolean
@@ -194,6 +206,14 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   // Initialize with prop value or empty (URL sync happens in effect after mount)
   const [selectedPath, setSelectedPath] = useState<string>(options.initialSelectedId ?? '')
+  const selectedPathRef = useRef(selectedPath)
+  selectedPathRef.current = selectedPath
+  // Counts selections through the returned setter, not this hook's own fallbacks.
+  const selectionsByCallerRef = useRef(0)
+  const selectEntryPath = useCallback((path: string) => {
+    selectionsByCallerRef.current += 1
+    setSelectedPath(path)
+  }, [])
   const [navigatorOpen, setNavigatorOpen] = useState(() => readUrlEntry() === '')
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
@@ -417,6 +437,83 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       })
     }
     return normalizeContentPayload(result.data)
+  }
+
+  // The branch's entries as the server lists them now, without replacing the list on screen.
+  const listEntriesUncommitted = async (branch: string): Promise<EditorEntry[]> =>
+    (
+      await fetchEntriesAndSchema(apiClient, branch, {
+        resolvePreviewSrc: options.resolvePreviewSrc,
+      })
+    ).entries
+
+  // Commits a fresh list and opens what `pick` finds (returned either way), unless the user was
+  // off `fromPath` or chose another entry or branch since. Not judged after the refresh, which
+  // moves the selection off a vanished `fromPath` on its own.
+  const refreshAndOpen = async (
+    branch: string,
+    fromPath: string,
+    pick: (e: EditorEntry) => boolean,
+  ): Promise<EditorEntry | undefined> => {
+    const stillOnIt = selectedPathRef.current === fromPath
+    const selections = selectionsByCallerRef.current
+    const found = (await refreshEntries(branch)).find(pick)
+    if (!found || branch !== currentBranchRef.current) return undefined
+    if (stillOnIt && selections === selectionsByCallerRef.current) setSelectedPath(found.path)
+    return found
+  }
+
+  const followMovedEntry = async (entry: EditorEntry): Promise<EditorEntry | undefined> => {
+    const branch = options.branchName
+    const movedHere = (e: EditorEntry) => e.contentId === entry.contentId && e.path !== entry.path
+    if (!(await listEntriesUncommitted(branch)).some(movedHere)) return undefined
+    return refreshAndOpen(branch, entry.path, movedHere)
+  }
+
+  // After a create that landed, a failed refresh is "not listed yet", never a failed create.
+  const openCreated = (branch: string, fromPath: string, pick: (e: EditorEntry) => boolean) =>
+    refreshAndOpen(branch, fromPath, pick).catch((err: unknown) => {
+      console.error(err)
+      return undefined
+    })
+
+  const recreateEntry = async (
+    entry: EditorEntry,
+    value: FormValue,
+  ): Promise<EditorEntry | undefined> => {
+    if (!entry.collectionPath) {
+      throw new Error('Entry missing collectionPath')
+    }
+    const branch = options.branchName
+    const path = entry.slug ? `${entry.collectionPath}/${entry.slug}` : entry.collectionPath
+    const writeParams: { branch: string; path: string; entryType?: string } = { branch, path }
+    if (entry.entryType) writeParams.entryType = entry.entryType
+    // The new entry, not the gone one a lagging list may still show at that path.
+    const createdHere = (e: EditorEntry) => e.path === entry.path && e.contentId !== entry.contentId
+    let result: Awaited<ReturnType<typeof apiClient.content.write>>
+    try {
+      result = await apiClient.content.write(writeParams, {
+        ...(buildWritePayload(entry, value) as unknown as WriteContentBody),
+        expectedVersion: null,
+      })
+      if (isGatewayFailure(result)) throw new UnansweredError()
+    } catch (err) {
+      // An unanswered create may have landed: if the list now has a new entry at the path, it did.
+      if (!isUnanswered(err)) throw err
+      const listed = await listEntriesUncommitted(branch).catch(() => [])
+      if (!listed.some(createdHere)) throw err
+      const landed = await openCreated(branch, entry.path, createdHere)
+      // No answer, so no version: read it, as a draft moved onto the entry needs it as its base.
+      if (landed) await loadEntry(landed).catch(console.error)
+      return landed
+    }
+    if (!result.ok)
+      throw new SaveApiError(result.status, result.error, result.fieldErrors, result.code)
+    const created = await openCreated(branch, entry.path, createdHere)
+    if (created && typeof result.data?.version === 'number') {
+      entryVersionsRef.current.set(versionKey(branch, created.contentId), result.data.version)
+    }
+    return created
   }
 
   // Explicit reload: always issues a fresh, independent fetch (never
@@ -756,7 +853,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   return {
     selectedPath,
-    setSelectedPath,
+    setSelectedPath: selectEntryPath,
     entries: entriesState,
     setEntries,
     collections: collectionsState,
@@ -772,6 +869,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     readEntryValue,
     saveEntry,
     getEntryVersion,
+    followMovedEntry,
+    recreateEntry,
     collectionByPath: collectionByPath,
     createModalOpen,
     createModalCollection,

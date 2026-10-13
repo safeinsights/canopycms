@@ -141,6 +141,19 @@ describe('describeEditors', () => {
     ])
   })
 
+  it('drops a looked-up name that is blank or the id itself', async () => {
+    const lookup = async (id: string) => ({
+      id,
+      name: id === 'user_x' ? 'user_x' : ' ',
+      email: 'x@x.test',
+    })
+
+    expect(await describeEditors(['user_x', 'user_y'], lookup)).toEqual([
+      { userId: 'user_x', name: undefined, email: 'x@x.test' },
+      { userId: 'user_y', name: undefined, email: 'x@x.test' },
+    ])
+  })
+
   it('keeps just the id without a lookup, or when the lookup throws', async () => {
     expect(await describeEditors([jane.userId], undefined)).toEqual([{ userId: jane.userId }])
 

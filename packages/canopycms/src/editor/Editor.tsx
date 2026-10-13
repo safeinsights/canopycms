@@ -375,6 +375,8 @@ const EditorContent: React.FC<EditorProps> = ({
     readEntryValue,
     saveEntry,
     getEntryVersion,
+    followMovedEntry,
+    recreateEntry,
     createModalOpen,
     createModalCollection,
     createModalError,
@@ -461,6 +463,8 @@ const EditorContent: React.FC<EditorProps> = ({
     readEntryValue,
     saveEntry,
     getEntryVersion,
+    followMovedEntry,
+    recreateEntry,
     setBusy: setEntriesLoading,
     onSaved: () => {
       void refreshEntries(branchNameState).catch((err) =>
@@ -653,8 +657,7 @@ const EditorContent: React.FC<EditorProps> = ({
   )
   const schema = currentEntry?.schema ?? EMPTY_SCHEMA
 
-  // A field thread inside list items follows them by key, placed in its entry's value where that
-  // is at hand (on screen, a draft, a load); one whose item is gone shows on the entry.
+  // Field threads follow their items' keys, placed in their entry's value where it is at hand.
   const entryValue = (entry: EditorEntry): FormValue | undefined => {
     if (entry.path === currentEntry?.path) return displayValue
     // As `displayValue` would show it: read-only content shows its saved value, not a draft.
@@ -683,8 +686,7 @@ const EditorContent: React.FC<EditorProps> = ({
     branchContentLocked,
   ])
 
-  // A thread's stored path is where its items were when it was made, so a jump into another entry
-  // waits for that entry's value to place the thread before it goes to the field.
+  // A jump into another entry waits for its value to place the thread; the stored path may be stale.
   const [pendingFieldJump, setPendingFieldJump] = useState<{
     entryPath: string
     canopyPath: string
@@ -714,8 +716,7 @@ const EditorContent: React.FC<EditorProps> = ({
     else handleJumpToField(entryPath, placed?.canopyPath ?? canopyPath, threadId)
   }, [pendingFieldJump, selectedPath, currentEntry, displayValue, displayComments])
 
-  // A new field thread names the list items on its path by key. An item only the draft has is
-  // refused: discarding the draft would leave the thread on nothing.
+  // A thread on an item only the draft has is refused: a discard would leave it on nothing.
   const handleAddDisplayedComment: typeof handleAddComment = async (
     text,
     type,
@@ -1563,8 +1564,7 @@ const EditorContent: React.FC<EditorProps> = ({
                             onChange={(next) => {
                               const contentId = currentEntry?.contentId
                               if (contentId && !contentReadOnlyRef.current) {
-                                // Every list item keeps a key (`item-keys.ts`), whatever field
-                                // made it; the list operations mint their own.
+                                // Every list item keeps a key, whatever field made it.
                                 const keyed = withItemKeys(schema, next, 'random')
                                 setDrafts((prev) => ({ ...prev, [contentId]: keyed }))
                               }

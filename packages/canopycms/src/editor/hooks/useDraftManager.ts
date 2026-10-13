@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
@@ -11,8 +11,10 @@ import { validateEntryFormValue, type EntryFieldError } from '../../validation/e
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
+import type { ApiErrorCode } from '../../api/types'
 import { isUnanswered } from '../unanswered'
 import { withItemKeys } from '../../item-keys'
+import { RetryToastMessage } from '../components/RetryToastMessage'
 
 /** @internal Exported for tests. */
 export const SAVE_TIMED_OUT_MESSAGE =
@@ -25,6 +27,34 @@ export const SAVE_MAY_HAVE_LANDED_MESSAGE =
 const saveMayHaveLandedToastId = (contentId: string) => `canopy-save-may-have-landed:${contentId}`
 
 const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
+
+/** @internal Exported for tests. A save refused because the entry was deleted. */
+export const ENTRY_DELETED_MESSAGE =
+  'This entry was deleted since you opened it, so it was not saved. Your changes are still in the form until the content list next refreshes and closes it: choose "Save as new entry" to keep them.'
+
+/** @internal Exported for tests. A save refused because the entry was renamed; the editor has opened it. */
+export const ENTRY_RENAMED_MESSAGE =
+  'This entry was renamed since you opened it, so it was not saved. Your changes moved with it and are still in the form: save again to keep them.'
+
+/** @internal Exported for tests. "Save as new entry" refused because an entry, possibly the user's own earlier attempt, now holds the path. */
+export const RECREATE_TAKEN_MESSAGE =
+  "An entry with this entry's name already exists, perhaps from your own earlier attempt, so it was not saved as a new entry. Your changes are still in the form: copy what you want to keep into that entry."
+
+/** @internal Exported for tests. The save was refused as gone, and the check for a rename failed. */
+export const ENTRY_GONE_UNCHECKED_MESSAGE =
+  'This entry was deleted or renamed since you opened it, so it was not saved, and the editor could not check which. Your changes are still in the form until the content list next refreshes and closes it: copy what you want to keep.'
+
+/** @internal Exported for tests. "Save as new entry" landed, but the content list does not show it yet. */
+export const RECREATED_NOT_LISTED_MESSAGE =
+  "Saved as a new entry, but the content list doesn't show it yet. Reload the page in a moment to open it."
+
+/** @internal Exported for tests. "Save as new entry" got no answer. */
+export const RECREATE_TIMED_OUT_MESSAGE =
+  'Saving as a new entry may have gone through even though the server didn\'t answer. Choose "Save as new entry" to try again: if it went through, you\'ll be told an entry with this name already exists.'
+
+const entryGoneToastId = (contentId: string) => `canopy-entry-gone:${contentId}`
+
+const ENTRY_GONE_CODE = 'ENTRY_GONE' satisfies ApiErrorCode
 
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
 const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
@@ -143,6 +173,10 @@ export interface UseDraftManagerOptions {
    * Undo, no longer applies.
    */
   onDraftsReset?: (contentId?: string) => void
+  /** Finds an entry a save reported gone under its new name (useEntryManager's `followMovedEntry`). */
+  followMovedEntry?: (entry: EditorEntry) => Promise<EditorEntry | undefined>
+  /** Creates a deleted entry again from its draft (useEntryManager's `recreateEntry`). */
+  recreateEntry?: (entry: EditorEntry, value: FormValue) => Promise<EditorEntry | undefined>
 }
 
 /** The unsaved work a branch-level action would leave behind. `labels` names the entries (it may be shorter than `count`). */
@@ -225,6 +259,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // Entries whose timed-out save toast is up, taken down once a save, reload, discard or branch
   // switch ends it, or a retry is refused as having landed.
   const timedOutSavesRef = useRef(new Set<string>())
+  // Entries whose "deleted" toast is up, taken down once a save, reload, discard or branch switch
+  // ends it.
+  const goneEntriesRef = useRef(new Set<string>())
+  // Entries whose "Save as new entry" create is in flight, so a second activation sends none.
+  const recreatingRef = useRef(new Set<string>())
   // The draft ids the reconcile effect below has already accounted for. It
   // prunes on an observed present -> absent TRANSITION rather than on "not
   // currently in drafts": the restore effect stamps base versions for ids
@@ -354,6 +393,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // A timed-out save belongs to the branch it was sent to; content ids repeat across branches.
       for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
       timedOutSavesRef.current.clear()
+      for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
+      goneEntriesRef.current.clear()
       reconciledDraftIdsRef.current = new Set()
     }
     prevBranchRef.current = options.branchName
@@ -481,8 +522,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     return () => window.removeEventListener('beforeunload', warn)
   }, [leaveLosesWork])
 
-  // A draft stored before list items had keys gains the keys a read of its file gives them
-  // (`item-keys.ts`), so one left unchanged matches its entry again and drops out below.
+  // A draft stored before items had keys gains the ones a read gives, so an unchanged one drops.
   useEffect(() => {
     const keyed = new Map<string, FormValue>()
     for (const [id, draft] of Object.entries(drafts)) {
@@ -651,6 +691,95 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }
 
+  const hideEntryGone = (contentId: string) => {
+    if (goneEntriesRef.current.delete(contentId)) notifications.hide(entryGoneToastId(contentId))
+  }
+
+  /**
+   * Sticky: the form shows the changes only until the list next refreshes and closes it. Offers the
+   * deliberate create on the save's branch. Hidden first so a repeat is announced again.
+   */
+  const showEntryGone = (
+    entry: EditorEntry,
+    branch: string,
+    message = ENTRY_DELETED_MESSAGE,
+    offerCreate = true,
+  ) => {
+    goneEntriesRef.current.add(entry.contentId)
+    notifications.hide(entryGoneToastId(entry.contentId))
+    notifications.show({
+      id: entryGoneToastId(entry.contentId),
+      title: `"${entry.label}" not saved`,
+      message: offerCreate
+        ? createElement(RetryToastMessage, {
+            message,
+            actionLabel: 'Save as new entry',
+            onRetry: () => void recreateGoneEntry(entry, branch),
+          })
+        : message,
+      color: 'yellow',
+      autoClose: false,
+      withCloseButton: true,
+    })
+  }
+
+  /** "Save as new entry", once at a time, and only on its branch: after a switch the drafts are another branch's. */
+  const recreateGoneEntry = async (entry: EditorEntry, branch: string) => {
+    const id = entry.contentId
+    const onBranch = () => latestOptionsRef.current.branchName === branch
+    const inFlightKey = `${branch}:${id}`
+    if (recreatingRef.current.has(inFlightKey)) return
+    if (!onBranch()) {
+      notifications.hide(entryGoneToastId(id))
+      return
+    }
+    const { drafts: latestDrafts, loadedValues: latestLoaded } = latestRef.current
+    const value = latestDrafts[id] ?? latestLoaded[id]
+    const recreate = latestOptionsRef.current.recreateEntry
+    if (!value || !recreate) return
+    recreatingRef.current.add(inFlightKey)
+    hideEntryGone(id)
+    options.setBusy(true)
+    try {
+      const created = await recreate(entry, value)
+      if (!onBranch()) return
+      if (created) {
+        // The changes now live in the new entry, under a new content ID; edits made while the
+        // create was in flight follow it there.
+        setDrafts((prev) => {
+          if (!(id in prev)) return prev
+          const { [id]: latest, ...rest } = prev
+          return equal(latest, value) ? rest : { ...rest, [created.contentId]: latest }
+        })
+      }
+      notifications.show({
+        message: created ? 'Saved as a new entry' : RECREATED_NOT_LISTED_MESSAGE,
+        color: 'green',
+        autoClose: getNotificationDuration(created ? 4000 : 8000),
+        withCloseButton: true,
+      })
+    } catch (err) {
+      console.error(err)
+      if (!onBranch()) return
+      if (err instanceof SaveApiError && err.status === 409) {
+        showEntryGone(entry, branch, RECREATE_TAKEN_MESSAGE)
+      } else if (isUnanswered(err)) {
+        showEntryGone(entry, branch, RECREATE_TIMED_OUT_MESSAGE)
+      } else {
+        showEntryGone(
+          entry,
+          branch,
+          err instanceof SaveApiError && err.serverMessage
+            ? `It was not saved as a new entry: ${err.serverMessage}`
+            : 'It was not saved as a new entry. Your changes are still in the form.',
+        )
+      }
+    } finally {
+      recreatingRef.current.delete(inFlightKey)
+      options.setBusy(false)
+    }
+  }
+
   /**
    * How the selected entry's draft relates to the server version we hold.
    *
@@ -718,7 +847,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
 
   const handleSave = async () => {
-    if (!options.currentEntry || !effectiveValue || !currentId) return
+    const entry = options.currentEntry
+    const branch = options.branchName
+    if (!entry || !effectiveValue || !currentId) return
 
     if (currentId in reloadRequiredRef.current) {
       if (reloadRequiredRef.current[currentId] === options.getEntryVersion?.(currentId)) {
@@ -749,11 +880,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     // Client-side pre-save validation (ED-H1): the same pure schema rules the
     // server enforces authoritatively at the write boundary. Blocks the save
     // and surfaces per-field errors in the form instead of a green "Saved".
-    const validationErrors = validateEntryFormValue(
-      options.currentEntry.schema,
-      options.currentEntry.format,
-      effectiveValue,
-    )
+    const validationErrors = validateEntryFormValue(entry.schema, entry.format, effectiveValue)
     if (validationErrors.length > 0) {
       setErrorState({ entryId: currentId, errors: toFieldErrorMap(validationErrors) })
       notifications.show({
@@ -770,7 +897,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     options.setBusy(true)
     setSaveInFlight(true)
     try {
-      const saved = await options.saveEntry(options.currentEntry, effectiveValue)
+      const saved = await options.saveEntry(entry, effectiveValue)
       // Drop the draft now that it has been persisted, rather than
       // overwriting it with `saved`. `effectiveValue` is `drafts[currentId]
       // ?? loadedValues[currentId]`, and `loadedValues[currentId]` is about
@@ -789,6 +916,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       if (timedOutSavesRef.current.delete(currentId)) {
         notifications.hide(saveTimedOutToastId(currentId))
       }
+      hideEntryGone(currentId)
       notifications.show({
         message: 'Saved',
         color: 'green',
@@ -825,7 +953,40 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       ) {
         setErrorState({ entryId: currentId, errors: toFieldErrorMap(err.fieldErrors) })
       }
-      if (isConflict) {
+      if (isConflict && err.code === ENTRY_GONE_CODE) {
+        // Deleted or renamed since it was read, by someone else or by a delete or rename of this
+        // user's that got no answer. A retry cannot save it, so the timed-out toast's "save
+        // again" no longer applies. A rename keeps the content ID, so the entry is looked for
+        // under its new name, where the draft follows it.
+        if (timedOutSavesRef.current.delete(currentId)) {
+          notifications.hide(saveTimedOutToastId(currentId))
+        }
+        let moved: EditorEntry | undefined
+        let checked = true
+        try {
+          moved = await options.followMovedEntry?.(entry)
+        } catch (followErr) {
+          console.error(followErr)
+          checked = false
+        }
+        // A branch switch meanwhile cleared this branch's toasts; none of these belong on the next.
+        if (latestOptionsRef.current.branchName !== branch) return
+        if (moved) {
+          hideEntryGone(currentId)
+          notifications.show({
+            title: `"${entry.label}" not saved`,
+            message: ENTRY_RENAMED_MESSAGE,
+            color: 'yellow',
+            autoClose: getNotificationDuration(8000),
+            withCloseButton: true,
+          })
+        } else if (checked) {
+          showEntryGone(entry, branch)
+        } else {
+          // Deleted or renamed, but which is unknown, so a create could duplicate a renamed entry.
+          showEntryGone(entry, branch, ENTRY_GONE_UNCHECKED_MESSAGE, false)
+        }
+      } else if (isConflict) {
         // A version conflict on the retry of a save that went unanswered is most likely that
         // save having landed, which a reload settles just as for WRITE_OUTCOME_UNKNOWN.
         const ownSaveLanded =
@@ -844,7 +1005,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         }
       } else if (isUnanswered(err)) {
         // A save that did land moved the file's version, so the server refuses the retry as a
-        // conflict; a file since deleted or moved is the exception (`ContentStore.write`).
+        // conflict; a file since deleted or moved refuses it as gone (`ContentStore.write`).
         timedOutSavesRef.current.add(currentId)
         notifications.show({
           id: saveTimedOutToastId(currentId),
@@ -874,6 +1035,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const performDiscardDrafts = () => {
     for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
     timedOutSavesRef.current.clear()
+    for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
+    goneEntriesRef.current.clear()
     options.onDraftsReset?.()
     setDrafts({})
     setErrorState(null)
@@ -914,6 +1077,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const performDiscardFileDraft = () => {
     if (!currentId) return
     options.onDraftsReset?.(currentId)
+    hideEntryGone(currentId)
     setErrorState(null)
     setDrafts((prev) => {
       const next = { ...prev }
@@ -978,6 +1142,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       if (timedOutSavesRef.current.delete(currentId)) {
         notifications.hide(saveTimedOutToastId(currentId))
       }
+      hideEntryGone(currentId)
       setLoadedValues((prev) => ({ ...prev, [currentId]: loaded }))
       // Drop the draft rather than seeding it with `loaded`. `effectiveValue`
       // falls back to `loadedValues`, so the rendered value is identical --

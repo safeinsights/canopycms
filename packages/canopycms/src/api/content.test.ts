@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { CONTENT_ROUTES } from './content'
+import { ENTRY_CHANGED_MESSAGE, ENTRY_GONE_MESSAGE } from './entries-constants'
 import type { ApiContext } from './types'
 import { unsafeAsBranchName, unsafeAsLogicalPath, unsafeAsSlug } from '../paths/test-utils'
 import { createMockApiContext } from '../test-utils'
@@ -86,6 +87,8 @@ vi.mock('../content-store', () => {
         this.conflictingPath = conflictingPath
       }
     },
+    // A real ContentConflictError subclass too, listed before the generic conflict mapping.
+    EntryGoneError: class EntryGoneError extends MockContentConflictError {},
     getDefaultEntryType: (entries: Array<{ default?: boolean }> | undefined) =>
       entries && entries.length > 0 ? entries.find((e) => e.default) || entries[0] : undefined,
   }
@@ -657,6 +660,192 @@ describe('content api', () => {
 
       expect(res.status).toBe(200)
       expect(writeSpy.mock.calls[0][2]).toEqual(expect.objectContaining({ expectedVersion: 42 }))
+    })
+  })
+
+  // An update (numeric expectedVersion) of an entry that is no longer on disk is refused, never
+  // re-created: only a create (`expectedVersion: null`) brings an entry back.
+  describe('update of an entry that is gone (ENTRY_GONE)', () => {
+    const gone = { ok: false, status: 409, error: ENTRY_GONE_MESSAGE, code: 'ENTRY_GONE' }
+
+    const mockStoreOnce = async (opts: {
+      exists: boolean
+      slug?: string
+      schema?: unknown[]
+      maxItems?: number
+      /** Marks the collection's only entry type unavailable, as a degraded schema resolve does. */
+      unavailable?: boolean
+      write?: ReturnType<typeof vi.fn>
+    }) => {
+      const { ContentStore } = await import('../content-store')
+      const writeSpy =
+        opts.write ?? vi.fn().mockResolvedValue({ collection: 'posts', format: 'json', data: {} })
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return {
+          resolvePath: vi.fn().mockReturnValue({
+            schemaItem: {
+              logicalPath: 'content/posts',
+              type: 'collection',
+              entries: [
+                {
+                  name: 'post',
+                  format: 'json',
+                  schema: opts.schema ?? [],
+                  maxItems: opts.maxItems,
+                  ...(opts.unavailable
+                    ? {
+                        unavailable: {
+                          reason: 'unknown-schema',
+                          schemaRef: 'postSchema',
+                          metaFile: 'posts/.collection.json',
+                        },
+                      }
+                    : {}),
+                },
+              ],
+            },
+            slug: opts.slug ?? 'hello',
+          }),
+          resolveDocumentPath: vi
+            .fn()
+            .mockReturnValue({ relativePath: `content/posts/${opts.slug ?? 'hello'}` }),
+          write: writeSpy,
+          idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+          documentExists: vi.fn().mockResolvedValue(opts.exists),
+          getExistingEntryType: vi.fn().mockResolvedValue(opts.exists ? 'post' : undefined),
+          countEntriesOfType: vi.fn().mockResolvedValue(opts.maxItems ?? 0),
+        } as never
+      })
+      return writeSpy
+    }
+    const write = (
+      body: {
+        format: 'json'
+        data: Record<string, unknown>
+        expectedVersion: number | null
+      },
+      entryType?: string,
+    ) =>
+      writeContent(
+        allowedCtx(),
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        {
+          branch: unsafeAsBranchName('feature/x'),
+          path: unsafeAsLogicalPath('posts/hello'),
+          ...(entryType ? { entryType } : {}),
+        },
+        body,
+      )
+
+    it('refuses an update whose file was deleted since the read, without calling store.write', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 })
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('reports a gone entry with a non-routable slug as gone, not as a 400 create refusal', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false, slug: 'my_post' })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 })
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('reports a gone entry as gone before maxItems and field validation judge it as a create', async () => {
+      const writeSpy = await mockStoreOnce({
+        exists: false,
+        maxItems: 1,
+        schema: [{ name: 'title', type: 'text', required: true }],
+      })
+
+      const res = await write({ format: 'json', data: {}, expectedVersion: 42 })
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('reports a gone entry as gone when its entryType names a type the collection lacks, not as a 400', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false })
+
+      const res = await write(
+        { format: 'json', data: { title: 'edit' }, expectedVersion: 42 },
+        'no-such-type',
+      )
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('reports a gone entry as gone when its entry type is unavailable, not as a schema error', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false, unavailable: true })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 })
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('still refuses a create naming a type the collection lacks with a 400', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false })
+
+      const res = await write({ format: 'json', data: {}, expectedVersion: null }, 'no-such-type')
+
+      expect(res).toEqual({ ok: false, status: 400, error: "Entry type 'no-such-type' not found" })
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('still refuses a write to an unavailable entry type for an entry that exists', async () => {
+      const writeSpy = await mockStoreOnce({ exists: true, unavailable: true })
+
+      await expect(
+        write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 }),
+      ).rejects.toBeInstanceOf(SchemaUnavailableError)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('maps store.write throwing EntryGoneError (file gone after the exists check) to the same 409', async () => {
+      const { EntryGoneError } = await import('../content-store')
+      const writeSpy = await mockStoreOnce({
+        exists: true,
+        write: vi.fn().mockRejectedValue(new EntryGoneError()),
+      })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 })
+
+      expect(writeSpy).toHaveBeenCalledTimes(1)
+      expect(res).toEqual(gone)
+    })
+
+    it('keeps a stale version on an existing file as the ordinary changed-since-opened conflict', async () => {
+      const { ContentConflictError } = await import('../content-store')
+      const writeSpy = await mockStoreOnce({
+        exists: true,
+        write: vi.fn().mockRejectedValue(new ContentConflictError()),
+      })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 41 })
+
+      expect(writeSpy).toHaveBeenCalledTimes(1)
+      expect(res).toEqual({ ok: false, status: 409, error: ENTRY_CHANGED_MESSAGE })
+      expect(res.code).toBeUndefined()
+    })
+
+    it('keeps a create of an existing slug as the create conflict, not as gone', async () => {
+      const writeSpy = await mockStoreOnce({ exists: true })
+
+      const res = await write({ format: 'json', data: {}, expectedVersion: null })
+
+      expect(res).toEqual({
+        ok: false,
+        status: 409,
+        error: 'An entry with slug "hello" already exists',
+      })
+      expect(res.code).toBeUndefined()
+      expect(writeSpy).not.toHaveBeenCalled()
     })
   })
 

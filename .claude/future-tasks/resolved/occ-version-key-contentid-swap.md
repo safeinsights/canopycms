@@ -28,7 +28,7 @@ before the fix, 409 + recreated content kept after), the `OCC token on save` blo
 
 Two adjacent issues found while verifying are filed separately:
 [draft-orphaned-by-contentid-swap.md](../draft-orphaned-by-contentid-swap.md) and
-[save-recreates-deleted-entry.md](../save-recreates-deleted-entry.md).
+[save-recreates-deleted-entry.md](save-recreates-deleted-entry.md).
 
 Found while fixing the branch-switch stale-mirror bug
 ([program-b-final-review-followups.md](program-b-final-review-followups.md),

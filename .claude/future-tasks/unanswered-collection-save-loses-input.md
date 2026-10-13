@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-12. An unanswered collection create or details save closes the collection dialog, so if the write did not land the user re-enters the name, label and every staged entry type. Keep the staged input and offer it on the next open, or put a restore action on the toast
+  New 2026-10-12. An unanswered collection create or details save closes the collection dialog, so if the write did not land the user re-enters the name, label and every staged entry type. docs/ux-guidelines.md now rules that a create closed after no answer prefills its dialog's next open; the details save follows the same pattern
 ---
 
 # An unanswered collection create or details save loses what was entered
@@ -27,15 +27,14 @@ entry type (about six fields each); a details save loses up to three fields. Tha
 guideline that errors keep the user's input (`docs/ux-guidelines.md`), which allows closing
 only because a retry could duplicate the write.
 
-## Fix direction
+## Fix
 
-- Keep the staged `CreateCollectionInput` (or the details update) in `Editor.tsx` and prefill
-  the dialog the next time "New collection" (or that collection's Edit) opens for the same
-  parent, with a way to discard it.
-- Or put a "Restore what you entered" action on the toast, which reopens the dialog with the
-  input. A toast with an action already pauses while hovered (`UndoToastMessage`).
-- Better still for create: after the content-tree refresh, look for a collection with that name
-  under that parent. If it is there, report success; if not, the restore offer above applies.
+[docs/ux-guidelines.md](../../docs/ux-guidelines.md#loading-empty-and-error-states) rules that a
+create closed after no answer prefills that dialog's next open with what was typed. Keep the
+staged `CreateCollectionInput` (or the details update) in `Editor.tsx` and prefill the dialog
+the next time "New collection" (or that collection's Edit) opens for the same parent, with a way
+to discard it. For create, first look for a collection with that name under that parent after
+the content-tree refresh: if it is there, report success instead.
 
 ## Done when
 

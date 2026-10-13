@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { ENTRY_CHANGED_MESSAGE } from './entries-constants'
+import { ENTRY_CHANGED_MESSAGE, ENTRY_GONE_MESSAGE } from './entries-constants'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import {
   BranchSyncingError,
@@ -8,6 +8,7 @@ import {
   ContentStoreError,
   ContentConflictError,
   DuplicateContentIdError,
+  EntryGoneError,
   UrlPathConflictError,
   getDefaultEntryType,
   type WriteInput,
@@ -100,8 +101,8 @@ export interface WriteContentBody {
   body?: string
   /**
    * OCC token. A number from a prior read/write response makes this an update,
-   * rejected with 409 if the file's mtime no longer matches (a file deleted
-   * since is written anew). `null` or omitted makes it
+   * rejected with 409 if the file's mtime no longer matches, or with 409 `ENTRY_GONE` if the
+   * file is gone (deleted or moved since the read). `null` or omitted makes it
    * a create, rejected with 409 if the entry already exists. There is no blind
    * write: without a token, "no conflict detection" would be indistinguishable
    * from "lost the token", so an update has to prove which version it read.
@@ -274,6 +275,13 @@ const storedMarkdownSafetyIssues = async (
   return findMarkdownSafetyIssues(fields, doc.format, data, siteAllow)
 }
 
+const entryGoneResponse = (): ApiResponse<never> => ({
+  ok: false,
+  status: 409,
+  error: ENTRY_GONE_MESSAGE,
+  code: 'ENTRY_GONE',
+})
+
 const writeContentHandler = async (
   gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
@@ -313,6 +321,12 @@ const writeContentHandler = async (
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
+
+  // Update guard: an update whose entry is gone is refused before anything below judges it,
+  // since its entry type can no longer be read off the file and every check that follows would
+  // treat it as a create. store.write() re-enforces it in-lock (EntryGoneError).
+  const exists = await store.documentExists(schemaItem.logicalPath, slug)
+  if (body.expectedVersion != null && !exists) return entryGoneResponse()
 
   // Authoritative schema validation at the write boundary (COMPOUND-2): the server re-checks
   // required fields, type/format correctness, and non-empty required references (rules shared
@@ -401,12 +415,10 @@ const writeContentHandler = async (
 
   const keptWarnings: EntryValidationIssue[] = []
   try {
-    const exists = await store.documentExists(schemaItem.logicalPath, slug)
-
     // Create guard: a create against a slug that already has content must never silently
     // overwrite it — short-circuit with 409 before field validation runs, so the error names the
     // real problem instead of "field is required" or a bare conflict. store.write() re-enforces
-    // this itself inside its per-entry lock against a fresh stat (the race-safe authoritative
+    // this itself inside its per-entry lock against a fresh open (the race-safe authoritative
     // check); this is just a cheaper fast path for the common case.
     if (expectedVersion === null && exists) {
       return { ok: false, status: 409, error: createConflictError }
@@ -682,8 +694,10 @@ const writeContentHandler = async (
       if (err instanceof UrlPathConflictError) {
         return { ok: false, status: 409, error: err.message }
       }
+      // Gone since the `exists` check above: deleted or moved between it and the in-lock open.
+      if (err instanceof EntryGoneError) return entryGoneResponse()
       // Race-safe fallback: the early `exists` check above catches the common case; this covers a
-      // collision that lands between that check and store.write()'s in-lock stat.
+      // collision that lands between that check and store.write()'s in-lock open.
       if (expectedVersion === null) {
         return { ok: false, status: 409, error: createConflictError }
       }

@@ -161,6 +161,7 @@ the dependency-free modules above.
 - `plugin.ts` — `AuthPlugin` interface (optional `getUsersMetadata`), `verifiesCredentials` marker, `assertAuthPluginAllowedForMode`
 - `user-metadata-lookup.ts` — `lookupUsersMetadata`: per-process cached, batched `/users` lookups; `lookupUserProfiles`, emailless
 - `types.ts` — `CanopyUser`, `AuthPluginConfig`, `AuthenticationResult`, `GroupMetadata`, `PermissionGroupOption`
+- `person-name.ts` — `personName`: no name when blank or the id
 - `context-helpers.ts` — auth context helpers, `extractHeaders` and `isCanopyRequest`
 - `caching-auth-plugin.ts` — `CachingAuthPlugin`, `AuthCacheProvider`, `TokenVerifier`: local token verify plus cached metadata
 - `file-based-auth-cache.ts` — `FileBasedAuthCache` reads the EFS JSON cache; `writeAuthCacheSnapshot` writes it atomically
@@ -211,12 +212,13 @@ The three access layers, reserved groups, and bootstrap admins are described in
 
 **Location**: `packages/canopycms-auth-clerk/src/`
 
-- `clerk-plugin.ts` — `ClerkAuthPlugin`, real JWT verification; resolves its secret lazily on first authenticated call
-- `jwt-verifier.ts` — `createClerkJwtVerifier`, networkless JWT-only verifier, deprecated in favour of `verifyTokenOnly()`
-- `cache-writer.ts` — `refreshClerkCache` populates the auth cache from the Clerk API
-- `ClerkSignIn.tsx` — `ClerkSignIn`, the editor's sign-in screen, re-exported from `canopycms-auth-clerk/client`
-- `skip-set-active-action.ts` — `useSkipClerkSetActiveAction`, skips `@clerk/nextjs`'s before-`setActive` Server Action while mounted; re-exported from `canopycms-auth-clerk/client`
-- `client.ts` — `useClerkAuthConfig` wires Clerk's `UserButton`, `ClerkSignIn` and sign-out into the editor
+- `clerk-plugin.ts` — `ClerkAuthPlugin`, real JWT verification; resolves its secret lazily
+- `jwt-verifier.ts` — `createClerkJwtVerifier`, deprecated for `verifyTokenOnly()`
+- `clerk-user.ts` — `toUserSearchResult`, shared with the cache writer
+- `cache-writer.ts` — `refreshClerkCache` populates the auth cache from Clerk
+- `ClerkSignIn.tsx` — `ClerkSignIn`, the editor's sign-in screen
+- `skip-set-active-action.ts` — `useSkipClerkSetActiveAction`, skips `@clerk/nextjs`'s before-`setActive` Server Action while mounted
+- `client.ts` — the `canopycms-auth-clerk/client` entry: `useClerkAuthConfig` wires Clerk's `UserButton`, `ClerkSignIn` and sign-out into the editor
 - `index.ts` — public exports
 
 ## Worker Module
