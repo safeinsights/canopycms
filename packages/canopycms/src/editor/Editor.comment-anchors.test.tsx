@@ -526,12 +526,27 @@ describe('an object list', () => {
       fireEvent.click(screen.getAllByTestId('object-list-add').at(-1)!)
       await waitFor(() => expect(screen.getByTestId('field-comment-team[3].name')).toBeTruthy())
 
-      await post('team[3].name', 'About the new item')
-
+      // The reason shows as soon as the box opens, before anything is typed.
+      fireEvent.click(await screen.findByTestId('field-comment-team[3].name'))
       const box = (await screen.findByTestId('new-thread-textarea')) as HTMLTextAreaElement
-      await waitFor(() => expect(screen.getByText(NEW_ITEM_COMMENT_MESSAGE)).toBeTruthy())
+      expect(screen.getByText(NEW_ITEM_COMMENT_MESSAGE)).toBeTruthy()
+
+      // A draft can still be typed; "Comment" says it can't act, and posts nothing.
+      fireEvent.change(box, { target: { value: 'About the new item' } })
+      const submit = screen.getByTestId('create-thread-button')
+      expect(submit.getAttribute('aria-disabled')).toBe('true')
+      fireEvent.click(submit)
+      await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
       expect(box.value).toBe('About the new item')
       expect(recorded.commentBodies).toEqual([])
+    })
+
+    it('shows no such reason on an item the saved entry has', async () => {
+      await open()
+      fireEvent.click(await screen.findByTestId('field-comment-team[2].name'))
+      await screen.findByTestId('new-thread-textarea')
+      expect(screen.queryByText(NEW_ITEM_COMMENT_MESSAGE)).toBeNull()
+      expect(screen.getByTestId('create-thread-button').getAttribute('aria-disabled')).toBeNull()
     })
   })
 
@@ -826,5 +841,54 @@ describe('jumping to a thread on another entry', () => {
       ).some((child) => (child as HTMLElement).style.outline.includes('solid'))
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(outline()).toBe(false)
+  })
+})
+
+describe('threads on another entry, in the comments panel', () => {
+  const card = (text: string): HTMLElement => {
+    const found = screen
+      .getAllByTestId('comment-thread')
+      .find((article) => within(article).queryByText(text))
+    if (!found) throw new Error(`no thread card says "${text}"`)
+    return found
+  }
+  const heading = (text: string) =>
+    within(card(text)).getByTestId('comment-thread-heading').textContent
+
+  it('names no item of an entry not loaded, since its stored index may be stale', async () => {
+    const stale = fieldThread('t-two', page, 'blocks[0].headline', ['k-b2'], 'Check Two')
+    stubApi([stale], { hello: teamData, landing: pageData })
+    renderEditor(team)
+    await loaded()
+
+    fireEvent.click(screen.getByTestId('comments-button'))
+    await waitFor(() => expect(heading('Check Two')).toBe('Field · landing › Sections › Headline'))
+  })
+
+  it('places a thread on an entry already loaded, marking one whose item is gone', async () => {
+    const gone = fieldThread('t-gone', team, 'team[0].name', ['k-gone'], 'Team gone')
+    const onPage = fieldThread('t-page', page, 'blocks[0].headline', ['k-b1'], 'On page')
+    stubApi([gone, onPage], { hello: teamData, landing: pageData })
+    renderEditor(team)
+    await loaded()
+
+    // Open the other entry by jumping to its thread; the first stays loaded.
+    fireEvent.click(screen.getByTestId('comments-button'))
+    const onPageCard = await waitFor(() => card('On page'))
+    fireEvent.click(within(onPageCard).getByRole('button', { name: 'Jump to field' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('field-comment-blocks[0].headline-popover')).toBeTruthy(),
+    )
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByTestId('field-comment-blocks[0].headline-popover')).toBeNull(),
+    )
+
+    fireEvent.click(screen.getByTestId('comments-button'))
+    await waitFor(() =>
+      expect(within(card('Team gone')).getByText('On a removed item')).toBeTruthy(),
+    )
+    expect(within(card('Team gone')).getByRole('button', { name: 'Jump to entry' })).toBeTruthy()
+    expect(heading('Team gone')).toBe('Field · hello › Team › Name, on a removed item')
   })
 })

@@ -653,29 +653,25 @@ const EditorContent: React.FC<EditorProps> = ({
   )
   const schema = currentEntry?.schema ?? EMPTY_SCHEMA
 
-  // A field thread inside list items follows them by key: the open entry's threads are shown at
-  // their items' places in the value on screen, and one whose item is gone, on the entry.
+  // A field thread inside list items follows them by key, placed in its entry's value where that
+  // is at hand (on screen, a draft, a load); one whose item is gone shows on the entry.
+  const entryValue = (entry: EditorEntry): FormValue | undefined =>
+    entry.path === currentEntry?.path
+      ? displayValue
+      : (drafts[entry.contentId] ?? loadedValues[entry.contentId])
   const displayComments = useMemo(() => {
-    if (!currentEntry || !displayValue) return comments
+    const byPath = new Map(entriesState.map((entry) => [entry.path as string, entry]))
     return comments.map((thread) => {
-      if (
-        thread.type !== 'field' ||
-        thread.entryPath !== currentEntry.path ||
-        !thread.canopyPath ||
-        !thread.itemKeys?.length
-      ) {
-        return thread
-      }
-      const path = resolveThreadPath(
-        currentEntry.schema,
-        displayValue,
-        thread.canopyPath,
-        thread.itemKeys,
-      )
+      const entry = thread.entryPath ? byPath.get(thread.entryPath) : undefined
+      const value = entry ? entryValue(entry) : undefined
+      if (thread.type !== 'field' || !thread.canopyPath || !thread.itemKeys?.length) return thread
+      if (!entry || !value) return thread
+      const path = resolveThreadPath(entry.schema, value, thread.canopyPath, thread.itemKeys)
       if (path === null) return { ...thread, onRemovedItem: true }
       return path === thread.canopyPath ? thread : { ...thread, canopyPath: path }
     })
-  }, [comments, currentEntry, displayValue])
+    // `entryValue` reads the open entry, its shown value, and the drafts and loads.
+  }, [comments, entriesState, currentEntry, displayValue, drafts, loadedValues])
 
   // A thread's stored path is where its items were when it was made, so a jump into another entry
   // waits for that entry's value to place the thread before it goes to the field.
@@ -729,27 +725,36 @@ const EditorContent: React.FC<EditorProps> = ({
     }
     const itemKeys = itemKeysOnPath(currentEntry.schema, displayValue, canopyPath)
     if (!itemKeys?.length) return handleAddComment(text, type, entryPath, canopyPath)
-    const saved = loadedValue
-      ? resolveThreadPath(currentEntry.schema, loadedValue, canopyPath, itemKeys)
-      : null
-    if (saved === null) throw new Error(NEW_ITEM_COMMENT_MESSAGE)
+    // The field's control says so before anyone types (`commentBlockedReason`); this is the backstop.
+    if (onUnsavedItem(itemKeys, canopyPath)) throw new Error(NEW_ITEM_COMMENT_MESSAGE)
     return handleAddComment(text, type, entryPath, canopyPath, undefined, itemKeys)
+  }
+  const onUnsavedItem = (itemKeys: string[], canopyPath: string): boolean =>
+    !currentEntry ||
+    !loadedValue ||
+    resolveThreadPath(currentEntry.schema, loadedValue, canopyPath, itemKeys) === null
+  const commentBlockedReason = (canopyPath: string): string | undefined => {
+    if (!currentEntry || !displayValue) return undefined
+    const itemKeys = itemKeysOnPath(currentEntry.schema, displayValue, canopyPath)
+    return itemKeys?.length && onUnsavedItem(itemKeys, canopyPath)
+      ? NEW_ITEM_COMMENT_MESSAGE
+      : undefined
   }
 
   const commentEntryLabel = (entryPath: string) =>
     entriesState.find((e) => e.path === entryPath)?.label
   // Only the open entry's value is at hand; for another entry the breadcrumb falls back to its
   // schema's field labels.
-  // A removed item's thread is named by the schema alone, without its items: no item holds its
-  // path any more.
-  const commentFieldLabel = (entryPath: string, canopyPath: string, onRemovedItem?: boolean) => {
-    const entry = entriesState.find((e) => e.path === entryPath)
-    if (!entry) return undefined
-    if (onRemovedItem) {
-      return fieldBreadcrumb(entry.schema, undefined, canopyPath, { items: false }).join(' › ')
-    }
-    const value = entry.path === currentEntry?.path ? displayValue : undefined
-    return fieldBreadcrumb(entry.schema, value, canopyPath).join(' › ')
+  // Items are named only where a value placed the thread; otherwise its indexes may be stale.
+  const commentFieldLabel = (thread: CommentThread) => {
+    const entry = entriesState.find((e) => e.path === thread.entryPath)
+    if (!entry || !thread.canopyPath) return undefined
+    const value = entryValue(entry)
+    const placed = !!value && !thread.onRemovedItem
+    const items = placed || !thread.itemKeys?.length
+    return fieldBreadcrumb(entry.schema, placed ? value : undefined, thread.canopyPath, {
+      items,
+    }).join(' › ')
   }
 
   // Gated on `loadedValues[contentId]` (not `drafts[contentId]`) so a
@@ -1536,6 +1541,7 @@ const EditorContent: React.FC<EditorProps> = ({
                             value={displayValue}
                             readOnly={contentReadOnly}
                             onRemoved={handleFieldRemoved}
+                            commentBlockedReason={commentBlockedReason}
                             onGetUserMetadata={getCommentUserMetadata}
                             header={{
                               title: currentEntry.label,

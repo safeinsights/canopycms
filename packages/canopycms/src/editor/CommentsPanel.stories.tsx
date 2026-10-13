@@ -113,7 +113,7 @@ export const Default: Story = {
     },
     onClose: () => console.log('Close panel'),
     entryLabel: (entryPath) => entryLabels[entryPath],
-    fieldLabel: (_entryPath, canopyPath) => fieldLabels[canopyPath],
+    fieldLabel: (thread) => fieldLabels[thread.canopyPath ?? ''],
   },
 }
 
@@ -240,6 +240,6 @@ export const HumanLabels: Story = {
       },
     ],
     entryLabel: (entryPath) => entryLabels[entryPath],
-    fieldLabel: (_entryPath, canopyPath) => fieldLabels[canopyPath],
+    fieldLabel: (thread) => fieldLabels[thread.canopyPath ?? ''],
   },
 }

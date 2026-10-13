@@ -25,7 +25,10 @@ summary: >-
    duplicates an item copies its `_key`. The draft setter keeps the first item holding a key, so
    a copy inserted ABOVE its original takes the original's key and its comment threads. Exporting
    `withFreshItemKeys` and `mintItemKey` would let a renderer do it right, but that adds public
-   API, so it needs approval.
+   API, so it needs approval. A renderer that rebuilds items without `_key` (`items.map((i) => ({ title: i.title }))`)
+   gets a new random key on every change, so their threads read as on a removed item and keyed
+   YAML comments on them are dropped. Keeping the previous key for an item at the same index that
+   arrives without one would cover that.
 3. **Dead path-matching code.** `useCommentSystem`'s `activeThreads`/`activeCommentContext` and
    `CommentStore.getThreadsForField` match field threads by their stored `canopyPath`. That path
    is only where the thread's items were when it was made. Neither has a consumer outside tests,

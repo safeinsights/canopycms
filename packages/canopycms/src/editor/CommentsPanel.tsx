@@ -15,6 +15,7 @@ import {
   Title,
   Switch,
   Tooltip,
+  VisuallyHidden,
 } from '@mantine/core'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
@@ -60,15 +61,8 @@ export interface CommentsPanelProps {
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** An entry's title for a thread's heading; without an answer the heading shows its path. */
   entryLabel?: (entryPath: string) => string | undefined
-  /**
-   * A field's breadcrumb for a thread's heading; without an answer the heading shows its path.
-   * `onRemovedItem`: the thread's item was removed, so no item's content names it.
-   */
-  fieldLabel?: (
-    entryPath: string,
-    canopyPath: string,
-    onRemovedItem?: boolean,
-  ) => string | undefined
+  /** A field thread's breadcrumb for its heading; without an answer the heading shows its path. */
+  fieldLabel?: (thread: CommentThread) => string | undefined
 }
 
 /**
@@ -166,10 +160,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     const kind = THREAD_KIND_LABELS[thread.type]
     if (!thread.entryPath) return kind
     const entry = entryLabel?.(thread.entryPath) ?? thread.entryPath
-    const field = thread.canopyPath
-      ? (fieldLabel?.(thread.entryPath, thread.canopyPath, thread.onRemovedItem) ??
-        thread.canopyPath)
-      : undefined
+    const field = thread.canopyPath ? (fieldLabel?.(thread) ?? thread.canopyPath) : undefined
     return `${kind} · ${field ? `${entry} › ${field}` : entry}`
   }
 
@@ -267,6 +258,10 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         data-testid="comment-thread-heading"
                       >
                         {threadHeading(thread)}
+                        {/* The badge beside it is outside the heading, which names the article. */}
+                        {thread.onRemovedItem && (
+                          <VisuallyHidden>, {ON_REMOVED_ITEM.toLowerCase()}</VisuallyHidden>
+                        )}
                       </Text>
                       {thread.resolved && (
                         <Badge size="xs" color="green" variant="light">

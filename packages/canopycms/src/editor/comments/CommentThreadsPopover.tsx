@@ -58,6 +58,11 @@ export interface CommentThreadsPopoverProps {
   highlightThreadId?: string
   /** Names the field of a thread shown away from it, such as one on a removed item. */
   threadFieldLabel?: (thread: CommentThread) => string | undefined
+  /**
+   * Why a new thread can't be posted here yet, such as a field of an item only the draft has.
+   * Shown before anyone types; the box stays usable, so a draft survives until it can be posted.
+   */
+  composeBlockedReason?: string
   testId: string
 }
 
@@ -96,6 +101,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   onGetUserMetadata,
   highlightThreadId,
   threadFieldLabel,
+  composeBlockedReason,
   testId,
 }) => {
   const [opened, setOpened] = useState(false)
@@ -434,6 +440,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
           )}
           {sortedThreads.length === 0 || composing ? (
             <NewThreadComposer
+              blockedReason={composeBlockedReason}
               text={newThreadDraft}
               onTextChange={setNewThreadDraft}
               onSubmit={async (text) => {
@@ -496,7 +503,8 @@ const NewThreadComposer: React.FC<{
   onTextChange: (text: string) => void
   onSubmit: (text: string) => Promise<void>
   onCancel: () => void
-}> = ({ text, onTextChange: setText, onSubmit, onCancel }) => {
+  blockedReason?: string
+}> = ({ text, onTextChange: setText, onSubmit, onCancel, blockedReason }) => {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const boxRef = useRef<HTMLTextAreaElement>(null)
@@ -508,7 +516,7 @@ const NewThreadComposer: React.FC<{
   useRefocusAfterSubmit(submitting, boxRef)
 
   const submit = async () => {
-    if (!text.trim()) return
+    if (!text.trim() || blockedReason) return
     setSubmitting(true)
     setError(null)
     try {
@@ -521,6 +529,33 @@ const NewThreadComposer: React.FC<{
     }
   }
 
+  const button = (
+    <Button
+      size="compact-sm"
+      onClick={() => void submit()}
+      loading={submitting}
+      disabled={!text.trim()}
+      data-disabled={blockedReason ? true : undefined}
+      aria-disabled={blockedReason ? true : undefined}
+      data-testid="create-thread-button"
+    >
+      Comment
+    </Button>
+  )
+  // `aria-disabled` keeps it focusable for its reason; unblocked it isn't wrapped, since the Tooltip keeps Escape from the popover.
+  const commentButton = blockedReason ? (
+    <Tooltip
+      label={blockedReason}
+      events={{ hover: true, focus: true, touch: true }}
+      multiline
+      maw={280}
+    >
+      {button}
+    </Tooltip>
+  ) : (
+    button
+  )
+
   return (
     <Stack gap="xs">
       <Textarea
@@ -532,20 +567,13 @@ const NewThreadComposer: React.FC<{
         minRows={2}
         autosize
         disabled={submitting}
+        description={blockedReason}
         error={error ?? undefined}
         data-autofocus
         data-testid="new-thread-textarea"
       />
       <Group gap="xs">
-        <Button
-          size="compact-sm"
-          onClick={() => void submit()}
-          loading={submitting}
-          disabled={!text.trim()}
-          data-testid="create-thread-button"
-        >
-          Comment
-        </Button>
+        {commentButton}
         <Button
           size="compact-sm"
           variant="subtle"

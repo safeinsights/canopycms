@@ -48,6 +48,8 @@ export interface FieldWrapperProps {
   controlPlacement?: 'label' | 'corner'
   /** Changes with the entry or branch, which resets the popover, so a draft never posts elsewhere. */
   resetKey: string
+  /** Why a new thread can't be posted on this field yet (`CommentThreadsPopover`). */
+  commentBlockedReason?: string
 }
 
 const FIELD_SCOPE_ATTR = 'data-field-comments'
@@ -72,6 +74,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   onGetUserMetadata,
   controlPlacement = 'label',
   resetKey,
+  commentBlockedReason,
 }) => {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [pointerOn, setPointerOn] = useState(false)
@@ -88,6 +91,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
     () =>
       formComments?.register(canopyPath, {
         subject: fieldLabel,
+        blockedReason: commentBlockedReason,
         // A new object per request, so asking again while it is open still counts.
         open: (returnFocusTo) => {
           const field = wrapperRef.current
@@ -96,7 +100,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
         },
         element: () => wrapperRef.current,
       }),
-    [formComments, canopyPath, fieldLabel],
+    [formComments, canopyPath, fieldLabel, commentBlockedReason],
   )
 
   useEffect(() => {
@@ -132,6 +136,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
       onResolveThread={onResolveThread}
       onGetUserMetadata={onGetUserMetadata}
       highlightThreadId={highlightThreadId}
+      composeBlockedReason={commentBlockedReason}
       testId={`field-comment-${canopyPath}`}
     />
   )

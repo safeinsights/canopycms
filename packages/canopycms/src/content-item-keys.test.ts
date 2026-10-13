@@ -482,7 +482,7 @@ describe('a YAML or MD entry saved for the first time with keys', () => {
       {
         format: 'md',
         data: { ...read.data, title: 'Crew, edited' },
-        body: read.body ?? '',
+        body: 'body' in read && typeof read.body === 'string' ? read.body : '',
         expectedVersion: read.version,
       },
       'mdnote',

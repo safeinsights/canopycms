@@ -382,12 +382,18 @@ describe('a field thread whose list item was removed', () => {
     expect(within(menu).queryByTestId('form-comments-field-links[0].href')).toBeNull()
   })
 
-  it('leaves the menu with no count when it is the only thread', () => {
+  it('leaves the menu with no count when it is the only thread, and says where it is', async () => {
+    const user = userEvent.setup()
     renderForm({ comments: [removedThread('r1', 'links[0].href')] })
 
-    expect(screen.getByTestId('form-comments-menu-button').getAttribute('aria-label')).toBe(
-      'Field comments',
-    )
+    const menuButton = screen.getByTestId('form-comments-menu-button')
+    expect(menuButton.getAttribute('aria-label')).toBe('Field comments')
+    await user.click(menuButton)
+    const menu = await screen.findByTestId('form-comments-menu')
+    expect(
+      within(menu).getByText('1 comment is on a removed item, under "Comment on this entry".'),
+    ).toBeTruthy()
+    expect(within(menu).queryByText('No field has comments yet.')).toBeNull()
   })
 
   it('stays on the entry once resolved, and a resolved one is not counted', async () => {

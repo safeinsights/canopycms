@@ -190,6 +190,13 @@ describe('CommentsPanel', () => {
       renderPanel({ comments: [onItem, removed], onJumpToEntry, onJumpToField })
 
       expect(within(card('removed')).getByText('On a removed item')).toBeTruthy()
+      // The heading names the card, so it says so too, for a reader moving by article.
+      expect(within(card('removed')).getByTestId('comment-thread-heading').textContent).toMatch(
+        /, on a removed item$/,
+      )
+      expect(within(card('on-item')).getByTestId('comment-thread-heading').textContent).not.toMatch(
+        /removed/,
+      )
       expect(within(card('removed')).getByRole('button', { name: 'Jump to entry' })).toBeTruthy()
       expect(within(card('removed')).queryByRole('button', { name: 'Jump to field' })).toBeNull()
 
@@ -666,8 +673,8 @@ describe('CommentsPanel', () => {
       renderPanel({
         comments,
         entryLabel: (entryPath) => (entryPath === 'posts/hello' ? 'Blog post title' : undefined),
-        fieldLabel: (_entry, canopyPath) =>
-          canopyPath === 'blocks[0].title' ? 'Page sections › Hero › Heading' : undefined,
+        fieldLabel: (thread) =>
+          thread.canopyPath === 'blocks[0].title' ? 'Page sections › Hero › Heading' : undefined,
       })
 
       expect(headings()).toEqual([
