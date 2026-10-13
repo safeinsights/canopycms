@@ -46,6 +46,8 @@ export interface RouteMetadata {
   mockDataCasts?: MockDataCasts
   /** See `EndpointConfigBase['clientTimeout']`. */
   clientTimeout?: 'long' | 'none'
+  /** See `EndpointConfigBase['readOnly']`. */
+  readOnly?: true
 }
 
 /**
@@ -154,6 +156,11 @@ interface EndpointConfigBase<
    * `REQUEST_TIMEOUT_MS` in request-deadline.ts.
    */
   clientTimeout?: 'long' | 'none'
+  /**
+   * A non-GET endpoint that changes nothing, such as a lookup taking its input in a body. Its
+   * timeout then says to try again rather than that it may have gone through (`ApiTimeoutError`).
+   */
+  readOnly?: true
 }
 
 /** Config for an endpoint without guards */
@@ -214,6 +221,7 @@ export function defineEndpoint(config: any): RouteDefinition<any, any, any> {
     defaultMockData: config.defaultMockData,
     mockDataCasts: config.mockDataCasts,
     clientTimeout: config.clientTimeout,
+    readOnly: config.readOnly,
   })
 
   // Convert path template to pattern array for router

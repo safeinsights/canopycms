@@ -422,6 +422,7 @@ const batchGetUserMetadata = defineEndpoint({
   namespace: 'permissions',
   name: 'batchGetUserMetadata',
   method: 'POST',
+  readOnly: true,
   path: '/users/batch',
   body: batchGetUserMetadataBodySchema,
   bodyType: 'BatchGetUserMetadataBody',

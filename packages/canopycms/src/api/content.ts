@@ -921,6 +921,7 @@ const validateReferences = defineEndpoint({
   namespace: 'content',
   name: 'validateReferences',
   method: 'POST',
+  readOnly: true,
   path: '/:branch/validate-references/...path',
   params: validateReferencesParamsSchema,
   body: validateReferencesBodySchema,

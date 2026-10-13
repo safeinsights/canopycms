@@ -80,8 +80,13 @@ const HAND_WRITTEN_METHODS: Record<string, (route: RouteMetadata) => string> = {
       if (options?.filename) {
         formData.append('filename', options.filename)
       }
-      return this.request('${route.method}', '${route.path}', formData, ${timeoutClassLiteral(route)}, options)
+      return this.request('${route.method}', '${route.path}', formData, ${timeoutClassLiteral(route)}, options${readOnlyArg(route)})
     }`,
+}
+
+/** The trailing `request` argument marking a non-GET endpoint that changes nothing. */
+function readOnlyArg(route: RouteMetadata): string {
+  return route.readOnly && route.method !== 'GET' ? ', true' : ''
 }
 
 /** The endpoint's timeout class: its declared `clientTimeout`, else `standard`. */
@@ -115,7 +120,7 @@ function generateClientMethod(route: RouteMetadata): string {
 
   const pathExpr = hasParams ? `this.buildPath('${route.path}', params)` : `'${route.path}'`
   const bodyExpr = hasBody ? 'body' : 'undefined'
-  const requestCall = `this.request('${route.method}', ${pathExpr}, ${bodyExpr}, ${timeoutClassLiteral(route)}, options)`
+  const requestCall = `this.request('${route.method}', ${pathExpr}, ${bodyExpr}, ${timeoutClassLiteral(route)}, options${readOnlyArg(route)})`
 
   return `    /** ${route.method} ${route.path} */
     ${route.name}: (${args}): Promise<${route.responseTypeName}> => {
@@ -365,11 +370,13 @@ ${namespacesCode}
     path: string,
     body: unknown,
     timeout: RequestTimeoutClass,
-    options?: RequestOptions
+    options?: RequestOptions,
+    readOnly = method === 'GET'
   ): Promise<T> {
     return runWithDeadline((signal) => this.send<T>(method, path, body, signal), {
       method,
       path,
+      readOnly,
       timeoutMs: resolveTimeoutMs(timeout, options),
       signal: options?.signal,
     })

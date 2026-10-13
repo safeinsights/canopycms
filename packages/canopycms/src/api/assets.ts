@@ -435,6 +435,7 @@ const presignAsset = defineEndpoint({
   namespace: 'assets',
   name: 'presign',
   method: 'POST',
+  readOnly: true,
   path: '/assets/presign',
   body: presignAssetBodySchema,
   bodyType: 'PresignAssetBody',
