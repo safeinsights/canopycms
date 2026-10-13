@@ -39,6 +39,7 @@ import { entryLogicalPath, parseSlug, type LogicalPath, type Slug } from '../pat
 import type { BranchContextWithSchema } from '../types'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
+import { withItemKeys } from '../item-keys'
 import { findBodyFieldName } from '../utils/body-field'
 
 /**
@@ -553,8 +554,14 @@ const writeContentHandler = async (
   // left unnormalized, a save would freeze that snapshot into the file (resolution only
   // re-resolves plain ID strings), permanently severing the reference from its target. Idempotent:
   // a payload that already holds ID strings is unchanged.
+  //
+  // Every list item and block leaves a save keyed (`item-keys.ts`). A key sent is kept, so a
+  // thread naming it still finds its item; one missing is filled from the item's content, as a
+  // read fills one.
   const normalizedData =
-    requestData === undefined ? undefined : normalizeReferenceValues(fields, requestData)
+    requestData === undefined
+      ? undefined
+      : withItemKeys(fields, normalizeReferenceValues(fields, requestData), 'content')
   // Computed before the validateEntry hook and the entry-link scan too, not just the write, so
   // every consumer agrees on the same bytes — otherwise an adopter's hook could see a resolved
   // object while the file got an ID string, depending on whether the post came from the editor.

@@ -91,6 +91,54 @@ describe('InlineCommentThread', () => {
     )
   })
 
+  describe('a thread shown away from its field, on a removed item', () => {
+    const removed: CommentThread = { ...mockThread, itemKeys: ['k-gone'], onRemovedItem: true }
+    const renderThread = (thread: CommentThread, fieldLabel?: string) =>
+      render(
+        <InlineCommentThread
+          thread={thread}
+          onAddReply={vi.fn()}
+          onResolve={vi.fn()}
+          currentUserId="alice"
+          canResolve={true}
+          fieldLabel={fieldLabel}
+        />,
+        { wrapper: Wrapper },
+      )
+
+    it('shows the gray "On a removed item" badge beside Unresolved, and the field it was on', () => {
+      renderThread(removed, 'Team › Item 2 › Name')
+
+      expect(screen.getByText('On a removed item')).toBeTruthy()
+      expect(screen.getAllByText('Unresolved').length).toBeGreaterThan(0)
+      expect(screen.getByTestId('inline-comment-thread-field').textContent).toBe(
+        'Team › Item 2 › Name',
+      )
+      expect(screen.getByText('This needs improvement')).toBeTruthy()
+    })
+
+    it('shows neither the badge nor a field line for a thread on its item', () => {
+      renderThread(mockThread)
+
+      expect(screen.queryByText('On a removed item')).toBeNull()
+      expect(screen.queryByTestId('inline-comment-thread-field')).toBeNull()
+    })
+
+    it('shows the field line for a thread given a label, whether or not its item is gone', () => {
+      renderThread(mockThread, 'Title')
+
+      expect(screen.getByTestId('inline-comment-thread-field').textContent).toBe('Title')
+      expect(screen.queryByText('On a removed item')).toBeNull()
+    })
+
+    it('keeps the badge on a resolved thread', () => {
+      renderThread({ ...removed, resolved: true })
+
+      expect(screen.getByText('On a removed item')).toBeTruthy()
+      expect(screen.getAllByText('Resolved').length).toBeGreaterThan(0)
+    })
+  })
+
   it('renders all comments in thread', () => {
     render(
       <InlineCommentThread

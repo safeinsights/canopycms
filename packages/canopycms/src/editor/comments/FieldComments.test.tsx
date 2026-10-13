@@ -336,6 +336,79 @@ describe('entry comments', () => {
   })
 })
 
+describe('a field thread whose list item was removed', () => {
+  /** The editor marks it so: its item is gone from the value the form shows. */
+  const removedThread = (id: string, canopyPath: string, opts: { resolved?: boolean } = {}) => ({
+    ...thread(id, canopyPath, { resolved: opts.resolved, text: `Comment in ${id}` }),
+    itemKeys: ['k-gone'],
+    onRemovedItem: true,
+  })
+
+  it('is listed with the entry threads, marked and named by the field it was on', async () => {
+    const user = userEvent.setup()
+    renderForm({ comments: [removedThread('r1', 'links[3].href')] })
+
+    const button = screen.getByTestId('entry-comment-button')
+    expect(button.getAttribute('aria-label')).toBe('Comment on this entry (1 open thread)')
+    await user.click(button)
+    const popover = await screen.findByTestId('entry-comment-button-popover')
+    const threads = within(popover).getAllByTestId('inline-comment-thread')
+    expect(threads).toHaveLength(1)
+    expect(within(threads[0]).getByText('Comment in r1')).toBeTruthy()
+    expect(within(threads[0]).getByText('On a removed item')).toBeTruthy()
+    // Named from the schema alone, without its item, since no item holds the path any more.
+    expect(within(threads[0]).getByTestId('inline-comment-thread-field').textContent).toBe(
+      'Links › Href',
+    )
+  })
+
+  it('shows on no field: not at its old path, and not in the field comments menu count', async () => {
+    const user = userEvent.setup()
+    renderForm({
+      comments: [removedThread('r1', 'links[0].href'), thread('t1', 'title')],
+    })
+
+    // The old path holds an item, which gets no thread control count from the removed one.
+    expect(control('links[0].href').getAttribute('aria-label')).toBe('Comment on Links › /a › Href')
+    expect(control('title').getAttribute('aria-label')).toBe('Comment on Title (1 open thread)')
+    const menuButton = screen.getByTestId('form-comments-menu-button')
+    expect(menuButton.getAttribute('aria-label')).toBe('Field comments (1 open thread)')
+    await user.click(menuButton)
+    const menu = await screen.findByTestId('form-comments-menu')
+    const withThreads = within(menu)
+      .getAllByRole('menuitem')
+      .filter((item) => item.dataset.testid?.startsWith('form-comments-field-'))
+    expect(withThreads.map((item) => item.textContent)).toEqual(['Title1 open thread'])
+    expect(within(menu).queryByTestId('form-comments-field-links[0].href')).toBeNull()
+  })
+
+  it('leaves the menu with no count when it is the only thread, and says where it is', async () => {
+    const user = userEvent.setup()
+    renderForm({ comments: [removedThread('r1', 'links[0].href')] })
+
+    const menuButton = screen.getByTestId('form-comments-menu-button')
+    expect(menuButton.getAttribute('aria-label')).toBe('Field comments')
+    await user.click(menuButton)
+    const menu = await screen.findByTestId('form-comments-menu')
+    expect(
+      within(menu).getByText('1 comment is on a removed item, under "Comment on this entry".'),
+    ).toBeTruthy()
+    expect(within(menu).queryByText('No field has comments yet.')).toBeNull()
+  })
+
+  it('stays on the entry once resolved, and a resolved one is not counted', async () => {
+    const user = userEvent.setup()
+    renderForm({ comments: [removedThread('r1', 'links[0].href', { resolved: true })] })
+
+    const button = screen.getByTestId('entry-comment-button')
+    expect(button.getAttribute('aria-label')).toBe('Comment on this entry')
+    await user.click(button)
+    const popover = await screen.findByTestId('entry-comment-button-popover')
+    expect(within(popover).getByText('On a removed item')).toBeTruthy()
+    expect(within(popover).getByText('Resolved')).toBeTruthy()
+  })
+})
+
 describe('field comment control, across field types and states', () => {
   let mockClient: MockApiClient
   beforeEach(async () => {

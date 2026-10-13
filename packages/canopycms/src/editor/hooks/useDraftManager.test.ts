@@ -19,6 +19,8 @@ import { ENTRY_CHANGED_MESSAGE, ENTRY_GONE_MESSAGE } from '../../api/entries-con
 import { UnansweredError } from '../unanswered'
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import type { EditorEntry } from '../Editor'
+import type { EntrySchema } from '../../config'
+import { withItemKeys } from '../../item-keys'
 import type { FormValue } from '../FormRenderer'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 
@@ -2951,6 +2953,111 @@ describe('useDraftManager', () => {
       expect(result.current.draftStorageFailed).toBe(true)
       expect(leaveIsGuarded()).toBe(true)
       warn.mockRestore()
+    })
+  })
+  describe('drafts stored before list items had keys', () => {
+    const teamSchema: EntrySchema = [
+      { name: 'title', type: 'string' },
+      {
+        name: 'team',
+        type: 'object',
+        list: true,
+        fields: [{ name: 'name', type: 'string' }],
+      },
+    ]
+    const teamEntry: EditorEntry = { ...mockEntry, schema: teamSchema }
+    const ID = 'abc123def456'
+    const teamOf = (...names: string[]) => names.map((name) => ({ name }))
+    /** What the server read gives the entry: every item keyed. */
+    const loaded = (...names: string[]) =>
+      withItemKeys(teamSchema, { title: 'Hello', team: teamOf(...names) }, 'content')
+    const storeDraft = (value: Record<string, unknown>) =>
+      window.localStorage.setItem(
+        'canopycms:drafts:main',
+        JSON.stringify({ v: 2, drafts: { [ID]: value }, baseVersions: { [ID]: 100 } }),
+      )
+    const options = { ...defaultOptions, currentEntry: teamEntry, entries: [teamEntry] }
+
+    it('drops a restored draft equal to the loaded value apart from keys', async () => {
+      storeDraft({ title: 'Hello', team: teamOf('A', 'B') })
+      const { result } = renderHook(() => useDraftManager(options))
+      await waitFor(() => expect(result.current.drafts[ID]).toBeDefined())
+
+      act(() => result.current.setLoadedValues({ [ID]: loaded('A', 'B') }))
+
+      await waitFor(() => expect(result.current.drafts[ID]).toBeUndefined())
+      expect(result.current.modifiedCount).toBe(0)
+      expect(result.current.isSelectedDirty()).toBe(false)
+      expect(result.current.editedFiles).toEqual([])
+      await waitFor(() => expect(readPersistedDrafts('main')[ID]).toBeUndefined())
+    })
+
+    it('keeps a restored draft that really differs, gaining the keys its unchanged items hold', async () => {
+      storeDraft({ title: 'Hello', team: teamOf('A', 'B, edited') })
+      const { result } = renderHook(() => useDraftManager(options))
+      await waitFor(() => expect(result.current.drafts[ID]).toBeDefined())
+      const base = loaded('A', 'B')
+
+      act(() => result.current.setLoadedValues({ [ID]: base }))
+
+      await waitFor(() => expect(result.current.modifiedCount).toBe(1))
+      const draftTeam = result.current.drafts[ID].team as Array<Record<string, unknown>>
+      const baseTeam = base.team as Array<Record<string, unknown>>
+      expect(draftTeam.map((t) => t.name)).toEqual(['A', 'B, edited'])
+      // The unchanged item has the key a read gives it; the edited one has a key of its own,
+      // as a read of the file with that edit would give it.
+      expect(draftTeam[0]._key).toBe(baseTeam[0]._key)
+      expect(typeof draftTeam[1]._key).toBe('string')
+      expect(draftTeam[1]._key).not.toBe(baseTeam[1]._key)
+      expect(result.current.isSelectedDirty()).toBe(true)
+    })
+
+    it('waits for the entry schema: a draft of an entry not yet known stays as stored', async () => {
+      storeDraft({ title: 'Hello', team: teamOf('A', 'B') })
+      const { result, rerender } = renderHook(
+        (props: { entries: EditorEntry[] }) => useDraftManager({ ...options, ...props }),
+        { initialProps: { entries: [] as EditorEntry[] } },
+      )
+      await waitFor(() => expect(result.current.drafts[ID]).toBeDefined())
+      expect(result.current.drafts[ID]).toEqual({ title: 'Hello', team: teamOf('A', 'B') })
+
+      rerender({ entries: [teamEntry] })
+
+      await waitFor(() => {
+        const team = result.current.drafts[ID].team as Array<Record<string, unknown>>
+        expect(team.every((t) => typeof t._key === 'string')).toBe(true)
+      })
+      act(() => result.current.setLoadedValues({ [ID]: loaded('A', 'B') }))
+      await waitFor(() => expect(result.current.drafts[ID]).toBeUndefined())
+    })
+
+    it('leaves a draft whose items already carry keys as it is', async () => {
+      const keyed = loaded('A', 'B')
+      storeDraft({ ...keyed, title: 'Edited' })
+      const { result } = renderHook(() => useDraftManager(options))
+      await waitFor(() => expect(result.current.drafts[ID]).toBeDefined())
+
+      expect(result.current.drafts[ID]).toEqual({ ...keyed, title: 'Edited' })
+      expect(result.current.drafts[ID].team).toEqual(keyed.team)
+    })
+
+    it('keeps the keys of a restored draft whose entry was renamed, which kept its content ID', async () => {
+      const keyed = loaded('A', 'B')
+      storeDraft({ ...keyed, title: 'Edited' })
+      const renamed: EditorEntry = {
+        ...teamEntry,
+        path: unsafeAsLogicalPath('content/posts/renamed'),
+        slug: 'renamed',
+      }
+      const { result } = renderHook(() =>
+        useDraftManager({ ...options, currentEntry: renamed, entries: [renamed] }),
+      )
+      await waitFor(() => expect(result.current.drafts[ID]).toBeDefined())
+
+      act(() => result.current.setLoadedValues({ [ID]: keyed }))
+
+      await waitFor(() => expect(result.current.modifiedCount).toBe(1))
+      expect(result.current.drafts[ID]).toEqual({ ...keyed, title: 'Edited' })
     })
   })
 })

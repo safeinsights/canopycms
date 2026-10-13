@@ -392,6 +392,39 @@ describe('findUnknownKeys', () => {
     ).toEqual([])
   })
 
+  it('never reports the `_key` of an object-list item, but still reports an unknown sibling', () => {
+    const listSchema: EntrySchema = [
+      {
+        name: 'cards',
+        type: 'object',
+        list: true,
+        fields: [{ name: 'label', type: 'string' }],
+      },
+    ]
+    expect(findUnknownKeys(listSchema, { cards: [{ _key: 'a1', label: 'One' }] })).toEqual([])
+    expect(
+      findUnknownKeys(listSchema, { cards: [{ _key: 'a1', label: 'One', href: '/one' }] }),
+    ).toEqual(['cards[0].href'])
+  })
+
+  it('never reports the `_key` of a block, in the canonical or the inline `_type` shape', () => {
+    expect(
+      findUnknownKeys(schema, {
+        ...validData,
+        blocks: [
+          { _key: 'b1', template: 'quote', value: { text: 'Hi' } },
+          { _key: 'b2', _type: 'quote', text: 'Hi' },
+        ],
+      }),
+    ).toEqual([])
+    expect(
+      findUnknownKeys(schema, {
+        ...validData,
+        blocks: [{ _key: 'b2', _type: 'quote', text: 'Hi', attribution: 'stale' }],
+      }),
+    ).toEqual(['blocks[0].attribution'])
+  })
+
   it('treats an inline group as transparent, reporting at the parent level', () => {
     const groupSchema: EntrySchema = [
       {

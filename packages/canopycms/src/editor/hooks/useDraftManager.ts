@@ -13,6 +13,7 @@ import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
 import type { ApiErrorCode } from '../../api/types'
 import { isUnanswered } from '../unanswered'
+import { withItemKeys } from '../../item-keys'
 import { RetryToastMessage } from '../components/RetryToastMessage'
 
 /** @internal Exported for tests. */
@@ -520,6 +521,22 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
   }, [leaveLosesWork])
+
+  // A pre-key draft gains the keys a read gives, so an unchanged one drops, if free of references.
+  useEffect(() => {
+    const keyed = new Map<string, FormValue>()
+    for (const [id, draft] of Object.entries(drafts)) {
+      const schema = entryById.get(id)?.schema
+      const next = schema ? withItemKeys(schema, draft, 'content') : draft
+      if (next !== draft) keyed.set(id, next)
+    }
+    if (keyed.size === 0) return
+    setDrafts((prev) => {
+      const next = { ...prev }
+      for (const [id, value] of keyed) if (prev[id] === drafts[id]) next[id] = value
+      return next
+    })
+  }, [drafts, entryById])
 
   // A draft equal to its entry's loaded value is not an edit. Drops it so it
   // neither counts as dirty nor lingers in storage.

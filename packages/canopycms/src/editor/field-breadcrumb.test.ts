@@ -96,7 +96,22 @@ describe('fieldBreadcrumb', () => {
 
   it('keeps raw names for segments the schema does not know', () => {
     expect(crumb('gone.child')).toEqual(['gone', 'child'])
-    expect(crumb('blocks[5].heading')).toEqual(['Page sections', 'Item 6', 'heading'])
+    expect(crumb('blocks[5].nowhere')).toEqual(['Page sections', 'Item 6', 'nowhere'])
+  })
+
+  it("finds a field of a block with no value in its templates' fields", () => {
+    expect(fieldBreadcrumb(fields, undefined, 'blocks[5].heading')).toEqual([
+      'Page sections',
+      'Item 6',
+      'Heading',
+    ])
+  })
+
+  it('leaves the item crumbs out when asked, for a path whose items are gone', () => {
+    const noItems = (path: string) => fieldBreadcrumb(fields, undefined, path, { items: false })
+    expect(noItems('blocks[5].heading')).toEqual(['Page sections', 'Heading'])
+    expect(noItems('links[3].label')).toEqual(['Links', 'Link text'])
+    expect(noItems('tags[2]')).toEqual(['Tags'])
   })
 
   it('never reads an inherited property as an image part', () => {

@@ -32,11 +32,14 @@ export interface EntryCommentsProps {
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Changes with the entry or branch, which resets the popover, so a draft never posts elsewhere. */
   resetKey: string
+  /** Names the field of a thread on a removed item, from its path. */
+  removedItemFieldLabel?: (canopyPath: string) => string
 }
 
 /**
  * The top of the form's comment actions: the "Field comments" menu, the keyboard route to
- * field comments, and "Comment on this entry" with the entry's threads.
+ * field comments, and "Comment on this entry" with the entry's threads. Those include the field
+ * threads whose list item or block was removed, which stay on the entry, marked.
  */
 export const EntryComments: React.FC<EntryCommentsProps> = ({
   comments,
@@ -48,9 +51,15 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
   highlightThreadId,
   onGetUserMetadata,
   resetKey,
+  removedItemFieldLabel,
 }) => {
   const entryThreads = useMemo(
-    () => comments.filter((t) => t.type === 'entry' && t.entryPath === entryPath),
+    () =>
+      comments.filter(
+        (t) =>
+          t.entryPath === entryPath &&
+          (t.type === 'entry' || (t.type === 'field' && t.onRemovedItem)),
+      ),
     [comments, entryPath],
   )
 
@@ -70,6 +79,11 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
         onResolveThread={onResolveThread}
         onGetUserMetadata={onGetUserMetadata}
         highlightThreadId={highlightThreadId}
+        threadFieldLabel={(thread) =>
+          thread.onRemovedItem && thread.canopyPath
+            ? (removedItemFieldLabel?.(thread.canopyPath) ?? thread.canopyPath)
+            : undefined
+        }
         testId="entry-comment-button"
       />
     </Group>

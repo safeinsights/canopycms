@@ -31,12 +31,15 @@ const labelOf = (field: FieldConfig): string => field.label ?? field.name
  * The human labels along a canopy path, for messages: `blocks[0].title` reads
  * `['Page sections', 'Hero', 'Heading']`. A block is named by its template's label and an
  * object-list item by its title (`listItemHeading`); a segment the schema doesn't know keeps its
- * raw name, so a stale path still reads.
+ * raw name, so a stale path still reads. A block whose template isn't known (no `value`, or an
+ * item that is gone) has its fields looked up in every template. `items: false` leaves the item
+ * crumbs out, for a path whose indexes no longer say which item it was.
  */
 export const fieldBreadcrumb = (
   fields: readonly FieldConfig[],
   value: unknown,
   path: string,
+  { items = true }: { items?: boolean } = {},
 ): string[] => {
   const crumbs: string[] = []
   let scope: readonly FieldConfig[] | undefined = fields
@@ -49,17 +52,18 @@ export const fieldBreadcrumb = (
       if (field?.type === 'block') {
         const block = isPlainRecord(item) ? item : {}
         const templateName = typeof block.template === 'string' ? block.template : undefined
-        const template = (field as BlockFieldConfig).templates.find((t) => t.name === templateName)
-        crumbs.push(template?.label ?? templateName ?? `Item ${segment + 1}`)
-        scope = template?.fields
+        const templates = (field as BlockFieldConfig).templates
+        const template = templates.find((t) => t.name === templateName)
+        if (items) crumbs.push(template?.label ?? templateName ?? `Item ${segment + 1}`)
+        scope = template ? template.fields : templates.flatMap((t) => t.fields)
         current = block.value
       } else if (field?.type === 'object') {
         const objectField = field as ObjectFieldConfig
-        crumbs.push(listItemHeading(item, objectField, segment))
+        if (items) crumbs.push(listItemHeading(item, objectField, segment))
         scope = objectField.fields
         current = item
       } else {
-        crumbs.push(`Item ${segment + 1}`)
+        if (items) crumbs.push(`Item ${segment + 1}`)
         scope = undefined
         current = item
       }

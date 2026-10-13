@@ -18,6 +18,8 @@ import { modKeyLabel } from '../platform'
 interface FieldCommentOpener {
   /** The field's breadcrumb, as its control names it. */
   subject: string
+  /** Why a new thread can't be posted on the field yet; the menu shows it beside the field. */
+  blockedReason?: string
   /** Opens the popover; `returnFocusTo` stands in for its opener unless a click closes it. */
   open: (returnFocusTo?: () => HTMLElement | null) => void
   /** The field's wrapper, which orders the menu as the form reads. */
@@ -132,10 +134,24 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
     noVersion,
   )
 
+  const onRemovedItems = useMemo(
+    () =>
+      comments.filter(
+        (t) => t.type === 'field' && t.entryPath === entryPath && t.onRemovedItem && !t.resolved,
+      ).length,
+    [comments, entryPath],
+  )
   const counts = useMemo(() => {
     const byPath = new Map<string, { open: number; total: number }>()
     for (const thread of comments) {
-      if (thread.type !== 'field' || thread.entryPath !== entryPath || !thread.canopyPath) continue
+      if (
+        thread.type !== 'field' ||
+        thread.entryPath !== entryPath ||
+        !thread.canopyPath ||
+        thread.onRemovedItem
+      ) {
+        continue
+      }
       const count = byPath.get(thread.canopyPath) ?? { open: 0, total: 0 }
       count.total += 1
       if (!thread.resolved) count.open += 1
@@ -253,7 +269,12 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
         mah="min(480px, 70vh)"
         style={{ overflowY: 'auto' }}
       >
-        <MenuItems formComments={formComments} counts={counts} openField={openField} />
+        <MenuItems
+          formComments={formComments}
+          counts={counts}
+          onRemovedItems={onRemovedItems}
+          openField={openField}
+        />
       </Menu.Dropdown>
     </Menu>
   )
@@ -263,8 +284,10 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
 const MenuItems: React.FC<{
   formComments: FormComments
   counts: Map<string, { open: number; total: number }>
+  /** This entry's open threads on a removed item, which no field lists. */
+  onRemovedItems: number
   openField: (opener: FieldCommentOpener) => void
-}> = ({ formComments, counts, openField }) => {
+}> = ({ formComments, counts, onRemovedItems, openField }) => {
   const allFields = formComments.fields()
   const withThreads = allFields.flatMap((field) => {
     const count = counts.get(field.canopyPath)
@@ -278,7 +301,9 @@ const MenuItems: React.FC<{
       <Menu.Label>Fields with comments</Menu.Label>
       {withThreads.length === 0 ? (
         <Text size="xs" c="dimmed" px="sm" pb="xs">
-          No field has comments yet.
+          {onRemovedItems > 0
+            ? `${onRemovedItems === 1 ? '1 comment is' : `${onRemovedItems} comments are`} on a removed item, under "Comment on this entry".`
+            : 'No field has comments yet.'}
         </Text>
       ) : (
         withThreads.map(({ field, open }) => (
@@ -305,6 +330,7 @@ const MenuItems: React.FC<{
           <Text size="sm" lineClamp={2}>
             Comment on {lastFocused.subject}
           </Text>
+          <BlockedReason opener={lastFocused} />
         </Menu.Item>
       )}
       {/* Every field, so one with nothing focusable of its own, such as a read-only toggle or
@@ -319,11 +345,20 @@ const MenuItems: React.FC<{
           <Text size="sm" lineClamp={2}>
             {field.subject}
           </Text>
+          <BlockedReason opener={field} />
         </Menu.Item>
       ))}
     </>
   )
 }
+
+/** A field's reason it can't take a new thread yet; its popover still opens, to draft one. */
+const BlockedReason: React.FC<{ opener: FieldCommentOpener }> = ({ opener }) =>
+  opener.blockedReason ? (
+    <Text size="xs" c="dimmed">
+      {opener.blockedReason}
+    </Text>
+  ) : null
 
 const noopSubscribe = () => () => {}
 const noVersion = (): number => 0

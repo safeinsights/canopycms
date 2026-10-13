@@ -5,6 +5,7 @@ import { IconPlus } from '@tabler/icons-react'
 
 import type { ObjectFieldConfig } from '../../config'
 import { isPlainRecord } from '../../validation/field-traversal'
+import { ITEM_KEY, mintItemKey, withFreshItemKeys } from '../../item-keys'
 import { formatCanopyPath } from '../canopy-path'
 import { useFieldCommentControl } from '../comments/field-comment-context'
 import { groupDescriptionProps } from './FieldDescription'
@@ -102,10 +103,11 @@ export const ObjectListField: React.FC<ObjectListFieldProps> = ({
             onChange(next)
           }}
           onDuplicate={(idx) =>
-            // Focus stays on the row's menu, which stands in for the item that acted.
+            // Focus stays on the row's menu, which stands in for the item that acted. The copy
+            // gets new keys, so no comment thread follows it.
             onChange([
               ...items.slice(0, idx + 1),
-              structuredClone(items[idx]),
+              withFreshItemKeys(field, structuredClone(items[idx])),
               ...items.slice(idx + 1),
             ])
           }
@@ -147,7 +149,7 @@ export const ObjectListField: React.FC<ObjectListFieldProps> = ({
               variant="light"
               size="xs"
               leftSection={<IconPlus size={14} aria-hidden />}
-              onClick={() => insertAt(items.length, {})}
+              onClick={() => insertAt(items.length, { [ITEM_KEY]: mintItemKey() })}
               data-testid="object-list-add"
             >
               Add {field.itemLabel ?? 'item'}

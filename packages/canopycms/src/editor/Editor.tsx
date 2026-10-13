@@ -104,6 +104,11 @@ import {
   type FieldRemoval,
 } from './undo-removal'
 import { formatCanopyPath } from './canopy-path'
+import { itemKeysOnPath, resolveThreadPath, withItemKeys } from '../item-keys'
+import {
+  ENTRY_NOT_LOADED_COMMENT_MESSAGE,
+  NEW_ITEM_COMMENT_MESSAGE,
+} from './comments/item-anchor-copy'
 import { findFieldTarget, focusFieldTarget } from './field-target'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
@@ -655,15 +660,116 @@ const EditorContent: React.FC<EditorProps> = ({
   )
   const schema = currentEntry?.schema ?? EMPTY_SCHEMA
 
+  // Field threads follow their items' keys, placed in their entry's value where it is at hand.
+  const entryValue = (entry: EditorEntry): FormValue | undefined => {
+    if (entry.path === currentEntry?.path) return displayValue
+    // As `displayValue` would show it: read-only content shows its saved value, not a draft.
+    const readOnly = branchContentLocked || entry.canEdit === false
+    return (readOnly ? undefined : drafts[entry.contentId]) ?? loadedValues[entry.contentId]
+  }
+  const displayComments = useMemo(() => {
+    const byPath = new Map(entriesState.map((entry) => [entry.path as string, entry]))
+    return comments.map((thread) => {
+      const entry = thread.entryPath ? byPath.get(thread.entryPath) : undefined
+      const value = entry ? entryValue(entry) : undefined
+      if (thread.type !== 'field' || !thread.canopyPath || !thread.itemKeys?.length) return thread
+      if (!entry || !value) return thread
+      const path = resolveThreadPath(entry.schema, value, thread.canopyPath, thread.itemKeys)
+      if (path === null) return { ...thread, onRemovedItem: true }
+      return path === thread.canopyPath ? thread : { ...thread, canopyPath: path }
+    })
+    // `entryValue` reads the open entry, its shown value, and the drafts and loads.
+  }, [
+    comments,
+    entriesState,
+    currentEntry,
+    displayValue,
+    drafts,
+    loadedValues,
+    branchContentLocked,
+  ])
+
+  // A jump into another entry waits for its value to place the thread; the stored path may be stale.
+  const [pendingFieldJump, setPendingFieldJump] = useState<{
+    entryPath: string
+    canopyPath: string
+    threadId: string
+  } | null>(null)
+  const jumpToThreadField = (entryPath: string, canopyPath: string, threadId: string) => {
+    if (entryPath === currentEntry?.path) {
+      handleJumpToField(entryPath, canopyPath, threadId)
+      return
+    }
+    setPendingFieldJump({ entryPath, canopyPath, threadId })
+    setSelectedPath(entryPath)
+  }
+  useEffect(() => {
+    if (!pendingFieldJump) return
+    if (selectedPath !== pendingFieldJump.entryPath) {
+      setPendingFieldJump(null)
+      return
+    }
+    if (currentEntry?.path !== pendingFieldJump.entryPath || !displayValue) return
+    const { entryPath, canopyPath, threadId } = pendingFieldJump
+    setPendingFieldJump(null)
+    const placed = displayComments.find((t) => t.id === threadId)
+    // A thread whose item is gone lives on its entry, not at the index it was made at.
+    if (placed?.onRemovedItem) handleJumpToEntry(entryPath, threadId)
+    else handleJumpToField(entryPath, placed?.canopyPath ?? canopyPath, threadId)
+  }, [pendingFieldJump, selectedPath, currentEntry, displayValue, displayComments])
+
+  // A thread on an item only the draft has is refused: a discard would leave it on nothing.
+  const handleAddDisplayedComment: typeof handleAddComment = async (
+    text,
+    type,
+    entryPath,
+    canopyPath,
+    threadId,
+  ) => {
+    if (
+      type !== 'field' ||
+      threadId ||
+      !canopyPath ||
+      !currentEntry ||
+      entryPath !== currentEntry.path ||
+      !displayValue
+    ) {
+      return handleAddComment(text, type, entryPath, canopyPath, threadId)
+    }
+    const itemKeys = itemKeysOnPath(currentEntry.schema, displayValue, canopyPath)
+    if (!itemKeys?.length) return handleAddComment(text, type, entryPath, canopyPath)
+    // The field's control says so before anyone types (`commentBlockedReason`); this is the backstop.
+    if (!loadedValue) throw new Error(ENTRY_NOT_LOADED_COMMENT_MESSAGE)
+    if (onUnsavedItem(itemKeys, canopyPath)) throw new Error(NEW_ITEM_COMMENT_MESSAGE)
+    return handleAddComment(text, type, entryPath, canopyPath, undefined, itemKeys)
+  }
+  const onUnsavedItem = (itemKeys: string[], canopyPath: string): boolean =>
+    !currentEntry ||
+    !loadedValue ||
+    resolveThreadPath(currentEntry.schema, loadedValue, canopyPath, itemKeys) === null
+  // Says nothing until the saved value is known, which is what tells a new item from a saved one.
+  const commentBlockedReason = (canopyPath: string): string | undefined => {
+    if (!currentEntry || !displayValue || !loadedValue) return undefined
+    const itemKeys = itemKeysOnPath(currentEntry.schema, displayValue, canopyPath)
+    return itemKeys?.length && onUnsavedItem(itemKeys, canopyPath)
+      ? NEW_ITEM_COMMENT_MESSAGE
+      : undefined
+  }
+
   const commentEntryLabel = (entryPath: string) =>
     entriesState.find((e) => e.path === entryPath)?.label
   // Only the open entry's value is at hand; for another entry the breadcrumb falls back to its
   // schema's field labels.
-  const commentFieldLabel = (entryPath: string, canopyPath: string) => {
-    const entry = entriesState.find((e) => e.path === entryPath)
-    if (!entry) return undefined
-    const value = entry.path === currentEntry?.path ? displayValue : undefined
-    return fieldBreadcrumb(entry.schema, value, canopyPath).join(' › ')
+  // Items are named only where a value placed the thread; otherwise its indexes may be stale.
+  const commentFieldLabel = (thread: CommentThread) => {
+    const entry = entriesState.find((e) => e.path === thread.entryPath)
+    if (!entry || !thread.canopyPath) return undefined
+    const value = entryValue(entry)
+    const placed = !!value && !thread.onRemovedItem
+    const items = placed || !thread.itemKeys?.length
+    return fieldBreadcrumb(entry.schema, placed ? value : undefined, thread.canopyPath, {
+      items,
+    }).join(' › ')
   }
 
   // Gated on `loadedValues[contentId]` (not `drafts[contentId]`) so a
@@ -1450,6 +1556,7 @@ const EditorContent: React.FC<EditorProps> = ({
                             value={displayValue}
                             readOnly={contentReadOnly}
                             onRemoved={handleFieldRemoved}
+                            commentBlockedReason={commentBlockedReason}
                             onGetUserMetadata={getCommentUserMetadata}
                             header={{
                               title: currentEntry.label,
@@ -1460,18 +1567,20 @@ const EditorContent: React.FC<EditorProps> = ({
                             onChange={(next) => {
                               const contentId = currentEntry?.contentId
                               if (contentId && !contentReadOnlyRef.current) {
-                                setDrafts((prev) => ({ ...prev, [contentId]: next }))
+                                // Every list item keeps a key, whatever field made it.
+                                const keyed = withItemKeys(schema, next, 'random')
+                                setDrafts((prev) => ({ ...prev, [contentId]: keyed }))
                               }
                             }}
                             customRenderers={customRenderers}
                             branch={branchNameState}
-                            comments={comments}
+                            comments={displayComments}
                             currentEntryPath={selectedPath}
                             currentUserId={commentUserId}
                             canResolve={canResolveAnyComment}
                             focusedFieldPath={focusedFieldPath}
                             highlightThreadId={highlightThreadId}
-                            onAddComment={handleAddComment}
+                            onAddComment={handleAddDisplayedComment}
                             onResolveThread={handleResolveThread}
                             fieldErrors={fieldErrors}
                             format={currentEntry.format}
@@ -1734,15 +1843,15 @@ const EditorContent: React.FC<EditorProps> = ({
               key={branchNameState}
               opened={commentsPanelOpen}
               branchName={branchNameState}
-              comments={comments}
+              comments={displayComments}
               canResolve={canResolveAnyComment}
               currentUserId={commentUserId}
               entryLabel={commentEntryLabel}
               fieldLabel={commentFieldLabel}
-              onAddComment={handleAddComment}
+              onAddComment={handleAddDisplayedComment}
               onResolveThread={handleResolveThread}
               onClose={() => setCommentsPanelOpen(false)}
-              onJumpToField={handleJumpToField}
+              onJumpToField={jumpToThreadField}
               onGetUserMetadata={getCommentUserMetadata}
               onJumpToEntry={handleJumpToEntry}
               onJumpToBranch={handleJumpToBranch}

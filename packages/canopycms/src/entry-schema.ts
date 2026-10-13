@@ -267,8 +267,16 @@ type SelectValue<F extends InferableField> = F extends {
     : SelectOptionValue<O[number]>
   : string
 
+/**
+ * The key a list item or block carries (`ITEM_KEY` in item-keys.ts), spelled out as `ImageValue`
+ * is. Every canopy read returns it; optional so data built by hand, such as a write, needn't.
+ */
+type ItemKeyed = { _key?: string }
+
 type ObjectValue<F extends InferableField & { fields: readonly InferableField[] }> =
-  F['list'] extends true ? Array<InferContentShape<F['fields']>> : InferContentShape<F['fields']>
+  F['list'] extends true
+    ? Array<InferContentShape<F['fields']> & ItemKeyed>
+    : InferContentShape<F['fields']>
 
 /**
  * Distributes over each member of a block-templates union to produce a discriminated union. The
@@ -279,7 +287,10 @@ type DistributeBlockTemplate<T> = T extends {
   name: infer N
   fields: infer Fields
 }
-  ? { template: N & string; value: InferContentShape<Extract<Fields, readonly InferableField[]>> }
+  ? {
+      template: N & string
+      value: InferContentShape<Extract<Fields, readonly InferableField[]>>
+    } & ItemKeyed
   : never
 
 type BlockValue<

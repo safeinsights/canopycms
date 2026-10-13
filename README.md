@@ -1856,7 +1856,7 @@ The base branch (the PR target, usually `main`) can never be submitted — a bra
 
 ### Using Comments
 
-Hover a field label and click the comment icon to add a field comment. Comments appear as badges on fields; click a badge to see the thread and add replies, and mark a comment resolved once it is addressed.
+Hover a field and click its comment icon to comment; a field with open threads shows their count. A comment inside a list item or block follows the item; one on a removed item stays on the entry.
 
 ### Managing Permissions (Admins)
 

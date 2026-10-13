@@ -1190,3 +1190,265 @@ describe('serializeFrontmatter keeps the source text of everything it did not ch
     )
   })
 })
+
+describe('serializeYaml follows a comment with a keyed list item', () => {
+  // The first item carries no comment: one above it belongs to the list, not to the item.
+  const keyed = `items:
+  - _key: ka
+    name: a
+    role: x
+  # about B -- do not delete
+  - _key: kb
+    name: b
+    role: y
+  # about C
+  - _key: kc
+    name: c
+    role: z
+`
+  const A = { _key: 'ka', name: 'a', role: 'x' }
+  const B = { _key: 'kb', name: 'b', role: 'y' }
+  const C = { _key: 'kc', name: 'c', role: 'z' }
+  const at = (out: string, text: string) => {
+    const index = out.indexOf(text)
+    // Presence first: an absent text gives -1, which would satisfy a position check.
+    expect(index).toBeGreaterThanOrEqual(0)
+    return index
+  }
+
+  it('moves each comment with its item when the list is reordered', () => {
+    const out = serializeYaml({ items: [C, A, B] }, keyed)
+
+    expect(at(out, '# about C')).toBeLessThan(at(out, '_key: kc'))
+    expect(at(out, '_key: kc')).toBeLessThan(at(out, '_key: ka'))
+    expect(at(out, '_key: ka')).toBeLessThan(at(out, '# about B -- do not delete'))
+    expect(at(out, '# about B -- do not delete')).toBeLessThan(at(out, '_key: kb'))
+  })
+
+  it('keeps the comment on an item edited in place, its key unchanged', () => {
+    const out = serializeYaml({ items: [A, { ...B, name: 'b, edited' }, C] }, keyed)
+
+    expect(at(out, '_key: ka')).toBeLessThan(at(out, '# about B -- do not delete'))
+    expect(at(out, '# about B -- do not delete')).toBeLessThan(at(out, 'name: b, edited'))
+    expect(at(out, 'name: b, edited')).toBeLessThan(at(out, '# about C'))
+  })
+
+  it('does not move the comment onto a different item that shifts into a removed item slot', () => {
+    // D shares `role: y` with B, the field evidence that would pair them if the keys did not
+    // decide: B is removed, and D lands on the index B held.
+    const D = { _key: 'kd', name: 'd', role: 'y' }
+
+    const out = serializeYaml({ items: [A, D, C] }, keyed)
+
+    expect(at(out, 'name: d')).toBeGreaterThan(at(out, '_key: ka'))
+    expect(out).not.toContain('do not delete')
+    expect(at(out, '# about C')).toBeGreaterThan(at(out, 'name: d'))
+    expect(at(out, '# about C')).toBeLessThan(at(out, '_key: kc'))
+  })
+
+  // The first save of a file that has no keys yet writes them all at once; an item still matches
+  // its un-keyed self, so a comment moves with it.
+  it('keeps the comment when the first save writes keys and reorders the list', () => {
+    const unkeyed = `items:
+  - name: a
+    role: x
+  # about B -- do not delete
+  - name: b
+    role: y
+`
+    const out = serializeYaml(
+      {
+        items: [
+          { _key: 'kb', name: 'b', role: 'y' },
+          { _key: 'ka', name: 'a', role: 'x' },
+        ],
+      },
+      unkeyed,
+    )
+
+    expect(out).toContain('# about B -- do not delete')
+    expect(yamlParse(out)).toEqual({
+      items: [
+        { _key: 'kb', name: 'b', role: 'y' },
+        { _key: 'ka', name: 'a', role: 'x' },
+      ],
+    })
+  })
+
+  it('keeps the comment when the first save writes keys without moving anything', () => {
+    const unkeyed = `items:
+  - name: a
+    role: x
+  # about B -- do not delete
+  - name: b
+    role: y
+`
+    const out = serializeYaml(
+      {
+        items: [
+          { name: 'a', role: 'x', _key: 'ka' },
+          { name: 'b', role: 'y', _key: 'kb' },
+        ],
+      },
+      unkeyed,
+    )
+
+    expect(out).toContain('# about B -- do not delete')
+    expect(out.indexOf('do not delete')).toBeLessThan(out.indexOf('name: b'))
+    expect(out.indexOf('do not delete')).toBeGreaterThan(out.indexOf('_key: ka'))
+  })
+
+  it('writes the keys of items that match their un-keyed selves', () => {
+    const unkeyed = `items:
+  - name: a
+  - name: b
+`
+    const data = {
+      items: [
+        { name: 'a', _key: 'ka' },
+        { name: 'b', _key: 'kb' },
+      ],
+    }
+    expect(yamlParse(serializeYaml(data, unkeyed))).toEqual(data)
+  })
+
+  it('writes the key of the copy left when the original is removed, not the original', () => {
+    // Duplicate, then Remove the original: the copy matches the original's un-keyed node.
+    const unkeyed = `team:
+  # about Ada
+  - name: Ada
+`
+    const data = { team: [{ name: 'Ada', _key: 'copy' }] }
+    const out = serializeYaml(data, unkeyed)
+    expect(yamlParse(out)).toEqual(data)
+    expect(out).toContain('# about Ada')
+  })
+
+  describe('the first keyed save of frontmatter that moves date-bearing items', () => {
+    const md = `---
+events:
+  # about A -- keep
+  - name: A
+    date: 2024-01-01
+  # about B -- keep
+  - name: B
+    date: 2024-02-01
+---
+
+Body.
+`
+    // As the API carries them: js-yaml reads a bare date as a Date, sent back as a timestamp.
+    const a = { name: 'A', date: '2024-01-01T00:00:00.000Z' }
+    const b = { name: 'B', date: '2024-02-01T00:00:00.000Z' }
+    const keyed = <T extends object>(item: T, key: string) => ({ ...item, _key: key })
+    const withoutKeyLines = (text: string) => text.replace(/\n *_key: k[ab]/g, '')
+
+    it.each([
+      ['reordered', [b, a]],
+      ['with the first item removed', [b]],
+    ])('writes what an un-keyed save would, plus the keys, when %s', (_, events) => {
+      const unkeyedOut = serializeFrontmatter('\nBody.\n', { events }, md, 'md')
+      const keyedEvents = events.map((e) => keyed(e, e === a ? 'ka' : 'kb'))
+      const out = serializeFrontmatter('\nBody.\n', { events: keyedEvents }, md, 'md')
+
+      expect(out).toContain('# about B -- keep')
+      expect(out).toContain('date: 2024-02-01\n')
+      expect(out).not.toContain('T00:00:00.000Z')
+      expect(withoutKeyLines(out)).toBe(unkeyedOut)
+      expect(matter(out).data.events.map((e: { _key: string }) => e._key)).toEqual(
+        keyedEvents.map((e) => e._key),
+      )
+    })
+  })
+
+  describe('a keyed frontmatter list whose neighbours share a bare date', () => {
+    const md = `---
+# page title
+title: Events
+date: 2024-03-03
+items:
+  - title: A
+    when: 2024-01-01
+    _key: ka
+  # about B
+  - title: B
+    when: 2024-01-01
+    _key: kb
+---
+
+Body.
+`
+    // As the API carries them: js-yaml reads a bare date as a Date, sent back as a timestamp.
+    const read = (title: string, key: string) => ({
+      title,
+      when: '2024-01-01T00:00:00.000Z',
+      _key: key,
+    })
+    const page = (items: unknown[]) => ({
+      title: 'Events',
+      date: '2024-03-03T00:00:00.000Z',
+      items,
+    })
+
+    it.each([
+      ['an item is removed and the next edited', [read('B, edited', 'kb')], 'B, edited'],
+      ['the items swap and one is edited', [read('B, edited', 'kb'), read('A', 'ka')], 'B, edited'],
+      ['a new item is inserted first', [read('N', 'kn'), read('A', 'ka'), read('B', 'kb')], 'A'],
+    ])('keeps the comments and the dates as written when %s', (_, items, kept) => {
+      const out = serializeFrontmatter('\nBody.\n', page(items), md, 'md')
+      expect(out).toContain('# page title')
+      expect(out).toContain('# about B')
+      expect(out).toContain('date: 2024-03-03\n')
+      // An item read before keeps its date as written, never a quoted or ISO rewrite.
+      expect(out).toContain(`title: ${kept}\n    when: 2024-01-01\n`)
+      expect(out).not.toMatch(/when: ['"]/)
+    })
+  })
+
+  it("moves an edited keyed item's comment with it, in a YAML file", () => {
+    const yaml = `items:
+  - name: a
+    _key: ka
+  # about B
+  - name: b
+    _key: kb
+`
+    const out = serializeYaml(
+      {
+        items: [
+          { name: 'b, edited', _key: 'kb' },
+          { name: 'a', _key: 'ka' },
+        ],
+      },
+      yaml,
+    )
+    expect(out.indexOf('# about B')).toBeLessThan(out.indexOf('b, edited'))
+    expect(out.indexOf('b, edited')).toBeLessThan(out.indexOf('name: a'))
+  })
+
+  it('keeps frontmatter comments on the first save that writes keys', () => {
+    const md = `---
+# keep: owned by legal
+title: Hello # inline note
+team:
+  # about Ada -- do not delete
+  - name: Ada
+  - name: Bo
+---
+
+Body.
+`
+    const data = {
+      title: 'Hello again',
+      team: [
+        { name: 'Ada', _key: 'ka' },
+        { name: 'Bo', _key: 'kb' },
+      ],
+    }
+    const out = serializeFrontmatter('\nBody.\n', data, md, 'md')
+    expect(out).toContain('# keep: owned by legal')
+    expect(out).toContain('# inline note')
+    expect(out).toContain('# about Ada -- do not delete')
+    expect(matter(out).data).toEqual(data)
+  })
+})

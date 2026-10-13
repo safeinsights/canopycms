@@ -225,6 +225,21 @@ const persistedDraft = (contentId: string): Record<string, unknown> | undefined 
     : undefined
 }
 
+/**
+ * The hrefs of the draft's `links`. Every item carries a `_key` the editor minted, so the items
+ * themselves are compared by what a person sees; the keys are checked to be present and distinct.
+ */
+const persistedHrefs = (contentId: string): string[] | undefined => {
+  const links = persistedDraft(contentId)?.links as
+    | Array<{ href: string; _key?: string }>
+    | undefined
+  if (!links) return undefined
+  const keys = links.map((link) => link._key)
+  expect(keys.every((key) => typeof key === 'string' && key.length > 0)).toBe(true)
+  expect(new Set(keys).size).toBe(keys.length)
+  return links.map((link) => link.href)
+}
+
 describe('admin surfaces', () => {
   it.each([
     ['an editor', [] as string[], false],
@@ -512,7 +527,7 @@ describe('Undo after Remove', () => {
     await loaded()
 
     await removeRow('/b')
-    await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
+    await waitFor(() => expect(persistedHrefs(hello.contentId)).toEqual(['/a']))
     fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
       target: { value: 'Edited after the removal' },
     })
@@ -525,7 +540,7 @@ describe('Undo after Remove', () => {
     await waitFor(() => {
       const draft = persistedDraft(hello.contentId)
       expect(draft?.title).toBe('Edited after the removal')
-      expect(draft?.links).toEqual([{ href: '/a' }, { href: '/b' }])
+      expect(persistedHrefs(hello.contentId)).toEqual(['/a', '/b'])
     })
     expect(notifications.hide).toHaveBeenCalledWith(toast.id)
   })
@@ -536,7 +551,7 @@ describe('Undo after Remove', () => {
     await loaded()
 
     await removeRow('/b')
-    await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
+    await waitFor(() => expect(persistedHrefs(hello.contentId)).toEqual(['/a']))
     const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
     // The toast's Undo button holds focus, as it does when a keyboard user presses it.
     const undo = message.getByRole('button', { name: /^Undo removing / })
@@ -555,13 +570,13 @@ describe('Undo after Remove', () => {
 
     await removeRow('/c')
     await removeRow('/a')
-    await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/b' }]))
+    await waitFor(() => expect(persistedHrefs(hello.contentId)).toEqual(['/b']))
     const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
     act(() => fireEvent.click(message.getByRole('button', { name: /^Undo removing / })))
 
     const restored = await screen.findByRole('group', { name: '/c' })
     await waitFor(() => expect(restored.contains(document.activeElement)).toBe(true))
-    expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/b' }, { href: '/c' }])
+    expect(persistedHrefs(hello.contentId)).toEqual(['/b', '/c'])
   })
 
   it('keeps focus on the named list after Remove, and holds the toast open only while it has focus', async () => {
@@ -616,7 +631,7 @@ describe('Undo is one-shot and ends with the draft', () => {
     renderEditor()
     await loaded()
     await removeSecondLink()
-    await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
+    await waitFor(() => expect(persistedHrefs(hello.contentId)).toEqual(['/a']))
 
     const message = render(<MantineProvider>{undoToastOf().message}</MantineProvider>)
     const undo = message.getByRole('button', { name: /^Undo removing / })
@@ -642,7 +657,7 @@ describe('Undo is one-shot and ends with the draft', () => {
     renderEditor()
     await loaded()
     await removeSecondLink()
-    await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
+    await waitFor(() => expect(persistedHrefs(hello.contentId)).toEqual(['/a']))
     const toast = undoToastOf()
 
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
@@ -670,7 +685,7 @@ describe('Undo is one-shot and ends with the draft', () => {
     renderEditor()
     await loaded()
     await removeSecondLink()
-    await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
+    await waitFor(() => expect(persistedHrefs(hello.contentId)).toEqual(['/a']))
     const toast = undoToastOf()
 
     fireEvent.click(screen.getByTestId('file-dropdown-button'))

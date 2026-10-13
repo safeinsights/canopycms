@@ -15,6 +15,7 @@ import {
   Title,
   Switch,
   Tooltip,
+  VisuallyHidden,
 } from '@mantine/core'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
@@ -24,6 +25,7 @@ import { RelativeTime } from './components/RelativeTime'
 import { ThreadReplyControls } from './comments/ThreadReplyControls'
 import { useTrackedWrites } from './comments/use-tracked-writes'
 import { CloseRefusedNotice } from './comments/CloseRefusedNotice'
+import { ON_REMOVED_ITEM } from './comments/item-anchor-copy'
 import { getErrorMessage } from '../utils/error'
 
 export interface CommentsPanelProps {
@@ -59,8 +61,8 @@ export interface CommentsPanelProps {
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** An entry's title for a thread's heading; without an answer the heading shows its path. */
   entryLabel?: (entryPath: string) => string | undefined
-  /** A field's breadcrumb for a thread's heading; without an answer the heading shows its path. */
-  fieldLabel?: (entryPath: string, canopyPath: string) => string | undefined
+  /** A field thread's breadcrumb for its heading; without an answer the heading shows its path. */
+  fieldLabel?: (thread: CommentThread) => string | undefined
 }
 
 /**
@@ -158,9 +160,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     const kind = THREAD_KIND_LABELS[thread.type]
     if (!thread.entryPath) return kind
     const entry = entryLabel?.(thread.entryPath) ?? thread.entryPath
-    const field = thread.canopyPath
-      ? (fieldLabel?.(thread.entryPath, thread.canopyPath) ?? thread.canopyPath)
-      : undefined
+    const field = thread.canopyPath ? (fieldLabel?.(thread) ?? thread.canopyPath) : undefined
     return `${kind} · ${field ? `${entry} › ${field}` : entry}`
   }
 
@@ -258,10 +258,19 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         data-testid="comment-thread-heading"
                       >
                         {threadHeading(thread)}
+                        {/* The badge beside it is outside the heading, which names the article. */}
+                        {thread.onRemovedItem && (
+                          <VisuallyHidden>, {ON_REMOVED_ITEM.toLowerCase()}</VisuallyHidden>
+                        )}
                       </Text>
                       {thread.resolved && (
                         <Badge size="xs" color="green" variant="light">
                           Resolved
+                        </Badge>
+                      )}
+                      {thread.onRemovedItem && (
+                        <Badge size="xs" color="gray" variant="light" c="var(--mantine-color-text)">
+                          {ON_REMOVED_ITEM}
                         </Badge>
                       )}
                     </Group>
@@ -270,6 +279,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                       {thread.type === 'field' &&
                         thread.entryPath &&
                         thread.canopyPath &&
+                        !thread.onRemovedItem &&
                         onJumpToField && (
                           <JumpButton
                             blocked={inFlight > 0}
@@ -282,14 +292,17 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                             Jump to field
                           </JumpButton>
                         )}
-                      {thread.type === 'entry' && thread.entryPath && onJumpToEntry && (
-                        <JumpButton
-                          blocked={inFlight > 0}
-                          onClick={() => jump(() => onJumpToEntry(thread.entryPath!, thread.id))}
-                        >
-                          Jump to entry
-                        </JumpButton>
-                      )}
+                      {/* A removed item's thread lives on its entry. */}
+                      {(thread.type === 'entry' || thread.onRemovedItem) &&
+                        thread.entryPath &&
+                        onJumpToEntry && (
+                          <JumpButton
+                            blocked={inFlight > 0}
+                            onClick={() => jump(() => onJumpToEntry(thread.entryPath!, thread.id))}
+                          >
+                            Jump to entry
+                          </JumpButton>
+                        )}
                       {thread.type === 'branch' && onJumpToBranch && (
                         <JumpButton
                           blocked={inFlight > 0}

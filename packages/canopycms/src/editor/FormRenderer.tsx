@@ -211,6 +211,8 @@ export interface FormRendererProps {
   header?: { title: string; typeLabel?: string }
   /** An entry-wide notice, shown first under the header. */
   notice?: React.ReactNode
+  /** Why a field can't take a new comment thread yet, such as one inside an unsaved item. */
+  commentBlockedReason?: (canopyPath: string) => string | undefined
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -235,6 +237,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   onGetUserMetadata,
   header,
   notice,
+  commentBlockedReason,
 }) => {
   const emit = readOnly ? noop : onChange
   const formRef = useRef<HTMLDivElement>(null)
@@ -313,7 +316,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             (thread) =>
               thread.type === 'field' &&
               thread.entryPath === currentEntryPath &&
-              thread.canopyPath === canopyPath,
+              thread.canopyPath === canopyPath &&
+              !thread.onRemovedItem,
           )
         : []
 
@@ -342,6 +346,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             canopyPath={canopyPath}
             entryPath={currentEntryPath}
             threads={fieldThreads}
+            commentBlockedReason={commentBlockedReason?.(canopyPath)}
             autoFocus={focusedFieldPath === canopyPath}
             currentUserId={currentUserId}
             canResolve={canResolve}
@@ -370,6 +375,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             canopyPath={canopyPath}
             entryPath={currentEntryPath}
             threads={fieldThreads}
+            commentBlockedReason={commentBlockedReason?.(canopyPath)}
             autoFocus={focusedFieldPath === canopyPath}
             currentUserId={currentUserId}
             canResolve={canResolve}
@@ -733,6 +739,10 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               highlightThreadId={highlightThreadId}
               onGetUserMetadata={onGetUserMetadata}
               resetKey={boundaryResetKey}
+              // From the schema alone, without the items: no item holds this path any more.
+              removedItemFieldLabel={(path) =>
+                fieldBreadcrumb(fields, undefined, path, { items: false }).join(' › ')
+              }
             />
           )}
 

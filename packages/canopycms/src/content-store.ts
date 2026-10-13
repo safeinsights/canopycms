@@ -27,6 +27,7 @@ import {
   withContentWriteLock,
 } from './utils/content-write-lock'
 import { findBodyFieldName } from './utils/body-field'
+import { withItemKeys } from './item-keys'
 import {
   buildMissingReference,
   buildResolvedReference,
@@ -1024,6 +1025,10 @@ export class ContentStore {
         absolutePath,
       }
     }
+
+    // Keys an item saved without one by its content, before references resolve into it, as the
+    // listing and the write path do (`item-keys.ts`).
+    doc.data = withItemKeys(fields, doc.data, 'content')
 
     if (options.resolveReferences !== false) {
       doc.data = await this.resolveReferencesInData(

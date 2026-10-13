@@ -37,6 +37,7 @@ import {
 } from 'yaml'
 
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
+import { ITEM_KEY, isItemKey } from '../item-keys'
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
 import { preserveMarkdownSource, type MarkdownBodyFormat } from './markdown-body-splice'
@@ -146,6 +147,27 @@ function identityKey(value: unknown): string | undefined {
   }
 }
 
+/** A list item's usable `ITEM_KEY`, or undefined. */
+function itemKeyOf(value: unknown): string | undefined {
+  const key = isPlainRecord(value) ? value[ITEM_KEY] : undefined
+  return isItemKey(key) ? key : undefined
+}
+
+/** {@link identityKey} with every `ITEM_KEY` left out, or undefined when there were none. */
+function unkeyedIdentityKey(value: unknown): string | undefined {
+  let found = false
+  try {
+    const key = JSON.stringify(value, (name: string, v: unknown) => {
+      if (name !== ITEM_KEY) return v
+      found = true
+      return undefined
+    })
+    return found ? key : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function nodePlainValue(node: unknown): unknown {
   if (!isNode(node)) return node
   try {
@@ -246,6 +268,11 @@ function looksLikeSameItem(node: unknown, value: unknown): boolean {
   // No record evidence available on either side — fall back to position.
   if (!isPlainRecord(existing) || !isPlainRecord(value)) return true
 
+  // Two keyed list items are the same item exactly when their keys match (`item-keys.ts`).
+  const before = existing[ITEM_KEY]
+  const after = value[ITEM_KEY]
+  if (isItemKey(before) && isItemKey(after)) return before === after
+
   return sharesFieldEvidence(existing, value, 0)
 }
 
@@ -345,21 +372,27 @@ function reconcileMap(
 }
 
 /**
- * Make a sequence's items match `value` exactly, aligning by VALUE first and position second.
+ * Make a sequence's items match `value` exactly, aligning by VALUE first, then by item key
+ * (`item-keys.ts`), then by position.
  *
- * A list has no item identity, so any alignment is a guess and the failure modes are not equally
- * bad: losing a comment shows up in review as a deletion, silently MOVING one onto content it does
- * not describe does not, and the comments this protects are the load-bearing kind ("do not delete
- * this block"). The rules run from most evidence to least, and stop rather than guessing:
+ * Without keys a list has no item identity, so any alignment is a guess and the failure modes are
+ * not equally bad: losing a comment shows up in review as a deletion, silently MOVING one onto
+ * content it does not describe does not, and the comments this protects are the load-bearing kind
+ * ("do not delete this block"). The rules run from most evidence to least, and stop rather than
+ * guessing:
  *
  * 1. **Exact value match** — reuse that old node whole, comments and all. This carries a comment
- *    through a pure reorder instead of stranding it on whatever moved into its index.
- * 2. **Same index, still unclaimed, and recognisably the same item** (`looksLikeSameItem`) —
+ *    through a pure reorder instead of stranding it on whatever moved into its index. On the save
+ *    that first writes keys, an item also matches the un-keyed node it was read from, reconciled
+ *    so the keys are written.
+ * 2. **Same key** — an edited keyed item is reconciled against the node holding its key, wherever
+ *    it was, so its comments move with it.
+ * 3. **Same index, still unclaimed, and recognisably the same item** (`looksLikeSameItem`) —
  *    reconcile against it: the edit-in-place case. Same-index rather than "next unclaimed old
  *    node in order", which pairs a newly-inserted item with an unrelated deleted one whenever one
  *    save both removes and adds; and evidence as well as position, because a wholesale
- *    replacement lands on the index it replaced.
- * 3. **Otherwise a fresh node, with no comments.**
+ *    replacement lands on the index it replaced. Items whose keys differ are never the same.
+ * 4. **Otherwise a fresh node, with no comments.**
  */
 function reconcileSeq(
   ctx: ReconcileContext,
@@ -379,10 +412,8 @@ function reconcileSeq(
   })
 
   const consumed = new Set<number>()
-  const matches = value.map((item) => {
-    const key = identityKey(item)
-    if (key === undefined) return undefined
-    const bucket = byIdentity.get(key)
+  const claim = (key: string | undefined): number | undefined => {
+    const bucket = key === undefined ? undefined : byIdentity.get(key)
     while (bucket && bucket.length > 0) {
       const index = bucket.shift()
       if (index !== undefined && !consumed.has(index)) {
@@ -391,12 +422,37 @@ function reconcileSeq(
       }
     }
     return undefined
+  }
+  // The save that first writes item keys (`item-keys.ts`) adds them to items the file holds
+  // without, so an item is also the same as an un-keyed one equal to it but for its keys. That
+  // node is reconciled rather than kept whole, which is what writes the keys in.
+  const reconciles = new Set<number>()
+  const matches: Array<number | undefined> = value.map((item, index) => {
+    const exact = claim(identityKey(item))
+    if (exact !== undefined) return exact
+    const unkeyed = claim(unkeyedIdentityKey(item))
+    if (unkeyed !== undefined) reconciles.add(index)
+    return unkeyed
+  })
+  // An edited keyed item is the node holding its key, wherever it moved, so its comments go with
+  // it. Claimed after every unedited item, so none of those loses its node to it.
+  const oldKeys = oldItems.map((node) => itemKeyOf(nodePlainValue(node)))
+  value.forEach((item, index) => {
+    const key = matches[index] === undefined ? itemKeyOf(item) : undefined
+    if (key === undefined) return
+    const at = oldKeys.findIndex((k, j) => k === key && !consumed.has(j))
+    if (at === -1) return
+    consumed.add(at)
+    matches[index] = at
+    reconciles.add(index)
   })
 
   seq.items = value.map((item, index) => {
     const matched = matches[index]
-    if (matched !== undefined) return oldItems[matched]
-    // `consumed` holds OLD indices claimed by rule 1, so this asks "is the node at my index still
+    if (matched !== undefined) {
+      return reconciles.has(index) ? reconcileNode(ctx, oldItems[matched], item) : oldItems[matched]
+    }
+    // `consumed` holds OLD indices claimed by rules 1 and 2, so this asks "is the node at my index still
     // unclaimed?". Each iteration owns a distinct index, so a candidate cannot be taken twice.
     const candidate = index < oldItems.length && !consumed.has(index) ? oldItems[index] : undefined
     const sameItem =
@@ -587,16 +643,34 @@ function withUnchangedAsOnDisk(value: unknown, read: unknown, disk: unknown): un
   if (Array.isArray(value) && Array.isArray(read) && Array.isArray(disk)) {
     if (read.length !== disk.length) return value
     // An item sent as read anywhere in the list, so an insert or a reorder keeps the rest as read.
+    // On the save that first writes item keys, it is found by what it was read as without them,
+    // and keeps the keys while its unchanged values take their disk form.
     const readKeys = read.map(identityKey)
     const claimed = new Set<number>()
-    return value.map((child, i) => {
-      const key = identityKey(child)
+    const claim = (key: string | undefined): number => {
       const at = readKeys.findIndex((k, j) => k !== undefined && k === key && !claimed.has(j))
-      if (at >= 0) {
-        claimed.add(at)
-        return disk[at]
+      if (at >= 0) claimed.add(at)
+      return at
+    }
+    const readItemKeys = read.map(itemKeyOf)
+    const exact = value.map((child) => claim(identityKey(child)))
+    return value.map((child, i) => {
+      if (exact[i] >= 0) return disk[exact[i]]
+      // An edited keyed item compares against the item holding its key, wherever it was read.
+      const key = itemKeyOf(child)
+      const byKey =
+        key === undefined ? -1 : readItemKeys.findIndex((k, j) => k === key && !claimed.has(j))
+      if (byKey >= 0) {
+        claimed.add(byKey)
+        return withUnchangedAsOnDisk(child, read[byKey], disk[byKey])
       }
-      return i < read.length ? withUnchangedAsOnDisk(child, read[i], disk[i]) : child
+      const unkeyed = unkeyedIdentityKey(child)
+      const asRead = unkeyed === undefined ? -1 : claim(unkeyed)
+      if (asRead >= 0) return withUnchangedAsOnDisk(child, read[asRead], disk[asRead])
+      // By position only when nothing says these are different items.
+      const other = i < read.length ? readItemKeys[i] : undefined
+      const differs = key !== undefined && other !== undefined && other !== key
+      return i < read.length && !differs ? withUnchangedAsOnDisk(child, read[i], disk[i]) : child
     })
   }
   return value
