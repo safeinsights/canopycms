@@ -2,9 +2,11 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-11, spotted while fixing PR 532's review findings. Leftovers against the guideline: "All Files" (Title Case, "file") in the entry menu and breadcrumb root; "Draft cleared for file" and a "Reload or Discard this file" toast; unnamed icon-only ActionIcons (CollectionEditor's row menu, and the Remove buttons on MemberList and PermissionEditor's no-lookup badges); the owner line showing a raw id when no lookup is given; two tooltips on a removable UserBadge
+  RESOLVED (2026-10-13). "All Files" is "All entries" (menu item and breadcrumb root); the discard toast reads `Draft cleared for "<entry>"` and the older-draft confirm says "entry" and quotes "Reload entry" / "Discard changes"; the group Remove button in `PermissionEditor` has an `aria-label` and Tooltip (the no-lookup user badges are gone, see member-list-raw-id-without-lookup; `CollectionEditor`'s row menu already had both); the branch owner line reads "Name unavailable" with no lookup; a removable `UserBadge` opens only the X's tooltip while the pointer or focus is on it; and the Title Case labels (Manage permissions, Manage groups, Internal/External groups, Create group, Edit group, Group name, Add member) are sentence case, with the ux-copy baseline re-recorded.
 ---
 # Vocabulary and naming leftovers beside PR 532
+
+## Status: RESOLVED 2026-10-13
 
 Found next to code PR 532 changed, left out of it:
 

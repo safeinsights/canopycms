@@ -40,7 +40,10 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
           label={label}
           aria-describedby={description ? fieldDescriptionId(inputId) : undefined}
           checked={value}
-          disabled={readOnly}
+          aria-readonly={readOnly || undefined}
+          styles={
+            readOnly ? { track: { cursor: 'default' }, input: { cursor: 'default' } } : undefined
+          }
           onChange={(e) => {
             if (!readOnly) onChange(e.currentTarget.checked)
           }}
@@ -49,7 +52,7 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
           wrapperProps={testId ? { 'data-testid': testId } : undefined}
         />
         {commentControl}
-        {/* A disabled switch's position is too faint to read, so read-only states it in words. */}
+        {/* A read-only switch looks as live as an editable one, so it states its value in words. */}
         {readOnly && (
           <Text size="sm" c="dimmed" data-testid={testId ? `${testId}-value` : undefined}>
             {value ? 'On' : 'Off'}

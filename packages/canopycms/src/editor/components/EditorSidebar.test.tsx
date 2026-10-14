@@ -27,7 +27,7 @@ describe('EditorSidebar - admin menu items', () => {
     cleanup()
   })
 
-  it('renders no Manage Permissions or Manage Groups without their callbacks', async () => {
+  it('renders no Manage permissions or Manage groups without their callbacks', async () => {
     render(
       <EditorSidebar
         {...defaultProps}
@@ -39,8 +39,8 @@ describe('EditorSidebar - admin menu items', () => {
 
     await userEvent.click(screen.getByLabelText('Settings'))
     await screen.findByText('Media library')
-    expect(screen.queryByText('Manage Permissions')).toBeNull()
-    expect(screen.queryByText('Manage Groups')).toBeNull()
+    expect(screen.queryByText('Manage permissions')).toBeNull()
+    expect(screen.queryByText('Manage groups')).toBeNull()
   })
 })
 
@@ -56,7 +56,7 @@ describe('EditorSidebar - System health menu item', () => {
 
     // Wait for the (unrelated) always-present item so we know the dropdown
     // actually opened before asserting System health's absence.
-    await screen.findByText('Manage Groups')
+    await screen.findByText('Manage groups')
     expect(screen.queryByText('System health')).toBeNull()
   })
 

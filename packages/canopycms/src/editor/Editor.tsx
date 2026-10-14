@@ -166,6 +166,8 @@ export interface EditorCollection {
   entryTypes?: EditorEntryType[] // All entry types in this collection
   order?: readonly string[] // Embedded IDs for ordering entries and children
   children?: EditorCollection[]
+  /** False when this user's path permissions refuse a new entry here (the entries listing). */
+  canAddEntry?: boolean
 }
 
 export interface EditorProps {
@@ -1311,7 +1313,10 @@ const EditorContent: React.FC<EditorProps> = ({
       // A collection that holds only collections has no entry type to add (`entryTypes` is
       // undefined when its list is empty).
       const canAddEntry =
-        node.type !== 'entry' && !allUnavailable && (node.entryTypes?.length ?? 0) > 0
+        node.type !== 'entry' &&
+        !allUnavailable &&
+        (node.entryTypes?.length ?? 0) > 0 &&
+        node.canAddEntry !== false
 
       return {
         path: node.path,
@@ -1649,7 +1654,7 @@ const EditorContent: React.FC<EditorProps> = ({
                         }
                       />
                     ) : currentEntry.canEdit === false ? (
-                      <NoEditPermissionNotice entryPath={currentEntry.path} />
+                      <NoEditPermissionNotice entryLabel={currentEntry.label} />
                     ) : schema.length > 0 && displayValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <SiteMdxAllowContext.Provider value={mdxAllow}>
@@ -1661,8 +1666,11 @@ const EditorContent: React.FC<EditorProps> = ({
                                     (currentBranch?.isProtected ?? true) ||
                                     currentBranch?.status === 'archived'
                                   }
+                                  // A hidden draft's discard changes nothing on screen, so it says so.
                                   onDiscard={() =>
-                                    handleDiscardFileDraft(() => navigatorToggleRef.current)
+                                    handleDiscardFileDraft(() => navigatorToggleRef.current, {
+                                      announce: true,
+                                    })
                                   }
                                 />
                               )

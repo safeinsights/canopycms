@@ -13,7 +13,7 @@ import {
 
 /**
  * E2E tests for the Group Manager and Permission Manager (Settings gear ->
- * "Manage Groups" / "Manage Permissions"): admin gating (D3), group CRUD
+ * "Manage groups" / "Manage permissions"): admin gating (D3), group CRUD
  * round trip (D1), path-permission assignment round trip (D2), and the
  * discard confirm on closing with staged changes (D6).
  *
@@ -49,12 +49,12 @@ test.describe('Permissions and Groups', () => {
       await editorPage.settingsMenuItem('Permissions').click()
       const permissionsDrawer = permissionManager.drawer
       await expect(permissionsDrawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
-      await expect(permissionsDrawer.getByRole('button', { name: 'Expand All' })).toBeVisible()
+      await expect(permissionsDrawer.getByRole('button', { name: 'Expand all' })).toBeVisible()
       await permissionManager.close()
 
       await groupManager.open()
       const groupsDrawer = groupManager.drawer
-      await expect(groupsDrawer.getByRole('tab', { name: 'Internal Groups' })).toBeVisible()
+      await expect(groupsDrawer.getByRole('tab', { name: 'Internal groups' })).toBeVisible()
       await groupManager.close()
     })
 
@@ -108,7 +108,7 @@ test.describe('Permissions and Groups', () => {
       removeE2eGroupsViaApi(page))
 
     try {
-      await test.step('open editor and Manage Groups', async () => {
+      await test.step('open editor and Manage groups', async () => {
         await editorPage.goto()
         await editorPage.waitForReady()
         await groupManager.open()
@@ -164,7 +164,7 @@ test.describe('Permissions and Groups', () => {
       removeE2eGroupsViaApi(page))
 
     try {
-      await test.step('open editor and Manage Groups', async () => {
+      await test.step('open editor and Manage groups', async () => {
         // A short viewport makes the group list overflow, so the save bar is only in view if sticky.
         await page.setViewportSize({ width: 1280, height: 600 })
         await editorPage.goto()
@@ -196,13 +196,13 @@ test.describe('Permissions and Groups', () => {
         await page.keyboard.press('Escape')
         await expect(groupManager.discardConfirm).toBeVisible({ timeout: SHORT_TIMEOUT })
         await groupManager.discardConfirm
-          .getByRole('button', { name: 'Discard', exact: true })
+          .getByRole('button', { name: 'Discard changes', exact: true })
           .click()
         await expect(groupManager.drawer).toBeHidden({ timeout: SHORT_TIMEOUT })
 
         await groupManager.open()
         await expect(
-          groupManager.drawer.getByRole('tab', { name: 'Internal Groups' }),
+          groupManager.drawer.getByRole('tab', { name: 'Internal groups' }),
         ).toBeVisible()
         await expect(groupManager.groupEntry(groupName)).toBeHidden()
       })
@@ -237,7 +237,7 @@ test.describe('Permissions and Groups', () => {
     })
 
     try {
-      await test.step('open editor and Manage Permissions', async () => {
+      await test.step('open editor and Manage permissions', async () => {
         await editorPage.goto()
         await editorPage.waitForReady()
         await permissionManager.open()

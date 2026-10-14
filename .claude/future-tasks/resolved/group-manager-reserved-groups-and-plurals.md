@@ -2,9 +2,11 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-10, from the editor UI epic's WS3b UX review. The group manager offers Delete on the built-in Admins and Reviewers groups (which the server re-derives), shows "1 MEMBERS", and discards staged changes without confirming
+  RESOLVED (2026-10-13). The group manager now says "1 member" / "N members" (one `memberCountLabel` for both sites), disables Delete on the built-in Admins and Reviewers groups with a focusable reason (`aria-disabled`, Tooltip "Built-in group; it can't be deleted." on hover, focus and touch), and the save bar's "Discard changes" asks first. The confirm lives in the shared `StagedChangesDrawer`, so the permission manager's save bar asks too.
 ---
 # Group manager: reserved groups, plurals, Discard changes
+
+## Status: RESOLVED 2026-10-13
 
 - **Reserved groups.** `group-manager/GroupCard.tsx` shows the trash icon on Admins and
   Reviewers. `api/groups.ts` re-derives the reserved groups on read, so the Delete group

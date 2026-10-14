@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Avatar,
   Badge,
@@ -16,19 +17,15 @@ import { isSystemUserId } from '../../system-users'
 import { personName } from '../../auth/person-name'
 
 export interface UserBadgeProps {
-  /** User ID to display */
   userId: CanopyUserId
 
-  /** Function to fetch user metadata by ID */
   getUserMetadata: (userId: string) => Promise<UserSearchResult | null>
 
-  /** Display mode */
   variant?: 'avatar-only' | 'avatar-name' | 'full'
 
   /** Show email tooltip on hover (default: true) */
   showEmailTooltip?: boolean
 
-  /** Optional removal button */
   onRemove?: (userId: CanopyUserId) => void
 
   /** Color theme (for Badge wrapper) */
@@ -43,7 +40,6 @@ export interface UserBadgeProps {
   /** Always show Badge wrapper (even without onRemove) */
   showBadge?: boolean
 
-  /** Loading state override */
   loading?: boolean
 
   /** Cached user data to avoid fetching (e.g., from search results) */
@@ -68,6 +64,8 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
   revealIdOnFallback = false,
 }) => {
   const { userMetadata, isLoading, error } = useUserMetadata(userId, getUserMetadata, cachedUser)
+  // The badge's tooltip stays shut while the pointer or focus is on the X and its own tooltip.
+  const [onRemoveButton, setOnRemoveButton] = useState(false)
 
   const loading = loadingOverride ?? isLoading
 
@@ -113,8 +111,12 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
                 radius="xl"
                 variant="transparent"
                 onClick={() => onRemove(userId)}
+                onMouseEnter={() => setOnRemoveButton(true)}
+                onMouseLeave={() => setOnRemoveButton(false)}
+                onFocus={() => setOnRemoveButton(true)}
+                onBlur={() => setOnRemoveButton(false)}
                 aria-label={`Remove ${personLabel}`}
-                style={{ color: 'var(--mantine-color-white)' }}
+                style={{ color: nameColor ?? 'var(--mantine-color-white)' }}
               >
                 <IconX size={12} stroke={2.5} />
               </ActionIcon>
@@ -136,7 +138,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
       content
     )
     return showEmailTooltip ? (
-      <Tooltip label={tooltip} disabled={!tooltip}>
+      <Tooltip label={tooltip} disabled={!tooltip || onRemoveButton}>
         {wrapped}
       </Tooltip>
     ) : (
@@ -228,10 +230,8 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
           color: 'var(--mantine-color-text)',
         }
       } else if (badgeVariant === 'light') {
-        // Light badges: use dark avatar for contrast
         avatarColor = 'dark'
       }
-      // outline badges: keep the passed color
     }
 
     return (

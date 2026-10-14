@@ -188,7 +188,7 @@ const PermissionManagerDrawer: React.FC<PermissionManagerProps & { onExited: () 
       isDirty={isDirty}
       isSaving={isSaving}
       canEdit={canEdit}
-      saveLabel="Save Permissions"
+      saveLabel="Save permissions"
       onSave={handleSave}
       onDiscard={handleDiscard}
       onExited={onExited}
@@ -229,10 +229,10 @@ const PermissionManagerDrawer: React.FC<PermissionManagerProps & { onExited: () 
 
         <Group gap="xs" pb="sm">
           <Button variant="subtle" onClick={expandAll}>
-            Expand All
+            Expand all
           </Button>
           <Button variant="subtle" onClick={collapseAll}>
-            Collapse All
+            Collapse all
           </Button>
         </Group>
 

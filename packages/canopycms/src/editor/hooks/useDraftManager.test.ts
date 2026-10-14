@@ -1773,6 +1773,40 @@ describe('useDraftManager', () => {
     })
   })
 
+  it('shows no toast when an entry draft is discarded: the form and the unsaved indicator already show it', async () => {
+    const { notifications } = await import('@mantine/notifications')
+    vi.mocked(notifications.show).mockClear()
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+    act(() => {
+      result.current.setDrafts({ abc123def456: { title: 'Draft 1' } })
+    })
+
+    act(() => {
+      result.current.handleDiscardFileDraft()
+    })
+
+    expect(result.current.drafts).not.toHaveProperty('abc123def456')
+    expect(notifications.show).not.toHaveBeenCalled()
+  })
+
+  it('toasts a discard when asked, for a draft the form is not showing', async () => {
+    const { notifications } = await import('@mantine/notifications')
+    vi.mocked(notifications.show).mockClear()
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+    act(() => {
+      result.current.setDrafts({ abc123def456: { title: 'Draft 1' } })
+    })
+
+    act(() => {
+      result.current.handleDiscardFileDraft(undefined, { announce: true })
+    })
+
+    expect(result.current.drafts).not.toHaveProperty('abc123def456')
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Unsaved changes to "Test Entry" discarded' }),
+    )
+  })
+
   describe('discard confirmation', () => {
     it('opens a confirm modal before discarding a file draft that differs from the loaded value', async () => {
       const { modals } = await import('@mantine/modals')
@@ -1902,8 +1936,8 @@ describe('useDraftManager', () => {
 
       expect(modals.openConfirmModal).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: 'Discard changes',
-          labels: expect.objectContaining({ confirm: 'Discard changes' }),
+          title: 'Discard changes to "Test Entry"?',
+          labels: expect.objectContaining({ confirm: 'Discard changes', cancel: 'Keep editing' }),
           confirmProps: expect.objectContaining({ 'data-testid': 'confirm-discard-entry' }),
         }),
       )
@@ -2425,6 +2459,13 @@ describe('useDraftManager', () => {
         expect(modals.openConfirmModal).toHaveBeenCalledWith(
           expect.objectContaining({ title: 'Unsaved draft from an older editor version' }),
         )
+        const { children } = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)![0] as {
+          children: string
+        }
+        expect(children).toContain(
+          `Choose "Reload entry" or "Discard changes" in the menu under the entry's title`,
+        )
+        expect(children).not.toMatch(/\bfile\b/)
       })
 
       // The defect: `null` was treated exactly like a known-stale base, and

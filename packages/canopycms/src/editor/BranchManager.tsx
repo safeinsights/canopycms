@@ -25,7 +25,6 @@ import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
 import { UserBadge } from './components/UserBadge'
 import { BranchAccessList } from './components/BranchAccessList'
-import { userIdLabel } from './user-display'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
@@ -209,7 +208,7 @@ export interface BranchManagerProps {
   ) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
   highlightThreadId?: string
-  /** Names people without `onGetOwnerMetadata`; with neither, access users are counted, owners ids */
+  /** Names people without `onGetOwnerMetadata`; with neither, access users are counted and owners read "Name unavailable" */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Names branch owners and access users; the branch listing seeds owners only */
   onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
@@ -217,7 +216,7 @@ export interface BranchManagerProps {
   onGetCommentUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
-/** The access-list lookup when a card has none: its access users are counted, not named. */
+/** The lookup when a card has none: an owner reads "Name unavailable" and access users are counted, not named. */
 const noUserLookup = async (): Promise<UserSearchResult | null> => null
 
 const CLOSED_PULL_REQUEST_REASON =
@@ -439,22 +438,16 @@ const BranchCard: React.FC<BranchCardProps> = ({
                   <Text size="xs" c="dimmed">
                     Owner:
                   </Text>
-                  {onGetOwnerMetadata ? (
-                    <UserBadge
-                      userId={b.createdBy}
-                      getUserMetadata={onGetOwnerMetadata}
-                      variant="avatar-name"
-                      size="xs"
-                      showEmailTooltip={true}
-                      showBadge={true}
-                      badgeVariant="light"
-                      color="gray"
-                    />
-                  ) : (
-                    <Text size="xs" c="dimmed">
-                      {userIdLabel(b.createdBy)}
-                    </Text>
-                  )}
+                  <UserBadge
+                    userId={b.createdBy}
+                    getUserMetadata={onGetOwnerMetadata ?? noUserLookup}
+                    variant="avatar-name"
+                    size="xs"
+                    showEmailTooltip={true}
+                    showBadge={true}
+                    badgeVariant="light"
+                    color="gray"
+                  />
                 </Group>
               </Group>
             )}

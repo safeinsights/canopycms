@@ -238,12 +238,12 @@ export function EditorSidebar({
             <Menu.Label>Settings</Menu.Label>
             {onPermissionManagerOpen && (
               <Menu.Item data-testid="settings-menu-permissions" onClick={onPermissionManagerOpen}>
-                Manage Permissions
+                Manage permissions
               </Menu.Item>
             )}
             {onGroupManagerOpen && (
               <Menu.Item data-testid="settings-menu-groups" onClick={onGroupManagerOpen}>
-                Manage Groups
+                Manage groups
               </Menu.Item>
             )}
             <Menu.Item

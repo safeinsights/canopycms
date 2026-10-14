@@ -363,7 +363,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   </ReasonedMenuItem>
                   <Menu.Divider />
                   <Menu.Item data-testid="all-files-menu-item" onClick={onNavigatorOpen}>
-                    All Files
+                    All entries
                   </Menu.Item>
                   <Menu.Divider />
                   <Menu.Label>Recently modified</Menu.Label>

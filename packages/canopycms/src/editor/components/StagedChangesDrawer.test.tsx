@@ -11,7 +11,12 @@ vi.mock('@mantine/modals', () => ({
   modals: { openConfirmModal: vi.fn() },
 }))
 
-type ConfirmOptions = { onConfirm?: () => void; onClose?: () => void }
+type ConfirmOptions = {
+  onConfirm?: () => void
+  onClose?: () => void
+  onExitTransitionEnd?: () => void
+  labels?: { confirm?: string; cancel?: string }
+}
 const openConfirmModal = vi.mocked(modals.openConfirmModal)
 const lastConfirm = (): ConfirmOptions =>
   openConfirmModal.mock.calls[openConfirmModal.mock.calls.length - 1][0] as ConfirmOptions
@@ -30,7 +35,7 @@ function renderDrawer(overrides: Partial<StagedChangesDrawerProps> = {}) {
     isDirty: false,
     isSaving: false,
     canEdit: true,
-    saveLabel: 'Save Groups',
+    saveLabel: 'Save groups',
     onSave: vi.fn(),
     onDiscard: vi.fn(),
     children: <div>panel body</div>,
@@ -68,7 +73,7 @@ describe('StagedChangesDrawer', () => {
       renderDrawer()
       expect(screen.getByText('panel body')).toBeTruthy()
       expect(screen.queryByText('Unsaved changes')).toBeNull()
-      expect(screen.queryByRole('button', { name: 'Save Groups' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Save groups' })).toBeNull()
     })
 
     it('closes at once, without a confirm', () => {
@@ -90,15 +95,15 @@ describe('StagedChangesDrawer', () => {
       expect(screen.getByRole('dialog', { name: /Unsaved changes/ })).toBeTruthy()
       expect(screen.getByText('Changes take effect only after you save.')).toBeTruthy()
 
-      fireEvent.click(screen.getByRole('button', { name: 'Save Groups' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Save groups' }))
       expect(props.onSave).toHaveBeenCalledTimes(1)
       fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
-      expect(props.onDiscard).toHaveBeenCalledTimes(1)
+      expect(openConfirmModal).toHaveBeenCalledTimes(1)
     })
 
     it('hides the save bar from a viewer who cannot edit', () => {
       renderDrawer({ isDirty: true, canEdit: false })
-      expect(screen.queryByRole('button', { name: 'Save Groups' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Save groups' })).toBeNull()
     })
 
     it('asks before closing, and closes only after a confirmed discard', () => {
@@ -110,6 +115,57 @@ describe('StagedChangesDrawer', () => {
       act(() => lastConfirm().onConfirm?.())
       expect(props.onDiscard).toHaveBeenCalledTimes(1)
       expect(props.onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('words the close confirm\'s red button as the action, "Discard changes"', () => {
+      renderDrawer({ isDirty: true })
+      pressEscape()
+      expect(lastConfirm().labels).toEqual({ confirm: 'Discard changes', cancel: 'Keep editing' })
+    })
+
+    it('asks before the save bar discards, and discards only once confirmed, leaving the drawer open', () => {
+      const { props } = renderDrawer({ isDirty: true })
+      fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+      expect(openConfirmModal).toHaveBeenCalledTimes(1)
+      expect(lastConfirm().labels).toEqual({ confirm: 'Discard changes', cancel: 'Keep editing' })
+      expect(props.onDiscard).not.toHaveBeenCalled()
+
+      act(() => lastConfirm().onConfirm?.())
+      expect(props.onDiscard).toHaveBeenCalledTimes(1)
+      expect(props.onClose).not.toHaveBeenCalled()
+    })
+
+    it('moves focus to the title once a confirmed save-bar discard takes the save bar away', () => {
+      const { rerenderWith } = renderDrawer({ isDirty: true })
+      const discard = screen.getByRole('button', { name: 'Discard changes' })
+      discard.focus()
+      fireEvent.click(discard)
+
+      act(() => lastConfirm().onConfirm?.())
+      rerenderWith({ isDirty: false })
+      act(() => lastConfirm().onExitTransitionEnd?.())
+
+      expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Groups' }))
+    })
+
+    it('returns focus to the save bar\'s "Discard changes" when its confirm is dismissed', () => {
+      renderDrawer({ isDirty: true })
+      const discard = screen.getByRole('button', { name: 'Discard changes' })
+      discard.focus()
+      fireEvent.click(discard)
+      ;(document.activeElement as HTMLElement | null)?.blur()
+
+      act(() => lastConfirm().onClose?.())
+      act(() => lastConfirm().onExitTransitionEnd?.())
+
+      expect(document.activeElement).toBe(discard)
+    })
+
+    it('keeps the staged changes when the save bar discard is dismissed', () => {
+      const { props } = renderDrawer({ isDirty: true })
+      fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+      act(() => lastConfirm().onClose?.())
+      expect(props.onDiscard).not.toHaveBeenCalled()
     })
 
     it('keeps the drawer and the changes when the confirm is dismissed', () => {

@@ -2,10 +2,11 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Leftovers from PR 538's UX review. The comments panel ignores Esc and its X while a write is in flight and doesn't say why. The staged drawers' unsaved-changes confirm says "Discard" / "Keep editing" instead of repeating "Discard changes". No CommentsPanel story renders the jump buttons or their blocked state, and no EditorSidebar story opens the Settings menu.
+  RESOLVED (2026-10-13). The comments panel's refusal to close already said why (`CloseRefusedNotice`); this pass added the missing test for the X. `StagedChangesDrawer`'s confirm now reads "Discard changes" / "Keep editing". New stories: `CommentsPanel` `WithJumpButtons` and `WriteInFlight` (a never-settling `onAddComment` shows the blocked jumps and the refusal), and `EditorSidebar` `SettingsMenuOpen` / `SettingsMenuForEditor` (a `play` function opens the menu).
 ---
-
 # Comments panel and staged-drawer UX follow-ups
+
+## Status: RESOLVED 2026-10-13
 
 All of these predate PR 538; its UX review found them next to the changed flows.
 

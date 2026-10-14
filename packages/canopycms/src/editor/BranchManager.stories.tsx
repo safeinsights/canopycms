@@ -126,6 +126,25 @@ export const WithBotOwner: Story = {
   },
 }
 
+/** An owner the lookup cannot name reads "Name unavailable", never the raw user id. */
+export const OwnerNameUnavailable: Story = {
+  args: {
+    ...Default.args,
+    branches: [
+      {
+        name: 'feature/landing',
+        status: 'editing',
+        updatedAt: ago(HOUR),
+        access: {},
+        createdBy: 'user_2abc',
+        submitBlocked: false,
+      },
+    ],
+    currentBranchName: 'feature/landing',
+    onGetUserMetadata: async () => null,
+  },
+}
+
 const reviewBranches: BranchSummary[] = [
   {
     name: 'main',

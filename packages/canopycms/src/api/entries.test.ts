@@ -600,6 +600,65 @@ describe('listEntries', () => {
     expect(readonlyEntry?.canEdit).toBe(false) // u1 cannot edit readonly post (restricted to admin)
   })
 
+  it('says per collection whether a new entry may be added, by collection-wide rules only', async () => {
+    const root = await tmpDir()
+    for (const dir of ['content/posts', 'content/pages']) {
+      await fs.mkdir(path.join(root, dir), { recursive: true })
+    }
+    const entryType = [
+      {
+        name: 'entry',
+        format: 'json' as const,
+        schema: [{ name: 'title', type: 'string' as const }],
+      },
+    ]
+    const schema = {
+      collections: [
+        { name: 'posts', path: 'posts', entries: entryType },
+        { name: 'pages', path: 'pages', entries: entryType },
+      ],
+    } as const
+    const config = defineCanopyTestConfig({ defaultBranchAccess: 'allow', schema })
+    // Every post is admin-only to edit; of the pages, only "about" is.
+    const pathRules: PathPermission[] = [
+      { path: unsafeAsPermissionPath('content/posts/**'), edit: { allowedUsers: ['admin'] } },
+      { path: unsafeAsPermissionPath('content/pages/about'), edit: { allowedUsers: ['admin'] } },
+    ]
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue(pathRules),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
+    })
+    const ctx = createMockApiContext({
+      services: { config, checkBranchAccess, checkContentAccess, createContentAccessChecker },
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
+    })
+    const access = async (userId: string) => {
+      const res = await listEntries.handler(
+        ctx,
+        { user: { type: 'authenticated', userId, groups: [] } },
+        { branch: unsafeAsBranchName('main') },
+      )
+      return Object.fromEntries(
+        (res.data?.collectionAccess ?? []).map((a) => [a.logicalPath, a.canAddEntry]),
+      )
+    }
+
+    expect(await access('u1')).toMatchObject({ 'content/posts': false, 'content/pages': true })
+    expect(await access('admin')).toMatchObject({ 'content/posts': true, 'content/pages': true })
+  })
+
   it('lists entries with embedded IDs in filenames', async () => {
     const root = await tmpDir()
 

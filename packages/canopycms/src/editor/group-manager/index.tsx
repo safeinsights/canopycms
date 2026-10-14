@@ -67,7 +67,7 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
     setIsModalOpen(true)
   }, [])
 
-  // Save Groups applies a delete with no further look; a group not yet saved has nothing to lose.
+  // Save groups applies a delete with no further look; a group not yet saved has nothing to lose.
   const confirmDeleteGroup = useCallback(
     (groupId: CanopyGroupId) => {
       if (isTempGroupId(groupId)) {
@@ -141,7 +141,7 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
       isDirty={isDirty}
       isSaving={isSaving}
       canEdit={canEdit}
-      saveLabel="Save Groups"
+      saveLabel="Save groups"
       onSave={save}
       onDiscard={discard}
       childModalOpen={isModalOpen || deleteConfirmOpen}
@@ -181,8 +181,8 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
             style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
           >
             <Tabs.List>
-              <Tabs.Tab value="internal">Internal Groups</Tabs.Tab>
-              <Tabs.Tab value="external">External Groups</Tabs.Tab>
+              <Tabs.Tab value="internal">Internal groups</Tabs.Tab>
+              <Tabs.Tab value="external">External groups</Tabs.Tab>
             </Tabs.List>
 
             <Tabs.Panel value="internal" style={{ flex: 1, overflow: 'auto' }}>

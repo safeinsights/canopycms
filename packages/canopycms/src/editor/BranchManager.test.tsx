@@ -1469,8 +1469,8 @@ describe('BranchManager', () => {
 
       expect(await screen.findByText('Casey Commenter')).toBeDefined()
       expect(onGetCommentUserMetadata).not.toHaveBeenCalledWith('user1')
-      // Owners stay ids for a user with no owner lookup.
-      expect(screen.getAllByText('user1').length).toBeGreaterThan(0)
+      expect((await screen.findAllByText('Name unavailable')).length).toBeGreaterThan(0)
+      expect(screen.queryByText('user1')).toBeNull()
     })
 
     it('names owners through the owner lookup only', async () => {
@@ -1531,8 +1531,9 @@ describe('BranchManager', () => {
       })
 
       expect(await screen.findByText('Access: 1 person')).toBeDefined()
-      expect(screen.queryByText('Name unavailable')).toBeNull()
+      expect(await screen.findAllByText('Name unavailable')).toHaveLength(1)
       expect(container.textContent).not.toContain('acl-user')
+      expect(container.textContent).not.toContain('owner1')
     })
 
     it('names the access users it can, then counts the rest with those the server withheld', async () => {

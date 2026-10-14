@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useReducer, useRef } from 'react'
 import { Badge, Button, Drawer, Fieldset, Group, Text, Title } from '@mantine/core'
 import { openConfirm } from '../utils/confirm-modal'
-import { focusReturnProps } from '../utils/focus-return'
+import { focusReturnProps, rememberOpener, returnTarget } from '../utils/focus-return'
 
 export interface StagedChangesDrawerProps {
   opened: boolean
@@ -56,7 +56,7 @@ function useBeforeUnloadWhileDirty(isDirty: boolean): void {
  * The drawer shell for an admin panel that stages edits and saves them as one batch
  * (groups, permissions). Staged edits exist only in the panel's state, so the shell keeps
  * them from being lost unnoticed: a title badge and a sticky save bar while dirty, a
- * discard confirm on close, and a `beforeunload` prompt.
+ * discard confirm on close and on the save bar's Discard changes, and a `beforeunload` prompt.
  */
 export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
   opened,
@@ -79,7 +79,31 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
   // render, where setting another component's state draws a React warning. While the confirm is open the
   // drawer still hears Escape, so requestClose must ignore it.
   const confirmOpenRef = useRef(false)
+  const titleRef = useRef<HTMLHeadingElement>(null)
   useBeforeUnloadWhileDirty(isDirty)
+
+  const confirmDiscard = useCallback(
+    (
+      body: string,
+      onConfirm: () => void,
+      focusReturn: ReturnType<typeof focusReturnProps> = {},
+    ) => {
+      confirmOpenRef.current = true
+      openConfirm({
+        ...focusReturn,
+        title: 'Discard unsaved changes?',
+        children: <Text size="sm">{body}</Text>,
+        labels: { confirm: 'Discard changes', cancel: 'Keep editing' },
+        confirmProps: { color: 'red' },
+        onConfirm,
+        // Mantine calls onClose for every exit, the confirm included.
+        onClose: () => {
+          confirmOpenRef.current = false
+        },
+      })
+    },
+    [],
+  )
 
   const requestClose = useCallback(() => {
     // The save is already on its way to the server; discarding now could not stop it.
@@ -88,22 +112,22 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
       onClose()
       return
     }
-    confirmOpenRef.current = true
-    openConfirm({
-      title: 'Discard unsaved changes?',
-      children: <Text size="sm">Closing now drops the changes you have not saved.</Text>,
-      labels: { confirm: 'Discard', cancel: 'Keep editing' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => {
-        onDiscard()
-        onClose()
-      },
-      // Mantine calls onClose for every exit, the confirm included.
-      onClose: () => {
-        confirmOpenRef.current = false
-      },
+    confirmDiscard('Closing now drops the changes you have not saved.', () => {
+      onDiscard()
+      onClose()
     })
-  }, [isDirty, isSaving, onClose, onDiscard])
+  }, [isDirty, isSaving, onClose, onDiscard, confirmDiscard])
+
+  const requestDiscard = useCallback(() => {
+    if (isSaving || confirmOpenRef.current) return
+    // Kept, the changes keep the save bar and its button; discarded, both go, and the title stands in.
+    const opener = rememberOpener()
+    confirmDiscard(
+      'Discarding drops the changes you have not saved.',
+      onDiscard,
+      focusReturnProps(() => returnTarget(opener, () => titleRef.current)),
+    )
+  }, [isSaving, onDiscard, confirmDiscard])
 
   const { onExitTransitionEnd: returnFocus, ...focusReturn } = focusReturnProps(returnFocusTo)
 
@@ -121,7 +145,9 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
       title={
         <div>
           <Group gap="xs">
-            <Title order={4}>{title}</Title>
+            <Title order={4} ref={titleRef} tabIndex={-1}>
+              {title}
+            </Title>
             {isDirty && (
               <Badge color="orange" variant="light">
                 Unsaved changes
@@ -166,7 +192,7 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
               size="sm"
               variant="subtle"
               color="neutral"
-              onClick={onDiscard}
+              onClick={requestDiscard}
               disabled={isSaving}
             >
               Discard changes

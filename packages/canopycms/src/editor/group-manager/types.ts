@@ -16,7 +16,7 @@ export interface GroupManagerProps {
   canEdit: boolean
   onSave?: (groups: InternalGroup[]) => Promise<void>
   onSearchUsers?: (query: string, limit?: number) => Promise<UserSearchResult[]>
-  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  onGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
   onSearchExternalGroups?: (query: string) => Promise<ExternalGroup[]>
 }
 

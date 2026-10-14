@@ -201,7 +201,11 @@ export interface UseDraftManagerReturn {
   editedFiles: Array<{ path: LogicalPath; label: string }>
   handleSave: () => Promise<void>
   handleDiscardDrafts: (returnFocusTo?: () => HTMLElement | null) => void
-  handleDiscardFileDraft: (returnFocusTo?: () => HTMLElement | null) => void
+  /** `announce` toasts the discard, for a draft the form isn't showing (a read-only branch's). */
+  handleDiscardFileDraft: (
+    returnFocusTo?: () => HTMLElement | null,
+    options?: { announce?: boolean },
+  ) => void
   handleReload: (returnFocusTo?: () => HTMLElement | null) => Promise<void>
   isDirtyForEntry: (entryPath: string) => boolean
   isSelectedDirty: () => boolean
@@ -836,9 +840,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         title: 'Unsaved draft from an older editor version',
         children:
           'This draft was saved by an earlier version of the editor, which did not record ' +
-          'which version of the file it was based on. Saving it will overwrite the copy ' +
+          'which version of the entry it was based on. Saving it will overwrite the copy ' +
           'currently on the server, including any changes made by someone else since. ' +
-          'Reload or Discard this file instead if you would rather not risk that.',
+          'Choose "Reload entry" or "Discard changes" in the menu under the entry\'s title ' +
+          'instead if you would rather not risk that.',
         labels: { confirm: 'Save anyway', cancel: 'Cancel' },
         confirmProps: { color: 'red' },
         onConfirm: () => settle(true),
@@ -1079,8 +1084,15 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }
 
-  const performDiscardFileDraft = () => {
-    if (!currentId) return
+  const performDiscardFileDraft = (announce = false) => {
+    const entry = options.currentEntry
+    if (!entry || !currentId) return
+    if (announce) {
+      notifications.show({
+        message: `Unsaved changes to "${entry.label}" discarded`,
+        color: 'green',
+      })
+    }
     options.onDraftsReset?.(currentId)
     hideEntryGone(currentId)
     setErrorState(null)
@@ -1105,14 +1117,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         }
       }
     } catch (err) {
-      console.warn('Failed to clear draft for file', err)
+      console.warn('Failed to clear draft for entry', err)
     }
-    notifications.show({
-      message: 'Draft cleared for file',
-      color: 'blue',
-      autoClose: getNotificationDuration(3000),
-      withCloseButton: true,
-    })
   }
 
   // Only prompt when there is a real draft that actually differs from the
@@ -1120,18 +1126,22 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // comparison as `modifiedCount`). Discarding a draft that's identical to
   // the loaded value, or discarding when there's no draft at all, has
   // nothing to lose, so it clears silently.
-  const handleDiscardFileDraft = (returnFocusTo?: () => HTMLElement | null) => {
+  const handleDiscardFileDraft = (
+    returnFocusTo?: () => HTMLElement | null,
+    { announce = false }: { announce?: boolean } = {},
+  ) => {
     if (!currentId) return
     if (!isSelectedDirty()) {
-      performDiscardFileDraft()
+      performDiscardFileDraft(announce)
       return
     }
+    const label = options.currentEntry?.label
     openConfirm({
-      title: 'Discard changes',
-      children: 'Discard unsaved changes for this entry?',
-      labels: { confirm: 'Discard changes', cancel: 'Cancel' },
+      title: label ? `Discard changes to "${label}"?` : 'Discard changes?',
+      children: 'Your unsaved changes to this entry will be lost.',
+      labels: { confirm: 'Discard changes', cancel: 'Keep editing' },
       confirmProps: { color: 'red', 'data-testid': 'confirm-discard-entry' },
-      onConfirm: performDiscardFileDraft,
+      onConfirm: () => performDiscardFileDraft(announce),
       ...focusReturnProps(returnFocusTo),
     })
   }

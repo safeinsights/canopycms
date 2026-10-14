@@ -1158,8 +1158,47 @@ describe('SystemHealthPanel', () => {
       await userEvent.click(screen.getByText('Branches'))
       await waitFor(() => expect(screen.getByText('feature-d')).toBeTruthy())
 
-      await userEvent.hover(screen.getByText('sync-failed'))
-      expect(await screen.findByText(/moved on GitHub/)).toBeTruthy()
+      await userEvent.hover(screen.getByText('Sync failed'))
+      expect((await screen.findByRole('tooltip')).textContent).toMatch(/moved on GitHub/)
+    })
+
+    it('reaches the sync-failed reason by keyboard: a focusable trigger described by the reason', async () => {
+      mockClient.admin.branchHealth.mockResolvedValueOnce(
+        mockSuccess({
+          entries: [
+            {
+              dirName: 'feature-d',
+              kind: 'healthy',
+              branch: {
+                name: 'feature-d',
+                status: 'editing',
+                access: {},
+                createdBy: 'user-1',
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-02T00:00:00.000Z',
+                syncStatus: 'sync-failed',
+                syncFailureReason: 'Push rejected for branch "feature-d": it has moved on GitHub',
+              },
+            },
+          ],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('feature-d')).toBeTruthy())
+
+      expect(screen.queryByRole('button', { name: /sync/i })).toBeNull()
+      const trigger = screen.getByText('Sync failed').closest('[tabindex="0"]') as HTMLElement
+      expect(trigger.tagName).toBe('SPAN')
+      act(() => trigger.focus())
+      expect(document.activeElement).toBe(trigger)
+      const describedBy = trigger.getAttribute('aria-describedby')
+      expect(document.getElementById(describedBy!)?.textContent).toBe(
+        'Push rejected for branch "feature-d": it has moved on GitHub — retry from the "Tasks" tab',
+      )
+      expect((await screen.findByRole('tooltip')).textContent).toMatch(/moved on GitHub/)
     })
 
     it('disables purge for a young orphan and confirms the 30-day trash retention for an old one', async () => {

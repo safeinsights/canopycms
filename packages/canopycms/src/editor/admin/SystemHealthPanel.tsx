@@ -13,6 +13,7 @@
 import {
   Alert,
   Badge,
+  Box,
   Button,
   Code,
   Group,
@@ -28,7 +29,9 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
+  VisuallyHidden,
 } from '@mantine/core'
+import { useId } from 'react'
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
@@ -1001,6 +1004,38 @@ function DuplicateRepairDetails({
   )
 }
 
+/**
+ * The reason is hidden text for assistive tech and a Tooltip that opens on hover, focus and touch.
+ * The trigger is a focusable span, not a button: it does nothing when pressed, so it must not be
+ * announced as one.
+ */
+function SyncFailedBadge({ reason }: { reason: string }) {
+  const reasonId = useId()
+  return (
+    <>
+      <Tooltip
+        label={reason}
+        multiline
+        maw={320}
+        events={{ hover: true, focus: true, touch: true }}
+      >
+        <Box
+          component="span"
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- the focus stop is what opens the tooltip for a keyboard user
+          tabIndex={0}
+          aria-describedby={reasonId}
+          className="mantine-focus-auto"
+        >
+          <Badge color="red" variant="light">
+            Sync failed
+          </Badge>
+        </Box>
+      </Tooltip>
+      <VisuallyHidden id={reasonId}>{reason}</VisuallyHidden>
+    </>
+  )
+}
+
 function BranchHealthRow({
   entry,
   baseWarning,
@@ -1076,19 +1111,13 @@ function BranchHealthRow({
         </Table.Td>
         <Table.Td>
           {b.syncStatus === 'sync-failed' ? (
-            <Tooltip
-              label={
+            <SyncFailedBadge
+              reason={
                 b.syncFailureReason
                   ? `${b.syncFailureReason} — retry from the "Tasks" tab`
                   : 'GitHub sync failed — retry from the "Tasks" tab'
               }
-              multiline
-              maw={320}
-            >
-              <Badge color="red" variant="light">
-                sync-failed
-              </Badge>
-            </Tooltip>
+            />
           ) : b.syncStatus === 'pending-sync' ? (
             <Badge color="gray" variant="light">
               pending-sync

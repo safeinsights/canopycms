@@ -1,6 +1,6 @@
 'use client'
 
-import React from 'react'
+import React, { useRef } from 'react'
 import { ActionIcon, Badge, Button, Group, Paper, Stack, Tabs, Text, Tooltip } from '@mantine/core'
 import { IconSearch, IconX, IconUserOff } from '@tabler/icons-react'
 import type {
@@ -14,6 +14,7 @@ import { PERMISSION_LEVELS, LEVEL_CONFIG } from './constants'
 import { GroupSelector } from './GroupSelector'
 import { UserSelector } from './UserSelector'
 import { UserBadge } from '../components/UserBadge'
+import { useFocusAfterRemove } from '../utils/focus-return'
 
 export interface PermissionEditorProps {
   node: TreeNode
@@ -29,7 +30,7 @@ export interface PermissionEditorProps {
   userSearchQuery: string
   userSearchError: string | null
   onSearchUsers: (query: string) => void
-  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  onGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
   onToggleUserSearch: (show: boolean) => void
   onAddUser: (path: string, level: PermissionLevel, userId: string) => void
   onRemoveUser: (path: string, level: PermissionLevel, userId: string) => void
@@ -67,6 +68,10 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
   onAddGroup,
   onRemoveGroup,
 }) => {
+  const { listRef, focusAfterRemove } = useFocusAfterRemove()
+  const addGroupsRef = useRef<HTMLButtonElement>(null)
+  const addUserRef = useRef<HTMLButtonElement>(null)
+
   const directPerm = node.directPermission
   const inheritedPerm = node.inheritedPermission
 
@@ -125,34 +130,20 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                           </Badge>
                         )
                       })}
-                      {inheritedTarget.allowedUsers?.map((userId) =>
-                        onGetUserMetadata ? (
-                          <UserBadge
-                            key={`inherited-user-${userId}`}
-                            userId={userId}
-                            getUserMetadata={onGetUserMetadata}
-                            variant="avatar-name"
-                            size="xs"
-                            badgeVariant="outline"
-                            color="gray"
-                            showEmailTooltip={true}
-                            showBadge={true}
-                            revealIdOnFallback
-                          />
-                        ) : (
-                          <Badge
-                            key={`inherited-user-${userId}`}
-                            variant="outline"
-                            color={userId === 'anonymous' ? 'orange' : 'gray'}
-                            size="xs"
-                            leftSection={
-                              userId === 'anonymous' ? <IconUserOff size={10} /> : undefined
-                            }
-                          >
-                            {userId === 'anonymous' ? 'Anonymous (Public)' : userId}
-                          </Badge>
-                        ),
-                      )}
+                      {inheritedTarget.allowedUsers?.map((userId) => (
+                        <UserBadge
+                          key={`inherited-user-${userId}`}
+                          userId={userId}
+                          getUserMetadata={onGetUserMetadata}
+                          variant="avatar-name"
+                          size="xs"
+                          badgeVariant="outline"
+                          color="gray"
+                          showEmailTooltip={true}
+                          showBadge={true}
+                          revealIdOnFallback
+                        />
+                      ))}
                     </Group>
                   </div>
                 )}
@@ -160,32 +151,38 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                 {canEdit ? (
                   <div>
                     <Text size="xs" fw={500} mb={4}>
-                      {LEVEL_CONFIG[level].label} Access
+                      {LEVEL_CONFIG[level].label} access
                     </Text>
 
-                    <Group gap="xs" mb="xs">
-                      {(directTarget?.allowedGroups ?? []).map((groupId) => {
+                    <Group gap="xs" mb="xs" ref={listRef}>
+                      {(directTarget?.allowedGroups ?? []).map((groupId, groupIndex) => {
                         const groupInfo = groups.find((g) => g.value === groupId)
                         return (
                           <Badge
                             key={`group-${groupId}`}
-                            variant="filled"
+                            variant="light"
                             color={LEVEL_CONFIG[level].color}
                             pr={3}
                             rightSection={
-                              <ActionIcon
-                                size="xs"
-                                color={LEVEL_CONFIG[level].color}
-                                radius="xl"
-                                variant="transparent"
-                                onClick={() => onRemoveGroup(node.path, level, groupId)}
-                              >
-                                <IconX
-                                  size={12}
-                                  stroke={2.5}
-                                  style={{ color: 'var(--mantine-color-white)' }}
-                                />
-                              </ActionIcon>
+                              <Tooltip label={`Remove ${groupInfo?.label ?? groupId}`}>
+                                <ActionIcon
+                                  size="xs"
+                                  color={LEVEL_CONFIG[level].color}
+                                  radius="xl"
+                                  variant="transparent"
+                                  aria-label={`Remove ${groupInfo?.label ?? groupId}`}
+                                  onClick={() => {
+                                    onRemoveGroup(node.path, level, groupId)
+                                    focusAfterRemove(groupIndex, addGroupsRef)
+                                  }}
+                                >
+                                  <IconX
+                                    size={12}
+                                    stroke={2.5}
+                                    style={{ color: 'var(--mantine-color-text)' }}
+                                  />
+                                </ActionIcon>
+                              </Tooltip>
                             }
                           >
                             {groupInfo?.label ?? groupId}
@@ -193,51 +190,26 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                         )
                       })}
 
-                      {(directTarget?.allowedUsers ?? []).map((userId) =>
-                        onGetUserMetadata ? (
-                          <UserBadge
-                            key={`user-${userId}`}
-                            userId={userId}
-                            getUserMetadata={onGetUserMetadata}
-                            variant="avatar-name"
-                            size="xs"
-                            badgeVariant="filled"
-                            color={userId === 'anonymous' ? 'orange' : LEVEL_CONFIG[level].color}
-                            onRemove={() => onRemoveUser(node.path, level, userId)}
-                            showEmailTooltip={true}
-                            revealIdOnFallback
-                          />
-                        ) : (
-                          <Badge
-                            key={`user-${userId}`}
-                            variant="filled"
-                            color={userId === 'anonymous' ? 'orange' : LEVEL_CONFIG[level].color}
-                            pr={3}
-                            leftSection={
-                              userId === 'anonymous' ? <IconUserOff size={12} /> : undefined
-                            }
-                            rightSection={
-                              <ActionIcon
-                                size="xs"
-                                color={
-                                  userId === 'anonymous' ? 'orange' : LEVEL_CONFIG[level].color
-                                }
-                                radius="xl"
-                                variant="transparent"
-                                onClick={() => onRemoveUser(node.path, level, userId)}
-                              >
-                                <IconX
-                                  size={12}
-                                  stroke={2.5}
-                                  style={{ color: 'var(--mantine-color-white)' }}
-                                />
-                              </ActionIcon>
-                            }
-                          >
-                            {userId === 'anonymous' ? 'Anonymous (Public)' : userId}
-                          </Badge>
-                        ),
-                      )}
+                      {(directTarget?.allowedUsers ?? []).map((userId, userIndex) => (
+                        <UserBadge
+                          key={`user-${userId}`}
+                          userId={userId}
+                          getUserMetadata={onGetUserMetadata}
+                          variant="avatar-name"
+                          size="xs"
+                          badgeVariant="light"
+                          color={userId === 'anonymous' ? 'orange' : LEVEL_CONFIG[level].color}
+                          onRemove={() => {
+                            onRemoveUser(node.path, level, userId)
+                            focusAfterRemove(
+                              (directTarget?.allowedGroups ?? []).length + userIndex,
+                              addUserRef,
+                            )
+                          }}
+                          showEmailTooltip={true}
+                          revealIdOnFallback
+                        />
+                      ))}
 
                       {(!directTarget?.allowedGroups || directTarget.allowedGroups.length === 0) &&
                         (!directTarget?.allowedUsers || directTarget.allowedUsers.length === 0) && (
@@ -249,19 +221,21 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
 
                     <Group gap="xs">
                       <Button
+                        ref={addGroupsRef}
                         variant="subtle"
                         leftSection={<IconSearch size={14} />}
                         onClick={() => onToggleGroupSearch(!showGroupSearch)}
                       >
-                        {showGroupSearch ? 'Cancel' : 'Add Groups'}
+                        {showGroupSearch ? 'Cancel' : 'Add groups'}
                       </Button>
 
                       <Button
+                        ref={addUserRef}
                         variant="subtle"
                         leftSection={<IconSearch size={14} />}
                         onClick={() => onToggleUserSearch(!showUserSearch)}
                       >
-                        {showUserSearch ? 'Cancel' : 'Add User'}
+                        {showUserSearch ? 'Cancel' : 'Add user'}
                       </Button>
 
                       {!(directTarget?.allowedUsers ?? []).includes('anonymous') && (
@@ -272,7 +246,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                             leftSection={<IconUserOff size={14} />}
                             onClick={() => onAddUser(node.path, level, 'anonymous')}
                           >
-                            Add Anonymous
+                            Add anonymous
                           </Button>
                         </Tooltip>
                       )}

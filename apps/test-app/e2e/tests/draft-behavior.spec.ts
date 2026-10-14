@@ -41,11 +41,6 @@ test.describe('Draft Behavior', () => {
       const confirmDialog = await editorPage.discardEntryDraft()
       await expect(confirmDialog).toBeVisible({ timeout: 5000 })
       await editorPage.confirmDiscard(confirmDialog)
-
-      // Verify notification appears
-      await expect(editorPage.notification('Draft cleared for file')).toBeVisible({
-        timeout: 5000,
-      })
     })
 
     await test.step('verify field reverts and save button is disabled', async () => {

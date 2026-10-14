@@ -447,7 +447,7 @@ describe('Editor integration', () => {
     expect(saveButton.getAttribute('aria-disabled')).toBe('true')
   })
 
-  it('names the entry path and whom to ask, and renders no form, for an entry the user cannot edit', async () => {
+  it('names the entry by its label and whom to ask, and renders no form, for an entry the user cannot edit', async () => {
     const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/hello'),
@@ -570,7 +570,7 @@ describe('Editor integration', () => {
 
     const notice = await screen.findByTestId('no-edit-permission-notice')
     expect(notice.textContent).toBe(
-      'You don\'t have edit access to "content/posts/hello". Ask a CanopyCMS admin to grant it in Manage Permissions.',
+      'You don\'t have edit access to "hello". Ask a CanopyCMS admin to grant it in "Manage permissions".',
     )
     expect(screen.queryByRole('textbox', { name: /title/i })).toBeNull()
   })
@@ -954,7 +954,7 @@ describe('Editor integration', () => {
     // Entry A's load starts (parked, not yet resolved).
     await waitFor(() => expect(resolvers[entryAApiPath]).toBeDefined())
 
-    // Navigate to entry B via the File menu -> All Files -> entry click,
+    // Navigate to entry B via the File menu -> All entries -> entry click,
     // while A is still in flight.
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
     await waitFor(() => expect(screen.getByTestId('all-files-menu-item')).toBeDefined())
@@ -1502,7 +1502,7 @@ describe('Editor integration', () => {
       expect(saveButton.getAttribute('aria-disabled')).toBe('true')
     })
 
-    // Open the entry navigator (File dropdown -> All Files) and confirm the
+    // Open the entry navigator (File dropdown -> All entries) and confirm the
     // read-only branch hides every mutation affordance: the per-collection
     // context menu (EntryNavigator's readOnly gating) and the drawer header's
     // "Content actions" button (Add entry/Add collection for the root), which

@@ -4,7 +4,6 @@ import React from 'react'
 import { Paper, Stack, Text, Loader } from '@mantine/core'
 import type { UserSearchResult } from './types'
 import { UserBadge } from '../components/UserBadge'
-import { personName } from '../../auth/person-name'
 
 export interface UserSelectorProps {
   searchQuery: string
@@ -13,7 +12,7 @@ export interface UserSelectorProps {
   isSearching: boolean
   searchError: string | null
   onSelectUser: (userId: string) => void
-  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  onGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
 }
 
 export const UserSelector: React.FC<UserSelectorProps> = ({
@@ -58,31 +57,14 @@ export const UserSelector: React.FC<UserSelectorProps> = ({
                 style={{ cursor: 'pointer' }}
                 onClick={() => onSelectUser(user.id)}
               >
-                {onGetUserMetadata ? (
-                  <UserBadge
-                    userId={user.id}
-                    getUserMetadata={onGetUserMetadata}
-                    variant="full"
-                    size="sm"
-                    cachedUser={user}
-                    showEmailTooltip={false}
-                  />
-                ) : (
-                  <>
-                    {personName(user.id, user.name) ? (
-                      <Text size="sm" fw={500}>
-                        {personName(user.id, user.name)}
-                      </Text>
-                    ) : (
-                      <Text size="sm" c="dimmed" fs="italic">
-                        Name unavailable
-                      </Text>
-                    )}
-                    <Text size="xs" c="dimmed">
-                      {user.email}
-                    </Text>
-                  </>
-                )}
+                <UserBadge
+                  userId={user.id}
+                  getUserMetadata={onGetUserMetadata}
+                  variant="full"
+                  size="sm"
+                  cachedUser={user}
+                  showEmailTooltip={false}
+                />
               </Paper>
             ))}
           </Stack>

@@ -2,10 +2,11 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  On a read-only form, ToggleField renders its Switch `disabled`, where docs/ux-guidelines.md (Fields) asks for read-only inputs, not disabled ones. A disabled Switch takes no focus, so a keyboard reviewer cannot reach the field; the "Field comments" menu covers commenting on it, but the value itself is unfocusable.
+  RESOLVED (2026-10-13). `ToggleField` renders a focusable Switch with `aria-readonly` whose `onChange` does nothing when read-only: Tab reaches it, it announces its state, and click or Space leaves the value alone. Its "On" / "Off" text stays, since a read-only switch looks as live as an editable one.
 ---
-
 # A read-only toggle is disabled, not read-only
+
+## Status: RESOLVED 2026-10-13
 
 `packages/canopycms/src/editor/fields/ToggleField.tsx` passes `disabled={readOnly}` to its
 Mantine `Switch`. The Fields rule says a read-only form's inputs are read-only, not disabled.

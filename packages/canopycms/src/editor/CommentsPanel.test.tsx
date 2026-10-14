@@ -521,6 +521,35 @@ describe('CommentsPanel', () => {
       expect(onClose).toHaveBeenCalledTimes(1)
     })
 
+    it('says why the X does nothing while a write is in flight', async () => {
+      let finish: () => void = () => {}
+      const onAddComment = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          }),
+      )
+      const onClose = vi.fn()
+      renderPanel({ comments: [fieldThread('a')], onAddComment, onClose })
+
+      await userEvent.click(within(card('a')).getByTestId('reply-thread-button'))
+      await userEvent.type(screen.getByLabelText('Reply to this thread'), 'Wait for me')
+      await userEvent.click(screen.getByTestId('submit-reply-button'))
+      const closeButton = document.querySelector<HTMLElement>('.mantine-Drawer-close')
+      expect(closeButton).not.toBeNull()
+      await userEvent.click(closeButton!)
+
+      expect(onClose).not.toHaveBeenCalled()
+      expect(screen.getByRole('status').textContent).toBe(CLOSE_WAITS_FOR_WRITE)
+      expect(screen.getByText(CLOSE_WAITS_FOR_WRITE, { selector: 'p' })).toBeTruthy()
+
+      await act(async () => {
+        finish()
+      })
+      await userEvent.click(document.querySelector<HTMLElement>('.mantine-Drawer-close')!)
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
     it('keeps a blocked jump focusable, says why on focus and ignores its click', async () => {
       let finish: () => void = () => {}
       const onAddComment = vi.fn(
