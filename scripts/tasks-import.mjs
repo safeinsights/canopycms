@@ -443,7 +443,7 @@ async function main() {
       // Compared with the live body, not a re-render of pass one: issues
       // created later in pass one already linked the ones before them.
       const live = await ghApi([`repos/${opts.repo}/issues/${entry.number}`, '--jq', '.body'])
-      if (live.replace(/\n$/, '') !== r.body.replace(/\n$/, '')) {
+      if (live.trimEnd() !== r.body.trimEnd()) {
         await ghApi(
           [
             '--method',
