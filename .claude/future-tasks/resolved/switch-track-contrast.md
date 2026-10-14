@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-13, from PR 548's UX review. A Mantine Switch's off-state track and border are 1.30:1 on white, under the 3:1 control-border rule. A read-only toggle is now enabled with `aria-readonly`, so it no longer has the disabled exemption; editable switches fail the same way. Theme-wide: give the Switch track the theme's `--canopy-input-border`
+  RESOLVED (2026-10-14, UX batch 3 theme PR) — the theme's stylesheet in `editor/theme.tsx` gives an unchecked, enabled Switch track's border `--canopy-input-border`, 3.29:1 on its gray.2 track and 4.09:1 on dark.6
 ---
 
 # Switch track contrast

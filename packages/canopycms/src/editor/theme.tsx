@@ -7,12 +7,16 @@ import {
   ActionIcon,
   Badge,
   Button,
+  Checkbox,
   DEFAULT_THEME,
   Drawer,
   Input,
   MantineProvider,
   Modal,
   Notification,
+  Radio,
+  Switch,
+  Text,
   Tooltip,
   getDefaultZIndex,
   getPrimaryShade,
@@ -29,7 +33,7 @@ import { Notifications } from '@mantine/notifications'
 import { ModalsProvider } from '@mantine/modals'
 import { generateColors } from '@mantine/colors-generator'
 
-import { composite, isMeasurable, readableOnScale } from './contrast'
+import { composite, contrastRatio, isMeasurable, readableOnScale } from './contrast'
 
 import '@mantine/core/styles.css'
 import '@mantine/dates/styles.css'
@@ -129,6 +133,8 @@ const canopyComponents = {
     },
   }),
   Badge: Badge.extend({
+    // Sentence case, as every other label.
+    styles: { root: { textTransform: 'none' } },
     vars: (theme, props) =>
       (props.variant ?? 'filled') === 'filled' && isPrimary(theme, props.color)
         ? {
@@ -148,6 +154,30 @@ const canopyComponents = {
       props.error || (props.variant ?? 'default') !== 'default'
         ? {}
         : { wrapper: { '--input-bd': 'var(--canopy-input-border)' } },
+  }),
+  // A checked primary control's tick, dot or thumb takes the colour that reads on the focus ring.
+  Checkbox: Checkbox.extend({
+    vars: (theme, props) =>
+      isPrimary(theme, props.color) && !props.iconColor
+        ? { root: { '--checkbox-icon-color': 'var(--canopy-focus-ring-contrast)' } }
+        : { root: {} },
+  }),
+  Radio: Radio.extend({
+    vars: (theme, props) =>
+      isPrimary(theme, props.color) && !props.iconColor
+        ? { root: { '--radio-icon-color': 'var(--canopy-focus-ring-contrast)' } }
+        : { root: {} },
+  }),
+  Switch: Switch.extend({
+    styles: (theme, props) =>
+      isPrimary(theme, props.color)
+        ? { root: { '--canopy-switch-thumb-on': 'var(--canopy-focus-ring-contrast)' } }
+        : {},
+  }),
+  // Dark dimmed text is nearly as bright as body text, so it also takes the dimmed font style.
+  Text: Text.extend({
+    styles: (_theme, props) =>
+      props.c === 'dimmed' ? { root: { fontStyle: 'var(--canopy-dimmed-font-style)' } } : {},
   }),
   ModalCloseButton: Modal.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
   DrawerCloseButton: Drawer.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
@@ -174,8 +204,7 @@ export const createCanopyTheme = (
 
   const base = createTheme({
     primaryColor: 'brand',
-    // Focus rings, focused borders and checked controls draw in the primary shade: indigo.7 is
-    // 4.48:1 on gray.1, indigo.5 3.05:1 on dark.5. Fills under white use `--canopy-primary-fill`.
+    // Where `--canopy-focus-ring` and `--canopy-primary-fill` start on the primary scale.
     primaryShade: { light: 7, dark: 5 },
     defaultRadius: 'md',
     colors: { ...DEFAULT_THEME.colors, brand, primary, neutral, accent },
@@ -225,8 +254,8 @@ const primaryFill = (theme: MantineTheme, scheme: 'light' | 'dark') => {
   const scale = theme.colors[theme.primaryColor]
   if (!scale.every(isMeasurable)) {
     return {
-      '--canopy-primary-fill': 'var(--mantine-primary-color-filled)',
-      '--canopy-primary-fill-hover': 'var(--mantine-primary-color-filled-hover)',
+      '--canopy-primary-fill': `var(--mantine-color-${theme.primaryColor}-filled)`,
+      '--canopy-primary-fill-hover': `var(--mantine-color-${theme.primaryColor}-filled-hover)`,
     }
   }
   const { shade, value } = readableOnScale(scale, {
@@ -244,6 +273,36 @@ const primaryFill = (theme: MantineTheme, scheme: 'light' | 'dark') => {
 }
 
 /**
+ * `--canopy-focus-ring`: the first step from the primary shade, darker in light mode and lighter in
+ * dark, at 3:1 on gray.1 or dark.5. Mantine draws focus rings, focused borders and checked controls
+ * in `--mantine-primary-color-filled`, so that becomes the ring; a tick on it is white or black.
+ */
+const focusRing = (theme: MantineTheme, scheme: 'light' | 'dark') => {
+  const scale = theme.colors[theme.primaryColor]
+  const surface = scheme === 'light' ? theme.colors.gray[1] : theme.colors.dark[5]
+  const ring =
+    scale.every(isMeasurable) && isMeasurable(surface)
+      ? readableOnScale(scale, {
+          from: getPrimaryShade(theme, scheme),
+          toward: scheme === 'light' ? 'darker' : 'lighter',
+          background: surface,
+          minimum: 3,
+        })
+      : undefined
+  const contrast = ring && contrastRatio(theme.white, ring.value) < 3 ? theme.black : theme.white
+  return {
+    '--canopy-focus-ring':
+      ring === undefined
+        ? `var(--mantine-color-${theme.primaryColor}-filled)`
+        : ring.shade === undefined
+          ? ring.value
+          : `var(--mantine-color-${theme.primaryColor}-${ring.shade})`,
+    '--canopy-focus-ring-contrast': contrast,
+    '--mantine-primary-color-filled': 'var(--canopy-focus-ring)',
+  }
+}
+
+/**
  * docs/ux-guidelines.md "Colour and contrast" says what each token is for; `theme.test.tsx` pins
  * every ratio for the default palette. Dark dimmed mixes dark.1 with dark.2, since dark.1 alone
  * reads as body text; placeholders sit further from it, so they never pass for a value.
@@ -252,6 +311,8 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
   variables: {
     '--canopy-count-bg':
       'color-mix(in srgb, var(--mantine-primary-color-filled) 20%, var(--mantine-color-body))',
+    '--canopy-count-bg-orange':
+      'color-mix(in srgb, var(--mantine-color-orange-filled) 20%, var(--mantine-color-body))',
   },
   light: {
     ...readableColourVariables(theme, 'light'),
@@ -263,7 +324,9 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
       'color-mix(in srgb, var(--mantine-color-gray-6) 80%, var(--mantine-color-gray-7))',
     '--canopy-surface-subtle': 'var(--mantine-color-gray-0)',
     '--canopy-surface-muted': 'var(--mantine-color-gray-1)',
+    '--canopy-dimmed-font-style': 'normal',
     ...primaryFill(theme, 'light'),
+    ...focusRing(theme, 'light'),
   },
   dark: {
     ...readableColourVariables(theme, 'dark'),
@@ -276,9 +339,57 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
       'color-mix(in srgb, var(--mantine-color-dark-2) 80%, var(--mantine-color-dark-1))',
     '--canopy-surface-subtle': 'var(--mantine-color-dark-6)',
     '--canopy-surface-muted': 'var(--mantine-color-dark-5)',
+    '--canopy-dimmed-font-style': 'italic',
     ...primaryFill(theme, 'dark'),
+    ...focusRing(theme, 'dark'),
   },
 })
+
+/**
+ * What Mantine draws from class rules, out of the theme variables' reach: unchecked control borders,
+ * white text on the primary colour (moved to the fill), and dimmed text outside `Text`. Outside
+ * days lose Mantine's half opacity, under 4.5:1.
+ */
+const CANOPY_STYLES = `
+.mantine-Checkbox-input:not(:checked, :disabled, [data-indeterminate], [data-error]),
+.mantine-CheckboxIndicator-indicator:not([data-checked], [data-disabled], [data-indeterminate]),
+.mantine-Radio-radio:not(:checked, :disabled, [data-error]),
+.mantine-RadioIndicator-indicator:not([data-checked], [data-disabled]) {
+  border-color: var(--canopy-input-border);
+}
+.mantine-Switch-input:not(:checked, :disabled, [data-disabled]) + .mantine-Switch-track:not([data-error]) {
+  --switch-bd: var(--canopy-input-border);
+}
+.mantine-Switch-input:checked + .mantine-Switch-track > .mantine-Switch-thumb {
+  --switch-thumb-bg: var(--canopy-switch-thumb-on, var(--mantine-color-white));
+  --switch-thumb-bd: var(--canopy-switch-thumb-on, var(--mantine-color-white));
+}
+[data-combobox-selected] {
+  --mantine-primary-color-filled: var(--canopy-primary-fill);
+}
+.mantine-DateTimePicker-day[data-selected],
+.mantine-DateTimePicker-pickerControl[data-selected] {
+  background-color: var(--canopy-primary-fill);
+}
+.mantine-DateTimePicker-day[data-selected]:hover,
+.mantine-DateTimePicker-pickerControl[data-selected]:hover {
+  background-color: var(--canopy-primary-fill-hover);
+}
+input.mantine-TimeInput-input::-webkit-datetime-edit-hour-field:focus,
+input.mantine-TimeInput-input::-webkit-datetime-edit-minute-field:focus,
+input.mantine-TimeInput-input::-webkit-datetime-edit-second-field:focus,
+input.mantine-TimeInput-input::-webkit-datetime-edit-ampm-field:focus {
+  background-color: var(--canopy-primary-fill);
+}
+.mantine-Menu-item[aria-disabled='true'],
+.mantine-Combobox-empty,
+.mantine-DateTimePicker-day[data-outside] {
+  font-style: var(--canopy-dimmed-font-style);
+}
+.mantine-DateTimePicker-day[data-outside]:not([data-disabled]) {
+  opacity: 1;
+}
+`
 
 export interface CanopyCMSProviderProps extends CanopyThemeOptions {
   children: React.ReactNode
@@ -300,6 +411,7 @@ export const CanopyCMSProvider: React.FC<CanopyCMSProviderProps> = ({
       cssVariablesResolver={canopyCssVariablesResolver}
     >
       {/* Confirms open from inside Drawers (level 'modal'), so sit a level above; notifications stay higher. */}
+      <style data-canopy-styles dangerouslySetInnerHTML={{ __html: CANOPY_STYLES }} />
       <ModalsProvider modalProps={{ zIndex: getDefaultZIndex('popover') }}>
         {withNotifications ? <Notifications position="bottom-left" /> : null}
         {children}

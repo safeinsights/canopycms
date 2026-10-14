@@ -188,8 +188,14 @@ export function EditorSidebar({
           <Indicator
             label={previewInexactMarks.length}
             size={16}
-            color="orange"
+            withBorder
             disabled={!highlightEnabled || previewInexactMarks.length === 0}
+            styles={{
+              indicator: {
+                background: 'var(--canopy-count-bg-orange)',
+                color: 'var(--mantine-color-text)',
+              },
+            }}
           >
             <ActionIcon
               variant={highlightEnabled ? 'filled' : 'subtle'}

@@ -6,11 +6,16 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   DEFAULT_THEME,
   Drawer,
   Menu,
   Modal,
   Notification,
+  Radio,
+  Select,
+  Switch,
+  Text,
   TextInput,
   Tooltip,
   getDefaultZIndex,
@@ -462,15 +467,19 @@ const variablesIn = (scheme: 'light' | 'dark'): Record<string, string> => {
 }
 
 /** A variable's value as an opaque colour, following `var()` and `color-mix()` through the theme. */
-const resolveColour = (value: string, variables: Record<string, string>): string => {
+const resolveColour = (
+  value: string,
+  variables: Record<string, string>,
+  theme = canopyTheme,
+): string => {
   const palette = /^var\(--mantine-color-([a-z]+)-(\d)\)$/.exec(value)
-  if (palette) return canopyTheme.colors[palette[1]][Number(palette[2])]
+  if (palette) return theme.colors[palette[1]][Number(palette[2])]
   const reference = /^var\((--[\w-]+)\)$/.exec(value)
-  if (reference) return resolveColour(variables[reference[1]], variables)
+  if (reference) return resolveColour(variables[reference[1]], variables, theme)
   const mix = /^color-mix\(in srgb, (var\([^)]+\)) (\d+)%, (var\([^)]+\))\)$/.exec(value)
   if (mix) {
-    const a = resolveColour(mix[1], variables)
-    const b = resolveColour(mix[3], variables)
+    const a = resolveColour(mix[1], variables, theme)
+    const b = resolveColour(mix[3], variables, theme)
     return composite(a, Number(mix[2]) / 100, b)
   }
   return value
@@ -523,6 +532,11 @@ describe('CanopyCMSProvider colour and contrast', () => {
   })
 
   it('draws focus rings, focused borders and checked controls at 3:1 in both schemes', () => {
+    // Mantine draws all three in its primary colour, which the theme makes the focus ring.
+    expect(light['--mantine-primary-color-filled']).toBe('var(--canopy-focus-ring)')
+    expect(darkVars['--mantine-primary-color-filled']).toBe('var(--canopy-focus-ring)')
+    expect(light['--canopy-focus-ring']).toBe('var(--mantine-color-brand-7)')
+    expect(darkVars['--canopy-focus-ring']).toBe('var(--mantine-color-brand-5)')
     const indicator = {
       light: inLight('--mantine-primary-color-filled'),
       dark: inDark('--mantine-primary-color-filled'),
@@ -531,6 +545,23 @@ describe('CanopyCMSProvider colour and contrast', () => {
     expect(
       [dark[5], dark[6], dark[7]].map((bg) => Number(contrastRatio(indicator.dark, bg).toFixed(2))),
     ).toEqual([3.05, 3.7, 4.23])
+    // A checked control's tick stays white, 3:1 or more on the ring.
+    expect(light['--canopy-focus-ring-contrast']).toBe(white)
+    expect(darkVars['--canopy-focus-ring-contrast']).toBe(white)
+    expect(contrastRatio(white, indicator.light)).toBeCloseTo(4.98, 2)
+    expect(contrastRatio(white, indicator.dark)).toBeCloseTo(3.67, 2)
+  })
+
+  it('borders an unchecked Checkbox, Radio and Switch at 3:1 on their own fill', () => {
+    // A Checkbox and Radio are white or dark.6 inside; a Switch's track is gray.2 or dark.6.
+    expect(contrastRatio(inLight('--canopy-input-border'), white)).toBeCloseTo(3.9, 2)
+    expect(contrastRatio(inLight('--canopy-input-border'), gray[2])).toBeCloseTo(3.29, 2)
+    expect(contrastRatio(inDark('--canopy-input-border'), dark[6])).toBeCloseTo(4.09, 2)
+  })
+
+  it('sets dimmed text in italics in dark mode only', () => {
+    expect(light['--canopy-dimmed-font-style']).toBe('normal')
+    expect(darkVars['--canopy-dimmed-font-style']).toBe('italic')
   })
 
   it('draws danger text at red.9 in light mode and red.3 in dark, 4.5:1 wherever it sits', () => {
@@ -573,6 +604,18 @@ describe('CanopyCMSProvider colour and contrast', () => {
     expect(contrastRatio(white, inLight('--canopy-primary-fill'))).toBeCloseTo(4.98, 2)
     expect(contrastRatio(white, inDark('--canopy-primary-fill'))).toBeCloseTo(4.98, 2)
     expect(contrastRatio(white, inDark('--canopy-primary-fill-hover'))).toBeCloseTo(5.67, 2)
+  })
+
+  it('puts an orange count in the text colour on an opaque orange tint', () => {
+    expect(light['--canopy-count-bg-orange']).toBe(
+      'color-mix(in srgb, var(--mantine-color-orange-filled) 20%, var(--mantine-color-body))',
+    )
+    expect(
+      contrastRatio(inLight('--mantine-color-text'), inLight('--canopy-count-bg-orange')),
+    ).toBeCloseTo(16.83, 2)
+    expect(
+      contrastRatio(inDark('--mantine-color-text'), inDark('--canopy-count-bg-orange')),
+    ).toBeCloseTo(6.43, 2)
   })
 
   it('puts a count in the text colour on a tint of the primary colour', () => {
@@ -659,6 +702,192 @@ describe('CanopyCMSProvider colour and contrast', () => {
         getByText('Withdraw').closest('button')?.style.getPropertyValue('--button-color'),
       ).toBe('var(--mantine-color-orange-light-color)')
     })
+  })
+})
+
+describe('CanopyCMSProvider focus ring for adopter brands', () => {
+  /** The ring and its contrast colour a provider with `brand` writes, resolved per scheme. */
+  const ringFor = (brand: string) => {
+    const theme = mergeMantineTheme(DEFAULT_THEME, createCanopyTheme({ colors: { brand } }))
+    render(
+      <CanopyCMSProvider colors={{ brand }}>
+        <span>text</span>
+      </CanopyCMSProvider>,
+    )
+    const read = (scheme: 'light' | 'dark') => {
+      const vars = variablesIn(scheme)
+      return {
+        name: vars['--canopy-focus-ring'],
+        ring: resolveColour(vars['--canopy-focus-ring'], vars, theme),
+        contrast: vars['--canopy-focus-ring-contrast'],
+      }
+    }
+    const result = { theme, light: read('light'), dark: read('dark') }
+    cleanup()
+    return result
+  }
+
+  it('lightens a dark brand in dark mode until the ring is 3:1 on dark.5', () => {
+    const { theme, light, dark } = ringFor('#1e3a8a')
+    const surfaces = theme.colors.dark
+    // The primary shade, dark.5's 2.21:1, would vanish; shade 3 is the first step past 3:1.
+    expect(contrastRatio(theme.colors.brand[5], surfaces[5])).toBeCloseTo(2.21, 2)
+    expect(dark.name).toBe('var(--mantine-color-brand-3)')
+    expect(contrastRatio(dark.ring, surfaces[5])).toBeCloseTo(4.08, 2)
+    expect(light.name).toBe('var(--mantine-color-brand-7)')
+    expect(contrastRatio(light.ring, theme.colors.gray[1])).toBeCloseTo(6.48, 2)
+    // White is 2.75:1 on the lightened ring, so a tick on it turns black.
+    expect(contrastRatio(theme.white, dark.ring)).toBeCloseTo(2.75, 2)
+    expect(dark.contrast).toBe(theme.black)
+    expect(contrastRatio(theme.black, dark.ring)).toBeCloseTo(7.64, 2)
+    expect(light.contrast).toBe(theme.white)
+  })
+
+  it('darkens a light brand in light mode until the ring is 3:1 on gray.1', () => {
+    const { theme, light, dark } = ringFor('#facc15')
+    expect(light.name).toBe('var(--mantine-color-brand-9)')
+    expect(contrastRatio(light.ring, theme.colors.gray[1])).toBeCloseTo(3.02, 2)
+    expect(light.contrast).toBe(theme.white)
+    expect(contrastRatio(theme.white, light.ring)).toBeCloseTo(3.36, 2)
+    expect(dark.name).toBe('var(--mantine-color-brand-5)')
+    expect(contrastRatio(dark.ring, theme.colors.dark[5])).toBeCloseTo(7.42, 2)
+    expect(dark.contrast).toBe(theme.black)
+  })
+})
+
+describe('CanopyCMSProvider checked controls', () => {
+  const rootVar = (el: Element | null, name: string) =>
+    (el?.closest('[class*="-root"]') as HTMLElement | null)?.style.getPropertyValue(name) ?? ''
+
+  it("draws a primary Checkbox's tick, Radio's dot and Switch's thumb in the ring's contrast", () => {
+    const { getByLabelText } = render(
+      <CanopyCMSProvider>
+        <Checkbox label="Primary box" />
+        <Checkbox label="Red box" color="red" />
+        <Checkbox label="Own tick" iconColor="black" />
+        <Radio label="Primary dot" />
+        <Switch label="Primary switch" />
+        <Switch label="Green switch" color="green" />
+      </CanopyCMSProvider>,
+    )
+    const ring = 'var(--canopy-focus-ring-contrast)'
+    expect(rootVar(getByLabelText('Primary box'), '--checkbox-icon-color')).toBe(ring)
+    expect(rootVar(getByLabelText('Red box'), '--checkbox-icon-color')).not.toBe(ring)
+    expect(rootVar(getByLabelText('Own tick'), '--checkbox-icon-color')).not.toBe(ring)
+    expect(rootVar(getByLabelText('Primary dot'), '--radio-icon-color')).toBe(ring)
+    expect(rootVar(getByLabelText('Primary switch'), '--canopy-switch-thumb-on')).toBe(ring)
+    expect(rootVar(getByLabelText('Green switch'), '--canopy-switch-thumb-on')).toBe('')
+  })
+})
+
+/** Whether the provider's stylesheet sets `property` on `element`, by matching its rules' selectors. */
+const canopyRuleSets = (element: Element, property: string): boolean => {
+  const sheet = document.querySelector<HTMLStyleElement>('style[data-canopy-styles]')?.sheet
+  if (!sheet) throw new Error('no canopy stylesheet')
+  return Array.from(sheet.cssRules).some(
+    (rule) =>
+      rule instanceof CSSStyleRule &&
+      rule.style.getPropertyValue(property) !== '' &&
+      rule.selectorText
+        .split(/,(?![^(]*\))/)
+        .some((selector) => !selector.includes('::') && element.matches(selector.trim())),
+  )
+}
+
+describe('CanopyCMSProvider stylesheet', () => {
+  it('borders unchecked, enabled Checkboxes, Radios and Switches with the input border', () => {
+    const { getByLabelText } = render(
+      <CanopyCMSProvider>
+        <Checkbox label="Off" />
+        <Checkbox label="On" defaultChecked />
+        <Checkbox label="Disabled" disabled />
+        <Radio label="Radio off" />
+        <Radio label="Radio on" defaultChecked />
+        <Switch label="Switch off" />
+        <Switch label="Switch on" defaultChecked />
+        <Switch label="Switch disabled" disabled />
+      </CanopyCMSProvider>,
+    )
+    expect(canopyRuleSets(getByLabelText('Off'), 'border-color')).toBe(true)
+    expect(canopyRuleSets(getByLabelText('On'), 'border-color')).toBe(false)
+    expect(canopyRuleSets(getByLabelText('Disabled'), 'border-color')).toBe(false)
+    expect(canopyRuleSets(getByLabelText('Radio off'), 'border-color')).toBe(true)
+    expect(canopyRuleSets(getByLabelText('Radio on'), 'border-color')).toBe(false)
+    const track = (label: string) =>
+      getByLabelText(label).parentElement?.querySelector('.mantine-Switch-track') as Element
+    expect(canopyRuleSets(track('Switch off'), '--switch-bd')).toBe(true)
+    expect(canopyRuleSets(track('Switch on'), '--switch-bd')).toBe(false)
+    expect(canopyRuleSets(track('Switch disabled'), '--switch-bd')).toBe(false)
+    const thumb = (label: string) => track(label).querySelector('.mantine-Switch-thumb') as Element
+    expect(canopyRuleSets(thumb('Switch on'), '--switch-thumb-bg')).toBe(true)
+    expect(canopyRuleSets(thumb('Switch off'), '--switch-thumb-bg')).toBe(false)
+  })
+
+  it('puts the armed combobox option and the selected day on the primary fill', async () => {
+    const { getByRole } = render(
+      <CanopyCMSProvider>
+        <Select
+          label="Collection"
+          data={['Posts', 'Pages']}
+          dropdownOpened
+          defaultValue="Posts"
+          selectFirstOptionOnChange
+        />
+      </CanopyCMSProvider>,
+    )
+    const option = await waitFor(() => getByRole('option', { name: 'Posts' }))
+    option.setAttribute('data-combobox-selected', 'true')
+    expect(canopyRuleSets(option, '--mantine-primary-color-filled')).toBe(true)
+    const day = document.createElement('button')
+    day.className = 'mantine-DateTimePicker-day'
+    day.setAttribute('data-selected', 'true')
+    expect(canopyRuleSets(day, 'background-color')).toBe(true)
+    day.removeAttribute('data-selected')
+    expect(canopyRuleSets(day, 'background-color')).toBe(false)
+  })
+
+  it('sets blocked menu items, empty comboboxes and outside days in the dimmed font style', () => {
+    render(<CanopyCMSProvider>{null}</CanopyCMSProvider>)
+    const item = document.createElement('button')
+    item.className = 'mantine-Menu-item'
+    expect(canopyRuleSets(item, 'font-style')).toBe(false)
+    item.setAttribute('aria-disabled', 'true')
+    expect(canopyRuleSets(item, 'font-style')).toBe(true)
+    const outside = document.createElement('button')
+    outside.className = 'mantine-DateTimePicker-day'
+    outside.setAttribute('data-outside', 'true')
+    expect(canopyRuleSets(outside, 'font-style')).toBe(true)
+    expect(canopyRuleSets(outside, 'opacity')).toBe(true)
+    outside.setAttribute('data-disabled', 'true')
+    expect(canopyRuleSets(outside, 'opacity')).toBe(false)
+  })
+})
+
+describe('CanopyCMSProvider text', () => {
+  it('sets dimmed Text in the dimmed font style unless the caller sets one', () => {
+    const { getByText } = render(
+      <CanopyCMSProvider>
+        <Text c="dimmed">Quiet</Text>
+        <Text c="dimmed" fs="normal">
+          Upright
+        </Text>
+        <Text c="red">Loud</Text>
+      </CanopyCMSProvider>,
+    )
+    expect(getByText('Quiet').style.fontStyle).toBe('var(--canopy-dimmed-font-style)')
+    expect(getByText('Upright').style.fontStyle).toBe('normal')
+    expect(getByText('Loud').style.fontStyle).toBe('')
+  })
+
+  it('sets badges in sentence case', () => {
+    const { getByText } = render(
+      <CanopyCMSProvider>
+        <Badge color="green">In review</Badge>
+      </CanopyCMSProvider>,
+    )
+    expect(
+      (getByText('In review').closest('.mantine-Badge-root') as HTMLElement).style.textTransform,
+    ).toBe('none')
   })
 })
 
