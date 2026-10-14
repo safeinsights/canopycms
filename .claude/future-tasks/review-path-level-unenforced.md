@@ -26,9 +26,9 @@ plus the thread-author / reviewer rule, and there was no `review`-level preceden
 2. **Remove it**: drop `'review'` from `PermissionLevel` and the Permission Manager, leaving
    review to the `reviewers` group.
 
-Either is a product decision for JP. It interacts with
+Either is a product decision for the maintainer. It interacts with
 [list-permission-level.md](list-permission-level.md), which proposes the level ordering
 `list < read < edit < review`, and with
 [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md).
 
-JP 2026-10-13: undecided whether to enforce or remove; stays a future task.
+The maintainer 2026-10-13: undecided whether to enforce or remove; stays a future task.

@@ -8,7 +8,7 @@ summary: >-
 
 ## Priority: P3
 
-Surfaced by the protected-base-branch code review (2026-07-24), finding #8, and
+Surfaced by the protected-base-branch code review (2026-07-24), finding 8, and
 extended 2026-07-30 by the canopy-hardening epic review (PR #183) with a second
 instance of the same divergence class (`settingsBranch`). **Both of those
 divergences are now closed** (2026-09-08, the base-branch derivation fix):

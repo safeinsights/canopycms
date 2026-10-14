@@ -7,7 +7,7 @@ summary: >-
 
 ## Priority: P3
 
-Surfaced by the protected-base-branch code review (2026-07-24), finding #7
+Surfaced by the protected-base-branch code review (2026-07-24), finding 7
 (reuse). Deferred cleanup.
 
 ## Problem
@@ -27,7 +27,7 @@ and the effective-base expression `branch.baseBranch ?? config.defaultBaseBranch
 (`resolveBaseBranch` in `utils/git.ts` is async git-HEAD detection, a different
 concern).
 
-The review-fix pass (finding #3) reduced but did not eliminate the drift risk:
+The review-fix pass (finding 3) reduced but did not eliminate the drift risk:
 `getBranchProtection` now also honors the recorded `branch.baseBranch`, aligning
 it with the backstops' logic — but the low-level comparison is still copy-pasted.
 

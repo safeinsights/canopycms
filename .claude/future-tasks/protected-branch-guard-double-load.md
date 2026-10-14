@@ -7,7 +7,7 @@ summary: >-
 
 ## Priority: P3
 
-Surfaced by the protected-base-branch code review (2026-07-24), finding #6. Real
+Surfaced by the protected-base-branch code review (2026-07-24), finding 6. Real
 efficiency regression, deferred from the fix pass (findings 1-5 were fixed).
 
 ## Problem

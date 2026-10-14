@@ -8,7 +8,7 @@ summary: >-
 
 Raised by the human review of
 [PR #229](https://github.com/safeinsights/canopycms/pull/229#pullrequestreview-4938780868)
-(finding #11), 2026-08-14. Not reachable today; filed because the failure mode is "mutates a
+(finding 11), 2026-08-14. Not reachable today; filed because the failure mode is "mutates a
 different collection", not "not found".
 
 ## The ambiguity

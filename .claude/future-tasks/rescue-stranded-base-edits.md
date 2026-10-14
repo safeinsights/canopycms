@@ -11,7 +11,7 @@ summary: >-
 Surfaced by the protected-base-branch work (2026-07-24). The first deployed prod
 instance let editors save directly on `main` before protection existed; recovery is
 currently a manual EFS runbook (docs/deploying-to-aws.md → Troubleshooting →
-"Stranded edits on the base branch"). JP chose runbook-only for that incident and
+"Stranded edits on the base branch"). The maintainer chose runbook-only for that incident and
 deferred tooling.
 
 ## Problem

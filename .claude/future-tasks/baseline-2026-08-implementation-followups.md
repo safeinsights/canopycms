@@ -51,7 +51,7 @@ made — not four edits that can each be forgotten independently.
 
 ## ~~2. [P3] `rich-text` is redundant with `markdown`/`mdx` — decide whether the type should exist~~ — DECIDED AND DONE
 
-**RESOLVED 2026-08-14: deleted.** JP's call. Three facts made it easy, and all
+**RESOLVED 2026-08-14: deleted.** The maintainer's call. Three facts made it easy, and all
 three had a shelf life:
 
 - **It was never released.** It lived only on `integration-202608-a`; published

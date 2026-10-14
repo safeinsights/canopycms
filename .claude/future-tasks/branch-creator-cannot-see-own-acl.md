@@ -17,4 +17,4 @@ adding such a UI, decide whether a creator counts as privileged for their own br
 (they chose those people, but only through ids they could not look up), or whether ACL editing
 stays admin-only and `canModifyBranchAccess` drops the creator grant.
 
-JP 2026-10-13: leaning toward branch creators controlling their own branch's access list (admins don't want to manage it), but it's a future task to figure out the design — including how creators find people without full directory search, and how it interacts with the lockdown, which must stay on top.
+The maintainer 2026-10-13: leaning toward branch creators controlling their own branch's access list (admins don't want to manage it), but it's a future task to figure out the design — including how creators find people without full directory search, and how it interacts with the lockdown, which must stay on top.

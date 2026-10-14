@@ -1,7 +1,7 @@
 ---
 priority: P3
 summary: >-
-  **Standing watch item, not a task.** `image-size` (prod dep, called on uploaded bytes at `assets/pipeline.ts:143`) has a high-severity DoS advisory with no upstream fix — re-confirmed 2026-08-13 that latest is still `2.0.2` from April 2025. JP accepted the risk with reasoning recorded (dimension extraction already non-fatal, input byte-capped, uploads authenticated) and rejected consolidating onto `sharp.metadata()` because sharp deliberately fails open, which would make dimensions silently vanish. Four explicit revisit triggers; check trigger 2 (upstream patch) whenever dependencies are next audited
+  **Standing watch item, not a task.** `image-size` (prod dep, called on uploaded bytes at `assets/pipeline.ts:143`) has a high-severity DoS advisory with no upstream fix — re-confirmed 2026-08-13 that latest is still `2.0.2` from April 2025. The maintainer accepted the risk with reasoning recorded (dimension extraction already non-fatal, input byte-capped, uploads authenticated) and rejected consolidating onto `sharp.metadata()` because sharp deliberately fails open, which would make dimensions silently vanish. Four explicit revisit triggers; check trigger 2 (upstream patch) whenever dependencies are next audited
 ---
 # `image-size` DoS advisory — standing risk acceptance
 
@@ -21,7 +21,7 @@ fix**. Re-checked against the npm registry 2026-08-13: latest is still `2.0.2`,
 published 2025-04-02. It is still called directly on uploaded bytes at
 `assets/pipeline.ts:143`.
 
-## Decision (JP, 2026-08-13): no code change
+## Decision (the maintainer, 2026-08-13): no code change
 
 The real exposure is much narrower than the advisory reads:
 

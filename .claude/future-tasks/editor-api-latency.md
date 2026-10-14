@@ -58,7 +58,7 @@ Cold and branch-create rows clone workspaces; both are one-offs.
 - `schema>resolve` appears only on a schema-cache **miss**.
 - Spans are per request (AsyncLocalStorage), so concurrent requests never mix; disabled, no scope is opened.
 
-### Getting the deployed breakdown (for JP; nothing here changes code)
+### Getting the deployed breakdown (for the maintainer; nothing here changes code)
 
 1. On the editor Lambda of the tier under test, set the environment variable
    `CANOPYCMS_DEBUG=true` (this is the existing debug switch; it also turns on the other DEBUG
@@ -135,7 +135,7 @@ NFS ops; do it only if the deployed lines show `settingsRoot`/`permissions` abov
   refresh changes their mtime. Watch that number.
 - **Cold starts.** The Lambda `Init Duration` plus the first request's `context=` (building
   services) and its one full ensure. These are one per container, but containers recycle.
-- **The extra 308 round trip** from the client's URL building (item #9, separate chip).
+- **The extra 308 round trip** from the client's URL building (item 9, separate chip).
 
 ## Appendix: the harness
 

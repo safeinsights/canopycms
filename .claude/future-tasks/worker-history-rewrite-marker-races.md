@@ -8,7 +8,7 @@ summary: >-
 
 Found by the adversarial review of PR #198
 ([program-b-final-review-followups.md](resolved/program-b-final-review-followups.md),
-HIGH #1, resolved 2026-08-12), which introduced the marker. The reviewer found
+HIGH 1, resolved 2026-08-12), which introduced the marker. The reviewer found
 no path where #198 destroys committed work — the lease discipline holds — but
 three ways the branch can end up **wedged and misdiagnosed**: the exact failure
 shape #198 exists to remove, recreated in rarer forms. Rated fix-before-production.
@@ -26,7 +26,7 @@ sequence spanning them is not.
 
 ---
 
-## MEDIUM-HIGH #1 — a concurrent clear disarms a new episode and disables its own self-heal
+## MEDIUM-HIGH 1 — a concurrent clear disarms a new episode and disables its own self-heal
 
 Set-once re-read (`markHistoryRewritten`), the clear (`clearHistoryRewrittenMarker`)
 and the arming path in `rebaseActiveBranches` have no atomicity between them.
@@ -52,7 +52,7 @@ converges.
 
 ---
 
-## MEDIUM #2 — a stale marker surviving a failed clear wedges the *next* episode
+## MEDIUM 2 — a stale marker surviving a failed clear wedges the *next* episode
 
 The clear is best-effort (a lock-contention or EFS failure is logged, not
 retried), and it is also skipped when `outgoingSha` reads null.
@@ -68,7 +68,7 @@ warns about: a failed clear destroys nothing, but it is not harmless.
 
 ---
 
-## MEDIUM #3 — a wedged branch enqueues one permanently-failing task per cycle, forever
+## MEDIUM 3 — a wedged branch enqueues one permanently-failing task per cycle, forever
 
 `enqueueGitHubPush` dedupes against `pending/` and `processing/` only, while
 `reconcilePendingRewrite` runs every cycle for as long as a marker is set. A
@@ -122,7 +122,7 @@ from `remote.git`?** Yes, and log once rather than every cycle. The marker's
 only purpose is to key a lease for publishing `remote.git`'s content onward; if
 that ref is gone there is nothing to publish and no lease to key, so keeping it
 buys nothing and costs a permanent per-cycle warn plus a permanent entry in the
-`rewritten` bucket that masks real signal (LOW #1 above). A branch that later
+`rewritten` bucket that masks real signal (LOW 1 above). A branch that later
 reappears re-arms through the normal path. One caveat: clear only when the
 branch *workspace* still exists — if the whole directory is gone the metadata is
 moot anyway.
@@ -135,7 +135,7 @@ clear destroys nothing but can wedge the next episode, and points here.
 
 ## Fix direction
 
-#1 and #2 are the same root cause and should be fixed together: make the
+Findings 1 and 2 are the same root cause and should be fixed together: make the
 marker's check-then-act safe across the two saves, either via the reviewer's
 re-read-after-publish hardening or by moving the arming sequence under a single
 hold of the branch.json lock (note `withOccFileLock` is **not** reentrant and
@@ -143,7 +143,7 @@ hold of the branch.json lock (note `withOccFileLock` is **not** reentrant and
 [../../docs/concurrency.md](../../docs/concurrency.md) for the deadlock this
 already caused once).
 
-#3 is independent and can land on its own.
+Finding 3 is independent and can land on its own.
 
 Any fix needs the same red-first discipline #198 used: these are interleavings,
 so the tests must drive the two paths against each other rather than asserting

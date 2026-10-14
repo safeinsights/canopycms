@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-10-08, from an adopter request. Editor crashes reach only the author's console. Add an adopter `onClientError` hook in the client config (errors caught by the field boundaries, window errors, failed API calls; context without field values). New adopter touchpoint, so it needs JP's approval
+  New 2026-10-08, from an adopter request. Editor crashes reach only the author's console. Add an adopter `onClientError` hook in the client config (errors caught by the field boundaries, window errors, failed API calls; context without field values). New adopter touchpoint, so it needs the maintainer's approval
 ---
 # Editor crashes reach no one but the console
 
@@ -24,6 +24,6 @@ called for errors the editor's boundaries catch (each passes through `reportEdit
 unhandled rejections while `/edit` is mounted, and for failed API calls the editor already surfaces.
 `context` carries the branch, entry path, field path and editor version, never field values.
 
-This adds an adopter touchpoint, so it needs JP's approval before it's built. Decide too whether
+This adds an adopter touchpoint, so it needs the maintainer's approval before it's built. Decide too whether
 the editor should report to the CMS's own API (one log for all adopters) instead of, or as well as,
 a callback.

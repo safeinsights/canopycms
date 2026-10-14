@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-10, from the editor UI epic's WS3 UX review. ReadOnlyDraftNotice and its Discard confirm say an entry has unsaved changes but not which fields; list them by label path ("Features › Features #1 › Title") so the user knows what Discard destroys
+  New 2026-10-10, from the editor UI epic's WS3 UX review. ReadOnlyDraftNotice and its Discard confirm say an entry has unsaved changes but not which fields; list them by label path (`Features › Features #1 › Title`) so the user knows what Discard destroys
 ---
 # Name the changed fields in the read-only draft notice
 

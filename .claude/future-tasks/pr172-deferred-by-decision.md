@@ -1,7 +1,7 @@
 ---
 priority: P3
 summary: >-
-  The two of PR #172's nine review findings deferred **by decision**, split out when the other seven were fixed; both re-verified live at `78e4ca8b`. #5: `workflow_dispatch` publishes provenance-signed npm artifacts from unreviewed branches — main's branch protection does not bound what reaches npm — logged by JP's call as a risk-acceptance question about the `int` channel, with a GitHub `environment:` + required reviewers as the one-line lever. #8: `setBusy` is a shared boolean written by two hooks with no ref-count, so a revalidation settling mid-save clears the save's busy state — spinner flicker, wants a `beginBusy`/`endBusy` counter
+  The two of PR #172's nine review findings deferred **by decision**, split out when the other seven were fixed; both re-verified live at `78e4ca8b`. Finding 5: `workflow_dispatch` publishes provenance-signed npm artifacts from unreviewed branches — main's branch protection does not bound what reaches npm — logged by the maintainer's call as a risk-acceptance question about the `int` channel, with a GitHub `environment:` + required reviewers as the one-line lever. Finding 8: `setBusy` is a shared boolean written by two hooks with no ref-count, so a revalidation settling mid-save clears the save's busy state — spinner flicker, wants a `beginBusy`/`endBusy` counter
 ---
 # PR #172's two deferred-by-decision findings
 
@@ -12,7 +12,7 @@ Split out of [pr172-review-followups.md](resolved/pr172-review-followups.md) on
 #223, #224, #226, #227) and the record moved to `resolved/`. These two were
 deferred **by decision, not oversight**. Both re-verified live at `78e4ca8b`.
 
-## #5 — `workflow_dispatch` publishes signed npm artifacts from unreviewed code
+## Finding 5 — `workflow_dispatch` publishes signed npm artifacts from unreviewed code
 
 `publish.yml:161-163` routes a manual dispatch to the `prerelease` job on
 `if: github.event_name == 'workflow_dispatch'` alone. The only other gate is
@@ -25,12 +25,12 @@ construction has not been reviewed, and the artifacts carry a valid provenance
 attestation. Stated plainly: **main's branch protection does not bound what
 reaches npm.**
 
-**JP's call, 2026-08-13: log as future work, not a current concern.** This is a
+**The maintainer's call, 2026-08-13: log as future work, not a current concern.** This is a
 risk-acceptance question about how open the `int` channel should be, not a
 defect. If it is ever to be bounded, the lever is a GitHub `environment:` with
 required reviewers on the `prerelease` job — roughly one line.
 
-## #8 — `setBusy` is a shared boolean with concurrent writers and no ref-count
+## Finding 8 — `setBusy` is a shared boolean with concurrent writers and no ref-count
 
 `editor/Editor.tsx:312` and `:370` both pass `setBusy: setEntriesLoading`, so
 `useEntryManager` and `useDraftManager` write the same flag. `useEntryManager.ts:642`
@@ -51,5 +51,5 @@ landed and been CI-verified.
 
 - [editor-state-context-migration.md](editor-state-context-migration.md) — the
   natural home for #8 if the editor state work is picked up again
-- [document-release-process.md](resolved/document-release-process.md) — #5's channel is
+- [document-release-process.md](resolved/document-release-process.md) — finding 5's channel is
   half of what that doc needs to describe

@@ -8,7 +8,7 @@ summary: >-
 ---
 # A non-executing MDX renderer for previews
 
-**Priority:** P2 [BOTH]. **Filed:** 2026-10-09, deferred by JP from the MDX trust-model decision.
+**Priority:** P2 [BOTH]. **Filed:** 2026-10-09, deferred by the maintainer from the MDX trust-model decision.
 
 ## Why
 
@@ -27,7 +27,7 @@ allowlist and URL rule. A violation renders a placeholder and calls `reportError
 ## Open questions
 
 - **Placement.** `canopycms/preview` if it tree-shakes. The parser adds acorn and micromark to any
-  page that imports it. Otherwise a new `canopycms/mdx` subpath, which needs JP's approval.
+  page that imports it. Otherwise a new `canopycms/mdx` subpath, which needs the maintainer's approval.
 - **Preview/production parity.** A site rendering production with `evaluate` and remark/rehype
   plugins sees a different preview. Decide whether the renderer accepts unified plugins.
 - **Allowlist source.** The component list is

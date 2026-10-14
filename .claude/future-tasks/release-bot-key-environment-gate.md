@@ -2,7 +2,7 @@
 priority: P2
 adopters: NEITHER
 summary: >-
-  CODE HALF DONE (branch chore/release-bot-key-environment): publish.yml's release-commit job, the only user of RELEASE_BOT_PRIVATE_KEY, names `environment: release`. OPEN, JP's settings: create the `release` environment limited to branch main, move the key into it, delete the repository secret (steps in DEVELOPING.md "Releasing"). Move to resolved/ once JP confirms
+  CODE HALF DONE (branch chore/release-bot-key-environment): publish.yml's release-commit job, the only user of RELEASE_BOT_PRIVATE_KEY, names `environment: release`. OPEN, the maintainer's settings: create the `release` environment limited to branch main, move the key into it, delete the repository secret (steps in DEVELOPING.md "Releasing"). Move to resolved/ once the maintainer confirms
 ---
 # Gate the release-bot key behind a main-only environment
 
@@ -25,7 +25,7 @@ which only narrowed where the token is minted.
    `prerelease` uses no secrets, and `tag-prerelease` uses `GITHUB_TOKEN`. Landing this first breaks nothing,
    because a job in an environment still sees repository secrets, and a run that names a missing
    environment creates it, unprotected.
-2. **Open, JP, in repository settings:** the numbered steps under "The release-bot key" in
+2. **Open, the maintainer, in repository settings:** the numbered steps under "The release-bot key" in
    [DEVELOPING.md](../../DEVELOPING.md#releasing). In short: environment `release`, deployment
    branches **Selected branches and tags** with one **Branch** rule `main` (no tag rule, since
    `release-commit` only runs on a push to `main`), the key as an environment secret, and the

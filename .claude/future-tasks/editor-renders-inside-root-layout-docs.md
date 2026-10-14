@@ -20,5 +20,5 @@ Clerk provider goes relative to the root layout, but not this.
 
 A short adopter-guide note: keep site chrome and global side effects out of the editor route (a
 route group for the public site, or a path check). Optionally export an `isEditorPath(pathname)`
-helper that respects `basePath` and the editor route; that is a new export, so it needs JP's
+helper that respects `basePath` and the editor route; that is a new export, so it needs the maintainer's
 approval.

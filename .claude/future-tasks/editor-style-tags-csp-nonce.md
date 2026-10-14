@@ -17,4 +17,4 @@ can see.
 
 Whether adopters need a strict `style-src`. If they do, take a nonce through the editor's
 config or props, pass it to `MantineProvider`'s `getStyleNonce`, and set it on each `<style>`.
-That is a new adopter touchpoint, so it needs JP's approval.
+That is a new adopter touchpoint, so it needs the maintainer's approval.

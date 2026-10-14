@@ -8,7 +8,7 @@ summary: >-
 
 Raised by the human review of
 [PR #229](https://github.com/safeinsights/canopycms/pull/229#pullrequestreview-4938780868)
-(finding #5b), 2026-08-14. Explicitly **not** rated a blocker by the reviewer: "the trade is
+(finding 5b), 2026-08-14. Explicitly **not** rated a blocker by the reviewer: "the trade is
 the right one." Filed so the trade is a recorded decision rather than something discovered
 later under load.
 

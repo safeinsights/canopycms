@@ -142,7 +142,7 @@ This section used to say the git-sync cluster goes "last, if at all", and that n
 should start while production-readiness work is in flight, because a split forces
 re-verification of recently-fixed bugs in the most-churned modules in the repo.
 
-That reasoning assumed the refactor would collide with in-flight prod work. **JP's call
+That reasoning assumed the refactor would collide with in-flight prod work. **The maintainer's call
 inverted it:** *"get this worker into better, more digestible shape, before we start
 testing it in production."* The quiet window before prod testing is the window, not the
 hazard — deferring only moves the same collision later, under more pressure. Under that

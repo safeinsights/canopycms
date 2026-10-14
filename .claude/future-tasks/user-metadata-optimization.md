@@ -177,7 +177,7 @@ Instead of fetching user metadata separately, embed it directly in API responses
     {
       "id": "2",
       "userId": "bob",
-      "user": { "id": "bob", "name": "Bob Jones", "email": "bob@example.com" },
+      "user": { "id": "bob", "name": "Bob Example", "email": "bob@example.com" },
       "text": "Thanks!"
     }
   ]

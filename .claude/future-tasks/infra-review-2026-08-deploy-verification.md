@@ -1,7 +1,7 @@
 ---
 priority: P1
 summary: >-
-  New 2026-08-21, filed at JP's request as the epic closed. Several infra-review fixes are **inert until a `cdk deploy`**, and two fail SILENTLY if the deploy does not take — which is how the defects went unnoticed originally. A checklist to run against the first prod deploy carrying the epic: the `current` symlink is relative AND editors render with names rather than raw Clerk ids AND a Clerk-org ACL actually grants; the worker comes up on `/usr/bin/node-22` with the unit active; a >30s request completes instead of 504ing at the edge; an unreferenced `/assets/t/` URL is a miss that writes nothing; the worker reads secrets with no AccessDenied; and on the next release, publish.yml waits for CI while a `workflow_dispatch` prerelease still goes straight through. Close the file once run
+  New 2026-08-21, filed at the maintainer's request as the epic closed. Several infra-review fixes are **inert until a `cdk deploy`**, and two fail SILENTLY if the deploy does not take — which is how the defects went unnoticed originally. A checklist to run against the first prod deploy carrying the epic: the `current` symlink is relative AND editors render with names rather than raw Clerk ids AND a Clerk-org ACL actually grants; the worker comes up on `/usr/bin/node-22` with the unit active; a >30s request completes instead of 504ing at the edge; an unreferenced `/assets/t/` URL is a miss that writes nothing; the worker reads secrets with no AccessDenied; and on the next release, publish.yml waits for CI while a `workflow_dispatch` prerelease still goes straight through. Close the file once run
 ---
 # [P1] Post-deploy checklist for the 2026-08 infra-review fixes
 
@@ -9,7 +9,7 @@ summary: >-
 checks below fail silently (the auth-cache symlink shows editors raw Clerk ids, and Clerk-organization
 ACLs deny).
 
-Filed 2026-08-21 by the `epic/infra-review-2026-08` epic, at JP's request
+Filed 2026-08-21 by the `epic/infra-review-2026-08` epic, at the maintainer's request
 ("there will be deploys soon, make sure we remember to check what we need to
 later").
 

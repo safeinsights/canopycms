@@ -7,10 +7,10 @@ summary: >-
 
 ## Priority: P3
 
-Surfaced by the protected-base-branch code review (2026-07-24), findings #9 and
-#10. Two small, independent cleanups deferred from the fix pass.
+Surfaced by the protected-base-branch code review (2026-07-24), findings 9
+and 10. Two small, independent cleanups deferred from the fix pass.
 
-## Problem A — inconsistent status code (finding #9)
+## Problem A — inconsistent status code (finding 9)
 
 Re-verified still open 2026-08-13 (`api/branch.ts:609` returns 400, `:617`
 returns 403, in the same handler).
@@ -23,7 +23,7 @@ precedes the `canDeleteBranch` permission check (403), so one handler yields
 either code for what a caller reads as the same category of failure. Align delete
 to 403 (or deliberately document why delete differs).
 
-## Problem B — speculative wire-flag optionality (finding #10)
+## Problem B — speculative wire-flag optionality (finding 10)
 
 **Re-verified 2026-08-13: the risk this finding named is now mitigated, but its
 structural fix is still undone.** Read the two halves separately.

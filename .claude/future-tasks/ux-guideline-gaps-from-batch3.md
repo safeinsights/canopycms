@@ -2,7 +2,7 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  Questions for JP from the UX review of the batch 3 behaviour PR, where docs/ux-guidelines.md is silent: how keyboard focus reaches an Undo toast, where focus goes when a button removes itself (Clear), camelCase acronyms in humanised names, a way forward on "You can't add entries here", and "comments" versus "threads" in counts
+  Questions for the maintainer from the UX review of the batch 3 behaviour PR, where docs/ux-guidelines.md is silent: how keyboard focus reaches an Undo toast, where focus goes when a button removes itself (Clear), camelCase acronyms in humanised names, a way forward on "You can't add entries here", and "comments" versus "threads" in counts
 ---
 
 # UX guideline gaps from batch 3

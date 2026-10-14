@@ -52,5 +52,5 @@ deployment can run without the check that binds tokens to expected origins.
   matcher unless this lands first
 - [listentries-acl-awareness.md](resolved/listentries-acl-awareness.md): the runtime `listEntries` /
   `buildContentTree`, and comment threads (`api/comments.ts`), enforce path ACLs through
-  `createContentAccessChecker`, which routes through matcher #1; those callers migrate with the
+  `createContentAccessChecker`, which routes through matcher 1; those callers migrate with the
   rest when the shared matcher lands

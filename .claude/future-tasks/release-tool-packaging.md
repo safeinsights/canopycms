@@ -2,12 +2,12 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-07. A bundled materialize release tool carries the whole `canopycms/server` graph (~2.9 MB) into a credentialed job, re-derives the CLI's exit codes, and nothing tests a CommonJS bundle that runs a transform. Proposal: a bundle-and-transform test, an exported `exitCodeFor`; a narrow `canopycms/materialize` entry point needs JP's approval
+  New 2026-10-07. A bundled materialize release tool carries the whole `canopycms/server` graph (~2.9 MB) into a credentialed job, re-derives the CLI's exit codes, and nothing tests a CommonJS bundle that runs a transform. Proposal: a bundle-and-transform test, an exported `exitCodeFor`; a narrow `canopycms/materialize` entry point needs the maintainer's approval
 ---
 # Make a bundled materialize release tool smaller and testable
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 from the adopting site's review of the
-[materialize release hardening](resolved/materialize-release-hardening.md) epic. **Item 1 needs JP's approval**
+[materialize release hardening](resolved/materialize-release-hardening.md) epic. **Item 1 needs the maintainer's approval**
 (a new package entry point).
 
 ## State
@@ -32,4 +32,4 @@ A credentialed release job bundles `materializeAssets` from `canopycms/server`. 
 Add a test that esbuilds the release-tool entry point to CommonJS (sharp and `@img/*` external),
 runs it against a local store with one missing transform, and checks the report. Export
 `exitCodeFor`. Add `kind` to `MaterializeResult` if a consumer needs it. Decide on the narrow entry
-point with JP.
+point with the maintainer.

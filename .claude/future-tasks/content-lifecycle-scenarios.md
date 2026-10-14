@@ -29,7 +29,7 @@ ARCHITECTURE.md section) covering:
   Two things changed that. (1) The branch-only publish decision
   ([draft-publish-lifecycle.md](draft-publish-lifecycle.md)) makes a long-lived
   branch the *supported* answer for in-progress content — a half-written article
-  is simply an open branch, since there is no per-entry draft state. (2) Per JP:
+  is simply an open branch, since there is no per-entry draft state. (2) Per the maintainer:
   assume some branches will be long-lived regardless, **because human reviewers
   forget about them.** So design for staleness *surfacing and recovery* — how a
   forgotten branch becomes visible, how it rebases without accumulating

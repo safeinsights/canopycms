@@ -4,7 +4,7 @@ adopters: BOTH
 summary: >-
   A production build warns about entries holding code in a non-`executable` markdown or MDX field
   (`warnUnsafeMarkdown` in `static/index.ts`), but still renders them, so a site that `evaluate`s
-  them runs that code on CI. Decide when the warning becomes a build failure. JP's call: it turns a
+  them runs that code on CI. Decide when the warning becomes a build failure. The maintainer's call: it turns a
   green build red for content the save path deliberately keeps
 ---
 # Fail the build on code in a non-executable markdown or MDX field

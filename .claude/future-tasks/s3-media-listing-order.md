@@ -5,7 +5,7 @@ summary: >-
 ---
 # Future Task: S3 media-library listing order (dev vs prod divergence)
 
-Status: **captured from the assets epic final review (finding #4), 2026-07-22.** Low
+Status: **captured from the assets epic final review (finding 4), 2026-07-22.** Low
 priority — a UX inconsistency, not a correctness bug.
 
 **Update, 2026-10-11 (WS7a-1):** the MediaLibrary now loads every page in the background and

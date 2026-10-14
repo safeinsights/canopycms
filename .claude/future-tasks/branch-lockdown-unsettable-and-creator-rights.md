@@ -8,7 +8,7 @@ summary: >-
 # Branch lockdown: nothing sets it, and the creator keeps delete rights
 
 [branch-lockdown-vs-acl-precedence.md](resolved/branch-lockdown-vs-acl-precedence.md) made the
-lockdown a ceiling over the ACL. Two gaps remain, and both need a decision from JP.
+lockdown a ceiling over the ACL. Two gaps remain, and both need a decision from the maintainer.
 
 ## 1. No API or UI sets `managerOrAdminAllowed`
 

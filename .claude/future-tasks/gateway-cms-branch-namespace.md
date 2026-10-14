@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-10-10, decision D9 of the worker process-split plan. Through the task queue a compromised CMS Lambda can push to, force-push (via a planted `historyRewrittenFrom` lease) and delete ANY GitHub branch outside the gateway's protected set, open PRs from them, which run the adopter's `push`/`pull_request` workflows, and update or close any PR by number. Decide whether new CMS branches get a prefix (say `cms/`) the worker or gateway refuses to step outside; needs JP
+  New 2026-10-10, decision D9 of the worker process-split plan. Through the task queue a compromised CMS Lambda can push to, force-push (via a planted `historyRewrittenFrom` lease) and delete ANY GitHub branch outside the gateway's protected set, open PRs from them, which run the adopter's `push`/`pull_request` workflows, and update or close any PR by number. Decide whether new CMS branches get a prefix (say `cms/`) the worker or gateway refuses to step outside; needs the maintainer
 ---
 
 # [P2] Confine CMS GitHub writes to a CMS branch namespace
@@ -40,4 +40,4 @@ Two more levers of the same kind:
   more moving parts.
 - **(c) Leave it,** and document GitHub rulesets on every branch that matters as the control.
 
-Recommendation when filed: (a), decided with JP.
+Recommendation when filed: (a), decided with the maintainer.
