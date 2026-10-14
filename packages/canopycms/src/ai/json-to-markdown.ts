@@ -492,7 +492,7 @@ function sanitizeMarkdownAltText(text: string): string {
  * `sanitizeMarkdownAltText` above — it survives `escapeTableCell`'s blind backslash-doubling
  * in a table cell.
  */
-function encodeMarkdownLinkDestination(src: string): string {
+export function encodeMarkdownLinkDestination(src: string): string {
   return src
     .replace(/[\r\n]+/g, '')
     .replace(/ /g, '%20')

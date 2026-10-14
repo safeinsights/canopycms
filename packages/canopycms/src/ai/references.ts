@@ -18,7 +18,7 @@ import { getErrorMessage } from '../utils/error'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { resolveEntryTitle } from '../utils/title-field'
 import { traverseFields } from '../validation/field-traversal'
-import type { ReferenceRendering } from './json-to-markdown'
+import { encodeMarkdownLinkDestination, type ReferenceRendering } from './json-to-markdown'
 import type {
   AIEntry,
   AIExcludedReference,
@@ -158,7 +158,10 @@ export type ReferenceLinkLookup = (id: string) => string | false | undefined
  * fails later is masked like any other, and its answer goes unused. A body reaches the callback from
  * `bodyOf` and nowhere else, which keeps it out of the output. A throw or a return other than a
  * non-empty string, `false` or `undefined` is logged and becomes `false`, so a broken callback
- * withholds a link rather than advertising a page the site may not have.
+ * withholds a link rather than advertising a page the site may not have; so does a target that
+ * cannot be read. A returned URL is stored encoded as a link destination, since body links splice
+ * it into markdown and HTML attributes as it is. An `entryLinkUrl` that throws leaves the target
+ * undecided, for the render to report as it does without this hook.
  */
 export async function decideReferenceLinks(
   referenceLink: AIReferenceLinkFn,
@@ -183,20 +186,33 @@ export async function decideReferenceLinks(
 
   const decisions = new Map<string, string | false | undefined>()
   for (const id of ids) {
-    const target = await resolveTarget(id)
+    let target: AIReferenceValue
+    try {
+      target = await resolveTarget(id)
+    } catch (err) {
+      console.warn(`AI content: cannot read entry ${id} for referenceLink:`, getErrorMessage(err))
+      decisions.set(id, false)
+      continue
+    }
     if (!isShownTarget(target)) continue
+    let defaultUrl: string | undefined
+    try {
+      defaultUrl = defaultPageUrl(target, entryLinkUrl)
+    } catch {
+      continue
+    }
     let decision: unknown
     try {
       decision = await referenceLink(target as AIResolvedReference, {
         body: bodyOf(id),
-        defaultUrl: defaultPageUrl(target, entryLinkUrl),
+        defaultUrl,
       })
     } catch (err) {
       console.warn(`AI content: referenceLink threw for entry ${id}:`, getErrorMessage(err))
       decision = false
     }
     if (typeof decision === 'string' && decision.trim()) {
-      decisions.set(id, decision.trim())
+      decisions.set(id, encodeMarkdownLinkDestination(decision.trim()).replace(/"/g, '%22'))
     } else if (decision === false || decision === undefined) {
       decisions.set(id, decision)
     } else {

@@ -431,6 +431,12 @@ function emitCollection(node: CollectionNode, files: Map<string, string>): AIMan
  * misshapen `seo` reads the flag from a field no entry sets, so every noindex entry ships.
  */
 function assertValidNoindexConfig(config: AIContentConfig | undefined): void {
+  const referenceLink: unknown = config?.referenceLink
+  if (referenceLink !== undefined && typeof referenceLink !== 'function') {
+    throw new Error(
+      `AI content config: referenceLink must be a function, got ${typeof referenceLink}`,
+    )
+  }
   const noindex: unknown = config?.exclude?.noindex
   if (noindex !== undefined && typeof noindex !== 'boolean') {
     throw new Error(`AI content config: exclude.noindex must be a boolean, got ${typeof noindex}`)
