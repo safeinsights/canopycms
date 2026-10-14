@@ -163,8 +163,7 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 - Anything clickable is a button or link (`UnstyledButton` when it must look bare), never a
   `div` with `onClick`.
 - An `iframe` has a `title`; an input has a label or `aria-label`.
-- Focus rings stay visible; never set `outline: none`. They draw in `--canopy-focus-ring`,
-  measured at 3:1 on their surface for any adopter brand.
+- Focus rings stay visible; never set `outline: none`.
 - `autoFocus` only on the first field of a dialog the user just opened.
 - A detail shown only in a tooltip, such as an email or an absolute date, also needs a
   focusable route: a focusable trigger, or visually hidden text in it or via `aria-describedby`.
@@ -183,20 +182,21 @@ included:
 
 - `--mantine-color-dimmed`, the only dimmed colour. Dark dimmed text also differs in size or
   style: no colour is both 4.5:1 and visibly dimmer than body text.
-- `--mantine-color-placeholder`, at least 4.5:1 and further from the text colour than dimmed, so
-  a placeholder never passes for a value.
+- `--mantine-color-placeholder`, at least 4.5:1, and at least 1.7:1 from the text colour so it
+  never passes for a value.
 - `--canopy-danger-text`, for all destructive and error text, menu items included: `red.9` in
-  light mode and `red.3` in dark, since `red.8` and `red.4` reach only 4.3:1.
+  light mode and `red.3` in dark, since `red.8` is 4.3:1 on `gray.0` and `red.4` 4.3:1 on `dark.4`.
 - `--canopy-input-border` (3:1), for inputs and the borders and tracks of Checkbox, Radio and
   Switch; `--canopy-surface-subtle` and `--canopy-surface-muted`.
+- `--canopy-focus-ring`, at least 3:1 on its surface for any adopter brand.
 
 Pass a plain colour; the theme brings its text and light variant to 4.5:1, at which dark mode's
 light status badges look alike. Success text is the default colour beside a green icon;
 `green.8` and `green.9` miss 4.5:1 on white. Count badges put text colour on a tinted background.
 A light yellow `Alert`'s title, icon and close button take the text colour; yellow on its own
 tint is under 2:1. Filled destructive buttons are `red.8`, 4.5:1 under white; no orange shade
-reaches that, so filled orange buttons are `orange.6` with black text. Any other colour but the
-primary is never filled: use its light variant.
+reaches that, so filled orange buttons are `orange.6` with black text. Nothing else but the
+primary is filled: other badges, icons and indicators take their colour's light variant.
 
 ## People
 

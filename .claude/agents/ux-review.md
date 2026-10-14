@@ -30,21 +30,21 @@ Check each changed surface against these rules:
 
 - comment control: Tab order, and no badge at zero; read-only forms' row handles and menus;
   date-time inputs ([Fields](../../docs/ux-guidelines.md#fields))
-- disabled reasons as sentences, on focus and touch; `aria-disabled` menu items, empty menus and
-  sections; path-rule and unsaved-state blocks
+- disabled reasons as sentences, on focus and touch, hidden text when icon-only; `aria-disabled`
+  menu items, empty menus and sections; path-rule and unsaved-state blocks
   ([Disabled controls](../../docs/ux-guidelines.md#disabled-controls))
 - focus when the opener is gone, and behind sticky regions
   ([Keyboard](../../docs/ux-guidelines.md#keyboard))
 - dismiss wording, placeholders, badge case, `…` on menu buttons, schema names
-  ([Copy](../../docs/ux-guidelines.md#copy)); Remove, Delete and Clear
+  ([Copy](../../docs/ux-guidelines.md#copy)); Remove, Delete, Clear and Content
   ([Vocabulary](../../docs/ux-guidelines.md#vocabulary))
 - toast pause; Undo for Clear and in modals, focus after it; removed items' comments
   ([Choosing a surface](../../docs/ux-guidelines.md#choosing-a-surface),
   [Destructive actions](../../docs/ux-guidelines.md#destructive-actions))
-- names, fallbacks, avatars and access lists ([People](../../docs/ux-guidelines.md#people));
-  tooltip-only details and focus rings ([Accessibility](../../docs/ux-guidelines.md#accessibility))
-- contrast of controls, badges, icons and borders in both schemes; no fixed shades or
-  non-primary fills; dimmed, danger and success text
+- names, fallbacks, avatars and access lists ([People](../../docs/ux-guidelines.md#people)),
+  and tooltip-only details ([Accessibility](../../docs/ux-guidelines.md#accessibility))
+- contrast of controls, badges, icons, borders and focus rings in both schemes; no fixed shades
+  or non-primary fills; dimmed, placeholder, danger and success text; 409s in yellow
   ([Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast))
 - no reorder under the pointer; unretryable refusals; unknown outcomes in yellow, named, with
   input kept

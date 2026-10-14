@@ -22,7 +22,8 @@ red 2.78, orange 2.23), as on the base. Surfaces: `permission-manager/Permission
 (an icon, 3:1), and `components/EditorSidebar.tsx`'s orange Indicator. The guideline now says a
 colour other than the primary is never filled: make each of these a light variant, which the
 theme already makes readable, leaving the filled red and orange Button resolver in `theme.tsx`
-alone.
+alone. Mantine's `Indicator` has no `variant`, so the sidebar's takes the light variant's colours
+through `styles`: text colour on a tint, as count badges do.
 
 ## White on the primary colour in dark mode
 
@@ -32,8 +33,12 @@ still miss 4.5:1: a combobox's armed option (Select, Tags, the quick-open palett
 also has `opacity: 0.75`, 3.53:1 even in light mode), the date picker's selected day and focused
 time segment. Shade 5 stays because focus rings, focused borders and checked controls need 3:1
 on dark surfaces. Each needs the fill token through a scoped rule or the component's `styles`.
-The focus-ring side is [object-clear-undo-and-ux-batch2-review-leftovers.md](object-clear-undo-and-ux-batch2-review-leftovers.md)'s
-`--canopy-focus-ring` item.
+Shade 5 measures 3:1 for the default brand only: darker adopter brands (`#1e3a8a` 2.21:1 on
+dark.5) fall short, as on the base. Focus rings get their own token in
+[object-clear-undo-and-ux-batch2-review-leftovers.md](object-clear-undo-and-ux-batch2-review-leftovers.md);
+focused input borders and checked Checkbox, Radio and Switch fills still draw in shade 5, and a
+measured indicator token would need routing through every focus and checked-state selector
+Mantine draws.
 
 ## Checkbox, Radio and Switch borders
 

@@ -40,6 +40,8 @@ compact "Outline"). None was in that PR's scope.
 - **Focus-ring token.** Add `--canopy-focus-ring`, measured at 3:1 on its surface for any
   adopter brand ([Accessibility](../../docs/ux-guidelines.md#accessibility)); dark primary shade
   5 gives 3.05:1 on dark.5 for the default brand only.
-- **Dark dimmed cue.** Dark dimmed text is about 1.3:1 from body text, so dimmed content
-  (outside-month days in the date picker) also needs a size or style difference
-  ([Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast)).
+- **Dark dimmed cue.** Dark dimmed text is about 1.3:1 from body text, so it also needs a size
+  or style difference ([Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast)).
+  Sweep every `c="dimmed"` in `editor/` that matches its neighbours' size and style (about 125
+  uses, some with no `size`, such as in `FormHeader.tsx` and `EntryNavigator.tsx`), the date
+  picker's outside-month days included.

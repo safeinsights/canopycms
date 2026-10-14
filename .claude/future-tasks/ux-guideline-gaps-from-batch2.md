@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Code follow-ups to JP's 2026-10-13 rulings on the batch 2 UX gaps, now rules in docs/ux-guidelines.md: hide UserBadge's avatar-only initials from assistive tech, a collection-level line where path rules hide the "…" actions, Badge uppercase off theme-wide, hidden reason text on icon-only disabled controls, "All entries" renamed "All content", and status-line Undo in every dialog with staged removals
+  Code follow-ups to JP's 2026-10-13 rulings on the batch 2 UX gaps, now rules in docs/ux-guidelines.md: hide UserBadge's avatar-only initials from assistive tech, a collection-level line where path rules hide the "…" actions, Badge uppercase off theme-wide, hidden reason text on icon-only disabled controls, and "All entries" renamed "All content"
 ---
 
 # UX batch 2 gaps: code follow-ups
@@ -19,9 +19,8 @@ editor into line with one.
 - **Badge case** ([Copy](../../docs/ux-guidelines.md#copy)). Turn off `Badge`'s uppercase in
   `editor/theme.tsx`, then drop `UserBadge`'s local `textTransform: 'none'`.
 - **Disabled reasons.** Give icon-only disabled controls their reason as visually hidden text
-  too; controls that carry text keep the Tooltip alone.
+  too; controls that carry text keep the Tooltip alone. `SyncFailedBadge` in
+  `admin/SystemHealthPanel.tsx` carries text and adds hidden text as well: check it against the
+  rule.
 - **"All content".** The header menu item (`components/EditorHeader.tsx`) and the breadcrumb
   root (`buildBreadcrumbSegments` in `editor-utils.ts`) say "All entries"; the drawer is "Content".
-- **Undo inside a modal** ([Destructive actions](../../docs/ux-guidelines.md#destructive-actions)).
-  `CollectionEditor` puts its staged-removal Undo in the dialog's status line; move any other
-  dialog's removal Undo from a toast to the same place.
