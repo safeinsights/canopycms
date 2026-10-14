@@ -395,7 +395,8 @@ Rendered Asset URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls); adopter con
 
 **Location**: `packages/canopycms/src/`
 
-- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `resolveReferences`, `resolveReferenceTarget` (denied → `RestrictedReference`, missing → `MissingReference`), `assertEntryAvailable`, the typed `ContentStoreError` codes, and the conflict errors
+- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `fillEmptyFieldWhileHoldingWriteLock`, `resolveReferences`, `resolveReferenceTarget` (denied → `RestrictedReference`, missing → `MissingReference`), `assertEntryAvailable`, the typed `ContentStoreError` codes, and the conflict errors
+- `stamp-on-publish.ts` — `stampNewEntries`: at submit, fills empty `stampOnPublish` datetime fields of entries the base tip lacks
 - `content-reader.ts` — content reading; resolves `entry:ID` body links at read time, opt-out via `resolveEntryLinks: false`
 - `content-id-index.ts` — ContentId indexing, tree and global lookups, and the duplicate-ID quarantine
 - `content-index-registry.ts` — in-process registry connecting branch-mutating operations to the stores they make stale
@@ -671,7 +672,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 
 **Location**: `packages/canopycms/src/`
 
-- `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
+- `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `listBaseTipFiles`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache; quarantines a dir whose metadata will not load
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
@@ -741,7 +742,7 @@ immediately; without one they enqueue a task for the worker; a submit marks the 
 **Location**: `packages/canopycms/src/services.ts`
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
-- `submitBranch()` — the submit workflow: checkout, status, commit all (with editor trailers), push; returns `changedPaths` and `editors` (`NothingToSubmitError` when empty)
+- `submitBranch()` — the submit workflow: checkout, stamp new entries (`stamp-on-publish.ts`), status, commit all (with editor trailers), push; returns `changedPaths` and `editors` (`NothingToSubmitError` when empty)
 - `commitToSettingsBranch()` — commit and push the settings branch (never a PR)
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 
