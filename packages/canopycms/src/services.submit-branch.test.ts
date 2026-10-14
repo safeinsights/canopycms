@@ -12,7 +12,7 @@ import type { BranchContext } from './types'
 import { NothingToSubmitError, type CanopyServices } from './services'
 import { BranchMetadataFileManager } from './branch-metadata'
 import { ContentWriteLockBusyError, tryAcquireContentWriteLock } from './utils/content-write-lock'
-import { ContentStore } from './content-store'
+import { ContentConflictError, ContentStore } from './content-store'
 import { listEntries } from './content-listing'
 import { flattenSchema } from './config/flatten'
 import { generateId } from './id'
@@ -666,6 +666,11 @@ describe('services submitBranch', () => {
               schema: [title, { name: 'meta', type: 'group' as const, fields: [stamp] }],
             },
             { name: 'card', format: 'json' as const, schema: [title, stamp] },
+            {
+              name: 'release',
+              format: 'json' as const,
+              schema: [stamp, { ...stamp, name: 'announcedAt' }],
+            },
           ],
         },
         { name: 'news', path: 'news', entries: [post] },
@@ -738,6 +743,58 @@ describe('services submitBranch', () => {
       expect(Date.parse(stamped)).toBeLessThanOrEqual(Date.now())
       expect(await pushedEntry(file)).toBe(await readEntry(file))
       expect((await simpleGit({ baseDir: localPath }).status()).files).toEqual([])
+    })
+
+    it('reports each stamped entry with the version a save must then send', async () => {
+      const id = generateId()
+      const file = entryPath('posts', 'post', 'reported', id, 'md')
+      await writeEntry(file, "---\ntitle: Reported\npublishedAt: ''\n---\nBody\n")
+      const store = new ContentStore(localPath, flattenSchema(stampSchema, 'content'))
+      const read = () => store.read('content/posts' as LogicalPath, 'reported' as Slug)
+      const before = (await read()).version!
+      await new Promise((resolve) => setTimeout(resolve, 5))
+
+      const { stamped } = await services.submitBranch({ context })
+
+      const value = stampIn(
+        await readEntry(file),
+        "---\ntitle: Reported\npublishedAt: 'STAMP'\n---\nBody\n",
+      )
+      const after = (await read()).version!
+      expect(stamped).toEqual([
+        { contentId: id, fields: { publishedAt: value }, previousVersion: before, version: after },
+      ])
+      const save = (expectedVersion: number) =>
+        store.write('content/posts' as LogicalPath, 'reported' as Slug, {
+          format: 'md',
+          data: { title: 'Saved', publishedAt: value },
+          body: 'Body\n',
+          expectedVersion,
+        })
+      await expect(save(before)).rejects.toThrow(ContentConflictError)
+      await expect(save(after)).resolves.toMatchObject({ data: { title: 'Saved' } })
+    })
+
+    it('reports an entry with two stamp fields once, at the version after both', async () => {
+      const id = generateId()
+      const file = entryPath('posts', 'release', 'two', id, 'json')
+      await writeEntry(file, '{ "publishedAt": "", "announcedAt": "" }\n')
+
+      const { stamped } = await services.submitBranch({ context })
+
+      const { mtimeMs } = await fs.stat(path.join(localPath, file))
+      const value = stamped[0]?.fields.publishedAt
+      expect(stamped).toEqual([
+        {
+          contentId: id,
+          fields: { publishedAt: value, announcedAt: value },
+          previousVersion: expect.any(Number),
+          version: mtimeMs,
+        },
+      ])
+      expect(await readEntry(file)).toBe(
+        `{ "publishedAt": "${value}", "announcedAt": "${value}" }\n`,
+      )
     })
 
     it('keeps every other byte of YAML, frontmatter and JSON entries, with one value per submit', async () => {
@@ -815,9 +872,14 @@ describe('services submitBranch', () => {
         entryPath('news', 'post', 'moved', movedId, 'md'),
       ])
       await writeEntry(page, empty('About'))
+      const readFile = vi.spyOn(fs, 'readFile')
 
-      await services.submitBranch({ context })
+      const result = await services.submitBranch({ context })
 
+      expect(result.stamped).toEqual([])
+      // Entries the base has are not even read.
+      const read = readFile.mock.calls.map(([file]) => String(file))
+      expect(read.filter((file) => file.includes(renamedId) || file.includes('kept'))).toEqual([])
       expect(await readEntry(kept)).toBe(empty('Kept'))
       expect(await readEntry(entryPath('posts', 'post', 'new-slug', renamedId, 'md'))).toBe(
         empty('Renamed'),

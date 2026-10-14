@@ -30,6 +30,7 @@
  * leaving two unsynchronized writers -- the unlocked behaviour, so still a strict improvement.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import path from 'node:path'
 
 import { getErrorMessage, isNodeError } from './error'
@@ -146,6 +147,18 @@ async function acquireContentWriteLock(
   }
 }
 
+/** The branch roots whose content-write lock the current async call chain holds. */
+const heldRoots = new AsyncLocalStorage<ReadonlySet<string>>()
+
+/**
+ * Throw unless the calling async chain runs inside {@link withContentWriteLock} for `branchRoot`:
+ * the check for code that writes under a lock its caller took.
+ */
+export function assertContentWriteLockHeld(branchRoot: string): void {
+  if (heldRoots.getStore()?.has(path.resolve(branchRoot))) return
+  throw new Error(`The content-write lock for ${branchRoot} is not held by this call`)
+}
+
 /** Run `fn` holding the branch's content-write lock, releasing in a `finally` so a throw cannot
  * strand it. */
 export async function withContentWriteLock<T>(
@@ -167,7 +180,9 @@ export async function withContentWriteLock<T>(
   })
   let result: T
   try {
-    result = await fn()
+    const held = new Set(heldRoots.getStore())
+    held.add(path.resolve(branchRoot))
+    result = await heldRoots.run(held, fn)
   } finally {
     await release()
   }

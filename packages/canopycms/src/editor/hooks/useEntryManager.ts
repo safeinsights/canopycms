@@ -107,6 +107,8 @@ export interface UseEntryManagerReturn {
    * server's conflict check and revert whoever wrote that newer version).
    */
   getEntryVersion: (contentId: string) => number | undefined
+  /** Holds `version` as the token for `contentId`, for a change the server made itself. */
+  adoptEntryVersion: (contentId: string, version: number) => void
   /**
    * Opens an entry a save reported gone (`ENTRY_GONE`) at its new path, found by content ID,
    * which a rename keeps. Undefined if deleted; the list is then not refreshed, which would close
@@ -376,6 +378,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // it to reason about the entry they are looking at right now.
   const getEntryVersion = (contentId: string): number | undefined =>
     entryVersionsRef.current.get(versionKey(options.branchName, contentId))
+
+  const adoptEntryVersion = (contentId: string, version: number): void => {
+    entryVersionsRef.current.set(versionKey(options.branchName, contentId), version)
+  }
 
   const saveEntry = async (entry: EditorEntry, value: FormValue) => {
     if (!entry.collectionPath) {
@@ -885,6 +891,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     readEntryValue,
     saveEntry,
     getEntryVersion,
+    adoptEntryVersion,
     followMovedEntry,
     recreateEntry,
     collectionByPath: collectionByPath,

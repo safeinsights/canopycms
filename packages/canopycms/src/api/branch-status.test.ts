@@ -111,6 +111,31 @@ describe('branch status api', () => {
       writeBlocked: true,
       submitBlocked: true,
     })
+    expect(res.data).not.toHaveProperty('stamped')
+  })
+
+  it("answers a submit with the entries it stamped, for the editor's open forms", async () => {
+    const ctx = makeCtx(true)
+    const stamped = [
+      {
+        contentId: 'abcdefghijkm',
+        fields: { publishedAt: '2026-10-14T00:00:00.000Z' },
+        previousVersion: 1,
+        version: 2,
+      },
+    ]
+    ctx.services.submitBranch = vi
+      .fn()
+      .mockResolvedValue({ changedPaths: ['a.md'], editors: [], stamped })
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.stamped).toEqual(stamped)
   })
 
   it('rejects submit on the base branch (protected -- submittableBranch guard, prod)', async () => {
@@ -366,7 +391,9 @@ describe('branch status api', () => {
           config: { defaultBranchAccess: 'allow' } as any,
         },
       })
-      ctx.services.submitBranch = vi.fn().mockResolvedValue({ changedPaths: [] })
+      ctx.services.submitBranch = vi
+        .fn()
+        .mockResolvedValue({ changedPaths: [], editors: [], stamped: [] })
       return { ctx, mockGit }
     }
 
@@ -447,7 +474,9 @@ describe('branch status api', () => {
       ctx.services.githubService = {
         createOrUpdatePR,
       } as unknown as NonNullable<typeof ctx.services.githubService>
-      ctx.services.submitBranch = vi.fn().mockResolvedValue({ changedPaths: ['a.md'] })
+      ctx.services.submitBranch = vi
+        .fn()
+        .mockResolvedValue({ changedPaths: ['a.md'], editors: [], stamped: [] })
       return ctx
     }
 
@@ -538,7 +567,7 @@ describe('branch status api', () => {
       })
       ctx.services.submitBranch = vi
         .fn()
-        .mockResolvedValue({ changedPaths: ['content/pages/home.md'] })
+        .mockResolvedValue({ changedPaths: ['content/pages/home.md'], editors: [], stamped: [] })
 
       const res = await submitBranchForMerge(
         ctx,

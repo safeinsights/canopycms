@@ -513,11 +513,15 @@ const looksLikeMalformedEntry = (
  * -- a `README.md`, a colocated sibling artifact -- is always dropped with a debug-gated
  * `log.warn` and never passed to `onSkip`. Optional and purely diagnostic: `listEntries` uses
  * it to turn the skip into a hard build-time failure instead of a silent one.
+ *
+ * `readsId`, when given, leaves out every entry whose ContentId it rejects before its file is
+ * read, so a caller wanting a few entries does not pay for the rest.
  */
 export const listCollectionEntries = async (
   root: string,
   collection: FlatSchemaItem,
   onSkip?: (file: SkippedListingFile) => void,
+  readsId?: (id: ContentId) => boolean,
 ): Promise<CollectionListItem[]> => {
   if (collection.type !== 'collection' || !collection.entries) {
     return []
@@ -576,6 +580,7 @@ export const listCollectionEntries = async (
       }
 
       const { type: entryTypeName, slug, id: contentId } = parsed
+      if (readsId && !readsId(contentId)) return null
       const entryType = entryTypes.find((e) => e.name === entryTypeName)
       const format: ContentFormat = entryType?.format || 'json'
       const bodyField = entryType?.schema ? findBodyFieldName(entryType.schema) : 'body'

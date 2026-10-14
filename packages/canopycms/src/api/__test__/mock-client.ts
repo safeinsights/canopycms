@@ -9,7 +9,7 @@ import type { ApiResponse } from '../types'
 import { createLogicalPath, createPhysicalPath } from '../../paths'
 import type { ContentId } from '../../paths'
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
-import type { BranchMergeResponse } from '../branch-status'
+import type { BranchMergeResponse, SubmitBranchResponse } from '../branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from '../content'
 import type { ReferenceOptionsResponse } from '../reference-options'
@@ -160,6 +160,10 @@ export function mockBranchDeleteResponse(): BranchDeleteResponse {
 
 export function mockBranchMergeResponse(): BranchMergeResponse {
   return mockSuccess({"branch":{"name":"test-branch","status":"archived"}})
+}
+
+export function mockSubmitBranchResponse(): SubmitBranchResponse {
+  return mockSuccess({"branch":{"name":"test-branch","status":"submitted","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})
 }
 
 export function mockCommentsResponse(): CommentsResponse {

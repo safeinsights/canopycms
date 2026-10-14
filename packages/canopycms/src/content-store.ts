@@ -22,6 +22,7 @@ import { serializeFrontmatter, serializeYaml } from './utils/content-serialize'
 import { serializeJson } from './utils/json-source-splice'
 import { withLock } from './utils/async-mutex'
 import {
+  assertContentWriteLockHeld,
   ContentWriteLockBusyError,
   DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
   withContentWriteLock,
@@ -285,6 +286,16 @@ const isEmptyFieldValue = (value: unknown): boolean =>
   value === undefined || value === null || value === ''
 
 /**
+ * A parsed entry document's top-level record. Anything but a plain object throws, so a fill never
+ * replaces an array or scalar root; YAML and frontmatter read an empty document as null.
+ */
+function entryRecord(parsed: unknown, emptyIsRecord: boolean): Record<string, unknown> {
+  if (isPlainRecord(parsed)) return parsed
+  if (emptyIsRecord && (parsed === null || parsed === undefined)) return {}
+  throw new Error('the file does not hold an object at its top level')
+}
+
+/**
  * `raw` with top-level `field` set to the string `value`, through the same source-preserving
  * serialisers `write()` uses, or undefined when `raw` already holds a non-empty value there.
  * Throws when the result would not read back as that string.
@@ -296,24 +307,23 @@ function fillEmptyTopLevelField(
   value: string,
 ): string | undefined {
   if (format === 'json' || format === 'yaml') {
-    const data = asRecord(format === 'json' ? JSON.parse(raw) : yamlParse(raw))
+    const parse = (text: string) =>
+      format === 'json' ? entryRecord(JSON.parse(text), false) : entryRecord(yamlParse(text), true)
+    const data = parse(raw)
     if (!isEmptyFieldValue(data[field])) return undefined
     const next = { ...data, [field]: value }
     const content = format === 'json' ? serializeJson(next, raw) : serializeYaml(next, raw)
-    const readBack = asRecord(format === 'json' ? JSON.parse(content) : yamlParse(content))
-    if (readBack[field] !== value) throw new Error(`"${field}" does not read back as written`)
+    if (parse(content)[field] !== value) throw new Error(`"${field}" does not read back as written`)
     return content
   }
+  const frontmatter = (text: string) => entryRecord(matter(text, {}).data, true)
   const fill = (from: string, fieldValue: string): string => {
     const parsed = matter(from, {})
-    const data = { ...(parsed.data as Record<string, unknown>), [field]: fieldValue }
+    const data = { ...entryRecord(parsed.data, true), [field]: fieldValue }
     return serializeFrontmatter(parsed.content, data, from, format)
   }
-  const readsBack = (content: string): boolean =>
-    (matter(content, {}).data as Record<string, unknown>)[field] === value
-  if (!isEmptyFieldValue((matter(raw, {}).data as Record<string, unknown>)[field])) {
-    return undefined
-  }
+  const readsBack = (content: string): boolean => frontmatter(content)[field] === value
+  if (!isEmptyFieldValue(frontmatter(raw)[field])) return undefined
   const content = fill(raw, value)
   if (readsBack(content)) return content
   // A key the serialiser inserts is written plain, and gray-matter reads a plain timestamp as a
@@ -1422,34 +1432,34 @@ export class ContentStore {
 
   /**
    * Set top-level `field` of the entry file at `physicalPath` to the string `value` when the
-   * file holds it empty (absent, null or ''), keeping every other byte; true when it wrote.
+   * file holds it empty (absent, null or ''), keeping every other byte. Resolves to the file's
+   * version (the mtime `read()` reports) before and after the write, or undefined when it left
+   * the file alone.
    *
    * PRECONDITION: the caller already holds this branch's content-write lock, which makes the
-   * read and the write one critical section. This takes no lock itself, since a nested
-   * acquisition fails busy and is why nothing holding that lock may call `write()`
-   * (docs/concurrency.md, "Lock acquisition order").
+   * read and the write one critical section; a call outside it throws. This takes no lock
+   * itself, since a nested acquisition fails busy and is why nothing holding that lock may call
+   * `write()` (docs/concurrency.md, "Lock acquisition order").
    */
   async fillEmptyFieldWhileHoldingWriteLock(
     physicalPath: PhysicalPath,
     format: ContentFormat,
     field: string,
     value: string,
-  ): Promise<boolean> {
+  ): Promise<{ previousVersion: number; version: number } | undefined> {
+    assertContentWriteLockHeld(this.root)
     const checked = validateAndNormalizePath(this.root, path.join(this.root, physicalPath))
     if (!checked.valid || !checked.normalizedPath) {
       throw new ContentStoreError(checked.error ?? 'Path traversal detected', 'VALIDATION')
     }
     const absolutePath = path.join(this.root, checked.normalizedPath)
-    const content = fillEmptyTopLevelField(
-      await fs.readFile(absolutePath, 'utf8'),
-      format,
-      field,
-      value,
-    )
-    if (content === undefined) return false
+    const current = await readFileWithMtimeIfExists(absolutePath)
+    if (!current) throw new EntryGoneError()
+    const content = fillEmptyTopLevelField(current.content, format, field, value)
+    if (content === undefined) return undefined
     await atomicWriteFile(absolutePath, content)
     await this.recordOwnMutation(this._idIndex)
-    return true
+    return { previousVersion: current.mtimeMs, version: (await fs.stat(absolutePath)).mtimeMs }
   }
 
   /**

@@ -32,10 +32,25 @@ const contentRootDir = (contentRoot: string): string | undefined =>
     .join('/') || undefined
 
 /**
+ * One entry a submit stamped: the editor moves its loaded value, draft and OCC token from
+ * `previousVersion` onto `version` with these fields set, instead of finding its next save refused.
+ */
+export interface StampedEntry {
+  contentId: ContentId
+  /** Stamp field name to the value written. */
+  fields: Record<string, string>
+  /** The file's version (`read()`'s mtime) before the stamp. */
+  previousVersion: number
+  /** The file's version after the stamp. */
+  version: number
+}
+
+/**
  * Fill every empty stamp field of every entry the base tip lacks with `stampedAt`, never
- * overwriting a value, and return the root-relative paths written. Lists the base only when the
- * schema has a stamp field. Rejects when the base cannot be fetched or listed; a single entry
- * that cannot be written is reported through `warn` and skipped.
+ * overwriting a value, and return the entries written. Lists the base only when the schema has
+ * a stamp field, and reads only the entry files the base lacks. Rejects when the base cannot be
+ * fetched or listed; a single entry that cannot be written is reported through `warn` and
+ * skipped.
  *
  * The caller holds the branch's content-write lock, as `store.fillEmptyFieldWhileHoldingWriteLock`
  * requires.
@@ -48,7 +63,7 @@ export async function stampNewEntries(options: {
   contentRoot: string
   stampedAt: string
   warn: (message: string) => void
-}): Promise<string[]> {
+}): Promise<StampedEntry[]> {
   const collections = options.flatSchema.filter(
     (item): item is CollectionSchemaItem =>
       item.type === 'collection' &&
@@ -62,21 +77,30 @@ export async function stampNewEntries(options: {
     if (id) baseIds.add(id)
   }
 
-  const stamped: string[] = []
+  const stamped: StampedEntry[] = []
   for (const collection of collections) {
-    for (const entry of await listCollectionEntries(options.branchRoot, collection)) {
-      if (baseIds.has(entry.contentId)) continue
+    const entries = await listCollectionEntries(
+      options.branchRoot,
+      collection,
+      undefined,
+      (id) => !baseIds.has(id),
+    )
+    for (const entry of entries) {
       const schema = collection.entries?.find((e) => e.name === entry.entryType)?.schema ?? []
       const empty = stampFieldNames(schema).filter((name) => isEmpty(entry.data[name]))
+      let written: StampedEntry | undefined
       for (const field of empty) {
         try {
-          const wrote = await options.store.fillEmptyFieldWhileHoldingWriteLock(
+          const versions = await options.store.fillEmptyFieldWhileHoldingWriteLock(
             entry.physicalPath,
             entry.format,
             field,
             options.stampedAt,
           )
-          if (wrote && !stamped.includes(entry.physicalPath)) stamped.push(entry.physicalPath)
+          if (!versions) continue
+          written ??= { contentId: entry.contentId, fields: {}, ...versions }
+          written.fields[field] = options.stampedAt
+          written.version = versions.version
         } catch (err) {
           options.warn(
             `CanopyCMS: Could not stamp "${field}" on ${entry.physicalPath}; it is submitted ` +
@@ -84,6 +108,7 @@ export async function stampNewEntries(options: {
           )
         }
       }
+      if (written) stamped.push(written)
     }
   }
   return stamped

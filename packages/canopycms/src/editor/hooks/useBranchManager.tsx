@@ -23,6 +23,7 @@ import { isNonApiResponse } from '../../api/client'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 import type { ApiResponse } from '../../api/types'
 import type { UnsavedSummary } from './useDraftManager'
+import type { StampedEntry } from '../../stamp-on-publish'
 import { describeUnsaved } from './useBranchActions'
 
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
@@ -325,6 +326,9 @@ export interface UseBranchManagerOptions {
 
   /** What is unsaved on the open branch (useDraftManager's `resolveUnsaved`), named before a submit. */
   getUnsaved?: () => Promise<UnsavedSummary>
+
+  /** The entries a submit of the open branch stamped (useDraftManager's `applySubmitStamps`). */
+  onStamped?: (stamped: StampedEntry[]) => void
 }
 
 export interface UseBranchManagerReturn {
@@ -629,6 +633,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 branch: branchNameToSubmit,
               })
               if (!result.ok) throw actionError(result, 'Failed to submit branch')
+              const stamped = result.data?.stamped
+              if (stamped && branchNameToSubmit === listedName(latest.current.branchName)) {
+                options.onStamped?.(stamped)
+              }
               notifications.show({
                 message: 'Branch submitted for review',
                 color: 'green',
