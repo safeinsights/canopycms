@@ -683,7 +683,7 @@ const EditorContent: React.FC<EditorProps> = ({
           action={removal.action}
           note={
             movedThreads > 0
-              ? `Its ${movedThreads === 1 ? 'comment' : `${movedThreads} comments`} moved to "Comment on this entry".`
+              ? `Its ${movedThreads === 1 ? 'comment thread' : `${movedThreads} comment threads`} moved to "Comment on this entry".`
               : undefined
           }
           onUndo={undo}

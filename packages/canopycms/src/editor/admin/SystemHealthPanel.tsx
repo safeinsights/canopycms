@@ -35,6 +35,7 @@ import { useId, type ReactNode } from 'react'
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
+import { formatRelativeTime } from '../relative-time'
 import {
   useSystemHealth,
   type UseSystemHealthReturn,
@@ -1010,6 +1011,12 @@ function DuplicateRepairDetails({
  * when pressed, so it must not be announced as one. A trigger with no text of its own, such as an
  * icon, takes its name from `name`.
  */
+/** "2d ago, 1/1/2026, 9:00:00 AM": inside a tooltip, so the absolute date sits beside it. */
+const firstFailed = (iso: string): string => {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? iso : `${formatRelativeTime(iso)}, ${date.toLocaleString()}`
+}
+
 function TooltipDetail({
   detail,
   name,
@@ -1027,7 +1034,8 @@ function TooltipDetail({
   return (
     <>
       <Tooltip
-        label={detail}
+        // A sighted user sees only the icon, so the tooltip names it too.
+        label={name ? `${name}: ${detail}` : detail}
         multiline
         maw={maw}
         style={preLine ? { whiteSpace: 'pre-line' } : undefined}
@@ -1151,7 +1159,7 @@ function BranchHealthRow({
             {showRebaseFailure && b.rebaseFailure && (
               <TooltipDetail
                 name="Rebase failing"
-                detail={`${b.rebaseFailure.message} (failing since ${b.rebaseFailure.firstAt})`}
+                detail={`${b.rebaseFailure.message} (first failed ${firstFailed(b.rebaseFailure.firstAt)})`}
               >
                 <ThemeIcon
                   color="yellow"
@@ -1166,7 +1174,7 @@ function BranchHealthRow({
             )}
             {baseWarning && (
               <TooltipDetail
-                name="Base branch refresh problem"
+                name="Base branch refresh failing"
                 detail={baseWarning}
                 maw={420}
                 preLine

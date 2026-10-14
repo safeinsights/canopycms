@@ -240,12 +240,12 @@ describe('EditorHeader - branch menu with no edits', () => {
     await userEvent.click(screen.getByTestId('file-dropdown-button'))
 
     const empty = await screen.findByTestId('recent-entries-empty')
-    expect(empty.textContent).toContain('No recently modified entries')
+    expect(empty.textContent).toContain('No edited entries yet')
     expect(empty.getAttribute('role')).toBeNull()
     expect(empty.hasAttribute('aria-disabled')).toBe(false)
     expect(empty.style.cursor).not.toBe('not-allowed')
     expect(within(empty).getByText('Entries you edit on this branch appear here.')).toBeTruthy()
-    expect(screen.queryByRole('menuitem', { name: /No recently modified entries/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /No edited entries yet/ })).toBeNull()
     expect(screen.queryByText('<none>')).toBeNull()
 
     screen.getByTestId('all-files-menu-item').focus()

@@ -123,7 +123,7 @@ describe('FormRenderer removals', () => {
       ],
       { seo },
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Clear "SEO"' }))
     expect(onChange).toHaveBeenLastCalledWith({ seo: undefined })
     expect(onRemoved).toHaveBeenCalledWith({
       kind: 'value',

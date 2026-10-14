@@ -432,7 +432,9 @@ describe('an object list', () => {
       .mock.calls.find(([options]) => String(options.id ?? '').startsWith('canopy-undo-'))![0]
     const message = render(<MantineProvider>{toast.message}</MantineProvider>)
     expect(
-      message.getByText('Removed "Bo" from Team. Its comment moved to "Comment on this entry".'),
+      message.getByText(
+        'Removed "Bo" from Team. Its comment thread moved to "Comment on this entry".',
+      ),
     ).toBeTruthy()
   })
 

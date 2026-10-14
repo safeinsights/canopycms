@@ -391,7 +391,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Menu.Label>Recently modified</Menu.Label>
                   {editedFiles.slice(0, 3).length === 0 ? (
                     <MenuEmptyText data-testid="recent-entries-empty" hint={EDITED_ENTRIES_HINT}>
-                      No recently modified entries
+                      No edited entries yet
                     </MenuEmptyText>
                   ) : (
                     editedFiles.slice(0, 3).map((file) => (

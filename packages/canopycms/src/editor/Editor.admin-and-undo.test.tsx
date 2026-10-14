@@ -625,7 +625,7 @@ describe('Undo after Remove', () => {
   })
 })
 
-describe('Undo after Clear', () => {
+describe('Clear and its Undo', () => {
   const undoToast = () => {
     const call = vi
       .mocked(notifications.show)
@@ -639,9 +639,15 @@ describe('Undo after Clear', () => {
     renderEditor()
     await loaded()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    const seo = screen.getByRole('group', { name: 'SEO' })
+    const clear = screen.getByRole('button', { name: 'Clear "SEO"' })
+    act(() => clear.focus())
+    fireEvent.click(clear)
     await waitFor(() => expect(persistedDraft(hello.contentId)).toBeDefined())
     expect(persistedDraft(hello.contentId)?.seo).toBeUndefined()
+    // The button goes with the value, so focus stays on the object rather than the page.
+    expect(screen.queryByRole('button', { name: 'Clear "SEO"' })).toBeNull()
+    expect(document.activeElement).toBe(seo)
 
     const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
     expect(message.getByText('Cleared "SEO"')).toBeTruthy()
@@ -662,7 +668,7 @@ describe('Undo after Clear', () => {
     renderEditor()
     await loaded()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Clear "SEO"' }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Summary' }), {
       target: { value: 'Typed after' },
     })

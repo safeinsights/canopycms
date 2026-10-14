@@ -14,6 +14,7 @@ import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
 import type { BranchHealthData } from '../../api/admin-branch-health'
 import type { BaseRefreshReport, BaseSchemaHold, WorkerStatusReport } from '../../types'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
+import { formatRelativeTime } from '../relative-time'
 
 // Mock the API client module (both useApiClient() and useSystemHealth() must
 // resolve to the same mock client instance) -- same pattern as
@@ -1092,12 +1093,12 @@ describe('SystemHealthPanel', () => {
       expect(screen.getByRole('img', { name: 'Rebase failing' })).toBe(trigger)
       act(() => trigger.focus())
       expect(document.activeElement).toBe(trigger)
+      const detail = `merge conflict (first failed ${formatRelativeTime('2026-01-01T00:00:00.000Z')}, ${new Date('2026-01-01T00:00:00.000Z').toLocaleString()})`
       expect(document.getElementById(trigger.getAttribute('aria-describedby')!)?.textContent).toBe(
-        'merge conflict (failing since 2026-01-01T00:00:00.000Z)',
+        detail,
       )
-      expect((await screen.findByRole('tooltip')).textContent).toBe(
-        'merge conflict (failing since 2026-01-01T00:00:00.000Z)',
-      )
+      // The tooltip names the icon, which is all a sighted user sees.
+      expect((await screen.findByRole('tooltip')).textContent).toBe(`Rebase failing: ${detail}`)
     })
 
     describe('base branch row', () => {
@@ -1148,14 +1149,16 @@ describe('SystemHealthPanel', () => {
 
         const trigger = icon.closest('[tabindex="0"]') as HTMLElement
         expect(trigger.tagName).toBe('SPAN')
-        expect(screen.getByRole('img', { name: 'Base branch refresh problem' })).toBe(trigger)
+        expect(screen.getByRole('img', { name: 'Base branch refresh failing' })).toBe(trigger)
         act(() => trigger.focus())
         expect(document.activeElement).toBe(trigger)
         const description = document.getElementById(
           trigger.getAttribute('aria-describedby')!,
         )?.textContent
         expect(description).toMatch(/Uncommitted: content\/home\.md/)
-        expect((await screen.findByRole('tooltip')).textContent).toBe(description)
+        expect((await screen.findByRole('tooltip')).textContent).toBe(
+          `Base branch refresh failing: ${description}`,
+        )
       })
 
       it('carries no warning when the worker reports no baseRefresh', async () => {

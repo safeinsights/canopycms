@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  UX batch 2 review leftovers: a pick in a date-only value saves a UTC timestamp, a compact "Outline" is announced twice, MDX popups have no edge in dark mode, the required asterisk misses contrast, validation errors aren't linked to their inputs, unlabelled collection names show raw, and no `--canopy-focus-ring` token or non-colour cue for dark dimmed text exists yet
+  UX batch 2 review leftovers: a pick in a date-only value saves a UTC timestamp, a compact "Outline" is announced twice, MDX popups have no edge in dark mode, the required asterisk misses contrast, validation errors aren't linked to their inputs, unlabelled collection and entry-type names show raw, some states have no story, and no `--canopy-focus-ring` token or non-colour cue for dark dimmed text exists yet
 ---
 # UX batch 2 review leftovers
 
@@ -28,9 +28,16 @@ compact "Outline"). None was in that PR's scope.
   input has `aria-invalid="false"` and no `aria-describedby` pointing at its error text.
   `FormRenderer`'s `renderField` draws the message beneath each field, so every field component
   needs the error's id passed to its input.
-- **Raw collection names.** Fields, groups and block templates without a label are humanised
-  (`schemaLabel` in `editor/schema-label.ts`); an unlabelled collection still shows its directory
-  name (`buildCollectionLabels` in `editor-utils.ts`, `navCollections` in `Editor.tsx`).
+- **Raw collection and entry-type names.** Fields, groups and block templates without a label are
+  humanised (`schemaLabel` in `editor/schema-label.ts`); an unlabelled collection or entry type
+  still shows its raw name (`buildCollectionLabels` in `editor-utils.ts`, `navCollections` and the
+  collection editor's entry-type list in `Editor.tsx`, `et.label || et.name` in
+  `components/EntryCreateModal.tsx`).
+- **Stories.** `admin/SystemHealthPanel.tsx` has none, so its row icons and badges are seen only
+  in tests; FormRenderer's `RemovedItemThread` story stubs `removedItemFieldLabel`, so the
+  schema-only fallback breadcrumb is never rendered.
+- **Toast punctuation.** "Removed "X" from Y" has no full stop until a note follows it
+  (`components/UndoToastMessage.tsx`).
 - **Focus-ring token.** Add `--canopy-focus-ring`, measured at 3:1 on its surface for any
   adopter brand ([Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast)); dark
   primary shade 5 gives 3.05:1 on dark.5 for the default brand only.

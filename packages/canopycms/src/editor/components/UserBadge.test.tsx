@@ -92,6 +92,19 @@ describe('UserBadge', () => {
     expect(hidden.className).toContain('mantine-VisuallyHidden-root')
   })
 
+  it("gives an avatar-only badge's tooltip the name before the email", async () => {
+    const { container } = render(
+      <UserBadge userId="user-1" getUserMetadata={mockGetUserMetadata} variant="avatar-only" />,
+      { wrapper: Wrapper },
+    )
+    await screen.findByText('Alice Johnson')
+    await userEvent.hover(container.querySelector('.mantine-Avatar-root') as HTMLElement)
+
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      `Alice Johnson, ${mockUser.email}`,
+    )
+  })
+
   it('renders full info in full mode', async () => {
     render(<UserBadge userId="user-1" getUserMetadata={mockGetUserMetadata} variant="full" />, {
       wrapper: Wrapper,

@@ -57,6 +57,9 @@ export const CouldNotLoadName: Story = {
   },
 }
 
+/** An avatar shown alone: its name is hidden text, and its tooltip gives the name and email. */
+export const AvatarOnly: Story = { args: { variant: 'avatar-only' } }
+
 /** An avatar shown alone names itself for a screen reader. */
 export const FallbackAvatarOnly: Story = {
   args: {

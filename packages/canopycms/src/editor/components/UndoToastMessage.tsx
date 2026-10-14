@@ -17,7 +17,7 @@ export interface UndoToastMessageProps {
   onRelease?: () => void
 }
 
-/** The body of the toast a form Remove raises in place of a confirmation. */
+/** The body of the toast a form Remove or Clear raises in place of a confirmation. */
 export function UndoToastMessage({
   label,
   action = 'remove',
@@ -44,6 +44,7 @@ export function UndoToastMessage({
       <Button
         size="compact-sm"
         variant="subtle"
+        style={{ flexShrink: 0 }}
         onClick={onUndo}
         aria-label={`Undo ${doing} ${label}`}
       >

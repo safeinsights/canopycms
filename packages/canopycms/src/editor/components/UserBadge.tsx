@@ -294,5 +294,12 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     }
   }
 
-  return wrap(renderContent(), variant === 'full' ? '' : record.email, personLabel)
+  // Alone, the avatar shows no name, so its tooltip gives it before the email.
+  const tooltip =
+    variant === 'full'
+      ? ''
+      : variant === 'avatar-only'
+        ? [personLabel, detail].filter(Boolean).join(', ')
+        : record.email
+  return wrap(renderContent(), tooltip, personLabel)
 }
