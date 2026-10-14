@@ -7,7 +7,7 @@ summary: >-
 # A slugless `read({ entryPath })` resolves by entry-type NAME, so a slug rename silently breaks it
 
 **Status:** Open. **Priority: P2.** Found 2026-08-21 while re-modelling `apps/example1`'s `home`
-entry (adopter request #20). Not previously filed.
+entry (an adopter request). Not previously filed.
 
 ## The defect
 

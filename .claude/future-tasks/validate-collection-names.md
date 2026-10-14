@@ -2,7 +2,7 @@
 priority: P2
 adopters: KB
 summary: >-
-  Reference fields' `collections` values are still unvalidated (silently zero results on a typo); the sibling `entryTypes` check shipped 2026-08-12 — reuse `forEachReferenceField` (`config/validation.ts:68-87`) + the branch-schema-cache hook. **Promoted P3→P2**: all five reference fields in the KB's schemas use `collections` today, so a typo fails silently in the KB right now
+  Reference fields' `collections` values are still unvalidated (silently zero results on a typo); the sibling `entryTypes` check shipped 2026-08-12 — reuse `forEachReferenceField` (`config/validation.ts:68-87`) + the branch-schema-cache hook. **Promoted P3→P2**: every reference field in an adopter's schemas uses `collections` today, so a typo fails silently for that adopter
 ---
 # Validate reference fields' `collections` names against the schema
 
@@ -43,6 +43,6 @@ set differs from the entry-type one even though the traversal is shared.
 Same tradeoff that was settled for entryTypes: this throws at schema resolution,
 so a typo takes the branch down until fixed. That was accepted deliberately —
 it is consistent with the adjacent `isValidSchema` throw and surfaces the
-mistake immediately — but it is worth re-confirming against docs-site-proto's
-real schema before landing, since `collections` is the older and more widely
+mistake immediately — but it is worth re-confirming against a real
+adopter schema before landing, since `collections` is the older and more widely
 used of the two scopes.

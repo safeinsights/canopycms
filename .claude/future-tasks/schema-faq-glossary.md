@@ -2,22 +2,21 @@
 priority: P3
 adopters: KB
 summary: >-
-  Dedicated FAQ and glossary schema collections for reuse across pages. Mostly the KB's content modelling; the file **undersells what already works** — `listEntries`' filter/extract callbacks already receive `item.data`, so tag-filtered FAQ queries need no new Canopy code. Only cross-page embedding and glossary auto-linking are real package gaps
+  First-class FAQ and glossary content types for reuse across pages. Mostly an adopter's content modelling; the file **undersells what already works** — `listEntries`' filter/extract callbacks already receive `item.data`, so tag-filtered FAQ queries need no new Canopy code. Only cross-page embedding and glossary auto-linking are real package gaps
 ---
 # Schema-Based FAQ and Glossary Collections
 
 ## Problem
 
-The docs-site-proto currently has FAQ items and glossary terms embedded directly in MDX content files. This works for single-page display but prevents reuse (e.g., surfacing relevant FAQs on topic pages, auto-linking glossary terms, or maintaining a single source of truth for definitions).
+An adopter's FAQ items and glossary terms can end up embedded directly in MDX content files. This works for single-page display but prevents reuse (e.g., surfacing relevant FAQs on topic pages, auto-linking glossary terms, or maintaining a single source of truth for definitions).
 
 ## Proposed Solution
 
-Create dedicated content collections in the docs site with their own schemas:
+Make FAQ and glossary first-class content types: dedicated collections with their own entry schemas, which an adopter defines with `defineEntrySchema`.
 
 ### FAQ Collection (`content/faqs/`)
 
 ```ts
-// In docs-site schemas.ts
 export const faqSchema = defineEntrySchema([
   { name: 'question', type: 'string', label: 'Question', required: true },
   {
@@ -25,7 +24,7 @@ export const faqSchema = defineEntrySchema([
     type: 'select',
     label: 'Tags',
     list: true,
-    options: ['about', 'privacy', 'process', 'technical', 'help'],
+    options: ['general', 'billing', 'setup', 'troubleshooting'],
   },
   // body (auto-injected) contains the answer as MDX
 ])
@@ -43,19 +42,14 @@ export const termSchema = defineEntrySchema([
 
 ## Canopy API Needs
 
-- `listEntries` filtering by collection/content type — needed to query "all FAQ entries tagged 'privacy'" or "all glossary terms"
+- `listEntries` filtering by collection/content type — needed to query "all FAQ entries tagged 'billing'" or "all glossary terms"
 - Ability to render an entry's body inline within another page's MDX (embedding)
 - Optionally: a remark/rehype plugin that auto-links glossary terms found in prose text to their definition pages or shows tooltips
 
 ## Current State
 
-The docs site currently has:
-
-- `<FAQ>` / `<FAQItem>` MDX components for accordion-style FAQs (support page)
-- `<DefinitionList>` / `<Definition>` MDX components for styled glossary terms
-
-These work well for visual display but don't support cross-page reuse. The schema collections would complement (not replace) these display components.
+An adopter can already show FAQs and glossary terms with MDX components (accordion-style FAQ items, styled definition lists). These work well for visual display but don't support cross-page reuse. The schema collections would complement (not replace) such display components.
 
 ## Context
 
-The schema definitions would live in the docs-site repo (`src/app/schemas.ts`), not in the canopycms repo. The Canopy work is around querying/filtering entries by collection for embedding purposes.
+The schema definitions would live in the adopter's own repo, not in the canopycms repo. The Canopy work is around querying/filtering entries by collection for embedding purposes.

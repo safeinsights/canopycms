@@ -6,7 +6,7 @@ summary: >-
 ---
 # [P3] A git process killed at worker exit can leave a stale `index.lock`
 
-**Found:** 2026-10-09, round 1 review of request 95 (`fix/worker-graceful-replacement`).
+**Found:** 2026-10-09, round 1 review of the graceful-replacement change (`fix/worker-graceful-replacement`).
 
 ## Problem
 

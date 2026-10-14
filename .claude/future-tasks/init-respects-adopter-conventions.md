@@ -8,7 +8,7 @@ summary: >-
 
 **Status**: proposed
 **Priority**: P3 (enhancement)
-**Origin**: surfaced while scaffolding `safeinsights/website` on 2026-04-17 — init emitted double-quoted, semicolon-terminated TypeScript into a repo whose Prettier config demanded single quotes and ASI, and the final "Next steps" block suggested `npm install` even though the repo uses pnpm. Both forced hand-cleanup.
+**Origin**: surfaced while scaffolding an adopter repo on 2026-04-17 — init emitted double-quoted, semicolon-terminated TypeScript into a repo whose Prettier config demanded single quotes and ASI, and the final "Next steps" block suggested `npm install` even though the repo uses pnpm. Both forced hand-cleanup.
 
 ## Motivation
 

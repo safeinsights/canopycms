@@ -36,9 +36,9 @@ Observed in this repo (two pointing at a path that still exists, one at a temp
 dir that is long gone):
 
 ```
-remote.__canopycms_init_1774743409818__.url  /var/folders/.../canopycms-branchws-ZCghyI/.canopy-dev/remote.git
-remote.__canopycms_init_1780496142006__.url  /Users/jps/dev/safeinsights/canopycms/apps/example1/.canopy-dev/remote.git
-remote.__canopycms_init_1780502184948__.url  /Users/jps/dev/safeinsights/canopycms/apps/example1/.canopy-dev/remote.git
+remote.__canopycms_init_1774743409818__.url  <tmpdir>/canopycms-branchws-ZCghyI/.canopy-dev/remote.git
+remote.__canopycms_init_1780496142006__.url  <repo>/apps/example1/.canopy-dev/remote.git
+remote.__canopycms_init_1780502184948__.url  <repo>/apps/example1/.canopy-dev/remote.git
 ```
 
 ## Why it matters

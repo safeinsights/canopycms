@@ -2,24 +2,18 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  Filed 2026-08-24, adopted onto the branch 2026-09-08 (previously untracked with no index row). Mechanical rename of the `asset-staging` S3 prefix to `asset-incoming`: "staging" names an environment in this org, so the prefix reads as "assets belonging to Staging" rather than "assets staged for promotion". Cheap **now** and not later — objects under the prefix expire after a day, so there is no data migration, only a 24-hour overlap window to tolerate. `asset-prefixes.ts` is the source of truth but the literal spans ~20 files across both packages. Two traps recorded: `isValidStagingKey` in `finalize.ts` enforces that finalize can only promote from this prefix (a rename that quietly weakens it is worse than no rename), and the one-day lifecycle rule is prefix-matched, so both prefixes need an expiry rule during the overlap or old objects linger forever. Overlaps [cdk-prefixes-duplication.md](cdk-prefixes-duplication.md), which wants the same literals imported rather than re-declared
+  Filed 2026-08-24, adopted onto the branch 2026-09-08 (previously untracked with no index row). Mechanical rename of the `asset-staging` S3 prefix to `asset-incoming`: "staging" names a deployment environment, so the prefix reads as one ("assets belonging to Staging") rather than "assets staged for promotion". Cheap **now** and not later — objects under the prefix expire after a day, so there is no data migration, only a 24-hour overlap window to tolerate. `asset-prefixes.ts` is the source of truth but the literal spans ~20 files across both packages. Two traps recorded: `isValidStagingKey` in `finalize.ts` enforces that finalize can only promote from this prefix (a rename that quietly weakens it is worse than no rename), and the one-day lifecycle rule is prefix-matched, so both prefixes need an expiry rule during the overlap or old objects linger forever. Overlaps [cdk-prefixes-duplication.md](cdk-prefixes-duplication.md), which wants the same literals imported rather than re-declared
 ---
 # [P3] Rename the `asset-staging` prefix to `asset-incoming`
 
-Decided 2026-08-24 alongside the shared artifact-bucket design in the
-infrastructure repo. Mechanical rename, no behaviour change.
+Decided 2026-08-24. Mechanical rename, no behaviour change.
 
 ## Why
 
-"Staging" is an environment name in the SafeInsights org — there is a Staging
-account and a staging host. A prefix called `asset-staging/` reads
-as "assets belonging to the Staging environment" rather than "assets staged for
-promotion," which is what it actually is.
-
-`asset-incoming/` also matches the shared artifact plane, where CI uploads land
-in `incoming/` and a promoter copies out of it. Both planes then use the same
-word for the same shape: an untrusted writer lands bytes, a verifier promotes
-them. The shared artifact bucket is named for the same reason.
+"Staging" names a deployment environment, so the prefix reads as one. A prefix
+called `asset-staging/` reads as "assets belonging to the Staging environment"
+rather than "assets staged for promotion," which is what it actually is. The
+rename avoids that environment-name collision.
 
 ## Why it is cheap now
 

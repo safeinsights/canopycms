@@ -15,7 +15,7 @@ exported from `canopycms/server`, so an ingest script no longer needs to copy th
 
 ## What is left: a write path
 
-An adopter's dataset-ingestion script writes entry YAML with raw `writeFileSync`, outside
+An adopter's bulk-import script writes entry YAML with raw `writeFileSync`, outside
 CanopyCMS's write path. Bulk-ingested content therefore:
 
 - **Bypasses schema validation.** Nothing checks the YAML against the entry type's schema the way

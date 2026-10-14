@@ -8,7 +8,7 @@ summary: >-
 
 **Status:** Shelved 2026-05-31. Designed in full (below); not implemented. Revisit when a real decoupled/vanity/multi-segment URL need appears. **Priority: P3.**
 
-**Why shelved:** The only requester (the `safeinsights/website` adopter) no longer needs it. Their need is single-segment, slug-equals-URL pages (`/privacy`, `/solutions`, …), which the **root-collection restructure** (below) satisfies natively with zero new package code. `isUrlPath` only earns its keep for the strictly broader class the restructure can't do — so we defer it (YAGNI) rather than add surface area now. This is right-sizing, not a shortcut: the restructure is the correct native solution for slug-equals-URL.
+**Why shelved:** The only requester (an adopter) no longer needs it. Their need is single-segment, slug-equals-URL pages (`/privacy`, `/solutions`, …), which the **root-collection restructure** (below) satisfies natively with zero new package code. `isUrlPath` only earns its keep for the strictly broader class the restructure can't do — so we defer it (YAGNI) rather than add surface area now. This is right-sizing, not a shortcut: the restructure is the correct native solution for slug-equals-URL.
 
 ---
 
@@ -26,7 +26,7 @@ Four structural computations, none reads `entry.data`:
 - `static/index.ts:54-66` (`collectStaticPaths`) — maps `StaticPathEntry` from `entry.urlPath`; its `filter` callback only sees `StaticPathEntry` (no `data`), so adopters can't post-map by a field.
 - `context.ts:169-200` (`readByUrlPath`) → `url-path-resolver.ts` `resolveUrlPathCandidates` — structural candidates only.
 
-Adopter proposal that prompted this: `safeinsights/website/docs/canopycms-proposal-isurlpath.md` (proposed an in-memory `Map<urlPath,entry>` index; we rejected the index in favor of a scan — see decisions).
+Adopter proposal that prompted this: a proposal in the adopter's own repo (proposed an in-memory `Map<urlPath,entry>` index; we rejected the index in favor of a scan — see decisions).
 
 ---
 

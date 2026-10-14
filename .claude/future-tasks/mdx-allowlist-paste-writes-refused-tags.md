@@ -5,7 +5,7 @@ summary: >-
 ---
 # Pasting rich text writes a tag the field refuses
 
-**Priority:** P3. **Found:** 2026-10-09, building and reviewing request 101's editor toolbar trim.
+**Priority:** P3. **Found:** 2026-10-09, building and reviewing the editor toolbar trim.
 
 ## Problem
 

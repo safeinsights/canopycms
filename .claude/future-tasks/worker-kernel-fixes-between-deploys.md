@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-09, from request 100. The worker's boot-time upgrade excludes the kernel, since a new kernel applies only at a reboot and nothing reboots the instance, so kernel security fixes reach it only with the AMI a deploy resolves; a weekly `workerMaxInstanceLifetime` recycle reuses the last deploy's AMI. Options: AL2023 kernel live patching (`kpatch`), or a reboot at the end of user data when `needs-restarting -r` says so, or a launch-time AMI with a scheduled daily refresh (which could replace the boot-time upgrade)
+  New 2026-10-09, from the worker hardening. The worker's boot-time upgrade excludes the kernel, since a new kernel applies only at a reboot and nothing reboots the instance, so kernel security fixes reach it only with the AMI a deploy resolves; a weekly `workerMaxInstanceLifetime` recycle reuses the last deploy's AMI. Options: AL2023 kernel live patching (`kpatch`), or a reboot at the end of user data when `needs-restarting -r` says so, or a launch-time AMI with a scheduled daily refresh (which could replace the boot-time upgrade)
 ---
 # [P3] Kernel security fixes reach the worker only with a deploy's AMI
 
@@ -34,6 +34,6 @@ redeployed runs that AMI's kernel indefinitely.
   - Costs: AMIs lag the repositories by AWS's AMI release interval, so userland fixes arrive later
     than with the upgrade; the worker drains and reboots daily rather than weekly; and an AMI that
     breaks the boot arrives with no deploy to blame or roll back. Dropping the upgrade reverses a
-    request-100 decision, so it needs JP's call.
+    worker-hardening decision, so it needs JP's call.
   - The swap file stays either way: the `dnf install`s load the same repository metadata (see
     [worker-boot-dnf-oom-on-nano.md](resolved/worker-boot-dnf-oom-on-nano.md)).

@@ -6,7 +6,7 @@ summary: >-
 ---
 # [P3] A list item with content after its nested list opens as source
 
-Found 2026-10-08 by the round-trip corpus test (adopter request 87b). The data loss is contained;
+Found 2026-10-08 by the round-trip corpus test. The data loss is contained;
 what remains is that these bodies cannot be edited in rich text.
 
 ## The gap

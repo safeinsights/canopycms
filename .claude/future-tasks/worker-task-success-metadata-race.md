@@ -20,5 +20,5 @@ the whole update into one `saveIf` whose predicate never refuses but whose updat
 it (that needs an updater-shaped API, so prefer the split). Add a test that archives the
 branch from inside the predicate's window.
 
-Found while adding `saveIf` for adopter request 97
+Found while adding `saveIf` for the empty-submit fix
 ([resolved/empty-submit-and-remote-delete.md](resolved/empty-submit-and-remote-delete.md)).

@@ -5,7 +5,7 @@ summary: >-
 ---
 # An `mdx`-typed body in an `md` entry type ignores its `mdxAllow`
 
-**Priority:** P3. **Found:** 2026-10-09, request 101 review.
+**Priority:** P3. **Found:** 2026-10-09, editor toolbar trim review.
 
 ## Problem
 

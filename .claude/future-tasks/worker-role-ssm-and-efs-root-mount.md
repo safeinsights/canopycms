@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-09, from the security review of request 100. Two narrowings left after the worker hardening: the worker role's `AmazonSSMManagedInstanceCore` allows `ssm:GetParameter(s)` on `*`, so a compromised worker reads every Parameter Store value in the account; and the EFS policy does not force clients through the access point, so a principal with broad `elasticfilesystem:Client*` identity permissions that can reach a mount target can mount the root with root access
+  New 2026-10-09, from the security review of the worker hardening. Two narrowings left after the worker hardening: the worker role's `AmazonSSMManagedInstanceCore` allows `ssm:GetParameter(s)` on `*`, so a compromised worker reads every Parameter Store value in the account; and the EFS policy does not force clients through the access point, so a principal with broad `elasticfilesystem:Client*` identity permissions that can reach a mount target can mount the root with root access
 ---
 # [P3] Narrow the worker's SSM grant; consider forcing EFS clients through the access point
 
@@ -14,7 +14,7 @@ summary: >-
 `CanopyCmsService` attaches `AmazonSSMManagedInstanceCore` to the worker role for Session
 Manager. That managed policy also allows `ssm:GetParameter`, `ssm:GetParameters` and others on
 `*`, and a SecureString under the default `aws/ssm` key decrypts for any account principal that
-uses SSM. This is the same class as the account-wide EFS policy that request 100 removed.
+uses SSM. This is the same class as the account-wide EFS policy that the worker hardening removed.
 
 Replace it with an inline statement listing only what the SSM agent needs for Session Manager and
 `send-command`: `ssm:UpdateInstanceInformation`, the association reads, `ssmmessages:*` and

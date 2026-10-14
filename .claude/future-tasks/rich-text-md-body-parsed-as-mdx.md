@@ -6,7 +6,7 @@ summary: >-
 ---
 # [P2] The rich-text editor parses a .md body as MDX, so an HTML comment opens it as source
 
-Found 2026-10-08 by the round-trip corpus test (adopter request 87b).
+Found 2026-10-08 by the round-trip corpus test.
 
 ## The gap
 

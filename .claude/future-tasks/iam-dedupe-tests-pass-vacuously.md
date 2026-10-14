@@ -8,7 +8,7 @@ summary: >-
 
 **Priority:** P3
 **Found:** 2026-09-12, by break-and-rerun while adding the GitHub App private-key ARN to
-the same IAM union (PR B3 of adopter request #45)
+the same IAM union (PR B3 of the worker GitHub App auth work)
 
 ## What
 

@@ -57,8 +57,8 @@ three had a shelf life:
 - **It was never released.** It lived only on `integration-202608-a`; published
   `canopycms` was 0.0.60 and never had it. So removal was not a breaking change
   — which it would have become the moment that branch drained to `main`.
-- **Nothing used it.** No `type: 'rich-text'` in either adopter repo
-  (`docs-site-proto`, `website`), the example app, the test app, or the fixtures.
+- **Nothing used it.** No `type: 'rich-text'` in either adopter repo,
+  the example app, the test app, or the fixtures.
 - **The implementing PR had already reached the same conclusion.** Its comment at
   `FormRenderer.tsx` said `rich-text` "has no distinct behavior anywhere else in
   the codebase" and reused the markdown editor rather than inventing a UI for it.

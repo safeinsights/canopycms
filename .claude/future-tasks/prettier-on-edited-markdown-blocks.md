@@ -2,11 +2,11 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-08, deferred from adopter request 85. Untouched body blocks keep their text and new text uses Prettier's markers, but an edited block is still MDXEditor's serialisation, whose escapes (`a\_b`) Prettier rewrites. Format edited blocks with `prettier/standalone` server-side inside the splice, with Prettier's defaults
+  New 2026-10-08, deferred from an adopter request. Untouched body blocks keep their text and new text uses Prettier's markers, but an edited block is still MDXEditor's serialisation, whose escapes (`a\_b`) Prettier rewrites. Format edited blocks with `prettier/standalone` server-side inside the splice, with Prettier's defaults
 ---
 # [P3] Format edited markdown blocks with Prettier
 
-Found 2026-10-08, deferred from adopter request 85 by agreement with the adopter.
+Found 2026-10-08, deferred from an adopter request by agreement with the adopter.
 
 ## The gap
 
@@ -17,7 +17,7 @@ MDXEditor escapes characters Prettier writes bare (`a\_b`, which Prettier rewrit
 measured with Prettier 3.8.1). Its tables are already padded as Prettier pads them. With `_`
 emphasis, intraword emphasis (`foo*bar*baz`) comes out as character references
 (`fo&#x6F;_&#x62;a&#x72;_&#x62;az`), which Prettier accepts but nobody can read. The adopter that
-reported 85 said this is not needed for them.
+reported it said this is not needed for them.
 
 ## Proposal
 

@@ -92,8 +92,8 @@ open design question. Two unsolved problems, either of which can sink a naive at
 2. **Content-addressed dedup makes provenance multi-valued.** See below. This is the
    part that was not obvious and that kills the cheap version.
 
-**Chosen for now: (a).** Nothing has been uploaded for real, and the one test deploy is
-being destroyed, so there is no urgency and no data to protect yet. Revisit (c) when a
+**Chosen for now: (a).** No real uploads exist yet, so there is no urgency and no data
+to protect yet. Revisit (c) when a
 real multi-editor deployment with restricted material is on the table.
 
 ## Why "just stamp `uploadedOnBranch` now while it's free" does not work

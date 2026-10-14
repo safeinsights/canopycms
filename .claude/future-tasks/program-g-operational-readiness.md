@@ -2,11 +2,11 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Workstream G of the production-readiness program ([hub](production-readiness-program.md), [log](program-log.md)): runbooks, a standing smoke test, ownership boundaries, release-channel wind-down and a documentation sweep, so people other than the original authors can deploy, verify, diagnose and recover the deployments
+  Workstream G of the production-readiness program: runbooks, a standing smoke test, ownership boundaries, release-channel wind-down and a documentation sweep, so people other than the original authors can deploy, verify, diagnose and recover the deployments
 ---
 # Program G — Operational readiness
 
-**Part of:** [production-readiness-program.md](production-readiness-program.md)
+**Part of:** the production-readiness program
 **Size:** M · **Priority:** P2 [BOTH] · **Status:** open · **Blocked by:** nothing (workstreams D, E and F were retired 2026-10-05)
 
 Everything needed for people other than the original authors to run these
@@ -14,16 +14,15 @@ deployments confidently.
 
 ## Runbooks
 
-A `RUNBOOK.md` per deployment (docs-site CMS, production, and the reusable
-adopter guide in `docs/`), each covering:
+A `RUNBOOK.md` for each deployment, plus the reusable adopter guide in `docs/`,
+each covering:
 
 - deploy — including the two-pass `editorOrigin` dance and the fact that infra
   changes need `cdk deploy`, not just a Lambda image update
-- roll back — re-point the CloudFront origin path at the previous `builds/{sha}`
-  and invalidate
+- roll back to the previous build
 - read logs — Lambda, transform Lambda, and the EC2 worker's CloudWatch log group
-  (the SSO role cannot `ssm:StartSession`/`SendCommand`, which is why log shipping
-  is default-on)
+  (the operator role cannot start an SSM session or send commands, which is why log
+  shipping is default-on)
 - recover a stuck branch — the admin System health panel paths from the
   git-admin-observability epic: worker liveness, task retry/delete, branch-health
   repair, purge-to-trash, registry quarantine. Production has no shell and no EFS
@@ -43,9 +42,8 @@ Define and write down who owns what:
 
 - CanopyCMS the package (release cadence, the integration-branch workflow, the
   prerelease channel)
-- the docs-site deployment (content flow, editors, cutovers)
-- website v2 when it resumes
-- the boundary with `iac` (account baselines) — see open decision #5
+- an adopter's deployment (content flow, editors, cutovers)
+- the boundary with the infrastructure repo that owns account baselines
 
 ## Release-channel wind-down
 

@@ -15,7 +15,7 @@ The editor lists only workspaces that carry `.canopy-meta/branch.json` (`branch-
 (`worker/git-sync.ts` `reconcileTrackedBranches`) but provisions nothing for it, every
 `/:branch/...` route answers 404 for it (`api/guards.ts`), and creating a Canopy branch with the
 same name is refused 409 once the mirror has it (`api/branch.ts`). `adoptInPlace` exists for dev
-only. So content a developer parks on a git branch (the marketing site's `qa/blog-parked-posts`
+only. So content a developer parks on a git branch (an adopter's parked-content branch
 holds two posts awaiting publication) cannot be touched in the editor before it merges.
 
 ## Proposed design

@@ -2,12 +2,12 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  New 2026-09-12, found writing `worker/secrets.test.ts` for adopter request #46. `canopycms-cdk` carries **two copies of `@smithy/types`** (4.13.1 under `@aws-sdk/client-secrets-manager`, 4.16.1 under `aws-sdk-client-mock` and `@aws-sdk/client-s3`), and the structural types are not mutually assignable — so `mockClient(SecretsManagerClient)` degrades to `Client<MetadataBearer>` and every `.resolves({ SecretString })` fails typecheck with ten TS2353s that name nothing real. `handler.test.ts` is clean only because its client happened to land on 4.16.1. Both obvious fixes were measured and rejected as too wide for a feature PR (override: 280 lockfile lines and it pins; `pnpm update`: 897 lines and it does not even fix it). `pnpm dedupe` is the untried candidate
+  New 2026-09-12, found writing `worker/secrets.test.ts` for the worker GitHub App auth work. `canopycms-cdk` carries **two copies of `@smithy/types`** (4.13.1 under `@aws-sdk/client-secrets-manager`, 4.16.1 under `aws-sdk-client-mock` and `@aws-sdk/client-s3`), and the structural types are not mutually assignable — so `mockClient(SecretsManagerClient)` degrades to `Client<MetadataBearer>` and every `.resolves({ SecretString })` fails typecheck with ten TS2353s that name nothing real. `handler.test.ts` is clean only because its client happened to land on 4.16.1. Both obvious fixes were measured and rejected as too wide for a feature PR (override: 280 lockfile lines and it pins; `pnpm update`: 897 lines and it does not even fix it). `pnpm dedupe` is the untried candidate
 ---
 # Two copies of `@smithy/types` make `aws-sdk-client-mock` untypeable for some AWS clients
 
 **Status: open.** Found 2026-09-12 while writing
-`packages/canopycms-cdk/worker/secrets.test.ts` (PR A1 of adopter requests #45/#46).
+`packages/canopycms-cdk/worker/secrets.test.ts` (PR A1 of the worker GitHub App auth work).
 
 ## Problem
 

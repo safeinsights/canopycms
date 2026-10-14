@@ -2,7 +2,7 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  **Narrowed 2026-09-08** (adopter request #39) — the `baseBranch`/`settingsBranch` divergence itself is fixed: `CanopyCmsService` gained a validated `settingsBranch` prop, and the generated `infrastructure/lib/cms-stack.ts` now derives both from the adopter's own `canopycms.config.ts` at synth time, so the two can no longer drift for anyone deploying through the generated stack. What remains: when they DO still diverge (a hand-rolled stack, a non-CDK deployment), the only signal is a per-cycle `workerLogWarn`, invisible to a shell-less operator — surface it into `WorkerStatusReport` for the admin System Health panel
+  **Narrowed 2026-09-08** (the base-branch derivation fix) — the `baseBranch`/`settingsBranch` divergence itself is fixed: `CanopyCmsService` gained a validated `settingsBranch` prop, and the generated `infrastructure/lib/cms-stack.ts` now derives both from the adopter's own `canopycms.config.ts` at synth time, so the two can no longer drift for anyone deploying through the generated stack. What remains: when they DO still diverge (a hand-rolled stack, a non-CDK deployment), the only signal is a per-cycle `workerLogWarn`, invisible to a shell-less operator — surface it into `WorkerStatusReport` for the admin System Health panel
 ---
 # Settings-branch mismatch has no observable signal beyond a per-cycle log warning
 
@@ -11,7 +11,7 @@ summary: >-
 Surfaced by the protected-base-branch code review (2026-07-24), finding #8, and
 extended 2026-07-30 by the canopy-hardening epic review (PR #183) with a second
 instance of the same divergence class (`settingsBranch`). **Both of those
-divergences are now closed** (2026-09-08, adopter request #39):
+divergences are now closed** (2026-09-08, the base-branch derivation fix):
 
 - `CanopyCmsService` gained a `settingsBranch` prop (stamped into the worker's
   `CANOPYCMS_SETTINGS_BRANCH`, validated at synth with the same git-ref guard
@@ -26,7 +26,7 @@ divergences are now closed** (2026-09-08, adopter request #39):
   crash-loop consequence of a wrong `baseBranch` (`verifyBaseBranchExists`
   throwing forever under systemd's `Restart=always`).
 
-See `CHANGELOG.md`'s `## Unreleased` entry (#39) for the adopter-facing
+See `CHANGELOG.md`'s `## Unreleased` entry on the base-branch derivation fix for the adopter-facing
 description, and `packages/canopycms-cdk/src/constructs/cms-service.ts`'s
 `assertValidGitRefComponent`/`baseBranch`/`settingsBranch` doc comments for the
 mechanism.

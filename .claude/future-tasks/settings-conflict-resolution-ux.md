@@ -9,8 +9,7 @@ summary: >-
 
 ## Background
 
-The settings version-conflict flow was wired end-to-end on branch
-`claude/settings-schema-protection-3b78af` (see
+The settings version-conflict flow was wired end-to-end on a feature branch (see
 [resolved/settings-file-occ-cross-host.md](resolved/settings-file-occ-cross-host.md)):
 GET `/permissions` and `/groups/internal` return the file `version`, the editor hooks
 (`usePermissionManager`, `useGroupManager`) send it back as `expectedContentVersion`,

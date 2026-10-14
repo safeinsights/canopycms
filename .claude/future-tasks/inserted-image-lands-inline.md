@@ -2,11 +2,11 @@
 priority: P3
 adopters: MKT
 summary: >-
-  New 2026-10-08, from adopter request 85's report. A toolbar image insert lands inline at the cursor with no blank lines around it. Make the toolbar insert block-level if MDXEditor allows it, or document it
+  New 2026-10-08, from an adopter report. A toolbar image insert lands inline at the cursor with no blank lines around it. Make the toolbar insert block-level if MDXEditor allows it, or document it
 ---
 # [P3] An image inserted from the toolbar lands inside the paragraph at the cursor
 
-Found 2026-10-08 in the adopter's report for request 85 (an e2e test PR's bot commit).
+Found 2026-10-08 in an adopter report (an e2e test PR's bot commit).
 
 ## The gap
 

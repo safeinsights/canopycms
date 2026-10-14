@@ -6,7 +6,7 @@ summary: >-
 ---
 # Future Task: Asset system review follow-ups (deferred from PR #126)
 
-Status: **captured from debshila's PR #126 review, 2026-07-23.** The 11 actionable
+Status: **captured from a human review of PR #126, 2026-07-23.** The 11 actionable
 code findings were fixed in commit d8eb807; these are the items deliberately deferred
 as non-blocking (LOW/NIT or larger-than-the-bug scope). None affect correctness of the
 happy path.

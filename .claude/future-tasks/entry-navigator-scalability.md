@@ -24,8 +24,8 @@ cap are those in the *last-traversed* collections, not an arbitrary slice.
 
 ## Why it's deferred
 
-Acceptable for the first production sites. The adopter that surfaced the pagination bug
-(docs-site-proto) has ~50 entries per collection; 10,000 is ~200× headroom. No current
+Acceptable for the first production sites. An adopter has ~50 entries per collection;
+10,000 is ~200× headroom. No current
 deployment is near the ceiling.
 
 ## Cost of the current approach

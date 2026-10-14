@@ -23,7 +23,7 @@ A middleware declaring `export const config = { runtime: 'nodejs' }`:
 | 16.1.7 | turbopack | **EMPTY** | 234 B | empty |
 
 All three are real `next build` runs, not source reads. The 16.1.7 arm was
-measured by the website adopter on their pin; the two 15.5.21 arms here, in
+measured by an adopter on their pin; the two 15.5.21 arms here, in
 `apps/dual-build-fixture`.
 
 `loadNodeMiddleware()` requires `functions['/_middleware']` in production —

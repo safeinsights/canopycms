@@ -12,11 +12,10 @@ which only narrowed where the token is minted.
 ## The gap
 
 - `GET /repos/safeinsights/canopycms/actions/secrets` lists `RELEASE_BOT_PRIVATE_KEY` as a
-  repository secret. The only environment is `copilot`.
+  repository secret. No deployment environment gates it yet.
 - Any workflow file on any branch can call `actions/create-github-app-token` with that key.
-- The resulting token belongs to app 4038189. The org ruleset `require-pr` (7484436) lets that
-  app bypass PR review on `main`, and `stable-tags-release-bot-only` (24895274) lets it create
-  stable tags.
+- The resulting token belongs to the release bot app. The org's require-PR ruleset lets that
+  app bypass PR review on `main`, and the stable-tags ruleset lets it create stable tags.
 - So anyone who can push a branch with a workflow can push to `main` without review.
 
 ## Fix

@@ -2,34 +2,23 @@
 priority: P1
 adopters: BOTH
 summary: >-
-  `deploy-test` passes `CLERK_SECRET_KEY` to its CMS Lambda as a plaintext environment variable, and the shipped `clerkMiddleware` throws without it, so the reference deployment and the documented Security Model disagree; the options (drop the middleware, plaintext, or fetch at init over a Secrets Manager VPC endpoint) are in the file. **Pending check:** JP checks the live Lambda environment in the console for `CLERK_SECRET_KEY`; P1 if it is there, P2 otherwise
+  The reference deployment passes `CLERK_SECRET_KEY` to its CMS Lambda as a plaintext environment variable, and the shipped `clerkMiddleware` throws without it, so the reference deployment and the documented Security Model disagree; the options (drop the middleware, plaintext, or fetch at init over a Secrets Manager VPC endpoint) are in the file. **Pending check:** JP checks the live Lambda environment in the console for `CLERK_SECRET_KEY`; P1 if it is there, P2 otherwise
 ---
-# [P1, pending check] `deploy-test` passes `CLERK_SECRET_KEY` to the CMS Lambda in plaintext
+# [P1, pending check] The reference deployment passes `CLERK_SECRET_KEY` to the CMS Lambda in plaintext
 
 **Pending check:** JP checks the live Lambda environment in the AWS console for `CLERK_SECRET_KEY`.
 P1 if the secret is there, P2 otherwise.
 
-Filed 2026-09-08 while fixing the `CLERK_JWT_KEY` classification (adopter request
-#37). **The fix is in a different repository**, which is the only reason this is a
-task file rather than part of that change.
+Filed 2026-09-08 while fixing the `CLERK_JWT_KEY` classification. **The fix is outside this
+repository** (the reference deployment's infrastructure code lives elsewhere), which is the only
+reason this is a task file rather than part of that change.
 
 ## Where
 
-`github.com/canopycms/deploy-test` — `infra/bin/app.ts:105-115`:
-
-```ts
-// Accepted test deviation: the CMS Lambda has no Secrets-Manager-fetch path
-// of its own today (only the EC2 worker does, via CanopyCmsServiceProps'
-// secretsArns/*SecretArn props below) - for this deploy test only, these
-// two optional Clerk values are passed straight through as plaintext Lambda
-// environment variables instead of being fetched from Secrets Manager.
-if (deployConfig.clerkJwtKey) {
-  environment.CLERK_JWT_KEY = deployConfig.clerkJwtKey
-}
-if (deployConfig.clerkSecretKey) {
-  environment.CLERK_SECRET_KEY = deployConfig.clerkSecretKey
-}
-```
+The reference deployment's infrastructure entry point copies two optional Clerk values from its
+deploy config straight into the CMS Lambda's environment as plaintext: `CLERK_JWT_KEY` and
+`CLERK_SECRET_KEY`. A comment there calls it an accepted test deviation, because the CMS Lambda
+"has no Secrets-Manager-fetch path of its own" (only the EC2 worker fetches from Secrets Manager).
 
 `CLERK_JWT_KEY` there is correct — it is a public PEM. `CLERK_SECRET_KEY` is not: it
 carries full Clerk backend API access, and it lands in the CMS Lambda's environment
@@ -37,20 +26,19 @@ where anyone with `lambda:GetFunctionConfiguration` can read it.
 
 ## Why it matters more than "it is only a test harness"
 
-`deploy-test` is the reference implementation adopters are pointed at, and it is the
-only end-to-end example of the deployment. A deviation there propagates by copying.
+The reference deployment is what adopters are pointed at, and it is the only end-to-end example
+of the deployment. A deviation there propagates by copying.
 
-The deviation's stated *reason* is also the misconception that adopter request #37 was
-filed about: "the CMS Lambda has no Secrets-Manager-fetch path of its own today" frames
-an absence as a gap. It is not a gap — the Lambda has no internet access, so it could
-not use such a path, and it is designed to need none. `docs/deploying-to-aws.md`'s
-Security Model section now states that posture in prose precisely so this inference
-stops being available.
+The deviation's stated *reason* is also a misconception: "the CMS Lambda has no
+Secrets-Manager-fetch path of its own today" frames an absence as a gap. It is not a gap — the
+Lambda has no internet access, so it could not use such a path, and it is designed to need none.
+`docs/deploying-to-aws.md`'s Security Model section now states that posture in prose precisely so
+this inference stops being available.
 
 ## CORRECTION 2026-09-08: do NOT simply drop the passthrough
 
 **An earlier version of this file said "nothing reads it, so removal is
-behaviour-preserving." That was wrong, and acting on it would break deploy-test's
+behaviour-preserving." That was wrong, and acting on it would break the reference deployment's
 editor.** Recorded here rather than silently edited, because the wrong version was
 committed and may have been read.
 
@@ -69,18 +57,18 @@ request, inside middleware. And the then-shipped
 `{ jwtKey: process.env.CLERK_JWT_KEY }`, with `matcher: ['/edit(.*)', '/api/canopycms(.*)']`
 — i.e. every editor route and every API call.
 
-**This inverts the finding.** deploy-test's passthrough is not an "accepted test
+**This inverts the finding.** The reference deployment's passthrough is not an "accepted test
 deviation" it can drop; on the evidence it is load-bearing, and the comment calling it a
 deviation is what is wrong. Meanwhile
 `examples/aws-deployment/infrastructure/lib/cms-stack.ts:110-113` passes only
 `CLERK_JWT_KEY` under "Lambda environment: public config only, never secrets" — so the
 documented reference deployment looks unable to serve an authenticated editor request at
-all, and deploy-test works precisely because it deviates.
+all, and the live reference deployment works precisely because it deviates.
 
 ## The actual decision
 
 Not "remove the passthrough" but "reconcile the security model with the shipped
-middleware", which is a real architectural call and not a deploy-test-local cleanup:
+middleware", which is a real architectural call and not a deployment-local cleanup:
 
 **0. Drop `clerkMiddleware`.** Added 2026-09-12. The options below all assume the Lambda keeps
 the middleware, but CanopyCMS's own auth doesn't need it: `createNextCanopyContext` wraps
@@ -95,15 +83,16 @@ as a supported shape, and since 2026-10-01 `canopycms init` scaffolds it: the pa
 exercised against a live Clerk instance; see
 [clerk-middleware-runtime-key-unverified.md](resolved/clerk-middleware-runtime-key-unverified.md)
 and [clerk-signed-out-followups.md](clerk-signed-out-followups.md). For
-deploy-test, it makes the middleware and the plaintext `CLERK_SECRET_KEY` passthrough removable
-**together**. Removing only the passthrough still breaks the editor, per the correction above.
+the reference deployment, it makes the middleware and the plaintext `CLERK_SECRET_KEY` passthrough
+removable **together**. Removing only the passthrough still breaks the editor, per the correction
+above.
 
 1. **Bring `CLERK_SECRET_KEY` into the CMS Lambda as a plaintext env var** and retract
    the "no sensitive secrets" half of the Security Model. Honest, but gives up the
    property that makes a Lambda compromise survivable.
 
 1b. **Fetch it at init over a Secrets Manager interface VPC endpoint.** Added 2026-09-09
-   after the website adopter pointed out that the objection which killed this option is
+   after an adopter pointed out that the objection which killed this option is
    wrong — and it is. The original objection ("the Lambda has no internet so it cannot
    fetch from Secrets Manager") confuses *no internet route* with *no route*. The Lambda
    runs in `PRIVATE_ISOLATED` subnets of the VPC `CanopyCmsService` creates, and a VPC
@@ -116,16 +105,13 @@ deploy-test, it makes the middleware and the plaintext `CLERK_SECRET_KEY` passth
 
    Of the options that keep the middleware, this is the only one that makes the documented
    Security Model **true** rather than requiring it to be softened, which is why it is worth
-   the endpoint cost if the middleware stays (option 0 avoids both). Note the
-   adopter's observation that their request #37 is now on its third version and **version
-   one was right**: it was filed as "no fetch path is a gap", retracted on the
-   no-internet objection, and re-filed once that objection turned out not to hold.
+   the endpoint cost if the middleware stays (option 0 avoids both).
 
 ### 1b is more tractable than first thought, and needs TWO levers
 
-Worked out 2026-09-09 across both sessions. An earlier version of this file called the
-module-scope env read "the hard part" and proposed spiking it. **That blocker does not
-exist** — the website adopter found the mechanism, and it is a documented public API.
+Worked out 2026-09-09. An earlier version of this file called the module-scope env read "the
+hard part" and proposed spiking it. **That blocker does not exist** — the mechanism is a
+documented public API.
 
 **Lever 1 — `clerkMiddleware` takes an options CALLBACK, awaited per request.**
 `@clerk/nextjs@7.9.1`, `dist/types/server/clerkMiddleware.d.ts:33,48`:
@@ -194,10 +180,8 @@ decision to JP about whether a production editor should depend on an experimenta
 option — but those two lines are a **local variable at the call site inside
 `hasMiddleware()`**. The function itself was never opened.
 
-The website adopter caught it, and **their correction needs correcting the same way**: they
-framed it as a version split — "real for 15.x adopters, empty for this site" — which is
-more generous than the facts. There is no split. It was empty in both, and accepting the
-split would have left a false constraint standing for 15.x adopters in this very file.
+The flag is absent in both versions, so there is no version split at the flag level. A version
+split does exist in what the build registers; it is measured below.
 
 ### MEASURED 2026-09-09, on our own pinned Next
 
@@ -243,7 +227,7 @@ runs on edge. The obvious fix is a `runtime: 'nodejs'` line in the template's `c
 **Measured: on Next 16.1.7 that would silently disable the auth middleware.**
 
 Three build arms, all real `CANOPY_BUILD=cms next build` runs with a
-`runtime: 'nodejs'` middleware — the third measured by the website adopter on their pin:
+`runtime: 'nodejs'` middleware — the third measured by an adopter on their pin:
 
 | | `functions['/_middleware']` | `middleware.js` | edge registration |
 | --- | --- | --- | --- |
@@ -284,7 +268,7 @@ was started in any arm. The turbopack arm on 15.5.21 also emitted 29 warnings, b
 the fixture is webpack-configured; that does not affect the manifest question asked of
 it, but it is not a clean turbopack configuration either.
 
-### Edge-runtime env delivery works — measured by the adopter
+### Edge-runtime env delivery works — measured by an adopter
 
 One more measurement, and it is the one that decides how the secret is *delivered* rather
 than whether it is needed. Since the middleware runs on **edge**, the question was whether
@@ -292,7 +276,7 @@ an environment read there is a runtime lookup or resolved at build time — beca
 were build-time, the Clerk secret could only ever arrive as a Docker **build arg**, baked
 into the image, per Clerk instance. Far worse than a Lambda environment variable.
 
-Measured by the website adopter on 16.1.7: a sentinel environment comparison in
+Measured by an adopter on 16.1.7: a sentinel environment comparison in
 `middleware.ts`, built with the variable unset, then the emitted edge chunk read. **The
 reference survives verbatim** in `.next/server/edge/chunks/…` — neither inlined nor
 dead-code-eliminated. So the worst case is excluded and Lambda-environment-variable
@@ -314,17 +298,9 @@ a node-runtime middleware does not register on 16.1.7 at all.
 
 ## Still worth doing regardless
 
-Rewrite deploy-test's comment so it stops citing a "Secrets-Manager-fetch path" the
-Lambda is designed not to need, and consider
-whether `infra/deploy-config.ts:74-89`'s `console.warn` for a missing `CLERK_JWT_KEY`
-should be a hard failure there too — this package's own scaffold
+Rewrite the reference deployment's comment so it stops citing a "Secrets-Manager-fetch path" the
+Lambda is designed not to need, and consider whether its deploy config's `console.warn` for a
+missing `CLERK_JWT_KEY` should be a hard failure there too — this package's own scaffold
 (`cli/template-files/cdk-app.ts.template:63`) uses `required()` and refuses the synth,
 because an unset value makes Clerk fall back to a network JWKS fetch that the
 internet-less Lambda hangs on.
-
-## Check while there
-
-Whether `deploy-test`'s CloudFront wiring still lists `/assets/t/*` before `/assets/*`
-(`infra/bin/app.ts:197-209`). It does today, hand-maintained under an explanatory
-comment. Once `AssetSupport.attachTo()` lands it should use that instead, so the
-ordering stops depending on that comment surviving future edits.

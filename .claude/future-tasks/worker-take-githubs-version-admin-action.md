@@ -11,7 +11,7 @@ summary: >-
 
 ## Priority: P2
 
-Found 2026-10-11 while building adopter request 110
+Found 2026-10-11 while building the tracked-branch-diverged fix
 ([tracked-branch-diverged-forever.md](resolved/tracked-branch-diverged-forever.md)).
 
 ## Problem

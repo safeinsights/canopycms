@@ -6,7 +6,7 @@ summary: >-
 ---
 # [P3] The rich-text editor merges two adjacent lists into one
 
-Found 2026-10-08 by the round-trip corpus test (adopter request 87b).
+Found 2026-10-08 by the round-trip corpus test.
 
 ## The gap
 

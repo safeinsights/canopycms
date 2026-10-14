@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-09-13, filed while landing `canopycms init-github-app` (PR #333) and deliberately scoped OUT of it — it needs account-owner rights and a live deployment, so folding it in would make a testable PR depend on a manual one. **Adopter request #45/#329 shipped GitHub App auth that has never authenticated to github.com**: every test mocks Octokit. Unproven in particular are the `x-access-token:<installation token>@github.com` URL for clone/fetch/`--force-with-lease` (`worker/github-gateway.ts`, `buildGitHubUrl`), the `@octokit/auth-app@6` -> `universal-github-app-jwt@1` resolution the worker actually bundles, `preflightGitHubAppAuth`'s boot mint, and whether `contents: write` + `pull_requests: write` really covers the two **GraphQL** mutations — the single entry in `CANOPY_APP_PERMISSIONS` derived by analogy rather than from GitHub's permissions reference, which enumerates REST endpoints only. The failure mode is why it is P2 rather than P3: `convert-to-draft`'s GraphQL failure carries no HTTP status, so `isPermanentTaskFailure` reads a permission denial as TRANSIENT and wedges the branch in `sync-failed` naming no permission. Plan is to run `init-github-app create`/`verify` against the `canopycms` org's `deploy-test` repo — the run is itself half the test, since the manifest conversion, the name limit and the 422-on-unapproved-permission behaviour are browser- and owner-gated and can never run in CI — then **narrow the installation deliberately** and confirm `verify` catches it. Afterwards re-measure `APP_NAME_MAX_LENGTH` (34) and `APP_SUMMARY_MAX_LENGTH` (37), both carried over from a sibling project rather than measured here
+  New 2026-09-13, filed while landing `canopycms init-github-app` (PR #333) and deliberately scoped OUT of it — it needs account-owner rights and a live deployment, so folding it in would make a testable PR depend on a manual one. **GitHub App auth (#321, #329) shipped but has never authenticated to github.com**: every test mocks Octokit. Unproven in particular are the `x-access-token:<installation token>@github.com` URL for clone/fetch/`--force-with-lease` (`worker/github-gateway.ts`, `buildGitHubUrl`), the `@octokit/auth-app@6` -> `universal-github-app-jwt@1` resolution the worker actually bundles, `preflightGitHubAppAuth`'s boot mint, and whether `contents: write` + `pull_requests: write` really covers the two **GraphQL** mutations — the single entry in `CANOPY_APP_PERMISSIONS` derived by analogy rather than from GitHub's permissions reference, which enumerates REST endpoints only. The failure mode is why it is P2 rather than P3: `convert-to-draft`'s GraphQL failure carries no HTTP status, so `isPermanentTaskFailure` reads a permission denial as TRANSIENT and wedges the branch in `sync-failed` naming no permission. Plan is to run `init-github-app create`/`verify` against a throwaway test repo — the run is itself half the test, since the manifest conversion, the name limit and the 422-on-unapproved-permission behaviour are browser- and owner-gated and can never run in CI — then **narrow the installation deliberately** and confirm `verify` catches it. Afterwards re-measure `APP_NAME_MAX_LENGTH` (34) and `APP_SUMMARY_MAX_LENGTH` (37), both carried over from a sibling project rather than measured here
 ---
 # [P2] The GitHub App auth path has never run against real GitHub — exercise it with `init-github-app`
 
@@ -12,8 +12,7 @@ make a testable PR depend on a manual one.
 
 ## The gap
 
-Adopter request #45 (#321) and its CDK half (#329) shipped GitHub App authentication for the
-worker. Every part of it is covered by unit tests with a mocked Octokit, and **none of it has
+GitHub App authentication for the worker (#321) and its CDK half (#329) have shipped. Every part of it is covered by unit tests with a mocked Octokit, and **none of it has
 ever authenticated to github.com.** Specifically unproven against the real service:
 
 - that `createAppAuth` + `normalizeGitHubAppPrivateKey` produce a JWT GitHub accepts, at the
@@ -52,8 +51,8 @@ way to set this up, and running it is itself half the test — the manifest conv
 optional, and the 422-on-unapproved-permission behaviour are all browser- and owner-gated and
 can never run in CI.
 
-1. `canopycms init-github-app create --owner canopycms --repo deploy-test -- <a command that
-   stores the key>` against the `canopycms` org's `deploy-test` repo. Record what GitHub
+1. `canopycms init-github-app create --owner <org> --repo <test-repo> -- <a command that
+   stores the key>` against a throwaway test repo. Record what GitHub
    actually did with the name length and with `redirect_url`.
 2. `canopycms init-github-app verify --app-id <id> --key-file <path>` and confirm the readback
    reports `repository_selection: selected` and exactly the three declared permissions.
@@ -62,13 +61,13 @@ can never run in CI.
    full publish: submit an edit, watch the branch push and the PR open, withdraw it to exercise
    `convert-to-draft`, resubmit to exercise `markPullRequestReadyForReview`.
 4. **Leave that worker running past the hour and publish again.** An installation token lasts
-   about an hour, and this is the one step nothing else approximates. It is the reason request
-   #45 exists at all: before the epic the worker read its credential once in `main()`, so an
+   about an hour, and this is the one step nothing else approximates. It is the reason the
+   refresh work exists at all: before the epic the worker read its credential once in `main()`, so an
    App token would have worked for an hour and then failed until the ASG replaced the instance.
    PR #334 added the refresh that is supposed to prevent that, driven from the git-sync loop
    rather than from a task failure — so this step tests #321, #329 and #334 together, and it is
    the only step whose failure mode is *silence an hour in* rather than an error at setup.
-   Worth doing with a JSON-field private key too (`#46` composed with `#45`), since one
+   Worth doing with a JSON-field private key too, since one
    credential document per environment is the shape an organisation actually uses.
 5. **Then narrow it deliberately** — drop the installation to `pull_requests: read` and confirm
    `verify` catches it, and that the worker's failure looks the way this file predicts. That is

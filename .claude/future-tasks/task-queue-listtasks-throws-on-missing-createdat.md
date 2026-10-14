@@ -11,7 +11,7 @@ summary: >-
 
 ## Priority: P2
 
-Found 2026-10-11 in review of adopter request 110's stale-mirror check, which lists the pending
+Found 2026-10-11 in review of the worker's stale-mirror check, which lists the pending
 and processing queues once per sync cycle (`worker/stale-mirror.ts`, `readEditorWork`).
 
 ## Problem

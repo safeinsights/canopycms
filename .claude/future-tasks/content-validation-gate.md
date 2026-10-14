@@ -2,7 +2,7 @@
 priority: P2
 adopters: KB
 summary: >-
-  New 2026-08-14 — from the site audits. Malformed MDX compiles fine and explodes at render; the KB was hit by this in a real production incident and wrote its own defense (a standalone render-safety script). Port it into `compileAndRenderCheck()` + a `canopycms validate-content` CLI so the next adopter doesn't have to get burned first
+  New 2026-08-14 — from the site audits. Malformed MDX compiles fine and explodes at render; an adopter hit this in production and wrote its own check. Port it into `compileAndRenderCheck()` + a `canopycms validate-content` CLI so the next adopter doesn't have to get burned first
 ---
 # Content validation gate: `compileAndRenderCheck()` + `canopycms validate-content`
 
@@ -10,18 +10,17 @@ summary: >-
 
 From the 2026-08-13/14 adopter site audits, triaged as part of the
 2026-08-14 go-live backlog re-baseline. No existing task file covered this.
-Tagged **[KB]** rather than [BOTH]: the documentation site already
-paid for this gap once (see below) and deploys first, so it's the more urgent
-side even though the capability generalizes to any adopter.
+Tagged **[KB]** rather than [BOTH]: an adopter already paid for this gap
+once (see below), so it's the more urgent side even though the capability
+generalizes to any adopter.
 
-## The KB learned this the hard way
+## An adopter learned this the hard way
 
 Malformed MDX **compiles fine and explodes at render** — schema validation
 and `entry-validator.ts` both pass a body that later throws inside the
-rendering pipeline, in production, in front of a reader. The documentation
-site was hit by this in a real production incident and responded by writing
-its own defense: a standalone script that actually renders each entry's
-content and catches what schema validation cannot.
+rendering pipeline, in production, in front of a reader. An adopter hit this
+in production and wrote its own check: a script that actually renders each
+entry's content and catches what schema validation cannot.
 
 That's exactly the kind of adopter-authored safety net that should be a
 package capability instead of a script one site happened to write after
@@ -57,8 +56,3 @@ getting burned.
   explicitly asks "which automated checks belong on content PRs —
   accessibility, SEO, link integrity?" This is the same question with a
   concrete, already-proven-necessary answer for MDX render-safety.
-- The adopter-side build gate and render-check module this ports from: a
-  compile-and-walk check wired ahead of the site build, plus an element-walker
-  that stands in for a real render because `react-dom/server` is banned in the
-  Next server graph. Ask the documentation site's maintainers for the current
-  source.

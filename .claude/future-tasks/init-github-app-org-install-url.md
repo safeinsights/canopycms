@@ -2,11 +2,11 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-09, from marketing-site request 48. For an org-owned App, `init-github-app create` prints the user-account install URL, which 404s mid-flow. Print `github.com/apps/<slug>/installations/new`
+  New 2026-10-09, from a marketing-site request. For an org-owned App, `init-github-app create` prints the user-account install URL, which 404s mid-flow. Print `github.com/apps/<slug>/installations/new`
 ---
 # `init-github-app create` prints a user-account install URL for an org-owned App
 
-**Priority:** P3 [BOTH]. **Found:** 2026-10-04, marketing-site request 48; still true at `fecc04a0`.
+**Priority:** P3 [BOTH]. **Found:** 2026-10-04, in a marketing-site request; still true at `fecc04a0`.
 
 ## Problem
 

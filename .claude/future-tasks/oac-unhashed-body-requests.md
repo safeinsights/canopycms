@@ -23,7 +23,7 @@ bodies (`api/request-body-hash.ts`). Nothing adds it to anything else.
   uploads by presigned POST to an unsigned S3 origin (`asset-support.ts`), never the Function URL,
   so this bites only if a proxied store is deployed behind OAC.
 
-`OAC always` cannot be relaxed. On basic-auth tiers it replaces the viewer's `Authorization: Basic`
+`OAC always` cannot be relaxed. On deployments fronted by basic auth it replaces the viewer's `Authorization: Basic`
 with SigV4, and `no-override` would forward Basic to the Lambda, which rejects it.
 
 ## Candidates, neither started

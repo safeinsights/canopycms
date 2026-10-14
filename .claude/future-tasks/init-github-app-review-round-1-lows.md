@@ -74,7 +74,7 @@ mis-parses two remotes the reviewer ran:
 
 - `ssh://git@ssh.github.com:443/acme/site.git` (GitHub's documented SSH-over-443 form) and
   `https://github.com:443/acme/site.git` both parse as owner `443`, repo `acme/site`.
-- `https://notgithub.com/acme/site.git` parses as github.com `acme/site`.
+- `https://notgithub.example/acme/site.git` parses as github.com `acme/site`.
 
 ### 7. `create` accepts an empty name and an `owner/repo` value for `--repo`
 

@@ -2,14 +2,13 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-08-30, from adopter requests #35/#36. `withCanopy` and `generate-ai-content` now both honor `CANOPY_BUILD_ID`, but no scaffolded pipeline sets it, so reproducible static exports are opt-in-if-you-read-the-README. That discovery cost is most of what the requesting adopter actually paid. Not a template one-liner: the value must be a **tree** hash (a commit SHA or date differs across a rebase of an identical tree), and narrowing it to build-relevant paths is an open config-vs-recipe question
+  New 2026-08-30, from two adopter requests. `withCanopy` and `generate-ai-content` now both honor `CANOPY_BUILD_ID`, but no scaffolded pipeline sets it, so reproducible static exports are opt-in-if-you-read-the-README. That discovery cost is most of what the requesting adopter actually paid. Not a template one-liner: the value must be a **tree** hash (a commit SHA or date differs across a rebase of an identical tree), and narrowing it to build-relevant paths is an open config-vs-recipe question
 ---
 # Scaffolded deploy pipelines should export `CANOPY_BUILD_ID`
 
 **Status:** Open. **Priority: P3** (enhancement; the capability works, the default does not use it).
 
-Filed 2026-08-30 while shipping adopter requests #35 and #36 (see
-[adopter-request-log-intake.md](adopter-request-log-intake.md)).
+Filed 2026-08-30 while shipping two adopter requests.
 
 ## What
 
@@ -19,7 +18,7 @@ no-ops when the variable is unset — which is what every scaffolded pipeline cu
 
 So the capability ships, but an adopter only benefits if they discover the variable in the README
 and wire it up themselves. That is most of the cost the requesting adopter actually paid: not
-writing the one-line pin, but *finding out it was needed*, late, by driving a real promoter.
+writing the one-line pin, but *finding out it was needed*, late, by driving a real deploy pipeline.
 
 ## Why it is not just "add a line to the template"
 
@@ -31,7 +30,7 @@ The value has to be a **source tree hash**, and the reasons are specific:
 - `git rev-parse HEAD^{tree}` is the cheap correct answer, but it hashes the WHOLE tree — including
   files that cannot affect build output (docs, CI config). Narrowing it to build-relevant paths is
   a real design question, and the requesting adopter flagged wanting it to be a config change
-  rather than an edit in three repos.
+  rather than an edit.
 
 ## Shape
 

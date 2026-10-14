@@ -18,7 +18,7 @@ If the worker dequeues, pushes and fails the task permanently before that save l
 
 The branch ends locked, showing "Syncing…", with no reason. The window is the handler's
 metadata save against a worker poll plus a GitHub push, so it is narrow, and the same ordering
-already let a fast permanent failure of any kind be overwritten before request 97.
+already let a fast permanent failure of any kind be overwritten before the empty-submit fix.
 
 Fix shape: save the submitted state (`status`, `submittedAt`, `syncStatus: 'pending-sync'`,
 cleared reasons) before enqueueing, and afterwards save only what the enqueue or direct call
@@ -26,5 +26,5 @@ produced, never `syncStatus` on the queued path. The direct path's 400 for "noth
 then has to return the branch to `editing` in its second save. Test by making the stub worker
 fail the task synchronously inside `enqueueTask`.
 
-Found in review of adopter request 97
+Found in review of the empty-submit fix
 ([resolved/empty-submit-and-remote-delete.md](resolved/empty-submit-and-remote-delete.md)).

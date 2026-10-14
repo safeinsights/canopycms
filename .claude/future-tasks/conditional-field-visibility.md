@@ -6,8 +6,8 @@ summary: >-
 ---
 # No conditional field visibility, so mutually-exclusive fields can only be signposted in labels
 
-**Status:** Open. **Priority: P3.** Found 2026-08-20 reviewing the marketing site's
-`int-official-content` branch (PR #80). Filed rather than fixed — this is new schema surface and
+**Status:** Open. **Priority: P3.** Found 2026-08-20 reviewing an adopter's
+content branch. Filed rather than fixed — this is new schema surface and
 wants its own design pass.
 
 ## Problem
@@ -23,25 +23,24 @@ guaranteed to be read: the field label.
 
 ## The worked example
 
-The marketing site's `comparisonPanels` block acquired a paired `rows[]` shape alongside its older
+An adopter's two-column comparison block acquired a paired `rows[]` shape alongside its older
 `left.items` / `right.items` lists. With no way to declare exclusivity, the schema says this:
 
 ```
 name: 'rows',  label: "Paired rows (use INSTEAD of the panels' own item lists)"
-name: 'left',  label: '✗ panel (traditional approach) — unpaired list; ignored when `rows` is set'
-name: 'right', label: '✓ panel (SafeInsights) — unpaired list; ignored when `rows` is set'
+name: 'left',  label: 'Left panel (old approach) — unpaired list; ignored when `rows` is set'
+name: 'right', label: 'Right panel (new approach) — unpaired list; ignored when `rows` is set'
 ```
 
 An editor sees all three, can fill all three, and two of them are then silently discarded at render
 time. Nothing validates it, nothing warns, and the only signal is a parenthetical in a label.
 
-Their own comment names the second-order cost: they kept both shapes partly because reshaping
-would have been lossy under **#29** (unknown keys dropped with no diagnostic), so a missing schema
-feature in one place hardened a workaround in another.
+The adopter named the second-order cost: they kept both shapes partly because reshaping would
+have been lossy (unknown keys are dropped with no diagnostic), so a missing schema feature in one
+place hardened a workaround in another.
 
-*(The adopter is separately collapsing that block to a single shape, which removes this particular
-instance. The package gap it exposed does not go away with it — the next adopter with a
-variant-shaped block hits the same wall.)*
+The package gap does not go away if that block is later collapsed to a single shape — the next
+adopter with a variant-shaped block hits the same wall.
 
 ## Why this is worth real design and not a quick attribute
 
@@ -53,8 +52,8 @@ variant-shaped block hits the same wall.)*
   parent-scope references need a path language, and a path language needs a story for `list: true`
   items.
 - **Hidden ≠ absent.** If a field is hidden because a sibling changed, does its stored value get
-  cleared, kept, or ignored? Each answer produces a different class of surprise, and #29 means a
-  kept-but-hidden value is currently invisible forever.
+  cleared, kept, or ignored? Each answer produces a different class of surprise, and because
+  unknown keys are dropped with no diagnostic, a kept-but-hidden value is currently invisible forever.
 - **The narrower alternative may be better.** A discriminated `variant`/`oneOf` field type — pick
   one shape, get exactly that shape's fields — models "two ways to author this block" more honestly
   than N independent visibility predicates, and is far easier to validate. Consider designing that

@@ -2,17 +2,17 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-09, from marketing-site request 66. Nothing says the editor route renders inside the adopter's root layout, so site chrome, analytics and global fetches run in `/edit`. A doc note, optionally an `isEditorPath` helper (needs approval)
+  New 2026-10-09, from a marketing-site request. Nothing says the editor route renders inside the adopter's root layout, so site chrome, analytics and global fetches run in `/edit`. A doc note, optionally an `isEditorPath` helper (needs approval)
 ---
 # The docs never say the editor renders inside the adopter's root layout
 
-**Priority:** P3 [BOTH]. **Found:** 2026-10-05, marketing-site request 66 (measured on a deployed
-tier).
+**Priority:** P3 [BOTH]. **Found:** 2026-10-05, in a marketing-site request (measured on a deployed
+editor).
 
 ## Problem
 
 The editor route mounts under the adopter's root layout, so site chrome, analytics, consent banners
-and global fetches there also run in `/edit`. On a tier behind HTTP Basic this raised password
+and global fetches there also run in `/edit`. On a deployment behind HTTP Basic auth this raised password
 prompts from images the editor never needed. README and `docs/deploying-to-aws.md` explain where a
 Clerk provider goes relative to the root layout, but not this.
 

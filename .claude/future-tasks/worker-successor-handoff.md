@@ -2,11 +2,11 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Deferred from request 95. A worker being replaced drains and exits when its instance enters Terminating:Wait, so there is still about 2 minutes with no worker while the replacement boots. A handoff would keep the old worker serving until the successor asks for the lock, cutting the gap to seconds when the ASG launches the replacement in parallel.
+  Deferred from the graceful-replacement change. A worker being replaced drains and exits when its instance enters Terminating:Wait, so there is still about 2 minutes with no worker while the replacement boots. A handoff would keep the old worker serving until the successor asks for the lock, cutting the gap to seconds when the ASG launches the replacement in parallel.
 ---
 # [P3] Hand the worker lock to a booting successor instead of draining at once
 
-**Deferred:** 2026-10-09 from adopter request 95, which shipped drain-only. The adopter rated the
+**Deferred:** 2026-10-09 from the graceful-replacement change, which shipped drain-only. The adopter rated the
 gap low priority because queued work survives it.
 
 ## The gap that remains

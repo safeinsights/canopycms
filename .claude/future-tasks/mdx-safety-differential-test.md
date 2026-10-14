@@ -30,6 +30,6 @@ really do run code or emit unsafe HTML.
 
 ## To do
 
-Add `@mdx-js/mdx` and `remark-gfm` as devDependencies of `packages/canopycms`, without bumping
-optional peers; see the memory note on grafting a lockfile. Then commit the harness as a seeded
+Add `@mdx-js/mdx` and `remark-gfm` as devDependencies of `packages/canopycms`: graft the
+lockfile snapshot by hand (do not let `pnpm add` bump optional peers). Then commit the harness as a seeded
 vitest test.

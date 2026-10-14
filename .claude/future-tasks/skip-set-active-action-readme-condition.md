@@ -2,11 +2,11 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-09, from marketing-site request 47. The auth-clerk README ties `useSkipClerkSetActiveAction` to rendering Clerk components; the trigger is any `setActive` with no holder mounted. Restate it by mechanism
+  New 2026-10-09, from a marketing-site request. The auth-clerk README ties `useSkipClerkSetActiveAction` to rendering Clerk components; the trigger is any `setActive` with no holder mounted. Restate it by mechanism
 ---
 # `useSkipClerkSetActiveAction`'s README states the wrong condition
 
-**Priority:** P3 [BOTH]. **Found:** marketing-site request 47; still true at `fecc04a0`.
+**Priority:** P3 [BOTH]. **Found:** in a marketing-site request; still true at `fecc04a0`.
 
 ## Problem
 

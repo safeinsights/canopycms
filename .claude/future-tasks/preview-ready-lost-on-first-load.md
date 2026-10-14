@@ -12,7 +12,7 @@ remounts the iframe. That covers the symptom. This task is the cause.
 
 ## What was measured
 
-These loads were captured read-only on a deployed adopter editor (canopycms `0.0.68-int.111`),
+These loads were captured read-only on a deployed adopter editor (an int prerelease of canopycms),
 using a capture-phase `message` listener in the editor window:
 
 - **Every load got exactly one ready message.** Its origin was the editor's and its `source` was
@@ -20,7 +20,7 @@ using a capture-phase `message` listener in the editor window:
   no redirect.
 - **The stuck load was the first, cold-cache one.** The iframe document started 6.5s into the
   editor's life, and ready arrived 5.2s later (slow hydration). The iframe's `load` came 1.2s after
-  ready. Afterwards the bar's pending state (`syncPending`, as int.111 names it) still read true.
+  ready. Afterwards the bar's pending state (`syncPending`, as that prerelease names it) still read true.
   The iframe's document, by its `timeOrigin`, had started before ready arrived, so no `src` change
   after ready re-armed the bar.
 - **A manual `location.reload()` of the iframe cleared the bar at once**, so the handler was
@@ -31,7 +31,7 @@ using a capture-phase `message` listener in the editor window:
 
 ## Ruled out: a `src` string change re-arming the bar without a new page
 
-int.111's `PreviewFrame` re-armed the bar on any change to the `src` string. That would strand it
+That prerelease's `PreviewFrame` re-armed the bar on any change to the `src` string. That would strand it
 only if the string changed without the iframe loading a new document. In Chrome (an iframe on a
 local origin, each change set as `iframe.src`, checked by `contentWindow.performance.timeOrigin`
 and `load` events), every change below produced a new document and one `load`:

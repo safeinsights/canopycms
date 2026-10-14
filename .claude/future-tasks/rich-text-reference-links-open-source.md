@@ -6,7 +6,7 @@ summary: >-
 ---
 # [P2] A reference-style link opens the whole body as source
 
-Found 2026-10-08 by the round-trip corpus test (adopter request 87b).
+Found 2026-10-08 by the round-trip corpus test.
 
 ## The gap
 

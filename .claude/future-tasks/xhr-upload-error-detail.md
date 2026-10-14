@@ -7,7 +7,7 @@ summary: >-
 # A failed direct upload reports a status code and nothing else
 
 **Status:** Open. **Priority: P3.** Filed 2026-09-10 alongside the change that added
-`media.uploadUrl` (adopter request #44).
+`media.uploadUrl` (an adopter request).
 
 ## Problem
 

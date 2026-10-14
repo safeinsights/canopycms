@@ -12,7 +12,7 @@ summary: >-
 
 The mirror lives in the gateway's `StateDirectory=canopy-github`
 (`/var/lib/canopy-github/github.git`) on the instance's 8 GiB root volume, and the gateway warns
-once when it passes 2 GiB. None of these matters for a docs-site repository; each matters for a big one.
+once when it passes 2 GiB. None of these matters for a small content repository; each matters for a big one.
 
 - **Cruft never expires.** `maintainMirror` (worker/github-mirror-upkeep.ts) runs
   `repack -a -d --cruft` with no `--cruft-expiration`, so every rebased-away commit and every

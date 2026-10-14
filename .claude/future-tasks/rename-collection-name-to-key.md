@@ -8,7 +8,7 @@ summary: >-
 
 ### Problem
 
-`collection.name` in `CollectionConfig` / `FlatSchemaItem` is a machine-readable identifier (e.g., `"posts"`, `"edplus-learning-at-scale"`), but the field name `name` doesn't communicate that. Compare:
+`collection.name` in `CollectionConfig` / `FlatSchemaItem` is a machine-readable identifier (e.g., `"posts"`, `"my-collection"`), but the field name `name` doesn't communicate that. Compare:
 
 - `slug` — obviously part of a URL
 - `label` — obviously for human display

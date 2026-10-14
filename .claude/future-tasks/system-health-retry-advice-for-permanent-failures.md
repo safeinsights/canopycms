@@ -18,5 +18,5 @@ alongside `syncFailureReason` when the task fails (the runner already computes `
 or drop the advice and let the Tasks tab's own retry control speak for itself. Keep the change
 small; a nearby System health status is being added separately, so expect a merge there.
 
-Found while fixing adopter request 97
+Found while building the empty-submit fix
 ([resolved/empty-submit-and-remote-delete.md](resolved/empty-submit-and-remote-delete.md)).
