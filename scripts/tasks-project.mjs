@@ -5,8 +5,8 @@
  * was ranked by hand; everything after it runs P0 to P3, then by file name.
  *
  * The Project's built-in Status field needs a "Do next" and a "Backlog"
- * option before this runs (the API cannot add options to it): rename its
- * options in the Project's settings first.
+ * option before this runs; `updateProjectV2Field` with `singleSelectOptions`
+ * sets them.
  */
 
 import { readFileSync } from 'node:fs'
@@ -52,9 +52,7 @@ export async function addToProject({ repo, project, map, save, ghApi, pace }) {
   const doNextId = option('Do next')
   const backlogId = option('Backlog')
   if (!doNextId || !backlogId) {
-    throw new Error(
-      'the Project\'s Status field needs "Do next" and "Backlog" options; add them in its settings',
-    )
+    throw new Error('the Project\'s Status field needs "Do next" and "Backlog" options')
   }
 
   const doNext = doNextFiles().filter((f) => map.issues[f])
