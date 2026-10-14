@@ -19,8 +19,9 @@ says string. `static/index.ts` normalizes Dates only inside its build guard, and
 ("CMS-authored entries round-trip as quoted strings") is wrong for timestamps.
 
 A `stampOnPublish` stamp is written quoted on purpose, so for the same field an adopter can get a
-string or a `Date` depending on who set it. YAML and JSON entries are not affected the same way
-(check YAML).
+string or a `Date` depending on who set it. YAML entries are read with the `yaml` package
+(`content-store.ts`), whose core schema keeps a timestamp a string, and JSON has no date type, so
+only MD/MDX frontmatter is affected.
 
 ## Fix options
 

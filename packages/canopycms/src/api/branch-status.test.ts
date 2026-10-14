@@ -199,7 +199,7 @@ describe('branch status api', () => {
     )
   })
 
-  it('leaves the conflict record for the reviewer, since save keeps fields it omits', async () => {
+  it('never writes the conflict record, leaving it for the reviewer', async () => {
     mockMetadataUpdate.mockClear()
 
     const res = await submitBranchForMerge(
@@ -209,6 +209,7 @@ describe('branch status api', () => {
     )
 
     expect(res.ok).toBe(true)
+    expect(mockMetadataUpdate).toHaveBeenCalled()
     for (const [update] of mockMetadataUpdate.mock.calls) {
       expect(update.branch).not.toHaveProperty('conflictStatus')
       expect(update.branch).not.toHaveProperty('conflictFiles')
