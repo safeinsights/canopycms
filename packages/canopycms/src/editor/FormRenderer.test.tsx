@@ -412,7 +412,7 @@ describe('FormRenderer', () => {
       const items = screen.getAllByRole('listitem').map((li) => li.textContent)
       expect(items).toEqual([
         'Title: This field is required',
-        'Blocks › Hero › headline: Expected text',
+        'Blocks › Hero › Headline: Expected text',
       ])
       expect(screen.getByTestId('validation-alert').textContent).not.toContain('blocks[0]')
     })
@@ -429,8 +429,8 @@ describe('FormRenderer', () => {
           />
         </CanopyCMSProvider>,
       )
-      await user.click(screen.getByRole('button', { name: 'Blocks › Hero › headline' }))
-      expect(document.activeElement).toBe(screen.getByLabelText('headline'))
+      await user.click(screen.getByRole('button', { name: 'Blocks › Hero › Headline' }))
+      expect(document.activeElement).toBe(screen.getByLabelText('Headline'))
       await user.click(screen.getByRole('button', { name: 'Title' }))
       expect(document.activeElement).toBe(screen.getByLabelText('Title'))
     })
@@ -837,7 +837,7 @@ describe('FormRenderer', () => {
 
     it('has no Clear affordance while the field is absent (nothing to clear)', () => {
       render(<StatefulForm fields={objectFields} initialValue={{}} />)
-      expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull()
+      expect(screen.queryByRole('button', { name: /^Clear\b/ })).toBeNull()
     })
 
     it('a filled-then-cleared required child is recoverable via Clear, resetting to undefined (not {})', async () => {
@@ -852,7 +852,7 @@ describe('FormRenderer', () => {
       expect(state.meta).toEqual({ label: 'x' })
 
       // The object now has a value, so the Clear affordance appears.
-      const clearButton = screen.getByRole('button', { name: 'Clear' })
+      const clearButton = screen.getByRole('button', { name: /^Clear\b/ })
 
       // Change their mind and empty the child back out. The object is still
       // "present" ({ label: '' }), so entry-validator's required-child check
@@ -925,7 +925,7 @@ describe('FormRenderer', () => {
         },
       ]
       render(<StatefulForm fields={requiredFields} initialValue={{ meta: { label: 'x' } }} />)
-      expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull()
+      expect(screen.queryByRole('button', { name: /^Clear\b/ })).toBeNull()
     })
 
     it('gets its own comment affordance, and a nested child keeps its own (regression guard)', () => {
@@ -1294,7 +1294,8 @@ describe('FormRenderer', () => {
       )
       expect(document.querySelector('[id$="-description"]')).toBeNull()
       expect(document.querySelector('[aria-describedby]')).toBeNull()
-      expect(document.querySelector('[role="group"]')).toBeNull()
+      // Still a named group, which Clear hands focus to.
+      expect(screen.getByRole('group', { name: 'Meta' })).toBeTruthy()
     })
 
     it('a markdown field without a description renders no description', () => {

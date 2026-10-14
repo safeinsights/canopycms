@@ -302,7 +302,7 @@ const MenuItems: React.FC<{
       {withThreads.length === 0 ? (
         <Text size="xs" c="dimmed" px="sm" pb="xs">
           {onRemovedItems > 0
-            ? `${onRemovedItems === 1 ? '1 comment is' : `${onRemovedItems} comments are`} on a removed item, under "Comment on this entry".`
+            ? `${onRemovedItems === 1 ? '1 comment thread is' : `${onRemovedItems} comment threads are`} on a removed item, under "Comment on this entry".`
             : 'No field has comments yet.'}
         </Text>
       ) : (

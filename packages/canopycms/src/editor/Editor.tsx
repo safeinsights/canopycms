@@ -109,6 +109,7 @@ import { MediaLibrary } from './media/MediaLibrary'
 import {
   removalAnchors,
   restoreRemoval,
+  openThreadsWithin,
   restoredFieldPath,
   type FieldRemoval,
 } from './undo-removal'
@@ -627,6 +628,15 @@ const EditorContent: React.FC<EditorProps> = ({
       ...removal,
       anchors: displayValue ? removalAnchors(fields, displayValue, removal) : undefined,
     }
+    const doing = removal.action === 'clear' ? 'clearing' : 'removing'
+    // Open threads keyed inside what was removed leave their fields for the entry's thread list.
+    const movedThreads = currentEntry
+      ? openThreadsWithin(
+          displayComments,
+          currentEntry.path,
+          removal.kind === 'list-item' ? [...removal.listPath, removal.index] : removal.path,
+        )
+      : 0
     nextUndoToastRef.current += 1
     const id = `canopy-undo-${nextUndoToastRef.current}`
     let used = false
@@ -639,7 +649,7 @@ const EditorContent: React.FC<EditorProps> = ({
       undoToastsRef.current.delete(id)
       if (!open) {
         notifications.show({
-          message: `Too late to undo removing ${removal.label}.`,
+          message: `Too late to undo ${doing} ${removal.label}.`,
           color: 'yellow',
         })
         return
@@ -654,7 +664,7 @@ const EditorContent: React.FC<EditorProps> = ({
       const now = draftsRef.current[contentId] ?? loadedValuesRef.current[contentId]
       if (!now || !restoreRemoval(fields, now, anchored)) {
         notifications.show({
-          message: `Couldn't undo removing ${removal.label}: that part of the entry has changed. Add it again if you still need it.`,
+          message: `Couldn't undo ${doing} ${removal.label}: that part of the entry has changed. ${removal.action === 'clear' ? 'Fill it in again' : 'Add it again'} if you still need it.`,
           color: 'yellow',
         })
         return
@@ -677,6 +687,12 @@ const EditorContent: React.FC<EditorProps> = ({
       message: (
         <UndoToastMessage
           label={removal.label}
+          action={removal.action}
+          note={
+            movedThreads > 0
+              ? `Its ${movedThreads === 1 ? 'comment thread' : `${movedThreads} comment threads`} moved to "Comment on this entry".`
+              : undefined
+          }
           onUndo={undo}
           onHold={() => notifications.update({ ...toast, autoClose: false })}
           onRelease={() => notifications.update(toast)}
@@ -804,6 +820,14 @@ const EditorContent: React.FC<EditorProps> = ({
     const entry = entriesState.find((e) => e.path === thread.entryPath)
     if (!entry || !thread.canopyPath) return undefined
     const value = entryValue(entry)
+    // While a removal is only in the draft, the saved value still holds the item to name.
+    const saved = thread.onRemovedItem ? loadedValues[entry.contentId] : undefined
+    const savedPath = saved
+      ? resolveThreadPath(entry.schema, saved, thread.canopyPath, thread.itemKeys)
+      : null
+    if (saved && savedPath !== null) {
+      return fieldBreadcrumb(entry.schema, saved, savedPath).join(' › ')
+    }
     const placed = !!value && !thread.onRemovedItem
     const items = placed || !thread.itemKeys?.length
     return fieldBreadcrumb(entry.schema, placed ? value : undefined, thread.canopyPath, {
@@ -1319,11 +1343,8 @@ const EditorContent: React.FC<EditorProps> = ({
         !!node.entryTypes?.length && node.entryTypes.every((et) => et.unavailable)
       // A collection that holds only collections has no entry type to add (`entryTypes` is
       // undefined when its list is empty).
-      const canAddEntry =
-        node.type !== 'entry' &&
-        !allUnavailable &&
-        (node.entryTypes?.length ?? 0) > 0 &&
-        node.canAddEntry !== false
+      const addable = node.type !== 'entry' && !allUnavailable && (node.entryTypes?.length ?? 0) > 0
+      const canAddEntry = addable && node.canAddEntry !== false
 
       return {
         path: node.path,
@@ -1337,6 +1358,7 @@ const EditorContent: React.FC<EditorProps> = ({
           node.contentId && currentBranch?.conflictFiles?.includes(node.contentId)
         ),
         unavailableSchemaRefs: unavailableRefs.length > 0 ? unavailableRefs : undefined,
+        addRefused: (addable && node.canAddEntry === false) || undefined,
         onAdd: canAddEntry
           ? () => (onCreateEntry ? onCreateEntry(node.path) : handleCreateEntry(node.path))
           : undefined,
@@ -1687,6 +1709,7 @@ const EditorContent: React.FC<EditorProps> = ({
                             readOnly={contentReadOnly}
                             onRemoved={handleFieldRemoved}
                             commentBlockedReason={commentBlockedReason}
+                            removedItemFieldLabel={commentFieldLabel}
                             onGetUserMetadata={getCommentUserMetadata}
                             header={{
                               title: currentEntry.label,

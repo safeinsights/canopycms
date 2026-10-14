@@ -222,8 +222,8 @@ icon-only below `lg`; its presentation is provisional until the shell redesign s
 ## Enforcement
 
 - `pnpm lint:ux-copy` ([scripts/check-ux-copy.mjs](../scripts/check-ux-copy.mjs)) flags Title
-  Case labels and placeholders, ASCII `...` and "successfully" against a per-file baseline.
-  After a fix, record it with `node scripts/check-ux-copy.mjs --write-baseline`.
+  Case labels and placeholders, ASCII `...` and "successfully" against a per-file baseline across
+  editor code and imports. After a fix, record it with `node scripts/check-ux-copy.mjs --write-baseline`.
 - `pnpm lint:a11y` runs `eslint-plugin-jsx-a11y` on the editor as errors against ESLint's
   suppressions in `scripts/a11y-suppressions.json`; `pnpm lint` shows the same rules as
   warnings. After a fix, run `pnpm lint:a11y --prune-suppressions`.

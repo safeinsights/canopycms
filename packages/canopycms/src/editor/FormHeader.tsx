@@ -193,8 +193,8 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
             trapFocus
             returnFocus={false}
           >
-            {/* One element either way, so focus survives the pane crossing the width. */}
-            <Tooltip label="Outline" disabled={!compact}>
+            {/* One element either way, so focus survives the width change; shut while wide. */}
+            <Tooltip label="Outline" disabled={!compact} opened={compact ? undefined : false}>
               <Popover.Target>
                 <Button
                   variant="subtle"

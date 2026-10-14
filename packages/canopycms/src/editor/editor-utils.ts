@@ -5,6 +5,7 @@ import type { EditorEntry, EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
 // Import directly from normalize to avoid pulling in server-only branch.ts
 import { normalizeFilesystemPath } from '../paths/normalize'
+import { humanizeName } from './schema-label'
 import { computeEntryUrl, isIndexSlug } from '../utils/entry-url'
 import { isDataOnlyFormat } from '../utils/format'
 import {
@@ -241,19 +242,6 @@ export const buildCollectionLabels = (collections?: EditorCollection[]): Map<str
   return map
 }
 
-/** A schema name read as words in sentence case: `blogPost` is "Blog post", `HTMLPage` "HTML page". */
-const humanizeName = (name: string): string => {
-  const words = name
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    // An acronym ("HTML") keeps its capitals.
-    .map((word) => (/^[A-Z0-9]{2,}$/.test(word) ? word : word.toLowerCase()))
-    .join(' ')
-  return words.charAt(0).toUpperCase() + words.slice(1)
-}
-
 /**
  * An entry's type as its collection labels it, else its name read as words; undefined when
  * untyped.
@@ -281,14 +269,14 @@ export const entryTypeLabel = (
  *
  * @param currentEntry - The entry to build breadcrumbs for (or undefined for root)
  * @param collectionLabels - Map of collection IDs to labels
- * @returns Array of breadcrumb segment strings, starting with 'All entries'
+ * @returns Array of breadcrumb segment strings, starting with 'All content'
  */
 export const buildBreadcrumbSegments = (
   currentEntry: EditorEntry | undefined,
   collectionLabels: Map<string, string>,
 ): string[] => {
-  if (!currentEntry) return ['All entries']
-  const segments = ['All entries']
+  if (!currentEntry) return ['All content']
+  const segments = ['All content']
 
   // Show collection hierarchy for entries that belong to a collection
   if (currentEntry.collectionPath) {

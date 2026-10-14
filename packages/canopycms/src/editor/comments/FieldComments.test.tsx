@@ -410,7 +410,9 @@ describe('a field thread whose list item was removed', () => {
     await user.click(menuButton)
     const menu = await screen.findByTestId('form-comments-menu')
     expect(
-      within(menu).getByText('1 comment is on a removed item, under "Comment on this entry".'),
+      within(menu).getByText(
+        '1 comment thread is on a removed item, under "Comment on this entry".',
+      ),
     ).toBeTruthy()
     expect(within(menu).queryByText('No field has comments yet.')).toBeNull()
   })

@@ -32,8 +32,8 @@ export interface EntryCommentsProps {
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Changes with the entry or branch, which resets the popover, so a draft never posts elsewhere. */
   resetKey: string
-  /** Names the field of a thread on a removed item, from its path. */
-  removedItemFieldLabel?: (canopyPath: string) => string
+  /** Names the field of a thread on a removed item. */
+  removedItemFieldLabel?: (thread: CommentThread) => string
 }
 
 /**
@@ -81,7 +81,7 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
         highlightThreadId={highlightThreadId}
         threadFieldLabel={(thread) =>
           thread.onRemovedItem && thread.canopyPath
-            ? (removedItemFieldLabel?.(thread.canopyPath) ?? thread.canopyPath)
+            ? (removedItemFieldLabel?.(thread) ?? thread.canopyPath)
             : undefined
         }
         testId="entry-comment-button"

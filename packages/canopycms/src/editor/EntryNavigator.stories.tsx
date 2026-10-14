@@ -64,6 +64,29 @@ export const FlatList: Story = {
   ),
 }
 
+/**
+ * Path rules refuse new entries in "Posts": its entries are locked, its "…" menu is gone, and one
+ * line says why.
+ */
+export const AddRefused: Story = {
+  render: () => (
+    <div className="w-80">
+      <EntryNavigator
+        onSelect={(id) => alert(`Select ${id}`)}
+        collections={[
+          {
+            path: unsafeAsLogicalPath('posts'),
+            label: 'Posts',
+            type: 'collection',
+            entries: posts.map((post) => ({ ...post, readOnly: true })),
+            addRefused: true,
+          },
+        ]}
+      />
+    </div>
+  ),
+}
+
 const noop = () => {}
 
 /** The navigator at the drawer's content width, with long titles, nesting, markers and every menu. */

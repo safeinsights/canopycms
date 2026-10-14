@@ -67,8 +67,8 @@ describe('fieldBreadcrumb', () => {
     expect(crumb('blocks.0.heading')).toEqual(['Page sections', 'Hero', 'Heading'])
   })
 
-  it('falls back to template and field names when they have no label', () => {
-    expect(crumb('blocks[1].href')).toEqual(['Page sections', 'cta', 'href'])
+  it('humanises template and field names that have no label', () => {
+    expect(crumb('blocks[1].href')).toEqual(['Page sections', 'Cta', 'Href'])
   })
 
   it('names the parts of an image field', () => {
