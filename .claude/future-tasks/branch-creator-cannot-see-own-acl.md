@@ -16,3 +16,5 @@ Nothing in the editor edits a branch's ACL as its creator today, so nothing brea
 adding such a UI, decide whether a creator counts as privileged for their own branch's ACL
 (they chose those people, but only through ids they could not look up), or whether ACL editing
 stays admin-only and `canModifyBranchAccess` drops the creator grant.
+
+JP 2026-10-13: branch creators SHOULD control their branch's access list (admins don't want to); a separate auth chip implements it.
