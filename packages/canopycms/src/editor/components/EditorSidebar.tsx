@@ -192,8 +192,8 @@ export function EditorSidebar({
             disabled={!highlightEnabled || previewInexactMarks.length === 0}
             styles={{
               indicator: {
-                background: 'var(--canopy-count-bg-orange)',
-                color: 'var(--mantine-color-text)',
+                '--indicator-color': 'var(--canopy-count-bg-orange)',
+                '--indicator-text-color': 'var(--mantine-color-text)',
               },
             }}
           >

@@ -16,8 +16,8 @@ a dark brand such as `#1e3a8a` is lightened in dark mode and a checked control's
 where white would not show. Unchecked Checkbox, Radio and Switch borders take
 `--canopy-input-border`. Selected options and dates sit on `--canopy-primary-fill`. Badges are
 sentence case, coloured badges use their light variant, dark-mode dimmed text and input
-descriptions are italic, the navigator's entry badge shows the entry type's label, and Markdown
-popups have a border in dark mode.
+descriptions are italic, the navigator's entry badge shows the entry type's label, count badges show
+their tint instead of the primary colour, and Markdown popups have a border in dark mode.
 
 **To adopt.** Nothing, unless visual snapshots or browser tests assert the old colours or badge
 text, such as the System Health panel's "corrupt metadata", now "Corrupt metadata". A

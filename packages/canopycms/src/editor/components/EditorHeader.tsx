@@ -484,8 +484,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     styles={{
                       indicator: {
                         pointerEvents: 'none',
-                        background: 'var(--canopy-count-bg)',
-                        color: 'var(--mantine-color-text)',
+                        // Mantine paints the pill again in a ::before, from this variable.
+                        '--indicator-color': 'var(--canopy-count-bg)',
+                        '--indicator-text-color': 'var(--mantine-color-text)',
                       },
                     }}
                   >

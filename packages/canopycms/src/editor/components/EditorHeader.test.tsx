@@ -334,6 +334,13 @@ describe('EditorHeader - comments indicator', () => {
     expect(count && getComputedStyle(count).pointerEvents).toBe('none')
   })
 
+  it('puts the count in the text colour on the count tint', () => {
+    renderHeader({ comments: [{ resolved: false }] })
+    const count = screen.getByTestId('comments-unresolved-count').parentElement as HTMLElement
+    expect(count.style.getPropertyValue('--indicator-color')).toBe('var(--canopy-count-bg)')
+    expect(count.style.getPropertyValue('--indicator-text-color')).toBe('var(--mantine-color-text)')
+  })
+
   it('shows no count when every thread is resolved', () => {
     renderHeader({ comments: [{ resolved: true }] })
     expect(screen.queryByTestId('comments-unresolved-count')).toBeNull()

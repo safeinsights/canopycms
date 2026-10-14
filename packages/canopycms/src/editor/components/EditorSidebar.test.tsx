@@ -153,3 +153,24 @@ describe('EditorSidebar - icon button tooltips', () => {
     expect(tooltip?.style.opacity ?? '0').toBe('0')
   })
 })
+
+describe('EditorSidebar - inexact marks count', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('puts the count in the text colour on an opaque orange tint', () => {
+    render(
+      <EditorSidebar
+        {...defaultProps}
+        highlightEnabled
+        previewInexactMarks={[{ path: 'hero.subtitle', nearest: 'hero' }]}
+      />,
+      { wrapper: Wrapper },
+    )
+    const count = document.querySelector('.mantine-Indicator-indicator') as HTMLElement
+    expect(count.textContent).toBe('1')
+    expect(count.style.getPropertyValue('--indicator-color')).toBe('var(--canopy-count-bg-orange)')
+    expect(count.style.getPropertyValue('--indicator-text-color')).toBe('var(--mantine-color-text)')
+  })
+})
