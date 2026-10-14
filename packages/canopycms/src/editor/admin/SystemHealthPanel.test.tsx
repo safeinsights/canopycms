@@ -1158,7 +1158,7 @@ describe('SystemHealthPanel', () => {
       await userEvent.click(screen.getByText('Branches'))
       await waitFor(() => expect(screen.getByText('feature-d')).toBeTruthy())
 
-      await userEvent.hover(screen.getByText('sync-failed'))
+      await userEvent.hover(screen.getByText('Sync failed'))
       expect((await screen.findByRole('tooltip')).textContent).toMatch(/moved on GitHub/)
     })
 
@@ -1189,7 +1189,9 @@ describe('SystemHealthPanel', () => {
       await userEvent.click(screen.getByText('Branches'))
       await waitFor(() => expect(screen.getByText('feature-d')).toBeTruthy())
 
-      const trigger = screen.getByRole('button', { name: 'sync-failed' })
+      expect(screen.queryByRole('button', { name: /sync/i })).toBeNull()
+      const trigger = screen.getByText('Sync failed').closest('[tabindex="0"]') as HTMLElement
+      expect(trigger.tagName).toBe('SPAN')
       act(() => trigger.focus())
       expect(document.activeElement).toBe(trigger)
       const describedBy = trigger.getAttribute('aria-describedby')

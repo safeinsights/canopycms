@@ -283,7 +283,7 @@ describe('Editor on a read-only branch', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
     const confirm = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
-    expect(confirm?.title).toBe('Discard changes')
+    expect(confirm?.title).toBe('Discard changes to "hello"?')
     act(() => confirm?.onConfirm?.())
 
     await waitFor(() => expect(screen.queryByTestId('read-only-draft-notice')).toBeNull())

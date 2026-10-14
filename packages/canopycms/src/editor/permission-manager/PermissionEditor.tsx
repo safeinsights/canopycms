@@ -1,6 +1,6 @@
 'use client'
 
-import React from 'react'
+import React, { useRef } from 'react'
 import { ActionIcon, Badge, Button, Group, Paper, Stack, Tabs, Text, Tooltip } from '@mantine/core'
 import { IconSearch, IconX, IconUserOff } from '@tabler/icons-react'
 import type {
@@ -14,6 +14,7 @@ import { PERMISSION_LEVELS, LEVEL_CONFIG } from './constants'
 import { GroupSelector } from './GroupSelector'
 import { UserSelector } from './UserSelector'
 import { UserBadge } from '../components/UserBadge'
+import { useFocusAfterRemove } from '../utils/focus-return'
 
 export interface PermissionEditorProps {
   node: TreeNode
@@ -67,6 +68,10 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
   onAddGroup,
   onRemoveGroup,
 }) => {
+  const { listRef, focusAfterRemove } = useFocusAfterRemove()
+  const addGroupsRef = useRef<HTMLButtonElement>(null)
+  const addUserRef = useRef<HTMLButtonElement>(null)
+
   const directPerm = node.directPermission
   const inheritedPerm = node.inheritedPermission
 
@@ -146,16 +151,16 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                 {canEdit ? (
                   <div>
                     <Text size="xs" fw={500} mb={4}>
-                      {LEVEL_CONFIG[level].label} Access
+                      {LEVEL_CONFIG[level].label} access
                     </Text>
 
-                    <Group gap="xs" mb="xs">
-                      {(directTarget?.allowedGroups ?? []).map((groupId) => {
+                    <Group gap="xs" mb="xs" ref={listRef}>
+                      {(directTarget?.allowedGroups ?? []).map((groupId, groupIndex) => {
                         const groupInfo = groups.find((g) => g.value === groupId)
                         return (
                           <Badge
                             key={`group-${groupId}`}
-                            variant="filled"
+                            variant="light"
                             color={LEVEL_CONFIG[level].color}
                             pr={3}
                             rightSection={
@@ -166,12 +171,15 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                                   radius="xl"
                                   variant="transparent"
                                   aria-label={`Remove ${groupInfo?.label ?? groupId}`}
-                                  onClick={() => onRemoveGroup(node.path, level, groupId)}
+                                  onClick={() => {
+                                    onRemoveGroup(node.path, level, groupId)
+                                    focusAfterRemove(groupIndex, addGroupsRef)
+                                  }}
                                 >
                                   <IconX
                                     size={12}
                                     stroke={2.5}
-                                    style={{ color: 'var(--mantine-color-white)' }}
+                                    style={{ color: 'var(--mantine-color-text)' }}
                                   />
                                 </ActionIcon>
                               </Tooltip>
@@ -182,16 +190,22 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                         )
                       })}
 
-                      {(directTarget?.allowedUsers ?? []).map((userId) => (
+                      {(directTarget?.allowedUsers ?? []).map((userId, userIndex) => (
                         <UserBadge
                           key={`user-${userId}`}
                           userId={userId}
                           getUserMetadata={onGetUserMetadata}
                           variant="avatar-name"
                           size="xs"
-                          badgeVariant="filled"
+                          badgeVariant="light"
                           color={userId === 'anonymous' ? 'orange' : LEVEL_CONFIG[level].color}
-                          onRemove={() => onRemoveUser(node.path, level, userId)}
+                          onRemove={() => {
+                            onRemoveUser(node.path, level, userId)
+                            focusAfterRemove(
+                              (directTarget?.allowedGroups ?? []).length + userIndex,
+                              addUserRef,
+                            )
+                          }}
                           showEmailTooltip={true}
                           revealIdOnFallback
                         />
@@ -207,19 +221,21 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
 
                     <Group gap="xs">
                       <Button
+                        ref={addGroupsRef}
                         variant="subtle"
                         leftSection={<IconSearch size={14} />}
                         onClick={() => onToggleGroupSearch(!showGroupSearch)}
                       >
-                        {showGroupSearch ? 'Cancel' : 'Add Groups'}
+                        {showGroupSearch ? 'Cancel' : 'Add groups'}
                       </Button>
 
                       <Button
+                        ref={addUserRef}
                         variant="subtle"
                         leftSection={<IconSearch size={14} />}
                         onClick={() => onToggleUserSearch(!showUserSearch)}
                       >
-                        {showUserSearch ? 'Cancel' : 'Add User'}
+                        {showUserSearch ? 'Cancel' : 'Add user'}
                       </Button>
 
                       {!(directTarget?.allowedUsers ?? []).includes('anonymous') && (
@@ -230,7 +246,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                             leftSection={<IconUserOff size={14} />}
                             onClick={() => onAddUser(node.path, level, 'anonymous')}
                           >
-                            Add Anonymous
+                            Add anonymous
                           </Button>
                         </Tooltip>
                       )}

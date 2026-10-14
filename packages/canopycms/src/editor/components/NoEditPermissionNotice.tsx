@@ -1,8 +1,8 @@
 import { Text } from '@mantine/core'
 
 export interface NoEditPermissionNoticeProps {
-  /** Logical path of the entry the user cannot edit. */
-  entryPath: string
+  /** Label of the entry the user cannot edit. */
+  entryLabel: string
 }
 
 /**
@@ -11,7 +11,7 @@ export interface NoEditPermissionNoticeProps {
  * or protected branch instead shows its banner in the header over a read-only form, the rule
  * `contentReadOnly` in `Editor.tsx` holds.
  */
-export function NoEditPermissionNotice({ entryPath }: NoEditPermissionNoticeProps) {
+export function NoEditPermissionNotice({ entryLabel }: NoEditPermissionNoticeProps) {
   return (
     <div
       role="status"
@@ -26,7 +26,7 @@ export function NoEditPermissionNotice({ entryPath }: NoEditPermissionNoticeProp
       }}
     >
       <Text size="sm" c="dimmed">
-        You don&apos;t have edit access to &quot;{entryPath}&quot;. Ask a CanopyCMS admin to grant
+        You don&apos;t have edit access to &quot;{entryLabel}&quot;. Ask a CanopyCMS admin to grant
         it in &quot;Manage permissions&quot;.
       </Text>
     </div>

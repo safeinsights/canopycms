@@ -838,8 +838,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           'This draft was saved by an earlier version of the editor, which did not record ' +
           'which version of the entry it was based on. Saving it will overwrite the copy ' +
           'currently on the server, including any changes made by someone else since. ' +
-          'Choose "Reload entry" or "Discard changes" in the entry menu instead if you would ' +
-          'rather not risk that.',
+          'Choose "Reload entry" or "Discard changes" in the menu under the entry\'s title ' +
+          'instead if you would rather not risk that.',
         labels: { confirm: 'Save anyway', cancel: 'Cancel' },
         confirmProps: { color: 'red' },
         onConfirm: () => settle(true),
@@ -1109,12 +1109,6 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     } catch (err) {
       console.warn('Failed to clear draft for entry', err)
     }
-    notifications.show({
-      message: `Draft cleared for "${entry.label}"`,
-      color: 'blue',
-      autoClose: getNotificationDuration(3000),
-      withCloseButton: true,
-    })
   }
 
   // Only prompt when there is a real draft that actually differs from the
@@ -1128,10 +1122,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       performDiscardFileDraft()
       return
     }
+    const label = options.currentEntry?.label
     openConfirm({
-      title: 'Discard changes',
-      children: 'Discard unsaved changes for this entry?',
-      labels: { confirm: 'Discard changes', cancel: 'Cancel' },
+      title: label ? `Discard changes to "${label}"?` : 'Discard changes?',
+      children: 'Your unsaved changes to this entry will be lost.',
+      labels: { confirm: 'Discard changes', cancel: 'Keep editing' },
       confirmProps: { color: 'red', 'data-testid': 'confirm-discard-entry' },
       onConfirm: performDiscardFileDraft,
       ...focusReturnProps(returnFocusTo),

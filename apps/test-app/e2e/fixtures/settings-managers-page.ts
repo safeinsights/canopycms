@@ -53,7 +53,7 @@ export class GroupManagerPage {
   }
 
   get saveButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Save Groups' })
+    return this.drawer.getByRole('button', { name: 'Save groups' })
   }
 
   get discardButton(): Locator {
@@ -72,7 +72,7 @@ export class GroupManagerPage {
     )
   }
 
-  /** The "Discard unsaved changes?" confirm that closing a dirty drawer opens. */
+  /** The "Discard unsaved changes?" confirm: closing a dirty drawer opens it, as does its save bar's "Discard changes". */
   get discardConfirm(): Locator {
     return this.page.getByRole('dialog', { name: 'Discard unsaved changes?' })
   }
@@ -92,7 +92,7 @@ export class GroupManagerPage {
     await expect(modal).toBeHidden({ timeout: SHORT_TIMEOUT })
   }
 
-  /** Click "Save Groups" and wait for the PUT to resolve (settings writes commit+push through a lock). */
+  /** Click "Save groups" and wait for the PUT to resolve (settings writes commit+push through a lock). */
   async saveAndVerify(): Promise<void> {
     await Promise.all([
       this.page.waitForResponse(
@@ -136,7 +136,7 @@ export class PermissionManagerPage {
   }
 
   /**
-   * Every tree node's PermissionEditor panel (tabs, "Add Groups" button,
+   * Every tree node's PermissionEditor panel (tabs, "Add groups" button,
    * etc.) is ALWAYS present in the DOM, not just the selected node's —
    * PermissionTree.tsx wraps each in `<Collapse in={isSelected}>` but never
    * unmounts it ("content stays in DOM for test accessibility", per its own
@@ -149,7 +149,7 @@ export class PermissionManagerPage {
    * `.first()` is the correct fix, not a shortcut: `activeLevel` and the
    * group/user-search UI state (`useGroupsAndUsers`) are held ONCE in
    * PermissionManager and passed down identically to every node's
-   * PermissionEditor, so clicking either copy of "Edit" or "Add Groups"
+   * PermissionEditor, so clicking either copy of "Edit" or "Add groups"
    * flips the same shared state. Which node's permission actually gets
    * mutated is governed entirely by `selectedNode` (set via `selectNode`
    * above) — the group-search results list itself is a REAL conditional
@@ -162,11 +162,11 @@ export class PermissionManagerPage {
   }
 
   get addGroupsButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Add Groups' }).first()
+    return this.drawer.getByRole('button', { name: 'Add groups' }).first()
   }
 
   get saveButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Save Permissions' })
+    return this.drawer.getByRole('button', { name: 'Save permissions' })
   }
 
   get discardButton(): Locator {
@@ -175,7 +175,7 @@ export class PermissionManagerPage {
 
   /**
    * Assign a group (by its display label, e.g. "Team A") to the currently
-   * selected node at the given level, via the "Add Groups" search panel.
+   * selected node at the given level, via the "Add groups" search panel.
    * Caller must have already selected a node.
    */
   async assignGroup(groupLabel: string, level: PermissionLevelName): Promise<void> {
@@ -185,7 +185,7 @@ export class PermissionManagerPage {
     await this.drawer.getByText(groupLabel, { exact: true }).click()
   }
 
-  /** Click "Save Permissions" and wait for the PUT to resolve. */
+  /** Click "Save permissions" and wait for the PUT to resolve. */
   async saveAndVerify(): Promise<void> {
     await Promise.all([
       this.page.waitForResponse(

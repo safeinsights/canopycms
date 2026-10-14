@@ -217,7 +217,10 @@ const settingsTrigger = () => screen.getByTestId('settings-button')
 describe('Discard changes (file menu)', () => {
   it.each([
     ['Escape', async () => userEvent.keyboard('{Escape}')],
-    ['Cancel', async () => userEvent.click(await screen.findByRole('button', { name: 'Cancel' }))],
+    [
+      'Keep editing',
+      async () => userEvent.click(await screen.findByRole('button', { name: 'Keep editing' })),
+    ],
   ])(
     'returns focus to the file menu button when the confirm is closed with %s',
     async (_how, close) => {

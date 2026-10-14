@@ -1,10 +1,11 @@
 'use client'
 
-import React from 'react'
+import React, { useRef } from 'react'
 import { Button, Group, Loader, Paper, Stack, Text, TextInput } from '@mantine/core'
 import { IconSearch } from '@tabler/icons-react'
 import type { UserSearchResult, CanopyGroupId, CanopyUserId } from './types'
 import { UserBadge } from '../components/UserBadge'
+import { useFocusAfterRemove } from '../utils/focus-return'
 
 export interface MemberListProps {
   groupId: CanopyGroupId
@@ -40,6 +41,9 @@ export const MemberList: React.FC<MemberListProps> = ({
   onHideSearch,
   canSearch,
 }) => {
+  const { listRef, focusAfterRemove } = useFocusAfterRemove()
+  const addMemberRef = useRef<HTMLButtonElement>(null)
+
   const handleAddMember = (userId: CanopyUserId) => {
     onAddMember(groupId, userId)
     onHideSearch()
@@ -50,18 +54,21 @@ export const MemberList: React.FC<MemberListProps> = ({
       <Text size="xs" fw={500} mb={4}>
         Members
       </Text>
-      <Group gap="xs" mb="xs">
+      <Group gap="xs" mb="xs" ref={listRef}>
         {members.length > 0 ? (
-          members.map((userId) => (
+          members.map((userId, index) => (
             <UserBadge
               key={userId}
               userId={userId}
               getUserMetadata={onGetUserMetadata}
               variant="avatar-name"
               size="xs"
-              badgeVariant="filled"
+              badgeVariant="light"
               color="blue"
-              onRemove={() => onRemoveMember(groupId, userId)}
+              onRemove={() => {
+                onRemoveMember(groupId, userId)
+                focusAfterRemove(index, addMemberRef)
+              }}
               showEmailTooltip={true}
               revealIdOnFallback
             />
@@ -123,6 +130,7 @@ export const MemberList: React.FC<MemberListProps> = ({
         </Paper>
       ) : (
         <Button
+          ref={addMemberRef}
           variant="subtle"
           leftSection={<IconSearch size={14} />}
           onClick={onShowSearch}

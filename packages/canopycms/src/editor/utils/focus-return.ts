@@ -1,4 +1,4 @@
-import { useRef, type MouseEvent, type RefObject } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type RefObject } from 'react'
 
 /**
  * Mantine's own `returnFocus` records the focused element at open, and a menu item has unmounted
@@ -90,5 +90,39 @@ export function focusReturnProps(returnFocusTo?: () => HTMLElement | null): {
     returnFocus: false,
     onExitTransitionEnd: () => focusIfIdle(returnFocusTo()),
     [FOCUS_RETURN_ATTR]: true,
+  }
+}
+
+/**
+ * Focus for a list of removable badges, each with a `Remove …` button. The button that removes an
+ * item is gone once it acts, so `focusAfterRemove(index, fallback)` moves focus, once the list has
+ * re-rendered without the item, to the Remove button now at that index (the next item's, else the
+ * previous one's), else to the `fallback` control, the section's "Add …" button. Put `listRef` on
+ * the element holding the badges.
+ */
+export function useFocusAfterRemove<L extends HTMLElement = HTMLDivElement>() {
+  const listRef = useRef<L>(null)
+  const [pending, setPending] = useState<{
+    index: number
+    fallback: RefObject<HTMLElement | null>
+  } | null>(null)
+
+  useEffect(() => {
+    if (!pending) return
+    const removeButtons = listRef.current?.querySelectorAll<HTMLElement>(
+      'button[aria-label^="Remove "]',
+    )
+    const target =
+      removeButtons && removeButtons.length > 0
+        ? removeButtons[Math.min(pending.index, removeButtons.length - 1)]
+        : pending.fallback.current
+    target?.focus()
+    setPending(null)
+  }, [pending])
+
+  return {
+    listRef,
+    focusAfterRemove: (index: number, fallback: RefObject<HTMLElement | null>) =>
+      setPending({ index, fallback }),
   }
 }

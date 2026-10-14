@@ -44,11 +44,7 @@
       "ellipsis": 1
     },
     "packages/canopycms/src/editor/permission-manager/index.tsx": {
-      "title-case": 2,
       "ellipsis": 1
-    },
-    "packages/canopycms/src/editor/permission-manager/PermissionEditor.tsx": {
-      "title-case": 3
     },
     "packages/canopycms/src/editor/permission-manager/UserSelector.tsx": {
       "ellipsis": 1

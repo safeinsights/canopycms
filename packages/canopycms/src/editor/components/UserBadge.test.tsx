@@ -231,6 +231,24 @@ describe('UserBadge', () => {
       expect(onRemove).toHaveBeenCalledWith('user-1')
     })
 
+    it.each([
+      ['filled', 'var(--mantine-color-white)'],
+      ['light', 'var(--mantine-color-text)'],
+      ['outline', 'var(--mantine-color-text)'],
+    ] as const)('draws the X of a %s badge in a colour that shows on it', (badgeVariant, color) => {
+      render(
+        <UserBadge
+          userId="user-1"
+          getUserMetadata={vi.fn()}
+          cachedUser={mockUser}
+          badgeVariant={badgeVariant}
+          onRemove={vi.fn()}
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(screen.getByRole('button', { name: 'Remove Alice Johnson' }).style.color).toBe(color)
+    })
+
     it("opens only the X's tooltip, not the badge's email one as well, while the pointer is on the X", async () => {
       render(
         <UserBadge

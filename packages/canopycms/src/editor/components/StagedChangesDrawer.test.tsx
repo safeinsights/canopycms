@@ -35,7 +35,7 @@ function renderDrawer(overrides: Partial<StagedChangesDrawerProps> = {}) {
     isDirty: false,
     isSaving: false,
     canEdit: true,
-    saveLabel: 'Save Groups',
+    saveLabel: 'Save groups',
     onSave: vi.fn(),
     onDiscard: vi.fn(),
     children: <div>panel body</div>,
@@ -73,7 +73,7 @@ describe('StagedChangesDrawer', () => {
       renderDrawer()
       expect(screen.getByText('panel body')).toBeTruthy()
       expect(screen.queryByText('Unsaved changes')).toBeNull()
-      expect(screen.queryByRole('button', { name: 'Save Groups' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Save groups' })).toBeNull()
     })
 
     it('closes at once, without a confirm', () => {
@@ -95,7 +95,7 @@ describe('StagedChangesDrawer', () => {
       expect(screen.getByRole('dialog', { name: /Unsaved changes/ })).toBeTruthy()
       expect(screen.getByText('Changes take effect only after you save.')).toBeTruthy()
 
-      fireEvent.click(screen.getByRole('button', { name: 'Save Groups' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Save groups' }))
       expect(props.onSave).toHaveBeenCalledTimes(1)
       fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
       expect(openConfirmModal).toHaveBeenCalledTimes(1)
@@ -103,7 +103,7 @@ describe('StagedChangesDrawer', () => {
 
     it('hides the save bar from a viewer who cannot edit', () => {
       renderDrawer({ isDirty: true, canEdit: false })
-      expect(screen.queryByRole('button', { name: 'Save Groups' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Save groups' })).toBeNull()
     })
 
     it('asks before closing, and closes only after a confirmed discard', () => {

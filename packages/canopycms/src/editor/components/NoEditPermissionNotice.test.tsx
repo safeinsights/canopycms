@@ -22,7 +22,7 @@ beforeAll(() => {
 const renderNotice = () =>
   render(
     <MantineProvider>
-      <NoEditPermissionNotice entryPath="docs/guide" />
+      <NoEditPermissionNotice entryLabel="Style guide" />
     </MantineProvider>,
   )
 
@@ -33,11 +33,11 @@ describe('NoEditPermissionNotice', () => {
 
   // canEdit is false only when a path rule denies edit, so the notice names that and whom to
   // ask; a locked or protected branch is reported by the header banner instead.
-  it('names the entry path, whom to ask, and where to grant access', () => {
+  it('names the entry by its label, whom to ask, and where to grant access', () => {
     renderNotice()
 
     expect(noticeText()).toBe(
-      'You don\'t have edit access to "docs/guide". Ask a CanopyCMS admin to grant it in "Manage permissions".',
+      'You don\'t have edit access to "Style guide". Ask a CanopyCMS admin to grant it in "Manage permissions".',
     )
   })
 })

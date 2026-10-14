@@ -299,9 +299,11 @@ describe('GroupManager', () => {
         { wrapper },
       )
 
-      // Tooltips with labels "Edit group" and "Delete group" should exist
       expect(screen.getByText('Content Editors')).toBeTruthy()
       expect(screen.getByText('Marketing Team')).toBeTruthy()
+      // Each button names its group, so a screen reader can tell the rows apart.
+      expect(screen.getByRole('button', { name: 'Edit group "Marketing Team"' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Delete group "Marketing Team"' })).toBeTruthy()
     })
   })
 
@@ -329,7 +331,7 @@ describe('GroupManager', () => {
 
       await waitFor(() => expect(screen.getByText('Content Editors')).toBeTruthy())
       expect(screen.queryByText('Staged Group')).toBeNull()
-      expect(screen.queryByText('Save Groups')).toBeNull()
+      expect(screen.queryByText('Save groups')).toBeNull()
     })
   })
 
@@ -361,7 +363,7 @@ describe('GroupManager', () => {
 
       // Adding only stages the group: its row says so until the batch is saved.
       await waitFor(() => {
-        expect(screen.getByText('Save Groups')).toBeTruthy()
+        expect(screen.getByText('Save groups')).toBeTruthy()
       })
       const newGroupCard = screen.getByText('New Group').closest('.mantine-Paper-root')
       expect(newGroupCard?.textContent).toContain('Unsaved')
@@ -447,7 +449,7 @@ describe('GroupManager', () => {
         { wrapper },
       )
 
-      fireEvent.click(screen.getByRole('button', { name: 'Delete group' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Delete group "Draft group"' }))
 
       expect(modals.openConfirmModal).not.toHaveBeenCalled()
       expect(screen.queryByText('Draft group')).toBeNull()
@@ -467,13 +469,13 @@ describe('GroupManager', () => {
         { wrapper },
       )
 
-      fireEvent.click(screen.getAllByRole('button', { name: 'Delete group' })[1])
+      fireEvent.click(screen.getByRole('button', { name: 'Delete group "Content Editors"' }))
 
       expect(modals.openConfirmModal).toHaveBeenCalledWith(
         expect.objectContaining({ title: 'Delete group' }),
       )
       expect(screen.getByText('Content Editors')).toBeTruthy()
-      expect(screen.queryByText('Save Groups')).toBeNull()
+      expect(screen.queryByText('Save groups')).toBeNull()
     })
 
     it('leaves Escape to the delete confirm while it is open, not the drawer behind it', async () => {
@@ -495,7 +497,7 @@ describe('GroupManager', () => {
         { wrapper },
       )
 
-      fireEvent.click(screen.getAllByRole('button', { name: 'Delete group' })[1])
+      fireEvent.click(screen.getByRole('button', { name: 'Delete group "Content Editors"' }))
       fireEvent.keyDown(document.body, { key: 'Escape' })
       expect(onClose).not.toHaveBeenCalled()
 
@@ -525,7 +527,9 @@ describe('GroupManager', () => {
         { wrapper },
       )
 
-      const [admins, reviewers, editors] = screen.getAllByRole('button', { name: 'Delete group' })
+      const admins = screen.getByRole('button', { name: 'Delete group "Admins"' })
+      const reviewers = screen.getByRole('button', { name: 'Delete group "Reviewers"' })
+      const editors = screen.getByRole('button', { name: 'Delete group "Content Editors"' })
       for (const button of [admins, reviewers]) {
         expect(button.getAttribute('aria-disabled')).toBe('true')
         expect(button.hasAttribute('data-disabled')).toBe(true)
@@ -534,10 +538,12 @@ describe('GroupManager', () => {
       }
       expect(editors.getAttribute('aria-disabled')).toBeNull()
       expect(modals.openConfirmModal).not.toHaveBeenCalled()
-      expect(screen.queryByText('Save Groups')).toBeNull()
+      expect(screen.queryByText('Save groups')).toBeNull()
 
       act(() => admins.focus())
-      expect(await screen.findByText("Built-in group; it can't be deleted.")).toBeTruthy()
+      expect(
+        await screen.findByText(`"Admins" is a built-in group, so it can't be deleted.`),
+      ).toBeTruthy()
     })
 
     it('removes group when delete is clicked', async () => {
@@ -554,10 +560,10 @@ describe('GroupManager', () => {
 
       expect(screen.getByText('Content Editors')).toBeTruthy()
 
-      fireEvent.click(screen.getAllByRole('button', { name: 'Delete group' })[1])
+      fireEvent.click(screen.getByRole('button', { name: 'Delete group "Content Editors"' }))
 
       await waitFor(() => {
-        expect(screen.getByText('Save Groups')).toBeTruthy()
+        expect(screen.getByText('Save groups')).toBeTruthy()
       })
     })
   })
@@ -737,7 +743,7 @@ describe('GroupManager', () => {
       fireEvent.click(screen.getByText('Alice Johnson'))
 
       await waitFor(() => {
-        expect(screen.getByText('Save Groups')).toBeTruthy()
+        expect(screen.getByText('Save groups')).toBeTruthy()
       })
     })
 
@@ -756,7 +762,7 @@ describe('GroupManager', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Remove Person user-1' }))
 
       await waitFor(() => {
-        expect(screen.getByText('Save Groups')).toBeTruthy()
+        expect(screen.getByText('Save groups')).toBeTruthy()
       })
       expect(screen.queryByText('Person user-1')).toBeNull()
     })
@@ -922,12 +928,12 @@ describe('GroupManager', () => {
       fireEvent.click(actionButtons[5] as Element)
 
       await waitFor(() => {
-        expect(screen.getByText('Save Groups')).toBeTruthy()
+        expect(screen.getByText('Save groups')).toBeTruthy()
         expect(screen.getByText('Discard changes')).toBeTruthy()
       })
     })
 
-    it('calls onSave when Save Groups is clicked', async () => {
+    it('calls onSave when Save groups is clicked', async () => {
       render(
         <GroupManager
           opened
@@ -947,10 +953,10 @@ describe('GroupManager', () => {
       fireEvent.click(deleteButton)
 
       await waitFor(() => {
-        expect(screen.getByText('Save Groups')).toBeTruthy()
+        expect(screen.getByText('Save groups')).toBeTruthy()
       })
 
-      const saveButton = screen.getByText('Save Groups')
+      const saveButton = screen.getByText('Save groups')
       fireEvent.click(saveButton)
 
       await waitFor(() => {
@@ -972,7 +978,7 @@ describe('GroupManager', () => {
 
       expect(screen.getByText('Content Editors')).toBeTruthy()
 
-      fireEvent.click(screen.getAllByRole('button', { name: 'Delete group' })[1])
+      fireEvent.click(screen.getByRole('button', { name: 'Delete group "Content Editors"' }))
 
       await waitFor(() => {
         expect(screen.getByText('Discard changes')).toBeTruthy()
@@ -982,7 +988,7 @@ describe('GroupManager', () => {
       fireEvent.click(discardButton)
 
       await waitFor(() => {
-        expect(screen.queryByText('Save Groups')).toBeFalsy()
+        expect(screen.queryByText('Save groups')).toBeFalsy()
         expect(screen.getByText('Content Editors')).toBeTruthy()
       })
     })
@@ -999,8 +1005,8 @@ describe('GroupManager', () => {
         />,
         { wrapper },
       )
-      fireEvent.click(screen.getAllByRole('button', { name: 'Delete group' })[1])
-      await waitFor(() => expect(screen.getByText('Save Groups')).toBeTruthy())
+      fireEvent.click(screen.getByRole('button', { name: 'Delete group "Content Editors"' }))
+      await waitFor(() => expect(screen.getByText('Save groups')).toBeTruthy())
 
       vi.mocked(modals.openConfirmModal).mockClear()
       vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {
@@ -1014,11 +1020,11 @@ describe('GroupManager', () => {
           labels: { confirm: 'Discard changes', cancel: 'Keep editing' },
         }),
       )
-      expect(screen.getByText('Save Groups')).toBeTruthy()
+      expect(screen.getByText('Save groups')).toBeTruthy()
       expect(screen.queryByText('Content Editors')).toBeNull()
 
       fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
-      await waitFor(() => expect(screen.queryByText('Save Groups')).toBeNull())
+      await waitFor(() => expect(screen.queryByText('Save groups')).toBeNull())
       expect(screen.getByText('Content Editors')).toBeTruthy()
     })
 
@@ -1044,10 +1050,10 @@ describe('GroupManager', () => {
       fireEvent.click(deleteButton)
 
       await waitFor(() => {
-        expect(screen.getByText('Save Groups')).toBeTruthy()
+        expect(screen.getByText('Save groups')).toBeTruthy()
       })
 
-      const saveButton = screen.getByText('Save Groups')
+      const saveButton = screen.getByText('Save groups')
       fireEvent.click(saveButton)
 
       await waitFor(() => {

@@ -1773,7 +1773,7 @@ describe('useDraftManager', () => {
     })
   })
 
-  it('names the entry in the toast that confirms a discard', async () => {
+  it('shows no toast when an entry draft is discarded: the form and the unsaved indicator already show it', async () => {
     const { notifications } = await import('@mantine/notifications')
     vi.mocked(notifications.show).mockClear()
     const { result } = renderHook(() => useDraftManager(defaultOptions))
@@ -1785,9 +1785,8 @@ describe('useDraftManager', () => {
       result.current.handleDiscardFileDraft()
     })
 
-    expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-      message: 'Draft cleared for "Test Entry"',
-    })
+    expect(result.current.drafts).not.toHaveProperty('abc123def456')
+    expect(notifications.show).not.toHaveBeenCalled()
   })
 
   describe('discard confirmation', () => {
@@ -1919,8 +1918,8 @@ describe('useDraftManager', () => {
 
       expect(modals.openConfirmModal).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: 'Discard changes',
-          labels: expect.objectContaining({ confirm: 'Discard changes' }),
+          title: 'Discard changes to "Test Entry"?',
+          labels: expect.objectContaining({ confirm: 'Discard changes', cancel: 'Keep editing' }),
           confirmProps: expect.objectContaining({ 'data-testid': 'confirm-discard-entry' }),
         }),
       )
@@ -2445,7 +2444,9 @@ describe('useDraftManager', () => {
         const { children } = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)![0] as {
           children: string
         }
-        expect(children).toContain('Choose "Reload entry" or "Discard changes" in the entry menu')
+        expect(children).toContain(
+          `Choose "Reload entry" or "Discard changes" in the menu under the entry's title`,
+        )
         expect(children).not.toMatch(/\bfile\b/)
       })
 

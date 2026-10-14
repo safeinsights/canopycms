@@ -447,7 +447,7 @@ describe('Editor integration', () => {
     expect(saveButton.getAttribute('aria-disabled')).toBe('true')
   })
 
-  it('names the entry path and whom to ask, and renders no form, for an entry the user cannot edit', async () => {
+  it('names the entry by its label and whom to ask, and renders no form, for an entry the user cannot edit', async () => {
     const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/hello'),
@@ -570,7 +570,7 @@ describe('Editor integration', () => {
 
     const notice = await screen.findByTestId('no-edit-permission-notice')
     expect(notice.textContent).toBe(
-      'You don\'t have edit access to "content/posts/hello". Ask a CanopyCMS admin to grant it in "Manage permissions".',
+      'You don\'t have edit access to "hello". Ask a CanopyCMS admin to grant it in "Manage permissions".',
     )
     expect(screen.queryByRole('textbox', { name: /title/i })).toBeNull()
   })

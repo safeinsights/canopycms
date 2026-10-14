@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { GroupManager } from './GroupManager'
 import type { InternalGroup } from '../authorization'
+import { RESERVED_GROUPS } from '../authorization/helpers'
 import type { ExternalGroup } from '../api/groups'
 import type { UserSearchResult } from '../auth/types'
 
@@ -101,6 +102,32 @@ const mockSave = async (groups: InternalGroup[]): Promise<void> => {
 export const Default: Story = {
   args: {
     internalGroups: mockInternalGroups,
+    canEdit: true,
+    onSave: mockSave,
+    onSearchUsers: mockSearchUsers,
+    onSearchExternalGroups: mockSearchExternalGroups,
+    onClose: () => console.log('Close clicked'),
+  },
+}
+
+/** The built-in groups keep a blocked Delete; its tooltip says why, on hover and focus. */
+export const WithBuiltInGroups: Story = {
+  args: {
+    internalGroups: [
+      {
+        id: RESERVED_GROUPS.ADMINS,
+        name: 'Admins',
+        description: 'Can manage branches, groups and permissions',
+        members: ['user-1'],
+      },
+      {
+        id: RESERVED_GROUPS.REVIEWERS,
+        name: 'Reviewers',
+        description: 'Can review submitted branches',
+        members: ['user-2'],
+      },
+      ...mockInternalGroups,
+    ],
     canEdit: true,
     onSave: mockSave,
     onSearchUsers: mockSearchUsers,

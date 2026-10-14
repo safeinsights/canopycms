@@ -49,7 +49,7 @@ test.describe('Permissions and Groups', () => {
       await editorPage.settingsMenuItem('Permissions').click()
       const permissionsDrawer = permissionManager.drawer
       await expect(permissionsDrawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
-      await expect(permissionsDrawer.getByRole('button', { name: 'Expand All' })).toBeVisible()
+      await expect(permissionsDrawer.getByRole('button', { name: 'Expand all' })).toBeVisible()
       await permissionManager.close()
 
       await groupManager.open()

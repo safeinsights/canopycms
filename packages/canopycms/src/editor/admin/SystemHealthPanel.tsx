@@ -13,6 +13,7 @@
 import {
   Alert,
   Badge,
+  Box,
   Button,
   Code,
   Group,
@@ -28,7 +29,6 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
-  UnstyledButton,
   VisuallyHidden,
 } from '@mantine/core'
 import { useId } from 'react'
@@ -1004,7 +1004,11 @@ function DuplicateRepairDetails({
   )
 }
 
-/** The reason is hidden text for assistive tech and a Tooltip that opens on hover, focus and touch. */
+/**
+ * The reason is hidden text for assistive tech and a Tooltip that opens on hover, focus and touch.
+ * The trigger is a focusable span, not a button: it does nothing when pressed, so it must not be
+ * announced as one.
+ */
 function SyncFailedBadge({ reason }: { reason: string }) {
   const reasonId = useId()
   return (
@@ -1015,11 +1019,17 @@ function SyncFailedBadge({ reason }: { reason: string }) {
         maw={320}
         events={{ hover: true, focus: true, touch: true }}
       >
-        <UnstyledButton type="button" aria-describedby={reasonId}>
+        <Box
+          component="span"
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- the focus stop is what opens the tooltip for a keyboard user
+          tabIndex={0}
+          aria-describedby={reasonId}
+          className="mantine-focus-auto"
+        >
           <Badge color="red" variant="light">
-            sync-failed
+            Sync failed
           </Badge>
-        </UnstyledButton>
+        </Box>
       </Tooltip>
       <VisuallyHidden id={reasonId}>{reason}</VisuallyHidden>
     </>

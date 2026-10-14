@@ -10,7 +10,8 @@ import { isReservedGroup } from '../../authorization/helpers'
 export const memberCountLabel = (count: number): string =>
   `${count} ${count === 1 ? 'member' : 'members'}`
 
-const RESERVED_DELETE_REASON = "Built-in group; it can't be deleted."
+const reservedDeleteReason = (name: string): string =>
+  `"${name}" is a built-in group, so it can't be deleted.`
 
 export interface GroupCardProps {
   group: InternalGroup
@@ -78,19 +79,23 @@ export const GroupCard: React.FC<GroupCardProps> = ({
           )}
         </div>
         <Group gap="xs">
-          <Tooltip label="Edit group">
-            <ActionIcon variant="subtle" aria-label="Edit group" onClick={() => onEdit(group)}>
+          <Tooltip label={`Edit group "${group.name}"`}>
+            <ActionIcon
+              variant="subtle"
+              aria-label={`Edit group "${group.name}"`}
+              onClick={() => onEdit(group)}
+            >
               <IconEdit size={16} />
             </ActionIcon>
           </Tooltip>
           <Tooltip
-            label={reserved ? RESERVED_DELETE_REASON : 'Delete group'}
+            label={reserved ? reservedDeleteReason(group.name) : `Delete group "${group.name}"`}
             events={{ hover: true, focus: true, touch: true }}
           >
             <ActionIcon
               variant="subtle"
               color="red"
-              aria-label="Delete group"
+              aria-label={`Delete group "${group.name}"`}
               data-disabled={reserved ? true : undefined}
               aria-disabled={reserved ? true : undefined}
               onClick={() => {

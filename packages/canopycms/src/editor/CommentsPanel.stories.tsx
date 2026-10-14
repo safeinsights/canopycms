@@ -262,7 +262,7 @@ async function typeInto(textarea: HTMLTextAreaElement, text: string): Promise<vo
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
-/** A comment write that never settles: the jumps are blocked, and Esc says why the panel stays. */
+/** A comment write that never settles: the jumps are blocked, and closing the drawer says why it stays. */
 export const WriteInFlight: Story = {
   args: {
     ...WithJumpButtons.args,
@@ -274,6 +274,6 @@ export const WriteInFlight: Story = {
     await typeInto(textarea, 'Waiting on the server')
     document.querySelector<HTMLButtonElement>('[data-testid="comment-submit"]')?.click()
     await new Promise((resolve) => setTimeout(resolve, 0))
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    document.querySelector<HTMLButtonElement>('.mantine-Drawer-close')?.click()
   },
 }

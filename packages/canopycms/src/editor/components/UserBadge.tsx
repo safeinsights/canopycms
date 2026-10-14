@@ -116,7 +116,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
                 onFocus={() => setOnRemoveButton(true)}
                 onBlur={() => setOnRemoveButton(false)}
                 aria-label={`Remove ${personLabel}`}
-                style={{ color: 'var(--mantine-color-white)' }}
+                style={{ color: nameColor ?? 'var(--mantine-color-white)' }}
               >
                 <IconX size={12} stroke={2.5} />
               </ActionIcon>

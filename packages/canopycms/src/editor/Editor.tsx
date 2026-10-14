@@ -1654,7 +1654,7 @@ const EditorContent: React.FC<EditorProps> = ({
                         }
                       />
                     ) : currentEntry.canEdit === false ? (
-                      <NoEditPermissionNotice entryPath={currentEntry.path} />
+                      <NoEditPermissionNotice entryLabel={currentEntry.label} />
                     ) : schema.length > 0 && displayValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <SiteMdxAllowContext.Provider value={mdxAllow}>
