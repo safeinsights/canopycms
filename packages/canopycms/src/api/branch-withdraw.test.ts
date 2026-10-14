@@ -70,9 +70,7 @@ describe('branch withdraw api', () => {
       { branch: 'feature/x' as BranchName },
     )
     expect(res.status).toBe(403)
-    expect(res.error).toContain(
-      'Only the branch creator or users with explicit branch access can withdraw this branch',
-    )
+    expect(res.error).toContain('You do not have permission to withdraw this branch from review.')
   })
 
   it('returns 400 if branch not submitted', async () => {

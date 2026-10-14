@@ -2,10 +2,19 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  JP 2026-10-13: the `managerOrAdminAllowed` lockdown outranks an explicit branch ACL, as `authorization/branch.ts`'s doc comment, ARCHITECTURE.md and README.md already say. The code runs the lockdown only when no user or group ACL exists, so an ACL naming an editor still lets them in; make the code enforce the lockdown above any ACL, with tests
+  RESOLVED 2026-10-14 — `checkBranchAccessWithDefault` applies the `managerOrAdminAllowed` lockdown before the ACL, through the shared, browser-safe `isLockedOutOfBranch` (`authorization/helpers.ts`), which the branch listing and the editor's Submit/Withdraw gating (`EditorHeader`, `getBranchPermissions`) now call too
 ---
 
 # [P3] Branch ACL: enforce the manager/admin lockdown above an explicit ACL
+
+## RESOLVED (2026-10-14)
+
+The lockdown is a ceiling, checked once in `isLockedOutOfBranch` (`authorization/helpers.ts`).
+`checkBranchAccessWithDefault` calls it ahead of the ACL, so every surface that goes through it
+(reads, writes, comments, Submit, Withdraw) follows it. The branch listing and both editor mirrors call
+it too, because each kept its own copy of the old order. Tests cover the authorization layer, the
+listing, both editor mirrors and the API end to end (`role-permissions.test.ts`). Follow-ups:
+[branch-lockdown-unsettable-and-creator-rights.md](../branch-lockdown-unsettable-and-creator-rights.md).
 
 JP ruled 2026-10-13 that the lockdown wins. The docs already say so: the "Precedence, highest
 first" list on `checkBranchAccessWithDefault` in `packages/canopycms/src/authorization/branch.ts`,
@@ -22,5 +31,5 @@ disagrees: it denies on `managerOrAdminAllowed` only under `!hasUserConstraint &
 - `canPerformWorkflowAction` grants Submit and Withdraw on `allowed_by_acl`; once the lockdown
   denies first, an ACL-listed editor on a locked-down branch loses both, which is the ruling's
   intent.
-  [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md) covers
+  [authorization-enforcement-consolidation.md](../authorization-enforcement-consolidation.md) covers
   the ACL matchers' wider divergence.

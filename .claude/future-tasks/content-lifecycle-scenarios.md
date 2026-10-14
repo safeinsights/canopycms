@@ -46,6 +46,16 @@ ARCHITECTURE.md section) covering:
 Also scour old plans/notes for prior thinking on these questions before starting
 fresh (the original FIXES.md note suspected this was partially designed before).
 
+## Long-lived branches: where each piece lives
+
+- Drift while parked: a branch with saved edits never rebases until submitted. The interim answer is
+  README "Drafts and Unpublishing" (withdraw, wait a cycle, resubmit); the fix is
+  [parked-branch-rebase.md](parked-branch-rebase.md).
+- Schema drift: [validate-cli.md](validate-cli.md)'s branch report and submit gate.
+- Content made outside the editor: [import-git-branch.md](import-git-branch.md).
+- Unpublish and restore: [deleted-entries-restore.md](deleted-entries-restore.md).
+- Upstream-conflict surfacing: the conflict record persists until the branch merges.
+
 ## Related
 
 - [post-merge-sync-gaps](resolved/post-merge-sync-gaps.md) (resolved) — solved the mechanical sync half; this

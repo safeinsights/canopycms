@@ -1860,6 +1860,12 @@ When your changes are ready, click "Submit for Review" in the header: that commi
 
 The base branch (the PR target, usually `main`) can never be submitted — a branch cannot be reviewed against itself — so the "Submit for Review" button is hidden whenever you are viewing it, in both dev and production. In production it is also read-only in the editor: you can browse it, but changes require creating a branch first (the editor shows a banner with a "Create a branch" button). In dev mode it stays fully editable, since local development typically starts there, but you still need to move your work to a branch before it can be submitted.
 
+### Drafts and Unpublishing
+
+A draft is a branch: content goes live only when its branch merges, so unfinished content stays on its branch however long that takes. A branch with saved edits does not follow the base branch until it is submitted; if GitHub then reports a conflict on its PR, click "Withdraw", wait about five minutes for the CMS to update the branch, and submit again.
+
+**To unpublish** an entry, delete it on a branch and publish that branch. To bring it back, a developer runs `git revert` on a branch created after the deletion merged. Branches created with plain git do not appear in the editor.
+
 ### Using Comments
 
 Hover a field and click its comment icon to comment; a field with open threads shows their count. A comment inside a list item or block follows the item; one on a removed item stays on the entry.
