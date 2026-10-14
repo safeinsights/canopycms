@@ -8,6 +8,7 @@ import { isPlainRecord } from '../validation/field-traversal'
 import { formatCanopyPath } from './canopy-path'
 import type { OutlineNode } from './FormHeader'
 import { listItemSecondary, listItemSummary } from './fields/list-item-title'
+import { schemaLabel } from './schema-label'
 
 /**
  * The form's outline: each top-level field in form order, holding the rows of a list or block
@@ -30,7 +31,7 @@ export function buildFormOutline(
           isPlainRecord(block) && typeof block.template === 'string' ? block.template : ''
         const template = templates.find((t) => t.name === name)
         return {
-          label: template?.label ?? (name || 'Unknown block'),
+          label: template ? schemaLabel(template) : name || 'Unknown block',
           secondary:
             template && isPlainRecord(block)
               ? listItemSecondary(block.value, template.fields)
@@ -50,10 +51,10 @@ export function buildFormOutline(
   const nodeOf = (field: FieldConfig): OutlineNode => {
     if (field.type === 'group') {
       const group = field as InlineGroupFieldConfig
-      return { label: group.label ?? group.name, children: group.fields.map(nodeOf) }
+      return { label: schemaLabel(group), children: group.fields.map(nodeOf) }
     }
     return {
-      label: field.label ?? field.name,
+      label: schemaLabel(field),
       path: formatCanopyPath([field.name]),
       children: rowsOf(field),
     }

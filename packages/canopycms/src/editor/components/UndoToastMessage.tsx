@@ -1,8 +1,12 @@
 import { Button, Group, Text } from '@mantine/core'
 
 export interface UndoToastMessageProps {
-  /** Names what was removed: `"Branch-aware" from Features`, `item 2 from Features`. */
+  /** Names what was removed: `"Branch-aware" from Features`, `item 2 from Features`, `"SEO"`. */
   label: string
+  /** `clear` for an optional object's Clear. */
+  action?: 'remove' | 'clear'
+  /** A sentence after the message, such as where the item's comments went. */
+  note?: string
   onUndo: () => void
   /**
    * Called when keyboard focus reaches the toast. Mantine pauses its timer on hover only, so the
@@ -13,8 +17,16 @@ export interface UndoToastMessageProps {
   onRelease?: () => void
 }
 
-/** The body of the toast a form Remove raises in place of a confirmation. */
-export function UndoToastMessage({ label, onUndo, onHold, onRelease }: UndoToastMessageProps) {
+/** The body of the toast a form Remove or Clear raises in place of a confirmation. */
+export function UndoToastMessage({
+  label,
+  action = 'remove',
+  note,
+  onUndo,
+  onHold,
+  onRelease,
+}: UndoToastMessageProps) {
+  const [done, doing] = action === 'clear' ? ['Cleared', 'clearing'] : ['Removed', 'removing']
   return (
     <Group
       justify="space-between"
@@ -26,12 +38,15 @@ export function UndoToastMessage({ label, onUndo, onHold, onRelease }: UndoToast
         if (!event.currentTarget.contains(event.relatedTarget)) onRelease?.()
       }}
     >
-      <Text size="sm" miw={0}>{`Removed ${label}`}</Text>
+      <Text size="sm" miw={0}>
+        {note ? `${done} ${label}. ${note}` : `${done} ${label}`}
+      </Text>
       <Button
         size="compact-sm"
         variant="subtle"
+        style={{ flexShrink: 0 }}
         onClick={onUndo}
-        aria-label={`Undo removing ${label}`}
+        aria-label={`Undo ${doing} ${label}`}
       >
         Undo
       </Button>

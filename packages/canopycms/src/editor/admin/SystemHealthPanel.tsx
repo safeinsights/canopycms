@@ -31,10 +31,11 @@ import {
   Tooltip,
   VisuallyHidden,
 } from '@mantine/core'
-import { useId } from 'react'
+import { useId, type ReactNode } from 'react'
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
+import { formatRelativeTime } from '../relative-time'
 import {
   useSystemHealth,
   type UseSystemHealthReturn,
@@ -1004,34 +1005,54 @@ function DuplicateRepairDetails({
   )
 }
 
+/** "2d ago, 1/1/2026, 9:00:00 AM": inside a tooltip, so the absolute date sits beside it. */
+const firstFailed = (iso: string): string => {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? iso : `${formatRelativeTime(iso)}, ${date.toLocaleString()}`
+}
+
 /**
- * The reason is hidden text for assistive tech and a Tooltip that opens on hover, focus and touch.
- * The trigger is a focusable span, not a button: it does nothing when pressed, so it must not be
- * announced as one.
+ * A detail that only a Tooltip would show: hidden text for assistive tech, plus a Tooltip that
+ * opens on hover, focus and touch. The trigger is a focusable span, not a button: it does nothing
+ * when pressed, so it must not be announced as one. A trigger with no text of its own, such as an
+ * icon, takes its name from `name`.
  */
-function SyncFailedBadge({ reason }: { reason: string }) {
-  const reasonId = useId()
+function TooltipDetail({
+  detail,
+  name,
+  maw = 320,
+  preLine = false,
+  children,
+}: {
+  detail: string
+  name?: string
+  maw?: number
+  preLine?: boolean
+  children: ReactNode
+}) {
+  const detailId = useId()
   return (
     <>
       <Tooltip
-        label={reason}
+        // A sighted user sees only the icon, so the tooltip names it too.
+        label={name ? `${name}: ${detail}` : detail}
         multiline
-        maw={320}
+        maw={maw}
+        style={preLine ? { whiteSpace: 'pre-line' } : undefined}
         events={{ hover: true, focus: true, touch: true }}
       >
         <Box
           component="span"
-          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- the focus stop is what opens the tooltip for a keyboard user
           tabIndex={0}
-          aria-describedby={reasonId}
+          role={name ? 'img' : undefined}
+          aria-label={name}
+          aria-describedby={detailId}
           className="mantine-focus-auto"
         >
-          <Badge color="red" variant="light">
-            Sync failed
-          </Badge>
+          {children}
         </Box>
       </Tooltip>
-      <VisuallyHidden id={reasonId}>{reason}</VisuallyHidden>
+      <VisuallyHidden id={detailId}>{detail}</VisuallyHidden>
     </>
   )
 }
@@ -1111,13 +1132,17 @@ function BranchHealthRow({
         </Table.Td>
         <Table.Td>
           {b.syncStatus === 'sync-failed' ? (
-            <SyncFailedBadge
-              reason={
+            <TooltipDetail
+              detail={
                 b.syncFailureReason
                   ? `${b.syncFailureReason} — retry from the "Tasks" tab`
                   : 'GitHub sync failed — retry from the "Tasks" tab'
               }
-            />
+            >
+              <Badge color="red" variant="light">
+                Sync failed
+              </Badge>
+            </TooltipDetail>
           ) : b.syncStatus === 'pending-sync' ? (
             <Badge color="gray" variant="light">
               pending-sync
@@ -1132,10 +1157,9 @@ function BranchHealthRow({
               </Badge>
             )}
             {showRebaseFailure && b.rebaseFailure && (
-              <Tooltip
-                label={`${b.rebaseFailure.message} (failing since ${b.rebaseFailure.firstAt})`}
-                multiline
-                maw={320}
+              <TooltipDetail
+                name="Rebase failing"
+                detail={`${b.rebaseFailure.message} (first failed ${firstFailed(b.rebaseFailure.firstAt)})`}
               >
                 <ThemeIcon
                   color="yellow"
@@ -1146,10 +1170,15 @@ function BranchHealthRow({
                 >
                   <IconAlertTriangle size={12} />
                 </ThemeIcon>
-              </Tooltip>
+              </TooltipDetail>
             )}
             {baseWarning && (
-              <Tooltip label={baseWarning} multiline maw={420} style={{ whiteSpace: 'pre-line' }}>
+              <TooltipDetail
+                name="Base branch refresh failing"
+                detail={baseWarning}
+                maw={420}
+                preLine
+              >
                 <ThemeIcon
                   color="yellow"
                   variant="light"
@@ -1159,7 +1188,7 @@ function BranchHealthRow({
                 >
                   <IconAlertTriangle size={12} />
                 </ThemeIcon>
-              </Tooltip>
+              </TooltipDetail>
             )}
             {duplicateIdScan?.state === 'found' && (
               <Tooltip label="Review and fix">

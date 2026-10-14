@@ -50,7 +50,7 @@ const ctaBlock = defineBlockTemplate({
   label: 'CTA',
   fields: [
     { name: 'title', type: 'string' },
-    { name: 'ctaText', type: 'string' },
+    { name: 'ctaText', type: 'string', label: 'CTA text' },
   ],
 })
 

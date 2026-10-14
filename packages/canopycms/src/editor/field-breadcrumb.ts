@@ -2,6 +2,7 @@ import type { BlockFieldConfig, FieldConfig, ObjectFieldConfig } from '../config
 import { isPlainRecord } from '../validation/field-traversal'
 import { parseCanopyPath } from './canopy-path'
 import { listItemHeading } from './fields/list-item-title'
+import { schemaLabel } from './schema-label'
 
 /** Labels for an image field's parts, which `ImageField` reports errors on. */
 const IMAGE_PART_LABELS = new Map([
@@ -24,8 +25,6 @@ const findField = (fields: readonly FieldConfig[], name: string): FieldConfig | 
   }
   return undefined
 }
-
-const labelOf = (field: FieldConfig): string => field.label ?? field.name
 
 /**
  * The human labels along a canopy path, for messages: `blocks[0].title` reads
@@ -54,7 +53,8 @@ export const fieldBreadcrumb = (
         const templateName = typeof block.template === 'string' ? block.template : undefined
         const templates = (field as BlockFieldConfig).templates
         const template = templates.find((t) => t.name === templateName)
-        if (items) crumbs.push(template?.label ?? templateName ?? `Item ${segment + 1}`)
+        if (items)
+          crumbs.push(template ? schemaLabel(template) : (templateName ?? `Item ${segment + 1}`))
         scope = template ? template.fields : templates.flatMap((t) => t.fields)
         current = block.value
       } else if (field?.type === 'object') {
@@ -81,7 +81,7 @@ export const fieldBreadcrumb = (
     }
 
     const found = scope ? findField(scope, segment) : undefined
-    crumbs.push(found ? labelOf(found) : segment)
+    crumbs.push(found ? schemaLabel(found) : segment)
     current = isPlainRecord(current) ? current[segment] : undefined
     field = found
     scope =

@@ -63,6 +63,9 @@ export interface ApiResponse<TData = unknown> {
  * caller read it (a 409); it was not saved, and only a create can bring the entry back.
  * `EDITOR_MODE_MISMATCH`: the editor bundle was built for the other operating mode than the
  * server runs (a 412, see operating-mode/editor-mode-check.ts); only a rebuild fixes it.
+ * `SETTINGS_CHANGED`: a groups or permissions save named a version the file has moved on from (a
+ * 409, see `SettingsVersionConflictError`); nothing was saved, and a reload shows the other edit.
+ * The other settings 409, a busy file lock, carries no code.
  */
 export type ApiErrorCode =
   | 'SCHEMA_UNAVAILABLE'
@@ -70,3 +73,4 @@ export type ApiErrorCode =
   | 'WRITE_OUTCOME_UNKNOWN'
   | 'ENTRY_GONE'
   | 'EDITOR_MODE_MISMATCH'
+  | 'SETTINGS_CHANGED'

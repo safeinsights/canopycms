@@ -29,6 +29,7 @@ import { ItemList } from './ItemList'
 import { useItemExpansion } from './item-expansion'
 import { useListItemKeys } from './list-item-keys'
 import { listItemSecondary } from './list-item-title'
+import { schemaLabel } from '../schema-label'
 
 export interface BlockInstance {
   template: string
@@ -90,7 +91,7 @@ const TemplateMenu: React.FC<{
             data-testid={`block-template-${template.name}`}
           >
             <Text size="sm" fw={500}>
-              {template.label ?? template.name}
+              {schemaLabel(template)}
             </Text>
             {template.description && (
               <Text size="xs" c="dimmed" style={{ whiteSpace: 'normal' }}>
@@ -241,7 +242,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
           summarize={(block) => {
             const template = findTemplate(templates, block.template)
             return {
-              title: template?.label ?? block.template ?? 'Unknown block',
+              title: template ? schemaLabel(template) : (block.template ?? 'Unknown block'),
               secondary: template ? listItemSecondary(block.value, template.fields) : undefined,
             }
           }}

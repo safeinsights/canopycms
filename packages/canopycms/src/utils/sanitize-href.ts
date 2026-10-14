@@ -202,7 +202,9 @@ export function isHttpUrlOrSameOriginPath(value: string): boolean {
  * <a href={sanitizeHref(cta.link)}>{cta.text}</a>
  * ```
  */
-export function sanitizeHref(url: string, fallback = '#'): string {
+export function sanitizeHref(url: string | null | undefined, fallback = '#'): string {
+  // A live preview's draft can lack the field, as after a Clear and a partial refill.
+  if (typeof url !== 'string') return fallback
   const trimmed = url.trim()
   if (trimmed === '') return fallback
 

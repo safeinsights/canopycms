@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { InternalGroup, CanopyGroupId, CanopyUserId } from '../types'
+import { SettingsChangedError } from '../../settings-conflict'
 
 const TEMP_GROUP_ID_PREFIX = 'temp-'
 
@@ -25,6 +26,8 @@ export interface UseGroupStateResult {
   isDirty: boolean
   isSaving: boolean
   error: string | null
+  /** The error is a version conflict (`SettingsChangedError`), shown yellow. */
+  errorIsConflict: boolean
   setError: (error: string | null) => void
   createGroup: (name: string, description: string) => void
   updateGroup: (groupId: CanopyGroupId, name: string, description: string) => void
@@ -42,7 +45,11 @@ export function useGroupState({
   const [groups, setGroups] = useState<InternalGroup[]>(initialGroups)
   const [isDirty, setIsDirty] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [failure, setFailure] = useState<{ message: string; conflict: boolean } | null>(null)
+  const setError = useCallback(
+    (message: string | null) => setFailure(message === null ? null : { message, conflict: false }),
+    [],
+  )
 
   useEffect(() => {
     setGroups(initialGroups)
@@ -130,24 +137,28 @@ export function useGroupState({
       await onSave(groupsToSave)
       setIsDirty(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save groups')
+      setFailure({
+        message: err instanceof Error ? err.message : 'Failed to save groups',
+        conflict: err instanceof SettingsChangedError,
+      })
     } finally {
       setIsSaving(false)
     }
-  }, [onSave, groups])
+  }, [onSave, groups, setError])
 
   const discard = useCallback(() => {
     setGroups(initialGroups)
     setIsDirty(false)
     setError(null)
-  }, [initialGroups])
+  }, [initialGroups, setError])
 
   return {
     groups,
     unsavedGroupIds,
     isDirty,
     isSaving,
-    error,
+    error: failure?.message ?? null,
+    errorIsConflict: failure?.conflict ?? false,
     setError,
     createGroup,
     updateGroup,

@@ -954,7 +954,7 @@ describe('Editor integration', () => {
     // Entry A's load starts (parked, not yet resolved).
     await waitFor(() => expect(resolvers[entryAApiPath]).toBeDefined())
 
-    // Navigate to entry B via the File menu -> All entries -> entry click,
+    // Navigate to entry B via the File menu -> All content -> entry click,
     // while A is still in flight.
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
     await waitFor(() => expect(screen.getByTestId('all-files-menu-item')).toBeDefined())
@@ -1502,7 +1502,7 @@ describe('Editor integration', () => {
       expect(saveButton.getAttribute('aria-disabled')).toBe('true')
     })
 
-    // Open the entry navigator (File dropdown -> All entries) and confirm the
+    // Open the entry navigator (File dropdown -> All content) and confirm the
     // read-only branch hides every mutation affordance: the per-collection
     // context menu (EntryNavigator's readOnly gating) and the drawer header's
     // "Content actions" button (Add entry/Add collection for the root), which
