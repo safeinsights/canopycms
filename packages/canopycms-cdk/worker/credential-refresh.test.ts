@@ -4,7 +4,7 @@
  * **Every assertion here counts calls or reads returned values — none of them
  * matches a log line.** A rate limiter tested by asserting that it logged
  * "skipping" passes with the limiter deleted, which is the exact shape
- * `.claude/future-tasks/iam-dedupe-tests-pass-vacuously.md` records: 480 tests
+ * safeinsights/canopycms#710 records: 480 tests
  * stayed green with the code under test removed. The clock is injected so the
  * interval is observed directly rather than waited out.
  *

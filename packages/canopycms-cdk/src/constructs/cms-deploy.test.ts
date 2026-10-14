@@ -1680,7 +1680,7 @@ describe('CanopyCmsService: secret ARN props feed the IAM policy', () => {
     // aws-cdk-lib 2.265 hides that regression twice over, so the setup matters:
     // - `PolicyStatement` collapses a repeated `resources` entry itself, so this
     //   does NOT pin the construct's own `new Set`
-    //   (.claude/future-tasks/iam-dedupe-tests-pass-vacuously.md).
+    //   (safeinsights/canopycms#710).
     // - `PolicyDocument` also drops a statement that renders byte-identical to
     //   another. With `secretsArns: [APP_KEY_ARN]` alone, a stray single-ARN grant
     //   rendered exactly like the union and was collapsed away, so this test

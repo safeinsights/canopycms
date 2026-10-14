@@ -59,7 +59,7 @@ import {
  * Duplicated rather than imported so a CONSTRUCT-only consumer does not pay for
  * the core package's module graph. Whether that still justifies duplicating is
  * an open question, tracked alongside the same question about the S3 prefix
- * constants in .claude/future-tasks/cdk-prefixes-duplication.md.
+ * constants in safeinsights/canopycms#608.
  *
  * Drift between the two copies is caught by a test, not by this comment:
  * cms-deploy.test.ts drives both this construct and the runtime predicate over

@@ -26,10 +26,9 @@ const rel = (p) => relative(repoRoot, p)
 
 /**
  * Markdown that is a dated snapshot or a prose backlog, not an instruction:
- * docs/reviews/ cites files as they were, which is accurate history rather
- * than drift, and future-tasks/ and BACKLOG.md cite files that don't exist
- * yet (planned work) or live in sibling repos -- future-tasks/ has its own
- * checker (check-future-tasks.mjs) for the links that ARE navigable.
+ * docs/reviews/ and the frozen future-tasks/ archive cite files as they were,
+ * which is accurate history rather than drift, and BACKLOG.md cites files that
+ * don't exist yet (planned work) or live in sibling repos.
  */
 const EXCLUDED = [
   'docs/reviews',

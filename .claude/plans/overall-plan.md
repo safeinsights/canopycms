@@ -175,7 +175,7 @@ Core architecture, editor UI, GitHub PR workflow, auth & permissions (groups-onl
 
 - **[AGENTS.md](../../AGENTS.md)** - Project context and working agreements
 - **[apps/example1/AGENTS.md](../../apps/example1/AGENTS.md)** - Example app integration guidelines
-- **[.claude/future-tasks/](../future-tasks/)** - Individual future-task specs
+- **[Backlog Project](https://github.com/orgs/safeinsights/projects/5)** - Open issues, ranked
 
 ---
 

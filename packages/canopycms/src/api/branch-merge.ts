@@ -9,7 +9,7 @@ const markAsMergedParamsSchema = z.object({
   branch: branchNameSchema,
 })
 
-/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
+/** @internal No importer; deletion candidate in safeinsights/canopycms#725. */
 export interface MarkAsMergedParams {
   branch: string
 }

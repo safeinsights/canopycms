@@ -9,7 +9,7 @@
  * (`.claude/future-tasks/resolved/cms-image-build-epic.md`, "The tracer misses the `.so`"). A
  * webpack build under pnpm fails differently: Next 15.5.21's webpack bundles sharp's JS into a
  * server chunk, so the bundled copy cannot reach its native binding regardless of this include
- * (root cause in `.claude/future-tasks/webpack-standalone-sharp-bundled.md`). An npm install and
+ * (root cause in safeinsights/canopycms#891). An npm install and
  * Next 16's `next build --webpack` have not been checked. Where the JS tracer does trace the
  * library itself, this include merges into one Set rather than duplicating it (upstream:
  * next.js#97973, sharp #4567/#4543 — fixed there, this module goes).

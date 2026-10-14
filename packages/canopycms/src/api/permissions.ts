@@ -72,10 +72,10 @@ const batchGetUserMetadataBodySchema = z.object({
 })
 
 export type UpdatePermissionsBody = z.infer<typeof updatePermissionsBodySchema>
-/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
+/** @internal No importer; deletion candidate in safeinsights/canopycms#725. */
 export type SearchUsersParams = z.infer<typeof searchUsersParamsSchema>
 export type BatchGetUserMetadataBody = z.infer<typeof batchGetUserMetadataBodySchema>
-/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
+/** @internal No importer; deletion candidate in safeinsights/canopycms#725. */
 export type GetUserMetadataParams = z.infer<typeof getUserMetadataParamsSchema>
 
 const getPermissionsHandler = async (

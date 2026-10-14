@@ -69,6 +69,6 @@ adding a hook so you match the right half.
 
 ## Known state, recorded so it is not rediscovered
 
-- `PermissionManager.tsx` and `GroupManager.tsx` are re-export shims over `permission-manager/` and `group-manager/`; removing them is tracked in [editor-compat-shims.md](../../../../.claude/future-tasks/editor-compat-shims.md).
+- `PermissionManager.tsx` and `GroupManager.tsx` are re-export shims over `permission-manager/` and `group-manager/`; removing them is tracked in safeinsights/canopycms#670.
 - `permission-manager/` has 11 source files and **no tests in the directory**; it is
   covered only indirectly through `PermissionManager.test.tsx`.

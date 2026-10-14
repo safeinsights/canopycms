@@ -233,9 +233,7 @@ export interface AssetSupportProps {
    * bucket) instead of creating one. The caller owns that bucket's
    * lifecycle rules and CORS configuration in this mode: `IBucket` (an
    * imported bucket reference) has no CDK-level `addLifecycleRule`/
-   * `addCorsRule` - only a bucket this construct creates itself does. See
-   * `.claude/future-tasks/docs-site-assets-wiring.md` for the BYO-mode
-   * wiring this is designed for.
+   * `addCorsRule` - only a bucket this construct creates itself does.
    *
    * @default - a new private bucket is created (standalone mode)
    */

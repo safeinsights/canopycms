@@ -2042,7 +2042,7 @@ export class ContentStore {
    * `data` from a process-global content-keyed cache, so `resolveSingleReferenceOnce`'s
    * top-level spread severs exactly one level and NESTED frontmatter objects alias across
    * occurrences, calls and requests. Pre-existing `read()` behavior, deliberately out of scope
-   * here; see `.claude/future-tasks/graymatter-cache-shared-frontmatter.md`.
+   * here; see safeinsights/canopycms#708.
    *
    * Measured (2000 occurrences of one target, local disk, the friendliest case for NOT
    * caching): cloning a snippet-sized target is ~63x cheaper than re-reading and parsing it, a

@@ -20,7 +20,7 @@ import { parseTypedFilename } from './utils/typed-filename'
  * `doc.index.{id}.json` inside an md-only collection claims no URL yet still blocks a sibling
  * write. Closing it means threading each collection's configured formats into a deliberately
  * schema-free module; tracked in
- * .claude/future-tasks/url-collision-guard-superset-of-listing.md.
+ * safeinsights/canopycms#878.
  *
  * A literal rather than derived: deriving it needs the `ContentFormat` union this module has no
  * reason to import. `url-collision.test.ts` carries the drift tripwire — a compile-time
@@ -110,7 +110,7 @@ async function findChildCollectionDir(dir: string, name: string): Promise<string
  *
  * The claimant set is nonetheless a strict superset of the listing's in three ways, all
  * over-blocking and all needing the same fix — the schema this module deliberately does not have
- * — so they are one task (.claude/future-tasks/url-collision-guard-superset-of-listing.md):
+ * — so they are one task (safeinsights/canopycms#878):
  *
  *   1. extension — see `CONTENT_EXTENSIONS` above;
  *   2. entry TYPE — parsing is structural (no `entryTypes` list), so a file whose type is not in
@@ -204,7 +204,7 @@ export async function findUrlPathClaimant(opts: {
   // KNOWN DEPENDENCY: this resolves ONE child collection by name, and the index direction above
   // likewise looks only for a parent ENTRY. Neither considers a second collection sharing the same
   // name, because nothing stops one being created -- `createCollectionInner` does not check
-  // sibling names (tracked in collection-sibling-name-uniqueness.md). With two `guides.{id}`
+  // sibling names (tracked in safeinsights/canopycms#624). With two `guides.{id}`
   // directories side by side, an index entry can be written into each: both writes pass this
   // guard, two entries claim one URL, and only the build guard catches it. Fixing sibling-name
   // uniqueness closes this without changing anything here, so that task is a prerequisite for

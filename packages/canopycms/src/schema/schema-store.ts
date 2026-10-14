@@ -423,7 +423,7 @@ export class SchemaOps {
    * root can re-normalise to the ROOT collection on a second call, mutating
    * the wrong one instead of reporting not-found. Every entry point calls
    * this exactly once today, so the ambiguity is unreachable; see
-   * .claude/future-tasks/collection-path-content-root-ambiguity.md. A future
+   * safeinsights/canopycms#623. A future
    * method that accepts a logical collection path must do the same.
    */
   private normalizeCollectionPath(collectionPath: LogicalPath): LogicalPath {
@@ -746,7 +746,7 @@ export class SchemaOps {
         // already rules out a `{slug}.{id}` directory at the destination — but that check is
         // case-SENSITIVE and lets an ID-less `docs/`-style directory through, so a case or
         // ID-less collision can still slip past it for entries deeper than the index; see
-        // .claude/future-tasks/collection-sibling-name-uniqueness.md.
+        // safeinsights/canopycms#624.
         if (await findIndexEntryIn(physicalPath)) {
           // Renaming TO "index" collapses this collection onto its OWN new path, not the
           // parent's — see url-collision.ts's findUrlPathClaimant for the equivalent create-time

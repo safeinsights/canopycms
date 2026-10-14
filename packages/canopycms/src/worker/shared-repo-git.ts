@@ -21,7 +21,7 @@ import { getErrorMessage } from '../utils/error'
  * merge, checkout) through a driver it plants in between, as does one that edits a rebase the
  * worker has stopped at a conflict (an `exec` line in `git-rebase-todo`, the `strategy` file). Only
  * moving that git into a process without the credential closes those:
- * .claude/future-tasks/worker-shared-repo-git-process-split.md.
+ * .claude/future-tasks/resolved/worker-shared-repo-git-process-split.md.
  */
 
 /**

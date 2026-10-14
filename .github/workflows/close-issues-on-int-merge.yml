@@ -31,8 +31,8 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_BODY: ${{ github.event.pull_request.body }}
         # GitHub's closing keywords, each naming one issue as `#N`,
-        # `owner/repo#N` or an issue URL in this repository. Numbers that are
-        # pull requests, or already closed, are skipped.
+        # `owner/repo#N` or an issue URL in this repository, at most 20 per PR.
+        # Numbers that are pull requests, or already closed, are skipped.
         run: |
           node --input-type=module -e '
             const repo = process.env.REPO.toLowerCase()
@@ -44,7 +44,9 @@ jobs:
               const target = (m[1] ?? m[2] ?? repo).toLowerCase()
               if (target === repo) numbers.add(Number(m[3]))
             }
-            console.log([...numbers].join(" "))
+            // A cap bounds what one careless merge can close.
+            if (numbers.size > 20) console.error(`naming ${numbers.size} issues; closing the first 20`)
+            console.log([...numbers].slice(0, 20).join(" "))
           ' > numbers.txt
           for n in $(cat numbers.txt); do
             state=$(gh api "repos/$REPO/issues/$n" --jq 'if .pull_request then "pr" else .state end' || echo missing)

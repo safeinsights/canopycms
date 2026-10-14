@@ -167,12 +167,6 @@ jobs:
       - name: Lint import cycles (dependency-cruiser)
         run: pnpm lint:cycles
 
-      # Backlog hygiene: dead links between task files, index rows still listed
-      # open whose file moved to resolved/, and orphans in both directions.
-      # Dependency-free and ~instant; also runs in pre-commit via lint-staged.
-      - name: Lint future-tasks backlog
-        run: pnpm lint:tasks
-
       # This repository is public: no value that could be an AWS account id in
       # any tracked file's text or path. The script's header holds the matching
       # rules and the two exemptions. Also runs in pre-commit via lint-staged.
@@ -211,8 +205,8 @@ jobs:
 
       # Root-level node tooling. `pnpm lint` is `pnpm -r`, which recurses over
       # workspace PACKAGES only -- scripts/ is not one, so until 2026-08-22
-      # nothing linted the seven scripts here, four of which gate CI or
-      # pre-commit themselves (lint:tasks, lint:actions, check:esm). Also lints
+      # nothing linted the scripts here, several of which gate CI or
+      # pre-commit themselves (lint:actions, check:esm). Also lints
       # vitest.shared.ts (the test-log guard) and the packages' vitest.config.ts
       # files that spread it in, which each package's own `eslint src/` skips.
       - name: Lint root scripts (ESLint)

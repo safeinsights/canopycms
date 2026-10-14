@@ -228,7 +228,7 @@ export async function repackBareRemoteIfNeeded(
  * so a clone or checkout the OOM killer stopped would pass for complete. Given as `errors` to a
  * GitManager's own instance, to `cloneRepo`'s, and to the worker's ref probes of an existing
  * remote.git (worker/cms-worker.ts); its static helpers and the bare-remote functions do not pass
- * it yet (.claude/future-tasks/simple-git-signal-exit-reads-as-success.md).
+ * it yet (safeinsights/canopycms#845).
  */
 export function failOnSignalExit(
   error: Buffer | Error | undefined,
@@ -555,7 +555,7 @@ export class GitManager {
     // gitNetworkChildEnv instead. Under the `allowNetworkRemoteInProd` escape
     // hatch `this.remote` CAN be a network URL, and these calls do hit it with
     // that restricted env: a known limitation of the escape hatch, tracked in
-    // .claude/future-tasks/network-escape-hatch-git-env.md.
+    // safeinsights/canopycms#754.
     //
     // GIT_CEILING_DIRECTORIES stops git traversing above repoPath to a parent
     // .git: a corrupt or missing workspace .git must fail, never silently

@@ -3,10 +3,8 @@
 /**
  * Screen text bound for a PUBLIC GitHub issue for anything that identifies an
  * adopter or private infrastructure. An issue's edit history is public, so a
- * body has to pass before it is created: redacting afterwards leaves the
- * original in the history. `tasks-import.mjs` refuses every body that fails.
- *
- * Two layers:
+ * body or comment has to pass before it is posted: redacting afterwards leaves
+ * the original in the history. Two layers:
  *
  * - Generic patterns, in this file: AWS account ids (the matcher of
  *   check-account-ids.mjs), ARNs, S3 buckets, AWS resource ids, hostnames not
@@ -14,23 +12,22 @@
  *   directories, private IPs, Clerk ids and keys, credential prefixes,
  *   `safeinsights/<repo>` other than this one, and adopter request-log numbers.
  * - Private names, gathered from the environment on every run and never
- *   written anywhere (see collectRuntimeTerms): the org's other repos, its
- *   members' logins and display names, the branches and environments of the
- *   org repos checked out beside this one, those checkouts' names, and local
- *   AWS profile names. There is deliberately no curated list: one would have
- *   to live outside the repo and would go stale. Findings show only which
- *   source matched unless `--show` is passed, so a report never copies a name.
+ *   written anywhere (see collectRuntimeTerms): the org's other repos and the
+ *   private repos of the viewer's other orgs, the org members' logins and
+ *   display names, the branches and environments of the org repos checked out
+ *   beside this one, those checkouts' names, and local AWS profile names. There
+ *   is deliberately no curated list: one would have to live outside the repo
+ *   and would go stale. Findings show only which source matched unless `--show`
+ *   is passed, so a report never copies a name.
  *
  * A false positive on a public host is fixed by adding the host to
  * PUBLIC_HOSTS. Anything else is fixed by rewording the text: there is no
  * per-finding allowlist.
  *
- *   node scripts/tasks-privacy-screen.mjs [--show] [--require-gh] [--repo o/r] [file...]
- *   node scripts/tasks-privacy-screen.mjs --self-test
+ *   pnpm tasks:screen [--show] [--require-gh] [--repo owner/name] <file>...
  *
- * With no files it screens every open task file in .claude/future-tasks/.
  * Without `--require-gh`, an unreachable gh degrades to the generic rules with
- * a loud warning; a bulk import always requires it.
+ * a loud warning. `--self-test` checks the matchers.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -505,15 +502,6 @@ export function screenText(text, privateTerms = [], { show = false } = {}) {
   return findings
 }
 
-/** Open task files: .claude/future-tasks/*.md, not resolved/. */
-export function openTaskFiles() {
-  const dir = path.join(ROOT, '.claude', 'future-tasks')
-  return readdirSync(dir)
-    .filter((f) => f.endsWith('.md'))
-    .sort()
-    .map((f) => path.join(dir, f))
-}
-
 function selfTest() {
   // Assembled at runtime so this file holds no unexempted twelve-digit literal.
   const fakeAccount = ['2109', '8765', '4321'].join('')
@@ -613,7 +601,11 @@ function main(argv) {
     console.error(`tasks-privacy-screen: ${err instanceof Error ? err.message : String(err)}`)
     process.exit(2)
   }
-  const targets = files.length > 0 ? files.map((f) => path.resolve(f)) : openTaskFiles()
+  if (files.length === 0) {
+    console.error('usage: pnpm tasks:screen [--show] [--require-gh] [--repo owner/name] <file>...')
+    process.exit(2)
+  }
+  const targets = files.map((f) => path.resolve(f))
   let refused = 0
   let review = 0
   for (const file of targets) {

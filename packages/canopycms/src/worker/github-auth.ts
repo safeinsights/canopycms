@@ -70,7 +70,7 @@ export interface GitHubAuthConfig {
    * 59 minutes and mints a new one after that, so `refreshCredential()` below
    * is a no-op on that path. It does NOT recover a rotated private key or an
    * early-revoked token — see
-   * .claude/future-tasks/worker-app-auth-cannot-recover-a-rotated-key.md.
+   * safeinsights/canopycms#894.
    */
   refreshGitHubToken?: () => Promise<string | undefined>
   /**
@@ -268,7 +268,7 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
       // key does not expire, and `@octokit/auth-app`'s own cache mints a new
       // installation token when the old one expires. A rotated key or an
       // early-revoked token is NOT recovered here — see
-      // .claude/future-tasks/worker-app-auth-cannot-recover-a-rotated-key.md.
+      // safeinsights/canopycms#894.
       refreshCredential: async () => {},
     }
   }

@@ -91,7 +91,7 @@ table:
 A comment states the current rule in present tense at the point it applies, plus the one
 non-obvious fact that justifies it. What the code did before, when it changed, who found
 the problem, and which PR or review found it belong in the commit message or
-`.claude/future-tasks/`, never in code or docs. A shared mechanism is explained once, at
+an issue, never in code or docs. A shared mechanism is explained once, at
 its owner; consumers point at it. A comment that says what the next lines plainly do is
 deleted. Module `AGENTS.md` files hold cross-file maps only. Nothing is appended to this
 file: it is loaded into every agent's context on every task, so it stays a map.
@@ -109,7 +109,7 @@ file: it is loaded into every agent's context on every task, so it stays a map.
 
 ## Quality Checks
 
-See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. `pnpm lint:bundle` (dependency-cruiser) fails when anything reachable from `canopycms/client` reaches a node built-in — see [Client-Bundle Boundary Check](DEVELOPING.md#client-bundle-boundary-check). `pnpm lint:tasks` enforces the backlog rule below — each task file's frontmatter, dead links between task files, and ranked rows whose file moved to `resolved/` — see [Future-Tasks Backlog Check](DEVELOPING.md#future-tasks-backlog-check). `pnpm lint:comments` ratchets comment volume against `scripts/comment-budget.json` (history markers, run length, comment/code ratio per directory), and `pnpm lint:docs` ratchets doc word counts against `scripts/docs-budgets.json` — see [Comment and Doc Budgets](DEVELOPING.md#comment-and-doc-budgets). Claude subagents are available:
+See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. `pnpm lint:bundle` (dependency-cruiser) fails when anything reachable from `canopycms/client` reaches a node built-in — see [Client-Bundle Boundary Check](DEVELOPING.md#client-bundle-boundary-check). `pnpm lint:comments` ratchets comment volume against `scripts/comment-budget.json` (history markers, run length, comment/code ratio per directory), and `pnpm lint:docs` ratchets doc word counts against `scripts/docs-budgets.json` — see [Comment and Doc Budgets](DEVELOPING.md#comment-and-doc-budgets). Claude subagents are available:
 
 - `.claude/agents/test.md` - Run tests and fix failures
 - `.claude/agents/typecheck.md` - Type checking

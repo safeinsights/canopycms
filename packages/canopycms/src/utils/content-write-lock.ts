@@ -57,7 +57,7 @@ const CONTENT_WRITE_LOCK_NAME = 'content-write.lock'
  * `next dev` and build-time provisioning across worker processes. The case to watch is a write
  * whose in-lock path triggers a full `idIndex()` rescan of a large tree over EFS, which can exceed
  * this budget and start 409ing unrelated saves. Making it configurable is tracked in
- * .claude/future-tasks/content-write-lock-tuning-and-granularity.md.
+ * safeinsights/canopycms#640.
  */
 export const DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS = 2000
 

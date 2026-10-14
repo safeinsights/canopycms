@@ -50,7 +50,7 @@ import type { TerminationNotice, TerminationWatchOptions } from './termination-w
  * `stopping`, lets push and Octokit requests under way finish, then closes every connection. A
  * running fetch job is not waited for: the process exits, and the unit's `KillMode=mixed` SIGKILLs
  * the cgroup, which takes the job's git with it. The plan's §3.1 "Stop ordering"
- * (.claude/future-tasks/worker-shared-repo-git-process-split.md) stops the worker unit first and
+ * (.claude/future-tasks/resolved/worker-shared-repo-git-process-split.md) stops the worker unit first and
  * gives this one `TimeoutStopSec=150`, well above this grace.
  */
 export const GATEWAY_DRAIN_GRACE_MS = 60_000

@@ -929,7 +929,7 @@ class LocalGitHubGateway implements GitHubGateway {
    * branch first. The mirror kills its git when `signal` aborts, and GitHub moves the ref only
    * after receiving the whole pack, so a killed push changes nothing or is found already done by
    * the re-run, unless git's transport child outlives it
-   * (.claude/future-tasks/worker-mirror-detached-work-drain.md).
+   * (safeinsights/canopycms#907).
    */
   private async pushInSession(
     mirror: MirrorSession,

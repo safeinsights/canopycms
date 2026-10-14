@@ -22,7 +22,7 @@ let warnedNoAdmins = false
 
 /**
  * Test-only: reset the once-per-process "no admins configured" warning latch.
- * @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md.
+ * @internal No importer; deletion candidate in safeinsights/canopycms#725.
  */
 export function resetResolveCanopyUserWarningForTests(): void {
   warnedNoAdmins = false
