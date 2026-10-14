@@ -622,7 +622,7 @@ const EditorContent: React.FC<EditorProps> = ({
       anchors: displayValue ? removalAnchors(fields, displayValue, removal) : undefined,
     }
     const doing = removal.action === 'clear' ? 'clearing' : 'removing'
-    // The item's open threads leave with it, for the entry's thread list (`displayComments`).
+    // Open threads keyed inside what was removed leave their fields for the entry's thread list.
     const movedThreads = currentEntry
       ? openThreadsWithin(
           displayComments,

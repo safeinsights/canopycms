@@ -203,7 +203,7 @@ export function isHttpUrlOrSameOriginPath(value: string): boolean {
  * ```
  */
 export function sanitizeHref(url: string | null | undefined, fallback = '#'): string {
-  // A live preview's draft can lack a field the saved value always has.
+  // A live preview's draft can lack the field, as after a Clear and a partial refill.
   if (typeof url !== 'string') return fallback
   const trimmed = url.trim()
   if (trimmed === '') return fallback

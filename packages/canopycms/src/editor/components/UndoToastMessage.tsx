@@ -1,7 +1,7 @@
 import { Button, Group, Text } from '@mantine/core'
 
 export interface UndoToastMessageProps {
-  /** Names what was removed: `"Branch-aware" from Features`, `item 2 from Features`. */
+  /** Names what was removed: `"Branch-aware" from Features`, `item 2 from Features`, `"SEO"`. */
   label: string
   /** `clear` for an optional object's Clear. */
   action?: 'remove' | 'clear'

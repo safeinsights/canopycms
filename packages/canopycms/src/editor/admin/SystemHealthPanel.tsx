@@ -1005,18 +1005,18 @@ function DuplicateRepairDetails({
   )
 }
 
-/**
- * A detail that only a Tooltip would show: hidden text for assistive tech, plus a Tooltip that
- * opens on hover, focus and touch. The trigger is a focusable span, not a button: it does nothing
- * when pressed, so it must not be announced as one. A trigger with no text of its own, such as an
- * icon, takes its name from `name`.
- */
 /** "2d ago, 1/1/2026, 9:00:00 AM": inside a tooltip, so the absolute date sits beside it. */
 const firstFailed = (iso: string): string => {
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? iso : `${formatRelativeTime(iso)}, ${date.toLocaleString()}`
 }
 
+/**
+ * A detail that only a Tooltip would show: hidden text for assistive tech, plus a Tooltip that
+ * opens on hover, focus and touch. The trigger is a focusable span, not a button: it does nothing
+ * when pressed, so it must not be announced as one. A trigger with no text of its own, such as an
+ * icon, takes its name from `name`.
+ */
 function TooltipDetail({
   detail,
   name,

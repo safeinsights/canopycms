@@ -4,9 +4,9 @@
  * scripts/ux-copy-baseline.json. Parses every non-test, non-story source file under
  * packages/canopycms/src/editor and, transitively, each src/ file the editor loads through a value
  * import or re-export (type-only ones skipped), since its copy can live outside editor/
- * (api/entries-constants.ts). Checks the
- * text a user can read: string literals, template text and JSX text, skipping module
- * specifiers, literal and template-literal types, and console.* arguments. Three rules:
+ * (api/entries-constants.ts). Checks the text a user can read: string literals, template text
+ * and JSX text, skipping module specifiers, literal and template-literal types, and console.*
+ * arguments. Three rules:
  * - `ellipsis`: three ASCII dots where `…` is meant, outside a route's `/...rest` parameter.
  * - `successfully`: the word, in any casing. A result reads as done without it.
  * - `title-case`: a label or placeholder in Title Case: the text of a button-like

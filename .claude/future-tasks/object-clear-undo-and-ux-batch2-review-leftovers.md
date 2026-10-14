@@ -31,7 +31,7 @@ compact "Outline"). None was in that PR's scope.
 - **Raw collection and entry-type names.** Fields, groups and block templates without a label are
   humanised (`schemaLabel` in `editor/schema-label.ts`); an unlabelled collection or entry type
   still shows its raw name (`buildCollectionLabels` in `editor-utils.ts`, `navCollections` and the
-  collection editor's entry-type list in `Editor.tsx`, `et.label || et.name` in
+  create dialog's `collectionLabel` in `Editor.tsx`, `et.label || et.name` in
   `components/EntryCreateModal.tsx`).
 - **Stories.** `admin/SystemHealthPanel.tsx` has none, so its row icons and badges are seen only
   in tests; FormRenderer's `RemovedItemThread` story stubs `removedItemFieldLabel`, so the
