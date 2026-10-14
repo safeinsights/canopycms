@@ -397,7 +397,7 @@ Rendered Asset URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls); adopter con
 **Location**: `packages/canopycms/src/`
 
 - `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `fillEmptyFieldWhileHoldingWriteLock`, `resolveReferences`, `resolveReferenceTarget` (denied → `RestrictedReference`, missing → `MissingReference`), `assertEntryAvailable`, the typed `ContentStoreError` codes, and the conflict errors
-- `stamp-on-publish.ts` — `stampNewEntries`: at submit, fills empty `stampOnPublish` datetime fields of entries neither the base tip nor the fork point holds
+- `stamp-on-publish.ts` — `stampNewEntries`: fills a new entry's empty `stampOnPublish` fields at submit
 - `content-reader.ts` — content reading; resolves `entry:ID` body links at read time, opt-out via `resolveEntryLinks: false`
 - `content-id-index.ts` — ContentId indexing, tree and global lookups, and the duplicate-ID quarantine
 - `content-index-registry.ts` — in-process registry connecting branch-mutating operations to the stores they make stale
@@ -434,7 +434,7 @@ array then alphabetical; with it, the comparator replaces that and runs after `e
 
 **Location**: `packages/canopycms/src/content-listing.ts`
 
-- `content-listing.ts` — `listEntries()`, `listCollectionEntries()` (`readsId` filters before reading), `sortByOrder()`, `withoutUnavailableEntries()`
+- `content-listing.ts` — `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `withoutUnavailableEntries()`
 
 `ListEntriesItem` carries `pathSegments`, `urlPath`, `slug`, `entryPath`, `entryId`, `collectionId`,
 `updatedAt`, `data` and an optional `schema`. `ListEntriesOptions` takes `extract`, `filter`,
@@ -744,7 +744,7 @@ immediately; without one they enqueue a task for the worker; a submit marks the 
 **Location**: `packages/canopycms/src/services.ts`
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
-- `submitBranch()` — the submit workflow: checkout, stamp new entries (`stamp-on-publish.ts`), status, commit all (with editor trailers), push; returns `changedPaths`, `editors` and `stamped` (`NothingToSubmitError` when empty)
+- `submitBranch()` — the submit workflow: checkout, stamp new entries, status, commit all (with editor trailers), push; returns `changedPaths`, `editors` and `stamped` (`NothingToSubmitError` when empty)
 - `commitToSettingsBranch()` — commit and push the settings branch (never a PR)
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 
@@ -858,7 +858,7 @@ in `server.ts` and `client.ts`. See
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
 - `provisioning-lock.ts` — `acquireProvisioningLock` (patient), `tryAcquireProvisioningLock` (zero-retry), `acquireProvisioningLockWithin` (bounded wait); `branchProvisioningLockName`; `guardOnCompromised`
 - `provision-log.ts` — `ProvisionLog`: per-step start/done timing lines for one workspace provisioning, never behind `CANOPYCMS_DEBUG`
-- `content-write-lock.ts` — `withContentWriteLock` (`assertContentWriteLockHeld` checks it), cross-host exclusion between working-tree mutations and the worker's rebase loop; `ContentWriteLockBusyError.outcome`
+- `content-write-lock.ts` — `withContentWriteLock`, cross-host exclusion between working-tree mutations and the worker's rebase loop; `ContentWriteLockBusyError.outcome`; `assertContentWriteLockHeld`
 
 The lock layers, the OCC guarantee boundary and the per-call resolve cache are in
 [docs/concurrency.md](docs/concurrency.md). The one-prefix-join rule is in
