@@ -45,3 +45,15 @@ export function isReviewer(groups: readonly string[] | undefined): boolean {
 export function isPrivileged(groups: readonly string[] | undefined): boolean {
   return isReviewer(groups)
 }
+
+/**
+ * Whether a branch's `managerOrAdminAllowed` lockdown shuts this user out. The lockdown is a
+ * ceiling over everything else that grants branch access -- the ACL, the creator, the default --
+ * so only Admins and Reviewers pass it. Dependency-free, so the editor's gating shares it.
+ */
+export function isLockedOutOfBranch(
+  access: { managerOrAdminAllowed?: boolean } | undefined,
+  groups: readonly string[] | undefined,
+): boolean {
+  return (access?.managerOrAdminAllowed ?? false) && !isPrivileged(groups)
+}

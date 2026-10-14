@@ -21,7 +21,7 @@ import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import { clientOperatingStrategy } from '../../operating-mode/client'
-import { isAdmin, isReviewer } from '../../authorization/helpers'
+import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchStatusPresentation } from '../branch-status'
 import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
@@ -175,7 +175,11 @@ export interface EditorHeaderProps {
   /**
    * Branch access control lists.
    */
-  branchAccess?: { allowedUsers?: string[]; allowedGroups?: string[] }
+  branchAccess?: {
+    allowedUsers?: string[]
+    allowedGroups?: string[]
+    managerOrAdminAllowed?: boolean
+  }
 
   /**
    * Whether the current branch is the protected base branch (see
@@ -563,7 +567,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               if (branchIsProtected && !isWithdrawable) return null
 
               // Who may submit/withdraw: creator, ACL access, the system branch, or an
-              // admin/reviewer -- Admins/Reviewers must be able to withdraw a protected
+              // admin/reviewer, and on a locked-down branch only the last -- Admins/Reviewers must be able to withdraw a protected
               // base branch stuck in 'submitted' even without ACL access. Mirrors the
               // server's canPerformWorkflowAction (BranchManager.tsx), which is the
               // actual enforcer; this only decides whether to show the control disabled.
@@ -579,7 +583,8 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 (isAdmin(userContext.groups ?? []) || isReviewer(userContext.groups ?? []))
 
               const userHasPermission =
-                userIsCreator || userInACL || isSystemBranch || userIsPrivileged
+                !isLockedOutOfBranch(branchAccess, userContext?.groups) &&
+                (userIsCreator || userInACL || isSystemBranch || userIsPrivileged)
               // A status with no available transition (today: 'archived') is a
               // separate condition from lacking permission, and conflating them
               // sent people to an admin to fix a non-permissions problem.

@@ -595,6 +595,47 @@ describe('branch api', () => {
     expect(res.data?.branches).toHaveLength(0)
   })
 
+  it('hides a locked-down branch from everyone its ACL or creator grant would admit', async () => {
+    const ctx = createMockApiContext({
+      services: {
+        registry: createMockRegistry([
+          createMockBranchContext({
+            branchName: 'feature/locked',
+            createdBy: 'u1',
+            access: {
+              managerOrAdminAllowed: true,
+              allowedUsers: ['u2'],
+              allowedGroups: ['editors'],
+            },
+            baseRoot: '/test/base',
+          }),
+          createMockBranchContext({
+            branchName: 'feature/open',
+            createdBy: 'u3',
+            access: { managerOrAdminAllowed: false, allowedUsers: ['u2'] },
+            baseRoot: '/test/base',
+          }),
+        ]) as any,
+      },
+    })
+    const namesFor = async (userId: string, groups: string[] = []) =>
+      (
+        await listBranches(ctx, { user: { type: 'authenticated', userId, groups } })
+      ).data?.branches.map((b) => b.name)
+
+    expect(await namesFor('u1')).toEqual([])
+    expect(await namesFor('u2')).toEqual(['feature/open'])
+    expect(await namesFor('u4', ['editors'])).toEqual([])
+    expect(await namesFor('boss', [RESERVED_GROUPS.REVIEWERS])).toEqual([
+      'feature/locked',
+      'feature/open',
+    ])
+    expect(await namesFor('root', [RESERVED_GROUPS.ADMINS])).toEqual([
+      'feature/locked',
+      'feature/open',
+    ])
+  })
+
   it('emits isProtected/readOnly flags on branches -- prod base is true/true, feature is false/false', async () => {
     const registry = createMockRegistry([
       createMockBranchContext({
