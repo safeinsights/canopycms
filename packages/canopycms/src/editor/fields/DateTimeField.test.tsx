@@ -64,7 +64,8 @@ const Harness: React.FC<{
   onChange?: (v: string) => void
   readOnly?: boolean
   description?: string
-}> = ({ initial = '', onChange, readOnly, description }) => {
+  stampOnPublish?: boolean
+}> = ({ initial = '', onChange, readOnly, description, stampOnPublish }) => {
   const [value, setValue] = useState(initial)
   return (
     <CanopyCMSProvider>
@@ -78,6 +79,7 @@ const Harness: React.FC<{
         }}
         dataCanopyField="publishedAt"
         readOnly={readOnly}
+        stampOnPublish={stampOnPublish}
       />
     </CanopyCMSProvider>
   )
@@ -300,6 +302,14 @@ describe('DateTimeField', () => {
   it('shows the placeholder when nothing is stored', () => {
     render(<Harness />)
     expect(pickerButton().textContent).toBe('Pick a date and time')
+  })
+
+  it('says submitting sets a stampOnPublish field while it is empty, and shows a set value', () => {
+    render(<Harness stampOnPublish />)
+    expect(pickerButton().textContent).toBe('Set automatically when submitted')
+    cleanup()
+    render(<Harness stampOnPublish initial={STORED} />)
+    expect(pickerButton().textContent).toBe(displayed(STORED))
   })
 
   it('calls no onChange on mount, on re-render, or on opening and closing the picker', async () => {

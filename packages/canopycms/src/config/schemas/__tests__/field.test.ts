@@ -73,6 +73,23 @@ describe('referenceFieldSchema', () => {
   })
 })
 
+describe('stampOnPublish', () => {
+  it('survives the fieldSchema parse on a datetime field', () => {
+    const parsed = fieldSchema.parse({
+      name: 'publishedAt',
+      type: 'datetime',
+      stampOnPublish: true,
+    })
+    expect(parsed).toMatchObject({ type: 'datetime', stampOnPublish: true })
+  })
+
+  it('rejects a non-boolean value', () => {
+    expect(() =>
+      fieldSchema.parse({ name: 'publishedAt', type: 'datetime', stampOnPublish: 'yes' }),
+    ).toThrow()
+  })
+})
+
 describe('markdown field options: renderAs and mdxAllow', () => {
   const narrow = {
     components: { Callout: { props: { type: ['info', 'warning'] } } },

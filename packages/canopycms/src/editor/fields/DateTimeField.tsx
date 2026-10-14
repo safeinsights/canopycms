@@ -16,6 +16,8 @@ export interface DateTimeFieldProps {
   dataCanopyField?: string
   /** Shows the value without accepting edits. */
   readOnly?: boolean
+  /** The field's `stampOnPublish`: while empty, it says submitting fills it. */
+  stampOnPublish?: boolean
 }
 
 /** Whether the locale uses a 12-hour clock, as the dropdown's native time input then does. */
@@ -97,6 +99,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
   onChange,
   dataCanopyField,
   readOnly = false,
+  stampOnPublish = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -121,7 +124,13 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
         }}
         withSeconds
         valueFormat={format}
-        placeholder={readOnly ? undefined : 'Pick a date and time'}
+        placeholder={
+          readOnly
+            ? undefined
+            : stampOnPublish
+              ? 'Set automatically when submitted'
+              : 'Pick a date and time'
+        }
         ariaLabels={CALENDAR_LABELS}
         timeInputProps={{ 'aria-label': 'Time' }}
         submitButtonProps={{ 'aria-label': 'Done' }}

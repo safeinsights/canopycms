@@ -20,6 +20,7 @@ import {
   ensureNoFlattenedFieldNameCollisions,
   ensureNoGroupsInsideComplexFields,
   ensureMarkdownFieldOptions,
+  ensureStampOnPublishPlacement,
 } from './config/validation'
 
 /** Look up a field's type by dotted path (e.g., "meta.order").
@@ -57,8 +58,8 @@ function findFieldType(fields: readonly FieldConfig[], dottedPath: string): stri
  * more than one `isBody`, or one on a field that is not markdown/mdx or is named one of
  * `RESOLVED_REFERENCE_KEYS`; a top-level or inline-group field named `unavailable`. This is also the one
  * place the shared field-shape checks run: field names a path can spell, select fields must have options,
- * reference fields must have `collections` or `entryTypes`, no inline groups
- * inside object/block fields, no field-name collisions after group flattening, valid `mdxAllow`.
+ * reference fields must have `collections` or `entryTypes`, no inline groups inside object/block fields,
+ * no field-name collisions after group flattening, valid `mdxAllow`, `stampOnPublish` placement.
  *
  * @example
  * ```typescript
@@ -134,6 +135,7 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
     ensureItemTitleFieldsExist(schema)
     ensureNoGroupsInsideComplexFields(schema)
     ensureMarkdownFieldOptions(schema)
+    ensureStampOnPublishPlacement(schema, `Entry schema registry entry "${key}"`)
     ensureNoFlattenedFieldNameCollisions(schema, `entry schema "${key}"`)
   }
 

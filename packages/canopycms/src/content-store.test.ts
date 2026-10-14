@@ -10,6 +10,7 @@ import { ContentIdIndex } from './content-id-index'
 import {
   bumpContentIndexGeneration,
   invalidateContentIndexesDurable,
+  readContentIndexGeneration,
 } from './content-index-generation'
 import { invalidateContentIndexesForRoot } from './content-index-registry'
 import {
@@ -22,7 +23,8 @@ import {
   EntryGoneError,
   UrlPathConflictError,
 } from './content-store'
-import { tryAcquireContentWriteLock } from './utils/content-write-lock'
+import { tryAcquireContentWriteLock, withContentWriteLock } from './utils/content-write-lock'
+import type { PhysicalPath } from './paths/types'
 import { getErrorMessage } from './utils/error'
 import { generateId } from './id'
 import { unsafeAsContentId, unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
@@ -4351,5 +4353,70 @@ describe('ContentStore read of a block or object value that is null or an array'
     ])
     expect(saved.data.meta).toEqual(['a'])
     expect(saved.data.items).toEqual([['x']])
+  })
+})
+
+describe('ContentStore.fillEmptyFieldWhileHoldingWriteLock', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+      },
+    ],
+  }
+  const value = '2026-10-13T12:00:00.000Z'
+
+  async function setUp(text: string) {
+    const root = await tmpDir()
+    const file = `content/posts/post.one.${generateId()}.json`
+    await fs.mkdir(path.join(root, 'content/posts'), { recursive: true })
+    await fs.writeFile(path.join(root, file), text, 'utf8')
+    const store = new ContentStore(root, flattenSchema(schema, 'content'), {
+      contentRootName: 'content',
+    })
+    return { root, file: file as PhysicalPath, store }
+  }
+
+  it('writes inside a lock its caller holds, and tells other processes the content changed', async () => {
+    const { root, file, store } = await setUp('{ "publishedAt": "" }\n')
+    const before = await readContentIndexGeneration(root)
+
+    const wrote = await withContentWriteLock(root, () =>
+      store.fillEmptyFieldWhileHoldingWriteLock(file, 'json', 'publishedAt', value),
+    )
+
+    expect(wrote).toBe(true)
+    expect(await fs.readFile(path.join(root, file), 'utf8')).toBe(`{ "publishedAt": "${value}" }\n`)
+    expect(await readContentIndexGeneration(root)).not.toBe(before)
+  })
+
+  it('leaves a non-empty value, and the file, alone', async () => {
+    const text = '{ "publishedAt": "2020-01-01" }\n'
+    const { root, file, store } = await setUp(text)
+
+    const wrote = await store.fillEmptyFieldWhileHoldingWriteLock(
+      file,
+      'json',
+      'publishedAt',
+      value,
+    )
+
+    expect(wrote).toBe(false)
+    expect(await fs.readFile(path.join(root, file), 'utf8')).toBe(text)
+  })
+
+  it('refuses a path outside its root', async () => {
+    const { store } = await setUp('{}\n')
+
+    await expect(
+      store.fillEmptyFieldWhileHoldingWriteLock(
+        '../outside.json' as PhysicalPath,
+        'json',
+        'publishedAt',
+        value,
+      ),
+    ).rejects.toThrow(ContentStoreError)
   })
 })

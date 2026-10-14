@@ -51,6 +51,8 @@ import { getBranchMetadataFileManager, recordBranchEditor } from './branch-metad
 import { readBranchMetadataFile } from './branch-metadata-file'
 import { getErrorMessage, redactCredentials } from './utils/error'
 import { withContentWriteLock } from './utils/content-write-lock'
+import { ContentStore } from './content-store'
+import { stampNewEntries } from './stamp-on-publish'
 
 /**
  * A per-instance active-branch detector with its own 5s TTL cache, in priority
@@ -200,8 +202,9 @@ export interface CanopyServices {
     message: string
   }) => Promise<void>
   /**
-   * Submit branch: commit all changes (with the submitter's trailers) and push
-   * to remote. Resolves with every path the branch changes against its base.
+   * Submit branch: fill new entries' empty `stampOnPublish` fields
+   * (stamp-on-publish.ts), commit all changes (with the submitter's trailers)
+   * and push to remote. Resolves with every path the branch changes against its base.
    * Holds the branch's content-write lock; rejects with
    * `ContentWriteLockBusyError` when busy, and with `NothingToSubmitError`
    * before pushing when the branch changes nothing.
@@ -381,6 +384,33 @@ async function _createCanopyServicesInternal(
     })
   }
 
+  /** Runs inside submitBranch's content-write lock; a stamp that fails never blocks the submit. */
+  const stampNewEntriesOrWarn = async (context: BranchContext, git: GitManager): Promise<void> => {
+    const contentRoot = services.config.contentRoot || 'content'
+    try {
+      const { flatSchema } = await services.branchSchemaCache.getSchema(
+        context.branchRoot,
+        services.entrySchemaRegistry,
+        contentRoot,
+      )
+      await stampNewEntries({
+        git,
+        store: new ContentStore(context.branchRoot, flatSchema, { contentRootName: contentRoot }),
+        branchRoot: context.branchRoot,
+        flatSchema,
+        contentRoot,
+        stampedAt: new Date().toISOString(),
+        warn: (message) => console.warn(redactCredentials(message)),
+      })
+    } catch (err) {
+      console.warn(
+        `CanopyCMS: Could not stamp the new entries on ${context.branch.name}; ` +
+          'submitting without stamps:',
+        redactCredentials(getErrorMessage(err)),
+      )
+    }
+  }
+
   const submitBranch = async (options: {
     context: BranchContext
     submitter?: SubmissionEditor
@@ -423,6 +453,9 @@ async function _createCanopyServicesInternal(
     let recorded: RecordedEditors = {}
     const submitted = await withContentWriteLock(options.context.branchRoot, async () => {
       await git.checkoutBranch(options.context.branch.name)
+      // Before the status read, so the stamp joins this commit even when an earlier attempt
+      // already committed the entry and only its push failed.
+      await stampNewEntriesOrWarn(options.context, git)
       const status = await git.status()
       // A save records its editor only after releasing this lock, so a save that lands just
       // before this submit can be committed here while its editor is named by the next commit.

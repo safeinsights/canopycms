@@ -72,6 +72,7 @@ import {
   type PhysicalPath,
   type Slug,
   type ContentId,
+  validateAndNormalizePath,
 } from './paths'
 
 /**
@@ -278,6 +279,48 @@ function validateSlug(slug: string): void {
       'VALIDATION',
     )
   }
+}
+
+const isEmptyFieldValue = (value: unknown): boolean =>
+  value === undefined || value === null || value === ''
+
+/**
+ * `raw` with top-level `field` set to the string `value`, through the same source-preserving
+ * serialisers `write()` uses, or undefined when `raw` already holds a non-empty value there.
+ * Throws when the result would not read back as that string.
+ */
+function fillEmptyTopLevelField(
+  raw: string,
+  format: ContentFormat,
+  field: string,
+  value: string,
+): string | undefined {
+  if (format === 'json' || format === 'yaml') {
+    const data = asRecord(format === 'json' ? JSON.parse(raw) : yamlParse(raw))
+    if (!isEmptyFieldValue(data[field])) return undefined
+    const next = { ...data, [field]: value }
+    const content = format === 'json' ? serializeJson(next, raw) : serializeYaml(next, raw)
+    const readBack = asRecord(format === 'json' ? JSON.parse(content) : yamlParse(content))
+    if (readBack[field] !== value) throw new Error(`"${field}" does not read back as written`)
+    return content
+  }
+  const fill = (from: string, fieldValue: string): string => {
+    const parsed = matter(from, {})
+    const data = { ...(parsed.data as Record<string, unknown>), [field]: fieldValue }
+    return serializeFrontmatter(parsed.content, data, from, format)
+  }
+  const readsBack = (content: string): boolean =>
+    (matter(content, {}).data as Record<string, unknown>)[field] === value
+  if (!isEmptyFieldValue((matter(raw, {}).data as Record<string, unknown>)[field])) {
+    return undefined
+  }
+  const content = fill(raw, value)
+  if (readsBack(content)) return content
+  // A key the serialiser inserts is written plain, and gray-matter reads a plain timestamp as a
+  // Date. Inserted as '' it is written quoted, and replacing it keeps that quoting.
+  const quoted = fill(fill(raw, ''), value)
+  if (readsBack(quoted)) return quoted
+  throw new Error(`"${field}" does not read back as written`)
 }
 
 export interface ContentStoreOptions {
@@ -1375,6 +1418,38 @@ export class ContentStore {
       // reload and retry.
       throw new ContentConflictError()
     })
+  }
+
+  /**
+   * Set top-level `field` of the entry file at `physicalPath` to the string `value` when the
+   * file holds it empty (absent, null or ''), keeping every other byte; true when it wrote.
+   *
+   * PRECONDITION: the caller already holds this branch's content-write lock, which makes the
+   * read and the write one critical section. This takes no lock itself, since a nested
+   * acquisition fails busy and is why nothing holding that lock may call `write()`
+   * (docs/concurrency.md, "Lock acquisition order").
+   */
+  async fillEmptyFieldWhileHoldingWriteLock(
+    physicalPath: PhysicalPath,
+    format: ContentFormat,
+    field: string,
+    value: string,
+  ): Promise<boolean> {
+    const checked = validateAndNormalizePath(this.root, path.join(this.root, physicalPath))
+    if (!checked.valid || !checked.normalizedPath) {
+      throw new ContentStoreError(checked.error ?? 'Path traversal detected', 'VALIDATION')
+    }
+    const absolutePath = path.join(this.root, checked.normalizedPath)
+    const content = fillEmptyTopLevelField(
+      await fs.readFile(absolutePath, 'utf8'),
+      format,
+      field,
+      value,
+    )
+    if (content === undefined) return false
+    await atomicWriteFile(absolutePath, content)
+    await this.recordOwnMutation(this._idIndex)
+    return true
   }
 
   /**

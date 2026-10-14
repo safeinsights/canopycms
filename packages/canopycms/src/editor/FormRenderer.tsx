@@ -481,6 +481,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
             readOnly={readOnly}
+            stampOnPublish={'stampOnPublish' in field && field.stampOnPublish === true}
           />,
         )
       case 'markdown':

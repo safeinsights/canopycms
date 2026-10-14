@@ -718,6 +718,20 @@ describe('FormRenderer', () => {
       expect(screen.queryByText(/Unsupported field/)).toBeNull()
     })
 
+    it('tells the picker about stampOnPublish', () => {
+      const fields: FieldConfig[] = [
+        { name: 'publishedAt', type: 'datetime', label: 'Published At', stampOnPublish: true },
+      ]
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer fields={fields} value={{}} onChange={() => {}} />
+        </CanopyCMSProvider>,
+      )
+      expect(screen.getByLabelText('Published At').textContent).toBe(
+        'Set automatically when submitted',
+      )
+    })
+
     it('updates form state when a date and time are picked, and the value survives a save round-trip', async () => {
       const fields: FieldConfig[] = [
         { name: 'publishedAt', type: 'datetime', label: 'Published At' },
