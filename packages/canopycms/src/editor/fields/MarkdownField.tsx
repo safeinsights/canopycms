@@ -315,7 +315,8 @@ const editorWrapperStyle: React.CSSProperties = {
  * Mantine's global CSS reset strips styles from semantic HTML elements.
  * Restore them inside the MDXEditor content area so formatting is visible. The toolbar wraps
  * rather than scrolling sideways (`toolbar-wrap.ts` hides a separator left at a row's edge).
- * MDXEditor's dark theme leaves its page background white, so editor and popups take tokens.
+ * MDXEditor's dark theme leaves its page background white, so editor and popups take tokens; in
+ * dark mode its drop shadow vanishes over a subtle panel, so popups take a dropdown's border.
  */
 const EditorContentStyles: React.FC = () => (
   <style>{`
@@ -323,6 +324,9 @@ const EditorContentStyles: React.FC = () => (
     .mdxeditor .canopy-mdx-toolbar { flex-wrap: wrap; overflow-x: visible; }
     .mdxeditor { --basePageBg: var(--mantine-color-body); }
     .mdxeditor-popup-container { --basePageBg: var(--canopy-surface-subtle); }
+    [data-mantine-color-scheme='dark'] .mdxeditor-popup-container :is([data-radix-popper-content-wrapper] > *, [role='dialog']) {
+      border: 1px solid var(--mantine-color-default-border);
+    }
     .canopy-mdx-toolbar [data-placeholder] > span:first-child { color: var(--mantine-color-placeholder); }
     .canopy-mdx-content ul { list-style-type: disc; padding-left: 1.5em; margin: 0.5em 0; }
     .canopy-mdx-content ol { list-style-type: decimal; padding-left: 1.5em; margin: 0.5em 0; }
@@ -339,7 +343,7 @@ const EditorContentStyles: React.FC = () => (
       border-left: 3px solid var(--mantine-color-default-border);
       padding-left: 1em;
       margin: 0.5em 0;
-      color: var(--mantine-color-dimmed);
+      color: inherit;
     }
     .canopy-mdx-content hr { border: none; border-top: 1px solid var(--mantine-color-default-border); margin: 1em 0; }
     .canopy-mdx-content p { margin: 0.75em 0; }

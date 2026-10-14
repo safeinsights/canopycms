@@ -728,12 +728,17 @@ export function CollectionEditor({
                         {entryType.name}
                       </Text>
                       {entryType.default && (
-                        <Badge size="xs" color="blue" leftSection={<IconStar size={10} />}>
+                        <Badge
+                          size="xs"
+                          color="blue"
+                          variant="light"
+                          leftSection={<IconStar size={10} />}
+                        >
                           Default
                         </Badge>
                       )}
                       {entryType.maxItems === 1 && (
-                        <Badge size="xs" color="gray">
+                        <Badge size="xs" color="gray" variant="light">
                           Singleton
                         </Badge>
                       )}

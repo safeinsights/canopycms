@@ -159,11 +159,7 @@ export function QuickOpenPalette({
                         {entry.label}
                       </Highlight>
                       {/* Inherits the option's colour, so it stays legible on the armed option's fill. */}
-                      {entry.slug && (
-                        <Text size="xs" style={{ opacity: 0.75 }}>
-                          {entry.slug}
-                        </Text>
-                      )}
+                      {entry.slug && <Text size="xs">{entry.slug}</Text>}
                     </Combobox.Option>
                   ))}
                 </Combobox.Group>

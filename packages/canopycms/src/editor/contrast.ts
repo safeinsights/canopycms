@@ -13,7 +13,7 @@ export const isMeasurable = (colour: string): boolean =>
 /** WCAG 2's minimum for body text. */
 const TEXT_CONTRAST = 4.5
 
-/** @internal Exported for tests. The WCAG 2 contrast ratio of two opaque colours. */
+/** The WCAG 2 contrast ratio of two opaque colours. */
 export const contrastRatio = (a: string, b: string): number => {
   const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x)
   return (light + 0.05) / (dark + 0.05)

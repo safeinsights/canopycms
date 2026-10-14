@@ -22,7 +22,7 @@ From the reviews of the form header and date picker PR (`editor/FormHeader.tsx`,
 - **Date-only values.** A stored `2024-05-01` parses as UTC midnight, so it shows as the previous
   evening west of UTC. Read a date-only string as local midnight.
 
-Placeholder contrast belongs to [contrast-beyond-the-ruled-colours.md](../contrast-beyond-the-ruled-colours.md).
+Placeholder contrast belongs to [contrast-beyond-the-ruled-colours.md](contrast-beyond-the-ruled-colours.md).
 
 ## Tooltips on focus
 
