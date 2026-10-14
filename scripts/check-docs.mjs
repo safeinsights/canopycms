@@ -38,6 +38,8 @@ const EXCLUDED = [
   '.git',
   // Other sessions' checkouts (git-ignored), each a full copy of the repo.
   '.claude/worktrees',
+  // `pnpm tasks:sync`'s mirror of GitHub issue bodies (git-ignored).
+  '.claude/backlog-cache',
   'dist',
   'BACKLOG.md',
   // Sample site content for the editor round-trip test; its links are site URLs.

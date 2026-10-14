@@ -53,7 +53,7 @@ function matchColumns(line) {
 }
 
 /** Columns (1-based) of every non-exempt match in one line; [0] for a URL-encoded one. */
-function findAccountIds(line) {
+export function findAccountIds(line) {
   const columns = matchColumns(line)
   if (columns.length > 0) return columns
   let decoded = line
@@ -153,5 +153,7 @@ function selfTest() {
   console.log(`check-account-ids self-test passed (${cases.length} matcher cases, 3 path cases).`)
 }
 
-if (process.argv[2] === '--self-test') selfTest()
-else scanTree()
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  if (process.argv[2] === '--self-test') selfTest()
+  else scanTree()
+}
