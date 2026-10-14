@@ -774,6 +774,12 @@ describe('CanopyCMSProvider checked controls', () => {
             <Tabs.Tab value="a">Fields</Tabs.Tab>
           </Tabs.List>
         </Tabs>
+        <Tabs defaultValue="b" variant="pills">
+          <Tabs.List>
+            <Tabs.Tab value="b">Pill</Tabs.Tab>
+          </Tabs.List>
+        </Tabs>
+        <Switch label="Brand switch" color="brand" />
       </CanopyCMSProvider>,
     )
     const ring = 'var(--canopy-focus-ring)'
@@ -791,6 +797,11 @@ describe('CanopyCMSProvider checked controls', () => {
     expect(
       own(getByRole('tab', { name: 'Fields' }).closest('.mantine-Tabs-root')!, '--tabs-color'),
     ).toBe(ring)
+    // Pills put text on the colour, so they keep Mantine's.
+    expect(
+      own(getByRole('tab', { name: 'Pill' }).closest('.mantine-Tabs-root')!, '--tabs-color'),
+    ).not.toBe(ring)
+    expect(rootVar(getByLabelText('Brand switch'), '--switch-color')).toBe(ring)
   })
 
   it("draws a primary Checkbox's tick, Radio's dot and Switch's thumb in the ring's contrast", () => {

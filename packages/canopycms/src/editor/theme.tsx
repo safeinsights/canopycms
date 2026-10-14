@@ -101,6 +101,25 @@ const CLOSE_BUTTON_PROPS = { 'aria-label': 'Close' }
 // `color`.
 const isPrimary = (theme: MantineTheme, color: string | undefined) =>
   color === undefined || color === theme.primaryColor
+interface CheckedControlProps {
+  color?: string
+  variant?: string
+  iconColor?: string
+}
+const checkboxOnRing = (theme: MantineTheme, props: CheckedControlProps) =>
+  isPrimary(theme, props.color)
+    ? {
+        '--checkbox-color': props.variant === 'outline' ? undefined : 'var(--canopy-focus-ring)',
+        '--checkbox-icon-color': props.iconColor ? undefined : 'var(--canopy-focus-ring-contrast)',
+      }
+    : {}
+const radioOnRing = (theme: MantineTheme, props: CheckedControlProps) =>
+  isPrimary(theme, props.color)
+    ? {
+        '--radio-color': props.variant === 'outline' ? undefined : 'var(--canopy-focus-ring)',
+        '--radio-icon-color': props.iconColor ? undefined : 'var(--canopy-focus-ring-contrast)',
+      }
+    : {}
 const canopyComponents = {
   Button: Button.extend({
     // The editor's default control size; a per-call `size` is only for a deliberate exception.
@@ -158,58 +177,27 @@ const canopyComponents = {
   }),
   // Checkbox, Radio and Tabs name their primary colour inline, past the focus-ring alias, so a
   // primary one is pointed at the ring here; its tick or dot takes the colour that reads on it.
-  Checkbox: Checkbox.extend({
-    vars: (theme, props) => ({
-      root: isPrimary(theme, props.color)
-        ? {
-            '--checkbox-color':
-              props.variant === 'outline' ? undefined : 'var(--canopy-focus-ring)',
-            '--checkbox-icon-color': props.iconColor
-              ? undefined
-              : 'var(--canopy-focus-ring-contrast)',
-          }
-        : {},
-    }),
-  }),
+  Checkbox: Checkbox.extend({ vars: (theme, props) => ({ root: checkboxOnRing(theme, props) }) }),
   CheckboxIndicator: Checkbox.Indicator.extend({
-    vars: (theme, props) => ({
-      indicator: isPrimary(theme, props.color)
-        ? {
-            '--checkbox-color':
-              props.variant === 'outline' ? undefined : 'var(--canopy-focus-ring)',
-            '--checkbox-icon-color': props.iconColor
-              ? undefined
-              : 'var(--canopy-focus-ring-contrast)',
-          }
-        : {},
-    }),
+    vars: (theme, props) => ({ indicator: checkboxOnRing(theme, props) }),
   }),
-  Radio: Radio.extend({
-    vars: (theme, props) => ({
-      root: isPrimary(theme, props.color)
-        ? {
-            '--radio-color': props.variant === 'outline' ? undefined : 'var(--canopy-focus-ring)',
-            '--radio-icon-color': props.iconColor ? undefined : 'var(--canopy-focus-ring-contrast)',
-          }
-        : {},
-    }),
-  }),
+  Radio: Radio.extend({ vars: (theme, props) => ({ root: radioOnRing(theme, props) }) }),
   RadioIndicator: Radio.Indicator.extend({
-    vars: (theme, props) => ({
-      indicator: isPrimary(theme, props.color)
-        ? {
-            '--radio-color': props.variant === 'outline' ? undefined : 'var(--canopy-focus-ring)',
-            '--radio-icon-color': props.iconColor ? undefined : 'var(--canopy-focus-ring-contrast)',
-          }
-        : {},
-    }),
+    vars: (theme, props) => ({ indicator: radioOnRing(theme, props) }),
   }),
+  // Pills put text on the colour, which the ring does not measure for.
   Tabs: Tabs.extend({
     vars: (theme, props) => ({
-      root: isPrimary(theme, props.color) ? { '--tabs-color': 'var(--canopy-focus-ring)' } : {},
+      root:
+        isPrimary(theme, props.color) && props.variant !== 'pills'
+          ? { '--tabs-color': 'var(--canopy-focus-ring)' }
+          : {},
     }),
   }),
   Switch: Switch.extend({
+    vars: (theme, props) => ({
+      root: isPrimary(theme, props.color) ? { '--switch-color': 'var(--canopy-focus-ring)' } : {},
+    }),
     styles: (theme, props) =>
       isPrimary(theme, props.color)
         ? { root: { '--canopy-switch-thumb-on': 'var(--canopy-focus-ring-contrast)' } }
