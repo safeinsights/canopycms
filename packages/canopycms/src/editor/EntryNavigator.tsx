@@ -737,7 +737,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             {showCollectionDirtyDot && <UnsavedDot label="Contains unsaved changes" />}
             {status && (
               <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0, maxWidth: 96 }}>
-                {status}
+                {status.charAt(0).toUpperCase() + status.slice(1)}
               </Badge>
             )}
             {conflictNotice && (
@@ -752,7 +752,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                   data-testid="conflict-badge"
                   style={{ flexShrink: 0 }}
                 >
-                  conflict
+                  Conflict
                 </Badge>
               </Tooltip>
             )}

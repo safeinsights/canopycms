@@ -343,8 +343,6 @@ const EditorContentStyles: React.FC = () => (
       border-left: 3px solid var(--mantine-color-default-border);
       padding-left: 1em;
       margin: 0.5em 0;
-      color: var(--mantine-color-dimmed);
-      font-style: var(--canopy-dimmed-font-style);
     }
     .canopy-mdx-content hr { border: none; border-top: 1px solid var(--mantine-color-default-border); margin: 1em 0; }
     .canopy-mdx-content p { margin: 0.75em 0; }

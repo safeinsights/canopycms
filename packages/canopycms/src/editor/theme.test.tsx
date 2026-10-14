@@ -806,6 +806,7 @@ describe('CanopyCMSProvider stylesheet', () => {
         <Switch label="Switch off" />
         <Switch label="Switch on" defaultChecked />
         <Switch label="Switch disabled" disabled />
+        <Switch label="Switch on, disabled" defaultChecked disabled />
       </CanopyCMSProvider>,
     )
     expect(canopyRuleSets(getByLabelText('Off'), 'border-color')).toBe(true)
@@ -820,7 +821,12 @@ describe('CanopyCMSProvider stylesheet', () => {
     expect(canopyRuleSets(track('Switch disabled'), '--switch-bd')).toBe(false)
     const thumb = (label: string) => track(label).querySelector('.mantine-Switch-thumb') as Element
     expect(canopyRuleSets(thumb('Switch on'), '--switch-thumb-bg')).toBe(true)
+    // An unchecked thumb's position is the state cue, so it is bordered too.
+    expect(canopyRuleSets(thumb('Switch off'), '--switch-thumb-bd')).toBe(true)
+    expect(canopyRuleSets(thumb('Switch disabled'), '--switch-thumb-bd')).toBe(false)
     expect(canopyRuleSets(thumb('Switch off'), '--switch-thumb-bg')).toBe(false)
+    // A disabled thumb keeps Mantine's colour; this rule out-specifies Mantine's disabled one.
+    expect(canopyRuleSets(thumb('Switch on, disabled'), '--switch-thumb-bg')).toBe(false)
   })
 
   it('puts the armed combobox option and the selected day on the primary fill', async () => {
@@ -879,15 +885,27 @@ describe('CanopyCMSProvider text', () => {
     expect(getByText('Loud').style.fontStyle).toBe('')
   })
 
-  it('sets badges in sentence case', () => {
+  it("sets an input's description in the dimmed font style", () => {
+    const { getByText } = render(
+      <CanopyCMSProvider>
+        <TextInput label="Slug" description="The entry's file name" />
+        <Select label="Type" description="What the entry holds" data={['Post']} />
+      </CanopyCMSProvider>,
+    )
+    for (const text of ["The entry's file name", 'What the entry holds']) {
+      expect(getByText(text).style.fontStyle).toBe('var(--canopy-dimmed-font-style)')
+    }
+  })
+
+  it('sets badges in sentence case, an xs badge at the sm size', () => {
     const { getByText } = render(
       <CanopyCMSProvider>
         <Badge color="green">In review</Badge>
       </CanopyCMSProvider>,
     )
-    expect(
-      (getByText('In review').closest('.mantine-Badge-root') as HTMLElement).style.textTransform,
-    ).toBe('none')
+    const root = getByText('In review').closest('.mantine-Badge-root') as HTMLElement
+    expect(root.style.textTransform).toBe('none')
+    expect(root.style.getPropertyValue('--badge-fz-xs')).toBe('var(--badge-fz-sm)')
   })
 })
 

@@ -1078,15 +1078,14 @@ function BranchHealthRow({
             <Text size="sm">{entry.dirName}</Text>
             {entry.isBaseBranch && (
               <Badge size="xs" color="gray" variant="outline">
-                base
+                Base
               </Badge>
             )}
           </Group>
         </Table.Td>
         <Table.Td>
-          {/* Colour from the shared map; the raw status text stays, since admin-branch-health e2e reads it. */}
           <Badge color={branchStatusPresentation(b.status)?.color ?? 'neutral'} variant="light">
-            {b.status}
+            {branchStatusPresentation(b.status)?.label}
           </Badge>
         </Table.Td>
         <Table.Td>
@@ -1120,7 +1119,7 @@ function BranchHealthRow({
             />
           ) : b.syncStatus === 'pending-sync' ? (
             <Badge color="gray" variant="light">
-              pending-sync
+              Pending sync
             </Badge>
           ) : null}
         </Table.Td>
@@ -1218,7 +1217,7 @@ function BranchHealthRow({
         <Table.Td>{entry.dirName}</Table.Td>
         <Table.Td>
           <Badge color="red" variant="light">
-            corrupt metadata
+            Corrupt metadata
           </Badge>
         </Table.Td>
         <Table.Td colSpan={3}>
@@ -1257,7 +1256,7 @@ function BranchHealthRow({
       <Table.Td>{entry.dirName}</Table.Td>
       <Table.Td>
         <Badge color="gray" variant="outline">
-          orphan
+          Orphan
         </Badge>
       </Table.Td>
       <Table.Td colSpan={3}>

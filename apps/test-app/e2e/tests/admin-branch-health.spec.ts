@@ -100,16 +100,16 @@ test.describe('Admin Branch Health', () => {
 
     const mainRow = adminPage.branchRow('main')
     await expect(mainRow).toBeVisible()
-    await expect(mainRow).toContainText('editing')
+    await expect(mainRow).toContainText('Editing')
 
     const baseDirName = await getBaseBranchDirName(page)
     const baseRow = adminPage.branchRow(baseDirName)
     await expect(baseRow).toBeVisible()
-    await expect(baseRow.getByText('base')).toBeVisible()
+    await expect(baseRow.getByText('Base', { exact: true })).toBeVisible()
 
     const branchRow = adminPage.branchRow(branchName)
     await expect(branchRow).toBeVisible()
-    await expect(branchRow).toContainText('editing')
+    await expect(branchRow).toContainText('Editing')
   })
 
   test('corrupt metadata repairs to editing/current-admin; registry quarantines it in the meantime (B9)', async ({
@@ -119,7 +119,7 @@ test.describe('Admin Branch Health', () => {
     await seedCorruptBranchDir(dirName)
 
     const adminPage = await openBranchesTab(page)
-    await expect(adminPage.branchRow(dirName)).toContainText('corrupt metadata')
+    await expect(adminPage.branchRow(dirName)).toContainText('Corrupt metadata')
 
     await test.step('B9: GET /branches still 200s and lists main despite the corrupt dir', async () => {
       const res = await page.request.get('/api/canopycms/branches', {
@@ -167,7 +167,7 @@ test.describe('Admin Branch Health', () => {
     await seedOrphanBranchDir(dirName, 20 * 60_000)
 
     const adminPage = await openBranchesTab(page)
-    await expect(adminPage.branchRow(dirName)).toContainText('orphan')
+    await expect(adminPage.branchRow(dirName)).toContainText('Orphan')
 
     await adminPage.purgeDirButton(dirName).click()
     await adminPage.confirmDialog('Purge directory', 'Purge')
@@ -212,7 +212,7 @@ test.describe('Admin Branch Health', () => {
     // 60s such calls set -- a local setTimeout would shrink headroom.
     const adminPage = await openBranchesTab(page)
     const baseDirName = await getBaseBranchDirName(page)
-    await expect(adminPage.branchRow(baseDirName)).toContainText('base')
+    await expect(adminPage.branchRow(baseDirName)).toContainText('Base')
     // A healthy row renders no Purge control at all -- purgeGateFor only
     // offers Purge for corrupt-metadata/orphan rows.
     await expect(adminPage.purgeDirButton(baseDirName)).toHaveCount(0)
@@ -229,7 +229,7 @@ test.describe('Admin Branch Health', () => {
         await fs.writeFile(metaPath, '{ this is not valid json', 'utf8')
         await bumpBranchRegistry()
         await refreshBranchesTab(adminPage)
-        await expect(adminPage.branchRow(baseDirName)).toContainText('corrupt metadata')
+        await expect(adminPage.branchRow(baseDirName)).toContainText('Corrupt metadata')
       })
 
       await test.step('UI rail: Purge renders but is disabled, with the base-branch tooltip', async () => {

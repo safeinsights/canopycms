@@ -133,8 +133,8 @@ const canopyComponents = {
     },
   }),
   Badge: Badge.extend({
-    // Sentence case, as every other label.
-    styles: { root: { textTransform: 'none' } },
+    // Sentence case, as every other label; an xs badge's 9px is too small for lowercase.
+    styles: { root: { textTransform: 'none', '--badge-fz-xs': 'var(--badge-fz-sm)' } },
     vars: (theme, props) =>
       (props.variant ?? 'filled') === 'filled' && isPrimary(theme, props.color)
         ? {
@@ -175,6 +175,9 @@ const canopyComponents = {
         : {},
   }),
   // Dark dimmed text is nearly as bright as body text, so it also takes the dimmed font style.
+  InputWrapper: Input.Wrapper.extend({
+    styles: { description: { fontStyle: 'var(--canopy-dimmed-font-style)' } },
+  }),
   Text: Text.extend({
     styles: (_theme, props) =>
       props.c === 'dimmed' ? { root: { fontStyle: 'var(--canopy-dimmed-font-style)' } } : {},
@@ -360,7 +363,10 @@ const CANOPY_STYLES = `
 .mantine-Switch-input:not(:checked, :disabled, [data-disabled]) + .mantine-Switch-track:not([data-error]) {
   --switch-bd: var(--canopy-input-border);
 }
-.mantine-Switch-input:checked + .mantine-Switch-track > .mantine-Switch-thumb {
+.mantine-Switch-input:not(:checked, :disabled, [data-disabled]) + .mantine-Switch-track > .mantine-Switch-thumb {
+  --switch-thumb-bd: var(--canopy-input-border);
+}
+.mantine-Switch-input:checked:not(:disabled, [data-disabled]) + .mantine-Switch-track > .mantine-Switch-thumb {
   --switch-thumb-bg: var(--canopy-switch-thumb-on, var(--mantine-color-white));
   --switch-thumb-bd: var(--canopy-switch-thumb-on, var(--mantine-color-white));
 }
