@@ -135,7 +135,7 @@ const RULES = [
     rx: /\bs3:\/\/([^/\s`'")]*)|\barn:aws[a-z-]*:s3:::([^/\s`'")]*)/gi,
     ok: (m) =>
       /^(?:|<[^>]*>?|\$\{[^}]*\}?|\{[^}]*\}?|\*|x+|\.\.\.|…|(?:my-|example-)?bucket|example)$/i.test(
-        m[1] ?? m[2],
+        (m[1] ?? m[2]).replace(/\.+$/, ''),
       ),
   },
   {
@@ -167,14 +167,17 @@ const RULES = [
     rx: /(?<!orgs\/)\bsafeinsights\/([A-Za-z0-9._-]+)/gi,
     ok: (m) =>
       m[1]
-        .replace(/\.git$/i, '')
         .replace(/\.+$/, '')
+        .replace(/\.git$/i, '')
         .toLowerCase() === 'canopycms',
   },
   {
     // Ruleset, App and installation ids are org configuration, not public.
     kind: 'github-id',
-    rx: /\b(?:rulesets?|apps?|installations?)(?: id)?[\s:#]{1,3}\d{6,10}\b|\(\d{7,10}\)/gi,
+    // Words may sit between the noun and the number only before an "id". Each
+    // word starts at a space its own class excludes, so the nesting is linear.
+    // eslint-disable-next-line security/detect-unsafe-regex
+    rx: /\b(?:rulesets?|apps?|installations?)(?:['’]s)?(?:(?: [\w`-]+){0,2} (?:id|ID)(?: is)?)?[\s:#/=]{1,3}\d{6,10}\b|\(\d{7,10}\)/gi,
   },
   // A CDK bootstrap qualifier names one account's deployment.
   { kind: 'cdk-qualifier', rx: /\bCDKToolkit-[\w-]+/g },
@@ -182,13 +185,16 @@ const RULES = [
     // An adopter's request log lives in its own private repo; its numbers mean
     // nothing publicly and point at it.
     kind: 'request-log-ref',
-    // A bare plural ("it requests 3 times") is a verb unless a `#` or `-` follows.
-    rx: /\b(?:(?:adopter|marketing[- ]site|knowledge[- ]base|KB|MKT) requests?[ #-]{1,3}|(?<!pull )request[ #-]{1,3}|(?<!pull )requests(?: ?#|-))\d+[a-z]?\b/gi,
+    // A bare plural ("it requests 3 times") is a verb unless a `#`, a `-` or a
+    // second number follows.
+    rx: /\b(?:(?:adopter|marketing[- ]site|knowledge[- ]base|KB|MKT) requests?[ #-]{1,3}|(?<!pull )request[ #-]{1,3}|(?<!pull )requests(?: ?#|-))\d+[a-z]?\b|(?<!pull )\brequests \d+(?=\s*(?:,|and|&|[-–/])\s*#?\d)/gi,
   },
   {
     kind: 'host',
     rx: HOST,
-    ok: (m) => isPublicHost(m[0]) || CODE_RECEIVER.test(m[0]),
+    ok: (m) =>
+      isPublicHost(m[0]) ||
+      (CODE_RECEIVER.test(m[0]) && !/(?:\/\/|@)$/.test(m.input.slice(0, m.index))),
   },
   {
     kind: 'email',
@@ -229,12 +235,15 @@ function bounded(name, flags) {
   return new RegExp(`(?<![\\w-])${escapeRx(name)}(?![\\w-])`, flags)
 }
 
-/**
- * A name that would match anywhere: a separator, an inner capital, or a digit
- * in more than four characters. `e2e`, `a11y` and `k8s` are jargon, not names.
- */
-const isDistinctive = (name) =>
-  /[-_./]|[a-z][A-Z]/.test(name) || (/\d/.test(name) && name.length > 4)
+/** Digit-bearing technical words that are not names. */
+const JARGON = new Set(
+  'e2e a11y k8s k3s i18n l10n s3 ec2 x86 arm64 amd64 ipv4 ipv6 utf8 utf16 base64 sha1 sha256 md5 oauth2 http2 http3 es5 es6 h1 h2 h3 mp3 mp4 b2b b2c p2p 2fa'.split(
+    ' ',
+  ),
+)
+
+/** A name that would match anywhere: a separator, a digit or an inner capital. */
+const isDistinctive = (name) => !JARGON.has(name.toLowerCase()) && /[-_./\d]|[a-z][A-Z]/.test(name)
 
 /** `v2`, `1.4`, `2026`: a version or number identifies nothing. */
 const isVersionLike = (name) => /^v?[\d.]+$/i.test(name) && /\d/.test(name)
@@ -341,7 +350,13 @@ export function termsFromNames({
   add('org repo', repos)
   add('sibling checkout', dirs)
   // Prose names a branch by its last segments (`feat/acme-launch` → `acme-launch`).
-  const segments = refs.flatMap((r) => r.split('/').slice(1)).filter((x) => /[-_]/.test(x))
+  const segmentsOf = (names) =>
+    names
+      .filter((r) => !/^(?:dependabot|renovate)\//.test(r))
+      .flatMap((r) => r.split('/').slice(1))
+      .filter((x) => /[-_]/.test(x))
+  for (const own of segmentsOf(self)) skip.add(own.toLowerCase())
+  const segments = segmentsOf(refs)
   add('branch or environment', [...refs, ...segments])
   // Prose drops a profile's org prefix (`acme-sandbox-admin` → `sandbox-admin`).
   const unprefixed = profiles.map((p) => p.slice(p.indexOf('-') + 1)).filter((p) => p.includes('-'))
@@ -672,7 +687,7 @@ function selfTest() {
   const fakeAccount = ['2109', '8765', '4321'].join('')
   const terms = termsFromNames({
     owners: ['acme', 'safeinsights'],
-    repos: ['acme-site', 'website', 'main'],
+    repos: ['acme-site', 'website', 'main', 'kb2'],
     logins: ['octo-dev'],
     people: ['Jane Q Doe', '', 'José Núñez', 'kim roe'],
     orgs: ['acmeco', 'acme-org'],
@@ -686,9 +701,12 @@ function selfTest() {
       'fix/launch',
       'e2e',
       'ci/a11y',
+      'dependabot/npm_and_yarn/npm-update',
+      'renovate/renovate-x',
+      'chore/own-segment',
     ],
     profiles: ['acme-admin', 'ac-stage-admin'],
-    self: ['feature-x'],
+    self: ['feature-x', 'fix/own-segment'],
   })
   const cases = [
     [`account ${fakeAccount}`, ['account-id']],
@@ -782,6 +800,13 @@ function selfTest() {
     ],
     ['the launch went well', []],
     ['the e2e suite and a11y checks', []],
+    ['deploy kb2 to prod', ['private-name']],
+    ["the App's id 4038189, ruleset require-pr has id 7484436", ['github-id', 'github-id']],
+    ['rulesets/7484436 and installation ID=12345678', ['github-id', 'github-id']],
+    ['requests 45 and 46', ['request-log-ref']],
+    ['clone safeinsights/canopycms.git.', []],
+    ['https://context.io/x', ['host']],
+    ['the npm-update and renovate-x segments, and own-segment', []],
     // a person whole, by part, by login, lower-case names capitalized,
     [
       'Kim Roe, then Kim, then roe, then @octo-dev',
