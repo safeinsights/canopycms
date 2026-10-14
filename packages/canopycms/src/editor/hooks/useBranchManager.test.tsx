@@ -306,6 +306,34 @@ describe('useBranchManager', () => {
     restore()
   })
 
+  it('passes the managerOrAdminAllowed lockdown through branchSummaries', async () => {
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        branches: [
+          mockBranches[0],
+          {
+            ...mockBranches[1],
+            access: { ...mockBranches[1].access, managerOrAdminAllowed: true },
+          },
+        ],
+        users: [],
+      },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.branchSummaries).toHaveLength(2)
+    })
+
+    expect(result.current.branchSummaries[0].access?.managerOrAdminAllowed).toBeUndefined()
+    expect(result.current.branchSummaries[1].access?.managerOrAdminAllowed).toBe(true)
+  })
+
   it('passes pullRequestState and mergedAt through branchSummaries unchanged', async () => {
     const branchesWithPrState: BranchMetadata[] = [
       {

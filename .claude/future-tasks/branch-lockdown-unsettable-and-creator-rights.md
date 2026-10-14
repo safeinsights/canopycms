@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-14. The `managerOrAdminAllowed` branch lockdown is enforced everywhere but no API or UI sets it (only a hand edit of `branch.json`), and a locked-out creator can still delete the branch and rewrite its now-inert ACL. Decide: build lockdown as a real admin feature, or delete it as `adminOnly` was
+  New 2026-10-14. The `managerOrAdminAllowed` branch lockdown is enforced everywhere but no API or UI sets it (only a hand edit of `branch.json`), and a locked-out creator can still delete the branch, and through an ACL rewrite read its full metadata. Decide: build lockdown as a real admin feature, or delete it as `adminOnly` was
 ---
 
 # Branch lockdown: nothing sets it, and the creator keeps delete rights
@@ -28,6 +28,8 @@ have it stripped by zod without noticing.
 
 `canDeleteBranch` and `canModifyBranchAccess` (`api/branch.ts`) grant the creator without
 consulting branch access. On a locked branch the creator cannot read it, but can still delete it
-and rewrite its ACL. The ACL rewrite is harmless now, since the lockdown outranks it. Whether the
-delete grant should yield to a lockdown is a ruling to make, and `getBranchPermissions`'
-`canDelete` (`editor/BranchManager.tsx`) has to change with it.
+and rewrite its ACL. The rewrite cannot lift the lockdown, which outranks the ACL, but its
+response is the full branch list item: title, description, status, pull request, conflict files,
+rebase failure, sync status. A creator locked out of `GET /:branch/status` reads all of it with
+`PATCH /:branch/access {}`. Whether both grants should yield to a lockdown is a ruling to make,
+and `getBranchPermissions`' `canDelete` (`editor/BranchManager.tsx`) has to change with it.
