@@ -167,6 +167,10 @@ describe('toPlainText', () => {
     it('reads YAML-looking lines between two `---` breaks as prose', () => {
       expect(toPlainText('---\ntitle: x\n---\nText')).toBe('title: x\n\nText')
     })
+
+    it('reads lines that are not valid YAML between two `---` breaks as prose', () => {
+      expect(toPlainText('---\ntitle: [x\n---\nText')).toBe('title: [x\n\nText')
+    })
   })
 
   describe('imports/exports', () => {

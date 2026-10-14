@@ -283,9 +283,10 @@ function collapseWhitespace(text: string): string {
 /**
  * Convert an MDX/Markdown entry body to plain prose text.
  *
- * Pass the body only, such as `entry.data.body`. Front matter in the input is
- * treated as prose, so a caller holding a whole file splits it first, for
- * example with `matter(file).content`.
+ * Pass the body only: the value of the entry's body field, such as
+ * `entry.data.body` when the schema names that field `body`. Front matter
+ * in the input is treated as prose, so a caller holding a whole file splits
+ * it first, for example with `matter(file, {}).content`.
  *
  * See the module doc above for the full pipeline and why this exists as a
  * distinct transform from `stripMdxImports`.
