@@ -728,7 +728,7 @@ describe('FormRenderer', () => {
         </CanopyCMSProvider>,
       )
       expect(screen.getByLabelText('Published At').textContent).toBe(
-        'Set automatically when submitted',
+        'Set automatically when a new entry is submitted',
       )
     })
 

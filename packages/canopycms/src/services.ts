@@ -206,7 +206,8 @@ export interface CanopyServices {
   /**
    * Submit branch: fill new entries' empty `stampOnPublish` fields
    * (stamp-on-publish.ts), commit all changes (with the submitter's trailers)
-   * and push to remote. Resolves with every path the branch changes against its base.
+   * and push to remote. Resolves with every path the branch changes against its base,
+   * and with `stamped`, the entries this submit stamped.
    * Holds the branch's content-write lock; rejects with
    * `ContentWriteLockBusyError` when busy, and with `NothingToSubmitError`
    * before pushing when the branch changes nothing.
@@ -409,8 +410,8 @@ async function _createCanopyServicesInternal(
       })
     } catch (err) {
       console.warn(
-        `CanopyCMS: Could not stamp the new entries on ${context.branch.name}; ` +
-          'submitting without stamps:',
+        `CanopyCMS: Could not finish stamping the new entries on ${context.branch.name}; ` +
+          'submitting with only the stamps already written:',
         redactCredentials(getErrorMessage(err)),
       )
       return []

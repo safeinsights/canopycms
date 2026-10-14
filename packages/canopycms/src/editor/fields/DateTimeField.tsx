@@ -16,7 +16,7 @@ export interface DateTimeFieldProps {
   dataCanopyField?: string
   /** Shows the value without accepting edits. */
   readOnly?: boolean
-  /** The field's `stampOnPublish`: while empty, it says submitting fills it. */
+  /** The field's `stampOnPublish`: while empty, it says a new entry's submit fills it. */
   stampOnPublish?: boolean
 }
 
@@ -128,7 +128,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
           readOnly
             ? undefined
             : stampOnPublish
-              ? 'Set automatically when submitted'
+              ? 'Set automatically when a new entry is submitted'
               : 'Pick a date and time'
         }
         ariaLabels={CALENDAR_LABELS}

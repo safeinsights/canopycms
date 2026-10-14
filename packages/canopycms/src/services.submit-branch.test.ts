@@ -1013,7 +1013,7 @@ describe('services submitBranch', () => {
       await services.submitBranch({ context })
 
       expect(await pushedEntry(file)).toBe(text)
-      expect(consoleSpy).toHaveWarned('Could not stamp the new entries on feature-1')
+      expect(consoleSpy).toHaveWarned('Could not finish stamping the new entries on feature-1')
       expect(JSON.stringify(consoleSpy.all().warn)).not.toContain('s3cret')
       consoleSpy.restore()
     })

@@ -287,7 +287,7 @@ const isEmptyFieldValue = (value: unknown): boolean =>
 
 /**
  * A parsed entry document's top-level record. Anything but a plain object throws, so a fill never
- * replaces an array or scalar root; YAML and frontmatter read an empty document as null.
+ * replaces an array or scalar root; YAML reads an empty document as null.
  */
 function entryRecord(parsed: unknown, emptyIsRecord: boolean): Record<string, unknown> {
   if (isPlainRecord(parsed)) return parsed

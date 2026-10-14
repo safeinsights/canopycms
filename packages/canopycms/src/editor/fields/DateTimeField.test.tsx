@@ -304,9 +304,9 @@ describe('DateTimeField', () => {
     expect(pickerButton().textContent).toBe('Pick a date and time')
   })
 
-  it('says submitting sets a stampOnPublish field while it is empty, and shows a set value', () => {
+  it("says a new entry's submit sets an empty stampOnPublish field, and shows a set value", () => {
     render(<Harness stampOnPublish />)
-    expect(pickerButton().textContent).toBe('Set automatically when submitted')
+    expect(pickerButton().textContent).toBe('Set automatically when a new entry is submitted')
     cleanup()
     render(<Harness stampOnPublish initial={STORED} />)
     expect(pickerButton().textContent).toBe(displayed(STORED))

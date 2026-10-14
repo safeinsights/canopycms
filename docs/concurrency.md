@@ -340,7 +340,8 @@ The worker takes the first two try-only, so it never waits on a writer; writers 
 content-write lock with a bounded wait and never take provisioning inside it. None is
 re-entrant: a nested content-write acquisition fails busy and a nested `withLock` hangs, so
 nothing holding the content-write lock may call `ContentStore.write`. Submit's `stampOnPublish`
-fill writes through `fillEmptyFieldWhileHoldingWriteLock`, which takes no lock.
+fill calls `fillEmptyFieldWhileHoldingWriteLock`, which takes no lock and throws unless called
+inside `withContentWriteLock` (tracked in AsyncLocalStorage).
 
 ## Residual staleness windows (accepted, bounded)
 
