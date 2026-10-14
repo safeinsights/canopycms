@@ -21,20 +21,24 @@ import {
 } from '../content-id-index'
 import { hasTraversalSequence } from '../paths'
 import { getErrorMessage, isNodeError } from '../utils/error'
+import { buildResolvedReference } from '../entry-schema'
 import { entryToMarkdown, frontmatterTitle, type ReferenceRendering } from './json-to-markdown'
 import {
   createReferenceRendering,
   createReferenceTargetResolver,
+  decideReferenceLinks,
   maskUnexportedTargets,
   resolveReferenceFields,
   type ReferenceTargetResolver,
 } from './references'
 import { resolveEntryLinksInText, type EntryLinkUrlResolver } from '../entry-link-resolver'
+import { computeEntryUrl } from '../utils/entry-url'
 import { DEFAULT_SEO_FIELD_NAMES, isNoindexEntry } from '../static/seo'
 import type {
   AIContentConfig,
   AIEntry,
   AIEntryMeta,
+  AIResolvedReference,
   AIManifest,
   AIManifestCollection,
   AIManifestEntry,
@@ -86,6 +90,7 @@ export interface GenerateResult {
 export async function generateAIContent(options: GenerateOptions): Promise<GenerateResult> {
   const { store, flatSchema, contentRoot, config, entryLinkUrl, generatedAt, buildId } = options
   assertValidNoindexConfig(config)
+  assertValidReferenceLink(config)
   const files = new Map<string, string>()
 
   const idIndex = await store.idIndex()
@@ -128,10 +133,44 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   for (const pending of allPending) {
     if (pending.contentId !== null) exported.set(pending.contentId, pending.filePath)
   }
-  const references = createReferenceRendering(idIndex, flatSchema, entryLinkUrl, {
-    mountPath: config?.mountPath ?? '/ai',
-    files: exported,
-  })
+  const pendingById = new Map<string, PendingEntry>()
+  for (const pending of allPending) {
+    if (pending.contentId !== null) pendingById.set(pending.contentId, pending)
+  }
+  // The target as `resolveReferenceTarget` would give it, built from this export's own read, so
+  // an entry outside the export set is never offered and a target cannot change mid-run
+  const subjectOf = (id: string) => {
+    const pending = pendingById.get(id)
+    if (!pending || !exported.has(id)) return undefined
+    const { slug } = pending.entry
+    const target = buildResolvedReference(structuredClone(pending.storedData), {
+      id,
+      slug,
+      collection: pending.collectionPath,
+      urlPath: computeEntryUrl(pending.collectionPath, slug, contentRoot),
+    }) as AIResolvedReference
+    return { target, body: pending.body }
+  }
+  const linkFor = config?.referenceLink
+    ? await decideReferenceLinks(config.referenceLink, allPending, subjectOf, entryLinkUrl)
+    : undefined
+  // A body `entry:` link takes the same page URL a reference to its target renders with
+  const bodyLinkUrl: EntryLinkUrlResolver | undefined = linkFor
+    ? (location) => {
+        const decided = linkFor(location.id)
+        if (typeof decided === 'string') return decided
+        return entryLinkUrl
+          ? entryLinkUrl(location)
+          : computeEntryUrl(location.collection, location.slug, contentRoot)
+      }
+    : entryLinkUrl
+  const references = createReferenceRendering(
+    idIndex,
+    flatSchema,
+    entryLinkUrl,
+    { mountPath: config?.mountPath ?? '/ai', files: exported },
+    linkFor,
+  )
   // An entry whose render throws is not in the export after all, so references and body links to
   // it are withheld like any other left-out target, and the entries that changed run their
   // transforms and render again. That can fail another entry, so this repeats until a round fails
@@ -145,11 +184,11 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
           pending.body,
           idIndex,
           contentRoot,
-          entryLinkUrl,
+          bodyLinkUrl,
           {
             isLinkable: (id) => {
               linked.add(id)
-              return exported.has(id)
+              return exported.has(id) && linkFor?.(id) !== false
             },
           },
         )
@@ -257,6 +296,8 @@ interface PendingEntry {
   entry: AIEntry
   /** The MD/MDX body as stored, before its `entry:` links are resolved against the export. */
   body?: string
+  /** The entry's data as stored, its references still ids, for `referenceLink` to judge. */
+  storedData: Record<string, unknown>
   /** The content ids its body's links were resolved against, as of its last resolution. */
   linkedIds: string[]
   contentId: string | null
@@ -331,6 +372,7 @@ async function collectEntries(
       })
       // AI content advertises an entry, so `noindex` leaves it out here as it does the sitemap.
       if (skipNoindex && isNoindexEntry(doc.data, config?.seo)) continue
+      const storedData = doc.data
       doc.data = await resolveReferenceFields(doc.data, entryTypeConfig.schema, resolveTarget)
 
       const aiEntry = docToAIEntry(doc, listEntry.slug, entryTypeName, entryTypeConfig, cleanPath)
@@ -343,6 +385,7 @@ async function collectEntries(
       pending.push({
         entry: aiEntry,
         body,
+        storedData,
         linkedIds: [],
         contentId: extractIdFromFilename(path.basename(listEntry.relativePath)),
         absolutePath: doc.absolutePath,
@@ -393,6 +436,19 @@ function emitCollection(node: CollectionNode, files: Map<string, string>): AIMan
     entryCount: rendered.length,
     entries: manifestEntries,
     subcollections: manifestSubcollections.length > 0 ? manifestSubcollections : undefined,
+  }
+}
+
+/**
+ * Refuse a `referenceLink` that is not a function, which would otherwise fail every call and
+ * withhold every link it governs, one warning per target.
+ */
+function assertValidReferenceLink(config: AIContentConfig | undefined): void {
+  const referenceLink: unknown = config?.referenceLink
+  if (referenceLink !== undefined && typeof referenceLink !== 'function') {
+    throw new Error(
+      `AI content config: referenceLink must be a function, got ${typeof referenceLink}`,
+    )
   }
 }
 

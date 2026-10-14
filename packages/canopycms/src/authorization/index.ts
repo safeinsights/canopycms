@@ -44,6 +44,7 @@ export {
   isAdmin,
   isReviewer,
   isPrivileged,
+  isLockedOutOfBranch,
 } from './helpers'
 
 export {

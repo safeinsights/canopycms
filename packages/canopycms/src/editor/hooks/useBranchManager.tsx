@@ -276,6 +276,7 @@ interface BranchSummary {
   access: {
     users: string[] | undefined
     groups: string[] | undefined
+    managerOrAdminAllowed: boolean | undefined
     withheldUsers: number | undefined
     withheldGroups: number | undefined
   }
@@ -474,6 +475,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         access: {
           users: b.access.allowedUsers,
           groups: b.access.allowedGroups,
+          managerOrAdminAllowed: b.access.managerOrAdminAllowed,
           withheldUsers: b.withheldAccess?.users,
           withheldGroups: b.withheldAccess?.groups,
         },

@@ -1682,6 +1682,8 @@ All content is included by default (an opt-out exclusion model); you can exclude
 
 A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one the export leaves out as `(unavailable entry <id>)`, with no title. An inline `entry:` link to a left-out entry renders as its plain text. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
 
+`referenceLink` decides where links to an exported entry point, for references and body `entry:` links alike. It receives the target and `{ body, defaultUrl }`; `body` is the target's stored MD/MDX body, and none of it reaches entries that link to it. Return a URL, `false` when the target has no page (its title renders as plain text, with no page or markdown-version link), or `undefined` for the default. It runs once per target per run, may be async, and never sees a missing or left-out target. A throw or any other return counts as `false`. A `fieldTransforms` entry that renders a reference field bypasses it.
+
 ### Option 1: Route Handler (Runtime)
 
 Serve AI content dynamically from a Next.js catch-all route, generated on first request and cached (regenerated every request in dev mode). **`npx canopycms init` sets this up** unless you pass `--no-ai`, generating `{appDir}/ai/config.ts` and `{appDir}/ai/[...path]/route.ts`. To do it manually:
@@ -1768,6 +1770,10 @@ const aiConfig = defineAIContentConfig({
       return renderProfileSchema(entry.data, JSON.parse(raw)) // your own renderer
     },
   },
+
+  // A person has a page only when their bio (the body) has prose
+  referenceLink: (target, { body }) =>
+    target.collection === 'content/people' && !body?.trim() ? false : undefined,
 })
 ```
 

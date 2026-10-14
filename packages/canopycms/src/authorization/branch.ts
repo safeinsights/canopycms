@@ -1,6 +1,6 @@
 import type { BranchContext } from '../types'
 import type { CanopyConfig, DefaultBranchAccess } from '../config'
-import { isAdmin, isReviewer } from './helpers'
+import { isAdmin, isLockedOutOfBranch, isReviewer } from './helpers'
 import { getBranchProtection } from './protected-branch'
 import type { CanopyUser } from '../user'
 import type { BranchAccessResult } from './types'
@@ -55,22 +55,20 @@ export function checkBranchAccessWithDefault(
   }
 
   const access = context.branch.access
-  const hasUserConstraint = !!access.allowedUsers?.length
-  const hasGroupConstraint = !!access.allowedGroups?.length
-  const managerOrAdminAllowed = access.managerOrAdminAllowed ?? false
-
-  if (!hasUserConstraint && !hasGroupConstraint && managerOrAdminAllowed) {
+  if (isLockedOutOfBranch(access, user.groups)) {
     return { allowed: false, reason: 'denied_by_acl' }
   }
 
+  const hasUserConstraint = !!access.allowedUsers?.length
+  const hasGroupConstraint = !!access.allowedGroups?.length
+
   if (!hasUserConstraint && !hasGroupConstraint) {
-    // The branch creator owns their own un-ACL'd branch, matching the three
-    // places that already grant on creator-ownership independently of branch
-    // access (listBranchesHandler, canDeleteBranch, canModifyBranchAccess):
-    // without it, under 'deny' a creator could delete their branch and rewrite
-    // its ACL but not read a file on it. Scoped to the no-ACL case on purpose --
-    // an EXPLICIT allowlist omitting the creator still denies them, which is how
-    // an admin locks down a branch someone else created.
+    // The branch creator owns their own un-ACL'd branch, as listBranchesHandler,
+    // canDeleteBranch and canModifyBranchAccess also grant: without it, under
+    // 'deny' a creator could delete their branch and rewrite its ACL but not
+    // read a file on it. Scoped to the no-ACL case on purpose -- an EXPLICIT
+    // allowlist omitting the creator still denies them, which is how an admin
+    // locks down a branch someone else created.
     if (context.branch.createdBy === user.userId) {
       return { allowed: true, reason: 'creator' }
     }

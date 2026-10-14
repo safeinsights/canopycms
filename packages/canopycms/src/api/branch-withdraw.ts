@@ -33,8 +33,7 @@ const withdrawBranchHandler = async (
     return {
       ok: false,
       status: 403,
-      error:
-        'Only the branch creator or users with explicit branch access can withdraw this branch',
+      error: 'You do not have permission to withdraw this branch from review.',
     }
   }
 

@@ -69,7 +69,7 @@ const submitBranchForMergeHandler = async (
     return {
       ok: false,
       status: 403,
-      error: 'Only the branch creator or users with explicit branch access can submit this branch',
+      error: 'You do not have permission to submit this branch for review.',
     }
   }
 

@@ -13,12 +13,19 @@ import { getDefaultEntryType } from '../content-store'
 import { extractEntryTypeFromFilename, type ContentIdIndex } from '../content-id-index'
 import type { EntryTypeConfig, FieldConfig, FlatSchemaItem, ReferenceFieldConfig } from '../config'
 import { RESTRICTED_REFERENCE_MARKER } from '../entry-schema'
-import type { EntryLinkUrlResolver } from '../entry-link-resolver'
+import { extractEntryLinkIds, type EntryLinkUrlResolver } from '../entry-link-resolver'
+import { getErrorMessage } from '../utils/error'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { resolveEntryTitle } from '../utils/title-field'
 import { traverseFields } from '../validation/field-traversal'
 import type { ReferenceRendering } from './json-to-markdown'
-import type { AIEntry, AIExcludedReference, AIReferenceValue } from './types'
+import type {
+  AIEntry,
+  AIExcludedReference,
+  AIReferenceLinkFn,
+  AIResolvedReference,
+  AIReferenceValue,
+} from './types'
 
 export type ReferenceTargetResolver = (id: string) => Promise<AIReferenceValue>
 
@@ -122,9 +129,115 @@ export function maskUnexportedTargets(
 }
 
 /**
+ * The page URL a resolved target links by default: `entryLinkUrl`'s, else its `urlPath`, the rule
+ * body `entry:` links use.
+ */
+function defaultPageUrl(
+  target: Record<string, unknown>,
+  entryLinkUrl: EntryLinkUrlResolver | undefined,
+): string | undefined {
+  const { id, slug, collection, urlPath } = target
+  if (
+    entryLinkUrl &&
+    typeof id === 'string' &&
+    typeof slug === 'string' &&
+    typeof collection === 'string'
+  ) {
+    return entryLinkUrl({ collection, slug, id })
+  }
+  return typeof urlPath === 'string' && urlPath ? urlPath : undefined
+}
+
+/** A target's page link as `referenceLink` decided it: a URL, `false` for none, or the default. */
+export type ReferenceLinkLookup = (id: string) => string | false | undefined
+
+/** What `referenceLink` is told about one exported target. */
+export interface ReferenceLinkSubject {
+  target: AIResolvedReference
+  body: string | undefined
+}
+
+/**
+ * Percent-encode every character that would end a link destination, an autolink or an HTML
+ * attribute value early (whitespace, controls, quotes, angle brackets and parentheses) or escape
+ * the character after it (a backslash). Body links splice the URL into all three as it is.
+ */
+function encodeLinkUrl(url: string): string {
+  let out = ''
+  for (const char of url) {
+    const code = char.charCodeAt(0)
+    out +=
+      code <= 0x20 || code === 0x7f || `"'<>()\\`.includes(char)
+        ? `%${code.toString(16).toUpperCase().padStart(2, '0')}`
+        : char
+  }
+  return out
+}
+
+/**
+ * Ask `referenceLink` once for each exported target the export's entries reference or link from
+ * their bodies, in entry order, and return the answers, each URL encoded by
+ * {@link encodeLinkUrl}. `subjectOf` builds a target from the export's own read of it, so the
+ * callback never sees a target outside the export set, and the body it is shown reaches no linking
+ * entry's output. A throw
+ * or a return other than a non-empty string, `false` or `undefined` is logged and becomes
+ * `false`, so a broken callback withholds a link rather than advertising a page the site may not
+ * have. A target whose `entryLinkUrl` throws is left undecided, unasked, so every link to it fails
+ * and is reported as it is without the hook.
+ */
+export async function decideReferenceLinks(
+  referenceLink: AIReferenceLinkFn,
+  entries: ReadonlyArray<{ entry: AIEntry; body?: string }>,
+  subjectOf: (id: string) => ReferenceLinkSubject | undefined,
+  entryLinkUrl: EntryLinkUrlResolver | undefined,
+): Promise<ReferenceLinkLookup> {
+  const ids = new Set<string>()
+  for (const { entry, body } of entries) {
+    for (const { record, field } of referenceSlots(entry.fields, entry.data)) {
+      const value = record[field.name]
+      for (const target of Array.isArray(value) ? value : [value]) {
+        if (isShownTarget(target)) ids.add(target.id)
+      }
+    }
+    for (const { id } of body ? extractEntryLinkIds(body) : []) ids.add(id)
+  }
+
+  const decisions = new Map<string, string | false | undefined>()
+  for (const id of ids) {
+    const subject = subjectOf(id)
+    if (!subject) continue
+    let defaultUrl: string | undefined
+    try {
+      defaultUrl = defaultPageUrl(subject.target, entryLinkUrl)
+    } catch {
+      continue
+    }
+    let decision: unknown
+    try {
+      decision = await referenceLink(subject.target, { body: subject.body, defaultUrl })
+    } catch (err) {
+      console.warn(`AI content: referenceLink threw for entry ${id}:`, getErrorMessage(err))
+      decision = false
+    }
+    if (typeof decision === 'string' && decision.trim()) {
+      decisions.set(id, encodeLinkUrl(decision.trim()))
+    } else if (decision === false) {
+      decisions.set(id, false)
+    } else if (decision !== undefined) {
+      console.warn(
+        `AI content: referenceLink returned ${typeof decision === 'string' ? 'an empty string' : typeof decision} for entry ${id}; expected a URL, false or undefined`,
+      )
+      decisions.set(id, false)
+    }
+  }
+  return (id) => decisions.get(id)
+}
+
+/**
  * Title and URLs for a resolved target. The title is `resolveEntryTitle` against the target's own
- * entry type, the chain the entries API labels an entry with. The page URL follows the rule body
- * `entry:` links use, so both kinds of link in one document agree. The markdown copy is the file
+ * entry type, the chain the entries API labels an entry with. The page URL is `linkFor`'s
+ * decision, else {@link defaultPageUrl}; body `entry:` links follow both, so the two kinds of link
+ * in one document agree. The markdown copy is the file
  * this export wrote for the target (`files`: content id to output path), under `mountPath`.
  */
 export function createReferenceRendering(
@@ -132,6 +245,7 @@ export function createReferenceRendering(
   flatSchema: readonly FlatSchemaItem[],
   entryLinkUrl: EntryLinkUrlResolver | undefined,
   markdownCopies: { mountPath: string; files: ReadonlyMap<string, string> },
+  linkFor?: ReferenceLinkLookup,
 ): ReferenceRendering {
   const mount = `/${markdownCopies.mountPath.replace(/^\/+|\/+$/g, '')}`.replace(/^\/$/, '')
   const entryTypeOf = (id: unknown): { schema?: readonly FieldConfig[]; label?: string } => {
@@ -158,16 +272,8 @@ export function createReferenceRendering(
       })
     },
     url: (target) => {
-      const { id, slug, collection, urlPath } = target
-      if (
-        entryLinkUrl &&
-        typeof id === 'string' &&
-        typeof slug === 'string' &&
-        typeof collection === 'string'
-      ) {
-        return entryLinkUrl({ collection, slug, id })
-      }
-      return typeof urlPath === 'string' && urlPath ? urlPath : undefined
+      const decided = typeof target.id === 'string' ? linkFor?.(target.id) : undefined
+      return decided ?? defaultPageUrl(target, entryLinkUrl)
     },
     markdownUrl: (target) => {
       const file = typeof target.id === 'string' ? markdownCopies.files.get(target.id) : undefined
