@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-08. An adopter's site name appears in two dozen backlog files, and its live docs hostname in four; the account ids and stack names are already gone. Decide whether the site name counts as private, then scrub to role wording; a name-list guard would need its list kept outside the repo. JP's call
+  RESOLVED 2026-10-14, chore/future-tasks-to-issues. Closed under the 2026-08-14 ruling not to retro-scrub old records: this frozen archive keeps what it says. The open backlog was scrubbed to role wording as it moved to GitHub issues, where the filing rule and `pnpm tasks:screen` keep adopter and infrastructure names out
 ---
 # The public repo names an adopter's site and its live docs hostname
 
