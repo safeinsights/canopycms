@@ -394,20 +394,24 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(meta?.conflictFiles).toBeUndefined()
     })
 
-    it('clears stale conflictFiles when branch catches up without new conflicts', async () => {
+    it('keeps the conflict record and clears a stale rebaseFailure when the branch is caught up', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature')
-      // Write stale conflict state
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {
         conflictStatus: 'conflicts-detected',
-        conflictFiles: ['staleContentId123'],
+        conflictFiles: ['EARLIERabcde'],
+        rebaseFailure: {
+          message: 'old',
+          firstAt: '2026-01-01T00:00:00Z',
+          lastAt: '2026-01-01T00:00:00Z',
+        },
       })
 
-      const worker = makeWorker(tmpDir)
-      await runRebase(worker)
+      await runRebase(makeWorker(tmpDir))
 
       const meta = await readMeta(setup.branchPath)
-      expect(meta?.conflictStatus).toBe('clean')
-      expect(meta?.conflictFiles).toEqual([])
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.conflictFiles).toEqual(['EARLIERabcde'])
+      expect(meta?.rebaseFailure).toBeUndefined()
     })
   })
 
@@ -690,6 +694,41 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const meta = await readMeta(setup.branchPath)
       expect(meta?.conflictStatus).toBe('conflicts-detected')
       expect(meta?.conflictFiles).toContain(ENTRY_ID)
+    })
+
+    it("adds a rebase's conflicts to the ones already recorded", async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
+      })
+      await setup.commitToBranch({ [ENTRY_FILE]: '{"title":"branch version"}' }, 'branch')
+      await setup.pushToRemote({ [ENTRY_FILE]: '{"title":"main version"}' }, 'main')
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        conflictStatus: 'conflicts-detected',
+        conflictFiles: ['EARLIERabcde'],
+      })
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.conflictFiles).toEqual(['EARLIERabcde', ENTRY_ID])
+    })
+
+    it('keeps an earlier conflict through a later clean rebase', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        conflictStatus: 'conflicts-detected',
+        conflictFiles: ['EARLIERabcde'],
+      })
+
+      await runRebase(makeWorker(tmpDir))
+
+      expect((await setup.branchGit.status()).behind).toBe(0)
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.conflictFiles).toEqual(['EARLIERabcde'])
     })
 
     it('excludes non-entry files from conflictFiles (conflictStatus stays clean)', async () => {

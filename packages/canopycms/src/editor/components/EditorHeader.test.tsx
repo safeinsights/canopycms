@@ -5,6 +5,7 @@ import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
 import { CanopyCMSProvider } from '../theme'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { EditorEntry } from '../Editor'
+import { RESERVED_GROUPS } from '../../authorization/helpers'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
   <CanopyCMSProvider>{children}</CanopyCMSProvider>
@@ -177,6 +178,32 @@ describe('EditorHeader - review lock', () => {
     expect(banner.textContent).toMatch(/could not be loaded/i)
     expect(banner.textContent).not.toMatch(/is editing — content is read-only/)
   })
+})
+
+describe('EditorHeader - locked-down branch', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  const lockedProps = {
+    branchStatus: 'submitted',
+    branchIsProtected: false,
+    branchCreatedBy: 'maker',
+    branchAccess: { allowedUsers: ['maker', 'invited'], managerOrAdminAllowed: true },
+  } satisfies Partial<EditorHeaderProps>
+
+  it.each(['maker', 'invited'])('blocks Withdraw for %s, whom only the ACL admits', (userId) => {
+    renderHeader({ ...lockedProps, userContext: { userId, groups: [] } })
+    expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it.each([RESERVED_GROUPS.ADMINS, RESERVED_GROUPS.REVIEWERS])(
+    'offers Withdraw to a member of %s',
+    (group) => {
+      renderHeader({ ...lockedProps, userContext: { userId: 'boss', groups: [group] } })
+      expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBeNull()
+    },
+  )
 })
 
 describe('EditorHeader - branch menu file count', () => {

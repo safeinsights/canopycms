@@ -131,6 +131,7 @@ const updateBranchAccessBodySchema = z.object({
 import {
   isPrivileged,
   isAdmin,
+  isLockedOutOfBranch,
   loadPathPermissions,
   getBranchProtection,
   getBranchWriteProtection,
@@ -583,9 +584,13 @@ export const listBranchesHandler = async (
     return branchListResponse(ctx, req, allBranches, defaultBranch)
   }
 
-  // Regular users only see branches they created or have explicit access to
+  // Regular users see the base branch and the branches they created or were given access to
   const visibleBranches = allBranches.filter((context) => {
     const branch = context.branch
+    // Ahead of every grant below, as in checkBranchAccessWithDefault.
+    if (isLockedOutOfBranch(branch.access, req.user.groups)) {
+      return false
+    }
     // The protected base branch is where every user lands by default; always
     // show it (read-only) so the editor can render its protected state.
     if (getBranchProtection(ctx.services.config, branch.name, branch.baseBranch).isProtected) {

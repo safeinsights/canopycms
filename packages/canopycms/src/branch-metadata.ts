@@ -370,6 +370,9 @@ export function buildMergedBranchUpdate(
     status: 'archived',
     pullRequestState: 'merged',
     mergedAt: now.toISOString(),
+    // The merge settled every conflict the record named.
+    conflictStatus: 'clean',
+    conflictFiles: [],
   }
 }
 

@@ -183,7 +183,7 @@ and [Auth Caching](ARCHITECTURE.md#auth-caching-cachingauthplugin).
 - `branch.ts` — branch-level access: `checkBranchAccessWithDefault`, `createCheckBranchAccess`, `canPerformWorkflowAction`
 - `path.ts` — path-level permissions: `checkPathAccess`, `resolveDefaultPathAccess`
 - `protected-branch.ts` — `getBranchProtection`, the single source of truth for protected-base-branch policy
-- `helpers.ts` — `isAdmin`, `isReviewer`, `isPrivileged`
+- `helpers.ts` — `isAdmin`, `isReviewer`, `isPrivileged`, and `isLockedOutOfBranch` (the browser-safe branch-lockdown check)
 - `types.ts` — `BranchAccessResult`, `ContentAccessResult`, `PermissionPath`
 - `validation.ts` — permission-path validation against traversal
 - `settings-file-store.ts` — `mutateSettingsJsonFile`, the shared cross-host layered-lock mutation helper

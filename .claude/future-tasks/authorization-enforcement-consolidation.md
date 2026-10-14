@@ -25,8 +25,10 @@ A shared matcher has to be importable from the browser bundle, so it cannot reac
 built-in or `pnpm lint:bundle` fails. Put it somewhere dependency-free (the `paths/branch-name.ts`
 precedent) or let the client keep its own copy behind a shared test fixture.
 
-They already disagree: the branch-listing filter ignores `managerOrAdminAllowed`, so a branch can
-be hidden from listing while its access check applies different semantics. The fix is one shared
+They already disagree: the branch-listing filter ignores `defaultBranchAccess: 'allow'`, so a
+no-ACL branch everyone may open is listed only to its creator, admins and reviewers. The `managerOrAdminAllowed`
+lockdown already has one shared, browser-safe owner, `isLockedOutOfBranch`
+(`authorization/helpers.ts`), and is the model for the matcher. The fix is one shared
 target-matcher so listing and enforcement cannot drift apart.
 
 ## Slice 3: Clerk `authorizedParties` stays optional in prod
@@ -39,7 +41,7 @@ deployment can run without the check that binds tokens to expected origins.
 
 - One shared target-matcher, browser-safe, used by all five sites (or four plus a
   shared-fixture-tested client copy).
-- A test proving listing and access agree on a `managerOrAdminAllowed` branch.
+- A test proving listing and access agree on a no-ACL branch under `defaultBranchAccess: 'allow'`.
 - Clerk config requires `authorizedParties` in prod mode.
 
 ## Related

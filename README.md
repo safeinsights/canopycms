@@ -1674,6 +1674,8 @@ All content is included by default (an opt-out exclusion model); you can exclude
 
 A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one the export leaves out as `(unavailable entry <id>)`, with no title. An inline `entry:` link to a left-out entry renders as its plain text. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
 
+`referenceLink` decides where links to an exported entry point, for references and body `entry:` links alike. It receives the target and `{ body, defaultUrl }`; `body` is the target's stored MD/MDX body, and none of it reaches entries that link to it. Return a URL, `false` when the target has no page (its title renders as plain text, with no page or markdown-version link), or `undefined` for the default. It runs once per target per run, may be async, and never sees a missing or left-out target. A throw or any other return counts as `false`. A `fieldTransforms` entry that renders a reference field bypasses it.
+
 ### Option 1: Route Handler (Runtime)
 
 Serve AI content dynamically from a Next.js catch-all route, generated on first request and cached (regenerated every request in dev mode). **`npx canopycms init` sets this up** unless you pass `--no-ai`, generating `{appDir}/ai/config.ts` and `{appDir}/ai/[...path]/route.ts`. To do it manually:
@@ -1760,6 +1762,10 @@ const aiConfig = defineAIContentConfig({
       return renderProfileSchema(entry.data, JSON.parse(raw)) // your own renderer
     },
   },
+
+  // A person has a page only when their bio (the body) has prose
+  referenceLink: (target, { body }) =>
+    target.collection === 'content/people' && !body?.trim() ? false : undefined,
 })
 ```
 
@@ -1853,6 +1859,12 @@ When your changes are ready, click "Submit for Review" in the header: that commi
 **A submitted branch is locked for content editing.** The editor disables Save and other write actions and shows a banner explaining why — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw" in the branch selector or Branches panel, which converts the PR back to a draft and returns the branch to `editing` status. A reviewer's "Request changes" returns it to `editing` too, after a confirmation, leaving the PR alone.
 
 The base branch (the PR target, usually `main`) can never be submitted — a branch cannot be reviewed against itself — so the "Submit for Review" button is hidden whenever you are viewing it, in both dev and production. In production it is also read-only in the editor: you can browse it, but changes require creating a branch first (the editor shows a banner with a "Create a branch" button). In dev mode it stays fully editable, since local development typically starts there, but you still need to move your work to a branch before it can be submitted.
+
+### Drafts and Unpublishing
+
+A draft is a branch: content goes live only when its branch merges, so unfinished content stays on its branch however long that takes. A branch with saved edits does not follow the base branch until it is submitted; if GitHub then reports a conflict on its PR, click "Withdraw", wait about five minutes for the CMS to update the branch, and submit again.
+
+**To unpublish** an entry, delete it on a branch and publish that branch. To bring it back, a developer runs `git revert` on a branch created after the deletion merged. Branches created with plain git do not appear in the editor.
 
 ### Using Comments
 

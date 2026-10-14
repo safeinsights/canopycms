@@ -32,6 +32,8 @@ export type {
   AIEntry,
   AIEntryMeta,
   AIExcludedReference,
+  AIReferenceLinkContext,
+  AIReferenceLinkFn,
   AIReferenceValue,
   AIResolvedReference,
   AIUnavailableReference,

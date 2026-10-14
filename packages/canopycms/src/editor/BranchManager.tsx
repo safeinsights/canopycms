@@ -26,7 +26,7 @@ import { BranchComments } from './comments/BranchComments'
 import { UserBadge } from './components/UserBadge'
 import { BranchAccessList } from './components/BranchAccessList'
 // Import directly from helpers to avoid server-only code in authorization barrel
-import { isAdmin, isReviewer } from '../authorization/helpers'
+import { isAdmin, isLockedOutOfBranch, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
@@ -44,6 +44,7 @@ export interface BranchSummary {
   access?: {
     users?: string[]
     groups?: string[]
+    managerOrAdminAllowed?: boolean
     /** Entries the server withheld from this viewer; see `BranchListItem.withheldAccess`. */
     withheldUsers?: number
     withheldGroups?: number
@@ -81,7 +82,8 @@ export interface UserContext {
 /**
  * What the current user can do to a branch, by the backend's hybrid model. Workflow access
  * (`hasWorkflowAccess`) goes to the creator, the users and groups on the branch's access list,
- * anyone on a system branch other than the protected base, and reviewers and admins. Submit also
+ * anyone on a system branch other than the protected base, and reviewers and admins; a
+ * `managerOrAdminAllowed` lockdown leaves only reviewers and admins. Submit also
  * needs the server's `submitBlocked` to be false; Withdraw needs the branch submitted or approved.
  * @internal Exported for tests.
  */
@@ -120,7 +122,8 @@ export const getBranchPermissions = (
     false
 
   const canPerformWorkflowActions =
-    userIsCreator || userInACL || isSystemBranch || userIsAdmin || userIsReviewer
+    !isLockedOutOfBranch(branch.access, user.groups) &&
+    (userIsCreator || userInACL || isSystemBranch || userIsAdmin || userIsReviewer)
 
   // Submit: can perform workflow actions AND the server says submit isn't
   // blocked. `submitBlocked` is the server's own compound answer -- status
