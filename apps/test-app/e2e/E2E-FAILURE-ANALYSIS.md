@@ -345,7 +345,7 @@ false` because all tests share one workspace + server). CI runners are slower
     shards by duration, all land on it and buy nothing further. Validate now
     runs as parallel jobs and is no longer the floor; a fifth shard still does
     not pay, for the reason in
-    `.claude/future-tasks/e2e-build-once-share-artifact.md` ("Related").
+    safeinsights/canopycms#662 ("Related").
   - **CONFIRMED at 4 shards (run 30590540192; re-verified via `gh` 2026-07-31
     — the run id originally recorded here, 30590565843, resolves to nothing on
     GitHub):** shards 2.57 / 2.58 / 2.62 / 3.05m, merge 0.57m, validate 3.88m.
@@ -358,7 +358,7 @@ false` because all tests share one workspace + server). CI runners are slower
     (a new spec file assigned to no shard never runs, and nothing fails).
   - The real lever is the ~70s `next build` paid once per shard — more shards
     make that worse in aggregate. See
-    `.claude/future-tasks/e2e-build-once-share-artifact.md`.
+    safeinsights/canopycms#662.
 
 ## 8. Related harness notes (lower priority)
 

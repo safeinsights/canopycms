@@ -3,7 +3,7 @@
 ## Behavioral Rules (always apply)
 
 - Commit and push without asking when the task clearly implies landing changes (PR fix loops, "fix and reply" requests, explicit feature work) — non-main branches only, and always report what was committed. Ask first before anything touching main, force-pushes, or history rewrites. When work ends uncommitted, provide a commit message.
-- Any out-of-scope issue flagged mid-session (background-task chip, review aside, agent finding, deferred fix) must be captured as a `.claude/future-tasks/` file, with `priority` and `summary` frontmatter, before the session ends — session suggestions are ephemeral; the files are the durable backlog. `index.md` is only the hand-ranked list, so don't add a row there for a new task. When a task is completed, `git mv` its file into `.claude/future-tasks/resolved/`, rewrite its summary as RESOLVED, and run `pnpm lint:tasks --fix` for the inbound links.
+- Any out-of-scope issue flagged mid-session (background-task chip, review aside, agent finding, deferred fix) must be filed as a GitHub issue before the session ends — session suggestions are ephemeral; the issues are the durable backlog. Write the body to a file, run `pnpm tasks:screen <file>`, then `gh issue create --body-file <file>` with `--type Bug|Feature|Task`, a `P0`–`P3` label and, when they apply, `adopters:*`, `needs-decision` and `security` labels. **Issues are public:** refer to people by role ("the maintainer"), to adopters by role ("the marketing site", "the KB", "an adopter"), and never name other repositories, hosts, accounts or environments. Resolve an issue with `Closes #N` in the PR body. Read the backlog with `pnpm tasks:sync` (offline copy in `.claude/backlog-cache/`).
 - Propose next work at the end of each iteration.
 - Use `pnpm`/`pnpm exec`, NOT npm or bun.
 - Use extensionless local imports.
@@ -40,19 +40,19 @@ Always do the following **before** proposing next work or providing a commit mes
 
 Only `AGENTS.md` is loaded automatically (below). Everything else you have to go and get:
 
-| Looking for                                                | Read                                                                                        |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| What a module does, and where its invariants live          | that module's own `AGENTS.md` — see the table in [AGENTS.md](AGENTS.md#code-organization)   |
-| The precise rule governing a line of code                  | **the code comment at that line.** It is authoritative; the docs are the map to it          |
-| Adopter-facing API, config, integration steps              | [README.md](README.md)                                                                      |
-| System concepts, package boundaries, design decisions      | [ARCHITECTURE.md](ARCHITECTURE.md)                                                          |
-| Contributor patterns, test utilities, workflows            | [DEVELOPING.md](DEVELOPING.md)                                                              |
-| Which file or symbol does X                                | [CODEBASE_GUIDE.md](CODEBASE_GUIDE.md)                                                      |
-| Editor UI copy, dialogs, states, keyboard, accessibility   | [docs/ux-guidelines.md](docs/ux-guidelines.md) — **required reading before editor UI work** |
-| Locks, caches, anything read-modify-write on the workspace | [docs/concurrency.md](docs/concurrency.md) — **required reading before you add one**        |
-| What to work on next, and known open issues                | [.claude/future-tasks/index.md](.claude/future-tasks/index.md)                              |
-| Deploying to AWS                                           | [docs/deploying-to-aws.md](docs/deploying-to-aws.md)                                        |
-| Findings from a past whole-codebase review                 | `docs/reviews/<YYYY-MM>.md` — dated snapshots, may cite since-moved files                   |
+| Looking for                                                | Read                                                                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| What a module does, and where its invariants live          | that module's own `AGENTS.md` — see the table in [AGENTS.md](AGENTS.md#code-organization)              |
+| The precise rule governing a line of code                  | **the code comment at that line.** It is authoritative; the docs are the map to it                     |
+| Adopter-facing API, config, integration steps              | [README.md](README.md)                                                                                 |
+| System concepts, package boundaries, design decisions      | [ARCHITECTURE.md](ARCHITECTURE.md)                                                                     |
+| Contributor patterns, test utilities, workflows            | [DEVELOPING.md](DEVELOPING.md)                                                                         |
+| Which file or symbol does X                                | [CODEBASE_GUIDE.md](CODEBASE_GUIDE.md)                                                                 |
+| Editor UI copy, dialogs, states, keyboard, accessibility   | [docs/ux-guidelines.md](docs/ux-guidelines.md) — **required reading before editor UI work**            |
+| Locks, caches, anything read-modify-write on the workspace | [docs/concurrency.md](docs/concurrency.md) — **required reading before you add one**                   |
+| What to work on next, and known open issues                | the [backlog Project](https://github.com/orgs/safeinsights/projects/5)'s Do next, or `pnpm tasks:sync` |
+| Deploying to AWS                                           | [docs/deploying-to-aws.md](docs/deploying-to-aws.md)                                                   |
+| Findings from a past whole-codebase review                 | `docs/reviews/<YYYY-MM>.md` — dated snapshots, may cite since-moved files                              |
 
 ## Project Context
 

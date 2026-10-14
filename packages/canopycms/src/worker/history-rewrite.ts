@@ -97,7 +97,7 @@ export async function markHistoryRewritten(
  * it on GitHub" diagnosis that is false -- we did.
  *
  * Tracked, with the concurrent-clear race that can drop a marker mid-arming,
- * in .claude/future-tasks/worker-history-rewrite-marker-races.md.
+ * in safeinsights/canopycms#902.
  */
 export async function clearHistoryRewrittenMarker(
   ctx: Pick<HistoryRewriteContext, 'contentBranchesPath'>,

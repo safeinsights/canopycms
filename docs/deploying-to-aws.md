@@ -72,7 +72,7 @@ export default withCanopy({
 - `npm run build` → static export for S3 (public site)
 - `CANOPY_BUILD=cms npm run build` → standalone server for Lambda (CMS)
 
-**sharp in the standalone image.** For the CMS build, `withCanopy()` also adds sharp's libvips shared library to Next's file tracing. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). An image built without it fails to load sharp at runtime with `ERR_DLOPEN_FAILED`. The include fixes Turbopack builds, Next 16's default. It does not fix a webpack build (Next 13 to 15, or `next build --webpack`): on Next 15.5.21 with pnpm, Next bundles sharp's JavaScript into a server chunk, so image transforms fail with or without the include. Other Next versions, Next 16's `--webpack` and npm installs have not been checked ([webpack-standalone-sharp-bundled.md](../.claude/future-tasks/webpack-standalone-sharp-bundled.md)).
+**sharp in the standalone image.** For the CMS build, `withCanopy()` also adds sharp's libvips shared library to Next's file tracing. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). An image built without it fails to load sharp at runtime with `ERR_DLOPEN_FAILED`. The include fixes Turbopack builds, Next 16's default. It does not fix a webpack build (Next 13 to 15, or `next build --webpack`): on Next 15.5.21 with pnpm, Next bundles sharp's JavaScript into a server chunk, so image transforms fail with or without the include. Other Next versions, Next 16's `--webpack` and npm installs have not been checked (safeinsights/canopycms#891).
 
 If you don't use `withCanopy()`, or your standalone build prints `CanopyCMS: could not add sharp's libvips…`, add the directory yourself. Paths are relative to the Next.js project directory. With pnpm:
 
@@ -1355,7 +1355,7 @@ commented opt-in, and adopted, it throws on every request it matches unless it c
 resolve a secret key — `jwtKey` does not satisfy that check. So the posture above holds for a
 deployment without that middleware, and one that keeps it needs `CLERK_SECRET_KEY` in the
 Lambda's environment, or a fetch of it at run time (see
-`.claude/future-tasks/deploy-test-lambda-plaintext-clerk-secret.md`). **A middleware you keep
+safeinsights/canopycms#650). **A middleware you keep
 must also be passed `jwtKey` explicitly**: it never reads `CLERK_JWT_KEY` from the
 environment, and without the prop the internet-less Lambda hangs on sign-in fetching JWKS.
 What dropping the middleware gives up is under [Dual Build Support](#dual-build-support); the
@@ -1385,6 +1385,14 @@ or close any pull request by number, which run your `push` and `pull_request` wo
 - never check out a pull request's head in `pull_request_target`;
 - use a fine-grained token or an App **without** the workflows permission, which is what stops a
   push from adding or changing a workflow file.
+
+**Check that the protection holds against the credential itself.** Each branch above, and any
+branch a cutover will make the base branch, needs a ruleset or branch protection requiring
+a pull request and blocking force pushes and deletion. A classic token of a repository
+admin bypasses classic branch protection unless "Do not allow bypassing the above settings" is on;
+an App installation token is bound by rulesets unless the App is a bypass actor. Confirm it with
+the credential on a throwaway branch protected the same way: a direct push and a force push
+must both be rejected.
 
 The worker's host, system git config and image stay trusted.
 
@@ -1440,7 +1448,7 @@ This has one consequence adopters don't need to think about, but that's worth kn
 
 CanopyCMS's generated API client (`packages/canopycms/src/api/client.ts`, via the shared `computeContentSha256Hex` helper in `packages/canopycms/src/api/request-body-hash.ts`) computes and attaches this header automatically for every JSON request body, using WebCrypto (`crypto.subtle.digest`). GET/DELETE requests without a body are unaffected. The header is a no-op on non-AWS deployments (it's just an extra header nothing enforces), so this doesn't need to be conditionally enabled per environment.
 
-**Next.js Server Actions 403 here.** Their POSTs carry a body without that header, so don't rely on Server Actions in the CMS build (`.claude/future-tasks/oac-unhashed-body-requests.md`). `@clerk/nextjs`'s provider runs one before every `setActive`, and when it fails, sign-in hangs. The editor skips it; `router.refresh()`, which Clerk runs next, still clears Next's router cache. If your CMS build renders Clerk components outside the editor, mount `useSkipClerkSetActiveAction()` as the [Clerk package README](../packages/canopycms-auth-clerk/README.md#clerk-components-on-your-own-pages) shows. This is verified from source, not yet observed live.
+**Next.js Server Actions 403 here.** Their POSTs carry a body without that header, so don't rely on Server Actions in the CMS build (safeinsights/canopycms#759). `@clerk/nextjs`'s provider runs one before every `setActive`, and when it fails, sign-in hangs. The editor skips it; `router.refresh()`, which Clerk runs next, still clears Next's router cache. If your CMS build renders Clerk components outside the editor, mount `useSkipClerkSetActiveAction()` as the [Clerk package README](../packages/canopycms-auth-clerk/README.md#clerk-components-on-your-own-pages) shows. This is verified from source, not yet observed live.
 
 **`FormData` bodies can't be hashed this way**, because the multipart boundary is generated at send time. The one CanopyCMS request that sends one, the proxied upload (`POST /assets/upload`), serves a local asset store. With the S3 store the editor uploads by presigned POST to an unsigned S3 origin, never the Function URL. Send any new body as JSON, or as raw bytes hashed with `computeContentSha256HexFromBytes`, never as `FormData`.
 

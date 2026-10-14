@@ -395,7 +395,7 @@ export async function listEntries<T = Record<string, unknown>>(
       // One deliberate copy of the rule remains: `content-tree.ts`'s `defaultBuildPath`,
       // exported for adopters to extend and also handling the collection case
       // `computeEntryUrl` does not model. Folding it in is tracked in
-      // `.claude/future-tasks/default-build-path-url-rule-copy.md`.
+      // safeinsights/canopycms#646.
       const urlPath = computeEntryUrl(entry.collectionPath, entry.slug, contentRootName)
 
       const raw = entry.data

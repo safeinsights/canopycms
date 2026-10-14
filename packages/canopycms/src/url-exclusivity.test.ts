@@ -361,7 +361,7 @@ describe('readByUrlPath resolves exactly the URLs listEntries publishes', () => 
     // the check by construction. Pinned because that is a load-bearing accident of the fallback,
     // not something the rule says out loud: tightening it into a filename-grammar check would
     // silently 404 every legacy entry. (They remain invisible to listEntries -- a separate,
-    // tracked gap: .claude/future-tasks/legacy-untyped-files-url-addressable.md.)
+    // tracked gap: safeinsights/canopycms#728.)
     const schema: RootCollectionConfig = {
       collections: [{ name: 'docs', path: 'docs', entries: [entryType('doc', { default: true })] }],
     }

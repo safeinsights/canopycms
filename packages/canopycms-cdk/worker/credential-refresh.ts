@@ -43,7 +43,7 @@ import { getSecret, type GetSecretOptions } from './secrets'
  * the first failure the floor permits: immediately unless a failure in the last
  * interval already used the read, and then normally at most one interval later
  * (core's floor can push that to about two — see
- * .claude/future-tasks/worker-app-auth-cannot-recover-a-rotated-key.md). A publish
+ * safeinsights/canopycms#894). A publish
  * that exhausts its retries inside that wait still fails.
  *
  * It is also a BACKSTOP against loop tuning, since both loop intervals are

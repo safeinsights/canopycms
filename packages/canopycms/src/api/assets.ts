@@ -271,9 +271,9 @@ const listAssetsHandler = async (
  * `uploadedBy` records the FIRST uploader only: finalizeAsset dedups on content hash, so a second
  * person uploading an identical file gains no delete rights over it — benign (a 403 where they
  * expected success, never the reverse; see
- * .claude/future-tasks/asset-listing-cross-branch-exposure.md).
+ * safeinsights/canopycms#572).
  *
- * Coupled to the blob-GC follow-up in asset-review-followups.md: this permission is safe because
+ * Coupled to the blob-GC follow-up in safeinsights/canopycms#575: this permission is safe because
  * delete is a de-list, not a destroy — nothing another branch references breaks. If GC ever makes
  * delete destroy the blob, this needs a reference check too.
  */

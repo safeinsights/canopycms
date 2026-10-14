@@ -109,7 +109,7 @@ export {
   registerPrivateKey,
   redactEgress,
 } from './gateway-egress'
-// The boot self-checks the split entrypoint runs in each role (.claude/future-tasks/
+// The boot self-checks the split entrypoint runs in each role (.claude/future-tasks/resolved/
 // worker-shared-repo-git-process-split.md §5).
 export {
   assertSelfChecks,
@@ -769,7 +769,7 @@ export class CmsWorker {
    *    and GitHub calls are killed and the task is released to pending with no
    *    retry spent; a sync's bundle, unbundle, ref update and settings push
    *    are killed. The gateway's GitHub fetches and mirror maintenance run on
-   *    (.claude/future-tasks/worker-mirror-detached-work-drain.md). A branch rebase
+   *    (safeinsights/canopycms#907). A branch rebase
    *    is never aborted, because a rebase killed mid-branch is recovered
    *    lossily; anything still unsettled after a short grace is abandoned to
    *    the process exit.

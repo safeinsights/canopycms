@@ -254,7 +254,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     // deliberately does not resolve the former, so a caller linking `path` linked to a 404.
     // Same index decision as computeEntryUrl/listEntries/buildPreviewSrc, through the same
     // predicate. NOTE this builder still keeps its own content-root strip and its own encoding
-    // rather than delegating wholesale -- see .claude/future-tasks/default-build-path-url-rule-copy.md.
+    // rather than delegating wholesale -- see safeinsights/canopycms#646.
     const encodedSlug = isIndexSlug(opts.slug) ? '' : encodeSlug(opts.slug)
     const url = encodedSlug ? `${trimmed}/${encodedSlug}` : trimmed || '/'
     return appendBranch(url)

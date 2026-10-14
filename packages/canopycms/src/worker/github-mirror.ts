@@ -61,7 +61,7 @@ import { mirrorGitOptions, mirrorPins, quarantinePins } from './shared-repo-git'
  *
  * Every transfer runs with `--progress`: the timeout is inactivity, and a quiet fetch of a whole
  * repository would otherwise be killed for its size. The connectivity walk after a fetch still
- * prints nothing (.claude/future-tasks/worker-github-mirror-limits.md).
+ * prints nothing (safeinsights/canopycms#901).
  */
 export class GitHubMirror {
   readonly gitDir: string
@@ -171,7 +171,7 @@ export class GitHubMirror {
    * Clear what a killed gateway left, before any git runs: finish or undo an interrupted rebuild,
    * then every lock and temporary in the mirror. Nothing in this process writes it yet:
    * maintenance starts only after a session. A git a stopped dev worker left running is not
-   * covered (.claude/future-tasks/worker-mirror-detached-work-drain.md).
+   * covered (safeinsights/canopycms#907).
    */
   private async sweepAtStart(): Promise<void> {
     await fs.mkdir(this.stateDirectory, { recursive: true, mode: 0o700 })

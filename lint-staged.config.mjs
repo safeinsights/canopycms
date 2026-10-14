@@ -17,10 +17,6 @@ const config = {
   // the baseline), once per commit rather than once per file.
   '{packages/*/**/*.{ts,tsx,mts,cts,js,mjs,cjs},scripts/**/*.{mjs,js,ts},scripts/comment-budget.json}':
     () => 'pnpm run lint:comments',
-  // Backlog consistency (dead links, stale open rows, orphans) is likewise a
-  // whole-tree property: a link breaks in the file that did NOT change when its
-  // target moved, so a per-file check would miss exactly the case that rots.
-  '.claude/future-tasks/**/*.md': () => 'pnpm run lint:tasks',
   // Both editor UX ratchets compare whole-tree counts with a committed
   // baseline, which a fix below the baseline must also update.
   '{packages/canopycms/src/editor/**/*.{ts,tsx},scripts/check-ux-copy.mjs,scripts/ux-copy-baseline.json,package.json}':

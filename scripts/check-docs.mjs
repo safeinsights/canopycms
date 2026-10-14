@@ -26,10 +26,9 @@ const rel = (p) => relative(repoRoot, p)
 
 /**
  * Markdown that is a dated snapshot or a prose backlog, not an instruction:
- * docs/reviews/ cites files as they were, which is accurate history rather
- * than drift, and future-tasks/ and BACKLOG.md cite files that don't exist
- * yet (planned work) or live in sibling repos -- future-tasks/ has its own
- * checker (check-future-tasks.mjs) for the links that ARE navigable.
+ * docs/reviews/ and the frozen future-tasks/ archive cite files as they were,
+ * which is accurate history rather than drift, and BACKLOG.md cites files that
+ * don't exist yet (planned work) or live in sibling repos.
  */
 const EXCLUDED = [
   'docs/reviews',
@@ -38,6 +37,8 @@ const EXCLUDED = [
   '.git',
   // Other sessions' checkouts (git-ignored), each a full copy of the repo.
   '.claude/worktrees',
+  // `pnpm tasks:sync`'s mirror of GitHub issue bodies (git-ignored).
+  '.claude/backlog-cache',
   'dist',
   'BACKLOG.md',
   // Sample site content for the editor round-trip test; its links are site URLs.
@@ -119,6 +120,8 @@ function gitIgnored(paths) {
 
 function isExcluded(absPath) {
   const r = rel(absPath)
+  // `tasks:sync` stages the cache beside it, as `.claude/backlog-cache.tmp-<pid>`.
+  if (r.startsWith('.claude/backlog-cache.tmp-')) return true
   return EXCLUDED.some((d) => r === d || r.startsWith(d + '/'))
 }
 

@@ -41,7 +41,7 @@ const log = createDebugLogger({ prefix: 'EntriesAPI' })
 /**
  * Summary of an entry type for client display.
  * Simplified from EntryTypeConfig - doesn't include full field definitions.
- * @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md.
+ * @internal No importer; deletion candidate in safeinsights/canopycms#725.
  */
 export interface EntryTypeSummary {
   name: string
@@ -66,7 +66,7 @@ export interface CollectionItem {
   canEdit?: boolean
 }
 
-/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
+/** @internal No importer; deletion candidate in safeinsights/canopycms#725. */
 export interface ListEntriesParams {
   branch: string
   collection?: LogicalPath

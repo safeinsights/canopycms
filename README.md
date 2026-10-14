@@ -1599,6 +1599,15 @@ Weigh one thing before enabling it: **`{ read: 'allow' }` inverts deny-by-defaul
 
 Pages rendering content at request time should use the null-safe `readByUrlPath` rather than the strict `read()`: a `FORBIDDEN` denial comes back as `null`, so your existing `if (!result) return notFound()` produces an ordinary 404 without revealing that the content exists but is restricted (the reason still goes to the debug log under `CANOPYCMS_DEBUG=true`). Reserve `read()`, which throws on both missing and forbidden content, for contexts where the content is known to exist and be readable.
 
+#### Moving a live site to fail-closed access
+
+A site running `defaultBranchAccess: 'allow'` with an unscoped `defaultPathAccess: 'allow'` lets every signed-in user edit every path on every branch. Move it to the posture above in this order:
+
+1. **Upgrade first.** Flipping `defaultBranchAccess` to `'deny'` on a release that predates the creator and base-branch grants makes the base branch unreachable for every non-admin. The path-layer change is safe on older releases.
+2. As an admin, add an `edit` rule for your editors group in the editor's Permission Manager. `{ read: 'allow' }` leaves `edit` denied, so without that rule editors can create a branch but edit nothing. The rules live on the CMS's settings branch, not in your content files.
+3. Set `defaultPathAccess: { read: 'allow' }`, then `defaultBranchAccess: 'deny'`.
+4. **Verify as a non-admin user**: base-branch content loads, and creating a branch, editing on it and Submit all work. The admin bypass hides every path-layer mistake.
+
 ### System Health
 
 Admins get a "System health" panel for observing the CMS's operational state, riding the same Editor component and catch-all API route as everything else, so it needs no extra integration. See [System Health (Admins)](#system-health-admins) for what it shows.

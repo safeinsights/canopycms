@@ -724,7 +724,7 @@ export const deleteBranchHandler = async (
   // writableBranch/submittableBranch guards elsewhere use 403 for the same
   // "protected" category (tracked as a deferred, deliberately out-of-scope
   // cleanup in
-  // .claude/future-tasks/protected-branch-followup-cleanups.md); extending
+  // safeinsights/canopycms#781); extending
   // this check to 'approved' keeps it consistent with its own immediate
   // neighbour rather than introducing a fresh 400/403 split between two
   // arms of the same guard.

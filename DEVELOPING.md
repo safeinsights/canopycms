@@ -442,7 +442,6 @@ The logic is in `src/dev-content-watcher.ts` (`startDevContentWatcher()`), which
 Two things bite in a scratch worktree or any non-interactive shell, where `pnpm` resolves only through a `corepack` shim rather than being on the ambient `PATH`:
 
 - **The husky `pre-push` hook shells out to a bare `pnpm`, so `git push` fails with `pre-push script failed (code 127)`** — a `pnpm: command not found` inside the hook, not a push or auth error. Hooks see neither aliases nor shell functions, so the shim directory has to be exported on `PATH` in the _same_ command as the push. Same for `lint-staged` on `pre-commit`.
-- **`prettier --write` silently skips `.claude/future-tasks/*.md`** — they are prettier-ignored. Prettier reports only the files it formatted, so passing a task file and seeing no mention of it is a skip, not a no-op-because-clean. Match the surrounding style by hand.
 
 ### Request Timing (`CANOPYCMS_DEBUG=true`)
 
@@ -761,7 +760,7 @@ Filter on `file.working_dir` (simple-git's name for the working-tree column), **
 
 `setProvisioningTestHooks({ beforePublish, inspectBlocked })` (`@internal`, module-level; call it with no argument to clear) injects behaviour around the publish step in-process.
 
-A simple-git instance that clones or checks out must fail on a signal exit: in `git-manager.ts` pass `errors: failOnSignalExit`. It is not exported yet; see `.claude/future-tasks/simple-git-signal-exit-reads-as-success.md`.
+A simple-git instance that clones or checks out must fail on a signal exit: in `git-manager.ts` pass `errors: failOnSignalExit`. It is not exported yet; see safeinsights/canopycms#845.
 
 ### Extracting from a Class Whose Tests Reach Through the Instance
 
@@ -1224,11 +1223,11 @@ pnpm test
 `canopycms-next` (`knip.json`; the other workspaces are ignored). An export nothing in
 production code imports fails the check. An export a test needs carries a one-line
 `/** @internal Exported for tests. */` tag, which the `--tags=-internal` flag excludes; an
-export nothing imports at all carries `@internal No importer; deletion candidate in <task file>.`
-and a `.claude/future-tasks/` entry that owns its deletion. The guard covers declaration sites
+export nothing imports at all carries `@internal No importer; deletion candidate in safeinsights/canopycms#<N>.`
+and an issue that owns its deletion. The guard covers declaration sites
 only: barrel `index.ts` files and the two editor re-export shims are excluded from the report,
 so a dead re-export line in a barrel is not detected
-([knip-scope-gaps.md](.claude/future-tasks/knip-scope-gaps.md)). Package `exports` maps, `bin`,
+(safeinsights/canopycms#726). Package `exports` maps, `bin`,
 stories, `.storybook/`, the config barrel and the groups barrel are the entries.
 
 ### Client-Bundle Boundary Check
@@ -1277,7 +1276,7 @@ Both budgets run in CI and in the pre-commit hook. Each script's header comment 
 
 ### Account-ID Check
 
-`pnpm lint:account-ids` fails when a tracked file's text or path holds a value that could be an AWS account id, because this repository is public. It runs in CI and in the pre-commit hook. Name an account by its role, read it from the environment, or use one of the placeholders in [scripts/check-account-ids.mjs](scripts/check-account-ids.mjs), whose header states the matching rules and the two exemptions. Known gaps: [account-id-guard-gaps.md](.claude/future-tasks/account-id-guard-gaps.md).
+`pnpm lint:account-ids` fails when a tracked file's text or path holds a value that could be an AWS account id, because this repository is public. It runs in CI and in the pre-commit hook. Name an account by its role, read it from the environment, or use one of the placeholders in [scripts/check-account-ids.mjs](scripts/check-account-ids.mjs), whose header states the matching rules and the two exemptions. Known gaps: safeinsights/canopycms#558.
 
 ### Published-Package ESM Import Check
 
@@ -1320,9 +1319,9 @@ The rewrite pattern is the most fragile part and fails silently in both directio
 
 `scripts/smoke/standalone-image.mjs` builds the CMS editor image `canopycms init-deploy aws` generates (`Dockerfile.cms.template`), boots it, and sends it real requests. **Its header comment is authoritative on the why — read it before changing the script.** In short:
 
-- **The app is scaffolded OUTSIDE this workspace.** A Next 16.1.7 app installs `pnpm pack` tarballs of `canopycms`, `canopycms-next` and `canopycms-auth-dev` (`npm pack` will not do — only pnpm applies `publishConfig` and rewrites `workspace:` ranges). In this workspace those packages are workspace links compiled through `transpilePackages`, which is not what an adopter installs. The registry-shaped install, built with Next 16's default Turbopack, externalizes sharp as `.next/node_modules/sharp-<hash>`, the shape the libvips defect shows in. A webpack build under pnpm bundles sharp instead (see [webpack-standalone-sharp-bundled.md](.claude/future-tasks/webpack-standalone-sharp-bundled.md)).
+- **The app is scaffolded OUTSIDE this workspace.** A Next 16.1.7 app installs `pnpm pack` tarballs of `canopycms`, `canopycms-next` and `canopycms-auth-dev` (`npm pack` will not do — only pnpm applies `publishConfig` and rewrites `workspace:` ranges). In this workspace those packages are workspace links compiled through `transpilePackages`, which is not what an adopter installs. The registry-shaped install, built with Next 16's default Turbopack, externalizes sharp as `.next/node_modules/sharp-<hash>`, the shape the libvips defect shows in. A webpack build under pnpm bundles sharp instead (see safeinsights/canopycms#891).
 - **It runs in dev mode**, with a git checkout of the scaffold's `content/` on a non-`main` `release-base` branch copied in before boot. The page's title in the working tree, which `next build` reads, differs from its title in the `release-base` commit, which requests read, so a check can tell which copy served a response.
-- **14 checks (`assertContainer`)**: `whoami` answers 200; `/hello` renders the `release-base` title (a request-time read of the branch clone), not the working-tree one; `/sitemap.xml` lists the page's URL — its slug is identical in both copies, so this check cannot yet tell a build-time read from a request-time one ([cms-image-pr5-review-followups.md](.claude/future-tasks/cms-image-pr5-review-followups.md), item 5); `/no-such-page` is a 404 carrying the `release-base` title (the root layout's request-time read) while `/no/such/route` is a 404 carrying the working-tree title (Next serves the not-found page `next build` prerendered); `/favicon.ico` is not a 5xx; an asset round trip (presign, proxied upload/finalize, the `orig` identity transform through sharp as a PNG, a WebP resize); sharp externalized as `.next/node_modules/sharp-*` aliases, each with the libvips-cpp its own sharp declares, each loading and encoding; and zero `ERR_DLOPEN_FAILED` in the container logs.
+- **14 checks (`assertContainer`)**: `whoami` answers 200; `/hello` renders the `release-base` title (a request-time read of the branch clone), not the working-tree one; `/sitemap.xml` lists the page's URL — its slug is identical in both copies, so this check cannot yet tell a build-time read from a request-time one (safeinsights/canopycms#617, item 5); `/no-such-page` is a 404 carrying the `release-base` title (the root layout's request-time read) while `/no/such/route` is a 404 carrying the working-tree title (Next serves the not-found page `next build` prerendered); `/favicon.ico` is not a 5xx; an asset round trip (presign, proxied upload/finalize, the `orig` identity transform through sharp as a PNG, a WebP resize); sharp externalized as `.next/node_modules/sharp-*` aliases, each with the libvips-cpp its own sharp declares, each loading and encoding; and zero `ERR_DLOPEN_FAILED` in the container logs.
 
 Run it locally (needs Docker running, Node >= 22.2, pnpm, and corepack for `--pm pnpm`):
 
@@ -1341,34 +1340,21 @@ Flags: `--pm pnpm|npm`, `--next <version>` (default 16.1.7), `--pnpm-version` (d
 
 CI runs it as `standalone-image`, matrixed over pnpm and npm on `ubuntu-latest` and pnpm on `ubuntu-24.04-arm` (the Lambda's default architecture). It is gated by `dorny/paths-filter` like `dual-build` — the job always reports, only the expensive build and boot steps are skipped — on every source and packaging input of the three packages, the lockfile, the root `package.json`, `.nvmrc`, and the script and workflow themselves. `ci.yml` carries the list and why it is that wide.
 
-### Future-Tasks Backlog Check
+### Backlog: GitHub Issues
 
-`.claude/future-tasks/` is the durable backlog. Each task file starts with frontmatter that is the record of its `priority` (P0 to P3, `adopter-side` or `program`), optional `adopters` (KB, MKT, BOTH or NEITHER) and `summary`; [index.md](.claude/future-tasks/index.md) shows the format. `index.md` holds only the hand-ranked lists, so filing or resolving a task does not edit a shared file and parallel PRs do not conflict.
-
-```bash
-pnpm lint:tasks
-pnpm tasks:index   # every task as P0-P3, adopter-side, program and resolved tables
-```
-
-`lint:tasks` runs in CI right after `lint:bundle`, and in the pre-commit hook whenever a commit touches `.claude/future-tasks/`. The script is [scripts/check-future-tasks.mjs](scripts/check-future-tasks.mjs) — plain node, no dependencies, so its frontmatter parser accepts a strict subset of YAML (`key: value`, and `summary: >-` with indented text). It enforces five things:
-
-- **Frontmatter** — present, only known keys, a valid `priority` on every open file, a non-empty `summary` on every file.
-- **Priority agreement** — when a body restates the priority in its opening lines (`# [P2] …`, `**Priority:** P2`), it must match the frontmatter.
-- **Dead links** — every `.md` link target must resolve **relative to the linking file's own directory**, including links inside a summary. Moving a file into `resolved/` breaks inbound links in files that did not change, and a repo-root-relative check would call those clean.
-- **Stale ranked rows** — a table row in `index.md` linking a file that lives in `resolved/`, whether by its old bare name or by the `resolved/` path `--fix` rewrites it to.
-- **`[[wikilinks]]`** — they render as literal `[[text]]` on GitHub and are invisible to the dead-link check, so they rot silently. Kebab-case slugs only, so `[[...slug]]` (Next.js catch-all routes) and `[[:space:]]` (POSIX class) stay legal in prose.
-
-Only `.md` targets are checked. Task files also cite source files as prose written relative to the repo root rather than as navigable links; checking those would be pure false positives.
-
-To retire a task, `git mv` the file into `resolved/`, rewrite its `summary` as `RESOLVED <date>, <branch>. <what shipped>`, take it out of any ranked list in `index.md`, and run `--fix` for the links. One deliberate exception is documented in the backlog itself — `program-b-final-review-followups.md` strikes items ~~in place~~ rather than moving them, because the file still holds open work.
-
-**Use `--fix` for the mechanical half.** Moving a file into `resolved/` invalidates relative paths in two directions at once — links _inside_ the moved file (siblings are now one level up, repo-root docs one further) and links _pointing at_ it (now behind `resolved/`) — and the checker already knows where the target went:
+The backlog is this repository's GitHub issues, ranked on the [CanopyCMS backlog Project](https://github.com/orgs/safeinsights/projects/5): its **Do next** status, in row order, is what to work on now. The issue type (Bug, Feature or Task) carries kind. Labels carry severity (`P0` to `P3`), audience (`adopters:KB`, `MKT`, `BOTH` or `NEITHER`), and two flags: `needs-decision` (blocked on an open maintainer decision) and `security`. Code and docs cite an issue as `safeinsights/canopycms#N`.
 
 ```bash
-pnpm lint:tasks --fix
+pnpm tasks:screen body.md   # privacy screen; exits 1 on a finding
+gh issue create --title "..." --body-file body.md --type Bug --label P2 --label adopters:BOTH
+pnpm tasks:sync             # open issues into .claude/backlog-cache/ (git-ignored), for grep
 ```
 
-It repairs only paths whose target exists somewhere unambiguous, refuses when a basename is ambiguous across directories, and rewrites the `](target)` form specifically, so a path that also appears as prose is left alone. It deliberately does **not** take a resolved task out of a ranked list or write a missing summary; both need judgment.
+**Issues are public, and so is the history of every edit**, so a body is screened before it is created. Refer to people by role ("the maintainer"), to adopters by role ("the marketing site", "the KB", "an adopter"), and never name other repositories, hosts, accounts or environments. [scripts/tasks-privacy-screen.mjs](scripts/tasks-privacy-screen.mjs) checks the mechanical half: generic patterns (account ids, ARNs, buckets, hosts, emails, home paths, credentials) plus private names it gathers through `gh` at run time (`collectRuntimeTerms` lists the sources). The repository deliberately holds no list of private names. Without `gh`, with a token missing the `repo` or `read:org` scope, or as a user outside the org, the screen fails; `--generic-only` runs the generic patterns alone, and then you read the body yourself.
+
+**Closing.** `Closes #N` in the body of a PR from a branch of this repository closes the issue when the PR merges into an `int-*` branch ([close-issues-on-int-merge.yml](.github/workflows/close-issues-on-int-merge.yml)); GitHub's own closing covers only merges into `main`.
+
+`.claude/future-tasks/resolved/` is the frozen archive of tasks resolved before the backlog moved to issues, and `.claude/future-tasks/issue-map.json` maps each migrated task file to its issue. Neither is edited.
 
 ### Trojan Source (Bidirectional Unicode) Check
 

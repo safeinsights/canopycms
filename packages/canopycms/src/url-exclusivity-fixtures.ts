@@ -15,7 +15,7 @@
  * Scope of the invariant it checks: entries written in the `{type}.{slug}.{id}.{ext}` grammar
  * with a type their collection declares -- exactly the set `listEntries` can see. A legacy
  * untyped file (`overview.json`) is invisible to enumeration and is deliberately NOT probed here;
- * see `.claude/future-tasks/legacy-untyped-files-url-addressable.md`.
+ * see safeinsights/canopycms#728.
  */
 
 import { flattenSchema, type RootCollectionConfig } from './config'

@@ -171,8 +171,8 @@ const eslintConfig = [
   // repo-root `scripts/` directory is not one, so nothing in it was ever
   // reached. lint-staged did not reach them either: its glob listed
   // `js,jsx,ts,tsx,md,html,css,json,yaml,yml` and omitted `mjs`. The result was
-  // 90 eslint errors sitting in seven root scripts, four of which now gate CI
-  // or the pre-commit hook (lint:tasks, lint:actions, check:esm) -- the repo was
+  // 90 eslint errors sitting in seven root scripts, several of which gate CI
+  // or the pre-commit hook (lint:actions, check:esm) -- the repo was
   // gating merges on scripts nothing linted. See `lint:scripts` in package.json.
   //
   // 69 of those 90 were one cause: no node globals were declared, so every
@@ -288,7 +288,7 @@ const eslintConfig = [
   // A static value import makes importing the module graph load libvips. With
   // sharp external, as in an adopter's Next 16 standalone build, Turbopack wraps
   // it in an async module that awaits the load when the graph is evaluated
-  // (cms-image-build-epic.md in .claude/future-tasks/, "Every route loads sharp").
+  // (.claude/future-tasks/resolved/cms-image-build-epic.md, "Every route loads sharp").
   // transform.ts had one, and it sits under canopycms/server and canopycms/http,
   // so when that image lacked the libvips `.so` every on-demand route returned
   // 500, 404s included, and pipeline.ts's deliberate fail-open never ran.

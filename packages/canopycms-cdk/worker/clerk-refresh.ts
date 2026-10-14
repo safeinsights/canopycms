@@ -8,7 +8,7 @@
  * never see the 401 it is meant to react to. The callback is the last point
  * where the error is still visible. Do not "tidy" this into core without first
  * making `refreshAuthCache()` propagate — see
- * `.claude/future-tasks/refresh-auth-cache-error-handling.md`.
+ * safeinsights/canopycms#794.
  *
  * The same gate serves the GitHub gateway process, which holds the key and
  * hands the snapshot to the worker (`createClerkSnapshotFetcher`); the worker
@@ -100,7 +100,7 @@ async function withKeyReread<T>(
       // this repo is uniform rather than case-by-case. Note it is not
       // sufficient on its own: a Clerk `sk_live_…` matches none of
       // redactCredentials' current rules (see
-      // .claude/future-tasks/refresh-auth-cache-error-handling.md).
+      // safeinsights/canopycms#794).
       log.error(
         'Failed to re-read the Clerk secret key after Clerk rejected it:',
         redactCredentials(getErrorMessage(refreshErr)),

@@ -314,7 +314,7 @@ function shellWord(value: string): string {
  * `canopy-inspect`: run one command (or, with `--interactive`, a shell) as the worker's user,
  * inside exactly the worker's sandbox, so a hostile repository on EFS reaches only what the
  * worker reaches. `--interactive` relays the sandbox's terminal raw, and the worker can reach its
- * pty (.claude/future-tasks/canopy-inspect-interactive-shared-pty.md). Run as root. Nothing after `--` is composed by a shell
+ * pty (safeinsights/canopycms#604). Run as root. Nothing after `--` is composed by a shell
  * outside the sandbox: inspect-checks runs its assertions, then execs the command.
  */
 export function canopyInspectScript(): string[] {

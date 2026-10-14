@@ -5,14 +5,14 @@ description: Run a multi-PR epic on an integration branch — design + adversari
 
 Run a multi-fix epic (several related findings that deserve one coordinated design,
 not N ad-hoc fixes) using the integration-branch workflow. The invoking prompt or
-epic file (usually `.claude/future-tasks/<epic>.md`) defines scope and success
+epic issue defines scope and success
 criteria. Rationale for the shape: human review bandwidth is the scarce resource, so
 the epic gets exactly ONE human-reviewed PR; everything inside it is machine-reviewed
 at each step instead.
 
 ## Phase 1 — Design (plan mode, main loop)
 
-1. Read the epic file, every linked analysis/task file, and each implicated module in
+1. Read the epic issue, every linked issue and analysis, and each implicated module in
    full. Use Explore agents for call-site maps, test inventories, and existing-pattern
    discovery; keep design synthesis in the main loop.
 2. Produce ONE coordinated design covering all findings: shared primitives first, then
@@ -62,8 +62,8 @@ at each step instead.
 
 - Judgment-heavy docs (design references like docs/concurrency.md) are written by the
   main loop; run `update-codebase-guide` and `docs-architecture` agents for the
-  mechanical doc sweeps; move resolved future-task files into `resolved/` with their
-  frontmatter `summary` rewritten as RESOLVED, and take them out of `index.md`'s ranked lists.
+  mechanical doc sweeps; name every issue the epic resolves with `Closes #N` in the
+  PR body, so each closes when its PR merges.
 - If the epic created a durable pattern, give it a durable home (a docs/ reference +
   agent-charter maintenance trigger), not just PR descriptions.
 

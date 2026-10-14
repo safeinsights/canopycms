@@ -10,7 +10,7 @@
  * `spread`.
  *
  * Bundling bugs are out of reach: request 86 crashed only under Turbopack's chunking. See
- * `.claude/future-tasks/editor-tests-miss-adopter-runtime-stack.md`.
+ * safeinsights/canopycms#681.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -42,7 +42,6 @@ vi.mock('@mantine/modals', () => ({
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..')
 const FIXTURES = 'packages/canopycms/src/editor/fields/__fixtures__/markdown-corpus'
-const TASKS = '.claude/future-tasks'
 
 /** Every sample site's content tree, and the fixtures; relative to the repo root. */
 const CORPUS_ROOTS = [
@@ -53,26 +52,26 @@ const CORPUS_ROOTS = [
   FIXTURES,
 ]
 
-/** Bodies that open as source: a fragment of the reason MarkdownField shows, and any task. */
+/** Bodies that open as source: a fragment of the reason MarkdownField shows, and any issue. */
 const ROUTED_TO_SOURCE: Record<string, { reason: string; task?: string }> = {
   [`${FIXTURES}/component-with-import.mdx`]: { reason: 'import/export statements' },
   [`${FIXTURES}/reference-link.md`]: {
     reason: '{"type":"linkReference"',
-    task: `${TASKS}/rich-text-reference-links-open-source.md`,
+    task: 'safeinsights/canopycms#819',
   },
   [`${FIXTURES}/html-comment.md`]: {
     reason: 'Unexpected character `!`',
-    task: `${TASKS}/rich-text-md-body-parsed-as-mdx.md`,
+    task: 'safeinsights/canopycms#816',
   },
   [`${FIXTURES}/list-item-paragraphs.md`]: {
     reason: 'a list item with content after its nested list',
-    task: `${TASKS}/rich-text-merges-block-paragraphs.md`,
+    task: 'safeinsights/canopycms#818',
   },
 }
 
-/** Bodies whose export means something else, each with its task. Their saves are not checked. */
+/** Bodies whose export means something else, each with its issue. Their saves are not checked. */
 const KNOWN_EXPORT_DIFFERENCES: Record<string, string> = {
-  [`${FIXTURES}/adjacent-lists.md`]: `${TASKS}/rich-text-merges-adjacent-lists.md`,
+  [`${FIXTURES}/adjacent-lists.md`]: 'safeinsights/canopycms#817',
 }
 
 interface CorpusBody {
@@ -211,7 +210,7 @@ function compareBlocks(body: string, exported: string, format: MarkdownBodyForma
 
 const corpus = collectCorpus()
 
-it('collects the sample sites and fixtures, and every listed body names a live task', () => {
+it('collects the sample sites and fixtures, and every listed body names an issue', () => {
   const names = corpus.map((c) => c.name)
   expect(names.filter((name) => name.startsWith('apps/')).length).toBeGreaterThan(10)
   expect(names.filter((name) => name.endsWith('.mdx')).length).toBeGreaterThan(1)
@@ -221,9 +220,7 @@ it('collects the sample sites and fixtures, and every listed body names a live t
   ]
   for (const [name, task] of listed) {
     expect.soft(names, `${name} is not in the corpus`).toContain(name)
-    if (task !== undefined) {
-      expect.soft(fs.existsSync(path.join(REPO_ROOT, task)), `${task} does not exist`).toBe(true)
-    }
+    if (task !== undefined) expect.soft(task).toMatch(/^safeinsights\/canopycms#\d+$/)
   }
 })
 

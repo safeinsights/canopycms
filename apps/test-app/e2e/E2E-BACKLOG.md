@@ -20,7 +20,7 @@
 >   keyboard handlers and no search input in `EntryNavigator.tsx`. These belong in
 >   `BACKLOG.md` item 9 (feature roadmap), not here.
 > - **Items 17 and 18a are triple-tracked** — also in `COVERAGE-MATRIX.md` (E14,
->   E9) and in `.claude/future-tasks/e2e-deferred-coverage.md`. Use those.
+>   E9) and in safeinsights/canopycms#663. Use those.
 > - **Item 14's premise was superseded** by the branch-switch redesign in
 >   #181/#196.
 > - There are **no items 6 or 7** (the numbering skips them), and item 18 is used
@@ -33,8 +33,8 @@
 > PR #220 have no e2e coverage and are not listed here.
 >
 > **Recommended home going forward:** `COVERAGE-MATRIX.md` (what is covered) plus
-> `.claude/future-tasks/e2e-deferred-coverage.md` (what is deliberately deferred,
-> and why) — both already indexed and guarded by `pnpm lint:tasks`. The one piece
+> safeinsights/canopycms#663 (what is deliberately deferred,
+> and why). The one piece
 > of unique value here is the "Key gotchas learned so far" block, which should
 > move to `DEVELOPING.md` before this file is retired.
 

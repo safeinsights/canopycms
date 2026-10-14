@@ -33,7 +33,7 @@ Repo-level tooling, under `scripts/`:
 - `scripts/check-docs.mjs` — doc word budgets, list-item length, backticked-path and link resolution
 - `scripts/check-comment-budget.mjs` — source-comment volume ratchet, budgets in `scripts/comment-budget.json`
 - `scripts/check-ux-copy.mjs` — `pnpm lint:ux-copy`: editor copy rules over `editor/` and every `src/` file it imports
-- `scripts/check-future-tasks.mjs` — task frontmatter and link integrity; see [DEVELOPING.md](DEVELOPING.md#future-tasks-backlog-check)
+- `scripts/tasks-privacy-screen.mjs`, `scripts/tasks-sync.mjs` — issue screening and offline cache; see [DEVELOPING.md](DEVELOPING.md#backlog-github-issues)
 - `scripts/check-action-pins.mjs` — fails on a third-party Action pinned by a mutable tag
 - `scripts/check-account-ids.mjs` — fails on AWS account ids
 - `scripts/diff-comments-only.mjs` — proves a git range changed only comments in TypeScript files

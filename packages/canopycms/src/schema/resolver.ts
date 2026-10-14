@@ -66,7 +66,7 @@ export async function resolveSchema(
  *
  * @param contentRoot - Path to the content directory
  * @returns true if at least one .collection.json file exists
- * @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md.
+ * @internal No importer; deletion candidate in safeinsights/canopycms#725.
  */
 export async function hasSchemaFiles(contentRoot: string): Promise<boolean> {
   const metaFiles = await loadCollectionMetaFiles(contentRoot)

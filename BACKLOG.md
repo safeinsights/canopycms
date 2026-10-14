@@ -4,12 +4,12 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 
 > **Scope — which backlog is which** (added 2026-08-13 after a full audit).
 > This file is the **unranked feature roadmap**: capabilities we may want, with
-> no severity rubric. Defects, debt and deferred fixes live in
-> `.claude/future-tasks/` with P0–P3 severities, per-item files, and a CI guard
-> (`pnpm lint:tasks`). Roughly half the items below are completion records rather
-> than open work; several others are already tracked as task files, noted inline.
-> If you are looking for "what should I fix next", read
-> `.claude/future-tasks/index.md`, not this file.
+> no severity rubric. Defects, debt and deferred fixes are GitHub issues with
+> `P0`–`P3` labels, ranked on the
+> [backlog Project](https://github.com/orgs/safeinsights/projects/5). Roughly half
+> the items below are completion records rather than open work; several others are
+> already tracked as issues, noted inline. If you are looking for "what should I
+> fix next", read the Project's **Do next**, not this file.
 >
 > **Item numbering is load-bearing** — `api/entries.ts:249` cites "BACKLOG #19"
 > in a source comment. Do not renumber.
@@ -102,7 +102,7 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - Figure out gray-matter usage (currently JSON heavy)
 - Type-smoke test: render Editor with minimal entry, run `tsc --noEmit` to catch API shape mismatches
 - ~~TODO: Decide if `normalizeContentPayload` should merge top-level `body` when both nested `{ format, data, body }` and sibling `body` present~~ — settled; the source TODO is gone. `editor-utils.ts:76-95` implements it, with tests at `editor-utils.test.ts:136-153` (verified 2026-08-13)
-- Field renderers for `number` and `datetime` landed 2026-08-13 (PR #220): `NumberField`, `DateTimeField`, `NumberListField`. They have **no e2e coverage** yet. (`rich-text` landed in the same PR but was removed 2026-08-14 — it was only ever an alias for `markdown`; see the Resolved section of `.claude/future-tasks/index.md`)
+- Field renderers for `number` and `datetime` landed 2026-08-13 (PR #220): `NumberField`, `DateTimeField`, `NumberListField`. They have **no e2e coverage** yet. (`rich-text` landed in the same PR but was removed 2026-08-14 — it was only ever an alias for `markdown`; see commit `d414920e`)
 - TODO: Refine preview base defaults from config (allow overrides, better root entry handling, clarify trailing-slash behavior)
 
 ### 10. Sync and conflict surfacing
