@@ -33,6 +33,14 @@ type Story = StoryObj<typeof EditorSidebar>
 
 export const Default: Story = {}
 
+/** Highlights on, with preview marks naming no field: the count sits on the toggle. */
+export const HighlightsWithInexactMarks: Story = {
+  args: {
+    highlightEnabled: true,
+    previewInexactMarks: [{ path: 'hero.subtitle', nearest: 'hero' }, { path: 'sidebar' }],
+  },
+}
+
 /** The Settings menu as an admin sees it: permissions, groups, media library, system health. */
 export const SettingsMenuOpen: Story = {
   play: async ({ canvasElement }) => {

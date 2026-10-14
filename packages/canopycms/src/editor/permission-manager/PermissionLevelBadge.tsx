@@ -25,7 +25,7 @@ export const PermissionLevelBadge: React.FC<PermissionLevelBadgeProps> = ({
 
   if (hasPerms) {
     return (
-      <Badge size="xs" variant="filled" color={LEVEL_CONFIG[level].color}>
+      <Badge size="xs" variant="light" color={LEVEL_CONFIG[level].color}>
         {LEVEL_CONFIG[level].label}
       </Badge>
     )

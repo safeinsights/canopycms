@@ -930,7 +930,7 @@ describe('SystemHealthPanel', () => {
       expect(screen.getByText('broken-branch')).toBeTruthy()
       // Multiple corrupt-metadata fixtures are seeded in this describe block
       // (broken-branch, broken-locked, main) -- assert count, not identity.
-      expect(screen.getAllByText('corrupt metadata').length).toBeGreaterThanOrEqual(1)
+      expect(screen.getAllByText('Corrupt metadata').length).toBeGreaterThanOrEqual(1)
       expect(screen.getByText('orphan-young')).toBeTruthy()
       expect(screen.getByText('orphan-old')).toBeTruthy()
     })

@@ -71,9 +71,10 @@ export const AssetCard: React.FC<AssetCardProps> = ({
     >
       {onDelete && (
         <Tooltip label="Remove from library">
+          {/* Over the thumbnail, so opaque: the default fill with the danger colour. */}
           <ActionIcon
-            variant="filled"
-            color="red"
+            variant="default"
+            c="var(--canopy-danger-text)"
             radius="xl"
             style={{ position: 'absolute', top: 4, right: 4, zIndex: 1 }}
             aria-label={`Remove ${asset.filename} from library`}

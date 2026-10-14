@@ -182,16 +182,16 @@ never a fixed shade outside the theme (`gray.0`, `dark.7`, `bg="white"`). The th
 included:
 
 - `--mantine-color-dimmed`, the only dimmed colour. Dark dimmed text also differs in size or
-  style: on `dark.4`, a hovered menu item, no colour is both 4.5:1 and visibly dimmer than body
-  text.
+  style (italic, `--canopy-dimmed-font-style`): on `dark.4`, a hovered menu item, no colour
+  is both 4.5:1 and visibly dimmer than body text.
 - `--mantine-color-placeholder`, at least 4.5:1, and at least 1.7:1 from the text colour so it
   never passes for a value.
 - `--canopy-danger-text`, for all destructive and error text, menu items included: `red.9` in
   light mode and `red.3` in dark, since `red.8` is 4.3:1 on `gray.0` and `red.4` 4.3:1 on `dark.4`.
 - `--canopy-input-border` (3:1), for inputs and the borders and tracks of Checkbox, Radio and
-  Switch (not yet in the theme for those three); `--canopy-surface-subtle` and
-  `--canopy-surface-muted`.
-- `--canopy-focus-ring` (not yet in the theme), at least 3:1 on its surface for any adopter brand.
+  Switch; `--canopy-surface-subtle` and `--canopy-surface-muted`.
+- `--canopy-focus-ring` (3:1 on its surface for any brand) for focus rings, focused borders and
+  checked controls; white on the primary colour sits on `--canopy-primary-fill`.
 
 Pass a plain colour; the theme brings its text and light variant to 4.5:1, at which dark mode's
 light status badges look alike. Success text is the default colour beside a green icon;

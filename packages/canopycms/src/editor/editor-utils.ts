@@ -264,6 +264,15 @@ export const entryTypeLabel = (
   return type?.label ?? humanizeName(entry.entryType)
 }
 
+/** An entry's navigator badge: "Missing" when its file is gone, else its type's label or name. */
+export const entryStatusLabel = (
+  collections: EditorCollection[] | undefined,
+  entry: Pick<EditorEntry, 'status' | 'collectionPath' | 'entryType'>,
+): string | undefined => {
+  if (entry.status === 'missing') return 'Missing'
+  return entryTypeLabel(collections, entry) ?? (entry.status && humanizeName(entry.status))
+}
+
 /**
  * Builds breadcrumb segments for an entry based on its collection hierarchy.
  *

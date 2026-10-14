@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  What is left of docs/ux-guidelines.md "Colour and contrast" after the theme pass: filled colours other than the primary, which JP ruled 2026-10-13 must become light variants; in dark mode a combobox's armed option and the date picker's selected day put white on primary shade 5 (3.67:1); and Checkbox, Radio and Switch borders, ruled to take `--canopy-input-border`, are still Mantine's gray.4, under 3:1
+  RESOLVED (2026-10-14, UX batch 3 theme PR) — non-primary filled badges are light variants, the sidebar Indicator and AssetCard's remove icon are opaque, white on the primary colour (armed combobox option, selected day, focused time segment) sits on `--canopy-primary-fill`, and the theme's stylesheet gives unchecked Checkbox, Radio and Switch borders `--canopy-input-border`, with the ratios pinned in `theme.test.tsx`
 ---
 # Contrast beyond the ruled colours
 
@@ -37,7 +37,7 @@ time segment. Shade 5 stays because focus rings, focused borders and checked con
 on dark surfaces. Each needs the fill token through a scoped rule or the component's `styles`.
 Shade 5 measures 3:1 for the default brand only: darker adopter brands (`#1e3a8a` 2.21:1 on
 dark.5) fall short, as on the base. Focus rings get their own token in
-[object-clear-undo-and-ux-batch2-review-leftovers.md](object-clear-undo-and-ux-batch2-review-leftovers.md);
+[object-clear-undo-and-ux-batch2-review-leftovers.md](../object-clear-undo-and-ux-batch2-review-leftovers.md);
 focused input borders and checked Checkbox, Radio and Switch fills still draw in shade 5, and a
 measured indicator token would need routing through every focus and checked-state selector
 Mantine draws.

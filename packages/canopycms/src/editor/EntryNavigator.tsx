@@ -770,7 +770,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                   data-testid="conflict-badge"
                   style={{ flexShrink: 0 }}
                 >
-                  conflict
+                  Conflict
                 </Badge>
               </Tooltip>
             )}

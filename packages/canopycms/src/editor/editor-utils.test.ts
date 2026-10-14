@@ -9,6 +9,7 @@ import {
   buildWritePayload,
   normalizeContentPayload,
   buildCollectionLabels,
+  entryStatusLabel,
   entryTypeLabel,
   buildBreadcrumbSegments,
   calculatePathToEntry,
@@ -1378,6 +1379,15 @@ describe('entryTypeLabel', () => {
 
   it('reads the type name as words when the type has no label', () => {
     expect(entryTypeLabel(collections, entry('content/docs', 'faq'))).toBe('Faq')
+  })
+
+  it("labels a navigator badge with the entry's type, or Missing", () => {
+    const badge = (status: string, entryType?: string) =>
+      entryStatusLabel(collections, { ...entry('content', entryType), status })
+    expect(badge('page', 'page')).toBe('Landing page')
+    expect(badge('missing', 'page')).toBe('Missing')
+    expect(badge('blogPost', 'blogPost')).toBe('Blog post')
+    expect(badge('entry')).toBe('Entry')
   })
 
   it('reads the type name as words when the collection does not list that type', () => {

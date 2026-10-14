@@ -14,4 +14,6 @@ the panel's other states, are only seen in a live walk.
 ## Fix
 
 Add `SystemHealthPanel.stories.tsx` with mocked health data: a healthy branch, one whose sync
-failed with a reason, one in conflict, and a rebase failure.
+failed with a reason, one in conflict, and a rebase failure. Include the branch table's badges
+too (Base, Pending sync, Corrupt metadata, Orphan, a status label), which the UX batch 3 theme PR
+changed unseen.

@@ -115,7 +115,7 @@ export const DrawerWidth: Story = {
               {
                 path: unsafeAsLogicalPath('content/home'),
                 label: 'Home — the welcome page for every visitor to the research platform',
-                status: 'page',
+                status: 'Page',
                 contentId: unsafeAsContentId('home00000001'),
               },
             ],
@@ -135,13 +135,13 @@ export const DrawerWidth: Story = {
                       'content/guides/getting-started-with-a-very-long-guide-title',
                     ),
                     label: 'Getting started with a very long guide title that never ends',
-                    status: 'guide',
+                    status: 'Guide',
                     contentId: unsafeAsContentId('guide0000001'),
                   },
                   {
                     path: unsafeAsLogicalPath('content/guides/data-access'),
                     label: 'Data access',
-                    status: 'guide',
+                    status: 'Guide',
                     contentId: unsafeAsContentId('guide0000002'),
                     conflictNotice: true,
                   },
@@ -157,7 +157,7 @@ export const DrawerWidth: Story = {
                       {
                         path: unsafeAsLogicalPath('content/guides/advanced/enclave'),
                         label: 'Working inside a secure enclave',
-                        status: 'guide',
+                        status: 'Guide',
                         contentId: unsafeAsContentId('adv000000002'),
                       },
                     ],
@@ -177,7 +177,7 @@ export const DrawerWidth: Story = {
                   {
                     path: unsafeAsLogicalPath('content/news/launch'),
                     label: 'Launch announcement',
-                    status: 'post',
+                    status: 'Post',
                     contentId: unsafeAsContentId('news00000002'),
                     readOnly: true,
                   },

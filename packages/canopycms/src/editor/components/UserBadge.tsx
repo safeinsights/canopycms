@@ -125,7 +125,6 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
         }
         styles={{
           label: {
-            textTransform: 'none',
             display: 'flex',
             alignItems: 'center',
             gap: '4px',
