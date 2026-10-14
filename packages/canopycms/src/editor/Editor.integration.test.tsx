@@ -10,6 +10,7 @@ import { ApiClientProvider } from './context'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 import { RESERVED_GROUPS } from '../authorization'
 import { mockConsole } from '../test-utils/console-spy'
+import { SYSTEM_USER_ID } from '../system-users'
 
 // Editor.tsx no longer wraps its own SWR cache (only CanopyEditor.tsx does,
 // via SWRProvider) -- these tests render <Editor> directly, so they need
@@ -299,6 +300,177 @@ describe('Editor integration', () => {
       format: 'json',
       data: { title: 'Modified title' },
       expectedVersion: 100,
+    })
+  })
+
+  it("carries an unsaved draft onto the version a submit's stamp left", async () => {
+    const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
+    const stamp = '2026-10-14T09:00:00.000Z'
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('content/posts/hello'),
+      contentId: unsafeAsContentId('def456ABC123'),
+      label: 'Hello',
+      status: 'entry',
+      schema: [
+        { name: 'title', type: 'string' },
+        { name: 'publishedAt', type: 'datetime', stampOnPublish: true },
+      ],
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      collectionName: 'posts',
+      slug: 'hello',
+      format: 'json',
+      type: 'entry',
+    }
+    const branch = {
+      name: 'main',
+      status: 'editing',
+      access: {},
+      createdBy: SYSTEM_USER_ID,
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-01',
+      isProtected: false,
+      readOnly: false,
+      writeBlocked: false,
+      submitBlocked: false,
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { branches: [branch], defaultBranch: 'main' } }),
+        )
+      }
+      if (url.endsWith('/api/canopycms/main/submit') && init?.method === 'POST') {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branch: { ...branch, status: 'submitted' },
+              stamped: [
+                {
+                  contentId: 'def456ABC123',
+                  fields: { publishedAt: stamp },
+                  previousVersion: 100,
+                  version: 150,
+                },
+              ],
+            },
+          }),
+        )
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'entry-type',
+                  logicalPath: 'content/posts/post',
+                  name: 'post',
+                  parentPath: 'content/posts',
+                  format: 'json',
+                  schemaRef: 'postSchema',
+                },
+              ],
+              entrySchemas: { postSchema: entry.schema },
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  logicalPath: 'content/posts',
+                  contentId: 'abc123XYZ789',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: entry.schema,
+                  order: [],
+                },
+              ],
+              entries: [
+                {
+                  logicalPath: entry.path,
+                  contentId: 'def456ABC123',
+                  collectionPath: entry.collectionPath,
+                  collectionName: entry.collectionName,
+                  slug: entry.slug,
+                  format: entry.format,
+                  entryType: 'post',
+                  physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
+                  exists: true,
+                },
+              ],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: { title: 'Loaded title', publishedAt: '', version: 100 },
+          }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { modals } = await import('@mantine/modals')
+
+    renderWithProviders(
+      <Editor
+        entries={[entry]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+      />,
+    )
+    let input: HTMLInputElement
+    await waitFor(() => {
+      const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
+      expect(el?.value).toBe('Loaded title')
+      input = el!
+    })
+    fireEvent.change(input!, { target: { value: 'Unsaved title' } })
+    await waitFor(() => expect(readPersistedDrafts('main')).toHaveProperty('def456ABC123'))
+
+    fireEvent.click(await screen.findByTestId('submit-button'))
+    await waitFor(() => expect(vi.mocked(modals.openConfirmModal)).toHaveBeenCalled())
+    await act(async () => {
+      vi.mocked(modals.openConfirmModal).mock.lastCall?.[0].onConfirm?.()
+    })
+
+    await waitFor(() =>
+      expect(readPersistedDrafts('main').def456ABC123).toMatchObject({
+        title: 'Unsaved title',
+        publishedAt: stamp,
+      }),
+    )
+    // Once the branch is editable again, the draft saves against the stamped version.
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).startsWith(entryApiPath) && init?.method === 'PUT',
+      )
+      expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({
+        data: { title: 'Unsaved title', publishedAt: stamp },
+        expectedVersion: 150,
+      })
     })
   })
 

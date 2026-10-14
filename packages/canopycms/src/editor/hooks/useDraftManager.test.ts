@@ -2513,6 +2513,52 @@ describe('useDraftManager', () => {
         expect(tokens.get(id)).toBe(100)
         expect(readPersistedBaseVersions('main')).toEqual({ [id]: 100 })
       })
+
+      it('moves the token but leaves a draft based on an older version to the stale check', async () => {
+        persistV2({ [id]: { title: 'Last session', publishedAt: '' } }, { [id]: 90 })
+        const { result } = renderHook(() => useDraftManager(stampOptions()))
+        await waitFor(() => expect(result.current.drafts[id]).toBeDefined())
+
+        act(() => {
+          result.current.applySubmitStamps(stamped)
+        })
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(tokens.get(id)).toBe(150)
+        expect(result.current.drafts[id]).toEqual({ title: 'Last session', publishedAt: '' })
+        expect(readPersistedBaseVersions('main')).toEqual({ [id]: 90 })
+        expect(mockSaveEntry).not.toHaveBeenCalled()
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({ message: expect.stringMatching(/changed since you opened/) }),
+        )
+      })
+
+      it('moves the draft of an entry not loaded yet, which its later load then matches', async () => {
+        tokens.clear()
+        persistV2({ [id]: { title: 'Last session', publishedAt: '' } }, { [id]: 100 })
+        const { result } = renderHook(() => useDraftManager(stampOptions()))
+        await waitFor(() => expect(result.current.drafts[id]).toBeDefined())
+
+        act(() => {
+          result.current.applySubmitStamps(stamped)
+        })
+
+        expect(tokens.has(id)).toBe(false)
+        expect(result.current.drafts[id]).toEqual({ title: 'Last session', publishedAt: stamp })
+        await waitFor(() => expect(readPersistedBaseVersions('main')).toEqual({ [id]: 150 }))
+        // The entry's first load this session reads the stamped version.
+        tokens.set(id, 150)
+        await act(async () => {
+          await result.current.handleSave()
+        })
+        expect(mockSaveEntry).toHaveBeenCalledWith(mockEntry, {
+          title: 'Last session',
+          publishedAt: stamp,
+        })
+      })
     })
 
     describe('legacy draft with no recorded base version (pre-v2 storage)', () => {
