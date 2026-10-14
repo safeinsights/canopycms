@@ -147,28 +147,25 @@ describe('toPlainText', () => {
     })
   })
 
-  describe('frontmatter', () => {
-    it('strips YAML frontmatter entirely', () => {
-      const input = [
-        '---',
-        'title: Test Page',
-        'date: 2024-01-01',
-        '---',
-        '',
-        '# Heading',
-        '',
-        'Body text.',
-      ].join('\n')
-      const result = toPlainText(input)
-      expect(result).not.toContain('title:')
-      expect(result).not.toContain('Test Page')
-      expect(result).not.toContain('2024-01-01')
-      expect(result).toBe('Heading\n\nBody text.')
+  describe('a body that opens with a thematic break', () => {
+    it('keeps the prose after a leading `---` and a blank line', () => {
+      expect(toPlainText('---\n\nA bio.\n')).toBe('A bio.')
     })
 
-    it('handles content with no frontmatter at all', () => {
-      const input = '# Heading\n\nBody text.'
-      expect(toPlainText(input)).toBe('Heading\n\nBody text.')
+    it('keeps the prose after a leading `---` with no blank line', () => {
+      expect(toPlainText('---\nA bio.\n')).toBe('A bio.')
+    })
+
+    it('keeps the prose after a leading `***`', () => {
+      expect(toPlainText('***\n\nA bio.\n')).toBe('A bio.')
+    })
+
+    it('keeps the prose on both sides of a `---` mid-body', () => {
+      expect(toPlainText('Intro.\n\n---\n\nMore.\n')).toBe('Intro.\n\nMore.')
+    })
+
+    it('reads YAML-looking lines between two `---` breaks as prose', () => {
+      expect(toPlainText('---\ntitle: x\n---\nText')).toBe('title: x\n\nText')
     })
   })
 
@@ -318,12 +315,8 @@ describe('toPlainText', () => {
   })
 
   describe('realistic combined document', () => {
-    it('handles frontmatter + heading + prose + component + code + link together', () => {
+    it('handles heading + prose + component + code + link together', () => {
       const input = [
-        '---',
-        'title: Onboarding Guide',
-        '---',
-        '',
         '# Onboarding',
         '',
         'Welcome! Read the [setup guide](https://example.com/setup) first.',
@@ -343,8 +336,6 @@ describe('toPlainText', () => {
 
       const result = toPlainText(input)
 
-      expect(result).not.toContain('title:')
-      expect(result).not.toContain('---')
       expect(result).not.toContain('<Callout')
       expect(result).not.toContain('</Callout>')
       expect(result).not.toContain('<Divider')
