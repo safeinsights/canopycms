@@ -178,7 +178,8 @@ function encodeLinkUrl(url: string): string {
  * Ask `referenceLink` once for each exported target the export's entries reference or link from
  * their bodies, in entry order, and return the answers, each URL encoded by
  * {@link encodeLinkUrl}. `subjectOf` builds a target from the export's own read of it, so the
- * callback never sees a target outside the export set and its body reaches nothing else. A throw
+ * callback never sees a target outside the export set, and the body it is shown reaches no linking
+ * entry's output. A throw
  * or a return other than a non-empty string, `false` or `undefined` is logged and becomes
  * `false`, so a broken callback withholds a link rather than advertising a page the site may not
  * have. A target whose `entryLinkUrl` throws is left undecided, unasked, so every link to it fails
