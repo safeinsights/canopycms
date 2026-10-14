@@ -584,7 +584,7 @@ export const listBranchesHandler = async (
     return branchListResponse(ctx, req, allBranches, defaultBranch)
   }
 
-  // Regular users only see branches they created or have explicit access to
+  // Regular users see the base branch and the branches they created or were given access to
   const visibleBranches = allBranches.filter((context) => {
     const branch = context.branch
     // Ahead of every grant below, as in checkBranchAccessWithDefault.

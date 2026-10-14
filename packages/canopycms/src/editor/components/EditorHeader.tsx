@@ -567,10 +567,10 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               if (branchIsProtected && !isWithdrawable) return null
 
               // Who may submit/withdraw: creator, ACL access, the system branch, or an
-              // admin/reviewer, and on a locked-down branch only the last -- Admins/Reviewers must be able to withdraw a protected
-              // base branch stuck in 'submitted' even without ACL access. Mirrors the
-              // server's canPerformWorkflowAction (BranchManager.tsx), which is the
-              // actual enforcer; this only decides whether to show the control disabled.
+              // admin/reviewer (alone on a locked-down branch, and even without ACL access
+              // on a protected base branch stuck in 'submitted'). Mirrors the server's
+              // canPerformWorkflowAction (BranchManager.tsx), which is the actual
+              // enforcer; this only decides whether to show the control disabled.
               const userIsCreator = userContext?.userId === branchCreatedBy
               const isSystemBranch = branchCreatedBy === SYSTEM_USER_ID && !branchIsProtected
               const userInACL =

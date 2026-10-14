@@ -10,8 +10,8 @@ summary: >-
 ## RESOLVED (2026-10-14)
 
 The lockdown is a ceiling, checked once in `isLockedOutOfBranch` (`authorization/helpers.ts`).
-`checkBranchAccessWithDefault` calls it ahead of the ACL, so every guard-based surface (reads,
-writes, comments, Submit, Withdraw) follows it. The branch listing and both editor mirrors call
+`checkBranchAccessWithDefault` calls it ahead of the ACL, so every surface that goes through it
+(reads, writes, comments, Submit, Withdraw) follows it. The branch listing and both editor mirrors call
 it too, because each kept its own copy of the old order. Tests cover the authorization layer, the
 listing, both editor mirrors and the API end to end (`role-permissions.test.ts`). Follow-ups:
 [branch-lockdown-unsettable-and-creator-rights.md](../branch-lockdown-unsettable-and-creator-rights.md).

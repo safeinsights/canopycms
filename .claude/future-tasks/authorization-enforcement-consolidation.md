@@ -26,7 +26,7 @@ built-in or `pnpm lint:bundle` fails. Put it somewhere dependency-free (the `pat
 precedent) or let the client keep its own copy behind a shared test fixture.
 
 They already disagree: the branch-listing filter ignores `defaultBranchAccess: 'allow'`, so a
-no-ACL branch everyone may open is listed only to its creator. The `managerOrAdminAllowed`
+no-ACL branch everyone may open is listed only to its creator, admins and reviewers. The `managerOrAdminAllowed`
 lockdown already has one shared, browser-safe owner, `isLockedOutOfBranch`
 (`authorization/helpers.ts`), and is the model for the matcher. The fix is one shared
 target-matcher so listing and enforcement cannot drift apart.
