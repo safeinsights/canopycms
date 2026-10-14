@@ -41,6 +41,9 @@ export const referenceOptionSchema = z.union([
 
 const primitiveFieldSchema = fieldBaseSchema.extend({
   type: z.enum(primitiveFieldTypes).exclude([...markdownFieldTypes]),
+  // Listed so a parse keeps it (zod strips unknown keys); which fields may carry it is
+  // `ensureStampOnPublishPlacement`'s call (config/validation.ts).
+  stampOnPublish: z.boolean().optional(),
 })
 
 const mdxPropAllowSchema = z.union([

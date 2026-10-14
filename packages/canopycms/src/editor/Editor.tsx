@@ -70,6 +70,7 @@ import {
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
 import type { UnsavedSummary } from './hooks/useDraftManager'
+import type { StampedEntry } from '../stamp-on-publish'
 import { editorLayoutStorageKey } from './hooks/useEditorLayout'
 import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
@@ -358,6 +359,7 @@ const EditorContent: React.FC<EditorProps> = ({
     count: 0,
     labels: [],
   }))
+  const applySubmitStampsRef = useRef<(stamped: readonly StampedEntry[]) => void>(() => {})
   const {
     branchName: branchNameState,
     setBranchName,
@@ -377,6 +379,7 @@ const EditorContent: React.FC<EditorProps> = ({
     comments: commentsForBranchSummaries,
     // The draft manager comes later, as it depends on this hook's branch.
     getUnsaved: () => resolveUnsavedRef.current(),
+    onStamped: (stamped) => applySubmitStampsRef.current(stamped),
   })
 
   // Content mutations (add/delete/rename/reorder entries) are locked whenever the
@@ -411,6 +414,7 @@ const EditorContent: React.FC<EditorProps> = ({
     readEntryValue,
     saveEntry,
     getEntryVersion,
+    adoptEntryVersion,
     followMovedEntry,
     recreateEntry,
     createModalOpen,
@@ -489,6 +493,7 @@ const EditorContent: React.FC<EditorProps> = ({
     resolveUnsaved,
     fieldErrors,
     draftStorageFailed,
+    applySubmitStamps,
   } = useDraftManager({
     branchName: branchNameState,
     selectedPath,
@@ -499,6 +504,7 @@ const EditorContent: React.FC<EditorProps> = ({
     readEntryValue,
     saveEntry,
     getEntryVersion,
+    adoptEntryVersion,
     followMovedEntry,
     recreateEntry,
     setBusy: setEntriesLoading,
@@ -511,6 +517,7 @@ const EditorContent: React.FC<EditorProps> = ({
     onDraftsReset: (contentId) => dismissUndoToasts(contentId),
   })
   resolveUnsavedRef.current = resolveUnsaved
+  applySubmitStampsRef.current = applySubmitStamps
 
   // 4. Branch actions (depends on resolveUnsaved, setBranchName)
   const {

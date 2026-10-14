@@ -1723,9 +1723,7 @@ export class GitManager {
    * constraint.
    */
   async listChangedPathsSinceBase(): Promise<string[]> {
-    await this.git.raw(['fetch', '--end-of-options', this.remote, this.baseBranch])
-    // `--verify`: without it rev-parse echoes `--end-of-options` back as output.
-    const baseTip = (await this.git.revparse(['--verify', '--end-of-options', 'FETCH_HEAD'])).trim()
+    const baseTip = await this.fetchBaseTip()
     // -z: NUL-separated and unquoted, so no path needs unescaping.
     const output = await this.git.raw([
       'diff',
@@ -1734,6 +1732,46 @@ export class GitManager {
       '--no-renames',
       `${baseTip}...HEAD`,
       '--',
+    ])
+    return output.split('\0').filter((p) => p.length > 0)
+  }
+
+  /**
+   * Repo-relative paths of every file in the base branch's just-fetched tip or in its merge base
+   * with HEAD, limited to `under` (a repo-relative directory) when given. The merge base counts
+   * because a file the base deleted after the fork is still the base's on a branch not yet
+   * rebased. Reads commits, never the working tree, so a sparse clone lists the whole base.
+   */
+  async listBaseFiles(under?: string): Promise<string[]> {
+    const tip = await this.fetchBaseTip()
+    // With no shared commit merge-base exits 1 silently, which simple-git resolves as ''.
+    const forkPoint = (await this.git.raw(['merge-base', '--end-of-options', 'HEAD', tip])).trim()
+    const files = new Set(await this.listTreeFiles(tip, under))
+    if (forkPoint && forkPoint !== tip) {
+      for (const file of await this.listTreeFiles(forkPoint, under)) files.add(file)
+    }
+    return [...files]
+  }
+
+  /** Fetch the base branch and return its tip, pinned as pullBaseInner explains. */
+  private async fetchBaseTip(): Promise<string> {
+    await this.git.raw(['fetch', '--end-of-options', this.remote, this.baseBranch])
+    // `--verify`: without it rev-parse echoes `--end-of-options` back as output.
+    return (await this.git.revparse(['--verify', '--end-of-options', 'FETCH_HEAD'])).trim()
+  }
+
+  /** Repo-relative paths of every file in `rev`'s tree, under `under` when given. */
+  private async listTreeFiles(rev: string, under?: string): Promise<string[]> {
+    // -z: NUL-separated and unquoted, so no path needs unescaping.
+    const output = await this.git.raw([
+      'ls-tree',
+      '-r',
+      '-z',
+      '--name-only',
+      '--full-tree',
+      '--end-of-options',
+      rev,
+      ...(under ? [under] : []),
     ])
     return output.split('\0').filter((p) => p.length > 0)
   }
@@ -1990,8 +2028,9 @@ export class GitManager {
    * The base comes from the remote when the clone lacks it (it was cloned at an earlier base).
    */
   private async assertNotContentHistory(branchName: string, tip: string): Promise<void> {
-    const tree = await this.git.raw(['ls-tree', '-r', '--name-only', tip])
-    const strays = tree.split('\n').filter((file) => file && !SETTINGS_BRANCH_FILES.has(file))
+    const strays = (await this.listTreeFiles(tip)).filter(
+      (file) => !SETTINGS_BRANCH_FILES.has(file),
+    )
     if (strays.length > 0) {
       const shown = strays.slice(0, 3).join(', ') + (strays.length > 3 ? ', …' : '')
       throw new SettingsBranchHasContentHistoryError(branchName, this.remote, `it holds ${shown}`)

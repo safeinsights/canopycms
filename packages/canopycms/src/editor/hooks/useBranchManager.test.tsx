@@ -1021,6 +1021,67 @@ describe('useBranchManager', () => {
       expect(body).not.toContain('unsaved')
     })
 
+    describe("a submit's stamps", () => {
+      const stamped = [
+        {
+          contentId: unsafeAsContentId('abc123def456'),
+          fields: { publishedAt: '2026-10-14T09:00:00.000Z' },
+          previousVersion: 100,
+          version: 150,
+        },
+      ]
+      const answer = () =>
+        mockClient.workflow.submit.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: {
+            branch: { ...editingFeature[1], status: 'submitted' } as BranchListItem,
+            stamped,
+          },
+        })
+
+      it('hands the entries stamped on the open branch to the drafts', async () => {
+        answer()
+        const onStamped = vi.fn()
+        const { result } = await loaded(editingFeature, { initialBranch: 'feature', onStamped })
+
+        await act(async () => {
+          await result.current.handleSubmit('feature')
+        })
+
+        expect(onStamped).toHaveBeenCalledWith(stamped)
+      })
+
+      it('says how many new entries the submit dated', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        answer()
+        const { result } = await loaded(editingFeature, { initialBranch: 'feature' })
+
+        await act(async () => {
+          await result.current.handleSubmit('feature')
+        })
+
+        expect(notifications.show).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'Branch submitted for review. Dates set on 1 new entry.',
+          }),
+        )
+      })
+
+      it("hands over nothing from another branch's submit", async () => {
+        answer()
+        const onStamped = vi.fn()
+        const { result } = await loaded(editingFeature, { onStamped })
+
+        await act(async () => {
+          await result.current.handleSubmit('feature')
+        })
+
+        expect(mockClient.workflow.submit).toHaveBeenCalled()
+        expect(onStamped).not.toHaveBeenCalled()
+      })
+    })
+
     it('asks to withdraw from review, with a labelled confirm button', async () => {
       mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: true, status: 200 })
       const { result } = await loaded(mockBranches)

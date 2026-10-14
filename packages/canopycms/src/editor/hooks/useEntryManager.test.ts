@@ -387,6 +387,21 @@ describe('useEntryManager', () => {
     )
   })
 
+  it('sends an adopted version with the next save', async () => {
+    mockClient.content.write.mockResolvedValueOnce({ ok: true, status: 200, data: {} as any })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    await loadForSave(result)
+
+    result.current.adoptEntryVersion(mockEntry.contentId, LOADED_VERSION + 7)
+    await result.current.saveEntry(mockEntry, { title: 'T' })
+
+    expect(result.current.getEntryVersion(mockEntry.contentId)).toBe(LOADED_VERSION + 7)
+    expect(mockClient.content.write).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ expectedVersion: LOADED_VERSION + 7 }),
+    )
+  })
+
   it('saves entry with entryType when entry has entryType set', async () => {
     const entryWithType = {
       ...mockEntry,

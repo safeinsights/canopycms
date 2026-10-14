@@ -115,7 +115,7 @@ Which guards run, in what order, and what each one catches are in
 Route handlers, one file per endpoint namespace:
 
 - `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes every branch response, with server-computed `isProtected` / `readOnly`
-- `branch-status.ts` — `/branch-status`: status and submit
+- `branch-status.ts` — `/branch-status`: status and submit (`SubmitBranchResponse`)
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
 - `branch-review.ts` — `/branch-review`: request changes
 - `branch-merge.ts` — `/branch-merge`: merge and clean up
@@ -396,7 +396,8 @@ Rendered Asset URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls); adopter con
 
 **Location**: `packages/canopycms/src/`
 
-- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `resolveReferences`, `resolveReferenceTarget` (denied → `RestrictedReference`, missing → `MissingReference`), `assertEntryAvailable`, the typed `ContentStoreError` codes, and the conflict errors
+- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `fillEmptyFieldWhileHoldingWriteLock`, `resolveReferences`, `resolveReferenceTarget` (denied → `RestrictedReference`, missing → `MissingReference`), `assertEntryAvailable`, the typed `ContentStoreError` codes, and the conflict errors
+- `stamp-on-publish.ts` — `stampNewEntries`: fills a new entry's empty `stampOnPublish` fields at submit
 - `content-reader.ts` — content reading; resolves `entry:ID` body links at read time, opt-out via `resolveEntryLinks: false`
 - `content-id-index.ts` — ContentId indexing, tree and global lookups, and the duplicate-ID quarantine
 - `content-index-registry.ts` — in-process registry connecting branch-mutating operations to the stores they make stale
@@ -543,8 +544,8 @@ Manager hooks, in `editor/hooks/` — see
 - `useBranchManager.tsx` — branch state; adopts the server's `defaultBranch` when unpinned; overlays just-created branches
 - `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm; adopts server-sanitized names
 - `create-branch-request.ts` — `requestBranchCreate`: a 90 s create deadline, settled by the branch list
-- `useEntryManager.ts` — entry loading/saving, `readEntryValue`, `listAllEntries` cursors
-- `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; verifies restored drafts
+- `useEntryManager.ts` — entry loading/saving, `readEntryValue`, `adoptEntryVersion`, `listAllEntries` cursors
+- `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; verifies restored drafts; `applySubmitStamps`
 - `useSchemaManager.ts` — schema mutations, returning result objects
 - `useCommentSystem.ts` — comment CRUD
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
@@ -673,7 +674,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 
 **Location**: `packages/canopycms/src/`
 
-- `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
+- `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `listBaseFiles`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache; quarantines a dir whose metadata will not load
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
@@ -743,7 +744,7 @@ immediately; without one they enqueue a task for the worker; a submit marks the 
 **Location**: `packages/canopycms/src/services.ts`
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
-- `submitBranch()` — the submit workflow: checkout, status, commit all (with editor trailers), push; returns `changedPaths` and `editors` (`NothingToSubmitError` when empty)
+- `submitBranch()` — the submit workflow: checkout, stamp new entries, status, commit all (with editor trailers), push; returns `changedPaths`, `editors` and `stamped` (`NothingToSubmitError` when empty)
 - `commitToSettingsBranch()` — commit and push the settings branch (never a PR)
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 
@@ -857,7 +858,7 @@ in `server.ts` and `client.ts`. See
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
 - `provisioning-lock.ts` — `acquireProvisioningLock` (patient), `tryAcquireProvisioningLock` (zero-retry), `acquireProvisioningLockWithin` (bounded wait); `branchProvisioningLockName`; `guardOnCompromised`
 - `provision-log.ts` — `ProvisionLog`: per-step start/done timing lines for one workspace provisioning, never behind `CANOPYCMS_DEBUG`
-- `content-write-lock.ts` — `withContentWriteLock`, cross-host exclusion between working-tree mutations and the worker's rebase loop; `ContentWriteLockBusyError.outcome`
+- `content-write-lock.ts` — `withContentWriteLock`, cross-host exclusion between working-tree mutations and the worker's rebase loop; `ContentWriteLockBusyError.outcome`; `assertContentWriteLockHeld`
 
 The lock layers, the OCC guarantee boundary and the per-call resolve cache are in
 [docs/concurrency.md](docs/concurrency.md). The one-prefix-join rule is in

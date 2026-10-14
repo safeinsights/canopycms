@@ -71,6 +71,13 @@ interface BaseFieldConfig {
 
 interface PrimitiveFieldConfig extends BaseFieldConfig {
   type: (typeof scalarFieldTypes)[number]
+  /**
+   * On a top-level, optional, single `datetime` field: Canopy's first submit of an entry new to
+   * the base branch sets the field, while it is empty, to the submit's time
+   * (`stamp-on-publish.ts`). `ensureStampOnPublishPlacement` (`validation.ts`) refuses it
+   * anywhere else.
+   */
+  stampOnPublish?: boolean
 }
 
 /** Content that would run code as it renders is refused at save; see `validation/markdown-safety.ts`. */

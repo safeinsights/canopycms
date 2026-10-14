@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CanopyCMSProvider } from '../theme'
 import { DateTimeField } from './DateTimeField'
 
+const STAMP_NOTE =
+  "If left empty on a new entry, it's set to the time its branch is first submitted for review."
+
 const resolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions
 
 /** Has the machine's locale write times on a 12-hour clock, or a 24-hour one. */
@@ -64,7 +67,8 @@ const Harness: React.FC<{
   onChange?: (v: string) => void
   readOnly?: boolean
   description?: string
-}> = ({ initial = '', onChange, readOnly, description }) => {
+  stampOnPublish?: boolean
+}> = ({ initial = '', onChange, readOnly, description, stampOnPublish }) => {
   const [value, setValue] = useState(initial)
   return (
     <CanopyCMSProvider>
@@ -78,6 +82,7 @@ const Harness: React.FC<{
         }}
         dataCanopyField="publishedAt"
         readOnly={readOnly}
+        stampOnPublish={stampOnPublish}
       />
     </CanopyCMSProvider>
   )
@@ -300,6 +305,18 @@ describe('DateTimeField', () => {
   it('shows the placeholder when nothing is stored', () => {
     render(<Harness />)
     expect(pickerButton().textContent).toBe('Pick a date and time')
+  })
+
+  it('states the stampOnPublish rule in the description, empty or set, after the field description', () => {
+    render(<Harness stampOnPublish description="When it goes live." />)
+    expect(pickerButton().textContent).toBe('Pick a date and time')
+    expect(describedBy()).toBe(
+      `When it goes live. ${STAMP_NOTE} In your time zone (${zoneAbbreviation()}).`,
+    )
+    cleanup()
+    render(<Harness stampOnPublish initial={STORED} readOnly />)
+    expect(pickerButton().textContent).toBe(displayed(STORED))
+    expect(describedBy()).toBe(`${STAMP_NOTE} In your time zone (${zoneAbbreviation()}).`)
   })
 
   it('calls no onChange on mount, on re-render, or on opening and closing the picker', async () => {

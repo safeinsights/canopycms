@@ -6,6 +6,7 @@ import equal from 'fast-deep-equal'
 import type { EditorEntry } from '../Editor'
 import type { ContentId, LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
+import type { StampedEntry } from '../../stamp-on-publish'
 import { getNotificationDuration } from '../utils/env'
 import { validateEntryFormValue, type EntryFieldError } from '../../validation/entry-validator'
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
@@ -159,6 +160,8 @@ export interface UseDraftManagerOptions {
    * conflict detection falls back entirely to saveEntry's token check.
    */
   getEntryVersion?: (contentId: string) => number | undefined
+  /** Holds a version the server moved an entry to itself (useEntryManager's `adoptEntryVersion`). */
+  adoptEntryVersion?: (contentId: string, version: number) => void
   setBusy: (busy: boolean) => void
   /**
    * Fired (fire-and-forget) after a successful save. Lets callers refresh
@@ -224,6 +227,8 @@ export interface UseDraftManagerReturn {
   fieldErrors: Record<string, string>
   /** True while the last write of drafts to localStorage failed. */
   draftStorageFailed: boolean
+  /** Moves loaded values, tokens and drafts onto the versions a submit's stamps left. */
+  applySubmitStamps: (stamped: readonly StampedEntry[]) => void
 }
 
 /**
@@ -1264,7 +1269,53 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     return { count, labels: files.map((f) => f.label) }
   }
 
+  // An entry's token and draft base move to the stamped version only from the version the stamp
+  // replaced: one already behind it stays behind, so the usual conflict check still catches it.
+  const applySubmitStamps = (stamped: readonly StampedEntry[]) => {
+    const { getEntryVersion, adoptEntryVersion } = latestOptionsRef.current
+    const loadedMoved: StampedEntry[] = []
+    const draftsMoved: StampedEntry[] = []
+    for (const entry of stamped) {
+      if (getEntryVersion?.(entry.contentId) === entry.previousVersion) {
+        adoptEntryVersion?.(entry.contentId, entry.version)
+        loadedMoved.push(entry)
+      }
+      if (draftBaseVersionsRef.current[entry.contentId] === entry.previousVersion) {
+        draftBaseVersionsRef.current[entry.contentId] = entry.version
+        draftsMoved.push(entry)
+      }
+    }
+    if (loadedMoved.length > 0) {
+      setLoadedValues((prev) => {
+        const next = { ...prev }
+        for (const { contentId, fields } of loadedMoved) {
+          if (prev[contentId]) next[contentId] = { ...prev[contentId], ...fields }
+        }
+        return next
+      })
+    }
+    // A new drafts object even when no value changes, so the moved base versions are persisted.
+    if (draftsMoved.length > 0) {
+      setDrafts((prev) => {
+        const next = { ...prev }
+        for (const { contentId, fields } of draftsMoved) {
+          const draft = prev[contentId]
+          if (!draft) continue
+          const filled = { ...draft }
+          for (const [name, value] of Object.entries(fields)) {
+            if (draft[name] === undefined || draft[name] === null || draft[name] === '') {
+              filled[name] = value
+            }
+          }
+          next[contentId] = filled
+        }
+        return next
+      })
+    }
+  }
+
   return {
+    applySubmitStamps,
     drafts,
     setDrafts,
     loadedValues,

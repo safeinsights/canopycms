@@ -1,8 +1,9 @@
 import { z } from 'zod'
 import { branchParamSchema } from './validators'
-import type { ApiContext, ApiRequest } from './types'
+import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContext } from '../types'
-import { toBranchListItem, type BranchListItemResponse } from './branch'
+import { toBranchListItem, type BranchListItem, type BranchListItemResponse } from './branch'
+import type { StampedEntry } from '../stamp-on-publish'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
@@ -19,6 +20,15 @@ import { baseBranchOf } from '../utils/base-branch'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
+
+/**
+ * A submit's answer: the branch, plus the entries the submit stamped (stamp-on-publish.ts) when
+ * there were any, so the editor can carry its open forms and drafts onto their new versions.
+ */
+export type SubmitBranchResponse = ApiResponse<{
+  branch: BranchListItem
+  stamped?: StampedEntry[]
+}>
 
 const getBranchStatusHandler = async (
   gc: { branchContext: BranchContext },
@@ -40,7 +50,7 @@ const submitBranchForMergeHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
-): Promise<BranchListItemResponse> => {
+): Promise<SubmitBranchResponse> => {
   const { branchContext } = gc
 
   // Check if user can perform workflow actions (creator OR ACL access). isProtectedBranch
@@ -88,8 +98,9 @@ const submitBranchForMergeHandler = async (
   const { authPlugin } = ctx
   let changedPaths: string[]
   let editors: SubmissionEditor[]
+  let stamped: StampedEntry[]
   try {
-    ;({ changedPaths, editors } = await ctx.services.submitBranch({
+    ;({ changedPaths, editors, stamped } = await ctx.services.submitBranch({
       context: branchContext,
       submitter,
       lookupEditor: authPlugin ? (id) => authPlugin.getUserMetadata(id) : undefined,
@@ -197,7 +208,10 @@ const submitBranchForMergeHandler = async (
   return {
     ok: true,
     status: 200,
-    data: { branch: toBranchListItem(ctx.services.config, updated.branch, req.user) },
+    data: {
+      branch: toBranchListItem(ctx.services.config, updated.branch, req.user),
+      ...(stamped.length > 0 ? { stamped } : {}),
+    },
   }
 }
 
@@ -230,8 +244,8 @@ const submitBranchForMerge = defineEndpoint({
   method: 'POST',
   path: '/:branch/submit',
   params: branchParamSchema,
-  responseType: 'BranchListItemResponse',
-  response: {} as BranchListItemResponse,
+  responseType: 'SubmitBranchResponse',
+  response: {} as SubmitBranchResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',

@@ -14,9 +14,9 @@ export async function atomicWriteFile(
   await fs.mkdir(dir, { recursive: true })
 
   const tempPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-  await fs.writeFile(tempPath, content, typeof content === 'string' ? 'utf-8' : undefined)
-
+  // A temp file a failed write leaves behind would sit in the working tree for a commit to pick up.
   try {
+    await fs.writeFile(tempPath, content, typeof content === 'string' ? 'utf-8' : undefined)
     await fs.rename(tempPath, filePath)
   } catch (err) {
     await fs.unlink(tempPath).catch(() => {})
