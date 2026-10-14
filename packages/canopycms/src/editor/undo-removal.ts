@@ -185,6 +185,8 @@ export function restoreRemoval(
   const resolved = resolvePath(fields, value, removalPath(removal))
   if (!resolved || !anchorsHold(removal.anchors, resolved.anchors)) return undefined
   const { path } = resolved
+  // An enclosing object cleared since would come back holding only this.
+  if (!isPlainRecord(path.length > 1 ? getAt(value, path.slice(0, -1)) : value)) return undefined
   const current = getAt(value, path)
   let next: unknown
   if (removal.kind === 'list-item') {
@@ -204,18 +206,22 @@ export function restoreRemoval(
   return isPlainRecord(restored) ? restored : undefined
 }
 
-/** How many of an entry's open, item-keyed field threads `threads` place on or inside `path`. */
+/**
+ * How many open field threads a removal at `path` moves to the entry: those inside it keyed to an
+ * item at or below it. One keyed only above stays on its field, which a Clear leaves in place.
+ */
 export function openThreadsWithin(
   threads: readonly CommentThread[],
   entryPath: string,
   path: readonly CanopyPathSegment[],
 ): number {
   const prefix = parseCanopyPath(normalizeCanopyPath(path))
+  const isIndex = (segment: CanopyPathSegment) => typeof segment === 'number'
+  const itemsAbove = prefix.filter(isIndex).length - (isIndex(prefix[prefix.length - 1]) ? 1 : 0)
   return threads.filter((thread) => {
     if (thread.type !== 'field' || thread.resolved || thread.onRemovedItem) return false
-    if (thread.entryPath !== entryPath || !thread.canopyPath || !thread.itemKeys?.length) {
-      return false
-    }
+    if (thread.entryPath !== entryPath || !thread.canopyPath) return false
+    if ((thread.itemKeys?.length ?? 0) <= itemsAbove) return false
     const segments = parseCanopyPath(thread.canopyPath)
     return prefix.length <= segments.length && prefix.every((s, i) => segments[i] === s)
   }).length

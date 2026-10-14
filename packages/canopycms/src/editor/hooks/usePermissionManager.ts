@@ -2,10 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { PathPermission } from '../../config'
 import type { PermissionGroupOption } from '../../auth/types'
-import type { ApiErrorCode } from '../../api/types'
 import { useApiClient } from '../context'
-
-const SETTINGS_CHANGED_CODE = 'SETTINGS_CHANGED' satisfies ApiErrorCode
+import { SETTINGS_CHANGED_CODE, SettingsChangedError } from '../settings-conflict'
 
 export interface UsePermissionManagerOptions {
   /**
@@ -58,16 +56,16 @@ export function usePermissionManager(
   }
 
   const handleSavePermissions = async (permissions: PathPermission[]) => {
-    // A version conflict loses nothing yet, so it is yellow; every other failure is red.
-    let failureColor: 'red' | 'yellow' = 'red'
     try {
       const result = await apiClient.permissions.update({
         permissions,
         expectedContentVersion: versionRef.current,
       })
       if (!result.ok) {
-        if (result.code === SETTINGS_CHANGED_CODE) failureColor = 'yellow'
-        throw new Error(result.error || 'Failed to save permissions')
+        const message = result.error || 'Failed to save permissions'
+        throw result.code === SETTINGS_CHANGED_CODE
+          ? new SettingsChangedError(message)
+          : new Error(message)
       }
       notifications.show({
         title: 'Permissions saved',
@@ -77,7 +75,10 @@ export function usePermissionManager(
       await loadPermissions()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save permissions'
-      notifications.show({ message, color: failureColor })
+      notifications.show({
+        message,
+        color: err instanceof SettingsChangedError ? 'yellow' : 'red',
+      })
       throw err
     }
   }

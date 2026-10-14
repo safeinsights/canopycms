@@ -37,6 +37,7 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
     isDirty,
     isSaving,
     error,
+    errorIsConflict,
     setError,
     createGroup,
     updateGroup,
@@ -158,9 +159,9 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
         {error && (
           <Alert
             icon={<IconAlertCircle size={16} />}
-            color="red"
+            color={errorIsConflict ? 'yellow' : 'red'}
             mb="sm"
-            title="Error"
+            title={errorIsConflict ? 'Not saved' : 'Error'}
             withCloseButton
             onClose={() => setError(null)}
           >

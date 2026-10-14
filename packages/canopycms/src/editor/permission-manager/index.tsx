@@ -8,6 +8,7 @@ import { usePermissionTree } from './hooks/usePermissionTree'
 import { useGroupsAndUsers } from './hooks/useGroupsAndUsers'
 import { PermissionTree } from './PermissionTree'
 import { findTreeNode } from './utils'
+import { SettingsChangedError } from '../settings-conflict'
 import { StagedChangesDrawer, useOpeningKey } from '../components/StagedChangesDrawer'
 
 export const PermissionManager: React.FC<PermissionManagerProps> = (props) => {
@@ -33,6 +34,7 @@ const PermissionManagerDrawer: React.FC<PermissionManagerProps & { onExited: () 
 }) => {
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [errorIsConflict, setErrorIsConflict] = useState(false)
   const [activeLevel, setActiveLevel] = useState<PermissionLevel>('read')
 
   const {
@@ -88,6 +90,7 @@ const PermissionManagerDrawer: React.FC<PermissionManagerProps & { onExited: () 
       setIsDirty(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save permissions')
+      setErrorIsConflict(err instanceof SettingsChangedError)
     } finally {
       setIsSaving(false)
     }
@@ -204,9 +207,9 @@ const PermissionManagerDrawer: React.FC<PermissionManagerProps & { onExited: () 
         {error && (
           <Alert
             icon={<IconAlertCircle size={16} />}
-            color="red"
+            color={errorIsConflict ? 'yellow' : 'red'}
             mb="sm"
-            title="Error"
+            title={errorIsConflict ? 'Not saved' : 'Error'}
             withCloseButton
             onClose={() => setError(null)}
           >

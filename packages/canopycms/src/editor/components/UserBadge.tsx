@@ -166,13 +166,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     const hiddenDetail = `${revealIdOnFallback ? ` · ${userId}` : ''}${emailDetail ? `, ${emailDetail}` : ''}`
     return wrap(
       <Group gap={4}>
-        <Avatar
-          src={record?.avatarUrl}
-          alt=""
-          size={avatarSize}
-          color="gray"
-          aria-hidden={variant !== 'avatar-only' || undefined}
-        />
+        <Avatar src={record?.avatarUrl} alt="" size={avatarSize} color="gray" aria-hidden />
         {variant === 'avatar-only' ? (
           <VisuallyHidden component="span">{describedWithEmail}</VisuallyHidden>
         ) : (

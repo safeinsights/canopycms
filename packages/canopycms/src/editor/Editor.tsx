@@ -623,13 +623,13 @@ const EditorContent: React.FC<EditorProps> = ({
     }
     const doing = removal.action === 'clear' ? 'clearing' : 'removing'
     // The item's open threads leave with it, for the entry's thread list (`displayComments`).
-    const movedThreads =
-      removal.kind === 'list-item' && currentEntry
-        ? openThreadsWithin(displayComments, currentEntry.path, [
-            ...removal.listPath,
-            removal.index,
-          ])
-        : 0
+    const movedThreads = currentEntry
+      ? openThreadsWithin(
+          displayComments,
+          currentEntry.path,
+          removal.kind === 'list-item' ? [...removal.listPath, removal.index] : removal.path,
+        )
+      : 0
     nextUndoToastRef.current += 1
     const id = `canopy-undo-${nextUndoToastRef.current}`
     let used = false

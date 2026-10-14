@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import type { FieldConfig } from '../config'
+import type { CommentThread } from '../comment-store'
 import {
+  openThreadsWithin,
   removalAnchors,
   restoredFieldPath,
   restoreRemoval,
@@ -20,6 +22,18 @@ const fields: FieldConfig[] = [
     name: 'meta',
     type: 'group',
     fields: [{ name: 'hero', type: 'image' }],
+  },
+  {
+    name: 'seo',
+    type: 'object',
+    fields: [
+      { name: 'summary', type: 'string' },
+      {
+        name: 'card',
+        type: 'object',
+        fields: [{ name: 'caption', type: 'string' }],
+      },
+    ],
   },
   {
     name: 'blocks',
@@ -238,6 +252,67 @@ describe('restoreRemoval', () => {
         { kind: 'list-item', listPath: ['links'], index: 1, item, label: '/b' },
       ),
     ).toBeUndefined()
+  })
+})
+
+describe('restoreRemoval of a cleared object', () => {
+  const clearOf = (path: Array<string | number>, value: unknown): FieldRemoval => ({
+    kind: 'value',
+    path,
+    value,
+    label: 'x',
+    action: 'clear',
+  })
+
+  it('puts the object back while its field is still unset', () => {
+    const seo = { summary: 'S' }
+    expect(restoreRemoval(fields, { title: 'T' }, clearOf(['seo'], seo))?.seo).toBe(seo)
+  })
+
+  it('puts nothing back once the object holding it has itself been cleared', () => {
+    // Clear seo.card, then Clear seo: Undo on the first would bring seo back as { card } alone.
+    const removal = clearOf(['seo', 'card'], { caption: 'C' })
+    expect(restoreRemoval(fields, { title: 'T' }, removal)).toBeUndefined()
+    expect(restoreRemoval(fields, { seo: { summary: 'S' } }, removal)?.seo).toEqual({
+      summary: 'S',
+      card: { caption: 'C' },
+    })
+  })
+})
+
+describe('openThreadsWithin', () => {
+  const thread = (id: string, canopyPath: string, itemKeys?: string[], resolved = false) =>
+    ({
+      id,
+      type: 'field',
+      entryPath: 'posts/a',
+      canopyPath,
+      itemKeys,
+      resolved,
+      authorId: 'u',
+      createdAt: '2024-01-01T00:00:00Z',
+      comments: [],
+    }) as CommentThread
+
+  it('counts the open threads keyed to the removed item or inside it, and no other', () => {
+    const threads = [
+      thread('on-item', 'links[1].href', ['k1']),
+      thread('resolved', 'links[1].href', ['k1'], true),
+      thread('neighbour', 'links[10].href', ['k10']),
+      thread('other-entry', 'links[1].href', ['k1']),
+    ]
+    threads[3] = { ...threads[3], entryPath: 'posts/b' }
+    expect(openThreadsWithin(threads, 'posts/a', ['links', 1])).toBe(1)
+  })
+
+  it("counts a Clear's threads keyed to items inside it, not those keyed only above it", () => {
+    const threads = [
+      thread('inside-list', 'meta.links[0].href', ['k0']),
+      thread('on-field', 'meta.title'),
+      thread('above', 'team[1].seo.title', ['k-team1']),
+    ]
+    expect(openThreadsWithin(threads, 'posts/a', ['meta'])).toBe(1)
+    expect(openThreadsWithin(threads, 'posts/a', ['team', 1, 'seo'])).toBe(0)
   })
 })
 
