@@ -4,13 +4,16 @@ name: Close issues on integration merge
 # only when the PR merges into the default branch. Nearly every PR here merges
 # into an `int-*` branch instead, so this closes them at that merge.
 #
-# pull_request_target runs this file as it is on the base branch, with a token
-# that can write even for a PR from a fork. That is safe here only because
-# nothing from the PR is checked out or run: the job reads the event payload
-# (the PR body, as data in an environment variable) and calls `gh`. Keep it
-# that way -- no actions/checkout, no `${{ }}` of PR text inside `run:`.
+# `pull_request`, not `pull_request_target`: the latter always runs the
+# default branch's copy of a workflow, so this one would do nothing until it
+# reached `main`. A merged `pull_request` runs the file as merged into the
+# `int-*` branch. A fork's PR gets a read-only token, so only same-repository
+# PRs close issues, which the `if:` makes explicit. Nothing from the PR is
+# checked out or run: the job reads the PR body from an environment variable
+# and calls `gh`. Keep it that way -- no actions/checkout, no `${{ }}` of PR
+# text inside `run:`.
 on:
-  pull_request_target:
+  pull_request:
     types: [closed]
     branches: ['int-*']
 
@@ -18,7 +21,9 @@ permissions: {}
 
 jobs:
   close:
-    if: github.event.pull_request.merged == true
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -32,12 +37,18 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         # GitHub's closing keywords, each naming one issue as `#N`,
         # `owner/repo#N` or an issue URL in this repository, at most 20 per PR.
-        # Numbers that are pull requests, or already closed, are skipped.
+        # Fenced code, HTML comments and quoted lines are ignored, as GitHub
+        # ignores them. Numbers that are pull requests, or already closed, are
+        # skipped; one failed close does not stop the rest.
         run: |
           node --input-type=module -e '
+            import { writeFileSync } from "node:fs"
             const repo = process.env.REPO.toLowerCase()
-            const body = process.env.PR_BODY ?? ""
-            const ref = String.raw`(?:([\w.-]+\/[\w.-]+)#|#|https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/issues\/)(\d+)`
+            const body = (process.env.PR_BODY ?? "")
+              .replace(/<!--[\s\S]*?-->/g, "")
+              .replace(/^ {0,3}(```|~~~)[\s\S]*?^ {0,3}\1/gm, "")
+              .replace(/^ {0,3}>.*$/gm, "")
+            const ref = String.raw`(?:([\w.-]+\/[\w.-]+)#|#|https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/issues\/)([1-9]\d{0,8})\b`
             const rx = new RegExp(String.raw`\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+` + ref, "gi")
             const numbers = new Set()
             for (const m of body.matchAll(rx)) {
@@ -45,16 +56,19 @@ jobs:
               if (target === repo) numbers.add(Number(m[3]))
             }
             // A cap bounds what one careless merge can close.
-            if (numbers.size > 20) console.error(`naming ${numbers.size} issues; closing the first 20`)
-            console.log([...numbers].slice(0, 20).join(" "))
-          ' > numbers.txt
+            if (numbers.size > 20) console.log(`::warning::naming ${numbers.size} issues; closing the first 20`)
+            writeFileSync("numbers.txt", [...numbers].slice(0, 20).join(" "))
+          '
           for n in $(cat numbers.txt); do
             state=$(gh api "repos/$REPO/issues/$n" --jq 'if .pull_request then "pr" else .state end' || echo missing)
             if [ "$state" != "open" ]; then
               echo "#$n: $state, skipped"
               continue
             fi
-            gh issue close "$n" --repo "$REPO" --reason completed \
-              --comment "Closed by #$PR_NUMBER, merged into \`$BASE_REF\`."
-            echo "#$n: closed"
+            if gh issue close "$n" --repo "$REPO" --reason completed \
+              --comment "Closed by #$PR_NUMBER, merged into \`$BASE_REF\`."; then
+              echo "#$n: closed"
+            else
+              echo "::warning::#$n: close failed"
+            fi
           done

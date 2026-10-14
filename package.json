@@ -18,7 +18,7 @@
     "lint:cycles": "depcruise packages/canopycms/src packages/canopycms-next/src --output-type err-long",
     "tasks:screen": "node scripts/tasks-privacy-screen.mjs",
     "tasks:sync": "node scripts/tasks-sync.mjs",
-    "lint:account-ids": "node scripts/check-account-ids.mjs --self-test && node scripts/check-account-ids.mjs",
+    "lint:account-ids": "node scripts/check-account-ids.mjs --self-test && node scripts/tasks-privacy-screen.mjs --self-test && node scripts/check-account-ids.mjs",
     "lint:docs": "node scripts/check-docs.mjs --self-test && node scripts/check-docs.mjs",
     "lint:changesets": "node scripts/migration-notes.mjs --self-test && node scripts/release-stable.mjs --self-test && node scripts/migration-notes.mjs --check",
     "changelog:preview": "node scripts/migration-notes.mjs --preview",

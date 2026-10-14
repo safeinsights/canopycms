@@ -24,14 +24,14 @@
  * PUBLIC_HOSTS. Anything else is fixed by rewording the text: there is no
  * per-finding allowlist.
  *
- *   pnpm tasks:screen [--show] [--require-gh] [--repo owner/name] <file>...
+ *   pnpm tasks:screen [--show] [--generic-only] [--repo owner/name] <file>...
  *
- * Without `--require-gh`, an unreachable gh degrades to the generic rules with
- * a loud warning. `--self-test` checks the matchers.
+ * It fails (exit 2) when gh cannot gather the private names; `--generic-only`
+ * runs without them, with a loud warning. `--self-test` checks the matchers.
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -102,9 +102,9 @@ const isPublicHost = (host) => {
 // split one input two ways: linear despite the nesting safe-regex counts.
 const HOST =
   // eslint-disable-next-line security/detect-unsafe-regex
-  /(?<![\w.-])(?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|app|aws|ai|co|edu|gov|us|cloud|xyz|info|biz|me|tech|online)(?![\w-])/gi
+  /(?<![\w.-])(?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|app|aws|ai|co|edu|gov|us|cloud|xyz|info|biz|me|tech|online|ca|de|uk|eu|au|nz|ie|fr|nl|ch|se|dk|fi)(?![\w-])/gi
 // eslint-disable-next-line security/detect-unsafe-regex -- dot-terminated labels, as HOST
-const EMAIL = /[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})/g
+const EMAIL = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})/g
 /** An address at a reserved example domain, or GitHub's own git and noreply users. */
 const EMAIL_OK = (domain) =>
   /^(?:example\.(?:com|org|net)|github\.com|ssh\.github\.com|users\.noreply\.github\.com)$/i.test(
@@ -125,7 +125,11 @@ const RULES = [
   {
     kind: 's3-bucket',
     rx: /\bs3:\/\/([^/\s`'")]*)/gi,
-    ok: (m) => m[1] === '' || PLACEHOLDER.test(m[1]) || /^(?:bucket|example)/i.test(m[1]),
+    ok: (m) =>
+      m[1] === '' ||
+      /^(?:<[^>]*>?|\$\{[^}]*\}?|\{[^}]*\}?|\*|x+|\.\.\.|…|(?:my-|example-)?bucket|example)$/i.test(
+        m[1],
+      ),
   },
   {
     kind: 'aws-resource-id',
@@ -154,7 +158,7 @@ const RULES = [
     kind: 'private-repo',
     // An org URL (`github.com/orgs/safeinsights/projects/5`) names no repo.
     rx: /(?<!orgs\/)\bsafeinsights\/([A-Za-z0-9._-]+)/gi,
-    ok: (m) => m[1].toLowerCase() === 'canopycms',
+    ok: (m) => m[1].replace(/\.+$/, '').toLowerCase() === 'canopycms',
   },
   {
     // Ruleset, App and installation ids are org configuration, not public.
@@ -167,7 +171,7 @@ const RULES = [
     // An adopter's request log lives in its own private repo; its numbers mean
     // nothing publicly and point at it.
     kind: 'request-log-ref',
-    rx: /\b(?:(?:adopter|marketing[- ]site|knowledge[- ]base|KB|MKT) )?requests?[ #-]{1,3}\d+[a-z]?\b/gi,
+    rx: /\b(?:(?:adopter|marketing[- ]site|knowledge[- ]base|KB|MKT) )?(?<!pull )requests?[ #-]{1,3}\d+[a-z]?\b/gi,
   },
   {
     kind: 'host',
@@ -213,54 +217,90 @@ function bounded(name, flags) {
   return new RegExp(`(?<![\\w-])${escapeRx(name)}(?![\\w-])`, flags)
 }
 
+/** A name that would match anywhere: a separator, a digit or an inner capital. */
+const isDistinctive = (name) => /[-_./\d]|[a-z][A-Z]/.test(name)
+
+/** `v2`, `1.4`, `2026`: a version or number identifies nothing. */
+const isVersionLike = (name) => /^v?[\d.]+$/i.test(name) && /\d/.test(name)
+
+/** An optional emphasis or quote mark around a name in prose. */
+const MARK = '[`*_"\'’]?'
+
 /**
- * Matchers for one name, as `{ rx, review }`. A name with a separator, digit
- * or inner capital (`acme-site`, `site2`, `acmeSite`) is refused anywhere. A
+ * Matchers for one repo, checkout, branch or profile name, as `{ rx, review }`.
+ * A distinctive name (`acme-site`, `site2`, `acmeSite`) is refused anywhere. A
  * plain word (`website`) is ordinary prose and often a path segment here
  * (`docs/`, `utils/`), so it is refused only where it reads as a repo:
- * `<known owner>/name`, `../name`, `name@`, `name v2`, or "the name repo /
- * adopter / checkout". In backticks it is only
- * flagged for review.
+ * `<known owner>/name`, `../name`, `name@`, `name.git`, `name v2`, or "the
+ * name repo / adopter / checkout", marks and line breaks included. Alone in
+ * backticks it is only flagged for review. Every pattern runs over the whole
+ * text, so `\s+` spans a wrapped line.
  */
 export function nameMatcher(name, owners = []) {
-  if (/[-_./\d]|[a-z][A-Z]/.test(name)) return [{ rx: bounded(name, 'gi'), review: false }]
+  if (isDistinctive(name)) return [{ rx: bounded(name, 'gi'), review: false }]
   const e = escapeRx(name)
   const own = owners.map(escapeRx).join('|')
+  const strong = [
+    own && `(?<![\\w.-])(?:${own})/${e}(?![\\w-])`,
+    `(?<![./])\\.\\./${e}\\b`,
+    `(?<![\\w/.-])${e}@`,
+    `(?<![\\w.-])${e}\\.git\\b`,
+    `${MARK}\\b${e}\\b${MARK}(?:['’]s)?\\s+(?:repo|repository|adopter|checkout|clone)\\b`,
+    `\\b${e}[-\\s]v\\d+\\b`,
+  ].filter(Boolean)
   /* eslint-disable security/detect-non-literal-regexp -- escaped */
-  const strong = new RegExp(
-    `${own ? `(?<![\\w.-])(?:${own})/${e}(?![\\w-])|` : ''}(?<![./])\\.\\./${e}\\b|(?<![\\w/.-])${e}@|\\b${e}(?:'s)? (?:repo|repository|adopter|checkout|clone)\\b|\\b${e}[- ]v\\d+\\b`,
-    'gi',
-  )
-  const weak = new RegExp(`\`${e}\``, 'gi')
-  /* eslint-enable security/detect-non-literal-regexp */
   return [
-    { rx: strong, review: false },
-    { rx: weak, review: true },
+    { rx: new RegExp(strong.join('|'), 'gi'), review: false },
+    { rx: new RegExp(`\`${e}\``, 'gi'), review: true },
   ]
+  /* eslint-enable security/detect-non-literal-regexp */
 }
 
 /**
- * A person's display name, whole, plus each alphabetic part of two or more
- * letters case-sensitively (`Jane` but not `jane`, which is a word too often).
+ * Matchers for an org or account login. A distinctive one is refused
+ * anywhere; a plain word where it reads as an account: `github.com/login`,
+ * `login.github.io`, `login/repo`, or "the login org".
+ */
+export function ownerMatcher(login) {
+  if (isDistinctive(login)) return [{ rx: bounded(login, 'gi'), review: false }]
+  const e = escapeRx(login)
+  /* eslint-disable security/detect-non-literal-regexp -- escaped */
+  return [
+    {
+      rx: new RegExp(
+        `github\\.com/${e}(?![\\w-])|(?<![\\w.-])${e}(?:\\.github\\.io\\b|/[\\w.-])|${MARK}\\b${e}\\b${MARK}(?:['’]s)?\\s+org(?:anization)?\\b`,
+        'gi',
+      ),
+      review: false,
+    },
+    { rx: new RegExp(`\`${e}\``, 'gi'), review: true },
+  ]
+  /* eslint-enable security/detect-non-literal-regexp */
+}
+
+/**
+ * A person's display name, whole, plus each part of two or more letters, any
+ * script, case-sensitively (`Jane` but not `jane`, which is a word too often).
  */
 export function personMatchers(displayName) {
   const out = []
   const full = displayName.trim()
   if (!full) return out
-  if (full.includes(' ')) out.push(bounded(full, 'gi'))
+  if (full.includes(' ')) out.push(bounded(full, 'giu'))
   for (const part of full.split(/\s+/)) {
-    if (/^[A-Za-z][A-Za-z'-]+$/.test(part)) out.push(bounded(part, 'g'))
+    if (/^\p{L}[\p{L}'’-]+$/u.test(part)) out.push(bounded(part, 'gu'))
   }
   return out
 }
 
 /**
- * Turns gathered names into `{ source, rx }` terms. `self` names (this
- * repo's own branches and environments, which are public) and GENERIC_NAMES
- * are dropped.
+ * Turns gathered names into `{ source, rx, review? }` terms. `self` names
+ * (this repo, its owner and its own branches and environments, which are
+ * public), GENERIC_NAMES and version-like names are dropped.
  */
 export function termsFromNames({
   owners = [],
+  orgs = [],
   repos = [],
   dirs = [],
   logins = [],
@@ -273,7 +313,8 @@ export function termsFromNames({
   const terms = []
   const add = (source, names) => {
     for (const name of new Set(names)) {
-      if (!name || skip.has(name.toLowerCase()) || name.startsWith('dependabot/')) continue
+      if (!name || skip.has(name.toLowerCase()) || isVersionLike(name)) continue
+      if (name.startsWith('dependabot/')) continue
       for (const m of nameMatcher(name, owners)) terms.push({ source, ...m })
     }
   }
@@ -283,7 +324,12 @@ export function termsFromNames({
   // Prose drops a profile's org prefix (`acme-sandbox-admin` → `sandbox-admin`).
   const unprefixed = profiles.map((p) => p.slice(p.indexOf('-') + 1)).filter((p) => p.includes('-'))
   add('aws profile', [...profiles, ...unprefixed])
+  for (const login of new Set(orgs)) {
+    if (skip.has(login.toLowerCase())) continue
+    for (const m of ownerMatcher(login)) terms.push({ source: 'org', ...m })
+  }
   for (const login of new Set(logins)) {
+    if (skip.has(login.toLowerCase())) continue
     terms.push({ source: 'person', rx: bounded(login, 'gi') })
   }
   for (const name of new Set(people)) {
@@ -292,12 +338,38 @@ export function termsFromNames({
   return terms
 }
 
-const gh = (args) =>
-  execFileSync('gh', args, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 64 * 1024 * 1024,
-  })
+/**
+ * `gh`, failing with gh's own first error line. Node's default message is the
+ * whole command line, which would print gathered names into the report.
+ */
+function gh(args) {
+  try {
+    return execFileSync('gh', args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 64 * 1024 * 1024,
+    })
+  } catch (err) {
+    const stderr = err && typeof err === 'object' && 'stderr' in err ? String(err.stderr) : ''
+    throw new Error(stderr.trim().split('\n')[0] || 'gh failed')
+  }
+}
+
+/**
+ * Without `repo` and `read:org`, GraphQL omits private repositories and
+ * private org memberships instead of failing, so the screen would pass names
+ * it never saw. A token without an `X-OAuth-Scopes` header (a fine-grained
+ * one) cannot be checked, so it is refused as well.
+ */
+function assertScopes() {
+  const head = gh(['api', '-i', 'user', '--jq', '.login'])
+  const line = /^x-oauth-scopes:(.*)$/im.exec(head)
+  if (!line)
+    throw new Error('the gh token lists no OAuth scopes, so private names cannot be confirmed')
+  const scopes = line[1].split(',').map((x) => x.trim())
+  const missing = ['repo', 'read:org'].filter((x) => !scopes.includes(x))
+  if (missing.length > 0) throw new Error(`the gh token lacks scope ${missing.join(', ')}`)
+}
 
 /**
  * Every node of a paginated GraphQL connection. `root` is the query's selection
@@ -305,7 +377,7 @@ const gh = (args) =>
  */
 function allNodes(root, vars, pick) {
   const nodes = []
-  let after = null
+  let after = vars.after ?? null
   do {
     const args = [
       'api',
@@ -313,7 +385,7 @@ function allNodes(root, vars, pick) {
       '-f',
       `query=query($after: String, $login: String!) { ${root} }`,
     ]
-    for (const [k, v] of Object.entries(vars)) args.push('-f', `${k}=${v}`)
+    for (const [k, v] of Object.entries(vars)) if (k !== 'after') args.push('-f', `${k}=${v}`)
     if (after) args.push('-f', `after=${after}`)
     const conn = pick(JSON.parse(gh(args)).data)
     nodes.push(...conn.nodes)
@@ -333,38 +405,55 @@ const orgRepos = (login, privateOnly) =>
   ).map((n) => n.name)
 
 /**
- * Private repo names the token can see outside the owner org: the viewer's
- * own, and those of every other org they belong to. A sibling org can hold an
- * adopter's or a deployment's repo just as well.
+ * Private repos the token can see outside the owner org, as names plus the
+ * accounts that own them: the viewer's own, those it collaborates on, and
+ * those of every org it belongs to. An adopter's or a deployment's repo can
+ * sit in any of them.
  */
 function otherPrivateRepos(owner) {
   const viewer = JSON.parse(gh(['api', 'graphql', '-f', 'query={ viewer { login } }'])).data.viewer
     .login
-  const own = allNodes(
-    `user(login: $login) { repositories(first: 100, after: $after, privacy: PRIVATE, ownerAffiliations: [OWNER]) { ${PAGE} nodes { name } } }`,
+  const affiliations = '[OWNER, COLLABORATOR, ORGANIZATION_MEMBER]'
+  const visible = allNodes(
+    `user(login: $login) { repositories(first: 100, after: $after, privacy: PRIVATE, affiliations: ${affiliations}, ownerAffiliations: ${affiliations}) { ${PAGE} nodes { name owner { login } } } }`,
     { login: viewer },
     (d) => d.user.repositories,
-  ).map((n) => n.name)
+  )
   const orgs = allNodes(
     `user(login: $login) { organizations(first: 100, after: $after) { ${PAGE} nodes { login } } }`,
     { login: viewer },
     (d) => d.user.organizations,
   ).map((n) => n.login)
   return {
-    owners: [viewer, ...orgs],
-    repos: [...own, ...orgs.filter((o) => o !== owner).flatMap((o) => orgRepos(o, true))],
+    owners: [...new Set([viewer, ...orgs, ...visible.map((r) => r.owner.login)])],
+    repos: [
+      ...visible.map((r) => r.name),
+      ...orgs.filter((o) => o !== owner).flatMap((o) => orgRepos(o, true)),
+    ],
   }
 }
 
-/** Branch and environment names of `repos` (first 100 of each), batched into aliased queries. */
+/** Every branch of one repo past the first page, which arrives alphabetically. */
+const moreRefs = (owner, repo, after) =>
+  allNodes(
+    `repository(owner: $login, name: ${JSON.stringify(repo)}) { refs(refPrefix: "refs/heads/", first: 100, after: $after) { ${PAGE} nodes { name } } }`,
+    { login: owner, after },
+    (d) => d.repository.refs,
+  ).map((n) => n.name)
+
+/**
+ * Branch and environment names of `repos`, batched into aliased queries. The
+ * names are interpolated into the query, so only `[\w.-]` names are asked for.
+ */
 function refsOf(owner, repos) {
+  const safe = repos.filter((r) => /^[\w.-]+$/.test(r))
   const names = []
-  for (let i = 0; i < repos.length; i += 20) {
-    const batch = repos.slice(i, i + 20)
+  for (let i = 0; i < safe.length; i += 20) {
+    const batch = safe.slice(i, i + 20)
     const fields = batch
       .map(
         (r, j) => `r${j}: repository(owner: $owner, name: ${JSON.stringify(r)}) {
-          refs(refPrefix: "refs/heads/", first: 100) { nodes { name } }
+          refs(refPrefix: "refs/heads/", first: 100) { ${PAGE} nodes { name } }
           environments(first: 100) { nodes { name } } }`,
       )
       .join('\n')
@@ -378,13 +467,17 @@ function refsOf(owner, repos) {
         `owner=${owner}`,
       ]),
     ).data
-    for (const repo of Object.values(data)) {
-      if (!repo) continue
+    batch.forEach((r, j) => {
+      const repo = data[`r${j}`]
+      if (!repo) return
       names.push(
         ...repo.refs.nodes.map((n) => n.name),
         ...repo.environments.nodes.map((n) => n.name),
       )
-    }
+      if (repo.refs.pageInfo.hasNextPage) {
+        names.push(...moreRefs(owner, r, repo.refs.pageInfo.endCursor))
+      }
+    })
   }
   return names
 }
@@ -424,46 +517,65 @@ function awsProfiles() {
 
 /**
  * The private-name terms, gathered from the environment on every run and
- * never written anywhere: the org's other repos, the private repos of the
- * viewer and of their other orgs, the org members' logins and display names, the branches and environments of the org repos checked out
- * beside this one, those sibling checkouts' names, and local AWS profile
- * names.
+ * never written anywhere: the org's other repos, the private repos the
+ * viewer owns, collaborates on or sees through its other orgs, those repos'
+ * owners, the org members' logins and display
+ * names, the branches and environments of the org repos checked out beside
+ * this one, those sibling checkouts' names, and local AWS profile names.
  *
- * `requireGh`: throw when the GitHub half cannot be gathered, since a bulk
- * import screened without it would pass bodies that name an adopter's repo.
- * Otherwise that half is skipped with a warning.
+ * `requireGh` (the default): throw when any GitHub source cannot be gathered,
+ * since text screened without it would pass when it names an adopter's repo.
+ * `false` skips the GitHub half entirely, with a loud warning.
  */
-export function collectRuntimeTerms({ repo, requireGh = false }) {
+export function collectRuntimeTerms({ repo, requireGh = true }) {
   const [owner, selfName] = repo.split('/')
   const dirs = siblingDirs(selfName)
   const profiles = awsProfiles()
+  /** One gathering step, named in its error so a failure says which source broke. */
+  const step = (label, run) => {
+    try {
+      return run()
+    } catch (err) {
+      throw new Error(`${label}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
   try {
-    const repos = orgRepos(owner, false).filter((n) => n !== selfName)
+    if (!requireGh) throw new Error('--generic-only')
+    step('token scopes', assertScopes)
+    const repos = step('org repos', () => orgRepos(owner, false)).filter((n) => n !== selfName)
     if (repos.length === 0) throw new Error(`no repositories visible in ${owner}`)
-    const members = allNodes(
-      `organization(login: $login) { membersWithRole(first: 100, after: $after) { ${PAGE} nodes { login name } } }`,
-      { login: owner },
-      (d) => d.organization.membersWithRole,
+    const members = step('org members', () =>
+      allNodes(
+        `organization(login: $login) { membersWithRole(first: 100, after: $after) { ${PAGE} nodes { login name } } }`,
+        { login: owner },
+        (d) => d.organization.membersWithRole,
+      ),
     )
-    const checkedOut = repos.filter((r) => dirs.includes(r) && /^[\w.-]+$/.test(r))
-    const self = refsOf(owner, [selfName])
-    const others = otherPrivateRepos(owner)
+    const others = step('other private repos', () => otherPrivateRepos(owner))
+    const self = step("this repo's branches", () => refsOf(owner, [selfName]))
+    const refs = step('sibling branches', () =>
+      refsOf(
+        owner,
+        repos.filter((r) => dirs.includes(r)),
+      ),
+    )
     return termsFromNames({
       // An org named like this repo reads as this repo's own path segment.
       owners: [owner, ...others.owners].filter((o) => o !== selfName),
+      orgs: others.owners.filter((o) => o !== owner),
       repos: [...repos, ...others.repos],
       dirs,
       logins: members.map((m) => m.login),
       people: members.map((m) => m.name ?? ''),
-      refs: refsOf(owner, checkedOut),
+      refs,
       profiles,
-      self: [selfName, ...self],
+      self: [selfName, owner, ...self],
     })
   } catch (err) {
-    const why = err instanceof Error ? err.message.split('\n')[0] : String(err)
-    if (requireGh) throw new Error(`cannot gather org names through gh: ${why}`)
+    const why = err instanceof Error ? err.message : String(err)
+    if (requireGh) throw new Error(`cannot gather private names through gh: ${why}`)
     console.warn(
-      `\n*** tasks-privacy-screen: WARNING: gh failed (${why}).\n` +
+      '\n*** tasks-privacy-screen: WARNING: --generic-only.\n' +
         '*** Org repos, members, branches and environments are NOT screened; only generic rules,\n' +
         '*** sibling checkouts and AWS profiles are. Read the text yourself before filing.\n',
     )
@@ -488,18 +600,30 @@ export function screenText(text, privateTerms = [], { show = false } = {}) {
         findings.push({ kind, line: i + 1, column: m.index + 1, match: m[0].trim() })
       }
     }
-    for (const term of privateTerms) {
-      for (const m of line.matchAll(term.rx)) {
-        findings.push({
-          kind: term.review ? 'review-name' : 'private-name',
-          review: Boolean(term.review),
-          line: i + 1,
-          column: m.index + 1,
-          match: show ? `${term.source}: ${m[0]}` : `<${term.source}>`,
-        })
-      }
-    }
   })
+  // Names run over the whole text, so a phrase wrapped across lines matches.
+  const starts = [0]
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) starts.push(i + 1)
+  const position = (index) => {
+    let lo = 0
+    let hi = starts.length - 1
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (starts[mid] <= index) lo = mid
+      else hi = mid - 1
+    }
+    return { line: lo + 1, column: index - starts[lo] + 1 }
+  }
+  for (const term of privateTerms) {
+    for (const m of text.matchAll(term.rx)) {
+      findings.push({
+        kind: term.review ? 'review-name' : 'private-name',
+        review: Boolean(term.review),
+        ...position(m.index),
+        match: show ? `${term.source}: ${m[0].replace(/\s+/g, ' ')}` : `<${term.source}>`,
+      })
+    }
+  }
   return findings
 }
 
@@ -510,8 +634,9 @@ function selfTest() {
     owners: ['acme', 'safeinsights'],
     repos: ['acme-site', 'website', 'main'],
     logins: ['octo-dev'],
-    people: ['Jane Q Doe', ''],
-    refs: ['stg-blue', 'feature-x', 'dependabot/npm/x'],
+    people: ['Jane Q Doe', '', 'José Núñez'],
+    orgs: ['acmeco', 'acme-org'],
+    refs: ['stg-blue', 'feature-x', 'dependabot/npm/x', 'v2', '2026'],
     profiles: ['acme-admin', 'ac-stage-admin'],
     self: ['feature-x'],
   })
@@ -567,6 +692,21 @@ function selfTest() {
     ['GitHub ruleset `require-pr` (7484436) and app 4038189', ['github-id', 'github-id']],
     ['issue (#4038) and run 30586482757', []],
     ['the CDKToolkit-acme stack', ['cdk-qualifier']],
+    ['the `website` repo', ['private-name', 'review-name']],
+    ['git clone git@github.com:other/website.git', ['private-name']],
+    ['the website\nrepo is private', ['private-name']],
+    ['the website  repo, the website’s repo', ['private-name', 'private-name']],
+    ['see pull request #540', []],
+    ['Filed in safeinsights/canopycms.', []],
+    ['upgrade to v2 in 2026', []],
+    [
+      'github.com/acmeco and the acmeco org and acme-org',
+      ['private-name', 'private-name', 'private-name'],
+    ],
+    ['https://acmeco.github.io/site', ['private-name']],
+    ['José said so', ['private-name']],
+    ['s3://bucket-prod-acme/x and s3://my-bucket/x', ['s3-bucket']],
+    ['docs.acme.ca', ['host']],
   ]
   const failures = []
   for (const [text, expected] of cases) {
@@ -579,6 +719,10 @@ function selfTest() {
       )
     }
   }
+  const wrapped = screenText('x\nthe website\nrepo', terms).find((f) => !f.review)
+  if (wrapped?.line !== 2 || wrapped?.column !== 5) {
+    failures.push(`  a wrapped name reported at ${wrapped?.line}:${wrapped?.column}, expected 2:5`)
+  }
   const hidden = screenText('the acme-site repo', terms)[0]?.match
   if (hidden !== '<org repo>')
     failures.push(`  private name shown as ${hidden}, expected "<org repo>"`)
@@ -587,7 +731,7 @@ function selfTest() {
     console.error(failures.join('\n'))
     process.exit(1)
   }
-  console.log(`tasks-privacy-screen self-test passed (${cases.length + 1} cases).`)
+  console.log(`tasks-privacy-screen self-test passed (${cases.length + 2} cases).`)
 }
 
 function main(argv) {
@@ -598,13 +742,15 @@ function main(argv) {
   const files = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--repo')
   let terms
   try {
-    terms = collectRuntimeTerms({ repo, requireGh: argv.includes('--require-gh') })
+    terms = collectRuntimeTerms({ repo, requireGh: !argv.includes('--generic-only') })
   } catch (err) {
     console.error(`tasks-privacy-screen: ${err instanceof Error ? err.message : String(err)}`)
     process.exit(2)
   }
   if (files.length === 0) {
-    console.error('usage: pnpm tasks:screen [--show] [--require-gh] [--repo owner/name] <file>...')
+    console.error(
+      'usage: pnpm tasks:screen [--show] [--generic-only] [--repo owner/name] <file>...',
+    )
     process.exit(2)
   }
   const targets = files.map((f) => path.resolve(f))
@@ -625,6 +771,7 @@ function main(argv) {
   console.log(`tasks-privacy-screen: ${targets.length} file(s) pass.`)
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+// import.meta.url is the real path; argv[1] may run through a symlink.
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   main(process.argv.slice(2))
 }

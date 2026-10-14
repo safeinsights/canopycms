@@ -29,7 +29,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { lstatSync, readFileSync } from 'node:fs'
+import { lstatSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -153,7 +153,8 @@ function selfTest() {
   console.log(`check-account-ids self-test passed (${cases.length} matcher cases, 3 path cases).`)
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+// import.meta.url is the real path; argv[1] may run through a symlink.
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   if (process.argv[2] === '--self-test') selfTest()
   else scanTree()
 }

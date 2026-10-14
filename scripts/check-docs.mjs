@@ -120,6 +120,8 @@ function gitIgnored(paths) {
 
 function isExcluded(absPath) {
   const r = rel(absPath)
+  // `tasks:sync` stages the cache beside it, as `.claude/backlog-cache.tmp-<pid>`.
+  if (r.startsWith('.claude/backlog-cache.tmp-')) return true
   return EXCLUDED.some((d) => r === d || r.startsWith(d + '/'))
 }
 
