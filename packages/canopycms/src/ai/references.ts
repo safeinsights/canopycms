@@ -13,12 +13,19 @@ import { getDefaultEntryType } from '../content-store'
 import { extractEntryTypeFromFilename, type ContentIdIndex } from '../content-id-index'
 import type { EntryTypeConfig, FieldConfig, FlatSchemaItem, ReferenceFieldConfig } from '../config'
 import { RESTRICTED_REFERENCE_MARKER } from '../entry-schema'
-import type { EntryLinkUrlResolver } from '../entry-link-resolver'
+import { extractEntryLinkIds, type EntryLinkUrlResolver } from '../entry-link-resolver'
+import { getErrorMessage } from '../utils/error'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { resolveEntryTitle } from '../utils/title-field'
 import { traverseFields } from '../validation/field-traversal'
 import type { ReferenceRendering } from './json-to-markdown'
-import type { AIEntry, AIExcludedReference, AIReferenceValue } from './types'
+import type {
+  AIEntry,
+  AIExcludedReference,
+  AIReferenceLinkFn,
+  AIResolvedReference,
+  AIReferenceValue,
+} from './types'
 
 export type ReferenceTargetResolver = (id: string) => Promise<AIReferenceValue>
 
@@ -122,9 +129,90 @@ export function maskUnexportedTargets(
 }
 
 /**
+ * The page URL a resolved target links by default: `entryLinkUrl`'s, else its `urlPath`, the rule
+ * body `entry:` links use.
+ */
+function defaultPageUrl(
+  target: Record<string, unknown>,
+  entryLinkUrl: EntryLinkUrlResolver | undefined,
+): string | undefined {
+  const { id, slug, collection, urlPath } = target
+  if (
+    entryLinkUrl &&
+    typeof id === 'string' &&
+    typeof slug === 'string' &&
+    typeof collection === 'string'
+  ) {
+    return entryLinkUrl({ collection, slug, id })
+  }
+  return typeof urlPath === 'string' && urlPath ? urlPath : undefined
+}
+
+/** A target's page link as `referenceLink` decided it: a URL, `false` for none, or the default. */
+export type ReferenceLinkLookup = (id: string) => string | false | undefined
+
+/**
+ * Ask `referenceLink` once for each exported target the export's entries reference or link from
+ * their bodies, in entry order, and return the answers. Run it after the export set settles, so
+ * the callback never sees a target the export leaves out. A body reaches the callback from
+ * `bodyOf` and nowhere else, which keeps it out of the output. A throw or a return other than a
+ * non-empty string, `false` or `undefined` is logged and becomes `false`, so a broken callback
+ * withholds a link rather than advertising a page the site may not have.
+ */
+export async function decideReferenceLinks(
+  referenceLink: AIReferenceLinkFn,
+  entries: ReadonlyArray<{ entry: AIEntry; body?: string }>,
+  exported: { has(id: string): boolean },
+  resolveTarget: ReferenceTargetResolver,
+  bodyOf: (id: string) => string | undefined,
+  entryLinkUrl: EntryLinkUrlResolver | undefined,
+): Promise<ReferenceLinkLookup> {
+  const ids = new Set<string>()
+  for (const { entry, body } of entries) {
+    for (const { record, field } of referenceSlots(entry.fields, entry.data)) {
+      const value = record[field.name]
+      for (const target of Array.isArray(value) ? value : [value]) {
+        if (isShownTarget(target) && exported.has(target.id)) ids.add(target.id)
+      }
+    }
+    for (const { id } of body ? extractEntryLinkIds(body) : []) {
+      if (exported.has(id)) ids.add(id)
+    }
+  }
+
+  const decisions = new Map<string, string | false | undefined>()
+  for (const id of ids) {
+    const target = await resolveTarget(id)
+    if (!isShownTarget(target)) continue
+    let decision: unknown
+    try {
+      decision = await referenceLink(target as AIResolvedReference, {
+        body: bodyOf(id),
+        defaultUrl: defaultPageUrl(target, entryLinkUrl),
+      })
+    } catch (err) {
+      console.warn(`AI content: referenceLink threw for entry ${id}:`, getErrorMessage(err))
+      decision = false
+    }
+    if (typeof decision === 'string' && decision.trim()) {
+      decisions.set(id, decision.trim())
+    } else if (decision === false || decision === undefined) {
+      decisions.set(id, decision)
+    } else {
+      console.warn(
+        `AI content: referenceLink returned ${typeof decision === 'string' ? 'an empty string' : typeof decision} for entry ${id}; expected a URL, false or undefined`,
+      )
+      decisions.set(id, false)
+    }
+  }
+  return (id) => decisions.get(id)
+}
+
+/**
  * Title and URLs for a resolved target. The title is `resolveEntryTitle` against the target's own
- * entry type, the chain the entries API labels an entry with. The page URL follows the rule body
- * `entry:` links use, so both kinds of link in one document agree. The markdown copy is the file
+ * entry type, the chain the entries API labels an entry with. The page URL is `linkFor`'s
+ * decision, else {@link defaultPageUrl}; body `entry:` links follow both, so the two kinds of link
+ * in one document agree. The markdown copy is the file
  * this export wrote for the target (`files`: content id to output path), under `mountPath`.
  */
 export function createReferenceRendering(
@@ -132,6 +220,7 @@ export function createReferenceRendering(
   flatSchema: readonly FlatSchemaItem[],
   entryLinkUrl: EntryLinkUrlResolver | undefined,
   markdownCopies: { mountPath: string; files: ReadonlyMap<string, string> },
+  linkFor?: ReferenceLinkLookup,
 ): ReferenceRendering {
   const mount = `/${markdownCopies.mountPath.replace(/^\/+|\/+$/g, '')}`.replace(/^\/$/, '')
   const entryTypeOf = (id: unknown): { schema?: readonly FieldConfig[]; label?: string } => {
@@ -158,16 +247,8 @@ export function createReferenceRendering(
       })
     },
     url: (target) => {
-      const { id, slug, collection, urlPath } = target
-      if (
-        entryLinkUrl &&
-        typeof id === 'string' &&
-        typeof slug === 'string' &&
-        typeof collection === 'string'
-      ) {
-        return entryLinkUrl({ collection, slug, id })
-      }
-      return typeof urlPath === 'string' && urlPath ? urlPath : undefined
+      const decided = typeof target.id === 'string' ? linkFor?.(target.id) : undefined
+      return decided ?? defaultPageUrl(target, entryLinkUrl)
     },
     markdownUrl: (target) => {
       const file = typeof target.id === 'string' ? markdownCopies.files.get(target.id) : undefined

@@ -25,11 +25,13 @@ import { entryToMarkdown, frontmatterTitle, type ReferenceRendering } from './js
 import {
   createReferenceRendering,
   createReferenceTargetResolver,
+  decideReferenceLinks,
   maskUnexportedTargets,
   resolveReferenceFields,
   type ReferenceTargetResolver,
 } from './references'
 import { resolveEntryLinksInText, type EntryLinkUrlResolver } from '../entry-link-resolver'
+import { computeEntryUrl } from '../utils/entry-url'
 import { DEFAULT_SEO_FIELD_NAMES, isNoindexEntry } from '../static/seo'
 import type {
   AIContentConfig,
@@ -128,10 +130,37 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   for (const pending of allPending) {
     if (pending.contentId !== null) exported.set(pending.contentId, pending.filePath)
   }
-  const references = createReferenceRendering(idIndex, flatSchema, entryLinkUrl, {
-    mountPath: config?.mountPath ?? '/ai',
-    files: exported,
-  })
+  const pendingById = new Map<string, PendingEntry>()
+  for (const pending of allPending) {
+    if (pending.contentId !== null) pendingById.set(pending.contentId, pending)
+  }
+  const linkFor = config?.referenceLink
+    ? await decideReferenceLinks(
+        config.referenceLink,
+        allPending,
+        exported,
+        read.resolveTarget,
+        (id) => pendingById.get(id)?.body,
+        entryLinkUrl,
+      )
+    : undefined
+  // A body `entry:` link takes the same page URL a reference to its target renders with
+  const bodyLinkUrl: EntryLinkUrlResolver | undefined = linkFor
+    ? (location) => {
+        const decided = linkFor(location.id)
+        if (typeof decided === 'string') return decided
+        return entryLinkUrl
+          ? entryLinkUrl(location)
+          : computeEntryUrl(location.collection, location.slug, contentRoot)
+      }
+    : entryLinkUrl
+  const references = createReferenceRendering(
+    idIndex,
+    flatSchema,
+    entryLinkUrl,
+    { mountPath: config?.mountPath ?? '/ai', files: exported },
+    linkFor,
+  )
   // An entry whose render throws is not in the export after all, so references and body links to
   // it are withheld like any other left-out target, and the entries that changed run their
   // transforms and render again. That can fail another entry, so this repeats until a round fails
@@ -145,11 +174,11 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
           pending.body,
           idIndex,
           contentRoot,
-          entryLinkUrl,
+          bodyLinkUrl,
           {
             isLinkable: (id) => {
               linked.add(id)
-              return exported.has(id)
+              return exported.has(id) && linkFor?.(id) !== false
             },
           },
         )
