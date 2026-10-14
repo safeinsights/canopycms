@@ -523,6 +523,14 @@ A cleared string-valued field (`string`, `select`, `code` and the like) is saved
 
 A non-markdown field that throws while rendering (`customRenderers` too) shows its value read-only, unchanged on save; the rest still works.
 
+#### Stamping a publication date
+
+```typescript
+{ name: 'publishedAt', type: 'datetime', stampOnPublish: true }
+```
+
+The first Canopy submit of an entry new to the base branch sets this field, while empty, to the submit's time, in the commit it pushes. That is the submit, not the merge: if review runs long, edit the date by hand. A set value is never overwritten, so a resubmit keeps the first date and a promotion between deploy branches carries it unchanged; a restored entry keeps its old value, so clear the field to re-date it. An entry already on the base branch is never stamped, even after a rename or move, and neither is one committed with plain git. The flag is refused on anything but a top-level `datetime` without `list`, and with `required`, which could never be saved empty to be stamped.
+
 #### Rendering `markdown` / `mdx` content on your site
 
 CanopyCMS stores and edits markdown and deliberately does **not** ship a renderer: sites render markdown differently on purpose, so the presentation layer is yours. One confusing trap:
