@@ -30,3 +30,5 @@ Either is a product decision for JP. It interacts with
 [list-permission-level.md](list-permission-level.md), which proposes the level ordering
 `list < read < edit < review`, and with
 [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md).
+
+JP 2026-10-13: undecided whether to enforce or remove; stays a future task.
