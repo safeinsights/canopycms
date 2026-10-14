@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  RESOLVED (2026-10-14, UX batch 3 theme PR) — non-primary filled badges are light variants, the sidebar Indicator and AssetCard's remove icon are opaque, white on the primary colour (armed combobox option, selected day, focused time segment) sits on `--canopy-primary-fill`, and the theme's stylesheet gives unchecked Checkbox, Radio and Switch borders `--canopy-input-border`, all pinned in `theme.test.tsx`
+  RESOLVED (2026-10-14, UX batch 3 theme PR) — non-primary filled badges are light variants, the sidebar Indicator and AssetCard's remove icon are opaque, white on the primary colour (armed combobox option, selected day, focused time segment) sits on `--canopy-primary-fill`, and the theme's stylesheet gives unchecked Checkbox, Radio and Switch borders `--canopy-input-border`, with the ratios pinned in `theme.test.tsx`
 ---
 # Contrast beyond the ruled colours
 

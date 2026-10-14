@@ -276,7 +276,7 @@ export const entryTypeLabel = (
   return type?.label ?? humanizeName(entry.entryType)
 }
 
-/** An entry's navigator badge: "Missing" when its file is gone, else its type's label. */
+/** An entry's navigator badge: "Missing" when its file is gone, else its type's label or name. */
 export const entryStatusLabel = (
   collections: EditorCollection[] | undefined,
   entry: Pick<EditorEntry, 'status' | 'collectionPath' | 'entryType'>,

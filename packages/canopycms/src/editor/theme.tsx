@@ -175,8 +175,9 @@ const canopyComponents = {
         ? {}
         : { wrapper: { '--input-bd': 'var(--canopy-input-border)' } },
   }),
-  // Checkbox, Radio and Tabs name their primary colour inline, past the focus-ring alias, so a
-  // primary one is pointed at the ring here; its tick or dot takes the colour that reads on it.
+  // Checkbox, Radio and Tabs name their colour inline even when none is given, and a Switch when
+  // one is, past the focus-ring alias; a primary one is pointed at the ring here, and its tick,
+  // dot or thumb takes the colour that reads on it.
   Checkbox: Checkbox.extend({ vars: (theme, props) => ({ root: checkboxOnRing(theme, props) }) }),
   CheckboxIndicator: Checkbox.Indicator.extend({
     vars: (theme, props) => ({ indicator: checkboxOnRing(theme, props) }),
@@ -308,8 +309,9 @@ const primaryFill = (theme: MantineTheme, scheme: 'light' | 'dark') => {
 
 /**
  * `--canopy-focus-ring`: the first step from the primary shade, darker in light mode and lighter in
- * dark, at 3:1 on gray.1 or dark.5. Mantine draws focus rings, focused borders and checked controls
- * in `--mantine-primary-color-filled`, so that becomes the ring; a tick on it is white or black.
+ * dark, at 3:1 on gray.1 or dark.5. Mantine draws focus rings, focused borders and a checked
+ * Switch in `--mantine-primary-color-filled`, so that becomes the ring; `canopyComponents` points
+ * Checkbox, Radio and Tabs at it. A tick on it is white, or black where white is under 3:1.
  */
 const focusRing = (theme: MantineTheme, scheme: 'light' | 'dark') => {
   const scale = theme.colors[theme.primaryColor]
@@ -381,8 +383,9 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
 
 /**
  * What Mantine draws from class rules, out of the theme variables' reach: unchecked control borders,
- * white text on the primary colour (moved to the fill), and dimmed text outside `Text`. Outside
- * days lose Mantine's half opacity, under 4.5:1.
+ * Switch thumbs, white text on the primary colour (moved to the fill), and dimmed text Mantine
+ * draws itself (a blocked menu item, a combobox's empty message, outside days). Outside days lose
+ * Mantine's half opacity, under 4.5:1.
  */
 const CANOPY_STYLES = `
 .mantine-Checkbox-input:not(:checked, :disabled, [data-indeterminate], [data-error]),

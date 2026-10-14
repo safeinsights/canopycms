@@ -533,7 +533,7 @@ describe('CanopyCMSProvider colour and contrast', () => {
   })
 
   it('draws focus rings, focused borders and checked controls at 3:1 in both schemes', () => {
-    // Mantine draws all three in its primary colour, which the theme makes the focus ring.
+    // Mantine draws rings and focused borders in its primary colour, which the theme makes the ring.
     expect(light['--mantine-primary-color-filled']).toBe('var(--canopy-focus-ring)')
     expect(darkVars['--mantine-primary-color-filled']).toBe('var(--canopy-focus-ring)')
     expect(light['--canopy-focus-ring']).toBe('var(--mantine-color-brand-7)')
@@ -870,7 +870,7 @@ describe('CanopyCMSProvider stylesheet', () => {
     expect(canopyRuleSets(thumb('Switch off'), '--switch-thumb-bd')).toBe(true)
     expect(canopyRuleSets(thumb('Switch disabled'), '--switch-thumb-bd')).toBe(false)
     expect(canopyRuleSets(thumb('Switch off'), '--switch-thumb-bg')).toBe(false)
-    // A disabled thumb keeps Mantine's colour; this rule out-specifies Mantine's disabled one.
+    // A disabled thumb keeps Mantine's colour: the checked rule out-specifies Mantine's disabled one.
     expect(canopyRuleSets(thumb('Switch on, disabled'), '--switch-thumb-bg')).toBe(false)
   })
 
