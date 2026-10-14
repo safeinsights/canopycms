@@ -241,8 +241,8 @@ export interface AIReferenceLinkContext {
  * Where a link to an exported entry points, for every reference to it and every body `entry:`
  * link to it. Return a URL to link there instead of `context.defaultUrl`, `false` when the target
  * has no page (the title renders as plain text, with no page or markdown-version link), or
- * `undefined` to keep the default. Called once per target per run, and only for a target this
- * export includes; a throw or any other return is logged and treated as `false`.
+ * `undefined` to keep the default. Called once per target per run, never for a missing target or
+ * one the exclusions leave out; a throw or any other return is logged and treated as `false`.
  *
  * @example
  * ```ts

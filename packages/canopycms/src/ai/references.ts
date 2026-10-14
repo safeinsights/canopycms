@@ -153,8 +153,9 @@ export type ReferenceLinkLookup = (id: string) => string | false | undefined
 
 /**
  * Ask `referenceLink` once for each exported target the export's entries reference or link from
- * their bodies, in entry order, and return the answers. Run it after the export set settles, so
- * the callback never sees a target the export leaves out. A body reaches the callback from
+ * their bodies, in entry order, and return the answers. Run it once the exclusions have settled
+ * the export set, so the callback never sees an excluded or missing target; one whose own render
+ * fails later is masked like any other, and its answer goes unused. A body reaches the callback from
  * `bodyOf` and nowhere else, which keeps it out of the output. A throw or a return other than a
  * non-empty string, `false` or `undefined` is logged and becomes `false`, so a broken callback
  * withholds a link rather than advertising a page the site may not have.

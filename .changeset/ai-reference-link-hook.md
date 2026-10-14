@@ -17,8 +17,8 @@ fields and body `entry:` links, so the two kinds of link always agree. Return a 
 instead. Return `false` when the target has no page: its title then renders as plain text, with
 no page link and no markdown-version link, and an inline `entry:` link becomes its text. Return
 `undefined` to keep the default. `body` is the target's stored MD/MDX body and never reaches the
-export. The callback runs once per target per run, may be async, and never sees a target the
-export leaves out. A throw or any other return is logged and treated as `false`.
+export. The callback runs once per target per run, may be async, and never sees a missing target or
+one the exclusions leave out. A throw or any other return is logged and treated as `false`.
 
 **To adopt.** If your site's routes, sitemap or bylines decide that some entries have no page,
 apply the same rule here, for example `referenceLink: (target, { body }) =>
