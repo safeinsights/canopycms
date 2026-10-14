@@ -109,7 +109,7 @@ export {
   registerPrivateKey,
   redactEgress,
 } from './gateway-egress'
-// The boot self-checks the split entrypoint runs in each role (.claude/future-tasks/
+// The boot self-checks the split entrypoint runs in each role (.claude/future-tasks/resolved/
 // worker-shared-repo-git-process-split.md §5).
 export {
   assertSelfChecks,

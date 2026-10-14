@@ -37,9 +37,10 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         # GitHub's closing keywords, each naming one issue as `#N`,
         # `owner/repo#N` or an issue URL in this repository, at most 20 per PR.
-        # Fenced code, HTML comments and quoted lines are ignored, as GitHub
-        # ignores them. Numbers that are pull requests, or already closed, are
-        # skipped; one failed close does not stop the rest.
+        # Fenced code, HTML comments and quoted lines are stripped first, so a
+        # quoted or commented-out reference closes nothing. Numbers that are pull
+        # requests, or already closed, are skipped; one failed close does not
+        # stop the rest.
         run: |
           node --input-type=module -e '
             import { writeFileSync } from "node:fs"

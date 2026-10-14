@@ -5,7 +5,7 @@ import path from 'node:path'
 import { getErrorMessage, isNodeError } from '../utils/error'
 
 /**
- * The boot self-checks of the worker process split (.claude/future-tasks/
+ * The boot self-checks of the worker process split (.claude/future-tasks/resolved/
  * worker-shared-repo-git-process-split.md §5): each proves a sandbox layer the split rests on took
  * effect, because systemd applies some directives silently or not at all (`IPAddressDeny` without
  * cgroup-BPF). Every check fails closed: what it cannot read counts against it. They only report;

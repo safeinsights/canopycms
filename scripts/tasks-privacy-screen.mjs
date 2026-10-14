@@ -12,13 +12,10 @@
  *   directories, private IPs, Clerk ids and keys, credential prefixes,
  *   `safeinsights/<repo>` other than this one, and adopter request-log numbers.
  * - Private names, gathered from the environment on every run and never
- *   written anywhere (see collectRuntimeTerms): the org's other repos and the
- *   private repos of the viewer's other orgs, the org members' logins and
- *   display names, the branches and environments of the org repos checked out
- *   beside this one, those checkouts' names, and local AWS profile names. There
- *   is deliberately no curated list: one would have to live outside the repo
- *   and would go stale. Findings show only which source matched unless `--show`
- *   is passed, so a report never copies a name.
+ *   written anywhere; collectRuntimeTerms lists the sources. There is
+ *   deliberately no curated list: one would have to live outside the repo and
+ *   would go stale. Findings show only which source matched unless `--show` is
+ *   passed, so a report never copies a name.
  *
  * A false positive on a public host is fixed by adding the host to
  * PUBLIC_HOSTS. Anything else is fixed by rewording the text: there is no
@@ -26,8 +23,10 @@
  *
  *   pnpm tasks:screen [--show] [--generic-only] [--repo owner/name] <file>...
  *
- * It fails (exit 2) when gh cannot gather the private names; `--generic-only`
- * runs without them, with a loud warning. `--self-test` checks the matchers.
+ * It fails (exit 2) when gh cannot gather every private name: gh missing, a
+ * token without `repo` and `read:org`, or a user outside the org.
+ * `--generic-only` runs without them, with a loud warning. `--self-test`
+ * checks the matchers.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -113,7 +112,8 @@ const EMAIL_OK = (domain) =>
 
 /**
  * `this.app`, `opts.dev`, `process.env.de`: a property read on a common code
- * receiver, not a host, though the TLD list cannot tell them apart.
+ * receiver, not a host, though the TLD list cannot tell them apart. After
+ * `//` or `@` it is a host again (`https://context.io`).
  */
 const CODE_RECEIVER =
   /^(?:this|self|opts|options|ctx|context|state|props|process|process\.env|env|config|window|document|req|res|err|e|args|params|data|module|exports|console|globalThis|import\.meta)\.[a-z]+$/
@@ -257,7 +257,8 @@ const MARK = '[`*_"\'’]{0,2}'
  * plain word (`website`) is ordinary prose and often a path segment here
  * (`docs/`, `utils/`), so it is refused only where it reads as a repo:
  * `<known owner>/name`, `../name`, `name@`, `name.git`, `name v2`, or "the
- * name repo / adopter / checkout", marks and line breaks included. Alone in
+ * name repo / adopter / checkout", with up to two marks around it and line
+ * breaks included. Alone in
  * backticks it is only flagged for review. Every pattern runs over the whole
  * text, so `\s+` spans a wrapped line.
  */
@@ -557,15 +558,18 @@ function awsProfiles() {
 
 /**
  * The private-name terms, gathered from the environment on every run and
- * never written anywhere: the org's other repos, the private repos the
- * viewer owns, collaborates on or sees through its other orgs, those repos'
- * owners, the org members' logins and display
- * names, the branches and environments of the org repos checked out beside
- * this one, those sibling checkouts' names, and local AWS profile names.
+ * never written anywhere:
+ *
+ * - every other repo of the owner org, its members' logins and display names;
+ * - the private repos the viewer owns, collaborates on or sees through its
+ *   other orgs, and the logins of the accounts that own them;
+ * - the branches (and their multi-word segments) and environments of the org
+ *   repos checked out beside this one, and those checkouts' directory names;
+ * - local AWS profile names, with and without their first segment.
  *
  * `requireGh` (the default): throw when any GitHub source cannot be gathered,
- * since text screened without it would pass when it names an adopter's repo.
- * `false` skips the GitHub half entirely, with a loud warning.
+ * or the token lacks a scope or org membership that would make GitHub omit
+ * private names silently. `false` skips the GitHub half, with a loud warning.
  */
 export function collectRuntimeTerms({ repo, requireGh = true }) {
   const [owner, selfName] = repo.split('/')

@@ -141,7 +141,7 @@ finalize step is invisible until an editor tries to insert an image.
 Every deferral above is either (a) covered by unit or integration tests at the
 layer where the logic lives, (b) not reachable from a browser at all (CLI, CDK,
 build), or (c) blocked on a test-app fixture change big enough to be its own
-piece of work — each of those is filed in `.claude/future-tasks/`.
+piece of work — each of those is filed as an issue.
 
 No capability in the "no manual fallback in production" set is deferred.
 

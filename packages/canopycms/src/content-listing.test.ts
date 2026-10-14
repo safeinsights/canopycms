@@ -1400,7 +1400,7 @@ describe('listEntries', () => {
       expect(scopedRef).toMatchObject({ slug: 'signup', title: 'Sign up today' })
       // Frontmatter only, both ways — `read()` carries an md body on `doc.body`, and a resolved
       // reference spreads `doc.data`. The point of the assertion is that it does not DEPEND on
-      // scoping; see the future-tasks note on whether the body should be folded in at all.
+      // scoping; a reference carries the body only when its field sets `includeBody`.
       expect(scopedRef).not.toHaveProperty('body')
       expect(fullRef).not.toHaveProperty('body')
     })
