@@ -417,9 +417,56 @@ describe('an object list', () => {
     const popover = await screen.findByTestId('entry-comment-button-popover')
     expect(within(popover).getByText('Check Bo')).toBeTruthy()
     expect(within(popover).getByText('On a removed item')).toBeTruthy()
-    // Named by the field's schema labels alone, since no item holds the path any more.
-    expect(popover.textContent).toContain('Team')
-    expect(popover.textContent).toContain('Name')
+    // The removal is only in the draft, so the saved value still names the item.
+    expect(popover.textContent).toContain('Team › Bo › Name')
+  })
+
+  it("says on the Remove toast that the item's comment moved to the entry", async () => {
+    await open()
+    await waitFor(() => expect(threadPaths()).toEqual(['team[1].name']))
+
+    await chooseFromRow(rowTitled('Bo'), 'Remove')
+
+    const toast = vi
+      .mocked(notifications.show)
+      .mock.calls.find(([options]) => String(options.id ?? '').startsWith('canopy-undo-'))![0]
+    const message = render(<MantineProvider>{toast.message}</MantineProvider>)
+    expect(
+      message.getByText('Removed "Bo" from Team. Its comment moved to "Comment on this entry".'),
+    ).toBeTruthy()
+  })
+
+  it('says nothing of comments on the Remove toast of an item that had none', async () => {
+    await open()
+    await waitFor(() => expect(threadPaths()).toEqual(['team[1].name']))
+
+    await chooseFromRow(rowTitled('Cy'), 'Remove')
+
+    const toast = vi
+      .mocked(notifications.show)
+      .mock.calls.find(([options]) => String(options.id ?? '').startsWith('canopy-undo-'))![0]
+    const message = render(<MantineProvider>{toast.message}</MantineProvider>)
+    expect(message.getByText('Removed "Cy" from Team')).toBeTruthy()
+  })
+
+  it("names the removed item's field from the schema alone once the removal is saved", async () => {
+    await open()
+    await waitFor(() => expect(threadPaths()).toEqual(['team[1].name']))
+    await chooseFromRow(rowTitled('Bo'), 'Remove')
+    await waitFor(() => expect(threadPaths()).toEqual([]))
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^save$/i }).getAttribute('aria-disabled')).toBe(
+        'true',
+      ),
+    )
+
+    fireEvent.click(entryButton())
+    const popover = await screen.findByTestId('entry-comment-button-popover')
+    expect(within(popover).getByText('On a removed item')).toBeTruthy()
+    expect(popover.textContent).toContain('Team › Name')
+    expect(popover.textContent).not.toContain('Team › Bo')
   })
 
   it('puts the thread back on its item when the removal is undone', async () => {
@@ -710,9 +757,9 @@ describe('a block list', () => {
     fireEvent.click(entryButton())
     const popover = await screen.findByTestId('entry-comment-button-popover')
     expect(within(popover).getByText('On a removed item')).toBeTruthy()
-    // Named from the schema alone, without the block, which no longer holds the path.
+    // The removal is only in the draft, so the saved value still names the block.
     expect(within(popover).getByTestId('inline-comment-thread-field').textContent).toBe(
-      'Sections › Headline',
+      'Sections › Hero › Headline',
     )
   })
 

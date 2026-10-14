@@ -1,4 +1,4 @@
-import { forwardRef, useRef, type Ref } from 'react'
+import { forwardRef, useRef, type ReactNode, type Ref } from 'react'
 import {
   Alert,
   Badge,
@@ -198,6 +198,28 @@ export interface EditorHeaderProps {
   branchWriteBlocked?: boolean
 }
 
+const EDITED_ENTRIES_HINT = 'Entries you edit on this branch appear here.'
+
+/** An empty section of a menu with other items: plain text, so arrow keys skip it. */
+function MenuEmptyText({
+  hint,
+  children,
+  ...rest
+}: {
+  hint: string
+  children: ReactNode
+  'data-testid'?: string
+}) {
+  return (
+    <Text size="sm" c="dimmed" px="sm" py={6} {...rest}>
+      {children}
+      <Text size="xs" c="dimmed" component="span" display="block">
+        {hint}
+      </Text>
+    </Text>
+  )
+}
+
 /**
  * Header component for the Editor.
  * Contains site info, file navigation, breadcrumbs, branch selector, comments button, and action buttons.
@@ -363,17 +385,14 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   </ReasonedMenuItem>
                   <Menu.Divider />
                   <Menu.Item data-testid="all-files-menu-item" onClick={onNavigatorOpen}>
-                    All entries
+                    All content
                   </Menu.Item>
                   <Menu.Divider />
                   <Menu.Label>Recently modified</Menu.Label>
                   {editedFiles.slice(0, 3).length === 0 ? (
-                    <ReasonedMenuItem
-                      data-testid="recent-entries-empty"
-                      blockedReason="Entries you edit on this branch appear here."
-                    >
+                    <MenuEmptyText data-testid="recent-entries-empty" hint={EDITED_ENTRIES_HINT}>
                       No recently modified entries
-                    </ReasonedMenuItem>
+                    </MenuEmptyText>
                   ) : (
                     editedFiles.slice(0, 3).map((file) => (
                       <Menu.Item key={file.path} onClick={() => onEntrySelect(file.path)}>
@@ -441,12 +460,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     <Menu.Label>{`${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'} modified`}</Menu.Label>
                   )}
                   {editedFiles.length === 0 ? (
-                    <ReasonedMenuItem
-                      data-testid="edited-entries-empty"
-                      blockedReason="Entries you edit on this branch appear here."
-                    >
+                    <MenuEmptyText data-testid="edited-entries-empty" hint={EDITED_ENTRIES_HINT}>
                       No edited entries yet
-                    </ReasonedMenuItem>
+                    </MenuEmptyText>
                   ) : (
                     editedFiles.map((file) => (
                       <Menu.Item

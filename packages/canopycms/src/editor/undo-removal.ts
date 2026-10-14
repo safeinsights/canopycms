@@ -6,8 +6,9 @@ import type {
 } from '../config'
 import equal from 'fast-deep-equal'
 
+import type { CommentThread } from '../comment-store'
 import { isPlainRecord } from '../validation/field-traversal'
-import type { CanopyPathSegment } from './canopy-path'
+import { normalizeCanopyPath, parseCanopyPath, type CanopyPathSegment } from './canopy-path'
 
 /**
  * One list a removal sits inside (a block list, or an object list holding the removed item's
@@ -40,6 +41,8 @@ export type FieldRemoval = (
    * back once one has changed, so an item never lands in whichever block now holds its index.
    */
   anchors?: RemovalAnchor[]
+  /** `clear` for an optional object's Clear, which its toast calls clearing, not removing. */
+  action?: 'remove' | 'clear'
 }
 
 const findField = (fields: readonly FieldConfig[], name: string): FieldConfig | undefined => {
@@ -199,4 +202,21 @@ export function restoreRemoval(
   }
   const restored = setAt(value, path, next)
   return isPlainRecord(restored) ? restored : undefined
+}
+
+/** How many of an entry's open, item-keyed field threads `threads` place on or inside `path`. */
+export function openThreadsWithin(
+  threads: readonly CommentThread[],
+  entryPath: string,
+  path: readonly CanopyPathSegment[],
+): number {
+  const prefix = parseCanopyPath(normalizeCanopyPath(path))
+  return threads.filter((thread) => {
+    if (thread.type !== 'field' || thread.resolved || thread.onRemovedItem) return false
+    if (thread.entryPath !== entryPath || !thread.canopyPath || !thread.itemKeys?.length) {
+      return false
+    }
+    const segments = parseCanopyPath(thread.canopyPath)
+    return prefix.length <= segments.length && prefix.every((s, i) => segments[i] === s)
+  }).length
 }

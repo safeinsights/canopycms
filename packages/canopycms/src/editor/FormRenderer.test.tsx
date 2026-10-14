@@ -409,7 +409,7 @@ describe('FormRenderer', () => {
       const items = screen.getAllByRole('listitem').map((li) => li.textContent)
       expect(items).toEqual([
         'Title: This field is required',
-        'Blocks › Hero › headline: Expected text',
+        'Blocks › Hero › Headline: Expected text',
       ])
       expect(screen.getByTestId('validation-alert').textContent).not.toContain('blocks[0]')
     })
@@ -426,8 +426,8 @@ describe('FormRenderer', () => {
           />
         </CanopyCMSProvider>,
       )
-      await user.click(screen.getByRole('button', { name: 'Blocks › Hero › headline' }))
-      expect(document.activeElement).toBe(screen.getByLabelText('headline'))
+      await user.click(screen.getByRole('button', { name: 'Blocks › Hero › Headline' }))
+      expect(document.activeElement).toBe(screen.getByLabelText('Headline'))
       await user.click(screen.getByRole('button', { name: 'Title' }))
       expect(document.activeElement).toBe(screen.getByLabelText('Title'))
     })

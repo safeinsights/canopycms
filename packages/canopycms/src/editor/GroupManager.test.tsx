@@ -541,9 +541,37 @@ describe('GroupManager', () => {
       expect(screen.queryByText('Save groups')).toBeNull()
 
       act(() => admins.focus())
+      expect((await screen.findByRole('tooltip')).textContent).toBe(
+        `"Admins" is a built-in group, so it can't be deleted.`,
+      )
+    })
+
+    it("also gives the built-in groups' Delete the reason as its accessible description", () => {
+      const builtIn: InternalGroup[] = [
+        { id: 'Admins' as InternalGroup['id'], name: 'Admins', members: [] },
+        { id: 'editors' as InternalGroup['id'], name: 'Content Editors', members: [] },
+      ]
+      render(
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={builtIn}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
+        { wrapper },
+      )
+
+      const reason = `"Admins" is a built-in group, so it can't be deleted.`
+      const admins = screen.getByRole('button', { name: 'Delete group "Admins"' })
+      expect(admins.getAttribute('aria-label')).toBe('Delete group "Admins"')
       expect(
-        await screen.findByText(`"Admins" is a built-in group, so it can't be deleted.`),
-      ).toBeTruthy()
+        screen.getByRole('button', { name: 'Delete group "Admins"', description: reason }),
+      ).toBe(admins)
+      expect(screen.getByText(reason).className).toContain('mantine-VisuallyHidden-root')
+
+      const editors = screen.getByRole('button', { name: 'Delete group "Content Editors"' })
+      expect(editors.hasAttribute('aria-describedby')).toBe(false)
     })
 
     it('removes group when delete is clicked', async () => {

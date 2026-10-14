@@ -32,6 +32,7 @@ Repo-level tooling, under `scripts/`:
 - `scripts/migration-notes.mjs` — assembles `CHANGELOG.md` from `.changeset/`
 - `scripts/check-docs.mjs` — doc word budgets, list-item length, backticked-path and link resolution
 - `scripts/check-comment-budget.mjs` — source-comment volume ratchet, budgets in `scripts/comment-budget.json`
+- `scripts/check-ux-copy.mjs` — `pnpm lint:ux-copy`: editor copy rules over `editor/` and every `src/` file it imports
 - `scripts/check-future-tasks.mjs` — task frontmatter and link integrity; see [DEVELOPING.md](DEVELOPING.md#future-tasks-backlog-check)
 - `scripts/check-action-pins.mjs` — fails on a third-party Action pinned by a mutable tag
 - `scripts/check-account-ids.mjs` — fails on AWS account ids
@@ -508,7 +509,8 @@ Top-level components and helpers:
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
 - `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
 - `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`, `revealField`
-- `undo-removal.ts` — `FieldRemoval`, `restoreRemoval` — undo for a form Remove
+- `schema-label.ts` — `schemaLabel`: a field's, group's or template's label, else its humanised name
+- `undo-removal.ts` — `FieldRemoval`, `restoreRemoval`, `openThreadsWithin` — undo for a form Remove or Clear
 - `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
 - `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
 - `preview-marks.ts` — `findInexactMarks`, for `hooks/usePreviewMarks.ts`
@@ -589,7 +591,7 @@ Components, in `editor/components/`:
 - `UserBadge.tsx` — user avatar and name
 - `BranchAccessList.tsx` — a branch card's access list
 - `ReasonedMenuItem.tsx` — a blocked menu item and why
-- `UndoToastMessage.tsx` — a form Remove's undo toast
+- `UndoToastMessage.tsx` — the undo toast for a Remove or Clear
 - `RetryToastMessage.tsx` — a failed load's toast body with Retry
 - `ValidationSummary.tsx` — pre-save issues alert with breadcrumb buttons
 - `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`

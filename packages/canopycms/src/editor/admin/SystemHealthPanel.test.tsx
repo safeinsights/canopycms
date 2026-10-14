@@ -1081,6 +1081,25 @@ describe('SystemHealthPanel', () => {
       expect(screen.queryByTestId('rebase-failure-feature-c')).toBeNull() // archived: skipped
     })
 
+    it('reaches the rebase failure by keyboard: a named focusable icon described by the message', async () => {
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('feature-a')).toBeTruthy())
+
+      const icon = screen.getByTestId('rebase-failure-feature-a')
+      const trigger = icon.closest('[tabindex="0"]') as HTMLElement
+      expect(trigger.tagName).toBe('SPAN')
+      expect(screen.getByRole('img', { name: 'Rebase failing' })).toBe(trigger)
+      act(() => trigger.focus())
+      expect(document.activeElement).toBe(trigger)
+      expect(document.getElementById(trigger.getAttribute('aria-describedby')!)?.textContent).toBe(
+        'merge conflict (failing since 2026-01-01T00:00:00.000Z)',
+      )
+      expect((await screen.findByRole('tooltip')).textContent).toBe(
+        'merge conflict (failing since 2026-01-01T00:00:00.000Z)',
+      )
+    })
+
     describe('base branch row', () => {
       const healthyBase: BranchHealthEntry = {
         dirName: 'main',
@@ -1118,6 +1137,25 @@ describe('SystemHealthPanel', () => {
         expect((await screen.findByRole('tooltip')).textContent).toMatch(
           /Uncommitted: content\/home\.md/,
         )
+      })
+
+      it('reaches the base refresh warning by keyboard: a named focusable icon described by it', async () => {
+        mockClient.admin.status.mockResolvedValue(mockSuccess(makeStatusWithSync(dirtyBaseRefresh)))
+
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+        const icon = await screen.findByTestId('base-refresh-warning-main')
+
+        const trigger = icon.closest('[tabindex="0"]') as HTMLElement
+        expect(trigger.tagName).toBe('SPAN')
+        expect(screen.getByRole('img', { name: 'Base branch refresh problem' })).toBe(trigger)
+        act(() => trigger.focus())
+        expect(document.activeElement).toBe(trigger)
+        const description = document.getElementById(
+          trigger.getAttribute('aria-describedby')!,
+        )?.textContent
+        expect(description).toMatch(/Uncommitted: content\/home\.md/)
+        expect((await screen.findByRole('tooltip')).textContent).toBe(description)
       })
 
       it('carries no warning when the worker reports no baseRefresh', async () => {

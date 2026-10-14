@@ -281,7 +281,7 @@ describe('FormRenderer readOnly', () => {
     expect(screen.queryByRole('button', { name: 'Add section' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Add section here' })).toBeNull()
     expect(screen.queryByTestId('block-insert-between')).toBeNull()
-    const [first] = screen.getAllByRole('textbox', { name: 'heading' })
+    const [first] = screen.getAllByRole('textbox', { name: 'Heading' })
     expectLocked(first)
     fireEvent.change(first, { target: { value: 'Edited' } })
     expect(onChange).not.toHaveBeenCalled()

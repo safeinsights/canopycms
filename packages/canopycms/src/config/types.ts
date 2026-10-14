@@ -332,7 +332,7 @@ export type CollectionConfig = {
  * Contains top-level collections and entries (typed content at the root level).
  */
 export type RootCollectionConfig = {
-  /** Optional label for the root collection (e.g., "All entries", "Content") */
+  /** Optional label for the root collection (e.g., "All content", "Content") */
   readonly label?: string
   /** Entry types at the root level */
   readonly entries?: readonly EntryTypeConfig[]

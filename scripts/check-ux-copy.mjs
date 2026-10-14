@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * Copy rules for the editor UI (docs/ux-guidelines.md), ratcheted per file
- * against scripts/ux-copy-baseline.json.
- * Parses every non-test, non-story source file under packages/canopycms/src/editor
- * and checks the text a user can read: string literals, template text and JSX
- * text, skipping module specifiers, literal and template-literal types, and
- * console.* arguments. Three rules:
- * - `ellipsis`: three ASCII dots where `…` is meant.
+ * Copy rules for the editor UI (docs/ux-guidelines.md), ratcheted per file against
+ * scripts/ux-copy-baseline.json. Parses every non-test, non-story source file under
+ * packages/canopycms/src/editor and, transitively, each src/ file the editor loads through a value
+ * import or re-export (type-only ones skipped), since its copy can live outside editor/
+ * (api/entries-constants.ts). Checks the
+ * text a user can read: string literals, template text and JSX text, skipping module
+ * specifiers, literal and template-literal types, and console.* arguments. Three rules:
+ * - `ellipsis`: three ASCII dots where `…` is meant, outside a route's `/...rest` parameter.
  * - `successfully`: the word, in any casing. A result reads as done without it.
  * - `title-case`: a label or placeholder in Title Case: the text of a button-like
  *   or menu element (LABEL_ELEMENTS), or a LABEL_KEYS attribute or object-literal
@@ -17,11 +18,10 @@
  *   hold a name rather than copy. A false positive is fixed by adding its
  *   proper noun to PROPER_NOUNS.
  *
- * The baseline holds each file's count per rule. A count above its baseline
- * fails and lists that file's findings for the rule; a count below it fails
- * too, until `--write-baseline` records the improvement, so a recorded fix
- * leaves no room for a later violation; a fix and a new violation in one
- * file in one change still net out. A rewrite that would raise a count is
+ * The baseline holds each file's count per rule. A count above its baseline fails and lists
+ * that file's findings for the rule; a count below it fails too, until `--write-baseline`
+ * records the improvement, so a recorded fix leaves no room for a later violation; a fix and a
+ * new violation in one file in one change still net out. A rewrite that would raise a count is
  * refused without `--allow-raise`.
  *
  *   node scripts/check-ux-copy.mjs                    # check against the baseline
@@ -36,7 +36,8 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const SCOPE = 'packages/canopycms/src/editor'
+const SRC_ROOT = join(repoRoot, 'packages/canopycms/src')
+const SCOPE = join(SRC_ROOT, 'editor')
 const baselinePath = join(repoRoot, 'scripts', 'ux-copy-baseline.json')
 const rel = (p) => relative(repoRoot, p).split(sep).join('/')
 
@@ -119,7 +120,7 @@ function titleCaseWords(text) {
   return flagged
 }
 
-const hasAsciiEllipsis = (text) => text.includes('...')
+const hasAsciiEllipsis = (text) => text.replace(/\/\.\.\.(?=[A-Za-z_])/g, '/').includes('...')
 const hasSuccessfully = (text) => /successfully/i.test(text)
 
 /**
@@ -239,9 +240,15 @@ function isSkipped(node) {
   return false
 }
 
+const parse = (fileName, source) =>
+  ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+
 /** Every finding in one source file, as { rule, line, text }. */
 function scanSource(fileName, source) {
-  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  return scanFile(parse(fileName, source))
+}
+
+function scanFile(sf) {
   const findings = []
   const lineOf = (node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1
   const add = (rule, node, text) =>
@@ -286,6 +293,59 @@ function scanSource(fileName, source) {
   }
   visit(sf)
   return findings
+}
+
+/**
+ * The relative module specifiers whose values `sf` loads: imports, re-exports and dynamic
+ * `import()`s, minus the type-only ones, which load nothing.
+ */
+function valueImports(sf) {
+  const specifiers = []
+  const typeOnly = (elements) => elements.length > 0 && elements.every((e) => e.isTypeOnly)
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const clause = node.importClause
+      const bindings = clause?.namedBindings
+      const onlyTypes =
+        clause &&
+        (clause.isTypeOnly ||
+          (!clause.name && bindings && ts.isNamedImports(bindings) && typeOnly(bindings.elements)))
+      if (!onlyTypes) specifiers.push(node.moduleSpecifier.text)
+    } else if (
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      const exported = node.exportClause
+      const onlyTypes =
+        node.isTypeOnly || (exported && ts.isNamedExports(exported) && typeOnly(exported.elements))
+      if (!onlyTypes) specifiers.push(node.moduleSpecifier.text)
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      specifiers.push(node.arguments[0].text)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  return specifiers.filter((spec) => spec.startsWith('.'))
+}
+
+/** The source file a relative specifier names, or undefined outside src/ or when none exists. */
+function resolveModule(fromFile, specifier) {
+  const base = resolve(dirname(fromFile), specifier.replace(/\.[jt]sx?$/, ''))
+  for (const candidate of [
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, 'index.ts'),
+    join(base, 'index.tsx'),
+  ]) {
+    if (existsSync(candidate) && candidate.startsWith(SRC_ROOT + sep)) return candidate
+  }
+  return undefined
 }
 
 function walk(absDir, out) {
@@ -348,6 +408,8 @@ function selfTest() {
     ['<Button>Submit branch...</Button>', ['ellipsis']],
     ['const t = `Saving ${n}...`', ['ellipsis']],
     ['console.warn("Retrying...")', []],
+    ["buildPath('/:branch/content/...path', params)", []],
+    ['<Button>Open /docs...</Button>', ['ellipsis']],
     ["import x from '...'", []],
     ['setError("Saved Successfully")', ['successfully']],
     ['<Button>Saving…</Button>', []],
@@ -368,7 +430,47 @@ function selfTest() {
     ['console.error(`Retrying ${n}...`)', []],
     ['type Mode = "..."', []],
   ]
+  const importCases = [
+    ["import a from './a'", ['./a']],
+    ["import type { T } from './t'", []],
+    ["import { type T } from './t'", []],
+    ["import { type T, v } from './t'", ['./t']],
+    ["import def, { type T } from './d'", ['./d']],
+    ["import * as ns from './n'", ['./n']],
+    ["import './side'", ['./side']],
+    ["import x from 'react'", []],
+    ["export * from './b'", ['./b']],
+    ["export { x } from './b'", ['./b']],
+    ["export type { T } from './b'", []],
+    ["export { type T } from './b'", []],
+    ['export const x = 1', []],
+    ["const m = await import('./lazy')", ['./lazy']],
+  ]
   const failures = []
+  for (const [source, expected] of importCases) {
+    const actual = valueImports(parse('case.tsx', source))
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      failures.push(
+        `valueImports(${source}) = ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`,
+      )
+    }
+  }
+  const editorFile = join(SCOPE, 'Editor.tsx')
+  const resolutions = [
+    [editorFile, '../api/entries-constants', 'api/entries-constants.ts'],
+    [editorFile, '../authorization', 'authorization/index.ts'],
+    [editorFile, './components/EditorHeader', 'editor/components/EditorHeader.tsx'],
+    [editorFile, './components/EditorHeader.js', 'editor/components/EditorHeader.tsx'],
+    [editorFile, '../../../../package.json', undefined],
+    [editorFile, './no-such-module', undefined],
+  ]
+  for (const [from, specifier, expected] of resolutions) {
+    const resolved = resolveModule(from, specifier)
+    const actual = resolved && relative(SRC_ROOT, resolved).split(sep).join('/')
+    if (actual !== expected) {
+      failures.push(`resolveModule(${specifier}) = ${actual}, expected ${expected}`)
+    }
+  }
   for (const [text, expected] of labelCases) {
     const actual = titleCaseWords(text)
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -391,7 +493,7 @@ function selfTest() {
     process.exit(1)
   }
   console.log(
-    `check-ux-copy self-test passed (${labelCases.length} label cases, ${sourceCases.length} source cases).`,
+    `check-ux-copy self-test passed (${labelCases.length} label cases, ${sourceCases.length} source cases, ${importCases.length} import cases, ${resolutions.length} resolutions).`,
   )
   process.exit(0)
 }
@@ -399,8 +501,29 @@ function selfTest() {
 const args = process.argv.slice(2)
 if (args.includes('--self-test')) selfTest()
 
-const results = walk(join(repoRoot, SCOPE), [])
-  .map((abs) => ({ file: rel(abs), findings: scanSource(abs, readFileSync(abs, 'utf8')) }))
+/** The editor's files and, transitively, every src/ file they load through value imports. */
+function scannedFiles() {
+  const seen = new Set(walk(SCOPE, []))
+  const queue = [...seen]
+  const parsed = new Map()
+  while (queue.length > 0) {
+    const abs = queue.pop()
+    const sf = parse(abs, readFileSync(abs, 'utf8'))
+    parsed.set(abs, sf)
+    for (const specifier of valueImports(sf)) {
+      const target = resolveModule(abs, specifier)
+      if (!target || seen.has(target)) continue
+      if (EXCLUDED_BASENAME.test(target) || target.split(sep).some((d) => EXCLUDED_DIRS.has(d)))
+        continue
+      seen.add(target)
+      queue.push(target)
+    }
+  }
+  return parsed
+}
+
+const results = [...scannedFiles()]
+  .map(([abs, sf]) => ({ file: rel(abs), findings: scanFile(sf) }))
   .sort((a, b) => a.file.localeCompare(b.file))
 
 /** file -> rule -> count, for files with at least one finding. */
@@ -483,11 +606,13 @@ if (problems.length === 0) {
     0,
   )
   console.log(
-    `✅ editor copy within baseline (${results.length} files, ${total} baselined finding(s))`,
+    `✅ editor copy, including what it imports from outside editor/, within baseline (${results.length} files, ${total} baselined finding(s))`,
   )
   process.exit(0)
 }
-console.error(`❌ editor copy has ${problems.length} problem(s):\n`)
+console.error(
+  `❌ editor copy, including what it imports from outside editor/, has ${problems.length} problem(s):\n`,
+)
 for (const [first, ...detail] of problems) {
   console.error(`  ${first}`)
   for (const d of detail) console.error(`      ${d}`)

@@ -87,9 +87,9 @@ describe('UserBadge', () => {
       expect(skeletons.length).toBe(0)
     })
 
-    // Should have avatar but no name text in the container
-    const text = container.textContent || ''
-    expect(text).not.toContain('Alice Johnson')
+    // The name is there for assistive tech only, never as visible text.
+    const hidden = screen.getByText('Alice Johnson')
+    expect(hidden.className).toContain('mantine-VisuallyHidden-root')
   })
 
   it('renders full info in full mode', async () => {
@@ -521,25 +521,77 @@ describe('UserBadge', () => {
     })
   })
 
-  it('hides an avatar that repeats the name beside it, and labels one shown alone', async () => {
-    const { container, rerender } = render(
-      <UserBadge userId="user-1" getUserMetadata={vi.fn()} cachedUser={mockUser} />,
-      { wrapper: Wrapper },
-    )
-    const avatar = () => container.querySelector('.mantine-Avatar-root')
-    expect(avatar()?.getAttribute('aria-hidden')).toBe('true')
-    expect(container.querySelector('img')?.getAttribute('alt')).toBe('')
+  describe('an avatar is always hidden from assistive tech', () => {
+    const accessibleText = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll('*'))
+        .filter((el) => el.tagName !== 'STYLE' && !el.closest('[aria-hidden="true"]'))
+        .flatMap((el) => Array.from(el.childNodes))
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent)
+        .join('')
 
-    rerender(
-      <UserBadge
-        userId="user-1"
-        getUserMetadata={vi.fn()}
-        cachedUser={mockUser}
-        variant="avatar-only"
-      />,
-    )
-    expect(avatar()?.getAttribute('aria-hidden')).toBeNull()
-    expect(container.querySelector('img')?.getAttribute('alt')).toBe('Alice Johnson')
+    it('beside a name, has empty alt and aria-hidden', () => {
+      const { container } = render(
+        <UserBadge userId="user-1" getUserMetadata={vi.fn()} cachedUser={mockUser} />,
+        { wrapper: Wrapper },
+      )
+      expect(container.querySelector('.mantine-Avatar-root')?.getAttribute('aria-hidden')).toBe(
+        'true',
+      )
+      expect(container.querySelector('img')?.getAttribute('alt')).toBe('')
+    })
+
+    it('alone with initials, hides the initials and names the person in visually hidden text', () => {
+      const { container } = render(
+        <UserBadge
+          userId="user-3"
+          getUserMetadata={vi.fn()}
+          cachedUser={{ id: 'user-3', name: 'Alice Johnson', email: 'alice@example.com' }}
+          variant="avatar-only"
+        />,
+        { wrapper: Wrapper },
+      )
+      const avatar = container.querySelector('.mantine-Avatar-root')
+      expect(avatar?.textContent).toBe('AJ')
+      expect(avatar?.getAttribute('aria-hidden')).toBe('true')
+      expect(accessibleText(container)).toBe('Alice Johnson, alice@example.com')
+      expect(screen.getByText('Alice Johnson').className).toContain('mantine-VisuallyHidden-root')
+    })
+
+    it('alone with a picture, has empty alt and names the person in visually hidden text', () => {
+      const { container } = render(
+        <UserBadge
+          userId="user-1"
+          getUserMetadata={vi.fn()}
+          cachedUser={mockUser}
+          variant="avatar-only"
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(container.querySelector('.mantine-Avatar-root')?.getAttribute('aria-hidden')).toBe(
+        'true',
+      )
+      expect(container.querySelector('img')?.getAttribute('alt')).toBe('')
+      expect(accessibleText(container)).toBe('Alice Johnson, alice@example.com')
+    })
+
+    it('alone as the anonymous user, is named "Anonymous (Public)" in visually hidden text', () => {
+      const { container } = render(
+        <UserBadge
+          userId="anonymous"
+          getUserMetadata={vi.fn()}
+          cachedUser={{ id: 'anonymous', name: 'Anonymous', email: 'public' }}
+          variant="avatar-only"
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(container.querySelector('.mantine-Avatar-root')?.getAttribute('aria-hidden')).toBe(
+        'true',
+      )
+      expect(screen.getByText('Anonymous (Public)').className).toContain(
+        'mantine-VisuallyHidden-root',
+      )
+    })
   })
 
   describe('a person whose name is empty or is their id', () => {

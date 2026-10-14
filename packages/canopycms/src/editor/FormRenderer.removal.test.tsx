@@ -92,7 +92,7 @@ describe('FormRenderer removals', () => {
       listPath: ['blocks'],
       index: 0,
       item: block,
-      label: '"Hero" from blocks',
+      label: '"Hero" from Blocks',
     })
   })
 
@@ -107,6 +107,30 @@ describe('FormRenderer removals', () => {
       path: ['hero'],
       value: image,
       label: 'the image from Hero image',
+    })
+  })
+
+  it('reports a cleared object with its value, as a clear', () => {
+    const seo = { summary: 'Saved' }
+    const { onRemoved, onChange } = renderForm(
+      [
+        {
+          name: 'seo',
+          type: 'object',
+          label: 'SEO',
+          fields: [{ name: 'summary', type: 'string', label: 'Summary' }],
+        },
+      ],
+      { seo },
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(onChange).toHaveBeenLastCalledWith({ seo: undefined })
+    expect(onRemoved).toHaveBeenCalledWith({
+      kind: 'value',
+      path: ['seo'],
+      value: seo,
+      label: '"SEO"',
+      action: 'clear',
     })
   })
 
