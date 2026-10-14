@@ -19,7 +19,8 @@ disagrees: it denies on `managerOrAdminAllowed` only under `!hasUserConstraint &
   the ACL is consulted, whatever the ACL lists.
 - Add tests to `authorization/__tests__/branch.test.ts`: a lockdown plus an ACL naming the user
   (and one naming their group) denies; admins and reviewers still pass.
-- `canPerformWorkflowAction` grants Withdraw on `allowed_by_acl`; once the lockdown denies first,
-  an ACL-listed editor on a locked-down branch loses that too, which is the ruling's intent.
+- `canPerformWorkflowAction` grants Submit and Withdraw on `allowed_by_acl`; once the lockdown
+  denies first, an ACL-listed editor on a locked-down branch loses both, which is the ruling's
+  intent.
   [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md) covers
   the ACL matchers' wider divergence.

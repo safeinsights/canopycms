@@ -20,5 +20,8 @@ editor into line with one.
   `editor/theme.tsx`, then drop `UserBadge`'s local `textTransform: 'none'`.
 - **Disabled reasons.** Give icon-only disabled controls their reason as visually hidden text
   too; controls that carry text keep the Tooltip alone.
-- **"All content".** The header menu item (`components/EditorHeader.tsx`) and the breadcrumb
-  root (`buildBreadcrumbSegments` in `editor-utils.ts`) say "All entries"; the drawer is "Content".
+- **"All content".** Rename the header menu item (`components/EditorHeader.tsx`) and the
+  breadcrumb root (`buildBreadcrumbSegments` in `editor-utils.ts`) from "All entries" to "All
+  content"; the drawer they open is "Content"
+  ([Vocabulary](../../docs/ux-guidelines.md#vocabulary)). The example label in
+  `RootCollectionConfig`'s doc comment (`config/types.ts`) says "All entries" too.

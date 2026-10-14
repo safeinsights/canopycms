@@ -36,10 +36,9 @@ compact "Outline"). None was in that PR's scope.
   input has `aria-invalid="false"` and no `aria-describedby` pointing at its error text.
 - **Raw schema names**: an unlabelled block field shows "blocks" in the outline and "headline",
   "body" as labels in the block story fixture; `entryTypeLabel`-style humanising would cover them.
-
 - **Focus-ring token.** Add `--canopy-focus-ring`, measured at 3:1 on its surface for any
-  adopter brand ([Accessibility](../../docs/ux-guidelines.md#accessibility)); dark primary shade
-  5 gives 3.05:1 on dark.5 for the default brand only.
+  adopter brand ([Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast)); dark
+  primary shade 5 gives 3.05:1 on dark.5 for the default brand only.
 - **Dark dimmed cue.** Dark dimmed text is about 1.3:1 from body text, so it also needs a size
   or style difference ([Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast)).
   Sweep every dimmed text in `editor/` that matches its neighbours' size and style, in any form

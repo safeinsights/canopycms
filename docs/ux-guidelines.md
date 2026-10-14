@@ -8,21 +8,21 @@ The standard for every change to the CanopyCMS editor (`packages/canopycms/src/e
 One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 `packages/canopycms/src/editor/copy.ts`.
 
-| Say                       | For                                                            | Not                                         |
-| ------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
-| **Save**                  | Writing the open entry to the branch                           | Save file, Commit                           |
-| **Submit for review**     | Committing the branch and opening its pull request             | Submit branch, Publish                      |
-| **Withdraw from review**  | Taking a submitted branch back for editing                     | Withdraw branch                             |
-| **Request changes**       | A reviewer sending a branch back to its editor                 | Reject                                      |
-| **Switch branch**         | Opening another branch                                         | Change branch, Change / Manage              |
-| **New branch**            | Creating a branch                                              | Create branch, except as its form's confirm |
-| **Remove**                | Taking an item out of a list or field; unlisting an entry type | Clear, Delete                               |
-| **Clear**                 | Resetting an optional object field to unset                    | Remove                                      |
-| **Delete**                | Destroying a stored entry, collection, branch or group         | Remove                                      |
-| **Discard changes**       | Throwing away unsaved edits                                    | Discard drafts, Revert                      |
-| **entry**, **collection** | A content item, and the folder that holds entries              | file, page, item; folder                    |
-| **file**                  | An item in the media library                                   | asset, media item                           |
-| **Content**               | The drawer listing collections and entries ("All content")     | All entries                                 |
+| Say                       | For                                                                                        | Not                                         |
+| ------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| **Save**                  | Writing the open entry to the branch                                                       | Save file, Commit                           |
+| **Submit for review**     | Committing the branch and opening its pull request                                         | Submit branch, Publish                      |
+| **Withdraw from review**  | Taking a submitted branch back for editing                                                 | Withdraw branch                             |
+| **Request changes**       | A reviewer sending a branch back to its editor                                             | Reject                                      |
+| **Switch branch**         | Opening another branch                                                                     | Change branch, Change / Manage              |
+| **New branch**            | Creating a branch                                                                          | Create branch, except as its form's confirm |
+| **Remove**                | Taking an item out of a list or field; unlisting an entry type                             | Clear, Delete                               |
+| **Clear**                 | Resetting an optional object field to unset                                                | Remove                                      |
+| **Delete**                | Destroying a stored entry, collection, branch or group                                     | Remove                                      |
+| **Discard changes**       | Throwing away unsaved edits                                                                | Discard drafts, Revert                      |
+| **entry**, **collection** | A content item, and the folder that holds entries                                          | file, page, item; folder                    |
+| **file**                  | An item in the media library                                                               | asset, media item                           |
+| **Content**               | The drawer of collections and entries; its menu item and breadcrumb root say "All content" | All entries                                 |
 
 Branch status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`.
 
@@ -189,8 +189,9 @@ included:
 - `--canopy-danger-text`, for all destructive and error text, menu items included: `red.9` in
   light mode and `red.3` in dark, since `red.8` is 4.3:1 on `gray.0` and `red.4` 4.3:1 on `dark.4`.
 - `--canopy-input-border` (3:1), for inputs and the borders and tracks of Checkbox, Radio and
-  Switch; `--canopy-surface-subtle` and `--canopy-surface-muted`.
-- `--canopy-focus-ring`, at least 3:1 on its surface for any adopter brand.
+  Switch (not yet in the theme for those three); `--canopy-surface-subtle` and
+  `--canopy-surface-muted`.
+- `--canopy-focus-ring` (not yet in the theme), at least 3:1 on its surface for any adopter brand.
 
 Pass a plain colour; the theme brings its text and light variant to 4.5:1, at which dark mode's
 light status badges look alike. Success text is the default colour beside a green icon;

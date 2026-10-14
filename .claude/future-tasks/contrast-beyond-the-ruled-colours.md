@@ -19,8 +19,8 @@ red 2.78, orange 2.23), as on the base. Surfaces: `permission-manager/Permission
 `PermissionEditor.tsx` (colours from `LEVEL_CONFIG` in `permission-manager/constants.tsx`),
 `group-manager/MemberList.tsx` and filled `UserBadge`, `schema-editor/CollectionEditor.tsx`'s
 "Default" and "Singleton" badges, `media/AssetCard.tsx`'s red "Remove from library" ActionIcon
-(an icon, 3:1), and `components/EditorSidebar.tsx`'s orange Indicator. The guideline now says a
-colour other than the primary is never filled: make each of these a light variant, which the
+(an icon, 3:1), and `components/EditorSidebar.tsx`'s orange Indicator. The guideline now fills
+only the primary and the red and orange buttons: make each of these a light variant, which the
 theme already makes readable, leaving the filled red and orange Button resolver in `theme.tsx`
 alone. Mantine's `Indicator` has no `variant`, so the sidebar's takes text colour on an opaque tint
 through `styles` or `--indicator-color`, an orange counterpart of `--canopy-count-bg` (the
