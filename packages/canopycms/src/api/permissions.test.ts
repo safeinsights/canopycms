@@ -978,6 +978,7 @@ describe('permissions API', () => {
       expect(result.error).toBe(
         'Permissions were modified by another user. Please reload and try again.',
       )
+      expect(result.code).toBe('SETTINGS_CHANGED')
       // The version mismatch is detected inside the mutator BEFORE any
       // payload is computed for a write.
       expect(settingsMutation.getPayload()).toBeNull()
@@ -1069,6 +1070,7 @@ describe('permissions API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(409)
       expect(result.error).toBe('Settings are busy, please try again.')
+      expect(result.code).toBeUndefined()
     })
   })
 })

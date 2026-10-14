@@ -12,6 +12,7 @@ import { unsafeAsLogicalPath } from '../paths/test-utils'
 import { usePermissionManager } from './hooks/usePermissionManager'
 import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/test-utils'
 import { mockConsole } from '../test-utils/console-spy'
+import { SettingsChangedError } from './settings-conflict'
 
 // Needed by setupMockApiClient, which injects the mock into the factory.
 vi.mock('../api', async () => {
@@ -1040,8 +1041,9 @@ describe('PermissionManager', () => {
       })
     })
 
-    it('handles save errors gracefully', async () => {
-      const mockError = vi.fn().mockRejectedValue(new Error('Network error'))
+    /** Stages one change and saves it through `onSave`. */
+    const stageAndSave = async (onSave: (permissions: unknown) => Promise<void>) => {
+      const mockError = vi.fn(onSave)
 
       render(
         <PermissionManager
@@ -1091,10 +1093,27 @@ describe('PermissionManager', () => {
 
       await waitFor(() => screen.getByText('Save permissions'))
       fireEvent.click(screen.getByText('Save permissions'))
+    }
+
+    it('handles save errors gracefully', async () => {
+      await stageAndSave(() => Promise.reject(new Error('Network error')))
 
       await waitFor(() => {
         expect(screen.getByText('Network error')).toBeTruthy()
       })
+      expect(screen.getByText('Error')).toBeTruthy()
+    })
+
+    it('shows a version conflict as not saved rather than as an error', async () => {
+      await stageAndSave(() =>
+        Promise.reject(new SettingsChangedError('Permissions were modified by another user.')),
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Permissions were modified by another user.')).toBeTruthy()
+      })
+      expect(screen.getByText('Not saved')).toBeTruthy()
+      expect(screen.queryByText('Error')).toBeNull()
     })
   })
 

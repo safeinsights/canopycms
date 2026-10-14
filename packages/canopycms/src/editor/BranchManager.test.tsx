@@ -94,6 +94,24 @@ describe('getBranchPermissions', () => {
     expect(getBranchPermissions(branch, { userId: 'maker', groups: [] }).canSubmit).toBe(false)
   })
 
+  it('leaves workflow access on a locked-down branch to reviewers and admins alone', () => {
+    const branch: BranchSummary = {
+      name: 'work',
+      status: 'submitted',
+      createdBy: 'maker',
+      access: { users: ['maker', 'invited'], groups: ['team'], managerOrAdminAllowed: true },
+      submitBlocked: true,
+    }
+    const perms = (userId: string, groups: string[] = []) =>
+      getBranchPermissions(branch, { userId, groups })
+
+    expect(perms('maker').hasWorkflowAccess).toBe(false)
+    expect(perms('invited').hasWorkflowAccess).toBe(false)
+    expect(perms('member', ['team']).canWithdraw).toBe(false)
+    expect(perms('rita', [RESERVED_GROUPS.REVIEWERS]).canWithdraw).toBe(true)
+    expect(perms('root', [RESERVED_GROUPS.ADMINS]).canWithdraw).toBe(true)
+  })
+
   it('allows creator to submit editing branch', () => {
     const branch: BranchSummary = {
       name: 'main',

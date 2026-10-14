@@ -12,7 +12,7 @@ import { invalidateBranchContentCaches } from '../content-index-generation'
 import { isSettingsBranchName } from '../paths/branch-name'
 import { normalizeFilesystemPath } from '../paths/normalize'
 import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
-import type { PullRequestState } from '../types'
+import type { ConflictStatus, PullRequestState } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import {
   holdProvisionedWorkspace,
@@ -377,9 +377,7 @@ async function runRebaseRounds(
         } else {
           // Unexpected error — abort and leave the branch behind.
           // conflictStatus/conflictFiles are deliberately not updated: the
-          // rebase did not complete, so the true conflict state is unknown, and
-          // the existing (possibly stale) metadata is preserved until the next
-          // successful rebase cycle corrects it.
+          // rebase did not complete, so it replaced nothing to record.
           workerLogWarn(`  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`)
           failureReason = msg || 'Unknown error'
           await branchGit.rebase(['--abort']).catch(() => {})
@@ -441,6 +439,25 @@ function conflictFilesToContentIds(
     })
     .filter((id): id is ContentId => id !== null)
   return [...new Set(conflictIds)]
+}
+
+/**
+ * The conflict record after a rebase: the IDs already recorded plus this
+ * rebase's. A conflict means this branch's version replaced base's change to
+ * that entry, which a later clean rebase does not undo, so the record only
+ * grows until the branch merges (buildMergedBranchUpdate clears it).
+ *
+ * Pure.
+ */
+function recordConflicts(
+  recorded: readonly ContentId[] | undefined,
+  found: readonly ContentId[],
+): { conflictStatus: ConflictStatus; conflictFiles: ContentId[] } {
+  const conflictFiles = [...new Set([...(recorded ?? []), ...found])]
+  return {
+    conflictStatus: conflictFiles.length > 0 ? 'conflicts-detected' : 'clean',
+    conflictFiles,
+  }
 }
 
 /**
@@ -909,27 +926,17 @@ async function rebaseOneBranch(
         // `metaFile` snapshot from before the fetch/rev-list above, so a
         // concurrent editor-driven metadata change in that window is not
         // clobbered by a stale skip decision.
+        //
+        // Catching up leaves the conflict record alone: it names entries whose
+        // base change this branch's version replaced, which stays true until
+        // the branch merges (see recordConflicts). A lingering rebaseFailure
+        // is cleared, or it sticks as a stale warning forever: nothing else
+        // touches a caught-up branch, so no other save site clears it.
         const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
-        const conflictStatus = currentMeta?.branch.conflictStatus
-        const conflictFiles = currentMeta?.branch.conflictFiles
-        const conflictAlreadyClean =
-          (conflictStatus === undefined || conflictStatus === 'clean') &&
-          (conflictFiles === undefined || conflictFiles.length === 0)
-        // A lingering rebaseFailure must also be cleared once the branch
-        // catches up clean, or it sticks as a stale warning forever: nothing
-        // else touches a caught-up branch, so no other save site clears it.
-        const alreadyClean = conflictAlreadyClean && currentMeta?.branch.rebaseFailure === undefined
-        if (alreadyClean) {
+        if (currentMeta?.branch.rebaseFailure === undefined) {
           return { kind: 'none' }
         }
-        await meta.save({
-          branch: {
-            name: branchDir,
-            conflictStatus: 'clean',
-            conflictFiles: [],
-            rebaseFailure: undefined,
-          },
-        })
+        await meta.save({ branch: { name: branchDir, rebaseFailure: undefined } })
         return { kind: 'none' }
       }
 
@@ -1028,16 +1035,15 @@ async function rebaseOneBranch(
           ? `  Rebased ${branchDir} (kept branch version for ${conflictIdsDeduped.length} conflicting file(s))`
           : `  Rebased ${branchDir} successfully`,
       )
-      await meta.save({
+      await meta.update((existing) => ({
         branch: {
           name: branchDir,
-          conflictStatus: hadConflicts ? 'conflicts-detected' : 'clean',
-          conflictFiles: conflictIdsDeduped,
+          ...recordConflicts(existing?.branch.conflictFiles, conflictIdsDeduped),
           // The cycle completed, so clear any prior failure record regardless
           // of the conflict outcome.
           rebaseFailure: undefined,
         },
-      })
+      }))
       didRebase = true
 
       await carryForwardRewrittenHistory(ctx, {

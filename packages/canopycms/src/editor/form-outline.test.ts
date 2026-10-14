@@ -37,10 +37,10 @@ const team: FieldConfig = {
 }
 
 describe('buildFormOutline', () => {
-  it('has one node per top-level field, labelled or by name, with its path and no children', () => {
+  it('has one node per top-level field, labelled or by its humanised name, with its path and no children', () => {
     expect(buildFormOutline([title, summary], {})).toEqual([
       { label: 'Title', path: 'title' },
-      { label: 'summary', path: 'summary' },
+      { label: 'Summary', path: 'summary' },
     ])
   })
 
@@ -69,15 +69,15 @@ describe('buildFormOutline', () => {
         label: 'Search',
         children: [
           { label: 'Meta title', path: 'metaTitle' },
-          { label: 'metaText', path: 'metaText' },
+          { label: 'Meta text', path: 'metaText' },
         ],
       },
-      { label: 'summary', path: 'summary' },
+      { label: 'Summary', path: 'summary' },
     ])
     expect(outline[1]).not.toHaveProperty('path')
   })
 
-  it('names an unlabelled group by its name, and nests a group inside a group', () => {
+  it('names an unlabelled group by its humanised name, and nests a group inside a group', () => {
     const fields: FieldConfig[] = [
       {
         type: 'group',
@@ -87,8 +87,8 @@ describe('buildFormOutline', () => {
     ]
     expect(buildFormOutline(fields, {})).toEqual([
       {
-        label: 'outer',
-        children: [{ label: 'Inner', children: [{ label: 'summary', path: 'summary' }] }],
+        label: 'Outer',
+        children: [{ label: 'Inner', children: [{ label: 'Summary', path: 'summary' }] }],
       },
     ])
   })
@@ -107,7 +107,7 @@ describe('buildFormOutline', () => {
         path: 'sections',
         children: [
           { label: 'Hero banner', secondary: 'Welcome', path: 'sections[0]' },
-          { label: 'quote', secondary: 'To be', path: 'sections[1]' },
+          { label: 'Quote', secondary: 'To be', path: 'sections[1]' },
           { label: 'Hero banner', secondary: undefined, path: 'sections[2]' },
         ],
       },
@@ -174,8 +174,8 @@ describe('buildFormOutline', () => {
       { name: 'author', type: 'object', fields: [{ name: 'name', type: 'string' }] },
     ]
     expect(buildFormOutline(fields, { tags: ['a', 'b'], author: { name: 'Ada' } })).toEqual([
-      { label: 'tags', path: 'tags' },
-      { label: 'author', path: 'author' },
+      { label: 'Tags', path: 'tags' },
+      { label: 'Author', path: 'author' },
     ])
   })
 
@@ -186,7 +186,7 @@ describe('buildFormOutline', () => {
       fields: [{ name: 'name', type: 'string' }],
     }
     expect(buildFormOutline([author], { author: [{ name: 'Ada' }] })).toEqual([
-      { label: 'author', path: 'author' },
+      { label: 'Author', path: 'author' },
     ])
   })
 

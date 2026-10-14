@@ -53,6 +53,7 @@ import { FormHeader } from './FormHeader'
 import { buildFormOutline, hasCollapsibleList } from './form-outline'
 import { findFieldTarget, focusFieldTarget } from './field-target'
 import type { FieldRemoval } from './undo-removal'
+import { schemaLabel } from './schema-label'
 
 export type FormValue = Record<string, unknown>
 
@@ -200,7 +201,7 @@ export interface FormRendererProps {
   format?: ContentFormat
   /** Shows the value without accepting edits. Comments stay open. */
   readOnly?: boolean
-  /** Told of each list item, block or image that Remove takes out, so the caller can offer Undo. */
+  /** Told of each list item, block or image Remove takes out, or object Clear resets, for Undo. */
   onRemoved?: (removal: FieldRemoval) => void
   /** Resolves comment authors to names in field and entry threads; without it they show as ids. */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
@@ -213,6 +214,8 @@ export interface FormRendererProps {
   notice?: React.ReactNode
   /** Why a field can't take a new comment thread yet, such as one inside an unsaved item. */
   commentBlockedReason?: (canopyPath: string) => string | undefined
+  /** Names a removed item's thread's field; else the schema alone does, without the items. */
+  removedItemFieldLabel?: (thread: CommentThread) => string | undefined
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -238,6 +241,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   header,
   notice,
   commentBlockedReason,
+  removedItemFieldLabel,
 }) => {
   const emit = readOnly ? noop : onChange
   const formRef = useRef<HTMLDivElement>(null)
@@ -283,7 +287,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           build={(guardedUpdate) => renderFieldControl(field, currentValue, guardedUpdate, path)}
           fallback={(caught) => (
             <FieldCrashFallback
-              label={field.label ?? field.name}
+              label={schemaLabel(field)}
               fieldType={field.type}
               value={currentValue}
               onChange={readOnly ? undefined : update}
@@ -370,7 +374,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       return renderedField
     }
 
-    const label = field.label ?? field.name
+    const label = schemaLabel(field)
 
     const wrapWithComments = (renderedField: React.ReactNode) => {
       if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
@@ -606,18 +610,16 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             readOnly={readOnly}
             resetKey={boundaryResetKey}
             hasErrors={rowHasErrors(path)}
-            onRemoved={(index, block) =>
+            onRemoved={(index, block) => {
+              const template = blockField.templates.find((t) => t.name === block.template)
               onRemoved?.({
                 kind: 'list-item',
                 listPath: path,
                 index,
                 item: block,
-                label: `"${
-                  blockField.templates.find((t) => t.name === block.template)?.label ??
-                  block.template
-                }" from ${label}`,
+                label: `"${template ? schemaLabel(template) : block.template}" from ${label}`,
               })
-            }
+            }}
           />,
         )
       }
@@ -658,7 +660,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         // A non-list object has no list item to remove, so its only way back to `undefined` is
         // the Clear button (`onRemove`): shown only for an optional field that has a value.
         // Reset to `undefined`, never `{}`, which `isEmptyForRequired` (entry-validator.ts) reads
-        // as present. The label is "Clear" (docs/ux-guidelines.md, Vocabulary).
+        // as present. The label is "Clear" (docs/ux-guidelines.md, Vocabulary), and it offers Undo.
         const hasValue = currentValue !== undefined && currentValue !== null
         const canClear = !readOnly && objectField.required !== true && hasValue
 
@@ -671,7 +673,20 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             fields={objectField.fields}
             value={currentValue as Record<string, unknown> | undefined}
             onChange={(next) => update(next)}
-            onRemove={canClear ? () => update(undefined) : undefined}
+            onRemove={
+              canClear
+                ? () => {
+                    update(undefined)
+                    onRemoved?.({
+                      kind: 'value',
+                      path,
+                      value: currentValue,
+                      label: `"${label}"`,
+                      action: 'clear',
+                    })
+                  }
+                : undefined
+            }
             renderField={renderField}
             path={path}
             dataCanopyField={normalizeCanopyPath(path)}
@@ -739,9 +754,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               highlightThreadId={highlightThreadId}
               onGetUserMetadata={onGetUserMetadata}
               resetKey={boundaryResetKey}
-              // From the schema alone, without the items: no item holds this path any more.
-              removedItemFieldLabel={(path) =>
-                fieldBreadcrumb(fields, undefined, path, { items: false }).join(' › ')
+              removedItemFieldLabel={(thread) =>
+                removedItemFieldLabel?.(thread) ??
+                fieldBreadcrumb(fields, undefined, thread.canopyPath ?? '', { items: false }).join(
+                  ' › ',
+                )
               }
             />
           )}

@@ -968,12 +968,12 @@ describe('buildCollectionLabels', () => {
 })
 
 describe('buildBreadcrumbSegments', () => {
-  it('returns only "All entries" when no entry is provided', () => {
+  it('returns only "All content" when no entry is provided', () => {
     const labels = new Map<string, string>()
-    expect(buildBreadcrumbSegments(undefined, labels)).toEqual(['All entries'])
+    expect(buildBreadcrumbSegments(undefined, labels)).toEqual(['All content'])
   })
 
-  it('returns only "All entries" for entry without collectionPath', () => {
+  it('returns only "All content" for entry without collectionPath', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('test'),
       label: 'Test',
@@ -981,10 +981,10 @@ describe('buildBreadcrumbSegments', () => {
       contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map<string, string>()
-    expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All entries'])
+    expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All content'])
   })
 
-  it('returns "All entries" for single-level collection (root level)', () => {
+  it('returns "All content" for single-level collection (root level)', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('posts/hello'),
       label: 'Hello',
@@ -995,7 +995,7 @@ describe('buildBreadcrumbSegments', () => {
     }
     const labels = new Map([['posts', 'Posts']])
     // Single-level collection: parts = ['posts'], loop starts at i=1 which is >= length, so no segments added
-    expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All entries'])
+    expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All content'])
   })
 
   it('shows hierarchy for nested collections', () => {
@@ -1015,8 +1015,8 @@ describe('buildBreadcrumbSegments', () => {
 
     const result = buildBreadcrumbSegments(entry, labels)
 
-    // Should include: All entries, Documentation, Guides (skips 'Content' which is the root)
-    expect(result).toEqual(['All entries', 'Documentation', 'Guides'])
+    // Should include: All content, Documentation, Guides (skips 'Content' which is the root)
+    expect(result).toEqual(['All content', 'Documentation', 'Guides'])
   })
 
   it('shows hierarchy for deeply nested collections', () => {
@@ -1037,7 +1037,7 @@ describe('buildBreadcrumbSegments', () => {
 
     const result = buildBreadcrumbSegments(entry, labels)
 
-    expect(result).toEqual(['All entries', 'Documentation', 'API Reference', 'Version 2'])
+    expect(result).toEqual(['All content', 'Documentation', 'API Reference', 'Version 2'])
   })
 
   it('skips missing labels in hierarchy', () => {
@@ -1058,7 +1058,7 @@ describe('buildBreadcrumbSegments', () => {
     const result = buildBreadcrumbSegments(entry, labels)
 
     // Should skip the missing 'Documentation' segment
-    expect(result).toEqual(['All entries', 'Guides'])
+    expect(result).toEqual(['All content', 'Guides'])
   })
 
   it('includes slug path segments for nested slugs', () => {
@@ -1075,7 +1075,7 @@ describe('buildBreadcrumbSegments', () => {
     const result = buildBreadcrumbSegments(entry, labels)
 
     // Should include slug path segments (minus the last one which is the file name)
-    expect(result).toEqual(['All entries', '2024', '01'])
+    expect(result).toEqual(['All content', '2024', '01'])
   })
 
   it('combines collection hierarchy and slug segments', () => {
@@ -1095,7 +1095,7 @@ describe('buildBreadcrumbSegments', () => {
     const result = buildBreadcrumbSegments(entry, labels)
 
     // Collection hierarchy + slug segments
-    expect(result).toEqual(['All entries', 'Blog Posts', '2024', '01'])
+    expect(result).toEqual(['All content', 'Blog Posts', '2024', '01'])
   })
 
   it('works for root entry types with maxItems: 1', () => {
@@ -1114,7 +1114,7 @@ describe('buildBreadcrumbSegments', () => {
 
     const result = buildBreadcrumbSegments(entry, labels)
 
-    expect(result).toEqual(['All entries', 'Settings'])
+    expect(result).toEqual(['All content', 'Settings'])
   })
 })
 

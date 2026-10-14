@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { declaresScheme, isImplicitlyOffOrigin, sanitizeHref } from './sanitize-href'
 
 describe('sanitizeHref', () => {
+  it('returns the fallback for a missing value, as a live draft can hold', () => {
+    expect(sanitizeHref(undefined)).toBe('#')
+    expect(sanitizeHref(null, '/home')).toBe('/home')
+  })
+
   it('allows absolute http: URLs', () => {
     expect(sanitizeHref('http://example.com')).toBe('http://example.com/')
   })

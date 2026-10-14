@@ -285,6 +285,46 @@ describe('EntryNavigator', () => {
     })
   })
 
+  describe('a collection path rules refuse new entries in', () => {
+    const posts = (extra: Partial<EntryNavCollection> = {}): EntryNavCollection => ({
+      path: unsafeAsLogicalPath('posts'),
+      label: 'Posts',
+      type: 'collection',
+      entries: [{ path: unsafeAsLogicalPath('posts/first'), label: 'First', readOnly: true }],
+      ...extra,
+    })
+
+    it('says so once, under the collection', () => {
+      renderEntryNavigator({
+        collections: [
+          posts({ addRefused: true }),
+          posts({ path: unsafeAsLogicalPath('pages'), label: 'Pages' }),
+        ],
+      })
+
+      const messages = screen.getAllByTestId('add-refused-message')
+      expect(messages).toHaveLength(1)
+      expect(messages[0].textContent).toBe("You can't add entries here.")
+      expect(screen.getByTestId('entry-nav-item-posts').contains(messages[0])).toBe(true)
+    })
+
+    it('says so above the tree for a hidden root collection', () => {
+      renderEntryNavigator({ collections: [posts({ addRefused: true })], hiddenRootPath: 'posts' })
+
+      const message = screen.getByTestId('add-refused-message')
+      expect(
+        message.compareDocumentPosition(screen.getByTestId('entry-nav-item-first')) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    })
+
+    it('leaves it to the branch banner in a read-only navigator', () => {
+      renderEntryNavigator({ collections: [posts({ addRefused: true })], readOnly: true })
+
+      expect(screen.queryByTestId('add-refused-message')).toBeNull()
+    })
+  })
+
   describe('unavailable entry types', () => {
     const widgets = (extra: Partial<EntryNavCollection> = {}): EntryNavCollection => ({
       path: unsafeAsLogicalPath('widgets'),

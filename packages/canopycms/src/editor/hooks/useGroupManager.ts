@@ -3,6 +3,7 @@ import { notifications } from '@mantine/notifications'
 import type { InternalGroup } from '../../authorization'
 import type { UserSearchResult, GroupMetadata } from '../../auth/types'
 import { useApiClient } from '../context'
+import { SETTINGS_CHANGED_CODE, SettingsChangedError } from '../settings-conflict'
 import { createUserMetadataBatcher } from './user-metadata-batcher'
 
 export interface UseGroupManagerOptions {
@@ -59,17 +60,23 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
         expectedContentVersion: versionRef.current,
       })
       if (!result.ok) {
-        throw new Error(result.error || 'Failed to save groups')
+        const message = result.error || 'Failed to save groups'
+        throw result.code === SETTINGS_CHANGED_CODE
+          ? new SettingsChangedError(message)
+          : new Error(message)
       }
       notifications.show({
-        title: 'Groups Saved',
+        title: 'Groups saved',
         message: 'Internal groups have been updated',
         color: 'green',
       })
       await loadGroups()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save groups'
-      notifications.show({ message, color: 'red' })
+      notifications.show({
+        message,
+        color: err instanceof SettingsChangedError ? 'yellow' : 'red',
+      })
       throw err
     }
   }, [])

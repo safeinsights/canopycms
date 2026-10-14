@@ -111,6 +111,92 @@ describe('branch access', () => {
   })
 })
 
+describe('branch access: lockdown outranks the ACL', () => {
+  const editor = { type: 'authenticated' as const, userId: 'editor-1', groups: ['writers'] }
+  const lockedWith = (access: BranchContext['branch']['access']): BranchContext => ({
+    ...baseContext,
+    branch: { ...baseContext.branch, access: { managerOrAdminAllowed: true, ...access } },
+  })
+
+  it('refuses an editor the ACL names by user', () => {
+    const res = checkBranchAccessWithDefault(
+      lockedWith({ allowedUsers: ['editor-1'] }),
+      editor,
+      'allow',
+    )
+    expect(res).toEqual({ allowed: false, reason: 'denied_by_acl' })
+  })
+
+  it('refuses an editor the ACL names by group', () => {
+    const res = checkBranchAccessWithDefault(
+      lockedWith({ allowedGroups: ['writers'] }),
+      editor,
+      'allow',
+    )
+    expect(res).toEqual({ allowed: false, reason: 'denied_by_acl' })
+  })
+
+  it('refuses the creator even when the ACL names them', () => {
+    const res = checkBranchAccessWithDefault(
+      lockedWith({ allowedUsers: ['user-1'] }),
+      { type: 'authenticated', userId: 'user-1', groups: [] },
+      'allow',
+    )
+    expect(res).toEqual({ allowed: false, reason: 'denied_by_acl' })
+  })
+
+  it('refuses Submit and Withdraw to an editor the ACL names', () => {
+    expect(
+      canPerformWorkflowAction(lockedWith({ allowedUsers: ['editor-1'] }), editor, 'allow'),
+    ).toBe(false)
+  })
+
+  it.each([
+    ['an admin', RESERVED_GROUPS.ADMINS],
+    ['a manager', RESERVED_GROUPS.REVIEWERS],
+  ])('allows %s whom the ACL does not name', (_label, group) => {
+    const user = { type: 'authenticated' as const, userId: 'boss', groups: [group] }
+    const context = lockedWith({ allowedUsers: ['editor-1'] })
+    expect(checkBranchAccessWithDefault(context, user, 'deny')).toEqual({
+      allowed: true,
+      reason: 'privileged',
+    })
+    expect(canPerformWorkflowAction(context, user, 'deny')).toBe(true)
+  })
+
+  it('leaves the ACL to decide on a branch that is not locked down', () => {
+    const context: BranchContext = {
+      ...baseContext,
+      branch: {
+        ...baseContext.branch,
+        access: { managerOrAdminAllowed: false, allowedGroups: ['writers'] },
+      },
+    }
+    expect(checkBranchAccessWithDefault(context, editor, 'deny')).toEqual({
+      allowed: true,
+      reason: 'allowed_by_acl',
+    })
+    expect(
+      checkBranchAccessWithDefault(context, { ...editor, groups: ['readers'] }, 'allow'),
+    ).toEqual({ allowed: false, reason: 'denied_by_acl' })
+  })
+
+  it('leaves the default to decide on a branch with neither a lockdown nor an ACL', () => {
+    const context: BranchContext = {
+      ...baseContext,
+      branch: { ...baseContext.branch, access: { managerOrAdminAllowed: false } },
+    }
+    expect(checkBranchAccessWithDefault(context, editor, 'allow')).toEqual({
+      allowed: true,
+      reason: 'no_acl',
+    })
+    expect(checkBranchAccessWithDefault(context, editor, 'deny')).toEqual({
+      allowed: false,
+      reason: 'no_acl',
+    })
+  })
+})
+
 describe('branch access: creator grant', () => {
   const creator = { type: 'authenticated' as const, userId: 'user-1', groups: [] }
 

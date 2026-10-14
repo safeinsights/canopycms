@@ -1,4 +1,4 @@
-import { forwardRef, useRef, type Ref } from 'react'
+import { forwardRef, useRef, type ReactNode, type Ref } from 'react'
 import {
   Alert,
   Badge,
@@ -21,7 +21,7 @@ import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import { clientOperatingStrategy } from '../../operating-mode/client'
-import { isAdmin, isReviewer } from '../../authorization/helpers'
+import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchStatusPresentation } from '../branch-status'
 import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
@@ -175,7 +175,11 @@ export interface EditorHeaderProps {
   /**
    * Branch access control lists.
    */
-  branchAccess?: { allowedUsers?: string[]; allowedGroups?: string[] }
+  branchAccess?: {
+    allowedUsers?: string[]
+    allowedGroups?: string[]
+    managerOrAdminAllowed?: boolean
+  }
 
   /**
    * Whether the current branch is the protected base branch (see
@@ -196,6 +200,28 @@ export interface EditorHeaderProps {
    * `branchReadOnly` to pick which of the two banners to show. Default false.
    */
   branchWriteBlocked?: boolean
+}
+
+const EDITED_ENTRIES_HINT = 'Entries you edit on this branch appear here.'
+
+/** An empty section of a menu with other items: plain text, so arrow keys skip it. */
+function MenuEmptyText({
+  hint,
+  children,
+  ...rest
+}: {
+  hint: string
+  children: ReactNode
+  'data-testid'?: string
+}) {
+  return (
+    <Text size="sm" c="dimmed" px="sm" py={6} {...rest}>
+      {children}
+      <Text size="xs" c="dimmed" component="span" display="block">
+        {hint}
+      </Text>
+    </Text>
+  )
 }
 
 /**
@@ -363,17 +389,14 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   </ReasonedMenuItem>
                   <Menu.Divider />
                   <Menu.Item data-testid="all-files-menu-item" onClick={onNavigatorOpen}>
-                    All entries
+                    All content
                   </Menu.Item>
                   <Menu.Divider />
                   <Menu.Label>Recently modified</Menu.Label>
                   {editedFiles.slice(0, 3).length === 0 ? (
-                    <ReasonedMenuItem
-                      data-testid="recent-entries-empty"
-                      blockedReason="Entries you edit on this branch appear here."
-                    >
-                      No recently modified entries
-                    </ReasonedMenuItem>
+                    <MenuEmptyText data-testid="recent-entries-empty" hint={EDITED_ENTRIES_HINT}>
+                      No edited entries yet
+                    </MenuEmptyText>
                   ) : (
                     editedFiles.slice(0, 3).map((file) => (
                       <Menu.Item key={file.path} onClick={() => onEntrySelect(file.path)}>
@@ -441,12 +464,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     <Menu.Label>{`${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'} modified`}</Menu.Label>
                   )}
                   {editedFiles.length === 0 ? (
-                    <ReasonedMenuItem
-                      data-testid="edited-entries-empty"
-                      blockedReason="Entries you edit on this branch appear here."
-                    >
+                    <MenuEmptyText data-testid="edited-entries-empty" hint={EDITED_ENTRIES_HINT}>
                       No edited entries yet
-                    </ReasonedMenuItem>
+                    </MenuEmptyText>
                   ) : (
                     editedFiles.map((file) => (
                       <Menu.Item
@@ -564,10 +584,10 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               if (branchIsProtected && !isWithdrawable) return null
 
               // Who may submit/withdraw: creator, ACL access, the system branch, or an
-              // admin/reviewer -- Admins/Reviewers must be able to withdraw a protected
-              // base branch stuck in 'submitted' even without ACL access. Mirrors the
-              // server's canPerformWorkflowAction (BranchManager.tsx), which is the
-              // actual enforcer; this only decides whether to show the control disabled.
+              // admin/reviewer (alone on a locked-down branch, and even without ACL access
+              // on a protected base branch stuck in 'submitted'). Mirrors the server's
+              // canPerformWorkflowAction (BranchManager.tsx), which is the actual
+              // enforcer; this only decides whether to show the control disabled.
               const userIsCreator = userContext?.userId === branchCreatedBy
               const isSystemBranch = branchCreatedBy === SYSTEM_USER_ID && !branchIsProtected
               const userInACL =
@@ -580,7 +600,8 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 (isAdmin(userContext.groups ?? []) || isReviewer(userContext.groups ?? []))
 
               const userHasPermission =
-                userIsCreator || userInACL || isSystemBranch || userIsPrivileged
+                !isLockedOutOfBranch(branchAccess, userContext?.groups) &&
+                (userIsCreator || userInACL || isSystemBranch || userIsPrivileged)
               // A status with no available transition (today: 'archived') is a
               // separate condition from lacking permission, and conflating them
               // sent people to an admin to fix a non-permissions problem.

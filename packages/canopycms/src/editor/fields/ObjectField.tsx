@@ -55,6 +55,10 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
       data-canopy-field={dataCanopyField ?? formatCanopyPath(path)}
       shadow="xs"
       {...groupDescriptionProps(descriptionBaseId, description)}
+      role="group"
+      aria-label={label}
+      data-removal-focus
+      tabIndex={-1}
     >
       <Stack gap="sm">
         <FieldLabel
@@ -65,7 +69,17 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
           commentControl={commentControl}
           actions={
             onRemove && (
-              <Button variant="subtle" color="gray" onClick={onRemove}>
+              <Button
+                variant="subtle"
+                color="gray"
+                aria-label={label ? `${EDITOR_ACTIONS.clear} "${label}"` : undefined}
+                onClick={(event) => {
+                  // The button goes with the value, so focus moves to the object, not the page.
+                  const field = event.currentTarget.closest<HTMLElement>('[data-removal-focus]')
+                  onRemove()
+                  field?.focus()
+                }}
+              >
                 {EDITOR_ACTIONS.clear}
               </Button>
             )

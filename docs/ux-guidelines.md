@@ -182,7 +182,7 @@ never a fixed shade outside the theme (`gray.0`, `dark.7`, `bg="white"`). The th
 included:
 
 - `--mantine-color-dimmed`, the only dimmed colour. Dark dimmed text also differs in size or
-  style, italic through `--canopy-dimmed-font-style`: on `dark.4`, a hovered menu item, no colour
+  style (italic, `--canopy-dimmed-font-style`): on `dark.4`, a hovered menu item, no colour
   is both 4.5:1 and visibly dimmer than body text.
 - `--mantine-color-placeholder`, at least 4.5:1, and at least 1.7:1 from the text colour so it
   never passes for a value.
@@ -190,9 +190,8 @@ included:
   light mode and `red.3` in dark, since `red.8` is 4.3:1 on `gray.0` and `red.4` 4.3:1 on `dark.4`.
 - `--canopy-input-border` (3:1), for inputs and the borders and tracks of Checkbox, Radio and
   Switch; `--canopy-surface-subtle` and `--canopy-surface-muted`.
-- `--canopy-focus-ring`, at least 3:1 on its surface for any adopter brand, for focus rings,
-  focused borders and checked controls. White text on the primary colour sits on
-  `--canopy-primary-fill`.
+- `--canopy-focus-ring` (3:1 on its surface for any brand) for focus rings, focused borders and
+  checked controls; white on the primary colour sits on `--canopy-primary-fill`.
 
 Pass a plain colour; the theme brings its text and light variant to 4.5:1, at which dark mode's
 light status badges look alike. Success text is the default colour beside a green icon;
@@ -223,8 +222,8 @@ icon-only below `lg`; its presentation is provisional until the shell redesign s
 ## Enforcement
 
 - `pnpm lint:ux-copy` ([scripts/check-ux-copy.mjs](../scripts/check-ux-copy.mjs)) flags Title
-  Case labels and placeholders, ASCII `...` and "successfully" against a per-file baseline.
-  After a fix, record it with `node scripts/check-ux-copy.mjs --write-baseline`.
+  Case labels and placeholders, ASCII `...` and "successfully" against a per-file baseline across
+  editor code and imports. After a fix, record it with `node scripts/check-ux-copy.mjs --write-baseline`.
 - `pnpm lint:a11y` runs `eslint-plugin-jsx-a11y` on the editor as errors against ESLint's
   suppressions in `scripts/a11y-suppressions.json`; `pnpm lint` shows the same rules as
   warnings. After a fix, run `pnpm lint:a11y --prune-suppressions`.

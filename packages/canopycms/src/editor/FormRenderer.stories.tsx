@@ -5,6 +5,7 @@ import type { CommentThread } from '../comment-store'
 import type { FieldConfig } from '../config'
 import { FormRenderer } from './FormRenderer'
 import { ReadOnlyDraftNotice } from './components/ReadOnlyDraftNotice'
+import { NEW_ITEM_COMMENT_MESSAGE } from './comments/item-anchor-copy'
 
 type HeroBlock = {
   template: 'hero'
@@ -310,7 +311,15 @@ const CommentingForm: React.FC<{
   readOnly?: boolean
   fieldErrors?: Record<string, string>
   initialThreads?: CommentThread[]
-}> = ({ readOnly, fieldErrors, initialThreads = sampleThreads }) => {
+  commentBlockedReason?: (canopyPath: string) => string | undefined
+  removedItemFieldLabel?: (thread: CommentThread) => string | undefined
+}> = ({
+  readOnly,
+  fieldErrors,
+  initialThreads = sampleThreads,
+  commentBlockedReason,
+  removedItemFieldLabel,
+}) => {
   const [value, setValue] = useState<PostValue>(initialPost)
   const [threads, setThreads] = useState<CommentThread[]>(initialThreads)
   return (
@@ -321,6 +330,8 @@ const CommentingForm: React.FC<{
         onChange={(next) => setValue(next as unknown as PostValue)}
         readOnly={readOnly}
         fieldErrors={fieldErrors}
+        commentBlockedReason={commentBlockedReason}
+        removedItemFieldLabel={removedItemFieldLabel}
         comments={threads}
         currentEntryPath="posts/hello"
         currentUserId="alice"
@@ -390,4 +401,50 @@ export const WithValidationErrors: Story = {
       }}
     />
   ),
+}
+
+const clickOnceRendered = async (selector: string) => {
+  for (let i = 0; i < 20; i++) {
+    const element = document.querySelector<HTMLElement>(selector)
+    if (element) {
+      element.click()
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+}
+
+/**
+ * A thread whose item was removed lives on "Comment on this entry", marked "On a removed item",
+ * with its field's breadcrumb. While the removal is only in the draft, the editor names the item
+ * from the saved value.
+ */
+export const RemovedItemThread: Story = {
+  render: () => (
+    <CommentingForm
+      initialThreads={[
+        {
+          ...storyThread('t-gone', 'field', 'features[2].description', 'Is this still true?'),
+          itemKeys: ['k-gone'],
+          onRemovedItem: true,
+        },
+        storyThread('t4', 'entry', undefined, 'Ready for review once the hero is final.'),
+      ]}
+      removedItemFieldLabel={() => 'Key features › Offline › Description'}
+    />
+  ),
+  play: () => clickOnceRendered('[data-testid="entry-comment-button"]'),
+}
+
+/** A field inside an item added since the last save takes no new thread until the entry is saved. */
+export const CommentBlockedOnUnsavedItem: Story = {
+  render: () => (
+    <CommentingForm
+      initialThreads={[]}
+      commentBlockedReason={(path) =>
+        path.startsWith('features[1]') ? NEW_ITEM_COMMENT_MESSAGE : undefined
+      }
+    />
+  ),
+  play: () => clickOnceRendered('[data-testid="field-comment-features[1].title"]'),
 }

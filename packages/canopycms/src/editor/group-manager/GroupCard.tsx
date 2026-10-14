@@ -1,7 +1,7 @@
 'use client'
 
-import React from 'react'
-import { ActionIcon, Badge, Group, Paper, Text, Tooltip } from '@mantine/core'
+import React, { useId } from 'react'
+import { ActionIcon, Badge, Group, Paper, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 import { IconEdit, IconTrash } from '@tabler/icons-react'
 import type { InternalGroup, UserSearchResult, CanopyGroupId, CanopyUserId } from './types'
 import { MemberList } from './MemberList'
@@ -52,6 +52,7 @@ export const GroupCard: React.FC<GroupCardProps> = ({
   canSearch,
 }) => {
   const reserved = isReservedGroup(group.id)
+  const reservedReasonId = useId()
   return (
     <Paper withBorder p="sm" mb="xs">
       <Group justify="space-between" mb="sm">
@@ -96,6 +97,7 @@ export const GroupCard: React.FC<GroupCardProps> = ({
               variant="subtle"
               color="red"
               aria-label={`Delete group "${group.name}"`}
+              aria-describedby={reserved ? reservedReasonId : undefined}
               data-disabled={reserved ? true : undefined}
               aria-disabled={reserved ? true : undefined}
               onClick={() => {
@@ -105,6 +107,11 @@ export const GroupCard: React.FC<GroupCardProps> = ({
               <IconTrash size={16} />
             </ActionIcon>
           </Tooltip>
+          {reserved && (
+            <VisuallyHidden id={reservedReasonId}>
+              {reservedDeleteReason(group.name)}
+            </VisuallyHidden>
+          )}
         </Group>
       </Group>
 

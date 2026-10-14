@@ -5,6 +5,7 @@ import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
 import { CanopyCMSProvider } from '../theme'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { EditorEntry } from '../Editor'
+import { RESERVED_GROUPS } from '../../authorization/helpers'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
   <CanopyCMSProvider>{children}</CanopyCMSProvider>
@@ -179,6 +180,32 @@ describe('EditorHeader - review lock', () => {
   })
 })
 
+describe('EditorHeader - locked-down branch', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  const lockedProps = {
+    branchStatus: 'submitted',
+    branchIsProtected: false,
+    branchCreatedBy: 'maker',
+    branchAccess: { allowedUsers: ['maker', 'invited'], managerOrAdminAllowed: true },
+  } satisfies Partial<EditorHeaderProps>
+
+  it.each(['maker', 'invited'])('blocks Withdraw for %s, whom only the ACL admits', (userId) => {
+    renderHeader({ ...lockedProps, userContext: { userId, groups: [] } })
+    expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it.each([RESERVED_GROUPS.ADMINS, RESERVED_GROUPS.REVIEWERS])(
+    'offers Withdraw to a member of %s',
+    (group) => {
+      renderHeader({ ...lockedProps, userContext: { userId: 'boss', groups: [group] } })
+      expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBeNull()
+    },
+  )
+})
+
 describe('EditorHeader - branch menu file count', () => {
   afterEach(() => {
     cleanup()
@@ -215,41 +242,43 @@ describe('EditorHeader - branch menu with no edits', () => {
     expect(screen.queryByText('0 entries modified')).toBeNull()
   })
 
-  it('offers the branch menu empty state as a blocked item that arrow keys reach', async () => {
+  it('shows the branch menu empty state as plain text that arrow keys skip', async () => {
     renderHeader({ modifiedCount: 0, editedFiles: [] })
 
     await userEvent.click(screen.getByTestId('branch-dropdown-button'))
 
     const empty = await screen.findByTestId('edited-entries-empty')
-    expect(empty.getAttribute('role')).toBe('menuitem')
-    expect(empty.getAttribute('aria-disabled')).toBe('true')
-    expect(empty.hasAttribute('disabled')).toBe(false)
-    expect(empty.hasAttribute('data-disabled')).toBe(false)
+    expect(empty.getAttribute('role')).toBeNull()
+    expect(empty.hasAttribute('aria-disabled')).toBe(false)
+    expect(empty.style.cursor).not.toBe('not-allowed')
     expect(within(empty).getByText('Entries you edit on this branch appear here.')).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: /No edited entries yet/ })).toBeNull()
 
-    // "Switch branch…" is the last enabled item above it; ArrowDown must land on the empty state.
     screen.getByTestId('manage-branches-menu-item').focus()
     await userEvent.keyboard('{ArrowDown}')
-    expect(document.activeElement).toBe(empty)
+    expect(document.activeElement).not.toBe(empty)
+    expect(empty.contains(document.activeElement)).toBe(false)
+    expect(document.activeElement?.getAttribute('role')).toBe('menuitem')
   })
 
-  it('offers the entry menu empty state as a blocked item that arrow keys reach', async () => {
+  it('shows the entry menu empty state as plain text that arrow keys skip', async () => {
     renderHeader({ editedFiles: [] })
 
     await userEvent.click(screen.getByTestId('file-dropdown-button'))
 
     const empty = await screen.findByTestId('recent-entries-empty')
-    expect(empty.textContent).toContain('No recently modified entries')
-    expect(empty.getAttribute('role')).toBe('menuitem')
-    expect(empty.getAttribute('aria-disabled')).toBe('true')
-    expect(empty.hasAttribute('disabled')).toBe(false)
-    expect(empty.hasAttribute('data-disabled')).toBe(false)
+    expect(empty.textContent).toContain('No edited entries yet')
+    expect(empty.getAttribute('role')).toBeNull()
+    expect(empty.hasAttribute('aria-disabled')).toBe(false)
+    expect(empty.style.cursor).not.toBe('not-allowed')
     expect(within(empty).getByText('Entries you edit on this branch appear here.')).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: /No edited entries yet/ })).toBeNull()
     expect(screen.queryByText('<none>')).toBeNull()
 
     screen.getByTestId('all-files-menu-item').focus()
     await userEvent.keyboard('{ArrowDown}')
-    expect(document.activeElement).toBe(empty)
+    expect(empty.contains(document.activeElement)).toBe(false)
+    expect(document.activeElement?.getAttribute('role')).toBe('menuitem')
   })
 })
 
@@ -276,10 +305,10 @@ describe('EditorHeader - entry menu vocabulary', () => {
     cleanup()
   })
 
-  it('calls the navigator item "All entries", in sentence case', async () => {
+  it('calls the navigator item "All content", in sentence case', async () => {
     renderHeader()
     await userEvent.click(screen.getByTestId('file-dropdown-button'))
-    expect((await screen.findByTestId('all-files-menu-item')).textContent).toBe('All entries')
+    expect((await screen.findByTestId('all-files-menu-item')).textContent).toBe('All content')
   })
 })
 

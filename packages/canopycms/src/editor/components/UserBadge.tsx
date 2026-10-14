@@ -165,13 +165,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     const hiddenDetail = `${revealIdOnFallback ? ` · ${userId}` : ''}${emailDetail ? `, ${emailDetail}` : ''}`
     return wrap(
       <Group gap={4}>
-        <Avatar
-          src={record?.avatarUrl}
-          alt=""
-          size={avatarSize}
-          color="gray"
-          aria-hidden={variant !== 'avatar-only' || undefined}
-        />
+        <Avatar src={record?.avatarUrl} alt="" size={avatarSize} color="gray" aria-hidden />
         {variant === 'avatar-only' ? (
           <VisuallyHidden component="span">{describedWithEmail}</VisuallyHidden>
         ) : (
@@ -206,14 +200,14 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
   const renderAvatar = () => {
     if (userId === 'anonymous') {
       return (
-        <Avatar size={avatarSize} color="orange">
+        <Avatar size={avatarSize} color="orange" aria-hidden>
           <IconUserOff size={avatarSize * 0.6} />
         </Avatar>
       )
     }
     if (isSystemUserId(userId)) {
       return (
-        <Avatar size={avatarSize} color="gray">
+        <Avatar size={avatarSize} color="gray" aria-hidden>
           <IconRobot size={avatarSize * 0.6} />
         </Avatar>
       )
@@ -236,9 +230,9 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     return (
       <Avatar
         src={record.avatarUrl}
-        // Beside the name it repeats it, so it is hidden from screen readers.
-        alt={variant === 'avatar-only' ? displayName : ''}
-        aria-hidden={variant !== 'avatar-only' || undefined}
+        // The name is text beside it (hidden when alone), so initials stay out of the tree.
+        alt=""
+        aria-hidden
         size={avatarSize}
         color={avatarColor}
         style={avatarStyles}
@@ -255,18 +249,19 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     <VisuallyHidden component="span">{`, ${detail}`}</VisuallyHidden>
   ) : null
 
+  const personLabel = userId === 'anonymous' ? 'Anonymous (Public)' : displayName
+
   const renderContent = () => {
     const avatar = renderAvatar()
 
     switch (variant) {
       case 'avatar-only':
-        return detailText ? (
+        return (
           <Group gap={0}>
             {avatar}
+            <VisuallyHidden component="span">{personLabel}</VisuallyHidden>
             {detailText}
           </Group>
-        ) : (
-          avatar
         )
 
       case 'full':
@@ -290,7 +285,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
           <Group gap={4}>
             {avatar}
             <Text size={textSize} fw={500} c={nameColor}>
-              {userId === 'anonymous' ? 'Anonymous (Public)' : displayName}
+              {personLabel}
             </Text>
             {detailText}
           </Group>
@@ -298,9 +293,12 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     }
   }
 
-  return wrap(
-    renderContent(),
-    variant === 'full' ? '' : record.email,
-    userId === 'anonymous' ? 'Anonymous (Public)' : displayName,
-  )
+  // Alone, the avatar shows no name, so its tooltip gives it before the email.
+  const tooltip =
+    variant === 'full'
+      ? ''
+      : variant === 'avatar-only'
+        ? [personLabel, detail].filter(Boolean).join(', ')
+        : record.email
+  return wrap(renderContent(), tooltip, personLabel)
 }

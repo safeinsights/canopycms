@@ -979,6 +979,7 @@ describe('groups API', () => {
       expect(result.error).toBe(
         'Groups were modified by another user. Please reload and try again.',
       )
+      expect(result.code).toBe('SETTINGS_CHANGED')
       expect(settingsMutation.getPayload()).toBeNull()
     })
 
@@ -1097,6 +1098,7 @@ describe('groups API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(409)
       expect(result.error).toBe('Settings are busy, please try again.')
+      expect(result.code).toBeUndefined()
     })
   })
 })

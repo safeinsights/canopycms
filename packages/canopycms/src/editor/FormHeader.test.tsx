@@ -357,6 +357,32 @@ describe('FormHeader', () => {
       expect(document.activeElement).toBe(button)
     })
 
+    it('drops the tooltip and its description when the pane widens while it is open', async () => {
+      let resize = () => {}
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(callback: () => void) {
+            resize = callback
+          }
+          observe() {}
+          disconnect() {}
+        },
+      )
+      fakeHeaderWidth(200)
+      renderHeader()
+      const button = screen.getByRole('button', { name: 'Outline' })
+      act(() => button.focus())
+      await waitFor(() => expect(button.getAttribute('aria-describedby')).toBeTruthy())
+
+      fakeHeaderWidth(400)
+      act(() => resize())
+
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
+      expect(button.hasAttribute('aria-describedby')).toBe(false)
+      expect(document.activeElement).toBe(button)
+    })
+
     it('still opens the outline from the icon', async () => {
       fakeHeaderWidth(200)
       const user = userEvent.setup()

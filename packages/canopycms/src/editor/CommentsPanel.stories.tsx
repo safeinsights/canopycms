@@ -277,3 +277,40 @@ export const WriteInFlight: Story = {
     document.querySelector<HTMLButtonElement>('.mantine-Drawer-close')?.click()
   },
 }
+
+/**
+ * A field thread whose list item or block is gone: marked "On a removed item", named by the
+ * field's breadcrumb, and jumping to its entry rather than to a field.
+ */
+export const RemovedItemThread: Story = {
+  args: {
+    ...WithJumpButtons.args,
+    comments: [
+      {
+        id: 'thread-removed',
+        type: 'field',
+        entryPath: 'blog/intro',
+        canopyPath: 'features[2].description',
+        itemKeys: ['k-gone'],
+        onRemovedItem: true,
+        authorId: 'alice',
+        resolved: false,
+        createdAt: new Date(Date.now() - 3600000).toISOString(),
+        comments: [
+          {
+            id: 'comment-removed',
+            threadId: 'thread-removed',
+            userId: 'alice',
+            timestamp: new Date(Date.now() - 3600000).toISOString(),
+            text: 'Is this still true?',
+          },
+        ],
+      },
+      ...sampleThreads,
+    ],
+    fieldLabel: (thread) =>
+      thread.onRemovedItem
+        ? 'Key features › Offline › Description'
+        : fieldLabels[thread.canopyPath ?? ''],
+  },
+}

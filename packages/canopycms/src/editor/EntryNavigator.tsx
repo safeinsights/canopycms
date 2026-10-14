@@ -56,6 +56,13 @@ const UnavailableTypeRow: React.FC<{ schemaRefs: readonly string[] }> = ({ schem
   </Group>
 )
 
+/** Where path rules refuse new entries, one line says so in place of the "…" menus they hide. */
+const AddRefusedRow: React.FC = () => (
+  <Text size="xs" c="dimmed" mt={4} data-testid="add-refused-message">
+    You can&apos;t add entries here.
+  </Text>
+)
+
 export interface EntryNavItem {
   path: LogicalPath
   label: string
@@ -84,6 +91,8 @@ export interface EntryNavCollection {
   conflictNotice?: boolean
   /** Registry keys of this collection's unavailable entry types; non-empty shows the message once. */
   unavailableSchemaRefs?: readonly string[]
+  /** True when this user's path rules refuse a new entry here: the collection says so once. */
+  addRefused?: boolean
   onAdd?: () => void
   onEdit?: () => void
   onAddSubCollection?: () => void
@@ -424,6 +433,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             collectionPath: col.path,
             conflictNotice: col.conflictNotice,
             unavailableSchemaRefs: col.unavailableSchemaRefs,
+            addRefused: col.addRefused,
             onAdd: col.onAdd,
             onEdit: col.onEdit,
             onAddSubCollection: col.onAddSubCollection,
@@ -486,6 +496,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   }, [treeData, dirtyPaths])
 
   // The hidden root's own row never renders, so its message is shown once above the tree.
+  const hiddenRootAddRefused =
+    !readOnly &&
+    !!hiddenRootPath &&
+    collections?.length === 1 &&
+    collections[0].path === hiddenRootPath &&
+    !!collections[0].addRefused
   const hiddenRootUnavailableRefs =
     hiddenRootPath && collections?.length === 1 && collections[0].path === hiddenRootPath
       ? collections[0].unavailableSchemaRefs
@@ -650,6 +666,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const unavailableSchemaRefs = node.nodeProps?.unavailableSchemaRefs as
       | readonly string[]
       | undefined
+    // A read-only navigator already says so once, in the branch banner.
+    const addRefused = !readOnly && !!(node.nodeProps?.addRefused as boolean | undefined)
     const isLeaf = !hasChildren || isEntry
     const selected = node.value === selectedPath
     const label = String(node.label ?? '')
@@ -941,6 +959,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         {isCollection && unavailableSchemaRefs && unavailableSchemaRefs.length > 0 && (
           <UnavailableTypeRow schemaRefs={unavailableSchemaRefs} />
         )}
+        {isCollection && addRefused && <AddRefusedRow />}
       </Box>
     )
   }
@@ -977,6 +996,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         {hiddenRootUnavailableRefs && hiddenRootUnavailableRefs.length > 0 && (
           <Box pt="sm">
             <UnavailableTypeRow schemaRefs={hiddenRootUnavailableRefs} />
+          </Box>
+        )}
+        {hiddenRootAddRefused && (
+          <Box pt="sm">
+            <AddRefusedRow />
           </Box>
         )}
         {treeData.length === 0 ? (

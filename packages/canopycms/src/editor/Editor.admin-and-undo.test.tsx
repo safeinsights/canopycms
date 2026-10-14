@@ -60,6 +60,12 @@ const schema: EntrySchema = [
     list: true,
     fields: [{ name: 'href', type: 'string', label: 'Href' }],
   },
+  {
+    name: 'seo',
+    type: 'object',
+    label: 'SEO',
+    fields: [{ name: 'summary', type: 'string', label: 'Summary' }],
+  },
 ]
 const entryOf = (slug: string, contentId: string): EditorEntry => ({
   path: unsafeAsLogicalPath(`content/posts/${slug}`),
@@ -179,7 +185,9 @@ const stubApi = (
       )
     }
     if (url.includes('/content/content/posts/') && (!init?.method || init.method === 'GET')) {
-      return Promise.resolve(okJson({ title: 'Loaded title', links, version: 100 }))
+      return Promise.resolve(
+        okJson({ title: 'Loaded title', links, seo: { summary: 'Saved summary' }, version: 100 }),
+      )
     }
     return Promise.resolve(okJson({}))
   })
@@ -614,6 +622,68 @@ describe('Undo after Remove', () => {
     fireEvent.click(await screen.findByTestId('entry-nav-item-other'))
 
     await waitFor(() => expect(notifications.hide).toHaveBeenCalledWith(toast.id))
+  })
+})
+
+describe('Clear and its Undo', () => {
+  const undoToast = () => {
+    const call = vi
+      .mocked(notifications.show)
+      .mock.calls.find(([options]) => String(options.id ?? '').startsWith('canopy-undo-'))
+    expect(call).toBeDefined()
+    return call![0]
+  }
+
+  it('puts the object back and moves focus into it', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+
+    const seo = screen.getByRole('group', { name: 'SEO' })
+    const clear = screen.getByRole('button', { name: 'Clear "SEO"' })
+    act(() => clear.focus())
+    fireEvent.click(clear)
+    await waitFor(() => expect(persistedDraft(hello.contentId)).toBeDefined())
+    expect(persistedDraft(hello.contentId)?.seo).toBeUndefined()
+    // The button goes with the value, so focus stays on the object rather than the page.
+    expect(screen.queryByRole('button', { name: 'Clear "SEO"' })).toBeNull()
+    expect(document.activeElement).toBe(seo)
+
+    const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
+    expect(message.getByText('Cleared "SEO"')).toBeTruthy()
+    const undo = message.getByRole('button', { name: 'Undo clearing "SEO"' })
+    act(() => undo.focus())
+    act(() => fireEvent.click(undo))
+
+    await waitFor(() =>
+      expect(persistedDraft(hello.contentId)?.seo).toEqual({ summary: 'Saved summary' }),
+    )
+    const summary = screen.getByRole('textbox', { name: 'Summary' })
+    await waitFor(() => expect(document.activeElement).toBe(summary))
+    expect((summary as HTMLInputElement).value).toBe('Saved summary')
+  })
+
+  it('puts nothing back once the object has been filled in again', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear "SEO"' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Summary' }), {
+      target: { value: 'Typed after' },
+    })
+    await waitFor(() =>
+      expect(persistedDraft(hello.contentId)?.seo).toEqual({ summary: 'Typed after' }),
+    )
+
+    const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
+    act(() => fireEvent.click(message.getByRole('button', { name: 'Undo clearing "SEO"' })))
+
+    expect(notifications.show).toHaveBeenLastCalledWith({
+      message: `Couldn't undo clearing "SEO": that part of the entry has changed. Fill it in again if you still need it.`,
+      color: 'yellow',
+    })
+    expect(persistedDraft(hello.contentId)?.seo).toEqual({ summary: 'Typed after' })
   })
 })
 
@@ -1359,6 +1429,7 @@ describe('adding entries the path permissions allow', () => {
 
     fireEvent.click(await screen.findByTestId('collection-menu-posts'))
     expect(await screen.findByText('Add entry…')).toBeTruthy()
+    expect(screen.queryByTestId('add-refused-message')).toBeNull()
   })
 
   it('offers no "Add entry…" where the listing refuses it', async () => {
@@ -1369,7 +1440,10 @@ describe('adding entries the path permissions allow', () => {
     // The navigator has listed the collection's entries.
     expect((await screen.findAllByText('Other')).length).toBeGreaterThan(0)
 
-    // "Add entry…" was the only item a non-admin had, so the collection has no menu.
+    // "Add entry…" was the only item a non-admin had, so the collection has no menu, and says why.
     expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
+    expect(screen.getByTestId('add-refused-message').textContent).toBe(
+      "You can't add entries here.",
+    )
   })
 })
