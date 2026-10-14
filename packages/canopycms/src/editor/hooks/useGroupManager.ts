@@ -2,8 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { InternalGroup } from '../../authorization'
 import type { UserSearchResult, GroupMetadata } from '../../auth/types'
+import type { ApiErrorCode } from '../../api/types'
 import { useApiClient } from '../context'
 import { createUserMetadataBatcher } from './user-metadata-batcher'
+
+const SETTINGS_CHANGED_CODE = 'SETTINGS_CHANGED' satisfies ApiErrorCode
 
 export interface UseGroupManagerOptions {
   /**
@@ -53,23 +56,26 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
   }
 
   const handleSaveGroups = useCallback(async (groups: InternalGroup[]) => {
+    // A version conflict loses nothing yet, so it is yellow; every other failure is red.
+    let failureColor: 'red' | 'yellow' = 'red'
     try {
       const result = await apiClient.groups.updateInternal({
         groups,
         expectedContentVersion: versionRef.current,
       })
       if (!result.ok) {
+        if (result.code === SETTINGS_CHANGED_CODE) failureColor = 'yellow'
         throw new Error(result.error || 'Failed to save groups')
       }
       notifications.show({
-        title: 'Groups Saved',
+        title: 'Groups saved',
         message: 'Internal groups have been updated',
         color: 'green',
       })
       await loadGroups()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save groups'
-      notifications.show({ message, color: 'red' })
+      notifications.show({ message, color: failureColor })
       throw err
     }
   }, [])
