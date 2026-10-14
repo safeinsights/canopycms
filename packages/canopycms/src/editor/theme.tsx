@@ -16,6 +16,7 @@ import {
   Notification,
   Radio,
   Switch,
+  Tabs,
   Text,
   Tooltip,
   getDefaultZIndex,
@@ -155,18 +156,58 @@ const canopyComponents = {
         ? {}
         : { wrapper: { '--input-bd': 'var(--canopy-input-border)' } },
   }),
-  // A checked primary control's tick, dot or thumb takes the colour that reads on the focus ring.
+  // Checkbox, Radio and Tabs name their primary colour inline, past the focus-ring alias, so a
+  // primary one is pointed at the ring here; its tick or dot takes the colour that reads on it.
   Checkbox: Checkbox.extend({
-    vars: (theme, props) =>
-      isPrimary(theme, props.color) && !props.iconColor
-        ? { root: { '--checkbox-icon-color': 'var(--canopy-focus-ring-contrast)' } }
-        : { root: {} },
+    vars: (theme, props) => ({
+      root: isPrimary(theme, props.color)
+        ? {
+            '--checkbox-color':
+              props.variant === 'outline' ? undefined : 'var(--canopy-focus-ring)',
+            '--checkbox-icon-color': props.iconColor
+              ? undefined
+              : 'var(--canopy-focus-ring-contrast)',
+          }
+        : {},
+    }),
+  }),
+  CheckboxIndicator: Checkbox.Indicator.extend({
+    vars: (theme, props) => ({
+      indicator: isPrimary(theme, props.color)
+        ? {
+            '--checkbox-color':
+              props.variant === 'outline' ? undefined : 'var(--canopy-focus-ring)',
+            '--checkbox-icon-color': props.iconColor
+              ? undefined
+              : 'var(--canopy-focus-ring-contrast)',
+          }
+        : {},
+    }),
   }),
   Radio: Radio.extend({
-    vars: (theme, props) =>
-      isPrimary(theme, props.color) && !props.iconColor
-        ? { root: { '--radio-icon-color': 'var(--canopy-focus-ring-contrast)' } }
-        : { root: {} },
+    vars: (theme, props) => ({
+      root: isPrimary(theme, props.color)
+        ? {
+            '--radio-color': props.variant === 'outline' ? undefined : 'var(--canopy-focus-ring)',
+            '--radio-icon-color': props.iconColor ? undefined : 'var(--canopy-focus-ring-contrast)',
+          }
+        : {},
+    }),
+  }),
+  RadioIndicator: Radio.Indicator.extend({
+    vars: (theme, props) => ({
+      indicator: isPrimary(theme, props.color)
+        ? {
+            '--radio-color': props.variant === 'outline' ? undefined : 'var(--canopy-focus-ring)',
+            '--radio-icon-color': props.iconColor ? undefined : 'var(--canopy-focus-ring-contrast)',
+          }
+        : {},
+    }),
+  }),
+  Tabs: Tabs.extend({
+    vars: (theme, props) => ({
+      root: isPrimary(theme, props.color) ? { '--tabs-color': 'var(--canopy-focus-ring)' } : {},
+    }),
   }),
   Switch: Switch.extend({
     styles: (theme, props) =>
@@ -175,9 +216,11 @@ const canopyComponents = {
         : {},
   }),
   // Dark dimmed text is nearly as bright as body text, so it also takes the dimmed font style.
+  // Every input's description, Checkbox's, Radio's and Switch's included, is an InputWrapper's.
   InputWrapper: Input.Wrapper.extend({
     styles: { description: { fontStyle: 'var(--canopy-dimmed-font-style)' } },
   }),
+  // Dimmed Text takes the same style.
   Text: Text.extend({
     styles: (_theme, props) =>
       props.c === 'dimmed' ? { root: { fontStyle: 'var(--canopy-dimmed-font-style)' } } : {},

@@ -15,6 +15,7 @@ import {
   Radio,
   Select,
   Switch,
+  Tabs,
   Text,
   TextInput,
   Tooltip,
@@ -755,9 +756,42 @@ describe('CanopyCMSProvider focus ring for adopter brands', () => {
   })
 })
 
+const rootVar = (el: Element | null, name: string) =>
+  (el?.closest('[class*="-root"]') as HTMLElement | null)?.style.getPropertyValue(name) ?? ''
+
 describe('CanopyCMSProvider checked controls', () => {
-  const rootVar = (el: Element | null, name: string) =>
-    (el?.closest('[class*="-root"]') as HTMLElement | null)?.style.getPropertyValue(name) ?? ''
+  it('fills a checked primary Checkbox and Radio, and marks the active Tab, with the ring', () => {
+    const { getByLabelText, getByRole } = render(
+      <CanopyCMSProvider colors={{ brand: '#facc15' }}>
+        <Checkbox label="Primary box" defaultChecked />
+        <Checkbox label="Red box" color="red" defaultChecked />
+        <Checkbox label="Outline box" variant="outline" defaultChecked />
+        <Radio label="Primary dot" defaultChecked />
+        <Checkbox.Indicator checked data-testid="box-indicator" />
+        <Radio.Indicator checked data-testid="dot-indicator" />
+        <Tabs defaultValue="a">
+          <Tabs.List>
+            <Tabs.Tab value="a">Fields</Tabs.Tab>
+          </Tabs.List>
+        </Tabs>
+      </CanopyCMSProvider>,
+    )
+    const ring = 'var(--canopy-focus-ring)'
+    const own = (el: Element, name: string) => (el as HTMLElement).style.getPropertyValue(name)
+    expect(rootVar(getByLabelText('Primary box'), '--checkbox-color')).toBe(ring)
+    expect(rootVar(getByLabelText('Red box'), '--checkbox-color')).not.toBe(ring)
+    expect(rootVar(getByLabelText('Outline box'), '--checkbox-color')).not.toBe(ring)
+    expect(rootVar(getByLabelText('Primary dot'), '--radio-color')).toBe(ring)
+    expect(own(document.querySelector('[data-testid="box-indicator"]')!, '--checkbox-color')).toBe(
+      ring,
+    )
+    expect(own(document.querySelector('[data-testid="dot-indicator"]')!, '--radio-color')).toBe(
+      ring,
+    )
+    expect(
+      own(getByRole('tab', { name: 'Fields' }).closest('.mantine-Tabs-root')!, '--tabs-color'),
+    ).toBe(ring)
+  })
 
   it("draws a primary Checkbox's tick, Radio's dot and Switch's thumb in the ring's contrast", () => {
     const { getByLabelText } = render(
@@ -890,9 +924,18 @@ describe('CanopyCMSProvider text', () => {
       <CanopyCMSProvider>
         <TextInput label="Slug" description="The entry's file name" />
         <Select label="Type" description="What the entry holds" data={['Post']} />
+        <Switch label="Default" description="New entries take this type" />
+        <Checkbox label="Required" description="Saving needs a value" />
+        <Radio label="Draft" description="Not yet published" />
       </CanopyCMSProvider>,
     )
-    for (const text of ["The entry's file name", 'What the entry holds']) {
+    for (const text of [
+      "The entry's file name",
+      'What the entry holds',
+      'New entries take this type',
+      'Saving needs a value',
+      'Not yet published',
+    ]) {
       expect(getByText(text).style.fontStyle).toBe('var(--canopy-dimmed-font-style)')
     }
   })

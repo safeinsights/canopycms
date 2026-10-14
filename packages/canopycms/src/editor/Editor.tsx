@@ -53,6 +53,7 @@ import {
   buildPreviewRoute,
   buildPreviewSrc,
   buildCollectionLabels,
+  entryStatusLabel,
   entryTypeLabel,
   buildBreadcrumbSegments,
 } from './editor-utils'
@@ -1292,7 +1293,7 @@ const EditorContent: React.FC<EditorProps> = ({
         path: entry.path,
         label: entry.label,
         slug: entry.slug,
-        status: entry.status,
+        status: entryStatusLabel(activeCollections, entry),
         contentId: entry.contentId,
         readOnly: entry.canEdit === false || undefined,
         conflictNotice: !!(
@@ -1881,7 +1882,7 @@ const EditorContent: React.FC<EditorProps> = ({
                             path: e.path,
                             label: e.label,
                             slug: e.slug,
-                            status: e.status,
+                            status: entryStatusLabel(activeCollections, e),
                             readOnly: e.canEdit === false || undefined,
                           }))
                     }

@@ -477,7 +477,7 @@ describe('EntryNavigator', () => {
         ],
       })
 
-      expect(screen.getByText('Draft')).toBeTruthy()
+      expect(screen.getByText('draft')).toBeTruthy()
     })
   })
 
