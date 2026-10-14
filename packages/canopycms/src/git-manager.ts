@@ -1763,7 +1763,7 @@ export class GitManager {
       '--full-tree',
       '--end-of-options',
       rev,
-      ...(under ? ['--', under] : []),
+      ...(under ? [under] : []),
     ])
     return output.split('\0').filter((p) => p.length > 0)
   }
