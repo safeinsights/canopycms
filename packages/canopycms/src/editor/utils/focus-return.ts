@@ -97,8 +97,8 @@ export function focusReturnProps(returnFocusTo?: () => HTMLElement | null): {
  * Focus for a list of removable badges, each with a `Remove …` button. The button that removes an
  * item is gone once it acts, so `focusAfterRemove(index, fallback)` moves focus, once the list has
  * re-rendered without the item, to the Remove button now at that index (the next item's, else the
- * previous one's), else to the `fallback` control, the section's "Add …" button. Put `listRef` on
- * the element holding the badges.
+ * previous one's), else to the `fallback` control: the section's "Add …" button, or whatever stands
+ * in for it while that is hidden or disabled. Put `listRef` on the element holding the badges.
  */
 export function useFocusAfterRemove<L extends HTMLElement = HTMLDivElement>() {
   const listRef = useRef<L>(null)
