@@ -152,7 +152,8 @@ const RULES = [
   },
   {
     kind: 'private-repo',
-    rx: /\bsafeinsights\/([A-Za-z0-9._-]+)/gi,
+    // An org URL (`github.com/orgs/safeinsights/projects/5`) names no repo.
+    rx: /(?<!orgs\/)\bsafeinsights\/([A-Za-z0-9._-]+)/gi,
     ok: (m) => m[1].toLowerCase() === 'canopycms',
   },
   {
@@ -532,6 +533,7 @@ function selfTest() {
     ['host 10.0.12.7', ['private-ip']],
     ['see safeinsights/website for it', ['private-name', 'private-repo']],
     ['safeinsights/canopycms#12', []],
+    ['https://github.com/orgs/safeinsights/projects/5', []],
     ['from marketing-site request 66', ['request-log-ref']],
     ['adopter request #39', ['request-log-ref']],
     ['reverses a request-100 decision', ['request-log-ref']],
