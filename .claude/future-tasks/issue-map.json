@@ -1,0 +1,2588 @@
+{
+  "repo": "safeinsights/canopycms",
+  "issues": {
+    "account-id-guard-gaps.md": {
+      "number": 558,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyBg0",
+      "placed": true
+    },
+    "active-branch-read-resolves-schema-before-access.md": {
+      "number": 559,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyBoY",
+      "placed": true
+    },
+    "add-entry-probe-vs-slug-pattern-rules.md": {
+      "number": 560,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyBuc",
+      "placed": true
+    },
+    "ai-content-all-slug-collision.md": {
+      "number": 561,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyB0s",
+      "placed": true
+    },
+    "ai-content-entry-links-in-fields-unresolved.md": {
+      "number": 562,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyB84",
+      "placed": true
+    },
+    "ai-content-md-metadata-list-values.md": {
+      "number": 563,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyCEA",
+      "placed": true
+    },
+    "ai-content-v2.md": {
+      "number": 564,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyCKs",
+      "placed": true
+    },
+    "ai-export-entry-link-url-throw-drops-entries.md": {
+      "number": 565,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyCPo",
+      "placed": true
+    },
+    "api-response-constructors.md": {
+      "number": 566,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyCV0",
+      "placed": true
+    },
+    "api-schema-guarded-routes-skip-branch-access.md": {
+      "number": 567,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyCdE",
+      "placed": true
+    },
+    "approved-status-dead-end.md": {
+      "number": 568,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyCkM",
+      "placed": true
+    },
+    "archive-closed-unmerged-pr.md": {
+      "number": 569,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx6lI",
+      "placed": true
+    },
+    "asset-derivative-reaper.md": {
+      "number": 570,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyCq8",
+      "placed": true
+    },
+    "asset-list-cursor-survives-deleted-anchor.md": {
+      "number": 571,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyCxU",
+      "placed": true
+    },
+    "asset-listing-cross-branch-exposure.md": {
+      "number": 572,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx6tY",
+      "placed": true
+    },
+    "asset-meta-wx-vs-link.md": {
+      "number": 573,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyC4g",
+      "placed": true
+    },
+    "asset-refs-collector-precision.md": {
+      "number": 574,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyC-0",
+      "placed": true
+    },
+    "asset-review-followups.md": {
+      "number": 575,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx60c",
+      "placed": true
+    },
+    "assets-transform-4xx-alarm.md": {
+      "number": 576,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyDE4",
+      "placed": true
+    },
+    "audit-logging.md": {
+      "number": 577,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx66Y",
+      "placed": true
+    },
+    "auth-cache-snapshot-cleanup-by-name.md": {
+      "number": 578,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx7CM",
+      "placed": true
+    },
+    "auth-gate-second-modals-provider.md": {
+      "number": 579,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyDLE",
+      "placed": true
+    },
+    "authorization-enforcement-consolidation.md": {
+      "number": 580,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx7NE",
+      "placed": true
+    },
+    "aws-example-render-shares-init-deploy-file-list.md": {
+      "number": 581,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyDQw",
+      "placed": true
+    },
+    "baseline-2026-08-implementation-followups.md": {
+      "number": 582,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyDXA",
+      "placed": true
+    },
+    "baseline-2026-08-small-verified-items.md": {
+      "number": 583,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyDcw",
+      "placed": true
+    },
+    "block-discriminator-precedence-disagreement.md": {
+      "number": 584,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyDjs",
+      "placed": true
+    },
+    "block-nonrecord-value-reported-as-unknown-key.md": {
+      "number": 585,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyDqk",
+      "placed": true
+    },
+    "branch-card-owner-separator-wraps.md": {
+      "number": 586,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyDwM",
+      "placed": true
+    },
+    "branch-clones-tracking-canopy-meta.md": {
+      "number": 587,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx7Vk",
+      "placed": true
+    },
+    "branch-create-latency-and-cross-container-visibility.md": {
+      "number": 588,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx7d4",
+      "placed": true
+    },
+    "branch-creator-cannot-see-own-acl.md": {
+      "number": 589,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyD2o",
+      "placed": true
+    },
+    "branch-dialog-followups.md": {
+      "number": 590,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyD94",
+      "placed": true
+    },
+    "branch-list-waits-on-user-directory.md": {
+      "number": 591,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx7nA",
+      "placed": true
+    },
+    "branch-lockdown-unsettable-and-creator-rights.md": {
+      "number": 592,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyEDc",
+      "placed": true
+    },
+    "branch-metadata-name-sanitized-vs-raw.md": {
+      "number": 593,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyEJg",
+      "placed": true
+    },
+    "branch-name-collides-with-registry-file.md": {
+      "number": 594,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyEQI",
+      "placed": true
+    },
+    "branch-name-derived-paths-exceed-name-max.md": {
+      "number": 595,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyEWc",
+      "placed": true
+    },
+    "branch-namespace-validation-gaps.md": {
+      "number": 596,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx7wI",
+      "placed": true
+    },
+    "branch-provisioning-async.md": {
+      "number": 597,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx73w",
+      "placed": true
+    },
+    "branch-provisioning-kill-test-afterall-timeout.md": {
+      "number": 598,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyEeg",
+      "placed": true
+    },
+    "branch-provisioning-warm-spares.md": {
+      "number": 599,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyElA",
+      "placed": true
+    },
+    "build-canopy-scripts-outside-next-build.md": {
+      "number": 600,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx8BY",
+      "placed": true
+    },
+    "build-content-tree-silent-skip.md": {
+      "number": 601,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx8Jo",
+      "placed": true
+    },
+    "build-context-listing-memo-outlives-request.md": {
+      "number": 602,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyEr0",
+      "placed": true
+    },
+    "build-mode-env-at-runtime-disables-acls.md": {
+      "number": 603,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyEzQ",
+      "placed": true
+    },
+    "canopy-inspect-interactive-shared-pty.md": {
+      "number": 604,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyE6A",
+      "placed": true
+    },
+    "canopy-meta-dir-constant-consolidation.md": {
+      "number": 605,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyFAw",
+      "placed": true
+    },
+    "cdk-cloudfront-patterns-under-basepath.md": {
+      "number": 606,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyFGo",
+      "placed": true
+    },
+    "cdk-comment-second-pass.md": {
+      "number": 607,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyFPE",
+      "placed": true
+    },
+    "cdk-prefixes-duplication.md": {
+      "number": 608,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyFVU",
+      "placed": true
+    },
+    "check-docs-heading-anchors.md": {
+      "number": 609,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyFdE",
+      "placed": true
+    },
+    "check-esm-ci-workflow-package-list-still-hardcoded.md": {
+      "number": 610,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyFlI",
+      "placed": true
+    },
+    "ci-cms-image-base-pull-rate-limit.md": {
+      "number": 611,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyFq0",
+      "placed": true
+    },
+    "ci-not-run-on-integration-branch-pushes.md": {
+      "number": 612,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyFxE",
+      "placed": true
+    },
+    "clerk-protect-middleware-404s-api.md": {
+      "number": 613,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyF2g",
+      "placed": true
+    },
+    "clerk-signed-out-followups.md": {
+      "number": 614,
+      "priority": "P1",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx59w",
+      "placed": true
+    },
+    "cli-config-loader-duplication.md": {
+      "number": 615,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyF98",
+      "placed": true
+    },
+    "cli-sync-migrate-ignore-adopter-content-root.md": {
+      "number": 616,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyGEw",
+      "placed": true
+    },
+    "cms-image-pr5-review-followups.md": {
+      "number": 617,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyGK0",
+      "placed": true
+    },
+    "collapsible-rows-followups.md": {
+      "number": 618,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyGTE",
+      "placed": true
+    },
+    "collection-create-allows-duplicate-sibling-name.md": {
+      "number": 619,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx8QE",
+      "placed": true
+    },
+    "collection-editor-review-followups.md": {
+      "number": 620,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyGdY",
+      "placed": true
+    },
+    "collection-editor-update-dialog-flake.md": {
+      "number": 621,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyGmE",
+      "placed": true
+    },
+    "collection-management-dialog-redesign.md": {
+      "number": 622,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyGuE",
+      "placed": true
+    },
+    "collection-path-content-root-ambiguity.md": {
+      "number": 623,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyGzI",
+      "placed": true
+    },
+    "collection-sibling-name-uniqueness.md": {
+      "number": 624,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx8VI",
+      "placed": true
+    },
+    "comment-entry-path-schema-resolution.md": {
+      "number": 625,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyG6M",
+      "placed": true
+    },
+    "comment-guard-scope-gaps.md": {
+      "number": 626,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyHAo",
+      "placed": true
+    },
+    "comment-reload-failure-empties-threads.md": {
+      "number": 627,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyHGw",
+      "placed": true
+    },
+    "comment-retry-double-post.md": {
+      "number": 628,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyHOI",
+      "placed": true
+    },
+    "comment-surfaces-raw-id-without-lookup.md": {
+      "number": 629,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyHVg",
+      "placed": true
+    },
+    "comment-thread-unresolve.md": {
+      "number": 630,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyHdQ",
+      "placed": true
+    },
+    "comments-load-failure-has-no-error-ui.md": {
+      "number": 631,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyHig",
+      "placed": true
+    },
+    "comments-shortcut-macos-edge-cases.md": {
+      "number": 632,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyHok",
+      "placed": true
+    },
+    "conditional-field-visibility.md": {
+      "number": 633,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyHuo",
+      "placed": true
+    },
+    "config-type-zod-parity.md": {
+      "number": 634,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyH4U",
+      "placed": true
+    },
+    "conflict-record-followups.md": {
+      "number": 635,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyH_w",
+      "placed": true
+    },
+    "content-lifecycle-scenarios.md": {
+      "number": 636,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx8cA",
+      "placed": true
+    },
+    "content-root-dot-segment-shapes.md": {
+      "number": 637,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyIIc",
+      "placed": true
+    },
+    "content-validation-gate.md": {
+      "number": 638,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx8i8",
+      "placed": true
+    },
+    "content-write-lock-followups.md": {
+      "number": 639,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyIPk",
+      "placed": true
+    },
+    "content-write-lock-tuning-and-granularity.md": {
+      "number": 640,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyIXk",
+      "placed": true
+    },
+    "crashed-field-fallback-not-editable.md": {
+      "number": 641,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyIg0",
+      "placed": true
+    },
+    "crlf-frontmatter-delimiters-written-lf.md": {
+      "number": 642,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyIoc",
+      "placed": true
+    },
+    "crlf-markdown-frontmatter-rewritten.md": {
+      "number": 643,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyIx0",
+      "placed": true
+    },
+    "cropped-image-dimensions.md": {
+      "number": 644,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyI8s",
+      "placed": true
+    },
+    "dead-unhandled-rejection-guard-in-task-runner.md": {
+      "number": 645,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyJDI",
+      "placed": true
+    },
+    "default-build-path-url-rule-copy.md": {
+      "number": 646,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyJL8",
+      "placed": true
+    },
+    "delete-remote-branch-residual-windows.md": {
+      "number": 647,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyJVs",
+      "placed": true
+    },
+    "deleted-branch-drafts-survive.md": {
+      "number": 648,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyJfQ",
+      "placed": true
+    },
+    "deleted-entries-restore.md": {
+      "number": 649,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyJnA",
+      "placed": true
+    },
+    "deploy-test-lambda-plaintext-clerk-secret.md": {
+      "number": 650,
+      "priority": "P1",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx6GM",
+      "placed": true
+    },
+    "dev-branch-delete-leaves-remote-ref.md": {
+      "number": 651,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyJxI",
+      "placed": true
+    },
+    "dev-content-watcher-relative-sourceroot.md": {
+      "number": 652,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx8pc",
+      "placed": true
+    },
+    "dev-content-watcher-retraction-test-flake.md": {
+      "number": 653,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyJ8M",
+      "placed": true
+    },
+    "dev-divergence-in-app-surface.md": {
+      "number": 654,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyKGY",
+      "placed": true
+    },
+    "dev-init-temp-remote-left-in-source-repo.md": {
+      "number": 655,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyKM8",
+      "placed": true
+    },
+    "dev-settings-per-branch.md": {
+      "number": 656,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyKVA",
+      "placed": true
+    },
+    "dist-directory-beats-file-specifier-precedence.md": {
+      "number": 657,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyKeE",
+      "placed": true
+    },
+    "draft-orphaned-by-contentid-swap.md": {
+      "number": 658,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyKnU",
+      "placed": true
+    },
+    "duplicate-id-repair-consent-window.md": {
+      "number": 659,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyKu4",
+      "placed": true
+    },
+    "duplicate-id-scan-truncation-coverage.md": {
+      "number": 660,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyK30",
+      "placed": true
+    },
+    "duplicated-helpers-consolidation.md": {
+      "number": 661,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyK_0",
+      "placed": true
+    },
+    "e2e-build-once-share-artifact.md": {
+      "number": 662,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyLHQ",
+      "placed": true
+    },
+    "e2e-deferred-coverage.md": {
+      "number": 663,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyLPc",
+      "placed": true
+    },
+    "e2e-harness-followups.md": {
+      "number": 664,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyLYs",
+      "placed": true
+    },
+    "e2e-remote-git-ref-accumulation.md": {
+      "number": 665,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyLgo",
+      "placed": true
+    },
+    "e2e-test-results-upload-annotation.md": {
+      "number": 666,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyLq0",
+      "placed": true
+    },
+    "editor-api-latency.md": {
+      "number": 667,
+      "priority": "P1",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx6OI",
+      "placed": true
+    },
+    "editor-client-error-reporting-hook.md": {
+      "number": 668,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx8v8",
+      "placed": true
+    },
+    "editor-code-field-monaco.md": {
+      "number": 669,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyLxY",
+      "placed": true
+    },
+    "editor-compat-shims.md": {
+      "number": 670,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyL6Y",
+      "placed": true
+    },
+    "editor-header-clips-withdraw-at-narrow-widths.md": {
+      "number": 671,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyMCw",
+      "placed": true
+    },
+    "editor-next-static-on-shared-distribution.md": {
+      "number": 672,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyMMc",
+      "placed": true
+    },
+    "editor-operatingmode-option-unused.md": {
+      "number": 673,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyMWE",
+      "placed": true
+    },
+    "editor-planned-shortcuts-unbound.md": {
+      "number": 674,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyMfM",
+      "placed": true
+    },
+    "editor-preview-public-paths-under-basepath.md": {
+      "number": 675,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyMnk",
+      "placed": true
+    },
+    "editor-preview-references-test-load-sensitive.md": {
+      "number": 676,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyMug",
+      "placed": true
+    },
+    "editor-renders-inside-root-layout-docs.md": {
+      "number": 677,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyM1s",
+      "placed": true
+    },
+    "editor-state-context-migration.md": {
+      "number": 678,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyM98",
+      "placed": true
+    },
+    "editor-static-chunks-from-s3.md": {
+      "number": 679,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx80s",
+      "placed": true
+    },
+    "editor-style-tags-csp-nonce.md": {
+      "number": 680,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyNFo",
+      "placed": true
+    },
+    "editor-tests-miss-adopter-runtime-stack.md": {
+      "number": 681,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx87E",
+      "placed": true
+    },
+    "editor-ui-tests-flake-under-e2e-load.md": {
+      "number": 682,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyNNY",
+      "placed": true
+    },
+    "editor-whole-editor-stories-crash.md": {
+      "number": 683,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyNTo",
+      "placed": true
+    },
+    "entry-gone-notice-above-form.md": {
+      "number": 684,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyNcg",
+      "placed": true
+    },
+    "entry-link-resolution-cyclic-yaml.md": {
+      "number": 685,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyNiw",
+      "placed": true
+    },
+    "entry-logical-path-builder-drift.md": {
+      "number": 686,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyNrw",
+      "placed": true
+    },
+    "entry-navigator-loader-empty-tree.md": {
+      "number": 687,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyNz0",
+      "placed": true
+    },
+    "entry-navigator-scalability.md": {
+      "number": 688,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyN-M",
+      "placed": true
+    },
+    "entry-schema-eopt-reference-field-compile-error.md": {
+      "number": 689,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyOGQ",
+      "placed": true
+    },
+    "entrypath-read-resolves-by-entry-type-name.md": {
+      "number": 690,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx9D0",
+      "placed": true
+    },
+    "error-cause-not-typed-under-es2021.md": {
+      "number": 691,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyOOM",
+      "placed": true
+    },
+    "example1-postview-tags-and-draft-label.md": {
+      "number": 692,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyOWU",
+      "placed": true
+    },
+    "example1-typecheck-ts2742-duplicate-next.md": {
+      "number": 693,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx9MA",
+      "placed": true
+    },
+    "field-errors-not-tied-to-inputs.md": {
+      "number": 694,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx9Sg",
+      "placed": true
+    },
+    "fieldprops-type-edges.md": {
+      "number": 695,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyOdA",
+      "placed": true
+    },
+    "frontmatter-datetime-reads-as-date.md": {
+      "number": 696,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyOj8",
+      "placed": true
+    },
+    "gateway-auth-snapshot-limits.md": {
+      "number": 697,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyOsY",
+      "placed": true
+    },
+    "gateway-cms-branch-namespace.md": {
+      "number": 698,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx9aw",
+      "placed": true
+    },
+    "gateway-github-config-refusal.md": {
+      "number": 699,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx9lU",
+      "placed": true
+    },
+    "gateway-stale-lock-message-canopy-inspect.md": {
+      "number": 700,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyO28",
+      "placed": true
+    },
+    "get-error-message-fallback-overload.md": {
+      "number": 701,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyO84",
+      "placed": true
+    },
+    "git-conflict-markers-silently-normalized-by-prettier.md": {
+      "number": 702,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyPGI",
+      "placed": true
+    },
+    "git-manager-test-tmpdir-cleanup-race.md": {
+      "number": 703,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyPMQ",
+      "placed": true
+    },
+    "github-app-auth-unexercised-against-real-github.md": {
+      "number": 704,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx9t0",
+      "placed": true
+    },
+    "github-service-static-token-only.md": {
+      "number": 705,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyPSw",
+      "placed": true
+    },
+    "github-sync-mode-split-behind-strategy.md": {
+      "number": 706,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyPaE",
+      "placed": true
+    },
+    "graymatter-body-leading-delimiter.md": {
+      "number": 707,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx92Q",
+      "placed": true
+    },
+    "graymatter-cache-shared-frontmatter.md": {
+      "number": 708,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyPhg",
+      "placed": true
+    },
+    "has-unpushed-commits-ambiguous-refname.md": {
+      "number": 709,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyPo8",
+      "placed": true
+    },
+    "iam-dedupe-tests-pass-vacuously.md": {
+      "number": 710,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyPw4",
+      "placed": true
+    },
+    "image-size-dos-accepted-risk.md": {
+      "number": 711,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyP20",
+      "placed": true
+    },
+    "import-git-branch.md": {
+      "number": 712,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx9-k",
+      "placed": true
+    },
+    "includebody-not-wired-to-live-preview.md": {
+      "number": 713,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyP9k",
+      "placed": true
+    },
+    "infra-review-2026-08-deploy-verification.md": {
+      "number": 714,
+      "priority": "P1",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx54I",
+      "placed": true
+    },
+    "init-github-app-org-install-url.md": {
+      "number": 715,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyQEM",
+      "placed": true
+    },
+    "init-github-app-review-round-1-lows.md": {
+      "number": 716,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyQL8",
+      "placed": true
+    },
+    "init-mode-prompt-stale-doc.md": {
+      "number": 717,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyQR4",
+      "placed": true
+    },
+    "init-respects-adopter-conventions.md": {
+      "number": 718,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyQYw",
+      "placed": true
+    },
+    "insert-entry-link-shared-entry-search.md": {
+      "number": 719,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyQgo",
+      "placed": true
+    },
+    "inserted-image-lands-inline.md": {
+      "number": 720,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyQqM",
+      "placed": true
+    },
+    "integration-hook-timeout-default.md": {
+      "number": 721,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyQ1Q",
+      "placed": true
+    },
+    "isurlpath-field-marker.md": {
+      "number": 722,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyQ-E",
+      "placed": true
+    },
+    "item-keys-followups.md": {
+      "number": 723,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyRI0",
+      "placed": true
+    },
+    "kept-draft-on-uneditable-entry.md": {
+      "number": 724,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyRUI",
+      "placed": true
+    },
+    "knip-no-importer-deletion-candidates.md": {
+      "number": 725,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyRd4",
+      "placed": true
+    },
+    "knip-scope-gaps.md": {
+      "number": 726,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyRoY",
+      "placed": true
+    },
+    "lazy-transforms-refs-allowlist.md": {
+      "number": 727,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyRxI",
+      "placed": true
+    },
+    "legacy-untyped-files-url-addressable.md": {
+      "number": 728,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyR64",
+      "placed": true
+    },
+    "list-groups-now-depends-on-settings-workspace.md": {
+      "number": 729,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAySC0",
+      "placed": true
+    },
+    "list-permission-level.md": {
+      "number": 730,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAySLk",
+      "placed": true
+    },
+    "listing-stat-race-enoent.md": {
+      "number": 731,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAySTk",
+      "placed": true
+    },
+    "local-asset-store-temp-sweep.md": {
+      "number": 732,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAySaA",
+      "placed": true
+    },
+    "logging-consistency-sweep.md": {
+      "number": 733,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAySiM",
+      "placed": true
+    },
+    "main-review-hardening-for-release-key.md": {
+      "number": 734,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx-Ew",
+      "placed": true
+    },
+    "markdown-field-tab-never-leaves-the-editor.md": {
+      "number": 735,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx-MU",
+      "placed": true
+    },
+    "markdown-field-values-not-source-preserved.md": {
+      "number": 736,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAySpY",
+      "placed": true
+    },
+    "markdown-parse-cost-per-save.md": {
+      "number": 737,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAySx8",
+      "placed": true
+    },
+    "markdown-table-cells-split-by-unescaped-pipes.md": {
+      "number": 738,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyS5s",
+      "placed": true
+    },
+    "materialize-adopts-lazy-tagged-objects.md": {
+      "number": 739,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyTBo",
+      "placed": true
+    },
+    "mdx-allow-required-prop.md": {
+      "number": 740,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyTKE",
+      "placed": true
+    },
+    "mdx-allowlist-paste-writes-refused-tags.md": {
+      "number": 741,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyTQM",
+      "placed": true
+    },
+    "mdx-nested-editor-edits-sync-on-blur.md": {
+      "number": 742,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx-UI",
+      "placed": true
+    },
+    "mdx-non-executing-preview-renderer.md": {
+      "number": 743,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx-ck",
+      "placed": true
+    },
+    "mdx-registered-components.md": {
+      "number": 744,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyTXE",
+      "placed": true
+    },
+    "mdx-safety-build-guard.md": {
+      "number": 745,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx-l8",
+      "placed": true
+    },
+    "mdx-safety-differential-test.md": {
+      "number": 746,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyTdQ",
+      "placed": true
+    },
+    "mdx-typed-body-in-md-entry-ignores-mdxallow.md": {
+      "number": 747,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyTjg",
+      "placed": true
+    },
+    "mdxeditor-edit-rewrites-markdown.md": {
+      "number": 748,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx-uY",
+      "placed": true
+    },
+    "media-delete-failure-alert-retry-and-stories.md": {
+      "number": 749,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyTrU",
+      "placed": true
+    },
+    "media-folders-tags.md": {
+      "number": 750,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyTzw",
+      "placed": true
+    },
+    "migrate-preflight-url-collisions.md": {
+      "number": 751,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyT78",
+      "placed": true
+    },
+    "navigator-create-rename-ux-followups.md": {
+      "number": 752,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyUBs",
+      "placed": true
+    },
+    "nested-modal-escape-closes-drawer.md": {
+      "number": 753,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyUI4",
+      "placed": true
+    },
+    "network-escape-hatch-git-env.md": {
+      "number": 754,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyUQI",
+      "placed": true
+    },
+    "next-16.2-postcss-fork-bomb.md": {
+      "number": 755,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyUWE",
+      "placed": true
+    },
+    "next-react-cache-import-react18-esm.md": {
+      "number": 756,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyUgs",
+      "placed": true
+    },
+    "next16-node-runtime-middleware-unregistered.md": {
+      "number": 757,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx-1g",
+      "placed": true
+    },
+    "node-version-alignment.md": {
+      "number": 758,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx-8c",
+      "placed": true
+    },
+    "oac-unhashed-body-requests.md": {
+      "number": 759,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyUoQ",
+      "placed": true
+    },
+    "object-clear-undo-and-ux-batch2-review-leftovers.md": {
+      "number": 760,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyUxA",
+      "placed": true
+    },
+    "occ-json-write-mid-settle-test-flake.md": {
+      "number": 761,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyU4Y",
+      "placed": true
+    },
+    "occ-tests-flaky-under-load.md": {
+      "number": 762,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyU_A",
+      "placed": true
+    },
+    "package-readme-prod-remote-url-claim.md": {
+      "number": 763,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyVHQ",
+      "placed": true
+    },
+    "parked-branch-rebase.md": {
+      "number": 764,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyVNg",
+      "placed": true
+    },
+    "pr172-deferred-by-decision.md": {
+      "number": 765,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyVU8",
+      "placed": true
+    },
+    "prerelease-tag-dispatch-guard.md": {
+      "number": 766,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx_E8",
+      "placed": true
+    },
+    "presign-orphaned-signature.md": {
+      "number": 767,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyVcI",
+      "placed": true
+    },
+    "prettier-on-edited-markdown-blocks.md": {
+      "number": 768,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyViM",
+      "placed": true
+    },
+    "preview-first-paint-e2e-fails-on-dev-server.md": {
+      "number": 769,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyVoQ",
+      "placed": true
+    },
+    "preview-first-paint-public-asset-urls.md": {
+      "number": 770,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx_MM",
+      "placed": true
+    },
+    "preview-highlight-style-shared-across-instances.md": {
+      "number": 771,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyVug",
+      "placed": true
+    },
+    "preview-live-popout.md": {
+      "number": 772,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyV10",
+      "placed": true
+    },
+    "preview-no-view-auto-detect.md": {
+      "number": 773,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyV-A",
+      "placed": true
+    },
+    "preview-page-followups.md": {
+      "number": 774,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyWF4",
+      "placed": true
+    },
+    "preview-ready-lost-on-first-load.md": {
+      "number": 775,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx_TI",
+      "placed": true
+    },
+    "preview-reference-resolver-out-of-order-responses.md": {
+      "number": 776,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyWOU",
+      "placed": true
+    },
+    "preview-server-asset-prefix-cache-poisoning.md": {
+      "number": 777,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyWWg",
+      "placed": true
+    },
+    "primary-icons-and-links-for-light-brands.md": {
+      "number": 778,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyWcc",
+      "placed": true
+    },
+    "program-g-operational-readiness.md": {
+      "number": 779,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx_ag",
+      "placed": true
+    },
+    "protected-branch-comparison-helper.md": {
+      "number": 780,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyWkc",
+      "placed": true
+    },
+    "protected-branch-followup-cleanups.md": {
+      "number": 781,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyWr8",
+      "placed": true
+    },
+    "protected-branch-guard-double-load.md": {
+      "number": 782,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyWyM",
+      "placed": true
+    },
+    "provisioning-review-residuals.md": {
+      "number": 783,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyW7A",
+      "placed": true
+    },
+    "publish-without-id-token-during-install.md": {
+      "number": 784,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyXB8",
+      "placed": true
+    },
+    "purge-rail-config-clause-only.md": {
+      "number": 785,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyXJE",
+      "placed": true
+    },
+    "quick-open-palette-a11y-and-layouts.md": {
+      "number": 786,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyXRE",
+      "placed": true
+    },
+    "raw-route-redirect-caching.md": {
+      "number": 787,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyXZY",
+      "placed": true
+    },
+    "read-only-draft-notice-changed-fields.md": {
+      "number": 788,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyXgM",
+      "placed": true
+    },
+    "read-path-through-entry-type-path.md": {
+      "number": 789,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyXo4",
+      "placed": true
+    },
+    "rebase-conflict-codes-au-dd.md": {
+      "number": 790,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyXw8",
+      "placed": true
+    },
+    "redos-shaped-trim-regexes-neutralized-by-context.md": {
+      "number": 791,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyX4I",
+      "placed": true
+    },
+    "reference-resolution-branch-switch-stale.md": {
+      "number": 792,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyX-M",
+      "placed": true
+    },
+    "reference-without-resolved-schema-infers-string.md": {
+      "number": 793,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyYEU",
+      "placed": true
+    },
+    "refresh-auth-cache-error-handling.md": {
+      "number": 794,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyYKs",
+      "placed": true
+    },
+    "release-bot-key-environment-gate.md": {
+      "number": 795,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx_kU",
+      "placed": true
+    },
+    "release-required-status-checks.md": {
+      "number": 796,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyYQI",
+      "placed": true
+    },
+    "release-tool-packaging.md": {
+      "number": 797,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyYXA",
+      "placed": true
+    },
+    "reload-keeps-draft.md": {
+      "number": 798,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx_r4",
+      "placed": true
+    },
+    "remote-git-cruft-expiry.md": {
+      "number": 799,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyYd0",
+      "placed": true
+    },
+    "remote-git-heal-push-own-settings-branch.md": {
+      "number": 800,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyYjk",
+      "placed": true
+    },
+    "remote-git-repack-followups.md": {
+      "number": 801,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyYpk",
+      "placed": true
+    },
+    "remote-git-replaced-dirs-sweep.md": {
+      "number": 802,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyYvc",
+      "placed": true
+    },
+    "removed-item-comment-ux-followups.md": {
+      "number": 803,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyY18",
+      "placed": true
+    },
+    "rename-asset-staging-prefix.md": {
+      "number": 804,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyY8A",
+      "placed": true
+    },
+    "rename-collection-name-to-key.md": {
+      "number": 805,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyZCM",
+      "placed": true
+    },
+    "rename-delete-drop-write-outcome-unknown.md": {
+      "number": 806,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyZIo",
+      "placed": true
+    },
+    "render-preview-receives-raw-references.md": {
+      "number": 807,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyZOI",
+      "placed": true
+    },
+    "repair-dir-recovery-trashes-corrupt-metadata.md": {
+      "number": 808,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyZVw",
+      "placed": true
+    },
+    "rescue-stranded-base-edits.md": {
+      "number": 809,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyZcI",
+      "placed": true
+    },
+    "resolved-reference-inferred-body.md": {
+      "number": 810,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyZjI",
+      "placed": true
+    },
+    "review-path-level-unenforced.md": {
+      "number": 811,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyZsA",
+      "placed": true
+    },
+    "rich-text-code-span-url-shown-as-link.md": {
+      "number": 812,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyZ2A",
+      "placed": true
+    },
+    "rich-text-component-in-list-item-glued.md": {
+      "number": 813,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyZ_U",
+      "placed": true
+    },
+    "rich-text-inserted-list-loses-start.md": {
+      "number": 814,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyaG4",
+      "placed": true
+    },
+    "rich-text-link-filling-format-span.md": {
+      "number": 815,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyaP4",
+      "placed": true
+    },
+    "rich-text-md-body-parsed-as-mdx.md": {
+      "number": 816,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx_yU",
+      "placed": true
+    },
+    "rich-text-merges-adjacent-lists.md": {
+      "number": 817,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyaZI",
+      "placed": true
+    },
+    "rich-text-merges-block-paragraphs.md": {
+      "number": 818,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyah8",
+      "placed": true
+    },
+    "rich-text-reference-links-open-source.md": {
+      "number": 819,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx_7o",
+      "placed": true
+    },
+    "route-registry-parity-test.md": {
+      "number": 820,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyas8",
+      "placed": true
+    },
+    "s3-media-listing-order.md": {
+      "number": 821,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAya1U",
+      "placed": true
+    },
+    "sanitized-branch-name-git-mismatch.md": {
+      "number": 822,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAya8s",
+      "placed": true
+    },
+    "scaffold-cdk-typecheck-published-shape.md": {
+      "number": 823,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAybEs",
+      "placed": true
+    },
+    "scaffold-exports-canopy-build-id.md": {
+      "number": 824,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAybM8",
+      "placed": true
+    },
+    "scaffold-multi-mode-branch-derivation.md": {
+      "number": 825,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAybVk",
+      "placed": true
+    },
+    "schema-faq-glossary.md": {
+      "number": 826,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAybd0",
+      "placed": true
+    },
+    "schema-fetch-403-raw-diagnostic.md": {
+      "number": 827,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyAC0",
+      "placed": true
+    },
+    "schema-label-cannot-be-cleared.md": {
+      "number": 828,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAybm4",
+      "placed": true
+    },
+    "schema-registry-record-single-writer.md": {
+      "number": 829,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAybuc",
+      "placed": true
+    },
+    "script-runner-entrypoint.md": {
+      "number": 830,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyb34",
+      "placed": true
+    },
+    "seo-field-location-single-source.md": {
+      "number": 831,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAycAg",
+      "placed": true
+    },
+    "seo-trailing-slash-default-from-withcanopy.md": {
+      "number": 832,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAycJY",
+      "placed": true
+    },
+    "settings-branch-name-tag-collision.md": {
+      "number": 833,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyAJw",
+      "placed": true
+    },
+    "settings-conflict-resolution-ux.md": {
+      "number": 834,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAycSY",
+      "placed": true
+    },
+    "settings-conflict-way-forward.md": {
+      "number": 835,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyca0",
+      "placed": true
+    },
+    "settings-file-store-e2e-validation-test.md": {
+      "number": 836,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAycg0",
+      "placed": true
+    },
+    "settings-git-ops-cross-host.md": {
+      "number": 837,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyco0",
+      "placed": true
+    },
+    "settings-menu-media-only.md": {
+      "number": 838,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAycwQ",
+      "placed": true
+    },
+    "settings-name-and-pr-title-hardening.md": {
+      "number": 839,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyc48",
+      "placed": true
+    },
+    "shared-doc-hot-spots.md": {
+      "number": 840,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAydAQ",
+      "placed": true
+    },
+    "sharp-loader-rejection-test-strength.md": {
+      "number": 841,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAydG0",
+      "placed": true
+    },
+    "sharp-tracing-lockfile-root-edge-cases.md": {
+      "number": 842,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAydOA",
+      "placed": true
+    },
+    "side-effects-guard-const-initializer-calls.md": {
+      "number": 843,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAydVc",
+      "placed": true
+    },
+    "side-effects-next16-turbopack-smoke.md": {
+      "number": 844,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyddU",
+      "placed": true
+    },
+    "simple-git-signal-exit-reads-as-success.md": {
+      "number": 845,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyAQc",
+      "placed": true
+    },
+    "sitemap-extraurls-protocol-relative-loc.md": {
+      "number": 846,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAydls",
+      "placed": true
+    },
+    "skip-set-active-action-readme-condition.md": {
+      "number": 847,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAydsE",
+      "placed": true
+    },
+    "smithy-types-duplicate-resolution.md": {
+      "number": 848,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAydzA",
+      "placed": true
+    },
+    "split-large-files.md": {
+      "number": 849,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyAVo",
+      "placed": true
+    },
+    "stale-future-tasks-links-outside-future-tasks-dir.md": {
+      "number": 850,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyAb0",
+      "placed": true
+    },
+    "stamp-failed-submit-draft-409.md": {
+      "number": 851,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyd5c",
+      "placed": true
+    },
+    "stamp-on-publish-editor-followups.md": {
+      "number": 852,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyeBM",
+      "placed": true
+    },
+    "static-build-reference-acl.md": {
+      "number": 853,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyeLQ",
+      "placed": true
+    },
+    "storybook-branchmanager-story-crash.md": {
+      "number": 854,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyeSI",
+      "placed": true
+    },
+    "stray-init-remotes-accumulate.md": {
+      "number": 855,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyeZY",
+      "placed": true
+    },
+    "submit-saves-after-enqueue.md": {
+      "number": 856,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyehc",
+      "placed": true
+    },
+    "svg-asset-crop-never-renders.md": {
+      "number": 857,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyeqY",
+      "placed": true
+    },
+    "system-health-panel-story.md": {
+      "number": 858,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyezA",
+      "placed": true
+    },
+    "system-health-poll-overlap.md": {
+      "number": 859,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAye7Y",
+      "placed": true
+    },
+    "system-health-retry-advice-for-permanent-failures.md": {
+      "number": 860,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyfCM",
+      "placed": true
+    },
+    "system-health-status-labels.md": {
+      "number": 861,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyfJw",
+      "placed": true
+    },
+    "task-queue-listtasks-throws-on-missing-createdat.md": {
+      "number": 862,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyAiY",
+      "placed": true
+    },
+    "test-gap-backfill.md": {
+      "number": 863,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyfQM",
+      "placed": true
+    },
+    "test-layout-convergence.md": {
+      "number": 864,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyfYg",
+      "placed": true
+    },
+    "theme-css-variables-leak-to-the-host-page.md": {
+      "number": 865,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyfeI",
+      "placed": true
+    },
+    "timeout-ux-followups.md": {
+      "number": 866,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyfmk",
+      "placed": true
+    },
+    "toc-heading-id-contract.md": {
+      "number": 867,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyftI",
+      "placed": true
+    },
+    "trailing-slash-build-smoke.md": {
+      "number": 868,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyf0s",
+      "placed": true
+    },
+    "trailing-slash-router-helpers.md": {
+      "number": 869,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyf70",
+      "placed": true
+    },
+    "transform-first-render-throttle.md": {
+      "number": 870,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAygEM",
+      "placed": true
+    },
+    "transform-lambda-bundle-bloat.md": {
+      "number": 871,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAygLk",
+      "placed": true
+    },
+    "transform-lambda-sdk-create-only.md": {
+      "number": 872,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyApk",
+      "placed": true
+    },
+    "trivy-license-scan-severity-gaps.md": {
+      "number": 873,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAygTE",
+      "placed": true
+    },
+    "turbopack-import-cycle-double-evaluation.md": {
+      "number": 874,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx5w0",
+      "placed": true
+    },
+    "ui-epic-202610.md": {
+      "number": 875,
+      "priority": "P1",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx6eY",
+      "placed": true
+    },
+    "unavailable-entry-type-follow-ups.md": {
+      "number": 876,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAygbc",
+      "placed": true
+    },
+    "upstream-next-sharp-tracing-recheck.md": {
+      "number": 877,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAygiA",
+      "placed": true
+    },
+    "url-collision-guard-superset-of-listing.md": {
+      "number": 878,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAygrY",
+      "placed": true
+    },
+    "url-mapping-system.md": {
+      "number": 879,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyg1g",
+      "placed": true
+    },
+    "url-path-dotdot-segment-500.md": {
+      "number": 880,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyAv0",
+      "placed": true
+    },
+    "use-comment-system-unused-can-resolve.md": {
+      "number": 881,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyg-c",
+      "placed": true
+    },
+    "user-metadata-lookup-followups.md": {
+      "number": 882,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyhI4",
+      "placed": true
+    },
+    "user-metadata-optimization.md": {
+      "number": 883,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyhRQ",
+      "placed": true
+    },
+    "user-profile-seed-refetch-and-bot-ids.md": {
+      "number": 884,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyhbA",
+      "placed": true
+    },
+    "ux-copy-lint-scope-and-red-409s.md": {
+      "number": 885,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyhj0",
+      "placed": true
+    },
+    "ux-guardrail-ratchet-gaps.md": {
+      "number": 886,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyhrw",
+      "placed": true
+    },
+    "ux-guideline-gaps-from-batch3.md": {
+      "number": 887,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyhyc",
+      "placed": true
+    },
+    "ux-guidelines-entry-state-and-save-indicator.md": {
+      "number": 888,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyh5s",
+      "placed": true
+    },
+    "validate-cli.md": {
+      "number": 889,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyh-0",
+      "placed": true
+    },
+    "validate-collection-names.md": {
+      "number": 890,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyA1g",
+      "placed": true
+    },
+    "webpack-standalone-sharp-bundled.md": {
+      "number": 891,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyA8I",
+      "placed": true
+    },
+    "whoami-signed-in-user-name.md": {
+      "number": 892,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyiE0",
+      "placed": true
+    },
+    "withdraw-stale-pr-state-detection.md": {
+      "number": 893,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyiMY",
+      "placed": true
+    },
+    "worker-app-auth-cannot-recover-a-rotated-key.md": {
+      "number": 894,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyBEA",
+      "placed": true
+    },
+    "worker-base-branch-env-divergence.md": {
+      "number": 895,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyiTg",
+      "placed": true
+    },
+    "worker-boot-default-branch-refresh.md": {
+      "number": 896,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyibU",
+      "placed": true
+    },
+    "worker-contract-cfn-enforced.md": {
+      "number": 897,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyiho",
+      "placed": true
+    },
+    "worker-credential-log-and-test-noise.md": {
+      "number": 898,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyiok",
+      "placed": true
+    },
+    "worker-dedicated-user.md": {
+      "number": 899,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyiws",
+      "placed": true
+    },
+    "worker-entrypoint-single-process-path.md": {
+      "number": 900,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyi34",
+      "placed": true
+    },
+    "worker-github-mirror-limits.md": {
+      "number": 901,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyi-w",
+      "placed": true
+    },
+    "worker-history-rewrite-marker-races.md": {
+      "number": 902,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyBLA",
+      "placed": true
+    },
+    "worker-instance-files-bucket-retention.md": {
+      "number": 903,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyjEw",
+      "placed": true
+    },
+    "worker-kernel-fixes-between-deploys.md": {
+      "number": 904,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyjLY",
+      "placed": true
+    },
+    "worker-less-first-deploy-status-claim.md": {
+      "number": 905,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyjSI",
+      "placed": true
+    },
+    "worker-lock-compromise-handler-unguarded.md": {
+      "number": 906,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyjaA",
+      "placed": true
+    },
+    "worker-mirror-detached-work-drain.md": {
+      "number": 907,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyjiY",
+      "placed": true
+    },
+    "worker-push-end-of-options.md": {
+      "number": 908,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyjpY",
+      "placed": true
+    },
+    "worker-republishes-leaked-settings-branch.md": {
+      "number": 909,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyBRY",
+      "placed": true
+    },
+    "worker-role-ssm-and-efs-root-mount.md": {
+      "number": 910,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyjvc",
+      "placed": true
+    },
+    "worker-single-process-race-gap.md": {
+      "number": 911,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyj2M",
+      "placed": true
+    },
+    "worker-split-first-deploy-checks.md": {
+      "number": 912,
+      "priority": "P1",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAx6XM",
+      "placed": true
+    },
+    "worker-split-residual-risks.md": {
+      "number": 913,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyj8s",
+      "placed": true
+    },
+    "worker-split-span-review-lows.md": {
+      "number": 914,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAykC8",
+      "placed": true
+    },
+    "worker-spot-on-demand-fallback.md": {
+      "number": 915,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAykIU",
+      "placed": true
+    },
+    "worker-stale-git-index-lock-after-kill.md": {
+      "number": 916,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAykP0",
+      "placed": true
+    },
+    "worker-successor-handoff.md": {
+      "number": 917,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAykW4",
+      "placed": true
+    },
+    "worker-take-githubs-version-admin-action.md": {
+      "number": 918,
+      "priority": "P2",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyBY0",
+      "placed": true
+    },
+    "worker-task-success-metadata-race.md": {
+      "number": 919,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAykfI",
+      "placed": true
+    },
+    "worker-test-seams-dependency-injection.md": {
+      "number": 920,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAykl0",
+      "placed": true
+    },
+    "worker-tests-flake-under-load.md": {
+      "number": 921,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyksU",
+      "placed": true
+    },
+    "worker-workflow-refusal-test-flakes-under-load.md": {
+      "number": 922,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyky8",
+      "placed": true
+    },
+    "write-outcome-unknown-hold-on-deleted-entry.md": {
+      "number": 923,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyk5Q",
+      "placed": true
+    },
+    "xhr-upload-error-detail.md": {
+      "number": 924,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAyk_I",
+      "placed": true
+    },
+    "yaml-splice-residual-fallbacks.md": {
+      "number": 925,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAylEE",
+      "placed": true
+    },
+    "yarn-support-decision.md": {
+      "number": 926,
+      "priority": "P3",
+      "linked": true,
+      "item": "PVTI_lADOCZF8qs4BnD2ezhAylK0",
+      "placed": true
+    }
+  }
+}
