@@ -30,8 +30,10 @@ function parseArgs(argv) {
   const opts = { repo: 'safeinsights/canopycms' }
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--repo') opts.repo = argv[++i]
-    else if (argv[i] === '--project') opts.project = Number(argv[++i])
-    else throw new Error(`unknown argument ${argv[i]}`)
+    else if (argv[i] === '--project') {
+      opts.project = Number(argv[++i])
+      if (!Number.isInteger(opts.project)) throw new Error('--project takes a Project number')
+    } else throw new Error(`unknown argument ${argv[i]}`)
   }
   return opts
 }
@@ -74,7 +76,10 @@ function projectStatuses(repo, project) {
     const items = JSON.parse(gh(args)).data.organization.projectV2.items
     for (const node of items.nodes) {
       // An org Project can hold other repositories' issues, with clashing numbers.
-      if (node.content?.number && node.content.repository?.nameWithOwner === repo) {
+      if (
+        node.content?.number &&
+        node.content.repository?.nameWithOwner.toLowerCase() === repo.toLowerCase()
+      ) {
         ranks.set(node.content.number, {
           rank: ranks.size,
           status: node.fieldValueByName?.name ?? null,

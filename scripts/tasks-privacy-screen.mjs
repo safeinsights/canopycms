@@ -111,6 +111,13 @@ const EMAIL_OK = (domain) =>
     domain,
   ) || RESERVED_SUFFIXES.some((s) => domain.toLowerCase().endsWith(s))
 
+/**
+ * `this.app`, `opts.dev`, `process.env.de`: a property read on a common code
+ * receiver, not a host, though the TLD list cannot tell them apart.
+ */
+const CODE_RECEIVER =
+  /^(?:this|self|opts|options|ctx|context|state|props|process|process\.env|env|config|window|document|req|res|err|e|args|params|data|module|exports|console|globalThis|import\.meta)\.[a-z]+$/
+
 /** Placeholder-looking text in an identifier slot: `<x>`, `${x}`, `{x}`, `*`, `x`, `...`. */
 const PLACEHOLDER = /^(?:<[^>]*>?|\$\{[^}]*\}?|\{[^}]*\}?|\*|x+|\.\.\.|…|my-[\w-]*|example[\w-]*)$/i
 
@@ -124,11 +131,11 @@ const RULES = [
   },
   {
     kind: 's3-bucket',
-    rx: /\bs3:\/\/([^/\s`'")]*)/gi,
+    // `s3://bucket/key`, or the bucket in an ARN (`arn:aws:s3:::bucket/key`).
+    rx: /\bs3:\/\/([^/\s`'")]*)|\barn:aws[a-z-]*:s3:::([^/\s`'")]*)/gi,
     ok: (m) =>
-      m[1] === '' ||
-      /^(?:<[^>]*>?|\$\{[^}]*\}?|\{[^}]*\}?|\*|x+|\.\.\.|…|(?:my-|example-)?bucket|example)$/i.test(
-        m[1],
+      /^(?:|<[^>]*>?|\$\{[^}]*\}?|\{[^}]*\}?|\*|x+|\.\.\.|…|(?:my-|example-)?bucket|example)$/i.test(
+        m[1] ?? m[2],
       ),
   },
   {
@@ -158,12 +165,16 @@ const RULES = [
     kind: 'private-repo',
     // An org URL (`github.com/orgs/safeinsights/projects/5`) names no repo.
     rx: /(?<!orgs\/)\bsafeinsights\/([A-Za-z0-9._-]+)/gi,
-    ok: (m) => m[1].replace(/\.+$/, '').toLowerCase() === 'canopycms',
+    ok: (m) =>
+      m[1]
+        .replace(/\.git$/i, '')
+        .replace(/\.+$/, '')
+        .toLowerCase() === 'canopycms',
   },
   {
     // Ruleset, App and installation ids are org configuration, not public.
     kind: 'github-id',
-    rx: /\b(?:rulesets?|apps?|installations?)\b[^\n.;]{0,40}?\b\d{6,10}\b|\(\d{7,10}\)/gi,
+    rx: /\b(?:rulesets?|apps?|installations?)(?: id)?[\s:#]{1,3}\d{6,10}\b|\(\d{7,10}\)/gi,
   },
   // A CDK bootstrap qualifier names one account's deployment.
   { kind: 'cdk-qualifier', rx: /\bCDKToolkit-[\w-]+/g },
@@ -171,12 +182,13 @@ const RULES = [
     // An adopter's request log lives in its own private repo; its numbers mean
     // nothing publicly and point at it.
     kind: 'request-log-ref',
-    rx: /\b(?:(?:adopter|marketing[- ]site|knowledge[- ]base|KB|MKT) )?(?<!pull )requests?[ #-]{1,3}\d+[a-z]?\b/gi,
+    // A bare plural ("it requests 3 times") is a verb unless a `#` or `-` follows.
+    rx: /\b(?:(?:adopter|marketing[- ]site|knowledge[- ]base|KB|MKT) requests?[ #-]{1,3}|(?<!pull )request[ #-]{1,3}|(?<!pull )requests(?: ?#|-))\d+[a-z]?\b/gi,
   },
   {
     kind: 'host',
     rx: HOST,
-    ok: (m) => isPublicHost(m[0]),
+    ok: (m) => isPublicHost(m[0]) || CODE_RECEIVER.test(m[0]),
   },
   {
     kind: 'email',
@@ -217,14 +229,18 @@ function bounded(name, flags) {
   return new RegExp(`(?<![\\w-])${escapeRx(name)}(?![\\w-])`, flags)
 }
 
-/** A name that would match anywhere: a separator, a digit or an inner capital. */
-const isDistinctive = (name) => /[-_./\d]|[a-z][A-Z]/.test(name)
+/**
+ * A name that would match anywhere: a separator, an inner capital, or a digit
+ * in more than four characters. `e2e`, `a11y` and `k8s` are jargon, not names.
+ */
+const isDistinctive = (name) =>
+  /[-_./]|[a-z][A-Z]/.test(name) || (/\d/.test(name) && name.length > 4)
 
 /** `v2`, `1.4`, `2026`: a version or number identifies nothing. */
 const isVersionLike = (name) => /^v?[\d.]+$/i.test(name) && /\d/.test(name)
 
 /** An optional emphasis or quote mark around a name in prose. */
-const MARK = '[`*_"\'’]?'
+const MARK = '[`*_"\'’]{0,2}'
 
 /**
  * Matchers for one repo, checkout, branch or profile name, as `{ rx, review }`.
@@ -245,7 +261,7 @@ export function nameMatcher(name, owners = []) {
     `(?<![./])\\.\\./${e}\\b`,
     `(?<![\\w/.-])${e}@`,
     `(?<![\\w.-])${e}\\.git\\b`,
-    `${MARK}\\b${e}\\b${MARK}(?:['’]s)?\\s+(?:repo|repository|adopter|checkout|clone)\\b`,
+    `${MARK}(?<![A-Za-z0-9])${e}(?![A-Za-z0-9])${MARK}(?:['’]s)?\\s+(?:repo|repository|adopter|checkout|clone)\\b`,
     `\\b${e}[-\\s]v\\d+\\b`,
   ].filter(Boolean)
   /* eslint-disable security/detect-non-literal-regexp -- escaped */
@@ -259,7 +275,7 @@ export function nameMatcher(name, owners = []) {
 /**
  * Matchers for an org or account login. A distinctive one is refused
  * anywhere; a plain word where it reads as an account: `github.com/login`,
- * `login.github.io`, `login/repo`, or "the login org".
+ * `@login`, `login.github.io`, `login/repo`, or "the login org".
  */
 export function ownerMatcher(login) {
   if (isDistinctive(login)) return [{ rx: bounded(login, 'gi'), review: false }]
@@ -268,7 +284,7 @@ export function ownerMatcher(login) {
   return [
     {
       rx: new RegExp(
-        `github\\.com/${e}(?![\\w-])|(?<![\\w.-])${e}(?:\\.github\\.io\\b|/[\\w.-])|${MARK}\\b${e}\\b${MARK}(?:['’]s)?\\s+org(?:anization)?\\b`,
+        `github\\.com/${e}(?![\\w-])|(?<![\\w.-])@?${e}(?:\\.github\\.io\\b|/[\\w.-])|(?<![\\w.-])@${e}(?![\\w-])|${MARK}(?<![A-Za-z0-9])${e}(?![A-Za-z0-9])${MARK}(?:['’]s)?\\s+org(?:ani[sz]ation)?\\b`,
         'gi',
       ),
       review: false,
@@ -288,7 +304,11 @@ export function personMatchers(displayName) {
   if (!full) return out
   if (full.includes(' ')) out.push(bounded(full, 'giu'))
   for (const part of full.split(/\s+/)) {
-    if (/^\p{L}[\p{L}'’-]+$/u.test(part)) out.push(bounded(part, 'gu'))
+    if (!/^\p{L}[\p{L}'’-]+$/u.test(part)) continue
+    out.push(bounded(part, 'gu'))
+    // A lower-case display name is still capitalized in prose.
+    const capital = part[0].toUpperCase() + part.slice(1)
+    if (capital !== part) out.push(bounded(capital, 'gu'))
   }
   return out
 }
@@ -320,7 +340,9 @@ export function termsFromNames({
   }
   add('org repo', repos)
   add('sibling checkout', dirs)
-  add('branch or environment', refs)
+  // Prose names a branch by its last segments (`feat/acme-launch` → `acme-launch`).
+  const segments = refs.flatMap((r) => r.split('/').slice(1)).filter((x) => /[-_]/.test(x))
+  add('branch or environment', [...refs, ...segments])
   // Prose drops a profile's org prefix (`acme-sandbox-admin` → `sandbox-admin`).
   const unprefixed = profiles.map((p) => p.slice(p.indexOf('-') + 1)).filter((p) => p.includes('-'))
   add('aws profile', [...profiles, ...unprefixed])
@@ -350,6 +372,9 @@ function gh(args) {
       maxBuffer: 64 * 1024 * 1024,
     })
   } catch (err) {
+    if (err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') {
+      throw new Error('gh is not installed')
+    }
     const stderr = err && typeof err === 'object' && 'stderr' in err ? String(err.stderr) : ''
     throw new Error(stderr.trim().split('\n')[0] || 'gh failed')
   }
@@ -542,6 +567,21 @@ export function collectRuntimeTerms({ repo, requireGh = true }) {
   try {
     if (!requireGh) throw new Error('--generic-only')
     step('token scopes', assertScopes)
+    // A non-member's token sees only public repos and members, and would pass
+    // every private name without an error.
+    step('org membership', () => {
+      const member = JSON.parse(
+        gh([
+          'api',
+          'graphql',
+          '-f',
+          'query=query($login: String!) { organization(login: $login) { viewerIsAMember } }',
+          '-f',
+          `login=${owner}`,
+        ]),
+      ).data.organization?.viewerIsAMember
+      if (!member) throw new Error(`the token's user is not a member of ${owner}`)
+    })
     const repos = step('org repos', () => orgRepos(owner, false)).filter((n) => n !== selfName)
     if (repos.length === 0) throw new Error(`no repositories visible in ${owner}`)
     const members = step('org members', () =>
@@ -634,9 +674,19 @@ function selfTest() {
     owners: ['acme', 'safeinsights'],
     repos: ['acme-site', 'website', 'main'],
     logins: ['octo-dev'],
-    people: ['Jane Q Doe', '', 'José Núñez'],
+    people: ['Jane Q Doe', '', 'José Núñez', 'kim roe'],
     orgs: ['acmeco', 'acme-org'],
-    refs: ['stg-blue', 'feature-x', 'dependabot/npm/x', 'v2', '2026'],
+    refs: [
+      'stg-blue',
+      'feature-x',
+      'dependabot/npm/x',
+      'v2',
+      '2026',
+      'feat/acme-launch',
+      'fix/launch',
+      'e2e',
+      'ci/a11y',
+    ],
     profiles: ['acme-admin', 'ac-stage-admin'],
     self: ['feature-x'],
   })
@@ -707,6 +757,50 @@ function selfTest() {
     ['José said so', ['private-name']],
     ['s3://bucket-prod-acme/x and s3://my-bucket/x', ['s3-bucket']],
     ['docs.acme.ca', ['host']],
+    // Every form per source (the sweep): a distinctive repo name anywhere,
+    [
+      '`acme-site` and **acme-site** and acme-site.git',
+      ['private-name', 'private-name', 'private-name'],
+    ],
+    // a plain-word repo name only in repo contexts,
+    [
+      'acme/website, ../website, website@v2, website.git',
+      ['private-name', 'private-name', 'private-name', 'private-name'],
+    ],
+    ['the **website** repo and the __website__ checkout', ['private-name', 'private-name']],
+    ['the website-v2 and website v3 topologies', ['private-name', 'private-name']],
+    // an org by mention, URL, Pages host, owner path or "org",
+    [
+      '@acmeco, the acmeco organisation, acmeco/site',
+      ['private-name', 'private-name', 'private-name'],
+    ],
+    ['we said acmeco once', []],
+    // a branch whole or by its distinctive segments,
+    [
+      'feat/acme-launch, the acme-launch branch, fix/launch',
+      ['private-name', 'private-name', 'private-name', 'private-name'],
+    ],
+    ['the launch went well', []],
+    ['the e2e suite and a11y checks', []],
+    // a person whole, by part, by login, lower-case names capitalized,
+    [
+      'Kim Roe, then Kim, then roe, then @octo-dev',
+      [
+        'private-name',
+        'private-name',
+        'private-name',
+        'private-name',
+        'private-name',
+        'private-name',
+      ],
+    ],
+    // a bucket as a URI or in an ARN, and code that only looks like a host.
+    ['arn:aws:s3:::acme-prod/key', ['s3-bucket']],
+    ['arn:aws:s3:::<bucket>/key and s3://example/x', []],
+    ['this.app, opts.dev, process.env.de', []],
+    ['it requests 3 times; the apps directory has 100000 lines', []],
+    ['clone safeinsights/canopycms.git', []],
+    ['app 4038189 and installation id 12345678', ['github-id', 'github-id']],
   ]
   const failures = []
   for (const [text, expected] of cases) {
@@ -739,6 +833,10 @@ function main(argv) {
   const show = argv.includes('--show')
   const repoAt = argv.indexOf('--repo')
   const repo = repoAt === -1 ? 'safeinsights/canopycms' : argv[repoAt + 1]
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo ?? '')) {
+    console.error('tasks-privacy-screen: --repo takes owner/name')
+    process.exit(2)
+  }
   const files = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--repo')
   let terms
   try {
