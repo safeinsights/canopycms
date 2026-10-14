@@ -1530,7 +1530,7 @@ describe('GitManager.hasUnpushedCommits', () => {
   })
 })
 
-describe('GitManager.listBaseTipFiles', () => {
+describe('GitManager.listBaseFiles', () => {
   let tmpDir: string
   let localPath: string
   let localGit: ReturnType<typeof simpleGit>
@@ -1562,13 +1562,45 @@ describe('GitManager.listBaseTipFiles', () => {
 
   it("lists the base tip's files under a directory, and nothing beside it", async () => {
     const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
-    expect((await manager.listBaseTipFiles('content')).sort()).toEqual([
+    expect((await manager.listBaseFiles('content')).sort()).toEqual([
       'content/a.md',
       'content/sub/b.md',
     ])
-    expect((await manager.listBaseTipFiles()).sort()).toEqual(
+    expect((await manager.listBaseFiles()).sort()).toEqual(
       ['--', 'content/a.md', 'content/sub/b.md', 'contentx/c.md', 'top.txt'].sort(),
     )
+  })
+
+  it('also lists what the fork point held, for a file the base deleted since', async () => {
+    await localGit.checkoutLocalBranch('feature')
+    await localGit.checkout('main')
+    await localGit.raw(['rm', '-q', '--', 'content/a.md'])
+    await fs.writeFile(path.join(localPath, 'content', 'added.md'), 'added', 'utf8')
+    await localGit.raw(['add', '--', 'content/added.md'])
+    await localGit.commit('base moves on')
+    await localGit.push('origin', 'main')
+    await localGit.checkout('feature')
+    const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
+
+    expect((await manager.listBaseFiles('content')).sort()).toEqual([
+      'content/a.md',
+      'content/added.md',
+      'content/sub/b.md',
+    ])
+  })
+
+  it('lists only the tip when HEAD shares no history with the base', async () => {
+    await localGit.raw(['checkout', '-q', '--orphan', 'unrelated'])
+    await localGit.raw(['rm', '-rq', '--cached', '--', '.'])
+    await fs.writeFile(path.join(localPath, 'content', 'own.md'), 'own', 'utf8')
+    await localGit.raw(['add', '--', 'content/own.md'])
+    await localGit.commit('unrelated root')
+    const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
+
+    expect((await manager.listBaseFiles('content')).sort()).toEqual([
+      'content/a.md',
+      'content/sub/b.md',
+    ])
   })
 })
 

@@ -1737,12 +1737,20 @@ export class GitManager {
   }
 
   /**
-   * Repo-relative paths of every file in the base branch's just-fetched tip, limited to `under`
-   * (a repo-relative directory) when given. Reads the commit, never the working tree, so a sparse
-   * clone lists the whole base.
+   * Repo-relative paths of every file in the base branch's just-fetched tip or in its merge base
+   * with HEAD, limited to `under` (a repo-relative directory) when given. The merge base counts
+   * because a file the base deleted after the fork is still the base's on a branch not yet
+   * rebased. Reads commits, never the working tree, so a sparse clone lists the whole base.
    */
-  async listBaseTipFiles(under?: string): Promise<string[]> {
-    return this.listTreeFiles(await this.fetchBaseTip(), under)
+  async listBaseFiles(under?: string): Promise<string[]> {
+    const tip = await this.fetchBaseTip()
+    // With no shared commit merge-base exits 1 silently, which simple-git resolves as ''.
+    const forkPoint = (await this.git.raw(['merge-base', '--end-of-options', 'HEAD', tip])).trim()
+    const files = new Set(await this.listTreeFiles(tip, under))
+    if (forkPoint && forkPoint !== tip) {
+      for (const file of await this.listTreeFiles(forkPoint, under)) files.add(file)
+    }
+    return [...files]
   }
 
   /** Fetch the base branch and return its tip, pinned as pullBaseInner explains. */

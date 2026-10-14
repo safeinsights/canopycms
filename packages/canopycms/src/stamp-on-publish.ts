@@ -2,8 +2,9 @@
  * `stampOnPublish` (config/types.ts): at submit, each entry new to the base branch gets the
  * submit's time in its empty stamp fields. Canopy never merges and never writes the base branch,
  * and adopters build from the merged tree, so its own submit is the last point it can put the
- * date into the content. An entry counts as new when the base tip holds no file with its
- * ContentId, so a renamed or moved entry, which keeps its ID, is never stamped.
+ * date into the content. An entry counts as new when neither the base tip nor the fork point
+ * holds a file with its ContentId, so a renamed or moved entry, which keeps its ID, is never
+ * stamped.
  */
 import path from 'node:path'
 
@@ -46,7 +47,7 @@ export interface StampedEntry {
 }
 
 /**
- * Fill every empty stamp field of every entry the base tip lacks with `stampedAt`, never
+ * Fill every empty stamp field of every entry the base lacks with `stampedAt`, never
  * overwriting a value, and return the entries written. Lists the base only when the schema has
  * a stamp field, and reads only the entry files the base lacks. Rejects when the base cannot be
  * fetched or listed; a single entry that cannot be written is reported through `warn` and
@@ -56,7 +57,7 @@ export interface StampedEntry {
  * requires.
  */
 export async function stampNewEntries(options: {
-  git: Pick<GitManager, 'listBaseTipFiles'>
+  git: Pick<GitManager, 'listBaseFiles'>
   store: ContentStore
   branchRoot: string
   flatSchema: readonly FlatSchemaItem[]
@@ -72,7 +73,7 @@ export async function stampNewEntries(options: {
   if (collections.length === 0) return []
 
   const baseIds = new Set<ContentId>()
-  for (const file of await options.git.listBaseTipFiles(contentRootDir(options.contentRoot))) {
+  for (const file of await options.git.listBaseFiles(contentRootDir(options.contentRoot))) {
     const id = parseTypedFilename(path.posix.basename(file))?.id
     if (id) baseIds.add(id)
   }

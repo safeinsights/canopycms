@@ -890,6 +890,26 @@ describe('services submitBranch', () => {
       expect(await readEntry(page)).toBe(empty('About'))
     })
 
+    it('never stamps an entry the fork point had, though the base has deleted it since', async () => {
+      const file = entryPath('posts', 'post', 'gone-upstream', generateId(), 'md')
+      const text = "---\ntitle: Gone upstream\npublishedAt: ''\n---\nBody\n"
+      await writeEntry(file, text)
+      await commitToBase()
+      await simpleGit({ baseDir: localPath }).checkoutLocalBranch('feature-1')
+      // The base deletes the entry from another clone; this branch is not rebased onto that.
+      const seed = simpleGit({ baseDir: path.join(tmpDir, 'seed') })
+      await seed.pull('origin', 'main')
+      await seed.raw(['rm', '-q', '--', file])
+      await seed.commit('delete upstream')
+      await seed.push('origin', 'main')
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'another change', 'utf8')
+
+      const { stamped } = await services.submitBranch({ context })
+
+      expect(stamped).toEqual([])
+      expect(await readEntry(file)).toBe(text)
+    })
+
     it("judges newness by the base's entry files, not its collection directories", async () => {
       const id = generateId()
       await writeEntry(`content/archive.${id}/readme.txt`, 'a directory carrying the id')
@@ -947,7 +967,7 @@ describe('services submitBranch', () => {
       const file = entryPath('posts', 'post', 'retry', generateId(), 'md')
       const template = "---\ntitle: Retry\npublishedAt: 'STAMP'\n---\nBody\n"
       await writeEntry(file, template.replace('STAMP', ''))
-      vi.spyOn(GitManager.prototype, 'listBaseTipFiles').mockRejectedValueOnce(
+      vi.spyOn(GitManager.prototype, 'listBaseFiles').mockRejectedValueOnce(
         new Error('simulated fetch failure'),
       )
       vi.spyOn(GitManager.prototype, 'push').mockRejectedValueOnce(
@@ -963,12 +983,30 @@ describe('services submitBranch', () => {
       consoleSpy.restore()
     })
 
+    it('a failed push after stamping reports no stamps (drafts re-sync via the 409 path)', async () => {
+      const file = entryPath('posts', 'post', 'unpushed', generateId(), 'md')
+      const template = "---\ntitle: Unpushed\npublishedAt: 'STAMP'\n---\nBody\n"
+      await writeEntry(file, template.replace('STAMP', ''))
+      vi.spyOn(GitManager.prototype, 'push').mockRejectedValueOnce(
+        new Error('simulated push failure'),
+      )
+
+      // A rejection carries no result, so the stamps never reach the editor.
+      await expect(services.submitBranch({ context })).rejects.toThrow('simulated push failure')
+
+      const committed = await simpleGit({ baseDir: localPath }).show([`HEAD:${file}`])
+      expect(stampIn(committed, template)).toMatch(ISO_UTC)
+      expect(await remoteBranchSha('feature-1')).toBeUndefined()
+      // The retry pushes the stamp but finds nothing left to stamp.
+      expect((await services.submitBranch({ context })).stamped).toEqual([])
+    })
+
     it('submits unstamped, with a redacted warning, when the base cannot be read', async () => {
       const consoleSpy = mockConsole()
       const file = entryPath('posts', 'post', 'offline', generateId(), 'md')
       const text = "---\ntitle: Offline\npublishedAt: ''\n---\nBody\n"
       await writeEntry(file, text)
-      vi.spyOn(GitManager.prototype, 'listBaseTipFiles').mockRejectedValue(
+      vi.spyOn(GitManager.prototype, 'listBaseFiles').mockRejectedValue(
         new Error('fatal: unable to access https://x-access-token:s3cret@github.com/o/r.git'),
       )
 
@@ -986,7 +1024,7 @@ describe('services submitBranch', () => {
         mode: 'dev',
         defaultBaseBranch: 'main',
       })
-      const listBase = vi.spyOn(GitManager.prototype, 'listBaseTipFiles')
+      const listBase = vi.spyOn(GitManager.prototype, 'listBaseFiles')
       await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
 
       await services.submitBranch({ context })
