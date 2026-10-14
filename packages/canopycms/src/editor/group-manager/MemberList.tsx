@@ -43,6 +43,10 @@ export const MemberList: React.FC<MemberListProps> = ({
 }) => {
   const { listRef, focusAfterRemove } = useFocusAfterRemove()
   const addMemberRef = useRef<HTMLButtonElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const headingRef = useRef<HTMLParagraphElement>(null)
+  // With no member left, focus goes to whichever of these the section shows and can focus.
+  const emptyListFocus = showUserSearch ? searchInputRef : canSearch ? addMemberRef : headingRef
 
   const handleAddMember = (userId: CanopyUserId) => {
     onAddMember(groupId, userId)
@@ -51,7 +55,7 @@ export const MemberList: React.FC<MemberListProps> = ({
 
   return (
     <div>
-      <Text size="xs" fw={500} mb={4}>
+      <Text size="xs" fw={500} mb={4} ref={headingRef} tabIndex={-1}>
         Members
       </Text>
       <Group gap="xs" mb="xs" ref={listRef}>
@@ -67,7 +71,7 @@ export const MemberList: React.FC<MemberListProps> = ({
               color="blue"
               onRemove={() => {
                 onRemoveMember(groupId, userId)
-                focusAfterRemove(index, addMemberRef)
+                focusAfterRemove(index, emptyListFocus)
               }}
               showEmailTooltip={true}
               revealIdOnFallback
@@ -84,6 +88,7 @@ export const MemberList: React.FC<MemberListProps> = ({
         <Paper withBorder p="sm" mt="xs">
           <Stack gap="xs">
             <TextInput
+              ref={searchInputRef}
               placeholder="Search users by name or email..."
               value={searchQuery}
               onChange={(e) => onSearchQueryChange(e.target.value)}

@@ -1789,6 +1789,24 @@ describe('useDraftManager', () => {
     expect(notifications.show).not.toHaveBeenCalled()
   })
 
+  it('toasts a discard when asked, for a draft the form is not showing', async () => {
+    const { notifications } = await import('@mantine/notifications')
+    vi.mocked(notifications.show).mockClear()
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+    act(() => {
+      result.current.setDrafts({ abc123def456: { title: 'Draft 1' } })
+    })
+
+    act(() => {
+      result.current.handleDiscardFileDraft(undefined, { announce: true })
+    })
+
+    expect(result.current.drafts).not.toHaveProperty('abc123def456')
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Unsaved changes to "Test Entry" discarded' }),
+    )
+  })
+
   describe('discard confirmation', () => {
     it('opens a confirm modal before discarding a file draft that differs from the loaded value', async () => {
       const { modals } = await import('@mantine/modals')

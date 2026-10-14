@@ -201,7 +201,11 @@ export interface UseDraftManagerReturn {
   editedFiles: Array<{ path: LogicalPath; label: string }>
   handleSave: () => Promise<void>
   handleDiscardDrafts: (returnFocusTo?: () => HTMLElement | null) => void
-  handleDiscardFileDraft: (returnFocusTo?: () => HTMLElement | null) => void
+  /** `announce` toasts the discard, for a draft the form isn't showing (a read-only branch's). */
+  handleDiscardFileDraft: (
+    returnFocusTo?: () => HTMLElement | null,
+    options?: { announce?: boolean },
+  ) => void
   handleReload: (returnFocusTo?: () => HTMLElement | null) => Promise<void>
   isDirtyForEntry: (entryPath: string) => boolean
   isSelectedDirty: () => boolean
@@ -1080,9 +1084,15 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }
 
-  const performDiscardFileDraft = () => {
+  const performDiscardFileDraft = (announce = false) => {
     const entry = options.currentEntry
     if (!entry || !currentId) return
+    if (announce) {
+      notifications.show({
+        message: `Unsaved changes to "${entry.label}" discarded`,
+        color: 'green',
+      })
+    }
     options.onDraftsReset?.(currentId)
     hideEntryGone(currentId)
     setErrorState(null)
@@ -1116,10 +1126,13 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // comparison as `modifiedCount`). Discarding a draft that's identical to
   // the loaded value, or discarding when there's no draft at all, has
   // nothing to lose, so it clears silently.
-  const handleDiscardFileDraft = (returnFocusTo?: () => HTMLElement | null) => {
+  const handleDiscardFileDraft = (
+    returnFocusTo?: () => HTMLElement | null,
+    { announce = false }: { announce?: boolean } = {},
+  ) => {
     if (!currentId) return
     if (!isSelectedDirty()) {
-      performDiscardFileDraft()
+      performDiscardFileDraft(announce)
       return
     }
     const label = options.currentEntry?.label
@@ -1128,7 +1141,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       children: 'Your unsaved changes to this entry will be lost.',
       labels: { confirm: 'Discard changes', cancel: 'Keep editing' },
       confirmProps: { color: 'red', 'data-testid': 'confirm-discard-entry' },
-      onConfirm: performDiscardFileDraft,
+      onConfirm: () => performDiscardFileDraft(announce),
       ...focusReturnProps(returnFocusTo),
     })
   }

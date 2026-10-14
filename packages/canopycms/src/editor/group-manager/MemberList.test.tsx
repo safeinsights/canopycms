@@ -75,7 +75,15 @@ describe('MemberList focus after a removal', () => {
   ]
 
   /** Holds the members in state, as the group manager does, so a removal re-renders the list. */
-  function Harness({ initial }: { initial: string[] }) {
+  function Harness({
+    initial,
+    showUserSearch = false,
+    canSearch = true,
+  }: {
+    initial: string[]
+    showUserSearch?: boolean
+    canSearch?: boolean
+  }) {
     const [members, setMembers] = useState(initial)
     return (
       <SWRConfig value={{ provider: () => new Map() }}>
@@ -86,7 +94,7 @@ describe('MemberList focus after a removal', () => {
             onRemoveMember={(_group, userId) => setMembers((m) => m.filter((id) => id !== userId))}
             onAddMember={vi.fn()}
             onGetUserMetadata={async (id) => people.find((p) => p.id === id) ?? null}
-            showUserSearch={false}
+            showUserSearch={showUserSearch}
             searchQuery=""
             searchResults={[]}
             isSearching={false}
@@ -94,7 +102,7 @@ describe('MemberList focus after a removal', () => {
             onSearchQueryChange={vi.fn()}
             onShowSearch={vi.fn()}
             onHideSearch={vi.fn()}
-            canSearch
+            canSearch={canSearch}
           />
         </MantineProvider>
       </SWRConfig>
@@ -134,5 +142,19 @@ describe('MemberList focus after a removal', () => {
     render(<Harness initial={['u1']} />)
     await userEvent.click(await remove('Alice Johnson'))
     await expectFocus('Add member')
+  })
+
+  it('moves to the search box, for the only member while the search is open', async () => {
+    render(<Harness initial={['u1']} showUserSearch />)
+    await userEvent.click(await remove('Alice Johnson'))
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByLabelText('Search users by name or email')),
+    )
+  })
+
+  it('moves to the "Members" heading, for the only member when no one can be added', async () => {
+    render(<Harness initial={['u1']} canSearch={false} />)
+    await userEvent.click(await remove('Alice Johnson'))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByText('Members')))
   })
 })

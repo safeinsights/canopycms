@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useReducer, useRef } from 'react'
 import { Badge, Button, Drawer, Fieldset, Group, Text, Title } from '@mantine/core'
 import { openConfirm } from '../utils/confirm-modal'
-import { focusReturnProps } from '../utils/focus-return'
+import { focusReturnProps, rememberOpener, returnTarget } from '../utils/focus-return'
 
 export interface StagedChangesDrawerProps {
   opened: boolean
@@ -120,11 +120,12 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
 
   const requestDiscard = useCallback(() => {
     if (isSaving || confirmOpenRef.current) return
-    // The save bar, and the button that opened this, go with the changes, so focus goes to the title.
+    // Kept, the changes keep the save bar and its button; discarded, both go, and the title stands in.
+    const opener = rememberOpener()
     confirmDiscard(
       'Discarding drops the changes you have not saved.',
       onDiscard,
-      focusReturnProps(() => titleRef.current),
+      focusReturnProps(() => returnTarget(opener, () => titleRef.current)),
     )
   }, [isSaving, onDiscard, confirmDiscard])
 

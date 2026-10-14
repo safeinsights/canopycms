@@ -148,6 +148,19 @@ describe('StagedChangesDrawer', () => {
       expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Groups' }))
     })
 
+    it('returns focus to the save bar\'s "Discard changes" when its confirm is dismissed', () => {
+      renderDrawer({ isDirty: true })
+      const discard = screen.getByRole('button', { name: 'Discard changes' })
+      discard.focus()
+      fireEvent.click(discard)
+      ;(document.activeElement as HTMLElement | null)?.blur()
+
+      act(() => lastConfirm().onClose?.())
+      act(() => lastConfirm().onExitTransitionEnd?.())
+
+      expect(document.activeElement).toBe(discard)
+    })
+
     it('keeps the staged changes when the save bar discard is dismissed', () => {
       const { props } = renderDrawer({ isDirty: true })
       fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))

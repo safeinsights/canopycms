@@ -1666,8 +1666,11 @@ const EditorContent: React.FC<EditorProps> = ({
                                     (currentBranch?.isProtected ?? true) ||
                                     currentBranch?.status === 'archived'
                                   }
+                                  // A hidden draft's discard changes nothing on screen, so it says so.
                                   onDiscard={() =>
-                                    handleDiscardFileDraft(() => navigatorToggleRef.current)
+                                    handleDiscardFileDraft(() => navigatorToggleRef.current, {
+                                      announce: true,
+                                    })
                                   }
                                 />
                               )

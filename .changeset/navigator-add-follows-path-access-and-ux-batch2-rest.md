@@ -16,4 +16,5 @@ The group and permission managers always name people, never show a raw id, confi
 save bar's "Discard changes", and keep Delete off the built-in groups. A read-only toggle can be
 focused and announces its state. The sync-failed badge's reason opens on focus and touch. Editor
 labels such as "All entries", "Manage permissions" and "Create group" are now in sentence case.
-Discarding an entry's changes no longer toasts, since the form already shows it.
+Discarding an entry's changes toasts only for a read-only branch's hidden draft, where the form shows
+no change.
