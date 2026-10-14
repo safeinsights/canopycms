@@ -18,7 +18,7 @@ import { getErrorMessage } from '../utils/error'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { resolveEntryTitle } from '../utils/title-field'
 import { traverseFields } from '../validation/field-traversal'
-import { encodeMarkdownLinkDestination, type ReferenceRendering } from './json-to-markdown'
+import type { ReferenceRendering } from './json-to-markdown'
 import type {
   AIEntry,
   AIExcludedReference,
@@ -151,24 +151,44 @@ function defaultPageUrl(
 /** A target's page link as `referenceLink` decided it: a URL, `false` for none, or the default. */
 export type ReferenceLinkLookup = (id: string) => string | false | undefined
 
+/** What `referenceLink` is told about one exported target. */
+export interface ReferenceLinkSubject {
+  target: AIResolvedReference
+  body: string | undefined
+}
+
+/**
+ * Percent-encode every character that would end a link destination, an autolink or an HTML
+ * attribute value early: whitespace, controls, quotes, angle brackets and parentheses. Body
+ * links splice the URL into all three as it is.
+ */
+function encodeLinkUrl(url: string): string {
+  let out = ''
+  for (const char of url) {
+    const code = char.charCodeAt(0)
+    out +=
+      code <= 0x20 || code === 0x7f || `"'<>()`.includes(char)
+        ? `%${code.toString(16).toUpperCase().padStart(2, '0')}`
+        : char
+  }
+  return out
+}
+
 /**
  * Ask `referenceLink` once for each exported target the export's entries reference or link from
- * their bodies, in entry order, and return the answers. Run it once the exclusions have settled
- * the export set, so the callback never sees an excluded or missing target; one whose own render
- * fails later is masked like any other, and its answer goes unused. A body reaches the callback from
- * `bodyOf` and nowhere else, which keeps it out of the output. A throw or a return other than a
- * non-empty string, `false` or `undefined` is logged and becomes `false`, so a broken callback
- * withholds a link rather than advertising a page the site may not have; so does a target that
- * cannot be read. A returned URL is stored encoded as a link destination, since body links splice
- * it into markdown and HTML attributes as it is. An `entryLinkUrl` that throws leaves the target
- * undecided, for the render to report as it does without this hook.
+ * their bodies, in entry order, and return the answers, each URL encoded by
+ * {@link encodeLinkUrl}. `subjectOf` builds a target from the export's own read of it, so the
+ * callback never sees a target outside the export set and its body reaches nothing else. A throw
+ * or a return other than a non-empty string, `false` or `undefined` is logged and becomes
+ * `false`, so a broken callback withholds a link rather than advertising a page the site may not
+ * have. When `entryLinkUrl` throws for a target the callback is asked with no `defaultUrl`; an
+ * `undefined` answer then leaves the render to call `entryLinkUrl` and report its throw, as it
+ * does without the hook.
  */
 export async function decideReferenceLinks(
   referenceLink: AIReferenceLinkFn,
   entries: ReadonlyArray<{ entry: AIEntry; body?: string }>,
-  exported: { has(id: string): boolean },
-  resolveTarget: ReferenceTargetResolver,
-  bodyOf: (id: string) => string | undefined,
+  subjectOf: (id: string) => ReferenceLinkSubject | undefined,
   entryLinkUrl: EntryLinkUrlResolver | undefined,
 ): Promise<ReferenceLinkLookup> {
   const ids = new Set<string>()
@@ -176,46 +196,34 @@ export async function decideReferenceLinks(
     for (const { record, field } of referenceSlots(entry.fields, entry.data)) {
       const value = record[field.name]
       for (const target of Array.isArray(value) ? value : [value]) {
-        if (isShownTarget(target) && exported.has(target.id)) ids.add(target.id)
+        if (isShownTarget(target)) ids.add(target.id)
       }
     }
-    for (const { id } of body ? extractEntryLinkIds(body) : []) {
-      if (exported.has(id)) ids.add(id)
-    }
+    for (const { id } of body ? extractEntryLinkIds(body) : []) ids.add(id)
   }
 
   const decisions = new Map<string, string | false | undefined>()
   for (const id of ids) {
-    let target: AIReferenceValue
-    try {
-      target = await resolveTarget(id)
-    } catch (err) {
-      console.warn(`AI content: cannot read entry ${id} for referenceLink:`, getErrorMessage(err))
-      decisions.set(id, false)
-      continue
-    }
-    if (!isShownTarget(target)) continue
+    const subject = subjectOf(id)
+    if (!subject) continue
     let defaultUrl: string | undefined
     try {
-      defaultUrl = defaultPageUrl(target, entryLinkUrl)
+      defaultUrl = defaultPageUrl(subject.target, entryLinkUrl)
     } catch {
-      continue
+      defaultUrl = undefined
     }
     let decision: unknown
     try {
-      decision = await referenceLink(target as AIResolvedReference, {
-        body: bodyOf(id),
-        defaultUrl,
-      })
+      decision = await referenceLink(subject.target, { body: subject.body, defaultUrl })
     } catch (err) {
       console.warn(`AI content: referenceLink threw for entry ${id}:`, getErrorMessage(err))
       decision = false
     }
     if (typeof decision === 'string' && decision.trim()) {
-      decisions.set(id, encodeMarkdownLinkDestination(decision.trim()).replace(/"/g, '%22'))
-    } else if (decision === false || decision === undefined) {
-      decisions.set(id, decision)
-    } else {
+      decisions.set(id, encodeLinkUrl(decision.trim()))
+    } else if (decision === false) {
+      decisions.set(id, false)
+    } else if (decision !== undefined) {
       console.warn(
         `AI content: referenceLink returned ${typeof decision === 'string' ? 'an empty string' : typeof decision} for entry ${id}; expected a URL, false or undefined`,
       )

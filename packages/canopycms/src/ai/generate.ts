@@ -21,6 +21,7 @@ import {
 } from '../content-id-index'
 import { hasTraversalSequence } from '../paths'
 import { getErrorMessage, isNodeError } from '../utils/error'
+import { buildResolvedReference } from '../entry-schema'
 import { entryToMarkdown, frontmatterTitle, type ReferenceRendering } from './json-to-markdown'
 import {
   createReferenceRendering,
@@ -37,6 +38,7 @@ import type {
   AIContentConfig,
   AIEntry,
   AIEntryMeta,
+  AIResolvedReference,
   AIManifest,
   AIManifestCollection,
   AIManifestEntry,
@@ -134,15 +136,22 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   for (const pending of allPending) {
     if (pending.contentId !== null) pendingById.set(pending.contentId, pending)
   }
+  // The target as `resolveReferenceTarget` would give it, built from this export's own read, so
+  // an entry outside the export set is never offered and a target cannot change mid-run
+  const subjectOf = (id: string) => {
+    const pending = pendingById.get(id)
+    if (!pending || !exported.has(id)) return undefined
+    const { slug } = pending.entry
+    const target = buildResolvedReference(structuredClone(pending.storedData), {
+      id,
+      slug,
+      collection: pending.collectionPath,
+      urlPath: computeEntryUrl(pending.collectionPath, slug, contentRoot),
+    }) as AIResolvedReference
+    return { target, body: pending.body }
+  }
   const linkFor = config?.referenceLink
-    ? await decideReferenceLinks(
-        config.referenceLink,
-        allPending,
-        exported,
-        read.resolveTarget,
-        (id) => pendingById.get(id)?.body,
-        entryLinkUrl,
-      )
+    ? await decideReferenceLinks(config.referenceLink, allPending, subjectOf, entryLinkUrl)
     : undefined
   // A body `entry:` link takes the same page URL a reference to its target renders with
   const bodyLinkUrl: EntryLinkUrlResolver | undefined = linkFor
@@ -286,6 +295,8 @@ interface PendingEntry {
   entry: AIEntry
   /** The MD/MDX body as stored, before its `entry:` links are resolved against the export. */
   body?: string
+  /** The entry's data as stored, its references still ids, for `referenceLink` to judge. */
+  storedData: Record<string, unknown>
   /** The content ids its body's links were resolved against, as of its last resolution. */
   linkedIds: string[]
   contentId: string | null
@@ -360,6 +371,7 @@ async function collectEntries(
       })
       // AI content advertises an entry, so `noindex` leaves it out here as it does the sitemap.
       if (skipNoindex && isNoindexEntry(doc.data, config?.seo)) continue
+      const storedData = doc.data
       doc.data = await resolveReferenceFields(doc.data, entryTypeConfig.schema, resolveTarget)
 
       const aiEntry = docToAIEntry(doc, listEntry.slug, entryTypeName, entryTypeConfig, cleanPath)
@@ -372,6 +384,7 @@ async function collectEntries(
       pending.push({
         entry: aiEntry,
         body,
+        storedData,
         linkedIds: [],
         contentId: extractIdFromFilename(path.basename(listEntry.relativePath)),
         absolutePath: doc.absolutePath,

@@ -8,17 +8,11 @@ import { defineCanopyTestConfig } from '../../config-test'
 import { flattenSchema } from '../../config'
 import { ContentStore } from '../../content-store'
 import { extractIdFromFilename } from '../../content-id-index'
-import { buildRestrictedReference } from '../../entry-schema'
+import type { EntryLinkUrlResolver } from '../../entry-link-resolver'
 import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { generateAIContent } from '../generate'
 import { decideReferenceLinks } from '../references'
-import type {
-  AIContentConfig,
-  AIEntry,
-  AIReferenceLinkContext,
-  AIReferenceLinkFn,
-  AIReferenceValue,
-} from '../types'
+import type { AIContentConfig, AIEntry, AIReferenceLinkContext, AIReferenceLinkFn } from '../types'
 
 const personRef = {
   name: 'author',
@@ -120,7 +114,7 @@ describe('generateAIContent: referenceLink', () => {
     await fs.rm(root, { recursive: true, force: true })
   })
 
-  const generate = (config?: AIContentConfig, entryLinkUrl?: () => string) =>
+  const generate = (config?: AIContentConfig, entryLinkUrl?: EntryLinkUrlResolver) =>
     generateAIContent({
       store,
       flatSchema: flat,
@@ -186,19 +180,60 @@ describe('generateAIContent: referenceLink', () => {
     expect(alice?.defaultUrl).toBe('/custom')
   })
 
-  it('resolves every target without an ACL, so no restricted reference can reach it', async () => {
+  it('offers each target as the store resolves it, built from the export read, not a re-read', async () => {
+    const asResolved = await new ContentStore(root, flat).resolveReferenceTarget(ids.carol)
     const resolve = vi.spyOn(ContentStore.prototype, 'resolveReferenceTarget')
-    await generate({ referenceLink: () => undefined })
-    // Carol is linked only from a body, so only the referenceLink pre-pass resolves her
-    expect(resolve.mock.calls.map((call) => call[0])).toContain(ids.carol)
-    for (const call of resolve.mock.calls) expect(call[1]).toBeUndefined()
+    const seen = new Map<unknown, unknown>()
+    await generate({
+      referenceLink: (target) => {
+        seen.set(target.id, target)
+        return undefined
+      },
+    })
+    // Carol is linked only from a body, so nothing but the hook would read her as a target
+    expect(seen.get(ids.carol)).toEqual(asResolved)
+    expect(resolve.mock.calls.map((call) => call[0])).not.toContain(ids.carol)
+  })
+
+  it('lets the callback link a target whose entryLinkUrl throws', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // A field-only referrer: a body link to Alice would fail its entry before the hook runs
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('second'), {
+      format: 'md',
+      data: { title: 'Second', author: ids.alice },
+      body: 'No links.',
+    })
+    store = new ContentStore(root, flat)
+    const entryLinkUrl: EntryLinkUrlResolver = ({ id, slug }) => {
+      if (id === ids.alice) throw new Error('no route')
+      return `/people/${slug}`
+    }
+    const asked: Array<string | undefined> = []
+    const rescued = await generate(
+      {
+        referenceLink: (target, { defaultUrl }) => {
+          if (target.id !== ids.alice) return undefined
+          asked.push(defaultUrl)
+          return '/override/alice'
+        },
+      },
+      entryLinkUrl,
+    )
+    expect(asked).toEqual([undefined])
+    expect(rescued.files.get('posts/second.md')).toContain(
+      '**Author:** [Alice Example](/override/alice)',
+    )
+    // Answering undefined leaves the throw to the render, as without the hook
+    const unrescued = await generate({ referenceLink: () => undefined }, entryLinkUrl)
+    expect(unrescued.files.has('posts/second.md')).toBe(false)
   })
 
   it('encodes a returned URL the same way in references and body links', async () => {
-    const md = await post({ referenceLink: (target) => `/team/${String(target.slug)} (bio)` })
-    expect(md).toContain('**Author:** [Alice Example](/team/alice%20%28bio%29) (')
-    expect(md).toContain('[Alice](/team/alice%20%28bio%29#bio)')
-    expect(md).toContain('<a href="/team/bob%20%28bio%29">Bob</a>')
+    const md = await post({ referenceLink: (target) => `/team/${String(target.slug)} (b)'"<>\tz` })
+    const encoded = (slug: string) => `/team/${slug}%20%28b%29%27%22%3C%3E%09z`
+    expect(md).toContain(`**Author:** [Alice Example](${encoded('alice')}) (`)
+    expect(md).toContain(`[Alice](${encoded('alice')}#bio)`)
+    expect(md).toContain(`<a href="${encoded('bob')}">Bob</a>`)
   })
 
   it('never links a target whose own render fails, whatever the callback returns', async () => {
@@ -254,80 +289,46 @@ describe('generateAIContent: referenceLink', () => {
 
 describe('decideReferenceLinks', () => {
   const field = { name: 'author', type: 'reference' as const, label: 'Author' }
-  const entryWith = (author: unknown): AIEntry => ({
-    slug: 'post',
-    collection: 'posts',
-    collectionName: 'posts',
-    entryType: 'post',
-    format: 'json',
-    data: { author },
-    fields: [field],
+  const entryWith = (author: unknown, body?: string) => ({
+    entry: {
+      slug: 'post',
+      collection: 'posts',
+      collectionName: 'posts',
+      entryType: 'post',
+      format: 'json',
+      data: { author },
+      fields: [field],
+    } satisfies AIEntry,
+    body,
+  })
+  const subject = (id: string, urlPath: string) => ({
+    target: { id, slug: 's', collection: 'content/people', urlPath },
+    body: undefined,
   })
 
-  it('skips a restricted target even when its id is exported', async () => {
-    // Not an AIReferenceValue: the AI export resolves without an ACL, so it never makes one
-    const restricted = buildRestrictedReference(
-      { id: 'restrictedAB', slug: 'r', collection: 'content/people', urlPath: '/people/r' },
-      'Restricted',
-    ) as unknown as AIReferenceValue
+  it('never asks about an id the export does not hold, however it is linked', async () => {
     const referenceLink = vi.fn(() => undefined)
-    await decideReferenceLinks(
+    const held = subject('heldTargetAB', '/people/s')
+    const lookup = await decideReferenceLinks(
       referenceLink,
-      // Reached through a body link, so only the check on the resolved value can skip it
-      [{ entry: entryWith(''), body: '[R](entry:restrictedAB)' }],
-      new Set(['restrictedAB']),
-      async () => restricted,
-      () => undefined,
+      [entryWith({ ...held.target }, '[Gone](entry:missingXYZAB)')],
+      (id) => (id === held.target.id ? held : undefined),
       undefined,
     )
-    expect(referenceLink).not.toHaveBeenCalled()
+    expect(
+      referenceLink.mock.calls.map((call: unknown[]) => (call[0] as { id: string }).id),
+    ).toEqual(['heldTargetAB'])
+    expect(lookup('missingXYZAB')).toBeUndefined()
   })
 
   it('still asks about a target with no default URL, so a site can supply one', async () => {
-    const target = { id: 'nourl0000001', slug: 'n', collection: 'content/people', urlPath: '' }
+    const held = subject('noUrlTargetA', '')
     const lookup = await decideReferenceLinks(
       (_target, { defaultUrl }) => (defaultUrl === undefined ? '/supplied' : undefined),
-      [{ entry: entryWith(target) }],
-      new Set(['nourl0000001']),
-      async () => target,
-      () => undefined,
+      [entryWith({ ...held.target })],
+      () => held,
       undefined,
     )
-    expect(lookup('nourl0000001')).toBe('/supplied')
-  })
-
-  it('withholds the link to a target it cannot read', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const referenceLink = vi.fn(() => undefined)
-    const lookup = await decideReferenceLinks(
-      referenceLink,
-      [{ entry: entryWith(''), body: '[R](entry:cannotReadXY)' }],
-      new Set(['cannotReadXY']),
-      () => Promise.reject(new Error('transient')),
-      () => undefined,
-      undefined,
-    )
-    expect(lookup('cannotReadXY')).toBe(false)
-    expect(referenceLink).not.toHaveBeenCalled()
-    expect(
-      warn.mock.calls.some((call: unknown[]) => String(call[0]).includes('cannotReadXY')),
-    ).toBe(true)
-  })
-
-  it('leaves a target undecided when entryLinkUrl throws, without blaming referenceLink', async () => {
-    const target = { id: 'throws000001', slug: 't', collection: 'content/people', urlPath: '/t' }
-    const referenceLink = vi.fn(() => false as const)
-    const lookup = await decideReferenceLinks(
-      referenceLink,
-      [{ entry: entryWith(target) }],
-      new Set(['throws000001']),
-      async () => target,
-      () => undefined,
-      () => {
-        throw new Error('entryLinkUrl failed')
-      },
-    )
-    expect(referenceLink).not.toHaveBeenCalled()
-    expect(lookup('throws000001')).toBeUndefined()
+    expect(lookup('noUrlTargetA')).toBe('/supplied')
   })
 })
