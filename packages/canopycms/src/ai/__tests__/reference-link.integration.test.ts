@@ -195,9 +195,8 @@ describe('generateAIContent: referenceLink', () => {
     expect(resolve.mock.calls.map((call) => call[0])).not.toContain(ids.carol)
   })
 
-  it('lets the callback link a target whose entryLinkUrl throws', async () => {
+  it('leaves a target whose entryLinkUrl throws to fail as it does without the hook', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    // A field-only referrer: a body link to Alice would fail its entry before the hook runs
     await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('second'), {
       format: 'md',
       data: { title: 'Second', author: ids.alice },
@@ -208,29 +207,19 @@ describe('generateAIContent: referenceLink', () => {
       if (id === ids.alice) throw new Error('no route')
       return `/people/${slug}`
     }
-    const asked: Array<string | undefined> = []
-    const rescued = await generate(
-      {
-        referenceLink: (target, { defaultUrl }) => {
-          if (target.id !== ids.alice) return undefined
-          asked.push(defaultUrl)
-          return '/override/alice'
-        },
-      },
-      entryLinkUrl,
-    )
-    expect(asked).toEqual([undefined])
-    expect(rescued.files.get('posts/second.md')).toContain(
-      '**Author:** [Alice Example](/override/alice)',
-    )
-    // Answering undefined leaves the throw to the render, as without the hook
-    const unrescued = await generate({ referenceLink: () => undefined }, entryLinkUrl)
-    expect(unrescued.files.has('posts/second.md')).toBe(false)
+    const referenceLink = vi.fn<AIReferenceLinkFn>(() => '/override')
+    const withHook = await generate({ referenceLink }, entryLinkUrl)
+    const without = await generate(undefined, entryLinkUrl)
+    expect(referenceLink.mock.calls.map(([target]) => target.id)).not.toContain(ids.alice)
+    expect([...withHook.files.keys()].sort()).toEqual([...without.files.keys()].sort())
+    expect(withHook.files.has('posts/second.md')).toBe(false)
   })
 
   it('encodes a returned URL the same way in references and body links', async () => {
-    const md = await post({ referenceLink: (target) => `/team/${String(target.slug)} (b)'"<>\tz` })
-    const encoded = (slug: string) => `/team/${slug}%20%28b%29%27%22%3C%3E%09z`
+    const md = await post({
+      referenceLink: (target) => `/team/${String(target.slug)} (b)'"<>\t\\z`,
+    })
+    const encoded = (slug: string) => `/team/${slug}%20%28b%29%27%22%3C%3E%09%5Cz`
     expect(md).toContain(`**Author:** [Alice Example](${encoded('alice')}) (`)
     expect(md).toContain(`[Alice](${encoded('alice')}#bio)`)
     expect(md).toContain(`<a href="${encoded('bob')}">Bob</a>`)

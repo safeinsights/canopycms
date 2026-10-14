@@ -159,15 +159,15 @@ export interface ReferenceLinkSubject {
 
 /**
  * Percent-encode every character that would end a link destination, an autolink or an HTML
- * attribute value early: whitespace, controls, quotes, angle brackets and parentheses. Body
- * links splice the URL into all three as it is.
+ * attribute value early (whitespace, controls, quotes, angle brackets and parentheses) or escape
+ * the character after it (a backslash). Body links splice the URL into all three as it is.
  */
 function encodeLinkUrl(url: string): string {
   let out = ''
   for (const char of url) {
     const code = char.charCodeAt(0)
     out +=
-      code <= 0x20 || code === 0x7f || `"'<>()`.includes(char)
+      code <= 0x20 || code === 0x7f || `"'<>()\\`.includes(char)
         ? `%${code.toString(16).toUpperCase().padStart(2, '0')}`
         : char
   }
@@ -181,9 +181,8 @@ function encodeLinkUrl(url: string): string {
  * callback never sees a target outside the export set and its body reaches nothing else. A throw
  * or a return other than a non-empty string, `false` or `undefined` is logged and becomes
  * `false`, so a broken callback withholds a link rather than advertising a page the site may not
- * have. When `entryLinkUrl` throws for a target the callback is asked with no `defaultUrl`; an
- * `undefined` answer then leaves the render to call `entryLinkUrl` and report its throw, as it
- * does without the hook.
+ * have. A target whose `entryLinkUrl` throws is left undecided, unasked, so every link to it fails
+ * and is reported as it is without the hook.
  */
 export async function decideReferenceLinks(
   referenceLink: AIReferenceLinkFn,
@@ -210,7 +209,7 @@ export async function decideReferenceLinks(
     try {
       defaultUrl = defaultPageUrl(subject.target, entryLinkUrl)
     } catch {
-      defaultUrl = undefined
+      continue
     }
     let decision: unknown
     try {
