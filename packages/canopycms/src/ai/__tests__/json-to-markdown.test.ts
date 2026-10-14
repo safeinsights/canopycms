@@ -322,6 +322,20 @@ describe('entryToMarkdown', () => {
       expect(md).not.toContain('[Alice Example]')
     })
 
+    it('drops the markdown copy too when the rendering says the target has no page', () => {
+      const md = entryToMarkdown(
+        makeEntry({ fields: [authorField], data: { author: alice } }),
+        undefined,
+        {
+          title: () => 'Alice Example',
+          url: () => false,
+          markdownUrl: () => '/ai/authors/alice.md',
+        },
+      )
+      expect(md).toContain('## Author\n\nAlice Example')
+      expect(md).not.toContain('](')
+    })
+
     it('renders a missing target as its id with a marker, never its title', () => {
       const md = entryToMarkdown(
         makeEntry({

@@ -26,8 +26,11 @@ import type { AIEntry, AIContentConfig } from './types'
 export interface ReferenceRendering {
   /** Display title of a resolved target, used unless the field's `displayField` holds text. */
   title(target: Record<string, unknown>): string
-  /** Where the link points, or undefined to render the title as plain text. */
-  url(target: Record<string, unknown>): string | undefined
+  /**
+   * Where the page link points: undefined renders the title as plain text, and `false` also
+   * drops the markdown copy, for a target the site says has no page.
+   */
+  url(target: Record<string, unknown>): string | false | undefined
   /** URL of the target's own file in this export, linked after the page as its markdown copy. */
   markdownUrl?(target: Record<string, unknown>): string | undefined
 }
@@ -546,6 +549,7 @@ function formatReference(
         : references.title(target),
     ) || id
   const url = references.url(target)
+  if (url === false) return title
   const page = url ? `[${title}](${encodeMarkdownLinkDestination(url)})` : title
   const markdownUrl = references.markdownUrl?.(target)
   return markdownUrl

@@ -223,6 +223,39 @@ export type EntryTransformFn = (
  */
 export type EntryTransforms = Record<string, EntryTransformFn>
 
+/** What {@link AIReferenceLinkFn} knows about a target beyond its data. */
+export interface AIReferenceLinkContext {
+  /**
+   * The target's MD/MDX body as stored, `undefined` for a data-only entry. It only informs this
+   * decision: none of it reaches the entries that link to the target.
+   */
+  body: string | undefined
+  /**
+   * The URL the export links by default: `entryLinkUrl`'s result when the site sets one, else
+   * the target's `urlPath`; `undefined` when neither gives one.
+   */
+  defaultUrl: string | undefined
+}
+
+/**
+ * Where a link to an exported entry points, for every reference to it and every body `entry:`
+ * link to it. Return a URL to link there instead of `context.defaultUrl`, `false` when the target
+ * has no page (the title renders as plain text, with no page or markdown-version link), or
+ * `undefined` to keep the default. Called once per target per run, never for a missing target or
+ * one the exclusions leave out; a throw or any other return is logged and treated as `false`.
+ *
+ * @example
+ * ```ts
+ * // A person has a page only when their bio (the body) has prose
+ * referenceLink: (target, { body }) =>
+ *   target.collection === 'content/people' && !body?.trim() ? false : undefined
+ * ```
+ */
+export type AIReferenceLinkFn = (
+  target: AIResolvedReference,
+  context: AIReferenceLinkContext,
+) => Promise<string | false | undefined> | string | false | undefined
+
 /**
  * Main AI content configuration. Shared by route handler and build utility.
  */
@@ -251,6 +284,8 @@ export interface AIContentConfig {
   bodyTransforms?: BodyTransforms
   /** Per-entry-type transforms that append markdown (e.g. folding in a colocated sibling artifact) */
   entryTransforms?: EntryTransforms
+  /** Override or suppress the page link of a referenced or `entry:`-linked target */
+  referenceLink?: AIReferenceLinkFn
 }
 
 /**
