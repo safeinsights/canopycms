@@ -224,6 +224,23 @@ describe('branch status api', () => {
     )
   })
 
+  it('never writes the conflict record, leaving it for the reviewer', async () => {
+    mockMetadataUpdate.mockClear()
+
+    const res = await submitBranchForMerge(
+      makeCtx(true),
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(mockMetadataUpdate).toHaveBeenCalled()
+    for (const [update] of mockMetadataUpdate.mock.calls) {
+      expect(update.branch).not.toHaveProperty('conflictStatus')
+      expect(update.branch).not.toHaveProperty('conflictFiles')
+    }
+  })
+
   it('sanitizes credentials and absolute paths when the push fails (API-H2)', async () => {
     // The push-failure path logs by design; swallow (and assert) it so the
     // sanitized error doesn't clutter the test reporter.
