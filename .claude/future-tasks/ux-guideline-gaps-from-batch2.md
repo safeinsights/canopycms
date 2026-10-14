@@ -19,8 +19,6 @@ editor into line with one.
 - **Badge case** ([Copy](../../docs/ux-guidelines.md#copy)). Turn off `Badge`'s uppercase in
   `editor/theme.tsx`, then drop `UserBadge`'s local `textTransform: 'none'`.
 - **Disabled reasons.** Give icon-only disabled controls their reason as visually hidden text
-  too; controls that carry text keep the Tooltip alone. `SyncFailedBadge` in
-  `admin/SystemHealthPanel.tsx` carries text and adds hidden text as well: check it against the
-  rule.
+  too; controls that carry text keep the Tooltip alone.
 - **"All content".** The header menu item (`components/EditorHeader.tsx`) and the breadcrumb
   root (`buildBreadcrumbSegments` in `editor-utils.ts`) say "All entries"; the drawer is "Content".

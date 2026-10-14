@@ -22,8 +22,10 @@ red 2.78, orange 2.23), as on the base. Surfaces: `permission-manager/Permission
 (an icon, 3:1), and `components/EditorSidebar.tsx`'s orange Indicator. The guideline now says a
 colour other than the primary is never filled: make each of these a light variant, which the
 theme already makes readable, leaving the filled red and orange Button resolver in `theme.tsx`
-alone. Mantine's `Indicator` has no `variant`, so the sidebar's takes the light variant's colours
-through `styles`: text colour on a tint, as count badges do.
+alone. Mantine's `Indicator` has no `variant`, so the sidebar's takes text colour on an opaque tint
+through `styles` or `--indicator-color`, an orange counterpart of `--canopy-count-bg` (the
+`-light` variable is translucent). It shows while the ActionIcon beneath it is filled, so measure
+its count against both that fill and the rail.
 
 ## White on the primary colour in dark mode
 

@@ -88,8 +88,9 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
   giving the reason as a full sentence with the way forward ("This branch is in review.
   Withdraw it to make changes."). One reason blocking controls with different verbs names the
   blocking condition, not a verb. Mantine's `data-disabled` keeps the Tooltip working, on focus
-  and touch too. The Tooltip alone serves a control that carries text; an icon-only one also has
-  the reason as visually hidden text.
+  and touch too. The Tooltip alone serves a control that carries text. An icon-only one's
+  Tooltip gives the reason, its `aria-label` keeps the name, and the reason is also visually
+  hidden text.
 - No reason is needed for a submit disabled only because its adjacent input is empty, such as
   Reply, or a close button disabled only while its dialog is briefly busy.
 - An action blocked only by unsaved state shows the reason first and still allows drafting;
@@ -181,7 +182,8 @@ never a fixed shade outside the theme (`gray.0`, `dark.7`, `bg="white"`). The th
 included:
 
 - `--mantine-color-dimmed`, the only dimmed colour. Dark dimmed text also differs in size or
-  style: no colour is both 4.5:1 and visibly dimmer than body text.
+  style: on `dark.4`, a hovered menu item, no colour is both 4.5:1 and visibly dimmer than body
+  text.
 - `--mantine-color-placeholder`, at least 4.5:1, and at least 1.7:1 from the text colour so it
   never passes for a value.
 - `--canopy-danger-text`, for all destructive and error text, menu items included: `red.9` in

@@ -19,5 +19,7 @@ unchecked. Done when the copy lint also checks every constant the editor shows f
 [Colour and contrast](../../docs/ux-guidelines.md#colour-and-contrast) rules a 409 conflict
 yellow, since nothing is lost yet; `hooks/useDraftManager.ts` already does. `hooks/useGroupManager.ts`
 and `hooks/usePermissionManager.ts` catch their `expectedContentVersion` 409 into a red toast.
-Check the schema editor's saves too. A 409 that is not an edit conflict (a busy lock, the admin
-branch-health repairs) needs its own look before it changes colour.
+The same catch also receives the 409 for `SettingsFileConflictError` ("Settings are busy"), and
+the response carries no `code`, so the handlers need one to tell the two apart. The schema
+editor's 409s are all `SchemaStoreBusyError`, a busy lock: those, and the admin branch-health
+repairs, are not edit conflicts and need their own look before they change colour.
