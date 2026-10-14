@@ -2434,6 +2434,133 @@ describe('useDraftManager', () => {
       expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft from last session' })
     })
 
+    describe("a submit's stamps", () => {
+      const id = 'abc123def456'
+      const stamp = '2026-10-14T09:00:00.000Z'
+      const stamped = [
+        {
+          contentId: unsafeAsContentId(id),
+          fields: { publishedAt: stamp },
+          previousVersion: 100,
+          version: 150,
+        },
+      ]
+      let tokens: Map<string, number>
+      const stampOptions = () => ({
+        ...versionedOptions,
+        getEntryVersion: (contentId: string) => tokens.get(contentId),
+        adoptEntryVersion: (contentId: string, version: number) => {
+          tokens.set(contentId, version)
+        },
+      })
+
+      beforeEach(() => {
+        tokens = new Map([[id, 100]])
+      })
+
+      const renderWithDraft = async (draft: FormValue) => {
+        const { result } = renderHook(() => useDraftManager(stampOptions()))
+        act(() => {
+          result.current.setLoadedValues({ [id]: { title: 'Loaded', publishedAt: '' } })
+        })
+        act(() => {
+          result.current.setDrafts({ [id]: draft })
+        })
+        expect(readPersistedBaseVersions('main')).toEqual({ [id]: 100 })
+        return result
+      }
+
+      it('fills an empty stamp field in the draft and the loaded value, and the save goes through on the new version', async () => {
+        const result = await renderWithDraft({ title: 'Unsaved edit', publishedAt: '' })
+
+        act(() => {
+          result.current.applySubmitStamps(stamped)
+        })
+
+        expect(result.current.drafts[id]).toEqual({ title: 'Unsaved edit', publishedAt: stamp })
+        expect(result.current.loadedValues[id]).toEqual({ title: 'Loaded', publishedAt: stamp })
+        expect(tokens.get(id)).toBe(150)
+        await waitFor(() => expect(readPersistedBaseVersions('main')).toEqual({ [id]: 150 }))
+        await act(async () => {
+          await result.current.handleSave()
+        })
+        expect(mockSaveEntry).toHaveBeenCalledWith(mockEntry, {
+          title: 'Unsaved edit',
+          publishedAt: stamp,
+        })
+      })
+
+      it('keeps a date the editor typed into the draft', async () => {
+        const typed = '2020-01-01T00:00:00.000Z'
+        const result = await renderWithDraft({ title: 'Unsaved edit', publishedAt: typed })
+
+        act(() => {
+          result.current.applySubmitStamps(stamped)
+        })
+
+        expect(result.current.drafts[id]).toEqual({ title: 'Unsaved edit', publishedAt: typed })
+        await waitFor(() => expect(readPersistedBaseVersions('main')).toEqual({ [id]: 150 }))
+      })
+
+      it('leaves a draft already behind the stamped version to the conflict check', async () => {
+        const result = await renderWithDraft({ title: 'Unsaved edit', publishedAt: '' })
+
+        act(() => {
+          result.current.applySubmitStamps([{ ...stamped[0], previousVersion: 120 }])
+        })
+
+        expect(result.current.drafts[id]).toEqual({ title: 'Unsaved edit', publishedAt: '' })
+        expect(tokens.get(id)).toBe(100)
+        expect(readPersistedBaseVersions('main')).toEqual({ [id]: 100 })
+      })
+
+      it('moves the token but leaves a draft based on an older version to the stale check', async () => {
+        persistV2({ [id]: { title: 'Last session', publishedAt: '' } }, { [id]: 90 })
+        const { result } = renderHook(() => useDraftManager(stampOptions()))
+        await waitFor(() => expect(result.current.drafts[id]).toBeDefined())
+
+        act(() => {
+          result.current.applySubmitStamps(stamped)
+        })
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(tokens.get(id)).toBe(150)
+        expect(result.current.drafts[id]).toEqual({ title: 'Last session', publishedAt: '' })
+        expect(readPersistedBaseVersions('main')).toEqual({ [id]: 90 })
+        expect(mockSaveEntry).not.toHaveBeenCalled()
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({ message: expect.stringMatching(/changed since you opened/) }),
+        )
+      })
+
+      it('moves the draft of an entry not loaded yet, which its later load then matches', async () => {
+        tokens.clear()
+        persistV2({ [id]: { title: 'Last session', publishedAt: '' } }, { [id]: 100 })
+        const { result } = renderHook(() => useDraftManager(stampOptions()))
+        await waitFor(() => expect(result.current.drafts[id]).toBeDefined())
+
+        act(() => {
+          result.current.applySubmitStamps(stamped)
+        })
+
+        expect(tokens.has(id)).toBe(false)
+        expect(result.current.drafts[id]).toEqual({ title: 'Last session', publishedAt: stamp })
+        await waitFor(() => expect(readPersistedBaseVersions('main')).toEqual({ [id]: 150 }))
+        // The entry's first load this session reads the stamped version.
+        tokens.set(id, 150)
+        await act(async () => {
+          await result.current.handleSave()
+        })
+        expect(mockSaveEntry).toHaveBeenCalledWith(mockEntry, {
+          title: 'Last session',
+          publishedAt: stamp,
+        })
+      })
+    })
+
     describe('legacy draft with no recorded base version (pre-v2 storage)', () => {
       /** Pre-v2 storage format: a bare map, no base versions anywhere. */
       const persistLegacyDraft = () => {

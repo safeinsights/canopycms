@@ -51,6 +51,8 @@ import { getBranchMetadataFileManager, recordBranchEditor } from './branch-metad
 import { readBranchMetadataFile } from './branch-metadata-file'
 import { getErrorMessage, redactCredentials } from './utils/error'
 import { withContentWriteLock } from './utils/content-write-lock'
+import { ContentStore } from './content-store'
+import { stampNewEntries, type StampedEntry } from './stamp-on-publish'
 
 /**
  * A per-instance active-branch detector with its own 5s TTL cache, in priority
@@ -145,6 +147,8 @@ export interface SubmitBranchResult {
   changedPaths: string[]
   /** Every recorded editor of the branch, for the PR body. */
   editors: SubmissionEditor[]
+  /** The entries this submit stamped (stamp-on-publish.ts), for the editor's open forms. */
+  stamped: StampedEntry[]
 }
 
 export interface CanopyServices {
@@ -200,8 +204,10 @@ export interface CanopyServices {
     message: string
   }) => Promise<void>
   /**
-   * Submit branch: commit all changes (with the submitter's trailers) and push
-   * to remote. Resolves with every path the branch changes against its base.
+   * Submit branch: fill new entries' empty `stampOnPublish` fields
+   * (stamp-on-publish.ts), commit all changes (with the submitter's trailers)
+   * and push to remote. Resolves with every path the branch changes against its base,
+   * and with `stamped`, the entries this submit stamped.
    * Holds the branch's content-write lock; rejects with
    * `ContentWriteLockBusyError` when busy, and with `NothingToSubmitError`
    * before pushing when the branch changes nothing.
@@ -381,6 +387,37 @@ async function _createCanopyServicesInternal(
     })
   }
 
+  /** Runs inside submitBranch's content-write lock; a stamp that fails never blocks the submit. */
+  const stampNewEntriesOrWarn = async (
+    context: BranchContext,
+    git: GitManager,
+  ): Promise<StampedEntry[]> => {
+    const contentRoot = services.config.contentRoot || 'content'
+    try {
+      const { flatSchema } = await services.branchSchemaCache.getSchema(
+        context.branchRoot,
+        services.entrySchemaRegistry,
+        contentRoot,
+      )
+      return await stampNewEntries({
+        git,
+        store: new ContentStore(context.branchRoot, flatSchema, { contentRootName: contentRoot }),
+        branchRoot: context.branchRoot,
+        flatSchema,
+        contentRoot,
+        stampedAt: new Date().toISOString(),
+        warn: (message) => console.warn(redactCredentials(message)),
+      })
+    } catch (err) {
+      console.warn(
+        `CanopyCMS: Could not finish stamping the new entries on ${context.branch.name}; ` +
+          'submitting with only the stamps already written:',
+        redactCredentials(getErrorMessage(err)),
+      )
+      return []
+    }
+  }
+
   const submitBranch = async (options: {
     context: BranchContext
     submitter?: SubmissionEditor
@@ -421,8 +458,12 @@ async function _createCanopyServicesInternal(
       ]),
     )
     let recorded: RecordedEditors = {}
+    let stamped: StampedEntry[] = []
     const submitted = await withContentWriteLock(options.context.branchRoot, async () => {
       await git.checkoutBranch(options.context.branch.name)
+      // Before the status read, so the stamp joins this commit even when an earlier attempt
+      // already committed the entry and only its push failed.
+      stamped = await stampNewEntriesOrWarn(options.context, git)
       const status = await git.status()
       // A save records its editor only after releasing this lock, so a save that lands just
       // before this submit can be committed here while its editor is named by the next commit.
@@ -497,7 +538,11 @@ async function _createCanopyServicesInternal(
     // Re-read after the lock, so the PR body also names an editor recorded after the read above:
     // one whose save this commit carries, or one whose save will reach the PR with a later push.
     const editorIds = (await readRecorded())?.editors ?? recorded.editors ?? []
-    return { changedPaths: submitted, editors: await describeEditors(editorIds, lookupEditor) }
+    return {
+      changedPaths: submitted,
+      editors: await describeEditors(editorIds, lookupEditor),
+      stamped,
+    }
   }
 
   // Must be initialized before closures that reference it (commitToSettingsBranch)

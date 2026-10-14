@@ -274,6 +274,48 @@ export const ensureNoGroupsInsideComplexFields = (fields: unknown): void => {
 }
 
 /**
+ * Check that `stampOnPublish` sits only on an entry's own top-level `datetime` field (an inline
+ * group's members count, since groups carry no data) that is neither `list: true` nor
+ * `required: true`. The submit that stamps sets one top-level value, and a required field can
+ * never be saved empty, so it would never be stamped. Throws on the first problem.
+ */
+export const ensureStampOnPublishPlacement = (
+  fields: unknown,
+  scopeLabel = 'entry schema',
+): void => {
+  const refuse = (f: Record<string, unknown>, why: string): never => {
+    throw new Error(
+      `${scopeLabel}: field "${(f.name as string) ?? 'unknown'}" has stampOnPublish, ${why}`,
+    )
+  }
+  const check = (scopeFields: unknown, nestedIn: string | undefined): void => {
+    if (!Array.isArray(scopeFields)) return
+    for (const field of scopeFields) {
+      const f = field as Record<string, unknown>
+      if (f?.stampOnPublish !== undefined && typeof f.stampOnPublish !== 'boolean') {
+        refuse(f, 'which must be true or false')
+      }
+      if (f?.stampOnPublish === true) {
+        if (nestedIn) refuse(f, `but it is inside ${nestedIn}; only a top-level field is stamped`)
+        if (f.type !== 'datetime') refuse(f, `but it is type "${String(f.type)}", not "datetime"`)
+        if (f.list === true) refuse(f, 'but it is list: true; only a single date is stamped')
+        if (f.required === true) {
+          refuse(f, 'but it is required: true, so it can never be saved empty to be stamped')
+        }
+      }
+      if (f?.type === 'group') check(f.fields, nestedIn)
+      if (f?.type === 'object') check(f.fields, `object field "${String(f.name)}"`)
+      if (f?.type === 'block' && Array.isArray(f.templates)) {
+        for (const template of f.templates as Array<{ fields?: unknown }>) {
+          check(template.fields, `block field "${String(f.name)}"`)
+        }
+      }
+    }
+  }
+  check(fields, undefined)
+}
+
+/**
  * Check every markdown and mdx field's `mdxAllow` against its schema and its `renderAs`,
  * `mdxAllow` and `executable` against each other. Throws on the first problem.
  */

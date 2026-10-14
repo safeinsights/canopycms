@@ -444,6 +444,64 @@ describe('createEntrySchemaRegistry: markdown field options', () => {
   })
 })
 
+describe('createEntrySchemaRegistry: stampOnPublish', () => {
+  const stamp = (field: Record<string, unknown>): EntrySchema[number] =>
+    ({
+      name: 'publishedAt',
+      type: 'datetime',
+      stampOnPublish: true,
+      ...field,
+    }) as EntrySchema[number]
+  const register = (schema: EntrySchema) => () => createEntrySchemaRegistry({ post: schema })
+  const where = 'Entry schema registry entry "post": field "publishedAt" has stampOnPublish'
+
+  it('accepts it on a top-level optional datetime, and on one in an inline group', () => {
+    expect(register([{ name: 'title', type: 'string' }, stamp({})])).not.toThrow()
+    expect(register([{ name: 'meta', type: 'group', fields: [stamp({})] }])).not.toThrow()
+    expect(register([stamp({ stampOnPublish: false, type: 'string' })])).not.toThrow()
+  })
+
+  it('refuses it on a type other than datetime, built-in or custom', () => {
+    expect(register([stamp({ type: 'string' })])).toThrow(
+      `${where}, but it is type "string", not "datetime"`,
+    )
+    expect(register([stamp({ type: 'select', options: ['a'] })])).toThrow(
+      `${where}, but it is type "select", not "datetime"`,
+    )
+    expect(register([stamp({ type: 'publishDate' })])).toThrow(
+      `${where}, but it is type "publishDate", not "datetime"`,
+    )
+  })
+
+  it('refuses it on a list', () => {
+    expect(register([stamp({ list: true })])).toThrow(`${where}, but it is list: true`)
+  })
+
+  it('refuses it on a required field, which can never be saved empty', () => {
+    expect(register([stamp({ required: true })])).toThrow(
+      `${where}, but it is required: true, so it can never be saved empty to be stamped`,
+    )
+    expect(register([stamp({ required: false })])).not.toThrow()
+  })
+
+  it('refuses it inside an object or a block', () => {
+    expect(register([{ name: 'meta', type: 'object', fields: [stamp({})] }])).toThrow(
+      `${where}, but it is inside object field "meta"; only a top-level field is stamped`,
+    )
+    expect(
+      register([
+        { name: 'blocks', type: 'block', templates: [{ name: 'hero', fields: [stamp({})] }] },
+      ]),
+    ).toThrow(`${where}, but it is inside block field "blocks"`)
+  })
+
+  it('refuses a value that is not a boolean', () => {
+    expect(register([stamp({ stampOnPublish: 'yes' })])).toThrow(
+      `${where}, which must be true or false`,
+    )
+  })
+})
+
 describe('validateEntrySchemaRegistry', () => {
   const testDir = join(process.cwd(), '.test-content-validate')
 

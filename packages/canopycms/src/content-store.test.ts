@@ -10,6 +10,7 @@ import { ContentIdIndex } from './content-id-index'
 import {
   bumpContentIndexGeneration,
   invalidateContentIndexesDurable,
+  readContentIndexGeneration,
 } from './content-index-generation'
 import { invalidateContentIndexesForRoot } from './content-index-registry'
 import {
@@ -22,7 +23,8 @@ import {
   EntryGoneError,
   UrlPathConflictError,
 } from './content-store'
-import { tryAcquireContentWriteLock } from './utils/content-write-lock'
+import { tryAcquireContentWriteLock, withContentWriteLock } from './utils/content-write-lock'
+import type { PhysicalPath } from './paths/types'
 import { getErrorMessage } from './utils/error'
 import { generateId } from './id'
 import { unsafeAsContentId, unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
@@ -4351,5 +4353,97 @@ describe('ContentStore read of a block or object value that is null or an array'
     ])
     expect(saved.data.meta).toEqual(['a'])
     expect(saved.data.items).toEqual([['x']])
+  })
+})
+
+describe('ContentStore.fillEmptyFieldWhileHoldingWriteLock', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+      },
+    ],
+  }
+  const value = '2026-10-13T12:00:00.000Z'
+
+  async function setUp(text: string, ext = 'json') {
+    const root = await tmpDir()
+    const file = `content/posts/post.one.${generateId()}.${ext}` as PhysicalPath
+    await fs.mkdir(path.join(root, 'content/posts'), { recursive: true })
+    await fs.writeFile(path.join(root, file), text, 'utf8')
+    const store = new ContentStore(root, flattenSchema(schema, 'content'), {
+      contentRootName: 'content',
+    })
+    const fill = (target: PhysicalPath = file, format: 'json' | 'yaml' | 'md' = 'json') =>
+      withContentWriteLock(root, () =>
+        store.fillEmptyFieldWhileHoldingWriteLock(target, format, 'publishedAt', value),
+      )
+    const onDisk = () => fs.readFile(path.join(root, file), 'utf8')
+    return { root, file, store, fill, onDisk }
+  }
+
+  it('writes inside a lock its caller holds, reporting the versions a read gives before and after', async () => {
+    const { root, store, fill, onDisk } = await setUp('{ "publishedAt": "" }\n')
+    const read = () => store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('one'))
+    const before = await read()
+    const generation = await readContentIndexGeneration(root)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    const versions = await fill()
+
+    expect(await onDisk()).toBe(`{ "publishedAt": "${value}" }\n`)
+    expect(versions).toEqual({ previousVersion: before.version, version: (await read()).version })
+    expect(versions?.version).not.toBe(versions?.previousVersion)
+    expect(await readContentIndexGeneration(root)).not.toBe(generation)
+  })
+
+  it('refuses a call outside the content-write lock, writing nothing', async () => {
+    const text = '{ "publishedAt": "" }\n'
+    const { file, store, onDisk } = await setUp(text)
+
+    await expect(
+      store.fillEmptyFieldWhileHoldingWriteLock(file, 'json', 'publishedAt', value),
+    ).rejects.toThrow('content-write lock')
+    expect(await onDisk()).toBe(text)
+  })
+
+  it('leaves a non-empty value, and the file, alone', async () => {
+    const text = '{ "publishedAt": "2020-01-01" }\n'
+    const { fill, onDisk } = await setUp(text)
+
+    expect(await fill()).toBeUndefined()
+    expect(await onDisk()).toBe(text)
+  })
+
+  it.each(['[1, 2, 3]\n', 'null\n', '"text"\n'])(
+    'refuses a JSON file whose top level is not an object (%j), leaving it alone',
+    async (text) => {
+      const { fill, onDisk } = await setUp(text)
+
+      await expect(fill()).rejects.toThrow('does not hold an object')
+      expect(await onDisk()).toBe(text)
+    },
+  )
+
+  it('refuses a YAML list or a frontmatter list, and fills an empty YAML file', async () => {
+    const list = await setUp('- a\n- b\n', 'yaml')
+    await expect(list.fill(list.file, 'yaml')).rejects.toThrow('does not hold an object')
+    expect(await list.onDisk()).toBe('- a\n- b\n')
+
+    const md = await setUp('---\n- a\n---\nBody\n', 'md')
+    await expect(md.fill(md.file, 'md')).rejects.toThrow('does not hold an object')
+    expect(await md.onDisk()).toBe('---\n- a\n---\nBody\n')
+
+    const empty = await setUp('', 'yaml')
+    await empty.fill(empty.file, 'yaml')
+    expect(await empty.onDisk()).toBe(`publishedAt: ${value}\n`)
+  })
+
+  it('refuses a path outside its root', async () => {
+    const { fill } = await setUp('{}\n')
+
+    await expect(fill('../outside.json' as PhysicalPath)).rejects.toThrow(ContentStoreError)
   })
 })
