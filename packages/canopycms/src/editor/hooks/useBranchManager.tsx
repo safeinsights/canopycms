@@ -50,6 +50,11 @@ export const branchActionOutcomeUnknown = (action: string) =>
  * handler would settle the caller's promise before the confirmed work had
  * even run. Claiming the first exit resolves both.
  */
+const submittedMessage = (stampedCount: number): string =>
+  stampedCount === 0
+    ? 'Branch submitted for review'
+    : `Branch submitted for review. Dates set on ${stampedCount} new ${stampedCount === 1 ? 'entry' : 'entries'}.`
+
 const confirmModalHandlers = (onConfirm: () => Promise<void>, onDismiss: () => void) => {
   let settled = false
   const claim = (): boolean => {
@@ -640,7 +645,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 options.onStamped?.(stamped)
               }
               notifications.show({
-                message: 'Branch submitted for review',
+                message: submittedMessage(stamped?.length ?? 0),
                 color: 'green',
               })
               updateCreatedBranch(branchNameToSubmit, result.data?.branch)

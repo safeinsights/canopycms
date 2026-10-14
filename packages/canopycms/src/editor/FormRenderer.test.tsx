@@ -24,6 +24,9 @@ import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/tes
 // same reason.
 import '@mdxeditor/editor'
 
+const STAMP_NOTE =
+  "If left empty on a new entry, it's set to the time its branch is first submitted for review."
+
 // ImageField (the 'image' field case) reads the API client via context DI -
 // mock the factory module so createApiClientWrapper's ApiClientProvider and
 // useUserContext's internal createApiClient() calls agree on one instance.
@@ -727,9 +730,7 @@ describe('FormRenderer', () => {
           <FormRenderer fields={fields} value={{}} onChange={() => {}} />
         </CanopyCMSProvider>,
       )
-      expect(screen.getByLabelText('Published At').textContent).toBe(
-        'Set automatically when a new entry is submitted',
-      )
+      expect(screen.getByText(STAMP_NOTE, { exact: false })).toBeTruthy()
     })
 
     it('updates form state when a date and time are picked, and the value survives a save round-trip', async () => {

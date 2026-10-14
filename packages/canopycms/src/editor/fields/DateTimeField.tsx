@@ -16,7 +16,7 @@ export interface DateTimeFieldProps {
   dataCanopyField?: string
   /** Shows the value without accepting edits. */
   readOnly?: boolean
-  /** The field's `stampOnPublish`: while empty, it says a new entry's submit fills it. */
+  /** The field's `stampOnPublish`: the description says when a submit fills it. */
   stampOnPublish?: boolean
 }
 
@@ -91,6 +91,10 @@ const zoneName = (at: Date): string | undefined =>
  * Only a pick or Remove writes, so a loaded value, date-only or unparsable, saves back unchanged.
  * A pick keeps seconds (`withSeconds`).
  */
+/** Conditional: the editor cannot tell whether an entry is new to the base, and only a new one is stamped. */
+const STAMP_NOTE =
+  "If left empty on a new entry, it's set to the time its branch is first submitted for review."
+
 export const DateTimeField: React.FC<DateTimeFieldProps> = ({
   id,
   label,
@@ -107,6 +111,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
   const date = toDate(value)
   const zone = zoneName(date ?? new Date())
   const zoneNote = zone ? `In your time zone (${zone}).` : undefined
+  const stampNote = stampOnPublish ? STAMP_NOTE : undefined
   const format = valueFormat()
 
   return (
@@ -116,7 +121,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
         id={inputId}
         // The label alone would name the trigger; a screen reader also needs the value.
         aria-label={`${label ?? 'Date and time'}, ${date ? dayjs(date).format(format) : 'not set'}`}
-        description={[description, zoneNote].filter(Boolean).join(' ') || undefined}
+        description={[description, stampNote, zoneNote].filter(Boolean).join(' ') || undefined}
         size="sm"
         value={date}
         onChange={(next) => {
@@ -124,13 +129,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
         }}
         withSeconds
         valueFormat={format}
-        placeholder={
-          readOnly
-            ? undefined
-            : stampOnPublish
-              ? 'Set automatically when a new entry is submitted'
-              : 'Pick a date and time'
-        }
+        placeholder={readOnly ? undefined : 'Pick a date and time'}
         ariaLabels={CALENDAR_LABELS}
         timeInputProps={{ 'aria-label': 'Time' }}
         submitButtonProps={{ 'aria-label': 'Done' }}

@@ -1052,6 +1052,22 @@ describe('useBranchManager', () => {
         expect(onStamped).toHaveBeenCalledWith(stamped)
       })
 
+      it('says how many new entries the submit dated', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        answer()
+        const { result } = await loaded(editingFeature, { initialBranch: 'feature' })
+
+        await act(async () => {
+          await result.current.handleSubmit('feature')
+        })
+
+        expect(notifications.show).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'Branch submitted for review. Dates set on 1 new entry.',
+          }),
+        )
+      })
+
       it("hands over nothing from another branch's submit", async () => {
         answer()
         const onStamped = vi.fn()
