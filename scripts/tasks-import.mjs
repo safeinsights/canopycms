@@ -38,7 +38,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadPrivateTerms, screenText } from './tasks-privacy-screen.mjs'
+import { collectRuntimeTerms, screenText } from './tasks-privacy-screen.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const TASKS_DIR = path.join(ROOT, '.claude', 'future-tasks')
@@ -139,7 +139,11 @@ export function neutralizeMentions(line) {
   return line
     .split(/(`+[^`]*`+)/)
     .map((part, i) =>
-      i % 2 === 1 ? part : part.replace(/(^|[^\w`/.-])@([A-Za-z][\w-]*(?:\/[\w.-]+)?)/g, '$1`@$2`'),
+      i % 2 === 1
+        ? part
+        : // The optional `/…` tail starts with a character the name class excludes: linear.
+          // eslint-disable-next-line security/detect-unsafe-regex
+          part.replace(/(^|[^\w`/.-])@([A-Za-z][\w-]*(?:\/[\w.-]+)?)/g, '$1`@$2`'),
     )
     .join('')
 }
@@ -218,7 +222,7 @@ export function migratedFiles() {
 export function refusals(issue, privateTerms) {
   const out = []
   const text = `${issue.title}\n${issue.labels.join('\n')}\n${issue.body}`
-  for (const f of screenText(text, privateTerms))
+  for (const f of screenText(text, privateTerms).filter((x) => !x.review))
     out.push(`${f.kind} at rendered line ${f.line}: ${f.match}`)
   if (issue.body.length > MAX_BODY)
     out.push(`body is ${issue.body.length} characters (limit ${MAX_BODY})`)
@@ -327,7 +331,7 @@ async function main() {
   const ctx = { repo: opts.repo, ref, numbers, migrated }
 
   // Screened up front, all of it: a run that would refuse one body creates none.
-  const terms = loadPrivateTerms({ required: !opts.dryRun })
+  const terms = collectRuntimeTerms({ repo: opts.repo, requireGh: !opts.dryRun })
   const rendered = files.map((f) => render(f, ctx))
   const refused = rendered
     .map((r) => ({ file: r.file, why: refusals(r, terms) }))
@@ -341,6 +345,12 @@ async function main() {
         `<!-- title: ${r.title} -->\n<!-- labels: ${r.labels.join(', ')} -->\n\n${r.body}`,
       )
     }
+    const reviews = rendered.flatMap((r) =>
+      screenText(`${r.title}\n${r.labels.join('\n')}\n${r.body}`, terms, { show: true })
+        .filter((f) => f.review)
+        .map((f) => `${r.file}:${f.line}  ${f.match}`),
+    )
+    writeFileSync(path.join(opts.dryRun, 'REVIEW.txt'), `${reviews.join('\n')}\n`)
     writeFileSync(
       path.join(opts.dryRun, 'REFUSED.txt'),
       refused.map((r) => `${r.file}\n${r.why.map((w) => `  ${w}`).join('\n')}`).join('\n'),
@@ -353,7 +363,7 @@ async function main() {
     console.log(`  by priority: ${JSON.stringify(byPriority)}`)
     console.log(`  excluded: ${Object.keys(EXCLUDED).length} file(s)`)
     console.log(`  refused by the screen: ${refused.length} (see REFUSED.txt)`)
-    if (terms.length === 0) console.log('  WARNING: no private terms loaded; generic patterns only')
+    console.log(`  flagged for review: ${reviews.length} (see REVIEW.txt)`)
     process.exit(refused.length > 0 ? 1 : 0)
   }
 
