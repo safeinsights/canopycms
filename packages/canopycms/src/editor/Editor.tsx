@@ -298,7 +298,6 @@ const EditorContent: React.FC<EditorProps> = ({
   const [quickOpenOpen, setQuickOpenOpen] = useState(false)
   const [quickOpenFromDrawer, setQuickOpenFromDrawer] = useState(false)
   const navigatorToggleRef = useRef<HTMLButtonElement>(null)
-  const contentToggleRef = useRef<HTMLButtonElement>(null)
   const mediaButtonRef = useRef<HTMLButtonElement>(null)
   const branchToggleRef = useRef<HTMLButtonElement>(null)
   const settingsToggleRef = useRef<HTMLButtonElement>(null)
@@ -592,6 +591,8 @@ const EditorContent: React.FC<EditorProps> = ({
       setBranchManagerOpen(open)
     },
     onCommentsChange: setCommentsForBranchSummaries,
+    // Only the overlay hides the form, and `navigatorOpen` is only the overlay's.
+    onRevealForm: () => setNavigatorOpen(false),
   })
 
   const {
@@ -1823,7 +1824,6 @@ const EditorContent: React.FC<EditorProps> = ({
               onContentToggle={() =>
                 contentPanelShown ? setContentPanelShown(false) : openNavigator()
               }
-              contentToggleRef={contentToggleRef}
               onQuickOpen={openQuickOpen}
               quickOpenShortcut={quickOpenShortcut}
               quickOpenKeys={quickOpenKeys}

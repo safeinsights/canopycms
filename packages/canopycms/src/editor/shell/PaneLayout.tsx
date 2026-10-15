@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useLayoutEffect, useRef } from 'react'
 import { Box } from '@mantine/core'
 import { Group, Panel, Separator, useGroupRef, type Layout } from 'react-resizable-panels'
 
@@ -79,8 +79,9 @@ export function PaneLayout({
     }
   }, [groupRef, percent, arrangement])
 
-  // React 18 drops an `inert` prop, so it is set on the DOM.
-  useEffect(() => {
+  // React 18 drops an `inert` prop, so it is set on the DOM. A layout effect, so it changes before
+  // any passive effect of the same commit tries to focus into the form or out of the overlay.
+  useLayoutEffect(() => {
     formRef.current?.toggleAttribute('inert', formInert)
   }, [formInert])
 

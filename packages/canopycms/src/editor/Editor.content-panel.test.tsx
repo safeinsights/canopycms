@@ -15,6 +15,9 @@ import { ApiClientProvider } from './context'
 import { editorLayoutStorageKey } from './hooks/useEditorLayout'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 
+// The preview's focus message and the tree scroll fields into view; jsdom has no scrollIntoView.
+Object.defineProperty(Element.prototype, 'scrollIntoView', { value: () => {}, configurable: true })
+
 const originalMatchMedia = window.matchMedia
 
 afterEach(() => {
@@ -347,6 +350,53 @@ describe('content panel', () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByTestId('file-dropdown-button')),
     )
+  })
+
+  it('uncovers the form when the preview asks to focus one of its fields', async () => {
+    storeLayout({ layout: 'stacked' })
+    await setup(true)
+    const formPane = screen.getByTestId('form-pane')
+    expect(formPane.hasAttribute('inert')).toBe(true)
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'canopycms:preview:focus', fieldPath: 'title' },
+          origin: window.location.origin,
+        }),
+      )
+    })
+
+    await waitFor(() => expect(panel()).toBeNull())
+    expect(formPane.hasAttribute('inert')).toBe(false)
+  })
+
+  it('leaves Mod+Alt+M to a form the overlay covers', async () => {
+    storeLayout({ layout: 'stacked' })
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await screen.findByTestId('form-comments-menu-button')
+    const shortcut = () =>
+      fireEvent.keyDown(document.activeElement ?? document.body, {
+        key: 'm',
+        code: 'KeyM',
+        ctrlKey: true,
+        metaKey: true,
+        altKey: true,
+      })
+
+    act(() => toggle().focus())
+    fireEvent.click(toggle())
+    await loaded()
+    shortcut()
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(screen.queryByTestId('form-comments-menu')).toBeNull()
+
+    escapeFromPanel()
+    await waitFor(() => expect(panel()).toBeNull())
+    shortcut()
+    expect(await screen.findByTestId('form-comments-menu')).toBeDefined()
   })
 
   it('does not restore an overlay open on load', async () => {

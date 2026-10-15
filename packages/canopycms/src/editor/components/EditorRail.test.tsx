@@ -110,7 +110,10 @@ describe('EditorRail - buttons', () => {
 
   it('fills the button of an open panel, so its state is not a tint alone', () => {
     renderRail({ contentPanelOpen: true })
-    expect(screen.getByTestId('content-panel-toggle').getAttribute('data-variant')).toBe('filled')
+    const toggle = screen.getByTestId('content-panel-toggle')
+    expect(toggle.getAttribute('data-variant')).toBe('filled')
+    // The theme's measured fill for white on the primary colour, not Mantine's.
+    expect(toggle.style.getPropertyValue('--ai-bg')).toBe('var(--canopy-primary-fill)')
     expect(screen.getByTestId('rail-branches-button').getAttribute('data-variant')).toBe('subtle')
   })
 })

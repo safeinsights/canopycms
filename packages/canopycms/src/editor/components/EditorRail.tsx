@@ -31,7 +31,6 @@ export interface EditorRailProps {
   /** The content panel's element id, for `aria-controls`. */
   contentPanelId: string
   onContentToggle: () => void
-  contentToggleRef?: Ref<HTMLButtonElement>
   onQuickOpen: () => void
   /** The quick open shortcut as the platform writes it, such as "⌘P". */
   quickOpenShortcut: string
@@ -109,7 +108,6 @@ export function EditorRail({
   contentPanelOpen,
   contentPanelId,
   onContentToggle,
-  contentToggleRef,
   onQuickOpen,
   quickOpenShortcut,
   quickOpenKeys,
@@ -208,7 +206,6 @@ export function EditorRail({
             aria-expanded={contentPanelOpen}
             aria-controls={contentPanelOpen ? contentPanelId : undefined}
             data-testid="content-panel-toggle"
-            ref={contentToggleRef}
             onClick={onContentToggle}
           />
           <RailButton
