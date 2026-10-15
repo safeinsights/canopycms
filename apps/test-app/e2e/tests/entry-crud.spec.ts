@@ -103,14 +103,18 @@ test.describe('Entry CRUD Operations', () => {
     await test.step('reload and verify renamed entry persists', async () => {
       await page.reload()
       await editorPage.waitForReady()
+      // The renamed entry stays open across the reload, so the navigator opens expanded to it.
+      await expect(editorPage.currentEntryLabel()).toContainText('Post', {
+        timeout: STANDARD_TIMEOUT,
+      })
       await editorPage.openContentNavigator()
-
-      // Expand the Posts collection (collapsed after reload)
       await editorPage.navigatorItem('Posts').waitFor({
         state: 'visible',
         timeout: STANDARD_TIMEOUT,
       })
-      await editorPage.toggleCollection('Posts')
+      if (!(await editorPage.isCollectionExpanded('Posts'))) {
+        await editorPage.toggleCollection('Posts')
+      }
 
       // Label stays "Post" (rename only changes the slug, not the title)
       await expect(editorPage.navigatorItem('Post')).toBeVisible({ timeout: STANDARD_TIMEOUT })
@@ -157,6 +161,41 @@ test.describe('Entry CRUD Operations', () => {
       await editorPage.toggleCollection('Posts')
 
       await expect(editorPage.navigatorItem('Post')).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+    })
+  })
+
+  test("rename and delete the open entry from the top bar's entry menu", async () => {
+    await test.step('open editor and create a post (setup)', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.openContentNavigator()
+      await editorPage.createEntry('Posts', 'post-from-top-bar', 'Post')
+      await expect(editorPage.currentEntryLabel()).toContainText('Post', {
+        timeout: STANDARD_TIMEOUT,
+      })
+    })
+
+    await test.step('rename it from the entry menu', async () => {
+      await editorPage.renameOpenEntry('renamed-from-top-bar')
+      await expect(editorPage.currentEntryLabel()).toContainText('Post')
+      await expect
+        .poll(() => findContentFile('posts.qrstuvwxyz12/post.renamed-from-top-bar.'), {
+          timeout: STANDARD_TIMEOUT,
+        })
+        .toBeTruthy()
+    })
+
+    await test.step('delete it from the entry menu and confirm', async () => {
+      const modal = await editorPage.startDeleteOpenEntry()
+      await expect(modal).toContainText('Delete "Post"?')
+      await editorPage.deleteConfirmButton().click()
+      await expect(modal).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.currentEntryLabel()).toHaveText('No entry open')
+      await expect
+        .poll(() => findContentFile('posts.qrstuvwxyz12/post.renamed-from-top-bar.'), {
+          timeout: STANDARD_TIMEOUT,
+        })
+        .toBeNull()
     })
   })
 

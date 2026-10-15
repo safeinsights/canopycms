@@ -84,6 +84,8 @@ export const PreviewFrame = ({
   onPreviewError,
   onMarks,
   assetBase,
+  iframeStyle,
+  onReload,
 }: {
   src: string
   path: string
@@ -104,6 +106,10 @@ export const PreviewFrame = ({
    * distinct paths when the preview sends them within `MARK_REPORT_LIMITS`.
    */
   onMarks?: (marks: PreviewMarks) => void
+  /** Overrides the iframe's own layout, such as a fixed width and scale; the bar and chip stay unscaled. */
+  iframeStyle?: CSSProperties
+  /** Replaces the chip's Retry, for a host whose own reload control remounts the frame. */
+  onReload?: () => void
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Pin the preview origin from the src prop: outbound messages target it (never '*'),
@@ -292,7 +298,7 @@ export const PreviewFrame = ({
             <span style={visuallyHidden}>{LIVE_UPDATES_OFF_HELP}</span>
             <button
               type="button"
-              onClick={retry}
+              onClick={onReload ?? retry}
               title="Reload the preview"
               style={{
                 border: 'none',
@@ -322,6 +328,7 @@ export const PreviewFrame = ({
           width: '100%',
           height: '100%',
           border: 'none',
+          ...iframeStyle,
         }}
         onLoad={() => {
           post()

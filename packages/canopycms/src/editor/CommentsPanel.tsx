@@ -125,8 +125,8 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   const close = () => {
     if (!holdOpen()) onClose()
   }
-  // A jump hands focus to its target, the field's or entry's comment popover, so the drawer
-  // returns none: its return would land after the popover took focus.
+  // A jump hands focus to its target (the field's or entry's comment popover, or the branches
+  // drawer), so the drawer returns none: its return would land after the target took focus.
   const [jumping, setJumping] = useState(false)
   if (opened && jumping) setJumping(false)
   const jump = (go: () => void) => {
@@ -304,10 +304,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                       {thread.type === 'branch' && onJumpToBranch && (
                         <JumpButton
                           blocked={inFlight > 0}
-                          onClick={() => {
-                            onJumpToBranch(thread.id)
-                            onClose()
-                          }}
+                          onClick={() => jump(() => onJumpToBranch(thread.id))}
                         >
                           Open branch discussion
                         </JumpButton>

@@ -26,6 +26,9 @@ export interface UseCommentSystemOptions {
 
   setBranchManagerOpen: (open: boolean) => void
 
+  /** Uncovers the form before anything here focuses one of its fields. */
+  onRevealForm?: () => void
+
   onCommentsChange?: (comments: CommentThread[]) => void
 }
 
@@ -255,6 +258,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
           target.style.boxShadow = previous
         }, 1200)
 
+        options.onRevealForm?.()
         // Cleared shortly after, once FieldWrapper has seen it and scrolled to the field.
         setFocusedFieldPath(found.path)
         later(() => setFocusedFieldPath(undefined), 100)
@@ -282,6 +286,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
         if (target) {
           whenRevealed(target, () => target.scrollIntoView({ behavior: 'smooth', block: 'center' }))
         }
+        options.onRevealForm?.()
         setFocusedFieldPath(canopyPath)
         setHighlightThreadId(threadId)
         window.setTimeout(() => {
@@ -305,6 +310,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
         if (formElement) {
           formElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
         }
+        options.onRevealForm?.()
         setHighlightThreadId(threadId)
         window.setTimeout(() => {
           setHighlightThreadId(undefined)

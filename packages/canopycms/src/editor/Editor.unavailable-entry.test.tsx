@@ -275,9 +275,7 @@ const renderEditor = (initialSelectedId: string) =>
   )
 
 const openNavigator = async () => {
-  fireEvent.click(screen.getByTestId('file-dropdown-button'))
-  await waitFor(() => expect(screen.getByTestId('all-files-menu-item')).toBeDefined())
-  fireEvent.click(screen.getByTestId('all-files-menu-item'))
+  fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
   await waitFor(() => expect(screen.getByTestId('entry-nav-item-widgets')).toBeDefined())
 }
 
@@ -358,8 +356,7 @@ describe('Editor: an entry of an unavailable type', () => {
     fireEvent.click(screen.getByTestId('entry-nav-item-posts'))
     fireEvent.click(await screen.findByTestId('entry-nav-item-hello'))
     await waitFor(() => expect(screen.queryByTestId('unavailable-entry-notice')).toBeNull())
-    fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    fireEvent.click(await screen.findByTestId('all-files-menu-item'))
+    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
     fireEvent.click(await screen.findByTestId('entry-nav-item-first'))
     await screen.findByTestId('unavailable-entry-notice')
 
@@ -399,8 +396,7 @@ describe('Editor: an entry of an unavailable type', () => {
     })
 
     widgetResponse = () => okJson({ ok: true, status: 200, data: { size: 'large', version: 1 } })
-    fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    fireEvent.click(await screen.findByTestId('all-files-menu-item'))
+    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
     fireEvent.click(await screen.findByTestId('entry-nav-item-first'))
 
     await waitFor(() => {
@@ -423,7 +419,7 @@ describe('Editor: an entry of an unavailable type', () => {
 
     widgetResponse = () => okJson({ ok: true, status: 200, data: { size: 'large', version: 1 } })
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    fireEvent.click(await screen.findByText('Reload entry'))
+    fireEvent.click(await screen.findByText('Refresh from server'))
 
     await waitFor(() => {
       const el = screen.queryByRole('textbox', {

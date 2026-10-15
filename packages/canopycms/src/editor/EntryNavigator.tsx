@@ -130,9 +130,28 @@ export interface EntryNavigatorProps {
   readOnly?: boolean
   /** Entry paths with unsaved changes; each shows a dot, and so does every collection holding one. */
   dirtyPaths?: ReadonlySet<string>
+  /**
+   * A collection to bring into view: any filter clears, its ancestors and itself expand, and its
+   * row takes focus. `seq` makes a repeat ask for the same collection a new one.
+   */
+  revealCollection?: { path: string; seq: number }
+  /** The reveal is done, or its collection is not in the tree. */
+  onRevealed?: () => void
 }
 
 const lastSegment = (path: string): string => path.split('/').filter(Boolean).pop() ?? path
+
+/** A collection's node value; a single-entry collection's node is its entry. */
+const collectionNodeValue = (nodes: TreeNodeData[], path: string): string | undefined => {
+  for (const node of nodes) {
+    if (node.value === `collection:${path}` || node.nodeProps?.collectionPath === path) {
+      return node.value
+    }
+    const inner = node.children && collectionNodeValue(node.children, path)
+    if (inner) return inner
+  }
+  return undefined
+}
 
 /** The collection values below `nodes` that have children, as an all-expanded state. */
 const expandedStateFor = (nodes: TreeNodeData[], acc: Record<string, boolean> = {}) => {
@@ -286,6 +305,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   loading,
   readOnly = false,
   dirtyPaths,
+  revealCollection,
+  onRevealed,
 }) => {
   // Shadow the entry-mutation callbacks with undefined when readOnly, so every
   // downstream reference (hasEntryMenu, canReorder, the menu items themselves)
@@ -344,6 +365,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               status: entry?.status,
               isEntry: true,
               entryPath: entry?.path,
+              collectionPath: col.path,
               slug: entry ? (entry.slug ?? lastSegment(entry.path)) : undefined,
               itemReadOnly: entry?.readOnly,
             },
@@ -598,6 +620,44 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   useEffect(() => {
     hasScrolledRef.current = false
   }, [])
+
+  const treeBoxRef = useRef<HTMLDivElement>(null)
+  const servedRevealRef = useRef<number>()
+  // Runs again as the filter clears and the expansion lands, then focuses the row a frame later.
+  useEffect(() => {
+    if (!revealCollection || !treeData || servedRevealRef.current === revealCollection.seq) return
+    const served = () => {
+      servedRevealRef.current = revealCollection.seq
+      onRevealed?.()
+    }
+    if (query) {
+      setQuery('')
+      return
+    }
+    const value = collectionNodeValue(treeData, revealCollection.path)
+    if (!value) {
+      served()
+      return
+    }
+    const wanted = { ...calculatePathToEntry(value, treeData), [value]: true }
+    if (Object.keys(wanted).some((key) => !tree.expandedState[key])) {
+      const next = { ...tree.expandedState, ...wanted }
+      tree.setExpandedState(next)
+      localExpandedStateRef.current = next
+      onExpandedStateChange?.(next)
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      const row = Array.from(
+        treeBoxRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [],
+      ).find((item) => item.dataset.value === value)
+      row?.scrollIntoView({ block: 'nearest' })
+      row?.focus()
+      served()
+    })
+    return () => cancelAnimationFrame(frame)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `tree` and the callbacks are fresh each render
+  }, [revealCollection, treeData, query, tree.expandedState])
 
   const clearFilter = () => {
     setQuery('')
@@ -987,7 +1047,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           rightSection={
             query ? <CloseButton size="sm" aria-label="Clear filter" onClick={clearFilter} /> : null
           }
-          // Mantine closes the drawer on Escape from a window listener that reads this attribute.
+          // Mantine's drawers and modals ignore an Escape from an element with this attribute.
           data-mantine-stop-propagation={query ? 'true' : undefined}
           data-testid="entry-nav-filter"
         />
@@ -1026,7 +1086,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             </Button>
           </Stack>
         ) : (
-          <Box py="sm">
+          <Box py="sm" ref={treeBoxRef}>
             <Tree
               data={filteredTree}
               tree={tree}

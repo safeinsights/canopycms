@@ -21,7 +21,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
-import { Alert, Button, Center, Loader, Modal, Paper, Stack, Text, Title } from '@mantine/core'
+import { Alert, Box, Button, Center, Loader, Modal, Paper, Stack, Text, Title } from '@mantine/core'
 import { useSWRConfig } from 'swr'
 
 import type { EditorSignInProps } from '../config'
@@ -36,6 +36,7 @@ import {
 } from './context/ApiClientContext'
 import { EditorIdentityContext, type EditorIdentity } from './context/EditorIdentityContext'
 import { SWRProvider } from './context/SWRProvider'
+import { EditorShell } from './shell/EditorShell'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
 
 type GatePhase = 'checking' | 'signed-in' | 'signed-out' | 'error'
@@ -201,15 +202,13 @@ export function EditorAuthGate({
     if (modeMismatchNotice) {
       return (
         <CanopyCMSProvider {...themeOptions} withNotifications={false}>
-          <Center mih="100vh" p="md">
-            {modeMismatchNotice}
-          </Center>
+          <GateScreen>{modeMismatchNotice}</GateScreen>
         </CanopyCMSProvider>
       )
     }
     return (
       <CanopyCMSProvider {...themeOptions} withNotifications={false}>
-        <Center mih="100vh" p="md">
+        <GateScreen>
           {state.phase === 'signed-out' ? (
             <Stack align="center" gap="md" data-testid="canopy-sign-in-screen">
               {signIn}
@@ -228,7 +227,7 @@ export function EditorAuthGate({
               </Text>
             </Stack>
           )}
-        </Center>
+        </GateScreen>
       </CanopyCMSProvider>
     )
   }
@@ -278,6 +277,26 @@ export function EditorAuthGate({
         </CanopyCMSProvider>
       )}
     </EditorIdentityContext.Provider>
+  )
+}
+
+/** A screen shown in the editor's place, scrolling when it is taller than the window. */
+function GateScreen({ children }: { children: React.ReactNode }) {
+  return (
+    <EditorShell
+      main={
+        <Box h="100%" style={{ overflowY: 'auto' }}>
+          {/* Safe, so a screen wider or taller than the window keeps its start edge reachable. */}
+          <Center
+            mih="100%"
+            p="md"
+            style={{ justifyContent: 'safe center', alignItems: 'safe center' }}
+          >
+            {children}
+          </Center>
+        </Box>
+      }
+    />
   )
 }
 

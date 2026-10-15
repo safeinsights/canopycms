@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react'
 import { Modal, Button, Text, Group, Stack } from '@mantine/core'
+import { focusReturnProps } from '../utils/focus-return'
 
 export interface ConfirmDeleteModalProps {
   isOpen: boolean
@@ -13,6 +14,8 @@ export interface ConfirmDeleteModalProps {
   loading?: boolean
   /** Rendered between the message and the buttons. */
   children?: ReactNode
+  /** Where focus goes once it closes; Mantine's default, the element focused at open, without it. */
+  returnFocusTo?: () => HTMLElement | null
 }
 
 /**
@@ -28,6 +31,7 @@ export function ConfirmDeleteModal({
   onClose,
   loading = false,
   children,
+  returnFocusTo,
 }: ConfirmDeleteModalProps) {
   return (
     <Modal
@@ -39,6 +43,7 @@ export function ConfirmDeleteModal({
       closeButtonProps={{ disabled: loading }}
       closeOnEscape={!loading}
       closeOnClickOutside={!loading}
+      {...focusReturnProps(returnFocusTo)}
     >
       <Stack gap="md" data-testid="confirm-delete-modal">
         <Text size="sm">{message}</Text>

@@ -77,8 +77,8 @@
     },
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 782,
-      "words": 4367
+      "maxSectionWords": 839,
+      "words": 4425
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
@@ -87,8 +87,8 @@
     },
     "README.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 4914,
-      "words": 16609
+      "maxSectionWords": 4969,
+      "words": 16664
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
@@ -103,7 +103,7 @@
     "docs/ux-guidelines.md": {
       "historyMarkers": 0,
       "maxSectionWords": 298,
-      "words": 2070
+      "words": 2139
     },
     "packages/canopycms/src/AGENTS.md": {
       "historyMarkers": 0,
@@ -142,8 +142,8 @@
     },
     "packages/canopycms/src/editor/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 81,
-      "words": 459
+      "maxSectionWords": 88,
+      "words": 467
     },
     "packages/canopycms/src/editor/hooks/README.md": {
       "historyMarkers": 0,

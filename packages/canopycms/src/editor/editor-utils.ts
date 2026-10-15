@@ -273,39 +273,37 @@ export const entryStatusLabel = (
   return entryTypeLabel(collections, entry) ?? (entry.status && humanizeName(entry.status))
 }
 
+/** One crumb before the entry's own: "All content", a collection, or a folder of a nested slug. */
+export interface BreadcrumbSegment {
+  label: string
+  /** The collection the crumb opens in the content panel; absent on "All content" and slug folders. */
+  collectionPath?: string
+  /** A slug folder, which is not a node of the content tree, so it navigates nowhere. */
+  folder?: true
+}
+
 /**
- * Builds breadcrumb segments for an entry based on its collection hierarchy.
- *
- * @param currentEntry - The entry to build breadcrumbs for (or undefined for root)
- * @param collectionLabels - Map of collection IDs to labels
- * @returns Array of breadcrumb segment strings, starting with 'All content'
+ * Builds breadcrumb segments for an entry based on its collection hierarchy, starting with
+ * "All content". The first path part is skipped as the content root, which the tree does not show.
  */
 export const buildBreadcrumbSegments = (
   currentEntry: EditorEntry | undefined,
   collectionLabels: Map<string, string>,
-): string[] => {
-  if (!currentEntry) return ['All content']
-  const segments = ['All content']
+): BreadcrumbSegment[] => {
+  const segments: BreadcrumbSegment[] = [{ label: 'All content' }]
+  if (!currentEntry) return segments
 
-  // Show collection hierarchy for entries that belong to a collection
   if (currentEntry.collectionPath) {
-    // Split the collectionPath into path parts and build cumulative paths
-    // e.g., "content/documentation/guides" -> ["content/documentation", "content/documentation/guides"]
     const parts = currentEntry.collectionPath.split('/').filter(Boolean)
     for (let i = 1; i < parts.length; i++) {
       const pathUpToHere = parts.slice(0, i + 1).join('/')
       const label = collectionLabels.get(pathUpToHere)
-      if (label) {
-        segments.push(label)
-      }
+      if (label) segments.push({ label, collectionPath: pathUpToHere })
     }
   }
 
-  // Add slug path segments (for nested slugs like "folder/file")
   const slugSegments = (currentEntry.slug ?? '').split('/').filter(Boolean)
-  if (slugSegments.length > 1) {
-    segments.push(...slugSegments.slice(0, -1))
-  }
+  for (const folder of slugSegments.slice(0, -1)) segments.push({ label: folder, folder: true })
 
   return segments
 }

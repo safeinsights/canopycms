@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isSamePreviewPath, normalizePreviewPath } from './preview-path'
+import { displayPreviewPath, isSamePreviewPath, normalizePreviewPath } from './preview-path'
 
 describe('normalizePreviewPath', () => {
   it.each([
@@ -31,5 +31,41 @@ describe('isSamePreviewPath', () => {
     expect(isSamePreviewPath('/blog/x?branch=b', '/blog/x?branch=c')).toBe(false)
     expect(isSamePreviewPath('/blog/x?branch=b', '/blog/x')).toBe(false)
     expect(isSamePreviewPath('/base/blog/x', '/blog/x')).toBe(false)
+  })
+})
+
+describe('displayPreviewPath', () => {
+  it.each([
+    ['/blog/x/?branch=b', '/blog/x/'],
+    ['/?branch=feature%2Fa', '/'],
+    ['/blog/x?branch=b&lang=en#top', '/blog/x?lang=en'],
+    ['/base/preview/blog/x', '/base/preview/blog/x'],
+    ['https://other.example.com/p/x?branch=b', 'https://other.example.com/p/x'],
+    ['//cdn.example.com/p?branch=b', '//cdn.example.com/p'],
+    ['/search?flag&branch=b', '/search?flag'],
+    ['/p?q=a%20b&branch=b&tags[]=a/b', '/p?q=a%20b&tags[]=a/b'],
+    ['custom://h/p?branch=b', 'custom://h/p'],
+  ])('shows %s as %s', (input, expected) => {
+    expect(displayPreviewPath(input)).toBe(expected)
+  })
+})
+
+describe('displayPreviewPath with the preview mount', () => {
+  it.each([
+    ['/preview/posts/x?branch=b', {}, '/preview/posts/x'],
+    ['/preview/posts/x?branch=b', { previewPrefix: '/preview' }, '/posts/x'],
+    ['/preview?branch=b', { previewPrefix: 'preview/' }, '/'],
+    ['/preview/?branch=b', { previewPrefix: '/preview' }, '/'],
+    ['/b/preview/posts/x/?branch=b', { basePath: '/b', previewPrefix: '/preview' }, '/b/posts/x/'],
+    ['/b/preview?branch=b', { basePath: 'b', previewPrefix: '/preview' }, '/b'],
+    ['/previewer/x?branch=b', { previewPrefix: '/preview' }, '/previewer/x'],
+    ['/b/posts/x?branch=b', { basePath: '/b', previewPrefix: '/preview' }, '/b/posts/x'],
+    [
+      'https://cms.example.com/preview/posts/x?branch=b',
+      { basePath: '/b', previewPrefix: 'https://cms.example.com/preview' },
+      '/posts/x',
+    ],
+  ])('shows %s under %j as %s', (src, mount, expected) => {
+    expect(displayPreviewPath(src, mount)).toBe(expected)
   })
 })

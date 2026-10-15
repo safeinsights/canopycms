@@ -67,6 +67,8 @@ export interface UseEntryManagerOptions {
 export interface UseEntryManagerReturn {
   selectedPath: string
   setSelectedPath: (path: string) => void
+  /** Leaves no entry open, as after deleting the open one, instead of opening the first. */
+  closeEntry: () => void
   entries: EditorEntry[]
   setEntries: (entries: EditorEntry[]) => void
   collections: EditorCollection[]
@@ -80,6 +82,8 @@ export interface UseEntryManagerReturn {
   availableSchemas: string[]
   /** True while the first entry load for the current branch is in flight (initial load, per branch). */
   entriesInitializing: boolean
+  /** The branch's last entries fetch failed; its "Could not load content" toast offers Retry. */
+  entriesLoadFailed: boolean
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
   refreshEntries: (branch?: string) => Promise<EditorEntry[]>
@@ -216,10 +220,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   selectedPathRef.current = selectedPath
   // Counts selections through the returned setter, not this hook's own fallbacks.
   const selectionsByCallerRef = useRef(0)
-  const selectEntryPath = useCallback((path: string) => {
-    selectionsByCallerRef.current += 1
-    setSelectedPath(path)
-  }, [])
   const [navigatorOpen, setNavigatorOpen] = useState(() => readUrlEntry() === '')
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
@@ -301,8 +301,18 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   if (initialUrlEntry.current === undefined) {
     initialUrlEntry.current = readUrlEntry()
   }
-  // Honoured until any entry is selected; after that a lost selection opens the first again.
+  // Set by the URL's empty `entry` or by `closeEntry`; honoured until an entry is selected or the
+  // branch changes, after which a lost selection opens the first again.
   const noEntryRequested = useRef(initialUrlEntry.current === '')
+  const selectEntryPath = useCallback((path: string) => {
+    selectionsByCallerRef.current += 1
+    setSelectedPath(path)
+  }, [])
+  // No entry open, as the URL's empty `entry` asks, where a lost selection opens the first.
+  const closeEntry = useCallback(() => {
+    noEntryRequested.current = true
+    selectEntryPath('')
+  }, [selectEntryPath])
 
   const collectionByPath = useMemo(() => {
     const map = new Map<LogicalPath, EditorCollection>()
@@ -652,9 +662,26 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const renaming = entriesState.find((e) => e.path === path)
     const contentId = renaming?.contentId
     const label = renaming?.label ?? path
+    // As `refreshAndOpen`: the new path opens only if the user is still on the entry and branch.
+    const branch = options.branchName
+    const stillOnIt = selectedPathRef.current === path
+    const selections = selectionsByCallerRef.current
+    // The rename landed whatever the refresh does. The new path is selected only once the list
+    // holds it: before that, the selection check would find it missing and open the first entry.
     const landed = async (newPath: string | undefined) => {
-      if (newPath && selectedPath === path) setSelectedPath(newPath)
-      await refreshEntries()
+      const listed = await refreshEntries().catch((err: unknown) => {
+        console.error(err)
+        return null
+      })
+      if (
+        newPath &&
+        listed?.some((e) => e.path === newPath) &&
+        stillOnIt &&
+        selections === selectionsByCallerRef.current &&
+        branch === currentBranchRef.current
+      ) {
+        setSelectedPath(newPath)
+      }
       notifications.show({ message: 'Entry renamed', color: 'green' })
     }
     options.setBusy(true)
@@ -702,6 +729,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (isInitialMount.current) {
       isInitialMount.current = false
     } else {
+      noEntryRequested.current = false
       setSelectedPath('')
       // Bound version-map growth across switches. Correctness no longer
       // depends on this clear: tokens are keyed by `${branch}:${contentId}`
@@ -875,12 +903,14 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   return {
     selectedPath,
     setSelectedPath: selectEntryPath,
+    closeEntry,
     entries: entriesState,
     setEntries,
     collections: collectionsState,
     currentEntry,
     availableSchemas,
     entriesInitializing,
+    entriesLoadFailed: Boolean(options.branchName) && Boolean(entriesError),
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,

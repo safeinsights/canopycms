@@ -10,6 +10,7 @@ import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import type { CustomFieldRenderers } from './FormRenderer'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
+import { RESERVED_GROUPS } from '../authorization'
 import { mockConsole, type MockConsole } from '../test-utils/console-spy'
 import { silenceReportedRenderErrors } from '../test-utils/render-errors'
 
@@ -27,14 +28,15 @@ interface FrameProps {
   data?: unknown
   isLoading?: unknown
   onMarks?: (marks: { count: number; paths?: string[] }) => void
+  onPreviewError?: (error: { message: string; fieldPath?: string } | null) => void
 }
 
 /** Every `data`/`isLoading` pair the editor hands the preview frame, in render order. */
 const frames: FrameProps[] = []
 
 vi.mock('./PreviewFrame', () => ({
-  PreviewFrame: ({ data, isLoading, onMarks }: FrameProps) => {
-    frames.push({ data, isLoading, onMarks })
+  PreviewFrame: ({ data, isLoading, onMarks, onPreviewError }: FrameProps) => {
+    frames.push({ data, isLoading, onMarks, onPreviewError })
     return <iframe title="preview" />
   },
 }))
@@ -93,10 +95,11 @@ const person = (id: string, name: string) => ({
   urlPath: `/people/${name.toLowerCase()}`,
 })
 
-const stubApi = () => {
+const stubApi = (groups: string[] = []) => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    if (url.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups }))
     if (url.endsWith('/api/canopycms/branches')) {
       return Promise.resolve(
         okJson({
@@ -312,7 +315,7 @@ describe('Editor preview marks', () => {
         frames[frames.length - 1].onMarks?.({ count })
       })
     const note = () => screen.queryByText(/marks no editable elements/)
-    const toggle = screen.getByRole('button', { name: 'Toggle highlights' })
+    const toggle = screen.getByRole('button', { name: 'Highlight fields in the preview' })
 
     reportCount(0)
     expect(note()).toBeNull()
@@ -336,8 +339,8 @@ describe('Editor preview marks', () => {
     expect(note()).toBeNull()
   })
 
-  it('counts the marks that name no field on the toggle, and warns once for each', async () => {
-    stubApi()
+  it('counts the marks that name no field for an admin, and warns once for each', async () => {
+    stubApi([RESERVED_GROUPS.ADMINS])
     renderEditor()
     await waitFor(() => expect(frames.some((frame) => frame.onMarks)).toBe(true), {
       timeout: 10_000,
@@ -346,16 +349,18 @@ describe('Editor preview marks', () => {
       act(() => {
         frames[frames.length - 1].onMarks?.({ count: paths.length, paths })
       })
-    const toggle = screen.getByRole('button', { name: 'Toggle highlights' })
+    const toggle = screen.getByRole('button', { name: 'Highlight fields in the preview' })
     const warnings = () =>
       consoleSpy.all().warn.filter((message) => message.includes('[canopycms]'))
 
+    const chip = () => screen.queryByTestId('preview-unmapped-chip')
+
     fireEvent.click(toggle)
     report(['title', 'byline.person', 'byline.person.name', 'subtitle'])
-    await waitFor(() =>
-      expect(toggle.getAttribute('aria-description')).toBe(
-        "2 preview marks don't match a field: byline.person.name, subtitle. The browser console names the nearest field of each.",
-      ),
+    await waitFor(() => expect(chip()?.textContent).toBe('2 unmapped preview marks'))
+    fireEvent.click(chip()!)
+    expect((await screen.findByRole('dialog')).textContent).toContain(
+      "2 elements on this page carry field marks that don't match a field of this entry: byline.person.name, subtitle.",
     )
     await waitFor(() =>
       expect(warnings()).toEqual([
@@ -369,10 +374,48 @@ describe('Editor preview marks', () => {
     expect(warnings()).toHaveLength(2)
 
     fireEvent.click(toggle)
-    await waitFor(() => expect(toggle.getAttribute('aria-description')).toBeNull())
+    await waitFor(() => expect(chip()).toBeNull())
     report(['subtitle', 'heading'])
     await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(toggle.getAttribute('aria-description')).toBeNull()
+    expect(chip()).toBeNull()
     expect(warnings()).toHaveLength(2)
+  })
+
+  it('shows an editor no count of unmapped marks', async () => {
+    stubApi()
+    renderEditor()
+    await waitFor(() => expect(frames.some((frame) => frame.onMarks)).toBe(true), {
+      timeout: 10_000,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Highlight fields in the preview' }))
+    act(() => {
+      frames[frames.length - 1].onMarks?.({ count: 2, paths: ['title', 'subtitle'] })
+    })
+    // The marks did arrive: the console names the unmapped one.
+    await waitFor(() =>
+      expect(consoleSpy.all().warn.some((message) => message.includes('"subtitle"'))).toBe(true),
+    )
+    expect(screen.queryByTestId('preview-unmapped-chip')).toBeNull()
+  })
+
+  it("names a preview error's field by its labels and shows the page's path without the mount", async () => {
+    stubApi()
+    renderEditor()
+    await waitFor(() => expect(frames.length).toBeGreaterThan(0), { timeout: 10_000 })
+
+    expect(screen.getByRole('button', { name: 'Copy path /posts/hello' })).toBeTruthy()
+
+    act(() => {
+      frames[frames.length - 1].onPreviewError?.({
+        message: 'Unknown speaker',
+        fieldPath: 'blocks[0].speaker',
+      })
+    })
+    expect(await screen.findByText('Blocks › Quote › Speaker: Unknown speaker')).toBeTruthy()
+
+    act(() => {
+      frames[frames.length - 1].onPreviewError?.({ message: 'Unknown speaker', fieldPath: '.' })
+    })
+    expect(await screen.findByText('Unknown speaker')).toBeTruthy()
   })
 })

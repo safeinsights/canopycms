@@ -12,6 +12,7 @@ authoritative**. This file is the map.
 | `Editor.tsx`                              | The composition root. See below.                                                                                                                   |
 | `hooks/`                                  | 17 hooks — the real logic. Start here, not in the components. Has its own [README.md](hooks/README.md) covering the SWR data-loading architecture. |
 | `fields/`                                 | Field components per schema type, plus `FieldLabel` and `entry-link/`.                                                                             |
+| `shell/`                                  | `EditorShell` (the window grid), `TopBar`, `ActivityRail`, `SidePanelHost`, `PaneLayout` (the split). Layout only.                                 |
 | `components/`                             | Presentational pieces used by `Editor.tsx` (header, sidebar, modals).                                                                              |
 | `EditorAuthGate.tsx`                      | Signed-out and mode-mismatch handling, decided from the API's answers. See below.                                                                  |
 | `context/`                                | `ApiClientContext`, `AssetContext`, `EditorStateContext`, `SWRProvider`, `EditorIdentityContext`.                                                  |
@@ -55,7 +56,7 @@ or example-app styling, and do not leak editor CSS outward.
 
 `preview-bridge.tsx` is the `postMessage` contract between the editor and a host app's
 preview iframe (draft updates, click-to-focus, highlight) plus the host-page hooks;
-`PreviewFrame.tsx` is the editor's side. _Adopters' public pages_ import the bridge via
+`PreviewFrame.tsx` is the editor's side; `PreviewPane.tsx` and `PreviewToolbarTools.tsx` add its toolbar. _Adopters' public pages_ import the bridge via
 `canopycms/preview`, so its message names and payload shapes are a public contract. `isTrustedEditorMessage`/`resolveMessageOrigin` are the origin checks —
 do not weaken them. `preview-asset-base.ts` holds `assetUrl`'s preview prefix; see its header.
 

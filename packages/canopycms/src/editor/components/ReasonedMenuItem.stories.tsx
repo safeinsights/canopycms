@@ -23,7 +23,7 @@ const meta: Meta<typeof ReasonedMenuItem> = {
       </div>
     ),
   ],
-  args: { children: 'Reload entry', onClick: () => {} },
+  args: { children: 'Refresh from server', onClick: () => {} },
 }
 
 export default meta

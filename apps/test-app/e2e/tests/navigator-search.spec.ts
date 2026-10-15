@@ -37,15 +37,16 @@ test.describe('Navigator search', () => {
 
     await expect(page.locator('[data-testid="entry-nav-filter"]')).toHaveValue('')
     await expect(editorPage.navigatorItem('Test Site')).toBeVisible({ timeout: SHORT_TIMEOUT })
-    // The first Escape cleared the filter; the drawer is still open.
+    // The first Escape cleared the filter; the panel is still open.
     await expect(editorPage.contentNavigator).toBeVisible()
   })
 
-  test('Mod+P from inside a form field opens an entry by title, with the navigator closed', async ({
+  test('Mod+P from inside a form field opens an entry by title, with the panel closed', async ({
     page,
   }) => {
     await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
+    await editorPage.closeContentNavigator()
 
     await test.step('focus a text field in the form', async () => {
       await editorPage.getFieldInput('title').click()
@@ -59,81 +60,106 @@ test.describe('Navigator search', () => {
     await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
   })
 
-  for (const [route, open] of [
+  for (const [route, open, opener] of [
     [
-      "the drawer's Quick open button",
+      "the panel's Open entry button",
       (page: Page) => page.getByTestId('quick-open-button').click(),
+      (page: Page) => page.getByTestId('quick-open-button'),
     ],
-    ['Mod+P pressed inside the drawer', (page: Page) => page.keyboard.press('ControlOrMeta+P')],
+    [
+      'Mod+P pressed inside the panel',
+      (page: Page) => page.keyboard.press('ControlOrMeta+P'),
+      (page: Page) => page.getByTestId('entry-nav-filter'),
+    ],
   ] as const) {
-    test(`closing the palette opened by ${route} returns focus to the navigator toggle`, async ({
+    test(`the docked panel stays open under the palette opened by ${route}, and takes focus back`, async ({
       page,
     }) => {
       await editorPage.openContentNavigator()
+      // Mod+P pressed before the filter has focus would return focus elsewhere.
+      await expect(page.getByTestId('entry-nav-filter')).toBeFocused({ timeout: SHORT_TIMEOUT })
 
       await open(page)
       await expect(page.getByTestId('quick-open-input')).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.contentNavigator).toBeVisible()
       await page.keyboard.press('Escape')
 
       await expect(page.getByTestId('quick-open-input')).not.toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
-      await expect(page.getByTestId('file-dropdown-button')).toBeFocused({ timeout: SHORT_TIMEOUT })
+      await expect(opener(page)).toBeFocused({ timeout: SHORT_TIMEOUT })
+      await expect(editorPage.contentNavigator).toBeVisible()
     })
   }
 
-  test('closing the palette opened from a breadcrumb-opened drawer returns focus to that breadcrumb and keeps it there', async ({
-    page,
-  }) => {
-    await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
-    await editorPage.openContentNavigatorFromBreadcrumb()
-    const breadcrumb = page.getByTestId('breadcrumb-segment').first()
-
-    await page.getByTestId('quick-open-button').click()
-    await expect(page.getByTestId('quick-open-input')).toBeVisible({ timeout: STANDARD_TIMEOUT })
-    // Until the drawer has unmounted, its own focus return would answer for the palette's.
-    await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
-    await page.keyboard.press('Escape')
-
-    await expect(page.getByTestId('quick-open-input')).not.toBeVisible({
-      timeout: STANDARD_TIMEOUT,
+  test.describe('in a window too narrow to dock the panel', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize({ width: 900, height: 800 })
     })
-    await expect(breadcrumb).toBeFocused({ timeout: SHORT_TIMEOUT })
-    // A second, late focus move would land after Mantine's own timers have run.
-    await page.waitForTimeout(800)
-    await expect(breadcrumb).toBeFocused()
-  })
 
-  test('picking an entry in the palette opened from the menu-opened drawer returns focus to the navigator toggle', async ({
-    page,
-  }) => {
-    await editorPage.openContentNavigator()
-    await page.keyboard.press('ControlOrMeta+P')
-    const input = page.getByTestId('quick-open-input')
-    await expect(input).toBeVisible({ timeout: STANDARD_TIMEOUT })
-    // Until the drawer has unmounted, its own focus return would answer for the palette's.
-    await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
-
-    await input.fill('Test Site')
-    await expect(page.getByTestId('quick-open-option').first()).toBeVisible({
-      timeout: STANDARD_TIMEOUT,
+    test('the panel lays over the form only, leaving the preview in view', async () => {
+      await editorPage.openContentNavigator()
+      const panel = await editorPage.contentNavigator.boundingBox()
+      const preview = await editorPage.previewPane.boundingBox()
+      const form = await editorPage.formPane.boundingBox()
+      if (!panel || !preview || !form) throw new Error('a region is not visible')
+      expect(panel.x).toBeGreaterThanOrEqual(form.x - 1)
+      expect(panel.x + panel.width).toBeLessThanOrEqual(form.x + form.width + 1)
     })
-    await input.press('Enter')
 
-    await expect(editorPage.currentEntryLabel()).toContainText('Test Site', {
-      timeout: STANDARD_TIMEOUT,
+    test('closing the palette opened from a breadcrumb-opened panel returns focus to that breadcrumb and keeps it there', async ({
+      page,
+    }) => {
+      await editorPage.openContentNavigator()
+      await editorPage.selectEntry('Home Page')
+      await editorPage.openContentNavigatorFromBreadcrumb()
+      const breadcrumb = page.getByTestId('breadcrumb-segment').first()
+
+      await page.getByTestId('quick-open-button').click()
+      await expect(page.getByTestId('quick-open-input')).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      // The palette replaces the overlay.
+      await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
+      await page.keyboard.press('Escape')
+
+      await expect(page.getByTestId('quick-open-input')).not.toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
+      await expect(breadcrumb).toBeFocused({ timeout: SHORT_TIMEOUT })
+      // A second, late focus move would land after Mantine's own timers have run.
+      await page.waitForTimeout(800)
+      await expect(breadcrumb).toBeFocused()
     })
-    await expect(page.getByTestId('file-dropdown-button')).toBeFocused({ timeout: SHORT_TIMEOUT })
-  })
 
-  test('closing the menu-opened drawer with Escape returns focus to the navigator toggle', async ({
-    page,
-  }) => {
-    await editorPage.openContentNavigator()
+    test('picking an entry in the palette opened from the rail-opened panel returns focus to the Content button', async ({
+      page,
+    }) => {
+      await editorPage.openContentNavigator()
+      await page.keyboard.press('ControlOrMeta+P')
+      const input = page.getByTestId('quick-open-input')
+      await expect(input).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
 
-    await editorPage.closeContentNavigator()
+      await input.fill('Test Site')
+      await expect(page.getByTestId('quick-open-option').first()).toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
+      await input.press('Enter')
 
-    await expect(page.getByTestId('file-dropdown-button')).toBeFocused({ timeout: SHORT_TIMEOUT })
+      await expect(editorPage.currentEntryLabel()).toContainText('Test Site', {
+        timeout: STANDARD_TIMEOUT,
+      })
+      await expect(editorPage.contentPanelToggle).toBeFocused({ timeout: SHORT_TIMEOUT })
+    })
+
+    test('closing the rail-opened panel with Escape returns focus to the Content button', async ({
+      page,
+    }) => {
+      await editorPage.openContentNavigator()
+
+      await page.keyboard.press('Escape')
+
+      await expect(editorPage.contentNavigator).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.contentPanelToggle).toBeFocused({ timeout: SHORT_TIMEOUT })
+    })
   })
 })

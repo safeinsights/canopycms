@@ -5,7 +5,7 @@
  */
 import React from 'react'
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
@@ -49,11 +49,19 @@ const okJson = (data: unknown) =>
 
 const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unknown[] } = {}) => {
   const { groups = [], locked = false, threads = [] } = options
+  // The one entry, until a delete removes it or a rename moves it to `hello-two`.
+  let deleted = false
+  let renamed = false
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (init?.method === 'DELETE') deleted = true
+      if (init?.method === 'PATCH' && url.includes('/rename-entry/')) {
+        renamed = true
+        return Promise.resolve(okJson({ newPath: 'content/posts/hello-two' }))
+      }
       if (url.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups }))
       if (url.endsWith('/main/comments')) return Promise.resolve(okJson({ threads, users: [] }))
       if (url.endsWith('/api/canopycms/branches')) {
@@ -138,18 +146,18 @@ const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unkno
             ],
             entries: [
               {
-                logicalPath: hello.path,
+                logicalPath: renamed ? 'content/posts/hello-two' : hello.path,
                 contentId: hello.contentId,
                 collectionPath: hello.collectionPath,
                 collectionName: hello.collectionName,
-                slug: hello.slug,
+                slug: renamed ? 'hello-two' : hello.slug,
                 title: hello.label,
                 format: hello.format,
                 entryType: 'post',
                 physicalPath: `/content/posts.abc123XYZ789/post.hello.${hello.contentId}.json`,
                 exists: true,
               },
-            ],
+            ].filter(() => !deleted),
             pagination: { hasMore: false, limit: 50 },
           }),
         )
@@ -274,7 +282,7 @@ describe('Discard all changes (branch menu)', () => {
   )
 })
 
-describe('Reload entry (file menu)', () => {
+describe('Refresh from server (file menu)', () => {
   it('returns focus to the file menu button when the confirm over a draft is cancelled', async () => {
     stubApi()
     renderEditor()
@@ -282,12 +290,80 @@ describe('Reload entry (file menu)', () => {
     await editTitle()
 
     await activateByKeyboard(fileTrigger(), () =>
-      screen.findByRole('menuitem', { name: 'Reload entry' }),
+      screen.findByRole('menuitem', { name: 'Refresh from server' }),
     )
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
 
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
+  })
+})
+
+describe('Rename… and Delete entry (file menu)', () => {
+  it('opens the rename dialog for the open entry, and returns focus to the file menu button', async () => {
+    stubApi()
+    renderEditor()
+    await loaded()
+
+    await activateByKeyboard(fileTrigger(), byTestId('entry-menu-rename'))
+    const modal = await screen.findByTestId('rename-entry-modal')
+    expect((within(modal).getByRole('textbox') as HTMLInputElement).value).toBe('hello')
+    await userEvent.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByTestId('rename-entry-modal')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
+  })
+
+  it('keeps the entry open under its new slug once renamed', async () => {
+    stubApi()
+    renderEditor()
+    await loaded()
+
+    await activateByKeyboard(fileTrigger(), byTestId('entry-menu-rename'))
+    const input = within(await screen.findByTestId('rename-entry-modal')).getByRole('textbox')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'hello-two{Enter}')
+
+    // Its own new slug is never a clash, even as the closing dialog sees the refreshed list.
+    await waitFor(() => expect(window.location.search).toContain('hello-two'))
+    expect(screen.queryByText(/already exists/)).toBeNull()
+    await waitFor(() => expect(screen.queryByTestId('rename-entry-modal')).toBeNull())
+    await waitFor(() => expect(window.location.search).toContain('hello-two'))
+    expect(fileTrigger().textContent).toBe('Hello')
+    await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
+  })
+
+  it('deletes the open entry once confirmed, leaving none open, and focuses "All content"', async () => {
+    stubApi()
+    renderEditor()
+    await loaded()
+
+    await activateByKeyboard(fileTrigger(), byTestId('entry-menu-delete'))
+    const modal = await screen.findByTestId('confirm-delete-modal')
+    expect(modal.textContent).toContain('Delete "Hello"? This cannot be undone.')
+    await userEvent.click(within(modal).getByTestId('confirm-delete-submit'))
+
+    await waitFor(() => expect(fileTrigger().textContent).toBe('No entry open'))
+    // Its last render, the entry already gone from the list, still names it.
+    expect(modal.textContent).toContain('Delete "Hello"?')
+    const allContent = screen.getAllByTestId('breadcrumb-segment')[0]
+    await waitFor(() => expect(document.activeElement).toBe(allContent))
+  })
+
+  it('blocks both on a locked branch, saying why, and opens neither', async () => {
+    stubApi({ locked: true })
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('read-only-chip')).toBeTruthy())
+
+    await userEvent.click(fileTrigger())
+    for (const id of ['entry-menu-rename', 'entry-menu-delete']) {
+      const item = await screen.findByTestId(id)
+      expect(item.getAttribute('aria-disabled')).toBe('true')
+      expect(item.textContent).toContain('This branch is in review. Withdraw it to make changes.')
+      await userEvent.click(item)
+    }
+    expect(screen.queryByTestId('rename-entry-modal')).toBeNull()
+    expect(screen.queryByTestId('confirm-delete-modal')).toBeNull()
   })
 })
 
@@ -391,18 +467,8 @@ describe('Focus once a menu has closed', () => {
   const settled = () => act(() => new Promise((resolve) => setTimeout(resolve, 60)))
 
   it.each([
-    ['Reload entry', fileTrigger, () => screen.findByRole('menuitem', { name: 'Reload entry' })],
-    ['Discard changes with nothing to lose', fileTrigger, byTestId('discard-file-draft-menu-item')],
-    [
-      'Reload all entries',
-      branchTrigger,
-      () => screen.findByRole('menuitem', { name: 'Reload all entries' }),
-    ],
-    [
-      'Discard all changes with nothing modified',
-      branchTrigger,
-      byTestId('discard-all-drafts-menu-item'),
-    ],
+    ['Refresh from server', fileTrigger, byTestId('refresh-entry-menu-item')],
+    ['Refresh branch', branchTrigger, byTestId('refresh-branch-menu-item')],
   ])('%s leaves focus on its menu button', async (_name, trigger, find) => {
     stubApi()
     renderEditor()
@@ -413,18 +479,18 @@ describe('Focus once a menu has closed', () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger()))
   })
 
-  it('picking a recently modified entry leaves focus on the file menu button', async () => {
+  it('picking an unsaved entry leaves focus on the branch pill', async () => {
     stubApi()
     renderEditor()
     await loaded()
     await editTitle()
 
-    await activateByKeyboard(fileTrigger(), async () => {
+    await activateByKeyboard(branchTrigger(), async () => {
       const items = await screen.findAllByRole('menuitem', { name: 'Hello' })
       return items[0]
     })
 
-    await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
+    await waitFor(() => expect(document.activeElement).toBe(branchTrigger()))
   })
 
   it('leaves focus in the drawer that Switch branch… opened', async () => {
@@ -438,20 +504,6 @@ describe('Focus once a menu has closed', () => {
     await settled()
 
     expect(document.activeElement).not.toBe(branchTrigger())
-    expect(document.activeElement?.closest('[role="dialog"]')).not.toBeNull()
-  })
-
-  it('leaves focus in the drawer that Media library opened', async () => {
-    stubApi()
-    renderEditor()
-    await loaded()
-
-    await activateByKeyboard(settingsTrigger(), byTestId('settings-menu-media-library'))
-    await screen.findByRole('dialog')
-    await waitFor(() => expect(screen.queryByTestId('settings-menu')).toBeNull())
-    await settled()
-
-    expect(document.activeElement).not.toBe(settingsTrigger())
     expect(document.activeElement?.closest('[role="dialog"]')).not.toBeNull()
   })
 
@@ -473,7 +525,6 @@ describe('Focus once a menu has closed', () => {
 
 describe('Settings menu', () => {
   it.each([
-    ['Media library', 'settings-menu-media-library'],
     ['System health', 'settings-menu-system-health'],
     ['Manage permissions', 'settings-menu-permissions'],
     ['Manage groups', 'settings-menu-groups'],
@@ -492,19 +543,33 @@ describe('Settings menu', () => {
       await waitFor(() => expect(document.activeElement).toBe(settingsTrigger()))
     },
   )
+})
 
-  it('returns focus to the Settings button when the Media library is closed with its close button', async () => {
+describe('Media library (rail)', () => {
+  const mediaButton = () => screen.getByTestId('media-library-button')
+
+  it.each([
+    ['Escape', async () => userEvent.keyboard('{Escape}')],
+    [
+      'its close button',
+      async () => {
+        const close = document.querySelector('.mantine-Drawer-close')
+        if (!(close instanceof HTMLElement)) throw new Error('no drawer close button')
+        fireEvent.click(close)
+      },
+    ],
+  ])('takes focus, and returns it to the Media button when closed with %s', async (_how, close) => {
     stubApi()
     renderEditor()
     await loaded()
 
-    await activateByKeyboard(settingsTrigger(), byTestId('settings-menu-media-library'))
+    focusEl(mediaButton())
+    await userEvent.keyboard('{Enter}')
     const dialog = await screen.findByRole('dialog')
-    const close = document.querySelector('.mantine-Drawer-close')
-    if (!(close instanceof HTMLElement)) throw new Error('no drawer close button')
-    fireEvent.click(close)
+    await waitFor(() => expect(document.activeElement?.closest('[role="dialog"]')).toBe(dialog))
+    await close()
 
     await waitFor(() => expect(dialog.isConnected).toBe(false))
-    await waitFor(() => expect(document.activeElement).toBe(settingsTrigger()))
+    await waitFor(() => expect(document.activeElement).toBe(mediaButton()))
   })
 })

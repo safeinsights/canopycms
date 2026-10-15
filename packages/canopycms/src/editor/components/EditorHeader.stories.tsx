@@ -1,29 +1,25 @@
+import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 
 import { EditorHeader } from './EditorHeader'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
-import type { CommentThread } from '../../comment-store'
 
 const noop = () => {}
 
-const openThread: CommentThread = {
-  id: 'thread-1',
-  type: 'entry',
-  resolved: false,
-  comments: [],
-  createdAt: '2026-10-01T12:00:00Z',
-  authorId: 'alice',
-  entryPath: 'posts/hello',
+const phone = {
+  viewport: {
+    viewports: { phone: { name: 'Phone', styles: { width: '390px', height: '844px' } } },
+    defaultViewport: 'phone',
+  },
 }
 
 const meta: Meta<typeof EditorHeader> = {
   title: 'Editor/EditorHeader',
   component: EditorHeader,
+  parameters: { layout: 'fullscreen' },
   args: {
-    siteTitle: 'Example Site',
-    headerTitle: 'Hello',
     currentEntry: {
-      path: unsafeAsLogicalPath('posts/hello'),
+      path: unsafeAsLogicalPath('content/posts/hello'),
       contentId: unsafeAsContentId('abc123def456'),
       label: 'Hello',
       schema: [],
@@ -31,49 +27,165 @@ const meta: Meta<typeof EditorHeader> = {
     branchName: 'feature/landing',
     operatingMode: 'prod',
     busy: false,
-    breadcrumbSegments: ['Posts', 'Hello'],
-    editedFiles: [],
-    modifiedCount: 0,
-    unresolvedCommentCount: 0,
-    comments: [],
+    breadcrumbSegments: [
+      { label: 'All content' },
+      { label: 'Posts', collectionPath: 'content/posts' },
+    ],
+    editedFiles: [
+      { path: unsafeAsLogicalPath('content/posts/hello'), label: 'Hello' },
+      { path: unsafeAsLogicalPath('content/pages/about'), label: 'About us' },
+      { path: unsafeAsLogicalPath('content/pages/team'), label: 'Our team' },
+    ],
+    modifiedCount: 3,
     onNavigatorOpen: noop,
+    onCollectionOpen: noop,
     onFileReload: noop,
     onFileDiscardDraft: noop,
+    onEntryRename: noop,
+    onEntryDelete: noop,
     onEntrySelect: noop,
     onBranchReloadData: noop,
     onBranchDiscardDrafts: noop,
     onBranchManagerOpen: noop,
-    onCommentsPanelOpen: noop,
     onSave: noop,
+    onSaveAll: noop,
+    saveAllProgress: null,
     onSubmit: noop,
     onWithdraw: noop,
     hasUnsavedChanges: true,
     branchStatus: 'editing',
+    userContext: { userId: 'user-1' },
+    branchCreatedBy: 'user-1',
   },
 }
 
 export default meta
 type Story = StoryObj<typeof EditorHeader>
 
-export const Editing: Story = {
-  args: { comments: [openThread], unresolvedCommentCount: 1 },
+/** Three entries unsaved, the open one among them: its dot, the pill's count and Save all (3). */
+export const Unsaved: Story = {}
+
+export const Saved: Story = {
+  args: { hasUnsavedChanges: false, editedFiles: [], modifiedCount: 0 },
 }
 
 export const InReview: Story = {
-  args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
+  args: {
+    branchStatus: 'submitted',
+    branchWriteBlocked: true,
+    hasUnsavedChanges: false,
+    editedFiles: [],
+    modifiedCount: 0,
+  },
 }
 
-export const ProtectedBaseBranch: Story = {
+/** The protected base branch: the "Read-only" chip, no Submit, Save blocked with its reason. */
+export const ReadOnly: Story = {
   args: {
     branchName: 'main',
     branchIsProtected: true,
     branchReadOnly: true,
     branchWriteBlocked: true,
     hasUnsavedChanges: false,
+    editedFiles: [],
+    modifiedCount: 0,
   },
+}
+
+/** A path rule refuses this entry to this user, on an editable branch. */
+export const EntryReadOnly: Story = {
+  args: { entryReadOnly: true, hasUnsavedChanges: false },
+}
+
+/** At 390px the breadcrumb takes its own row, so "Withdraw from review" is never clipped. */
+export const Narrow: Story = {
+  parameters: phone,
+  args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
+}
+
+/** Below `lg` the unsaved indicator is an icon, its text in its Tooltip and accessible name. */
+export const NarrowUnsaved: Story = {
+  parameters: phone,
+}
+
+/** The widest phone case: in review, many unsaved; the pill keeps its count and the row wraps. */
+export const NarrowInReviewManyUnsaved: Story = {
+  parameters: phone,
+  args: {
+    branchStatus: 'submitted',
+    branchWriteBlocked: true,
+    hasUnsavedChanges: false,
+    modifiedCount: 12,
+  },
+}
+
+/** Before branch details arrive: no lock chip or status yet, as nothing is known. */
+export const BranchLoading: Story = {
+  args: { branchLoading: true, branchWriteBlocked: true, hasUnsavedChanges: false },
+}
+
+export const SaveAllInProgress: Story = {
+  args: { busy: true, saveAllProgress: { done: 1, total: 3 } },
 }
 
 /** The browser refused to store drafts, so leaving the page would lose them. */
 export const UnsavedNotKept: Story = {
   args: { draftStorageFailed: true },
+}
+
+export const NoEntryOpen: Story = {
+  args: {
+    currentEntry: undefined,
+    breadcrumbSegments: [{ label: 'All content' }],
+    hasUnsavedChanges: false,
+  },
+}
+
+/** Clicks `testId` once it has rendered, then waits for the menu it opens. */
+const openMenu =
+  (testId: string): Story['play'] =>
+  async ({ canvasElement }) => {
+    const until = async (found: () => Element | null) => {
+      for (let i = 0; i < 50 && !found(); i++) await new Promise((r) => setTimeout(r, 50))
+    }
+    const trigger = () =>
+      canvasElement.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)
+    await until(trigger)
+    trigger()?.click()
+    await until(() => document.querySelector('[role="menu"]'))
+  }
+const openEntryMenu = openMenu('file-dropdown-button')
+
+/** The entry menu: refresh, discard, then Rename… and the destructive Delete entry. */
+export const EntryMenu: Story = {
+  args: { hasUnsavedChanges: false },
+  play: openEntryMenu,
+}
+
+/** On a branch in review, Rename… and Delete entry stay in the menu, blocked, with the reason. */
+export const EntryMenuBlocked: Story = {
+  args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
+  play: openEntryMenu,
+}
+
+/** A Save in flight. */
+export const Saving: Story = {
+  args: { busy: true, saving: true },
+}
+
+/** A Save that has just landed: "Saved" for two seconds, then "Save". */
+export const JustSaved: Story = {
+  args: { hasUnsavedChanges: false, modifiedCount: 2 },
+  render: function JustSavedStory(args) {
+    // Only a signal that rises after mount shows "Saved".
+    const [signal, setSignal] = useState(0)
+    useEffect(() => setSignal(1), [])
+    return <EditorHeader {...args} savedSignal={signal} savedHere />
+  },
+}
+
+/** The branch's entry list failed to load, so Save all can't match drafts to entries. */
+export const SaveAllEntryListFailed: Story = {
+  args: { entryListFailed: true },
+  play: openMenu('save-options-button'),
 }

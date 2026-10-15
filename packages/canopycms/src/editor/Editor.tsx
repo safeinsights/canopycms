@@ -7,8 +7,6 @@ import {
   Alert,
   Box,
   Button,
-  Drawer,
-  Group,
   Menu,
   Paper,
   Skeleton,
@@ -25,6 +23,7 @@ import {
   IconPlus,
   IconSearch,
 } from '@tabler/icons-react'
+import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 
 type TreeController = ReturnType<typeof useTree>
@@ -35,9 +34,12 @@ import type { ContentFormat, EntrySchema, EntryTypeUnavailable, MdxAllowlist } f
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { CustomFieldRenderers, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
-import { PreviewFrame } from './PreviewFrame'
+import { PreviewPane } from './PreviewPane'
 import type { OperatingMode } from '../operating-mode'
-import { EditorPanes } from './EditorPanes'
+import { clientOperatingStrategy } from '../operating-mode/client'
+import { EditorShell } from './shell/EditorShell'
+import { PaneLayout } from './shell/PaneLayout'
+import { SidePanelHost } from './shell/SidePanelHost'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
 import { BranchManager } from './BranchManager'
 import { BranchesDrawer } from './components/BranchesDrawer'
@@ -71,16 +73,22 @@ import {
 import { useBranchActions } from './hooks/useBranchActions'
 import type { UnsavedSummary } from './hooks/useDraftManager'
 import type { StampedEntry } from '../stamp-on-publish'
-import { editorLayoutStorageKey } from './hooks/useEditorLayout'
+import {
+  CONTENT_PANEL_WIDTH_MAX,
+  CONTENT_PANEL_WIDTH_MIN,
+  editorLayoutStorageKey,
+} from './hooks/useEditorLayout'
 import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
-import { EditorFooter, EditorHeader, EditorSidebar } from './components'
+import { BranchLockBanner, EditorHeader, EditorRail } from './components'
+import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
-import { QUICK_OPEN_REPLACES_ATTR, QuickOpenPalette } from './components/QuickOpenPalette'
-import { FOCUS_RETURN_ATTR, focusIfIdle, rememberOpener, returnTarget } from './utils/focus-return'
+import { QuickOpenPalette } from './components/QuickOpenPalette'
+import { rememberOpener, returnTarget } from './utils/focus-return'
 import { modKeyLabel } from './platform'
+import { EDITOR_ACTIONS } from './copy'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { ReferencedByList, referencedDeleteMessage } from './components/ReferencedByList'
@@ -176,9 +184,7 @@ export interface EditorCollection {
 export interface EditorProps {
   entries: EditorEntry[]
   title: string
-  subtitle?: string
   siteTitle?: string
-  siteSubtitle?: string
   branchName?: string
   operatingMode: OperatingMode
   collections?: EditorCollection[]
@@ -220,6 +226,7 @@ export interface EditorProps {
 // Stable fallbacks, so reference resolution's memo and effect don't re-run on every render
 // while no entry is open.
 const EMPTY_SCHEMA: EntrySchema = []
+const CONTENT_PANEL_ID = 'canopy-content-panel'
 const EMPTY_VALUE: FormValue = {}
 
 /**
@@ -235,9 +242,7 @@ export const Editor: React.FC<EditorProps> = (props) => (
 const EditorContent: React.FC<EditorProps> = ({
   entries,
   title,
-  subtitle,
   siteTitle = title,
-  siteSubtitle = subtitle,
   branchName = '',
   collections,
   contentRoot,
@@ -288,13 +293,14 @@ const EditorContent: React.FC<EditorProps> = ({
   const collectionOpeningRef = useRef(0)
 
   const [quickOpenOpen, setQuickOpenOpen] = useState(false)
-  const [quickOpenFromDrawer, setQuickOpenFromDrawer] = useState(false)
+  const [quickOpenFromOverlay, setQuickOpenFromOverlay] = useState(false)
   const navigatorToggleRef = useRef<HTMLButtonElement>(null)
+  const mediaButtonRef = useRef<HTMLButtonElement>(null)
   const branchToggleRef = useRef<HTMLButtonElement>(null)
   const settingsToggleRef = useRef<HTMLButtonElement>(null)
   // Null when the branches drawer opened from a menu item; see `rememberOpener`.
   const branchOpenerRef = useRef<HTMLElement | null>(null)
-  // Null when the drawer opened from a menu item, which unmounts on click, or with focus on the page.
+  // Null when the panel opened from a menu item, which unmounts on click, or with focus on the page.
   const navigatorOpenerRef = useRef<HTMLElement | null>(null)
   const quickOpenOpenRef = useRef(false)
   useEffect(() => {
@@ -313,10 +319,15 @@ const EditorContent: React.FC<EditorProps> = ({
   const [deletingCollectionPath, setDeletingCollectionPath] = useState<LogicalPath | null>(null)
   const [deleteEntryModalOpen, setDeleteEntryModalOpen] = useState(false)
   const [deletingEntryPath, setDeletingEntryPath] = useState<LogicalPath | null>(null)
+  // Named at open: a delete that lands takes the entry out of the list while the dialog fades.
+  const [deletingEntryLabel, setDeletingEntryLabel] = useState<string>()
   // Set once the server refuses a delete because other entries reference the entry.
   const [deletingEntryReferencedBy, setDeletingEntryReferencedBy] =
     useState<EntryReferencedBy | null>(null)
   const [deleteInProgress, setDeleteInProgress] = useState(false)
+  // A rename or delete asked for from the top bar's entry menu, whose item is gone once it acts.
+  const [entryChangeFromMenu, setEntryChangeFromMenu] = useState(false)
+  const allContentCrumbRef = useRef<HTMLButtonElement>(null)
 
   // Draft compile/render error reported by the preview page (null = renders cleanly)
   const [previewError, setPreviewError] = useState<{ message: string; fieldPath?: string } | null>(
@@ -339,7 +350,11 @@ const EditorContent: React.FC<EditorProps> = ({
   // The signed-in user, so "started by me" matches the thread authors the server records.
   const commentUserId = userContext?.userId ?? currentUser
 
+  // Below 64em (1024px) the editor starts stacked and the content panel never docks.
+  const wideWindow =
+    useMediaQuery('(min-width: 64em)', true, { getInitialValueInEffect: false }) !== false
   const {
+    loaded: layoutLoaded,
     layout,
     setLayout,
     highlightEnabled,
@@ -347,9 +362,18 @@ const EditorContent: React.FC<EditorProps> = ({
     sideSplitPercent,
     stackedSplitPercent,
     setSplitPercent,
-    headerRef,
-    headerHeight,
-  } = useEditorLayout({ storageKey: editorLayoutStorageKey(basePath) })
+    previewWidth,
+    setPreviewWidth,
+    contentPanelOpen,
+    setContentPanelOpen,
+    contentPanelWidth,
+    setContentPanelWidth,
+  } = useEditorLayout({
+    storageKey: editorLayoutStorageKey(basePath),
+    defaultLayout: wideWindow ? 'side' : 'stacked',
+  })
+  // In the stacked layout the content panel lays over the form only, so the preview stays in view.
+  const contentPanelDocked = layout === 'side' && wideWindow
 
   // Comments state (shared between useCommentSystem and useBranchManager)
   const [commentsForBranchSummaries, setCommentsForBranchSummaries] = useState<CommentThread[]>([])
@@ -399,11 +423,13 @@ const EditorContent: React.FC<EditorProps> = ({
   const {
     selectedPath,
     setSelectedPath,
+    closeEntry,
     entries: entriesState,
     collections: collectionsFromApi,
     currentEntry,
     availableSchemas,
     entriesInitializing,
+    entriesLoadFailed,
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,
@@ -439,6 +465,30 @@ const EditorContent: React.FC<EditorProps> = ({
       }),
     setBusy: setEntriesLoading,
   })
+
+  // The content overlay and a maximized preview hide the form; `navigatorOpen` is only the
+  // overlay's. Anything that focuses something in the form reveals it first. Opening an entry
+  // closes the overlay only, so the preview stays maximized across entries (see
+  // `previewShownMaximized` for the loads in between).
+  const [previewMaximized, setPreviewMaximized] = useState(false)
+  const revealForm = () => {
+    setNavigatorOpen(false)
+    setPreviewMaximized(false)
+  }
+  const openEntry = (path: string) => {
+    setSelectedPath(path)
+    setNavigatorOpen(false)
+  }
+
+  // An open overlay docks open, as the URL's ask for no entry does at load; `navigatorOpen` is only
+  // the overlay's, so a docked panel never resurfaces as one. Waits for the stored layout, whose
+  // arrival could otherwise dock an overlay the stacked layout keeps.
+  useEffect(() => {
+    if (layoutLoaded && contentPanelDocked && navigatorOpen) {
+      setContentPanelOpen(true)
+      setNavigatorOpen(false)
+    }
+  }, [layoutLoaded, contentPanelDocked, navigatorOpen, setContentPanelOpen, setNavigatorOpen])
 
   // Keeps the entry-type list referentially stable while the create modal shows
   // the same collection: a new array on every render would churn Mantine's
@@ -486,6 +536,11 @@ const EditorContent: React.FC<EditorProps> = ({
     modifiedCount,
     editedFiles,
     handleSave,
+    singleSaving,
+    lastSaved,
+    handleSaveAll,
+    saveAllProgress,
+    isSaveAllRunning,
     handleDiscardDrafts,
     handleDiscardFileDraft,
     handleReload,
@@ -508,6 +563,8 @@ const EditorContent: React.FC<EditorProps> = ({
     followMovedEntry,
     recreateEntry,
     setBusy: setEntriesLoading,
+    // The errors are in the form.
+    onSaveBlocked: () => setPreviewMaximized(false),
     onSaved: () => {
       void refreshEntries(branchNameState).catch((err) =>
         console.error('Failed to refresh entries after save', err),
@@ -559,6 +616,7 @@ const EditorContent: React.FC<EditorProps> = ({
       setBranchManagerOpen(open)
     },
     onCommentsChange: setCommentsForBranchSummaries,
+    onRevealForm: revealForm,
   })
 
   const {
@@ -677,6 +735,7 @@ const EditorContent: React.FC<EditorProps> = ({
         return restored ? { ...prev, [contentId]: restored } : prev
       })
       // The toast's Undo button unmounts with it, so focus goes to the restored row once rendered.
+      revealForm()
       requestAnimationFrame(() => {
         const target = findFieldTarget(restoredPath)
         if (target) focusFieldTarget(target.element)
@@ -1172,20 +1231,20 @@ const EditorContent: React.FC<EditorProps> = ({
     }
   }
 
-  const handleDeleteEntry = (entryPath: LogicalPath) => {
+  const handleDeleteEntry = (entryPath: LogicalPath, fromMenu = false) => {
+    setEntryChangeFromMenu(fromMenu)
     setDeletingEntryPath(entryPath)
+    setDeletingEntryLabel(entriesState.find((e) => e.path === entryPath)?.label)
     setDeletingEntryReferencedBy(null)
     setDeleteEntryModalOpen(true)
   }
 
-  const closeDeleteEntryModal = () => {
-    setDeleteEntryModalOpen(false)
-    setDeletingEntryPath(null)
-    setDeletingEntryReferencedBy(null)
-  }
+  // What the dialog names stays until the next delete, so its exit shows no change of text.
+  const closeDeleteEntryModal = () => setDeleteEntryModalOpen(false)
 
   const confirmDeleteEntry = async () => {
-    if (!deletingEntryPath) return
+    // Its button stays clickable while the closed dialog fades; that click deletes nothing.
+    if (!deleteEntryModalOpen || !deletingEntryPath) return
     setDeleteInProgress(true)
     try {
       // The user has seen the referencing entries only once the server has named them.
@@ -1196,35 +1255,32 @@ const EditorContent: React.FC<EditorProps> = ({
         setDeletingEntryReferencedBy(result.referencedBy)
         return
       }
-      if (result.ok && selectedPath === deletingEntryPath) {
-        setSelectedPath('')
-      }
+      if (result.ok && selectedPath === deletingEntryPath) closeEntry()
       closeDeleteEntryModal()
     } finally {
       setDeleteInProgress(false)
     }
   }
 
-  const handleRenameEntry = (entryPath: string) => {
-    // Find the entry being renamed
+  const handleRenameEntry = (entryPath: string, fromMenu = false) => {
     const entry = entriesState.find((e) => e.path === entryPath)
     if (!entry) {
       notifications.show({ message: 'Entry not found', color: 'red' })
       return
     }
+    setEntryChangeFromMenu(fromMenu)
     setRenamingEntry(entry)
     setRenameModalError(null)
     setRenameModalOpen(true)
   }
 
   const handleRenameSubmit = async (newSlug: string) => {
-    if (!renamingEntry) return
+    if (!renameModalOpen || !renamingEntry) return
     setRenameModalSaving(true)
     setRenameModalError(null)
     try {
       await renameEntry(renamingEntry.path, newSlug)
       setRenameModalOpen(false)
-      setRenamingEntry(null)
     } catch (err) {
       setRenameModalError({
         message: err instanceof Error ? err.message : 'Rename failed',
@@ -1391,18 +1447,73 @@ const EditorContent: React.FC<EditorProps> = ({
   ])
 
   const quickOpenShortcut = modKeyLabel() === '⌘' ? '⌘P' : 'Ctrl+P'
+  const quickOpenKeys = modKeyLabel() === '⌘' ? 'Meta+P' : 'Control+P'
+  // Docked, the content panel's open state is the stored preference; as an overlay it is
+  // `navigatorOpen`, which starts open when the URL asks for no entry.
+  const contentPanelShown = contentPanelDocked ? contentPanelOpen : navigatorOpen
+  const setContentPanelShown = (open: boolean) =>
+    contentPanelDocked ? setContentPanelOpen(open) : setNavigatorOpen(open)
+  // The overlay lives in the form pane, under a maximized preview.
+  const contentOverlayShown = !contentPanelDocked && contentPanelShown
+  useEffect(() => {
+    if (contentOverlayShown) setPreviewMaximized(false)
+  }, [contentOverlayShown])
+  // Bumped on every ask for the panel, so one already open still takes focus.
+  const [contentPanelFocusRequest, setContentPanelFocusRequest] = useState(0)
   const openNavigator = () => {
     navigatorOpenerRef.current = rememberOpener()
-    setNavigatorOpen(true)
+    // In the same commit as the overlay mounts, so its focus request meets no inert form panel.
+    if (!contentPanelDocked) setPreviewMaximized(false)
+    setContentPanelShown(true)
+    setContentPanelFocusRequest((request) => request + 1)
   }
+  // A collection crumb opens the panel as "All content" does, then its collection's row takes focus.
+  const [collectionReveal, setCollectionReveal] = useState<{ path: string; seq: number }>()
+  // Only ever rises: the navigator serves each seq once, and the request is cleared once served.
+  const revealSeqRef = useRef(0)
+  const revealCollection = (path: string) => {
+    openNavigator()
+    revealSeqRef.current += 1
+    setCollectionReveal({ path, seq: revealSeqRef.current })
+  }
+  // An ask the panel closed on before serving it must not fire when the panel next opens.
+  useEffect(() => {
+    if (!contentPanelShown) setCollectionReveal(undefined)
+  }, [contentPanelShown])
+  const runSaveAll = () => {
+    void handleSaveAll()
+      .then((result) => {
+        if (!result) return
+        showSaveAllResult(result, {
+          // Focus goes to the entry's menu, where its reason's "Refresh from server" is.
+          onOpenEntry: (path) => {
+            openEntry(path)
+            requestAnimationFrame(() => navigatorToggleRef.current?.focus())
+          },
+          onRetry: runSaveAll,
+        })
+      })
+      .catch(console.error)
+  }
+  // The entry menu's trigger stands in for its item; once the entry is deleted, "All content".
+  const entryChangeReturnTarget = entryChangeFromMenu
+    ? () => navigatorToggleRef.current ?? allContentCrumbRef.current
+    : undefined
   const navigatorReturnTarget = () =>
     returnTarget(navigatorOpenerRef.current, () => navigatorToggleRef.current)
   const branchReturnTarget = () =>
     returnTarget(branchOpenerRef.current, () => branchToggleRef.current)
   const settingsReturnTarget = () => settingsToggleRef.current
+  // The palette replaces the overlay panel; a docked one stays. Opened from inside the overlay,
+  // whose tree then unmounts, it returns focus to the panel's opener.
   const openQuickOpen = () => {
-    if (!quickOpenOpen) setQuickOpenFromDrawer(navigatorOpen)
-    setNavigatorOpen(false)
+    if (!quickOpenOpen) {
+      const panel = document.getElementById(CONTENT_PANEL_ID)
+      setQuickOpenFromOverlay(
+        !contentPanelDocked && navigatorOpen && !!panel?.contains(document.activeElement),
+      )
+    }
+    if (!contentPanelDocked) setNavigatorOpen(false)
     setQuickOpenOpen(true)
   }
 
@@ -1416,13 +1527,18 @@ const EditorContent: React.FC<EditorProps> = ({
     () =>
       new Set(
         entriesState
-          .filter((e) => e.collectionPath === renamingEntry?.collectionPath && e.slug)
+          .filter(
+            (e) =>
+              e.collectionPath === renamingEntry?.collectionPath &&
+              e.contentId !== renamingEntry?.contentId &&
+              e.slug,
+          )
           .map((e) => e.slug as string),
       ),
     [entriesState, renamingEntry],
   )
 
-  // Tree expansion state - persists across drawer close/open
+  // Tree expansion state - persists across panel close/open
   const treeExpandedStateRef = useRef<Record<string, boolean>>({})
 
   const treeControllerRef = useRef<TreeController | null>(null)
@@ -1510,40 +1626,67 @@ const EditorContent: React.FC<EditorProps> = ({
     data: displayValue,
   })
 
+  // Only the default preview has the toolbar that maximizes and restores it. With no value to
+  // preview (an entry loading, or failed to load, with no draft) the form shows instead, and the
+  // choice reapplies once a value arrives.
+  const previewCanMaximize =
+    !renderPreview && Boolean(currentEntry?.previewSrc) && !currentEntryUnavailable
+  const previewShownMaximized = previewMaximized && previewCanMaximize && Boolean(previewFrameData)
+  useEffect(() => {
+    if (!previewCanMaximize) setPreviewMaximized(false)
+  }, [previewCanMaximize])
+  const [paneResizing, setPaneResizing] = useState(false)
+
+  const previewErrorField = previewError?.fieldPath
+    ? fieldBreadcrumb(schema, displayValue, previewError.fieldPath).join(' › ')
+    : ''
+
   // An unavailable entry previews nothing: the site cannot read it, and a stored draft would
   // otherwise mount the frame at a page that answers not-found.
   const defaultPreview =
     currentEntry?.previewSrc && previewFrameData && !currentEntryUnavailable ? (
-      <Box pos="relative" w="100%" h="100%">
-        {previewError && (
-          <Alert
-            color="red"
-            title="Preview error"
-            withCloseButton
-            onClose={() => setPreviewError(null)}
-            style={{ position: 'absolute', top: 8, left: 8, right: 8, zIndex: 2 }}
-          >
-            {previewError.fieldPath
-              ? `${previewError.fieldPath}: ${previewError.message}`
-              : previewError.message}
-          </Alert>
-        )}
-        <PreviewFrame
-          src={currentEntry.previewSrc}
-          path={currentEntry.previewSrc}
-          data={previewFrameData}
-          isLoading={previewLoadingState}
-          style={{
-            width: '100%',
-            height: '100%',
-            border: '1px solid var(--mantine-color-default-border)',
-          }}
-          highlightEnabled={highlightEnabled}
-          onPreviewError={setPreviewError}
-          onMarks={onPreviewMarks}
-          assetBase={authenticatedAssetBase(basePath)}
-        />
-      </Box>
+      <PreviewPane
+        src={currentEntry.previewSrc}
+        data={previewFrameData}
+        isLoading={previewLoadingState}
+        highlightEnabled={highlightEnabled}
+        onPreviewError={setPreviewError}
+        onMarks={onPreviewMarks}
+        assetBase={authenticatedAssetBase(basePath)}
+        mount={{ basePath, previewPrefix }}
+        previewWidth={previewWidth}
+        onPreviewWidthChange={setPreviewWidth}
+        onHighlightToggle={() => {
+          setHighlightEnabled(!highlightEnabled)
+          clearPreviewMarks()
+        }}
+        marksNothing={previewMarksNothing}
+        inexactMarks={previewInexactMarks}
+        showMarkDiagnostics={userIsAdmin}
+        layout={layout}
+        maximized={previewShownMaximized}
+        onMaximizedChange={(maximized) => {
+          // A docked panel stays beside a maximized preview; an overlay one would sit inert under it.
+          if (maximized && !contentPanelDocked) setNavigatorOpen(false)
+          setPreviewMaximized(maximized)
+        }}
+        resizing={paneResizing}
+        notice={
+          previewError && (
+            <Alert
+              color="red"
+              title="Preview error"
+              withCloseButton
+              onClose={() => setPreviewError(null)}
+              radius={0}
+            >
+              {previewErrorField
+                ? `${previewErrorField}: ${previewError.message}`
+                : previewError.message}
+            </Alert>
+          )
+        }
+      />
     ) : (
       <Paper
         withBorder
@@ -1568,611 +1711,681 @@ const EditorContent: React.FC<EditorProps> = ({
       </Paper>
     )
 
-  const sidebarWidth = 64
-  const footerHeight = 40
-
-  const headerTitle = currentEntry?.label ?? currentEntry?.slug ?? title
   const breadcrumbSegments = useMemo(
     () => buildBreadcrumbSegments(currentEntry, collectionLabels),
     [collectionLabels, currentEntry],
   )
 
+  // The browser tab names the open entry and the site.
+  const tabTitle = currentEntry
+    ? `${currentEntry.label ?? currentEntry.slug} · ${siteTitle}`
+    : siteTitle
+  // The host page's title comes back on unmount only if the tab still shows the editor's: a route
+  // navigated to may have set its own by then.
+  const writtenTitleRef = useRef<string | null>(null)
+  useEffect(() => {
+    const hostTitle = document.title
+    return () => {
+      if (document.title === writtenTitleRef.current) document.title = hostTitle
+    }
+  }, [])
+  useEffect(() => {
+    document.title = tabTitle
+    writtenTitleRef.current = tabTitle
+  }, [tabTitle])
+
+  const openBranchManager = () => {
+    branchOpenerRef.current = rememberOpener()
+    setBranchManagerOpen(true)
+    // Always retry, not only when branchless. Opening the manager is
+    // the one in-app retry for a failed branches fetch, and the fetch
+    // is terminal on its own: SWRProvider sets shouldRetryOnError and
+    // revalidateOnFocus false, and useBranchesData's refreshInterval
+    // is 0 without data. Reloading is idempotent.
+    loadBranches().catch(console.error)
+  }
+
+  const contentPanel = (
+    <SidePanelHost
+      id={CONTENT_PANEL_ID}
+      title="Content"
+      mode={contentPanelDocked ? 'docked' : 'overlay'}
+      opened={contentPanelShown}
+      width={contentPanelWidth}
+      minWidth={CONTENT_PANEL_WIDTH_MIN}
+      maxWidth={CONTENT_PANEL_WIDTH_MAX}
+      onWidthChange={setContentPanelWidth}
+      onClose={() => setContentPanelShown(false)}
+      focusRequest={contentPanelFocusRequest}
+      // Quick open takes focus as it replaces the overlay.
+      returnFocusTo={() => (quickOpenOpen ? null : navigatorReturnTarget())}
+      data-testid="content-panel"
+      actions={
+        <>
+          {navCollections &&
+            navCollections.length > 0 &&
+            !branchContentLocked &&
+            (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
+              <Menu shadow="md" width={200} withinPortal position="bottom-end">
+                <Tooltip label="Content actions" withinPortal>
+                  <Menu.Target>
+                    <ActionIcon variant="subtle" color="gray" aria-label="Content actions">
+                      <IconDots size={16} />
+                    </ActionIcon>
+                  </Menu.Target>
+                </Tooltip>
+                <Menu.Dropdown>
+                  {navCollections[0].onAdd && (
+                    <Menu.Item
+                      leftSection={<IconPlus size={14} />}
+                      onClick={() => navCollections[0].onAdd?.()}
+                    >
+                      Add entry…
+                    </Menu.Item>
+                  )}
+                  {navCollections[0].onAddSubCollection && (
+                    <>
+                      {navCollections[0].onAdd && <Menu.Divider />}
+                      <Menu.Label>Admin</Menu.Label>
+                      <Menu.Item
+                        leftSection={<IconFolderPlus size={14} />}
+                        onClick={() => navCollections[0].onAddSubCollection?.()}
+                      >
+                        Add collection…
+                      </Menu.Item>
+                    </>
+                  )}
+                </Menu.Dropdown>
+              </Menu>
+            )}
+          <Tooltip label={`${EDITOR_ACTIONS.openEntry} (${quickOpenShortcut})`} withinPortal>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              onClick={openQuickOpen}
+              aria-label={EDITOR_ACTIONS.openEntry}
+              aria-keyshortcuts={quickOpenKeys}
+              data-testid="quick-open-button"
+            >
+              <IconSearch size={16} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Collapse all folders" withinPortal>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              onClick={handleCollapseAll}
+              aria-label="Collapse all folders"
+            >
+              <IconChevronUp size={16} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Expand all folders" withinPortal>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              onClick={handleExpandAll}
+              aria-label="Expand all folders"
+            >
+              <IconChevronDown size={16} />
+            </ActionIcon>
+          </Tooltip>
+        </>
+      }
+    >
+      <Box px="md">
+        <EntryNavigator
+          collections={navCollections}
+          items={
+            navCollections
+              ? undefined
+              : entriesState.map((e) => ({
+                  path: e.path,
+                  label: e.label,
+                  slug: e.slug,
+                  status: entryStatusLabel(activeCollections, e),
+                  readOnly: e.canEdit === false || undefined,
+                }))
+          }
+          selectedPath={selectedPath}
+          onSelect={openEntry}
+          onTreeControllerReady={handleTreeControllerReady}
+          expandedStateRef={treeExpandedStateRef}
+          onExpandedStateChange={handleExpandedStateChange}
+          onDeleteEntry={handleDeleteEntry}
+          onRenameEntry={handleRenameEntry}
+          onReorderEntry={userIsAdmin ? handleReorderEntry : undefined}
+          hiddenRootPath={hiddenRootPath}
+          loading={entriesInitializing}
+          readOnly={branchContentLocked}
+          dirtyPaths={dirtyPaths}
+          revealCollection={collectionReveal}
+          onRevealed={() => setCollectionReveal(undefined)}
+        />
+      </Box>
+    </SidePanelHost>
+  )
+
   return (
     <CanopyCMSProvider {...(themeOptions ?? {})}>
       <AssetContextProvider basePath={basePath}>
-        <Box bg="var(--canopy-surface-subtle)" style={{ minHeight: '100vh', width: '100%' }}>
-          <EditorHeader
-            ref={headerRef}
-            siteTitle={siteTitle}
-            siteSubtitle={siteSubtitle}
-            headerTitle={headerTitle}
-            currentEntry={currentEntry}
-            branchName={branchNameState}
-            operatingMode={operatingMode}
-            branchStatus={currentBranch?.status}
-            busy={busy}
-            breadcrumbSegments={breadcrumbSegments}
-            editedFiles={editedFiles}
-            modifiedCount={modifiedCount}
-            unresolvedCommentCount={comments.filter((t) => !t.resolved).length}
-            comments={comments}
-            // A draft kept for an unavailable entry stays in storage but cannot be saved.
-            hasUnsavedChanges={!currentEntryUnavailable && !contentReadOnly && isSelectedDirty()}
-            draftStorageFailed={draftStorageFailed}
-            userContext={userContext}
-            branchCreatedBy={currentBranch?.createdBy}
-            branchAccess={currentBranch?.access}
-            // Fail-closed for the same reason branchContentLocked above is:
-            // isProtected/writeBlocked gate real actions in EditorHeader (hiding
-            // Submit, disabling Save), so a missing wire value must read as
-            // "protected"/"blocked", not "unprotected"/"unblocked".
-            // branchWriteBlocked reuses branchContentLocked itself rather than
-            // re-deriving `?? true` a second time here, so there is exactly one
-            // fail-closed computation of "are writes blocked" in this component.
-            branchIsProtected={currentBranch?.isProtected ?? true}
-            branchReadOnly={currentBranch?.readOnly}
-            branchWriteBlocked={branchContentLocked}
-            onNavigatorOpen={openNavigator}
-            navigatorToggleRef={navigatorToggleRef}
-            branchToggleRef={branchToggleRef}
-            onFileReload={() => handleReload(() => navigatorToggleRef.current)}
-            onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
-            onEntrySelect={setSelectedPath}
-            onBranchReloadData={handleReloadBranchData}
-            onBranchDiscardDrafts={() => handleDiscardDrafts(() => branchToggleRef.current)}
-            onBranchManagerOpen={() => {
-              branchOpenerRef.current = rememberOpener()
-              setBranchManagerOpen(true)
-              // Always retry, not only when branchless. Opening the manager is
-              // the one in-app retry for a failed branches fetch, and the fetch
-              // is terminal on its own: SWRProvider sets shouldRetryOnError and
-              // revalidateOnFocus false, and useBranchesData's refreshInterval
-              // is 0 without data. Reloading is idempotent.
-              loadBranches().catch(console.error)
-            }}
-            onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
-            onSave={currentEntryUnavailable ? noop : handleSave}
-            onSubmit={() => {
-              if (branchNameState) handleSubmit(branchNameState).catch(console.error)
-            }}
-            onWithdraw={() => {
-              if (branchNameState) handleWithdraw(branchNameState).catch(console.error)
-            }}
-          />
-
-          <Box
-            style={{
-              paddingTop: headerHeight,
-              paddingBottom: footerHeight,
-              paddingRight: sidebarWidth,
-              minHeight: '100vh',
-              width: '100%',
-            }}
-          >
-            <Box
-              style={{
-                height: `calc(100vh - ${headerHeight + footerHeight}px)`,
-                minHeight: 0,
-                position: 'relative',
-              }}
-            >
-              <Box style={{ flex: 1, minHeight: 0, height: '100%', width: '100%' }}>
-                <EditorPanes
-                  layout={layout}
-                  onLayoutChange={(next) => setLayout(next)}
-                  sideSplitPercent={sideSplitPercent}
-                  stackedSplitPercent={stackedSplitPercent}
-                  onSplitPercentChange={setSplitPercent}
-                  preview={
-                    renderPreview && currentEntry && !currentEntryUnavailable
-                      ? renderPreview(currentEntry, displayValue)
-                      : defaultPreview
-                  }
-                  form={
-                    !currentEntry ? (
-                      <CenteredMessage>
-                        {!branchNameState && busy
-                          ? 'Setting up your branch workspace…'
-                          : entriesInitializing
-                            ? 'Loading content…'
-                            : 'Select an item to start editing.'}
-                      </CenteredMessage>
-                    ) : currentEntryUnavailable ? (
-                      <UnavailableEntryNotice
-                        schemaRefs={
-                          currentEntry.unavailable ? [currentEntry.unavailable.schemaRef] : []
-                        }
-                      />
-                    ) : currentEntry.canEdit === false ? (
-                      <NoEditPermissionNotice entryLabel={currentEntry.label} />
-                    ) : schema.length > 0 && displayValue ? (
-                      <EntryLinkContext.Provider value={entryLinkContextValue}>
-                        <SiteMdxAllowContext.Provider value={mdxAllow}>
-                          <FormRenderer
-                            notice={
-                              hiddenDraftNotice && (
-                                <ReadOnlyDraftNotice
-                                  permanentlyReadOnly={
-                                    (currentBranch?.isProtected ?? true) ||
-                                    currentBranch?.status === 'archived'
-                                  }
-                                  // A hidden draft's discard changes nothing on screen, so it says so.
-                                  onDiscard={() =>
-                                    handleDiscardFileDraft(() => navigatorToggleRef.current, {
-                                      announce: true,
-                                    })
-                                  }
-                                />
-                              )
-                            }
-                            fields={schema}
-                            value={displayValue}
-                            readOnly={contentReadOnly}
-                            onRemoved={handleFieldRemoved}
-                            commentBlockedReason={commentBlockedReason}
-                            removedItemFieldLabel={commentFieldLabel}
-                            onGetUserMetadata={getCommentUserMetadata}
-                            header={{
-                              title: currentEntry.label,
-                              typeLabel: entryTypeLabel(activeCollections, currentEntry),
-                            }}
-                            // The one writer of drafts. Read-only content gets none, whatever a
-                            // field emits (MDXEditor's mount-time normalisation included).
-                            onChange={(next) => {
-                              const contentId = currentEntry?.contentId
-                              if (contentId && !contentReadOnlyRef.current) {
-                                // Every list item keeps a key, whatever field made it.
-                                const keyed = withItemKeys(schema, next, 'random')
-                                setDrafts((prev) => ({ ...prev, [contentId]: keyed }))
-                              }
-                            }}
-                            customRenderers={customRenderers}
-                            branch={branchNameState}
-                            comments={displayComments}
-                            currentEntryPath={selectedPath}
-                            currentUserId={commentUserId}
-                            canResolve={canResolveAnyComment}
-                            focusedFieldPath={focusedFieldPath}
-                            highlightThreadId={highlightThreadId}
-                            onAddComment={handleAddDisplayedComment}
-                            onResolveThread={handleResolveThread}
-                            fieldErrors={fieldErrors}
-                            format={currentEntry.format}
-                            conflictNotice={
-                              !!(
-                                currentEntry?.contentId &&
-                                currentBranch?.conflictFiles?.includes(currentEntry.contentId)
-                              )
-                            }
-                          />
-                        </SiteMdxAllowContext.Provider>
-                      </EntryLinkContext.Provider>
-                    ) : schema.length === 0 ? (
-                      <CenteredMessage>No fields to edit.</CenteredMessage>
-                    ) : loadFailedKey !== `${branchNameState}:${currentEntry.contentId}` ? (
-                      <Stack gap="lg" p="md" data-testid="entry-loading-skeleton">
-                        {[0, 1, 2].map((row) => (
-                          <Stack key={row} gap={6}>
-                            <Skeleton h={12} w={120} />
-                            <Skeleton h={36} />
-                          </Stack>
-                        ))}
-                      </Stack>
-                    ) : (
-                      <Alert
-                        color="red"
-                        variant="light"
-                        m="md"
-                        title="This entry couldn't be loaded."
-                        data-testid="entry-load-failed"
-                      >
-                        <Button
-                          variant="default"
-                          onClick={() => {
-                            setLoadFailedKey(null)
-                            setLoadAttempt((attempt) => attempt + 1)
-                          }}
-                        >
-                          Retry
-                        </Button>
-                      </Alert>
-                    )
-                  }
-                />
-              </Box>
-              <EditorSidebar
-                layout={layout}
-                highlightEnabled={highlightEnabled}
-                previewMarksNothing={previewMarksNothing}
-                previewInexactMarks={previewInexactMarks}
-                sidebarWidth={sidebarWidth}
-                headerHeight={headerHeight}
-                footerHeight={footerHeight}
-                onLayoutChange={setLayout}
-                onHighlightToggle={() => {
-                  setHighlightEnabled(!highlightEnabled)
-                  clearPreviewMarks()
-                }}
-                onPermissionManagerOpen={
-                  userIsAdmin ? () => setPermissionManagerOpen(true) : undefined
-                }
-                onGroupManagerOpen={userIsAdmin ? () => setGroupManagerOpen(true) : undefined}
-                onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
-                onSystemHealthOpen={userIsAdmin ? () => setSystemHealthOpen(true) : undefined}
-                settingsToggleRef={settingsToggleRef}
-                AccountComponent={AccountComponent}
-                onAccountClick={onAccountClick}
-                onLogoutClick={onLogoutClick}
-              />
-            </Box>
-          </Box>
-
-          <EditorFooter />
-
-          <Drawer.Root
-            opened={navigatorOpen}
-            onClose={() => setNavigatorOpen(false)}
-            returnFocus={false}
-            onExitTransitionEnd={() => {
-              if (!quickOpenOpenRef.current) focusIfIdle(navigatorReturnTarget())
-            }}
-            // Mantine closes every open overlay on one Escape, so the drawer leaves it to a dialog
-            // opened from it.
-            closeOnEscape={
-              !createModalOpen &&
-              !renameModalOpen &&
-              !deleteEntryModalOpen &&
-              !deleteCollectionModalOpen &&
-              !collectionEditorOpen
-            }
-            position="left"
-            size={360}
-          >
-            <Drawer.Overlay blur={2} />
-            <Drawer.Content {...{ [QUICK_OPEN_REPLACES_ATTR]: true, [FOCUS_RETURN_ATTR]: true }}>
-              <Drawer.Header>
-                <Drawer.Title>Content</Drawer.Title>
-                <Group gap="xs">
-                  {navCollections &&
-                    navCollections.length > 0 &&
-                    !branchContentLocked &&
-                    (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
-                      <Menu shadow="md" width={200} withinPortal position="bottom-end">
-                        <Menu.Target>
-                          <ActionIcon variant="subtle" color="gray" aria-label="Content actions">
-                            <IconDots size={16} />
-                          </ActionIcon>
-                        </Menu.Target>
-                        <Menu.Dropdown>
-                          {navCollections[0].onAdd && (
-                            <Menu.Item
-                              leftSection={<IconPlus size={14} />}
-                              onClick={() => navCollections[0].onAdd?.()}
-                            >
-                              Add entry…
-                            </Menu.Item>
-                          )}
-                          {navCollections[0].onAddSubCollection && (
-                            <>
-                              {navCollections[0].onAdd && <Menu.Divider />}
-                              <Menu.Label>Admin</Menu.Label>
-                              <Menu.Item
-                                leftSection={<IconFolderPlus size={14} />}
-                                onClick={() => navCollections[0].onAddSubCollection?.()}
-                              >
-                                Add collection…
-                              </Menu.Item>
-                            </>
-                          )}
-                        </Menu.Dropdown>
-                      </Menu>
-                    )}
-                  <Tooltip label={`Quick open (${quickOpenShortcut})`} withinPortal>
-                    <ActionIcon
-                      variant="subtle"
-                      color="gray"
-                      onClick={openQuickOpen}
-                      aria-label="Quick open"
-                      data-testid="quick-open-button"
-                    >
-                      <IconSearch size={16} />
-                    </ActionIcon>
-                  </Tooltip>
-                  <Tooltip label="Collapse all folders" withinPortal>
-                    <ActionIcon
-                      variant="subtle"
-                      color="gray"
-                      onClick={handleCollapseAll}
-                      aria-label="Collapse all folders"
-                    >
-                      <IconChevronUp size={16} />
-                    </ActionIcon>
-                  </Tooltip>
-                  <Tooltip label="Expand all folders" withinPortal>
-                    <ActionIcon
-                      variant="subtle"
-                      color="gray"
-                      onClick={handleExpandAll}
-                      aria-label="Expand all folders"
-                    >
-                      <IconChevronDown size={16} />
-                    </ActionIcon>
-                  </Tooltip>
-                  <Drawer.CloseButton />
-                </Group>
-              </Drawer.Header>
-              <Drawer.Body p={0}>
-                <Box px="md">
-                  <EntryNavigator
-                    collections={navCollections}
-                    items={
-                      navCollections
-                        ? undefined
-                        : entriesState.map((e) => ({
-                            path: e.path,
-                            label: e.label,
-                            slug: e.slug,
-                            status: entryStatusLabel(activeCollections, e),
-                            readOnly: e.canEdit === false || undefined,
-                          }))
-                    }
-                    selectedPath={selectedPath}
-                    onSelect={(id) => {
-                      setSelectedPath(id)
-                      setNavigatorOpen(false)
-                    }}
-                    onTreeControllerReady={handleTreeControllerReady}
-                    expandedStateRef={treeExpandedStateRef}
-                    onExpandedStateChange={handleExpandedStateChange}
-                    onDeleteEntry={handleDeleteEntry}
-                    onRenameEntry={handleRenameEntry}
-                    onReorderEntry={userIsAdmin ? handleReorderEntry : undefined}
-                    hiddenRootPath={hiddenRootPath}
-                    loading={entriesInitializing}
-                    readOnly={branchContentLocked}
-                    dirtyPaths={dirtyPaths}
-                  />
-                </Box>
-              </Drawer.Body>
-            </Drawer.Content>
-          </Drawer.Root>
-          <QuickOpenPalette
-            opened={quickOpenOpen}
-            onOpen={openQuickOpen}
-            onClose={() => setQuickOpenOpen(false)}
-            returnFocusTo={quickOpenFromDrawer ? navigatorReturnTarget : undefined}
-            entries={entriesState}
-            // The hidden root's entries sit at the top of the tree, so they get no heading here either.
-            collectionLabel={(path) => (path === hiddenRootPath ? '' : collectionLabels.get(path))}
-            onSelect={setSelectedPath}
-          />
-          <BranchesDrawer
-            opened={branchManagerOpen}
-            onClose={() => setBranchManagerOpen(false)}
-            confirmOpen={branchConfirmOpen}
-            returnFocusTo={branchReturnTarget}
-          >
-            <BranchManager
-              branches={branchSummaries}
-              mode={operatingMode}
-              user={userContext}
-              currentBranchName={currentBranch?.name ?? branchNameState}
-              onSelect={async (name) => {
-                try {
-                  await handleBranchChange(name)
-                  setBranchManagerOpen(false)
-                } catch (err) {
-                  console.error('Branch change failed or was cancelled:', err)
-                  // Don't close branch manager if there was an error or user cancelled
-                }
-              }}
-              onBeforeCreate={confirmCreateBranch}
-              onCreate={handleCreateBranch}
-              onSubmit={(name) => {
-                handleSubmit(name).catch((err) => console.error(err))
-              }}
-              onWithdraw={(name) => {
-                handleWithdraw(name).catch((err) => console.error(err))
-              }}
-              onRequestChanges={(name) => {
-                handleRequestChanges(name).catch((err) => console.error(err))
-              }}
-              onDelete={(name) => {
-                handleDelete(name).catch((err) => console.error(err))
-              }}
-              onClose={() => setBranchManagerOpen(false)}
-              comments={comments}
-              currentUserId={commentUserId}
-              canResolve={canResolveAnyComment}
-              onAddComment={handleAddComment}
-              onResolveThread={handleResolveThread}
-              highlightThreadId={highlightThreadId}
-              onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
-              onGetOwnerMetadata={getCommentUserMetadata}
-              onGetCommentUserMetadata={getCommentUserMetadata}
-            />
-          </BranchesDrawer>
-          {branchNameState && (
-            <CommentsPanel
-              key={branchNameState}
-              opened={commentsPanelOpen}
+        <EditorShell
+          topBar={
+            <EditorHeader
+              currentEntry={currentEntry}
               branchName={branchNameState}
-              comments={displayComments}
-              canResolve={canResolveAnyComment}
-              currentUserId={commentUserId}
-              entryLabel={commentEntryLabel}
-              fieldLabel={commentFieldLabel}
-              onAddComment={handleAddDisplayedComment}
-              onResolveThread={handleResolveThread}
-              onClose={() => setCommentsPanelOpen(false)}
-              onJumpToField={jumpToThreadField}
-              onGetUserMetadata={getCommentUserMetadata}
-              onJumpToEntry={handleJumpToEntry}
-              onJumpToBranch={handleJumpToBranch}
-            />
-          )}
-
-          {userIsAdmin && (
-            <GroupManager
-              opened={groupManagerOpen}
-              onClose={() => setGroupManagerOpen(false)}
-              returnFocusTo={settingsReturnTarget}
-              internalGroups={groupsData}
-              loading={groupsLoading}
-              canEdit={userIsAdmin}
-              onSave={handleSaveGroups}
-              onSearchUsers={handleSearchUsers}
-              onGetUserMetadata={handleGetUserMetadata}
-              onSearchExternalGroups={handleSearchExternalGroups}
-            />
-          )}
-
-          {userIsAdmin && (
-            <PermissionManager
-              opened={permissionManagerOpen}
-              onClose={() => setPermissionManagerOpen(false)}
-              returnFocusTo={settingsReturnTarget}
-              collections={activeCollections}
-              contentRoot={contentRoot}
-              permissions={permissionsData}
-              loading={permissionsLoading}
-              canEdit={userIsAdmin}
-              onSave={handleSavePermissions}
-              onSearchUsers={handleSearchUsers}
-              onGetUserMetadata={handleGetUserMetadata}
-              onListGroups={handleListGroups}
-            />
-          )}
-
-          {userIsAdmin && (
-            <SystemHealthPanel
-              opened={systemHealthOpen}
-              onClose={() => setSystemHealthOpen(false)}
-              returnFocusTo={settingsReturnTarget}
-            />
-          )}
-
-          <MediaLibrary
-            opened={mediaLibraryOpen}
-            onClose={() => setMediaLibraryOpen(false)}
-            mode="manage"
-            returnFocusTo={settingsReturnTarget}
-          />
-
-          {userIsAdmin && (
-            <CollectionEditor
-              isOpen={collectionEditorOpen}
-              editingCollection={editingCollection}
-              parentPath={collectionEditorParentPath}
-              availableSchemas={availableSchemas}
-              onSave={handleCollectionSave}
-              onAddEntryType={
-                editingCollection ? (path, entryType) => addEntryType(path, entryType) : undefined
+              operatingMode={operatingMode}
+              branchStatus={currentBranch?.status}
+              busy={busy}
+              breadcrumbSegments={breadcrumbSegments}
+              editedFiles={editedFiles}
+              modifiedCount={modifiedCount}
+              // A draft kept for an unavailable entry stays in storage but cannot be saved.
+              hasUnsavedChanges={!currentEntryUnavailable && !contentReadOnly && isSelectedDirty()}
+              entryHasDraft={isSelectedDirty()}
+              entryReadOnly={currentEntry?.canEdit === false}
+              draftStorageFailed={draftStorageFailed}
+              userContext={userContext}
+              branchCreatedBy={currentBranch?.createdBy}
+              branchAccess={currentBranch?.access}
+              // Fail-closed for the same reason branchContentLocked above is:
+              // isProtected/writeBlocked gate real actions in EditorHeader (hiding
+              // Submit, disabling Save), so a missing wire value must read as
+              // "protected"/"blocked", not "unprotected"/"unblocked".
+              // branchWriteBlocked reuses branchContentLocked itself rather than
+              // re-deriving `?? true` a second time here, so there is exactly one
+              // fail-closed computation of "are writes blocked" in this component.
+              branchIsProtected={currentBranch?.isProtected ?? true}
+              branchReadOnly={currentBranch?.readOnly}
+              branchWriteBlocked={branchContentLocked}
+              // A failed fetch leaves the list empty too; the banner says that one.
+              branchLoading={!currentBranch && (branchesLoading || branchSummaries.length === 0)}
+              onNavigatorOpen={openNavigator}
+              onCollectionOpen={revealCollection}
+              navigatorToggleRef={navigatorToggleRef}
+              branchToggleRef={branchToggleRef}
+              onFileReload={() => handleReload(() => navigatorToggleRef.current)}
+              onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
+              onEntryRename={() => currentEntry && handleRenameEntry(currentEntry.path, true)}
+              onEntryDelete={() => currentEntry && handleDeleteEntry(currentEntry.path, true)}
+              allContentRef={allContentCrumbRef}
+              entryUnavailable={currentEntryUnavailable}
+              onEntrySelect={openEntry}
+              onBranchReloadData={() => {
+                void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
+                  console.error,
+                )
+              }}
+              onBranchDiscardDrafts={() => handleDiscardDrafts(() => branchToggleRef.current)}
+              onBranchManagerOpen={openBranchManager}
+              onSave={currentEntryUnavailable ? noop : handleSave}
+              onSaveAll={runSaveAll}
+              saveAllProgress={saveAllProgress}
+              saving={
+                singleSaving?.branch === branchNameState &&
+                singleSaving.contentId === currentEntry?.contentId
               }
-              onUpdateEntryType={
-                editingCollection
-                  ? (path, name, updates) => updateEntryType(path, name, updates)
+              savedSignal={lastSaved?.seq}
+              savedHere={
+                lastSaved?.branch === branchNameState &&
+                lastSaved.contentId === currentEntry?.contentId
+              }
+              // Save all finds each draft's entry in the list, so with none listed it would save nothing.
+              entryListFailed={entriesLoadFailed && entriesState.length === 0}
+              onSubmit={() => {
+                if (branchNameState && !isSaveAllRunning()) {
+                  handleSubmit(branchNameState).catch(console.error)
+                }
+              }}
+              onWithdraw={() => {
+                if (branchNameState && !isSaveAllRunning()) {
+                  handleWithdraw(branchNameState).catch(console.error)
+                }
+              }}
+            />
+          }
+          banner={
+            <BranchLockBanner
+              branchName={branchNameState}
+              branchStatus={currentBranch?.status}
+              branchReadOnly={currentBranch?.readOnly}
+              branchWriteBlocked={branchContentLocked}
+              onBranchManagerOpen={openBranchManager}
+            />
+          }
+          rail={
+            <EditorRail
+              siteTitle={siteTitle}
+              onHomeOpen={() => {
+                const first = entriesState[0]
+                if (first) openEntry(first.path)
+              }}
+              contentPanelOpen={contentPanelShown}
+              contentPanelId={CONTENT_PANEL_ID}
+              onContentToggle={() =>
+                contentPanelShown ? setContentPanelShown(false) : openNavigator()
+              }
+              onQuickOpen={openQuickOpen}
+              quickOpenShortcut={quickOpenShortcut}
+              quickOpenKeys={quickOpenKeys}
+              branchesOpen={branchManagerOpen}
+              onBranchesOpen={openBranchManager}
+              onCommentsOpen={
+                clientOperatingStrategy(operatingMode ?? 'prod').supportsComments() &&
+                branchNameState
+                  ? () => setCommentsPanelOpen(true)
                   : undefined
               }
-              onRemoveEntryType={
-                editingCollection ? (path, name) => removeEntryType(path, name) : undefined
+              commentsOpen={commentsPanelOpen}
+              unresolvedCommentCount={comments.filter((t) => !t.resolved).length}
+              mediaLibraryOpen={mediaLibraryOpen}
+              onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
+              mediaButtonRef={mediaButtonRef}
+              layout={layout}
+              onLayoutChange={setLayout}
+              layoutBlocked={previewShownMaximized}
+              onPermissionManagerOpen={
+                userIsAdmin ? () => setPermissionManagerOpen(true) : undefined
               }
-              onReloadEntryTypes={editingCollection ? readEntryTypes : undefined}
-              onClose={handleCloseCollectionEditor}
-              isSaving={schemaLoading}
-              error={collectionEditorError}
-              restored={restoredCollectionInput}
-              onDiscardRestored={() => {
-                collectionDraftRef.current = null
-                setRestoredCollectionInput(null)
-              }}
+              onGroupManagerOpen={userIsAdmin ? () => setGroupManagerOpen(true) : undefined}
+              onSystemHealthOpen={userIsAdmin ? () => setSystemHealthOpen(true) : undefined}
+              settingsToggleRef={settingsToggleRef}
+              AccountComponent={AccountComponent}
+              onAccountClick={onAccountClick}
+              onLogoutClick={onLogoutClick}
             />
-          )}
-
-          {renamingEntry && (
-            <RenameEntryModal
-              isOpen={renameModalOpen}
-              entryLabel={renamingEntry.label}
-              currentSlug={renamingEntry.slug || ''}
-              onSave={handleRenameSubmit}
-              onClose={() => {
-                setRenameModalOpen(false)
-                setRenamingEntry(null)
-                setRenameModalError(null)
-              }}
-              isSaving={renameModalSaving}
-              error={renameModalError?.mayHaveLanded ? null : renameModalError?.message}
-              warning={renameModalError?.mayHaveLanded ? renameModalError.message : null}
-              existingSlugs={renameExistingSlugs}
-              previewPath={(slug) =>
-                previewPathFor({
-                  collectionPath: renamingEntry.collectionPath ?? '',
-                  collectionName: renamingEntry.collectionName,
-                  slug,
-                  entryType: renamingEntry.entryType,
-                })
-              }
-            />
-          )}
-
-          {createModalCollection && (
-            <EntryCreateModal
-              isOpen={createModalOpen}
-              collectionLabel={createModalCollection.label || createModalCollection.name}
-              entryTypes={createModalEntryTypes}
-              onCreate={handleCreateModalSubmit}
-              onClose={closeCreateModal}
-              isCreating={createModalCreating}
-              error={createModalError}
-              existingSlugs={createModalExistingSlugs}
-              previewPath={(slug, entryTypeName) =>
-                previewPathFor({
-                  collectionPath: createModalCollection.path,
-                  collectionName: createModalCollection.name,
-                  slug,
-                  entryType: entryTypeName,
-                })
-              }
-            />
-          )}
-
-          <ConfirmDeleteModal
-            isOpen={deleteCollectionModalOpen}
-            title="Delete Collection"
-            message="Are you sure you want to delete this collection? This cannot be undone."
-            confirmLabel="Delete Collection"
-            onConfirm={confirmDeleteCollection}
-            onClose={() => {
-              setDeleteCollectionModalOpen(false)
-              setDeletingCollectionPath(null)
-            }}
-            loading={deleteInProgress}
-          />
-
-          <ConfirmDeleteModal
-            isOpen={deleteEntryModalOpen}
-            title="Delete Entry"
-            message={
-              deletingEntryReferencedBy
-                ? referencedDeleteMessage(deletingEntryReferencedBy)
-                : 'Are you sure you want to delete this entry? This cannot be undone.'
-            }
-            confirmLabel={deletingEntryReferencedBy ? 'Delete anyway' : 'Delete Entry'}
-            onConfirm={confirmDeleteEntry}
-            onClose={closeDeleteEntryModal}
-            loading={deleteInProgress}
-          >
-            {deletingEntryReferencedBy && (
-              <ReferencedByList
-                referencedBy={deletingEntryReferencedBy}
-                onOpenEntry={(entryPath) => {
-                  closeDeleteEntryModal()
-                  setSelectedPath(entryPath)
+          }
+          panel={contentPanelDocked ? contentPanel : undefined}
+          main={
+            <Box h="100%">
+              <PaneLayout
+                formOverlay={contentPanelDocked ? undefined : contentPanel}
+                formInert={contentOverlayShown}
+                previewMaximized={previewShownMaximized}
+                // Sizing the pane, by pointer or key, gives the page the pane's width.
+                onSeparatorDrag={(dragging) => {
+                  setPaneResizing(dragging)
+                  if (dragging) setPreviewWidth('fit')
                 }}
+                arrangement={layout}
+                sideSplitPercent={sideSplitPercent}
+                stackedSplitPercent={stackedSplitPercent}
+                onSplitPercentChange={(arrangement, percent) => {
+                  setSplitPercent(arrangement, percent)
+                  setPreviewWidth('fit')
+                }}
+                preview={
+                  renderPreview && currentEntry && !currentEntryUnavailable
+                    ? renderPreview(currentEntry, displayValue)
+                    : defaultPreview
+                }
+                form={
+                  !currentEntry ? (
+                    <CenteredMessage>
+                      {!branchNameState && busy
+                        ? 'Setting up your branch workspace…'
+                        : entriesInitializing
+                          ? 'Loading content…'
+                          : 'Select an item to start editing.'}
+                    </CenteredMessage>
+                  ) : currentEntryUnavailable ? (
+                    <UnavailableEntryNotice
+                      schemaRefs={
+                        currentEntry.unavailable ? [currentEntry.unavailable.schemaRef] : []
+                      }
+                    />
+                  ) : currentEntry.canEdit === false ? (
+                    <NoEditPermissionNotice entryLabel={currentEntry.label} />
+                  ) : schema.length > 0 && displayValue ? (
+                    <EntryLinkContext.Provider value={entryLinkContextValue}>
+                      <SiteMdxAllowContext.Provider value={mdxAllow}>
+                        <FormRenderer
+                          notice={
+                            hiddenDraftNotice && (
+                              <ReadOnlyDraftNotice
+                                permanentlyReadOnly={
+                                  (currentBranch?.isProtected ?? true) ||
+                                  currentBranch?.status === 'archived'
+                                }
+                                // A hidden draft's discard changes nothing on screen, so it says so.
+                                onDiscard={() =>
+                                  handleDiscardFileDraft(() => navigatorToggleRef.current, {
+                                    announce: true,
+                                  })
+                                }
+                              />
+                            )
+                          }
+                          fields={schema}
+                          value={displayValue}
+                          readOnly={contentReadOnly}
+                          onRemoved={handleFieldRemoved}
+                          commentBlockedReason={commentBlockedReason}
+                          removedItemFieldLabel={commentFieldLabel}
+                          onGetUserMetadata={getCommentUserMetadata}
+                          header={{
+                            title: currentEntry.label,
+                            typeLabel: entryTypeLabel(activeCollections, currentEntry),
+                          }}
+                          // The one writer of drafts. Read-only content gets none, whatever a
+                          // field emits (MDXEditor's mount-time normalisation included).
+                          onChange={(next) => {
+                            const contentId = currentEntry?.contentId
+                            if (contentId && !contentReadOnlyRef.current) {
+                              // Every list item keeps a key, whatever field made it.
+                              const keyed = withItemKeys(schema, next, 'random')
+                              setDrafts((prev) => ({ ...prev, [contentId]: keyed }))
+                            }
+                          }}
+                          customRenderers={customRenderers}
+                          branch={branchNameState}
+                          comments={displayComments}
+                          currentEntryPath={selectedPath}
+                          currentUserId={commentUserId}
+                          canResolve={canResolveAnyComment}
+                          focusedFieldPath={focusedFieldPath}
+                          highlightThreadId={highlightThreadId}
+                          onAddComment={handleAddDisplayedComment}
+                          onResolveThread={handleResolveThread}
+                          fieldErrors={fieldErrors}
+                          format={currentEntry.format}
+                          conflictNotice={
+                            !!(
+                              currentEntry?.contentId &&
+                              currentBranch?.conflictFiles?.includes(currentEntry.contentId)
+                            )
+                          }
+                        />
+                      </SiteMdxAllowContext.Provider>
+                    </EntryLinkContext.Provider>
+                  ) : schema.length === 0 ? (
+                    <CenteredMessage>No fields to edit.</CenteredMessage>
+                  ) : loadFailedKey !== `${branchNameState}:${currentEntry.contentId}` ? (
+                    <Stack gap="lg" p="md" data-testid="entry-loading-skeleton">
+                      {[0, 1, 2].map((row) => (
+                        <Stack key={row} gap={6}>
+                          <Skeleton h={12} w={120} />
+                          <Skeleton h={36} />
+                        </Stack>
+                      ))}
+                    </Stack>
+                  ) : (
+                    <Alert
+                      color="red"
+                      variant="light"
+                      m="md"
+                      title="This entry couldn't be loaded."
+                      data-testid="entry-load-failed"
+                    >
+                      <Button
+                        variant="default"
+                        onClick={() => {
+                          setLoadFailedKey(null)
+                          setLoadAttempt((attempt) => attempt + 1)
+                        }}
+                      >
+                        Retry
+                      </Button>
+                    </Alert>
+                  )
+                }
               />
-            )}
-          </ConfirmDeleteModal>
-        </Box>
+            </Box>
+          }
+          overlays={
+            <>
+              <QuickOpenPalette
+                opened={quickOpenOpen}
+                onOpen={openQuickOpen}
+                onClose={() => setQuickOpenOpen(false)}
+                returnFocusTo={quickOpenFromOverlay ? navigatorReturnTarget : undefined}
+                entries={entriesState}
+                // The hidden root's entries sit at the top of the tree, so they get no heading here either.
+                collectionLabel={(path) =>
+                  path === hiddenRootPath ? '' : collectionLabels.get(path)
+                }
+                onSelect={setSelectedPath}
+              />
+              <BranchesDrawer
+                opened={branchManagerOpen}
+                onClose={() => setBranchManagerOpen(false)}
+                confirmOpen={branchConfirmOpen}
+                returnFocusTo={branchReturnTarget}
+              >
+                <BranchManager
+                  branches={branchSummaries}
+                  mode={operatingMode}
+                  user={userContext}
+                  currentBranchName={currentBranch?.name ?? branchNameState}
+                  currentWorkflowBlockedReason={
+                    saveAllProgress ? 'Wait for Save all to finish.' : undefined
+                  }
+                  onSelect={async (name) => {
+                    try {
+                      await handleBranchChange(name)
+                      setBranchManagerOpen(false)
+                    } catch (err) {
+                      console.error('Branch change failed or was cancelled:', err)
+                      // Don't close branch manager if there was an error or user cancelled
+                    }
+                  }}
+                  onBeforeCreate={confirmCreateBranch}
+                  onCreate={handleCreateBranch}
+                  // A Save all mid-run on the open branch would be submitted partway through.
+                  onSubmit={(name) => {
+                    if (name === branchNameState && isSaveAllRunning()) return
+                    handleSubmit(name).catch((err) => console.error(err))
+                  }}
+                  onWithdraw={(name) => {
+                    if (name === branchNameState && isSaveAllRunning()) return
+                    handleWithdraw(name).catch((err) => console.error(err))
+                  }}
+                  onRequestChanges={(name) => {
+                    handleRequestChanges(name).catch((err) => console.error(err))
+                  }}
+                  onDelete={(name) => {
+                    handleDelete(name).catch((err) => console.error(err))
+                  }}
+                  onClose={() => setBranchManagerOpen(false)}
+                  comments={comments}
+                  currentUserId={commentUserId}
+                  canResolve={canResolveAnyComment}
+                  onAddComment={handleAddComment}
+                  onResolveThread={handleResolveThread}
+                  highlightThreadId={highlightThreadId}
+                  onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
+                  onGetOwnerMetadata={getCommentUserMetadata}
+                  onGetCommentUserMetadata={getCommentUserMetadata}
+                />
+              </BranchesDrawer>
+              {branchNameState && (
+                <CommentsPanel
+                  key={branchNameState}
+                  opened={commentsPanelOpen}
+                  branchName={branchNameState}
+                  comments={displayComments}
+                  canResolve={canResolveAnyComment}
+                  currentUserId={commentUserId}
+                  entryLabel={commentEntryLabel}
+                  fieldLabel={commentFieldLabel}
+                  onAddComment={handleAddDisplayedComment}
+                  onResolveThread={handleResolveThread}
+                  onClose={() => setCommentsPanelOpen(false)}
+                  onJumpToField={jumpToThreadField}
+                  onGetUserMetadata={getCommentUserMetadata}
+                  onJumpToEntry={handleJumpToEntry}
+                  onJumpToBranch={handleJumpToBranch}
+                />
+              )}
+
+              {userIsAdmin && (
+                <GroupManager
+                  opened={groupManagerOpen}
+                  onClose={() => setGroupManagerOpen(false)}
+                  returnFocusTo={settingsReturnTarget}
+                  internalGroups={groupsData}
+                  loading={groupsLoading}
+                  canEdit={userIsAdmin}
+                  onSave={handleSaveGroups}
+                  onSearchUsers={handleSearchUsers}
+                  onGetUserMetadata={handleGetUserMetadata}
+                  onSearchExternalGroups={handleSearchExternalGroups}
+                />
+              )}
+
+              {userIsAdmin && (
+                <PermissionManager
+                  opened={permissionManagerOpen}
+                  onClose={() => setPermissionManagerOpen(false)}
+                  returnFocusTo={settingsReturnTarget}
+                  collections={activeCollections}
+                  contentRoot={contentRoot}
+                  permissions={permissionsData}
+                  loading={permissionsLoading}
+                  canEdit={userIsAdmin}
+                  onSave={handleSavePermissions}
+                  onSearchUsers={handleSearchUsers}
+                  onGetUserMetadata={handleGetUserMetadata}
+                  onListGroups={handleListGroups}
+                />
+              )}
+
+              {userIsAdmin && (
+                <SystemHealthPanel
+                  opened={systemHealthOpen}
+                  onClose={() => setSystemHealthOpen(false)}
+                  returnFocusTo={settingsReturnTarget}
+                />
+              )}
+
+              <MediaLibrary
+                opened={mediaLibraryOpen}
+                onClose={() => setMediaLibraryOpen(false)}
+                mode="manage"
+                returnFocusTo={() => mediaButtonRef.current}
+              />
+
+              {userIsAdmin && (
+                <CollectionEditor
+                  isOpen={collectionEditorOpen}
+                  editingCollection={editingCollection}
+                  parentPath={collectionEditorParentPath}
+                  availableSchemas={availableSchemas}
+                  onSave={handleCollectionSave}
+                  onAddEntryType={
+                    editingCollection
+                      ? (path, entryType) => addEntryType(path, entryType)
+                      : undefined
+                  }
+                  onUpdateEntryType={
+                    editingCollection
+                      ? (path, name, updates) => updateEntryType(path, name, updates)
+                      : undefined
+                  }
+                  onRemoveEntryType={
+                    editingCollection ? (path, name) => removeEntryType(path, name) : undefined
+                  }
+                  onReloadEntryTypes={editingCollection ? readEntryTypes : undefined}
+                  onClose={handleCloseCollectionEditor}
+                  isSaving={schemaLoading}
+                  error={collectionEditorError}
+                  restored={restoredCollectionInput}
+                  onDiscardRestored={() => {
+                    collectionDraftRef.current = null
+                    setRestoredCollectionInput(null)
+                  }}
+                />
+              )}
+
+              {renamingEntry && (
+                <RenameEntryModal
+                  isOpen={renameModalOpen}
+                  entryLabel={renamingEntry.label}
+                  currentSlug={renamingEntry.slug || ''}
+                  onSave={handleRenameSubmit}
+                  // `renamingEntry` stays until the next rename, so the dialog plays its exit and
+                  // returns focus.
+                  onClose={() => {
+                    setRenameModalOpen(false)
+                    setRenameModalError(null)
+                  }}
+                  isSaving={renameModalSaving}
+                  returnFocusTo={entryChangeReturnTarget}
+                  error={renameModalError?.mayHaveLanded ? null : renameModalError?.message}
+                  warning={renameModalError?.mayHaveLanded ? renameModalError.message : null}
+                  existingSlugs={renameExistingSlugs}
+                  previewPath={(slug) =>
+                    previewPathFor({
+                      collectionPath: renamingEntry.collectionPath ?? '',
+                      collectionName: renamingEntry.collectionName,
+                      slug,
+                      entryType: renamingEntry.entryType,
+                    })
+                  }
+                />
+              )}
+
+              {createModalCollection && (
+                <EntryCreateModal
+                  isOpen={createModalOpen}
+                  collectionLabel={createModalCollection.label || createModalCollection.name}
+                  entryTypes={createModalEntryTypes}
+                  onCreate={handleCreateModalSubmit}
+                  onClose={closeCreateModal}
+                  isCreating={createModalCreating}
+                  error={createModalError}
+                  existingSlugs={createModalExistingSlugs}
+                  previewPath={(slug, entryTypeName) =>
+                    previewPathFor({
+                      collectionPath: createModalCollection.path,
+                      collectionName: createModalCollection.name,
+                      slug,
+                      entryType: entryTypeName,
+                    })
+                  }
+                />
+              )}
+
+              <ConfirmDeleteModal
+                isOpen={deleteCollectionModalOpen}
+                title="Delete Collection"
+                message="Are you sure you want to delete this collection? This cannot be undone."
+                confirmLabel="Delete Collection"
+                onConfirm={confirmDeleteCollection}
+                onClose={() => {
+                  setDeleteCollectionModalOpen(false)
+                  setDeletingCollectionPath(null)
+                }}
+                loading={deleteInProgress}
+              />
+
+              <ConfirmDeleteModal
+                isOpen={deleteEntryModalOpen}
+                title="Delete entry"
+                message={
+                  deletingEntryReferencedBy
+                    ? referencedDeleteMessage(deletingEntryReferencedBy)
+                    : `Delete ${deletingEntryLabel ? `"${deletingEntryLabel}"` : 'this entry'}? This cannot be undone.`
+                }
+                confirmLabel={deletingEntryReferencedBy ? 'Delete anyway' : 'Delete entry'}
+                onConfirm={confirmDeleteEntry}
+                onClose={closeDeleteEntryModal}
+                loading={deleteInProgress}
+                returnFocusTo={entryChangeReturnTarget}
+              >
+                {deletingEntryReferencedBy && (
+                  <ReferencedByList
+                    referencedBy={deletingEntryReferencedBy}
+                    onOpenEntry={(entryPath) => {
+                      closeDeleteEntryModal()
+                      openEntry(entryPath)
+                    }}
+                  />
+                )}
+              </ConfirmDeleteModal>
+            </>
+          }
+        />
       </AssetContextProvider>
     </CanopyCMSProvider>
   )

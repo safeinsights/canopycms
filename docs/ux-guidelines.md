@@ -11,6 +11,8 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | Say                       | For                                                                                        | Not                                         |
 | ------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------- |
 | **Save**                  | Writing the open entry to the branch                                                       | Save file, Commit                           |
+| **Save all**              | Saving every unsaved entry on the branch                                                   | Save branch                                 |
+| **Refresh from server**   | Replacing the open entry with its saved copy                                               | Reload entry                                |
 | **Submit for review**     | Committing the branch and opening its pull request                                         | Submit branch, Publish                      |
 | **Withdraw from review**  | Taking a submitted branch back for editing                                                 | Withdraw branch                             |
 | **Request changes**       | A reviewer sending a branch back to its editor                                             | Reject                                      |
@@ -22,7 +24,7 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Discard changes**       | Throwing away unsaved edits                                                                | Discard drafts, Revert                      |
 | **entry**, **collection** | A content item, and the folder that holds entries                                          | file, page, item; folder                    |
 | **file**                  | An item in the media library                                                               | asset, media item                           |
-| **Content**               | The drawer of collections and entries; its menu item and breadcrumb root say "All content" | All entries                                 |
+| **Content**               | The panel of collections and entries; its menu item and breadcrumb root read "All content" | All entries                                 |
 
 Branch status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`.
 
@@ -146,9 +148,13 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 - Bind shortcuts with Mantine's `useHotkeys` as `mod+…`, which is ⌘ on macOS and Ctrl
   elsewhere, scoped to the editor root. A shortcut that must work while typing, such as Save,
   passes `[]` as `tagsToIgnore` and `true` as `triggerOnContentEditable`.
-- Taken: Mod+P quick open, Mod+Alt+M comments, Esc closes the topmost panel. Planned for WS8:
+- Taken: Mod+P quick open, Mod+Alt+M comments, Esc closes the topmost overlay, else restores a
+  maximized preview; a docked panel stays open. Planned for WS8:
   Mod+S save, Mod+. content panel, Mod+Shift+L layout. Never bind Mod+K (MDXEditor's link), the formatting keys, or the browser's own
   (Mod+W, T, R, L, F).
+- An overlay panel makes what it covers `inert` (`formInert` in
+  `packages/canopycms/src/editor/shell/PaneLayout.tsx`), and anything that targets the covered
+  part closes it first (`revealForm` in `packages/canopycms/src/editor/Editor.tsx`).
 - Tooltips and the shortcut sheet show the platform's modifier.
 - Every action is reachable by keyboard, focus follows visual order, and closing an overlay
   returns focus to the control that opened it. A menu item is gone once it acts, so its menu's
@@ -212,12 +218,13 @@ primary is filled: other badges, icons and indicators take their colour's light 
 
 ## Shell regions
 
-The editor fills the window as one grid: **top bar** (breadcrumb, branch pill, unsaved
-indicator, Save), **banner** (branch-wide notices), **rail** (activity icons), **panel**
-(content tree, branches, comments, media), **main** (preview and form) and **overlays**
-(drawers, modals, toasts). The regions are layout only; features plug into them. New UI goes
+The editor fills the window as one grid: **top bar** (breadcrumb and entry menu, branch pill,
+Submit or Withdraw, unsaved indicator, Save and Save all), **banner** (branch-wide notices),
+**rail** (activity icons, layout, settings), **panel** (content tree, docked when wide and side by
+side, else over the form), **main** (preview and form) and **overlays** (branches, comments and
+media drawers, quick open, modals, toasts). The regions are layout only; features plug into them. New UI goes
 into an existing region, and adding a region is a design decision. The unsaved indicator is
-icon-only below `lg`; its presentation is provisional until the shell redesign settles.
+icon-only below `lg`.
 
 ## Enforcement
 

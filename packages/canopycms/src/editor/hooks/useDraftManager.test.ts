@@ -409,6 +409,14 @@ describe('useDraftManager', () => {
       title: 'Saved Title',
       body: 'Saved Content',
     })
+    // The Save button says it landed; no toast does.
+    expect(result.current.lastSaved).toEqual({
+      branch: defaultOptions.branchName,
+      contentId: 'abc123def456',
+      seq: 1,
+    })
+    const { notifications } = await import('@mantine/notifications')
+    expect(notifications.show).not.toHaveBeenCalled()
   })
 
   it('clears the draft key (state and localStorage) after a successful save, instead of keeping it forever', async () => {
@@ -568,7 +576,7 @@ describe('useDraftManager', () => {
         expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
           expect.objectContaining({
             message:
-              'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).',
+              'This entry changed since you opened it. Choose "Refresh from server" to see the latest version (your unsaved edits will be lost).',
             color: 'yellow',
           }),
         )
@@ -727,7 +735,7 @@ describe('useDraftManager', () => {
 
         expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
           message:
-            'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).',
+            'This entry changed since you opened it. Choose "Refresh from server" to see the latest version (your unsaved edits will be lost).',
         })
         expect(mockSaveEntry).toHaveBeenCalledTimes(1)
         expect(notifications.hide).toHaveBeenCalledWith('canopy-save-may-have-landed:abc123def456')
@@ -869,10 +877,7 @@ describe('useDraftManager', () => {
         })
 
         expect(mockSaveEntry).toHaveBeenCalledTimes(2)
-        const { notifications } = await import('@mantine/notifications')
-        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: 'Saved',
-        })
+        expect(result.current.lastSaved).toMatchObject({ contentId: 'abc123def456' })
       })
 
       it('takes the timed-out warning down when the retry of an unanswered save finds the entry gone', async () => {
@@ -1352,9 +1357,7 @@ describe('useDraftManager', () => {
           await result.current.handleSave()
         })
 
-        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: 'Saved',
-        })
+        expect(result.current.lastSaved).toMatchObject({ contentId: 'abc123def456' })
         expect(notifications.hide).toHaveBeenCalledWith(goneToastId)
       })
 
@@ -1369,9 +1372,7 @@ describe('useDraftManager', () => {
         })
 
         const { notifications } = await import('@mantine/notifications')
-        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: 'Saved',
-        })
+        expect(result.current.lastSaved).toMatchObject({ contentId: 'abc123def456' })
         expect(notifications.hide).not.toHaveBeenCalledWith(goneToastId)
       })
 
@@ -1410,7 +1411,7 @@ describe('useDraftManager', () => {
         })
 
         expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: 'Reload failed',
+          message: "Couldn't refresh from the server. Your changes are still here; try again.",
         })
         expect(notifications.hide).not.toHaveBeenCalledWith(goneToastId)
       })
@@ -1480,9 +1481,7 @@ describe('useDraftManager', () => {
         })
         expect(mockSaveEntry).toHaveBeenCalledTimes(2)
         // The next save that lands takes the warning down.
-        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: 'Saved',
-        })
+        expect(result.current.lastSaved).toMatchObject({ contentId: 'abc123def456' })
         expect(notifications.hide).toHaveBeenCalledWith('canopy-save-timed-out:abc123def456')
       })
 
@@ -2005,7 +2004,7 @@ describe('useDraftManager', () => {
   })
 
   describe('reload confirmation (D5)', () => {
-    // "Reload entry" overwrites the working value with the server's copy, so it
+    // "Refresh from server" overwrites the working value with the server's copy, so it
     // is at least as destructive as "Discard draft" -- which has always been
     // behind a confirm. It is also the recovery path the 409 conflict toast
     // points at, so an unguarded reload destroys exactly the work the user was
@@ -2034,7 +2033,7 @@ describe('useDraftManager', () => {
 
       const { modals } = await import('@mantine/modals')
       expect(modals.openConfirmModal).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Reload entry' }),
+        expect.objectContaining({ title: 'Refresh from server' }),
       )
       // Auto-confirmed by the modals mock, so the reload still went through and
       // the stale draft is gone (the loaded value is the working value again).
@@ -2108,7 +2107,9 @@ describe('useDraftManager', () => {
       expect.objectContaining({ title: 'Not available yet', message: 'not known yet' }),
     )
     expect(vi.mocked(notifications.show)).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'Reload failed' }),
+      expect.objectContaining({
+        message: "Couldn't refresh from the server. Your changes are still here; try again.",
+      }),
     )
     expect(mockSetBusy).toHaveBeenLastCalledWith(false)
   })
@@ -2160,7 +2161,8 @@ describe('useDraftManager', () => {
     const validatedOptions = { ...defaultOptions, currentEntry: validatedEntry }
 
     it('blocks the save and surfaces per-field errors for an invalid draft', async () => {
-      const { result } = renderHook(() => useDraftManager(validatedOptions))
+      const onSaveBlocked = vi.fn()
+      const { result } = renderHook(() => useDraftManager({ ...validatedOptions, onSaveBlocked }))
 
       act(() => {
         result.current.setDrafts({ abc123def456: { title: '', body: 'Content' } })
@@ -2172,6 +2174,7 @@ describe('useDraftManager', () => {
       expect(mockSaveEntry).not.toHaveBeenCalled()
       expect(mockSetBusy).not.toHaveBeenCalled()
       expect(result.current.fieldErrors).toEqual({ title: 'This field is required' })
+      expect(onSaveBlocked).toHaveBeenCalledTimes(1)
       const { notifications } = await import('@mantine/notifications')
       expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
         expect.objectContaining({ color: 'red', title: 'Cannot save yet' }),
@@ -2248,7 +2251,8 @@ describe('useDraftManager', () => {
         ]),
       )
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-      const { result } = renderHook(() => useDraftManager(validatedOptions))
+      const onSaveBlocked = vi.fn()
+      const { result } = renderHook(() => useDraftManager({ ...validatedOptions, onSaveBlocked }))
 
       act(() => {
         result.current.setDrafts({ abc123def456: { title: 'Hello', body: 'Content' } })
@@ -2260,6 +2264,7 @@ describe('useDraftManager', () => {
       expect(result.current.fieldErrors).toEqual({
         author: 'Referenced entry does not exist',
       })
+      expect(onSaveBlocked).toHaveBeenCalledTimes(1)
       consoleErrorSpy.mockRestore()
     })
 
@@ -2425,7 +2430,7 @@ describe('useDraftManager', () => {
       expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
         expect.objectContaining({
           message:
-            'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).',
+            'This entry changed since you opened it. Choose "Refresh from server" to see the latest version (your unsaved edits will be lost).',
           color: 'yellow',
         }),
       )
@@ -2590,7 +2595,7 @@ describe('useDraftManager', () => {
           children: string
         }
         expect(children).toContain(
-          `Choose "Reload entry" or "Discard changes" in the menu under the entry's title`,
+          `Choose "Refresh from server" or "Discard changes" in the entry's menu, on its name`,
         )
         expect(children).not.toMatch(/\bfile\b/)
       })

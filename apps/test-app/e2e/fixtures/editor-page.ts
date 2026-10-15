@@ -3,13 +3,13 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 import { BranchPage } from './branch-page'
 
 /** Entries of the rail's Settings menu, named for what they open. */
-export type SettingsItem = 'Groups' | 'Permissions' | 'Media library' | 'System health'
+export type SettingsItem = 'Groups' | 'Permissions' | 'System health' | 'About'
 
 const SETTINGS_ITEM_TEST_IDS: Record<SettingsItem, string> = {
   Groups: 'settings-menu-groups',
   Permissions: 'settings-menu-permissions',
-  'Media library': 'settings-menu-media-library',
   'System health': 'settings-menu-system-health',
+  About: 'settings-menu-about',
 }
 
 /** 'my-first-post' as 'My First Post'. */
@@ -38,13 +38,18 @@ export class EditorPage {
   // Panes
   readonly formPane: Locator
   readonly previewPane: Locator
+  /** The separator between the preview and the form; its `aria-valuenow` is the preview's percent. */
+  readonly paneSplitter: Locator
 
   // Header elements
   readonly saveButton: Locator
   private readonly fileDropdownButton: Locator
-  private readonly allFilesMenuItem: Locator
 
-  /** The entry navigator (a drawer): the tree of collections and entries. */
+  // Rail elements
+  /** The rail's Content button, which opens and closes the content panel. */
+  readonly contentPanelToggle: Locator
+
+  /** The entry navigator, in the content panel: the tree of collections and entries. */
   readonly contentNavigator: Locator
 
   constructor(page: Page) {
@@ -53,11 +58,14 @@ export class EditorPage {
     // Panes
     this.formPane = page.locator('[data-testid="form-pane"]')
     this.previewPane = page.locator('[data-testid="preview-pane"]')
+    this.paneSplitter = page.getByRole('separator', { name: 'Resize preview and form' })
 
     // Header elements
     this.fileDropdownButton = page.locator('[data-testid="file-dropdown-button"]')
     this.saveButton = page.locator('[data-testid="save-button"]')
-    this.allFilesMenuItem = page.locator('[data-testid="all-files-menu-item"]')
+
+    // Rail elements
+    this.contentPanelToggle = page.locator('[data-testid="content-panel-toggle"]')
 
     this.contentNavigator = page.locator('[data-testid="entry-navigator"]')
   }
@@ -92,12 +100,32 @@ export class EditorPage {
     ])
   }
 
+  /** The preview's share of the split, in percent. */
+  async paneSplitPercent(): Promise<number> {
+    return Number(await this.paneSplitter.getAttribute('aria-valuenow'))
+  }
+
+  /** Drags the split by `dx` pixels with a real pointer, across the preview iframe when `dx` < 0. */
+  async dragPaneSplit(dx: number): Promise<void> {
+    const box = await this.paneSplitter.boundingBox()
+    if (!box) throw new Error('The pane splitter is not visible')
+    const x = box.x + box.width / 2
+    const y = box.y + box.height / 2
+    await this.page.mouse.move(x, y)
+    await this.page.mouse.down()
+    await this.page.mouse.move(x + dx, y, { steps: 5 })
+    await this.page.mouse.up()
+  }
+
   /**
-   * Open the content navigator via the header's file menu.
+   * Open the content panel from the rail, unless it is open already: docked, it stays open across
+   * entries.
    */
   async openContentNavigator(): Promise<void> {
-    await this.fileDropdownButton.click()
-    await this.allFilesMenuItem.click()
+    await this.contentPanelToggle.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    if ((await this.contentPanelToggle.getAttribute('aria-expanded')) !== 'true') {
+      await this.contentPanelToggle.click()
+    }
     await this.contentNavigator.waitFor({
       state: 'visible',
       timeout: STANDARD_TIMEOUT,
@@ -116,10 +144,12 @@ export class EditorPage {
   }
 
   /**
-   * Close the content navigator so the form pane is interactive.
+   * Close the content panel from the rail, unless it is closed already.
    */
   async closeContentNavigator(): Promise<void> {
-    await this.page.keyboard.press('Escape')
+    if ((await this.contentPanelToggle.getAttribute('aria-expanded')) === 'true') {
+      await this.contentPanelToggle.click()
+    }
     await expect(this.contentNavigator).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
@@ -151,6 +181,12 @@ export class EditorPage {
    */
   async toggleCollection(label: string): Promise<void> {
     await this.navigatorItem(label).click()
+  }
+
+  /** Whether the navigator shows a collection's children: Mantine's tree renders them as a group. */
+  async isCollectionExpanded(label: string): Promise<boolean> {
+    const node = this.navigatorItem(label).locator('xpath=ancestor::li[@role="treeitem"][1]')
+    return (await node.locator(':scope > ul[role="group"]').count()) > 0
   }
 
   /**
@@ -231,7 +267,16 @@ export class EditorPage {
    */
   async renameEntry(entryLabel: string, newSlug: string): Promise<void> {
     await this.openEntryMenu(entryLabel, 'rename-entry-menu-item')
+    await this.finishRename(newSlug)
+  }
 
+  /** Rename the open entry's slug from the top bar's entry menu, and wait for the modal to close. */
+  async renameOpenEntry(newSlug: string): Promise<void> {
+    await this.openFileMenuItem('entry-menu-rename')
+    await this.finishRename(newSlug)
+  }
+
+  private async finishRename(newSlug: string): Promise<void> {
     const modal = this.page.locator('[data-testid="rename-entry-modal"]')
     await expect(modal).toBeVisible()
     // fill() replaces the pre-filled current slug
@@ -246,6 +291,16 @@ export class EditorPage {
    */
   async startDeleteEntry(entryLabel: string): Promise<Locator> {
     await this.openEntryMenu(entryLabel, 'delete-entry-menu-item')
+    return this.deleteDialog()
+  }
+
+  /** Start deleting the open entry from the top bar's entry menu; returns its visible dialog. */
+  async startDeleteOpenEntry(): Promise<Locator> {
+    await this.openFileMenuItem('entry-menu-delete')
+    return this.deleteDialog()
+  }
+
+  private async deleteDialog(): Promise<Locator> {
     const modal = this.page.locator('[data-testid="confirm-delete-modal"]')
     await expect(modal).toBeVisible()
     return modal
@@ -306,15 +361,20 @@ export class EditorPage {
     await item.click()
   }
 
+  /** Open the top bar's entry menu, on the open entry's crumb, and choose an item. */
+  private async openFileMenuItem(itemTestId: string): Promise<void> {
+    await this.fileDropdownButton.click()
+    const item = this.page.locator(`[data-testid="${itemTestId}"]`)
+    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await item.click()
+  }
+
   /**
    * Open the header's file menu and discard the open entry's unsaved draft. Returns the
    * confirmation dialog; finish with {@link confirmDiscard}.
    */
   async discardEntryDraft(): Promise<Locator> {
-    await this.fileDropdownButton.click()
-    const item = this.page.locator('[data-testid="discard-file-draft-menu-item"]')
-    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-    await item.click()
+    await this.openFileMenuItem('discard-file-draft-menu-item')
     return this.discardDialog('confirm-discard-entry')
   }
 
@@ -360,7 +420,7 @@ export class EditorPage {
   }
 
   /**
-   * Open the comments panel from the header.
+   * Open the comments panel from the rail.
    */
   async openComments(): Promise<void> {
     const button = this.page.locator('[data-testid="comments-button"]')
@@ -454,7 +514,7 @@ export class EditorPage {
   }
 
   /**
-   * The rail's preview-highlights toggle; reflects its state in `aria-pressed`.
+   * The preview toolbar's highlights toggle; reflects its state in `aria-pressed`.
    */
   highlightToggle(): Locator {
     return this.page.locator('[data-testid="toggle-highlights-button"]')
@@ -468,10 +528,46 @@ export class EditorPage {
   }
 
   /**
-   * The notice shown when the previewed page marks no editable elements.
+   * The note shown when the previewed page marks no editable elements.
    */
   noEditableMarksNotice(): Locator {
-    return this.page.getByText(/marks no editable elements/)
+    return this.page.getByText('Nothing to highlight')
+  }
+
+  /**
+   * The admin's count of preview marks that name no field, in the preview toolbar.
+   */
+  unmappedMarksChip(): Locator {
+    return this.page.locator('[data-testid="preview-unmapped-chip"]')
+  }
+
+  /**
+   * The preview toolbar's width choice.
+   */
+  previewWidthSelect(): Locator {
+    return this.page.getByRole('textbox', { name: 'Preview width' })
+  }
+
+  /**
+   * The rail's layout button; its `data-layout` is the current layout, and a click switches it.
+   */
+  layoutButton(): Locator {
+    return this.page.locator('[data-testid="rail-layout-button"]')
+  }
+
+  maximizePreviewButton(): Locator {
+    return this.page.locator('[data-testid="preview-maximize-button"]')
+  }
+
+  restorePreviewButton(): Locator {
+    return this.page.locator('[data-testid="preview-restore-button"]')
+  }
+
+  /**
+   * Open the media library from the rail.
+   */
+  async openMediaLibrary(): Promise<void> {
+    await this.page.locator('[data-testid="media-library-button"]').click()
   }
 
   /**
@@ -546,14 +642,23 @@ export class EditorPage {
   }
 
   /**
-   * Wait for the save success notification to appear.
-   * Uses .first() because multiple saves in quick succession can stack notifications.
-   *
-   * @deprecated Prefer {@link saveAndVerify}, which waits for the network PUT response
-   * instead of the notification and is immune to stale notifications from prior saves.
+   * Run "Save all" from the caret beside Save.
    */
-  async waitForSaveNotification(): Promise<void> {
-    await expect(this.notification('Saved').first()).toBeVisible({ timeout: STANDARD_TIMEOUT })
+  async saveAll(): Promise<void> {
+    await this.page.getByTestId('save-options-button').click()
+    const item = this.page.getByTestId('save-all-menu-item')
+    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await item.click()
+  }
+
+  /** The toast listing what a Save all could not save. */
+  saveAllResult(): Locator {
+    return this.page.getByTestId('save-all-result')
+  }
+
+  /** The branch pill's "N unsaved" count, absent with nothing unsaved. */
+  branchUnsavedCount(): Locator {
+    return this.page.getByTestId('branch-unsaved-count')
   }
 
   /**

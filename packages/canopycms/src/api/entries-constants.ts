@@ -18,7 +18,7 @@ export const DEFAULT_ENTRIES_LIMIT = 50
  * caller read it. Shared with the editor, whose own pre-save staleness check reports the same.
  */
 export const ENTRY_CHANGED_MESSAGE =
-  'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).'
+  'This entry changed since you opened it. Choose "Refresh from server" to see the latest version (your unsaved edits will be lost).'
 
 /**
  * The 409 for an update whose entry is gone: deleted or moved since the caller read it (API code

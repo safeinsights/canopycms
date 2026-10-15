@@ -1086,6 +1086,23 @@ describe('BranchManager', () => {
       expect(screen.getAllByTestId('submit-branch-button-main')).toHaveLength(1)
     })
 
+    it("holds the current branch's workflow action with the reason it's given", async () => {
+      const onSubmit = vi.fn()
+      renderBranchManager({
+        branches: baseBranches,
+        currentBranchName: 'main',
+        currentWorkflowBlockedReason: 'Wait for Save all to finish.',
+        user: creatorUser,
+        onSubmit,
+        mode: 'prod',
+      })
+
+      const submit = screen.getByTestId('submit-branch-button-main')
+      expect(submit.getAttribute('aria-disabled')).toBe('true')
+      await userEvent.click(submit)
+      expect(onSubmit).not.toHaveBeenCalled()
+    })
+
     it('offers the current branch in review Withdraw from review as its primary action', async () => {
       const onWithdraw = vi.fn()
       renderBranchManager({

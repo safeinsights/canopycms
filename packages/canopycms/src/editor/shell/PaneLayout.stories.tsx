@@ -3,20 +3,20 @@ import { useMemo, useState } from 'react'
 
 import { Badge, Box, Group, Paper, SegmentedControl, Stack, Text, Title } from '@mantine/core'
 
-import type { FieldConfig } from '../config'
-import { EditorPanes, type PaneLayout } from './EditorPanes'
-import { FormRenderer, type FormValue } from './FormRenderer'
+import type { FieldConfig } from '../../config'
+import { PaneLayout, type PaneArrangement } from './PaneLayout'
+import { FormRenderer, type FormValue } from '../FormRenderer'
 
-const meta: Meta<typeof EditorPanes> = {
-  title: 'Editor/EditorPanes',
-  component: EditorPanes,
+const meta: Meta<typeof PaneLayout> = {
+  title: 'Editor/Shell/PaneLayout',
+  component: PaneLayout,
   parameters: {
     layout: 'fullscreen',
   },
 }
 
 export default meta
-type Story = StoryObj<typeof EditorPanes>
+type Story = StoryObj<typeof PaneLayout>
 
 type HeroBlock = {
   template: 'hero'
@@ -204,7 +204,7 @@ const PostPreview = ({ post, authorName }: { post: PostValue; authorName?: strin
 
 export const Default: Story = {
   render: () => {
-    const [layout, setLayout] = useState<PaneLayout>('side')
+    const [layout, setLayout] = useState<PaneArrangement>('side')
     const [post, setPost] = useState<PostValue>(initialPost)
     const authorMap = useMemo(
       () => Object.fromEntries(authors.map((a) => [a.id, a.name])) as Record<string, string>,
@@ -229,29 +229,56 @@ export const Default: Story = {
                 { value: 'stacked', label: 'Stacked' },
               ]}
               value={layout}
-              onChange={(value) => setLayout(value as PaneLayout)}
+              onChange={(value) => setLayout(value as PaneArrangement)}
             />
           </Group>
-          <EditorPanes
-            onLayoutChange={setLayout}
-            layout={layout}
-            preview={
-              <Box p="lg" bg="var(--canopy-surface-subtle)" h="100%">
-                <PostPreview post={post} authorName={authorMap[post.author]} />
-              </Box>
-            }
-            form={
-              <Box p="lg">
-                <FormRenderer
-                  fields={postSchema}
-                  value={post as unknown as FormValue}
-                  onChange={(value) => setPost(value as PostValue)}
-                />
-              </Box>
-            }
-          />
+          <Box style={{ flex: 1, minHeight: 0 }}>
+            <PaneLayout
+              arrangement={layout}
+              preview={
+                <Box p="lg" bg="var(--canopy-surface-subtle)" h="100%">
+                  <PostPreview post={post} authorName={authorMap[post.author]} />
+                </Box>
+              }
+              form={
+                <Box p="lg">
+                  <FormRenderer
+                    fields={postSchema}
+                    value={post as unknown as FormValue}
+                    onChange={(value) => setPost(value as PostValue)}
+                  />
+                </Box>
+              }
+            />
+          </Box>
         </Stack>
       </Box>
     )
   },
+}
+
+/** A maximized preview laid over the whole layout; the form and the separator are inert under it. */
+export const PreviewMaximized: Story = {
+  render: () => (
+    <Box style={{ height: '90vh' }}>
+      <PaneLayout
+        arrangement="side"
+        previewMaximized
+        preview={
+          <Box p="lg" bg="var(--canopy-surface-subtle)" h="100%">
+            <PostPreview post={initialPost} authorName={authors[0]?.name} />
+          </Box>
+        }
+        form={
+          <Box p="lg">
+            <FormRenderer
+              fields={postSchema}
+              value={initialPost as unknown as FormValue}
+              onChange={() => {}}
+            />
+          </Box>
+        }
+      />
+    </Box>
+  ),
 }

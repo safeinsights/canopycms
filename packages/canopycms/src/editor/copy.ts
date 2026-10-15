@@ -5,6 +5,8 @@
  */
 export const EDITOR_ACTIONS = {
   save: 'Save',
+  saveAll: 'Save all',
+  refreshFromServer: 'Refresh from server',
   submitForReview: 'Submit for review',
   withdrawFromReview: 'Withdraw from review',
   requestChanges: 'Request changes',
@@ -12,4 +14,5 @@ export const EDITOR_ACTIONS = {
   newBranch: 'New branch',
   remove: 'Remove',
   clear: 'Clear',
+  openEntry: 'Open entry',
 } as const

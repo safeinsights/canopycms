@@ -414,10 +414,10 @@ describe('content api', () => {
     })
 
     it.each([
-      ['not-run', undefined],
+      ['not-run', 'BRANCH_SYNCING'],
       ['unknown', 'WRITE_OUTCOME_UNKNOWN'],
     ] as const)(
-      "[SYNC-C1] passes a syncing refusal's message through, coded only when the write may have landed (%s)",
+      "[SYNC-C1] passes a syncing refusal's message through, coded by whether the write may have landed (%s)",
       async (outcome, code) => {
         const ctx = allowedCtx()
         const { ContentStore, BranchSyncingError } = await import('../content-store')

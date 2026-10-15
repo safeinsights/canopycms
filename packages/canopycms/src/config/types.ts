@@ -372,7 +372,6 @@ export interface EditorSignInProps {
 
 export interface CanopyEditorConfig {
   title?: string
-  subtitle?: string
   theme?: unknown
   /**
    * Preview-pane routes for sites whose routes don't mirror their content tree; otherwise an entry
