@@ -160,6 +160,37 @@ test.describe('Entry CRUD Operations', () => {
     })
   })
 
+  test("rename and delete the open entry from the top bar's entry menu", async () => {
+    await test.step('open editor and create a post (setup)', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.openContentNavigator()
+      await editorPage.createEntry('Posts', 'post-from-top-bar', 'Post')
+      await expect(editorPage.currentEntryLabel()).toContainText('Post', {
+        timeout: STANDARD_TIMEOUT,
+      })
+    })
+
+    await test.step('rename it from the entry menu', async () => {
+      await editorPage.renameOpenEntry('renamed-from-top-bar')
+      await expect(editorPage.currentEntryLabel()).toContainText('Post')
+      await expect
+        .poll(() => findContentFile('posts.qrstuvwxyz12/post.renamed-from-top-bar.'), {
+          timeout: STANDARD_TIMEOUT,
+        })
+        .toBeTruthy()
+    })
+
+    await test.step('delete it from the entry menu and confirm', async () => {
+      const modal = await editorPage.startDeleteOpenEntry()
+      await expect(modal).toContainText('Delete "Post"?')
+      await editorPage.deleteConfirmButton().click()
+      await expect(modal).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.currentEntryLabel()).toHaveText('No entry open')
+      await expect(editorPage.navigatorItem('Post')).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+    })
+  })
+
   /** Save, and return the content PUT's response. */
   const saveForResponse = async (page: Page) => {
     const [response] = await Promise.all([

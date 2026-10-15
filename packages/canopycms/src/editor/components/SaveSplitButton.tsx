@@ -1,8 +1,9 @@
 'use client'
 
-import React, { useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Box, Button, Loader, Menu, Text, Tooltip, VisuallyHidden } from '@mantine/core'
-import { IconAlertTriangle, IconChevronDown, IconCircleDot } from '@tabler/icons-react'
+import { useReducedMotion } from '@mantine/hooks'
+import { IconAlertTriangle, IconCheck, IconChevronDown, IconCircleDot } from '@tabler/icons-react'
 import { EDITOR_ACTIONS } from '../copy'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
@@ -21,6 +22,10 @@ export interface SaveSplitButtonProps {
   saveAllBlockedReason?: string
   /** Set while Save all runs. */
   saveAllProgress: SaveAllProgress | null
+  /** A Save of the open entry is in flight. */
+  saving?: boolean
+  /** Rises each time a Save of the open entry lands; undefined for another entry's. */
+  savedSignal?: number
   /** The open entry has unsaved changes. */
   entryDirty: boolean
   /** Writing drafts to localStorage failed, so they live only in this tab. */
@@ -28,6 +33,56 @@ export interface SaveSplitButtonProps {
 }
 
 const STORAGE_FAILED_HINT = "Save before you leave or reload, or they'll be lost."
+const SAVED_SHOWN_MS = 2000
+
+type SaveLabel = 'save' | 'saving' | 'saved'
+
+/**
+ * Every label in one grid cell, only `shown` visible, so the button keeps the widest one's width
+ * and the top bar never shifts.
+ */
+function SaveLabels({ shown, spinner }: { shown: SaveLabel; spinner: boolean }) {
+  const labels: Record<SaveLabel, React.ReactNode> = {
+    save: EDITOR_ACTIONS.save,
+    saving: (
+      <>
+        {spinner && (
+          <Box component="span" display="inline-flex" w={14}>
+            {shown === 'saving' && <Loader size={14} color="currentColor" />}
+          </Box>
+        )}
+        Saving…
+      </>
+    ),
+    saved: (
+      <>
+        <IconCheck size={14} aria-hidden="true" />
+        Saved
+      </>
+    ),
+  }
+  return (
+    <Box component="span" style={{ display: 'inline-grid' }}>
+      {(Object.keys(labels) as SaveLabel[]).map((key) => (
+        <Box
+          key={key}
+          component="span"
+          aria-hidden={key === shown ? undefined : true}
+          style={{
+            gridArea: '1 / 1',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            visibility: key === shown ? 'visible' : 'hidden',
+          }}
+        >
+          {labels[key]}
+        </Box>
+      ))}
+    </Box>
+  )
+}
 
 /**
  * The unsaved indicator, then Save with a caret offering "Save all". The indicator is icon-only
@@ -41,11 +96,31 @@ export function SaveSplitButton({
   unsavedCount,
   saveAllBlockedReason,
   saveAllProgress,
+  saving = false,
+  savedSignal,
   entryDirty,
   draftStorageFailed,
 }: SaveSplitButtonProps) {
   const caret = useRef<HTMLButtonElement>(null)
   const menuFocus = useMenuItemFocusReturn(caret)
+  const reducedMotion = useReducedMotion()
+  // Each landed Save shows "Saved" once, for its own entry; one landed before mount shows nothing.
+  const [seenSignal, setSeenSignal] = useState(savedSignal ?? 0)
+  const [flashing, setFlashing] = useState<number>()
+  if (savedSignal !== undefined && savedSignal > seenSignal) {
+    setSeenSignal(savedSignal)
+    setFlashing(savedSignal)
+  }
+  useEffect(() => {
+    if (flashing === undefined) return
+    const timer = setTimeout(() => setFlashing(undefined), SAVED_SHOWN_MS)
+    return () => clearTimeout(timer)
+  }, [flashing])
+  const label: SaveLabel = saving
+    ? 'saving'
+    : flashing !== undefined && flashing === savedSignal && !entryDirty && !saveAllProgress
+      ? 'saved'
+      : 'save'
   // Blocked, Save stays focusable (`aria-disabled`, not `disabled`), so its reason opens on focus.
   const saveBlocked = !!saveBlockedReason || busy || !!saveAllProgress
   const indicatorText = draftStorageFailed
@@ -83,7 +158,9 @@ export function SaveSplitButton({
       <VisuallyHidden role="status">
         {saveAllProgress
           ? `Saving ${saveAllProgress.total} ${saveAllProgress.total === 1 ? 'entry' : 'entries'}…`
-          : ''}
+          : label === 'saved'
+            ? 'Saved'
+            : ''}
       </VisuallyHidden>
       <Button.Group style={{ flexShrink: 0 }}>
         <Tooltip
@@ -94,19 +171,25 @@ export function SaveSplitButton({
         >
           <Button
             data-testid="save-button"
-            variant="light"
+            variant="filled"
             size="sm"
-            leftSection={saveAllProgress ? <Loader size={14} /> : undefined}
+            leftSection={
+              saveAllProgress && !reducedMotion ? (
+                <Loader size={14} color="currentColor" />
+              ) : undefined
+            }
             onClick={() => {
               if (!saveBlocked) onSave()
             }}
-            // Its progress label stays readable: disabled styling takes it far under 4.5:1.
-            data-disabled={saveBlocked && !saveAllProgress ? true : undefined}
+            // A progress or "Saved" label stays readable: disabled styling takes it under 4.5:1.
+            data-disabled={saveBlocked && !saveAllProgress && label === 'save' ? true : undefined}
             aria-disabled={saveBlocked ? true : undefined}
           >
-            {saveAllProgress
-              ? `Saving ${Math.min(saveAllProgress.done + 1, saveAllProgress.total)} of ${saveAllProgress.total}…`
-              : EDITOR_ACTIONS.save}
+            {saveAllProgress ? (
+              `Saving ${Math.min(saveAllProgress.done + 1, saveAllProgress.total)} of ${saveAllProgress.total}…`
+            ) : (
+              <SaveLabels shown={label} spinner={!reducedMotion} />
+            )}
           </Button>
         </Tooltip>
         <Menu withinPortal shadow="sm" position="bottom-end" {...menuFocus.menu}>
@@ -114,12 +197,12 @@ export function SaveSplitButton({
             <Menu.Target>
               <Button
                 ref={caret}
-                variant="light"
+                variant="filled"
                 size="sm"
                 px={8}
                 aria-label="Save options"
                 data-testid="save-options-button"
-                style={{ borderInlineStart: '1px solid var(--canopy-input-border)' }}
+                style={{ borderInlineStart: '1px solid var(--mantine-color-body)' }}
               >
                 <IconChevronDown size={14} aria-hidden="true" />
               </Button>

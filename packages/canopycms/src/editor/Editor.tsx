@@ -323,6 +323,9 @@ const EditorContent: React.FC<EditorProps> = ({
   const [deletingEntryReferencedBy, setDeletingEntryReferencedBy] =
     useState<EntryReferencedBy | null>(null)
   const [deleteInProgress, setDeleteInProgress] = useState(false)
+  // A rename or delete asked for from the top bar's entry menu, whose item is gone once it acts.
+  const [entryChangeFromMenu, setEntryChangeFromMenu] = useState(false)
+  const allContentCrumbRef = useRef<HTMLButtonElement>(null)
 
   // Draft compile/render error reported by the preview page (null = renders cleanly)
   const [previewError, setPreviewError] = useState<{ message: string; fieldPath?: string } | null>(
@@ -530,6 +533,8 @@ const EditorContent: React.FC<EditorProps> = ({
     modifiedCount,
     editedFiles,
     handleSave,
+    singleSaving,
+    lastSaved,
     handleSaveAll,
     saveAllProgress,
     isSaveAllRunning,
@@ -1223,12 +1228,15 @@ const EditorContent: React.FC<EditorProps> = ({
     }
   }
 
-  const handleDeleteEntry = (entryPath: LogicalPath) => {
+  const handleDeleteEntry = (entryPath: LogicalPath, fromMenu = false) => {
+    setEntryChangeFromMenu(fromMenu)
     setDeletingEntryPath(entryPath)
     setDeletingEntryReferencedBy(null)
     setDeleteEntryModalOpen(true)
   }
 
+  const deletingEntryLabel =
+    entriesState.find((e) => e.path === deletingEntryPath)?.label ?? 'this entry'
   const closeDeleteEntryModal = () => {
     setDeleteEntryModalOpen(false)
     setDeletingEntryPath(null)
@@ -1256,13 +1264,13 @@ const EditorContent: React.FC<EditorProps> = ({
     }
   }
 
-  const handleRenameEntry = (entryPath: string) => {
-    // Find the entry being renamed
+  const handleRenameEntry = (entryPath: string, fromMenu = false) => {
     const entry = entriesState.find((e) => e.path === entryPath)
     if (!entry) {
       notifications.show({ message: 'Entry not found', color: 'red' })
       return
     }
+    setEntryChangeFromMenu(fromMenu)
     setRenamingEntry(entry)
     setRenameModalError(null)
     setRenameModalOpen(true)
@@ -1490,6 +1498,10 @@ const EditorContent: React.FC<EditorProps> = ({
       })
       .catch(console.error)
   }
+  // The entry menu's trigger stands in for its item; once the entry is deleted, "All content".
+  const entryChangeReturnTarget = entryChangeFromMenu
+    ? () => navigatorToggleRef.current ?? allContentCrumbRef.current
+    : undefined
   const navigatorReturnTarget = () =>
     returnTarget(navigatorOpenerRef.current, () => navigatorToggleRef.current)
   const branchReturnTarget = () =>
@@ -1888,6 +1900,10 @@ const EditorContent: React.FC<EditorProps> = ({
               branchToggleRef={branchToggleRef}
               onFileReload={() => handleReload(() => navigatorToggleRef.current)}
               onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
+              onEntryRename={() => currentEntry && handleRenameEntry(currentEntry.path, true)}
+              onEntryDelete={() => currentEntry && handleDeleteEntry(currentEntry.path, true)}
+              allContentRef={allContentCrumbRef}
+              entryUnavailable={currentEntryUnavailable}
               onEntrySelect={openEntry}
               onBranchReloadData={() => {
                 void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
@@ -1899,6 +1915,13 @@ const EditorContent: React.FC<EditorProps> = ({
               onSave={currentEntryUnavailable ? noop : handleSave}
               onSaveAll={runSaveAll}
               saveAllProgress={saveAllProgress}
+              saving={singleSaving}
+              savedSignal={
+                lastSaved?.branch === branchNameState &&
+                lastSaved.contentId === currentEntry?.contentId
+                  ? lastSaved.seq
+                  : undefined
+              }
               // Save all finds each draft's entry in the list, so with none listed it would save nothing.
               entryListFailed={entriesLoadFailed && entriesState.length === 0}
               onSubmit={() => {
@@ -2278,6 +2301,7 @@ const EditorContent: React.FC<EditorProps> = ({
                     setRenameModalError(null)
                   }}
                   isSaving={renameModalSaving}
+                  returnFocusTo={entryChangeReturnTarget}
                   error={renameModalError?.mayHaveLanded ? null : renameModalError?.message}
                   warning={renameModalError?.mayHaveLanded ? renameModalError.message : null}
                   existingSlugs={renameExistingSlugs}
@@ -2328,16 +2352,17 @@ const EditorContent: React.FC<EditorProps> = ({
 
               <ConfirmDeleteModal
                 isOpen={deleteEntryModalOpen}
-                title="Delete Entry"
+                title="Delete entry"
                 message={
                   deletingEntryReferencedBy
                     ? referencedDeleteMessage(deletingEntryReferencedBy)
-                    : 'Are you sure you want to delete this entry? This cannot be undone.'
+                    : `Delete "${deletingEntryLabel}"? This cannot be undone.`
                 }
-                confirmLabel={deletingEntryReferencedBy ? 'Delete anyway' : 'Delete Entry'}
+                confirmLabel={deletingEntryReferencedBy ? 'Delete anyway' : 'Delete entry'}
                 onConfirm={confirmDeleteEntry}
                 onClose={closeDeleteEntryModal}
                 loading={deleteInProgress}
+                returnFocusTo={entryChangeReturnTarget}
               >
                 {deletingEntryReferencedBy && (
                   <ReferencedByList

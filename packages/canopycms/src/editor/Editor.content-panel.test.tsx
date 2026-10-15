@@ -9,6 +9,7 @@ import React from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { SWRConfig } from 'swr'
+import { notifications } from '@mantine/notifications'
 
 import type { EntrySchema } from '../config'
 import type { EditorEntry } from './Editor'
@@ -627,7 +628,23 @@ describe('maximized preview', () => {
   })
 })
 
-describe('Save all', () => {
+describe('saving', () => {
+  it('says "Saved" on the Save button, with no toast, for the entry it saved only', async () => {
+    const show = vi.spyOn(notifications, 'show')
+    onTestFinished(() => show.mockRestore())
+    await setup(true)
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Title/ }), {
+      target: { value: 'Edited' },
+    })
+    fireEvent.click(screen.getByTestId('save-button'))
+    await screen.findByRole('button', { name: 'Saved' })
+    expect(show).not.toHaveBeenCalled()
+
+    fireEvent.click(await row('second'))
+    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+    expect(screen.getByTestId('save-button')).toBe(screen.getByRole('button', { name: 'Save' }))
+  })
+
   it("blocks Save all while the branch's entry list failed to load", async () => {
     const consoleSpy = mockConsole()
     onTestFinished(() => consoleSpy.restore())

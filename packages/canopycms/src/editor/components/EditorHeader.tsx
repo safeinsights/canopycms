@@ -40,6 +40,12 @@ export interface EditorHeaderProps {
   /** Replaces the open entry with the server's copy. */
   onFileReload: () => void
   onFileDiscardDraft: () => void
+  /** Opens the open entry's rename dialog. */
+  onEntryRename: () => void
+  /** Asks to delete the open entry. */
+  onEntryDelete: () => void
+  /** The "All content" crumb. */
+  allContentRef?: Ref<HTMLButtonElement>
   onEntrySelect: (path: LogicalPath) => void
   /** Re-reads the branch and its entry list, keeping drafts. */
   onBranchReloadData: () => void
@@ -48,6 +54,10 @@ export interface EditorHeaderProps {
   onSave: () => void
   onSaveAll: () => void
   saveAllProgress: SaveAllProgress | null
+  /** A Save of the open entry is in flight. */
+  saving?: boolean
+  /** Rises each time a Save of the open entry lands. */
+  savedSignal?: number
   /** The branch's entry list failed to load and none is held. */
   entryListFailed?: boolean
   onSubmit: () => void
@@ -60,6 +70,8 @@ export interface EditorHeaderProps {
   draftStorageFailed?: boolean
   /** The open entry can't be edited by this user (a path rule). */
   entryReadOnly?: boolean
+  /** The open entry's type has no schema in the running code. */
+  entryUnavailable?: boolean
   /** Current branch status (undefined if unknown). */
   branchStatus: BranchStatus | undefined
   /** Current user context for permission checks. */
@@ -105,6 +117,9 @@ export function EditorHeader({
   branchToggleRef,
   onFileReload,
   onFileDiscardDraft,
+  onEntryRename,
+  onEntryDelete,
+  allContentRef,
   onEntrySelect,
   onBranchReloadData,
   onBranchDiscardDrafts,
@@ -112,6 +127,8 @@ export function EditorHeader({
   onSave,
   onSaveAll,
   saveAllProgress,
+  saving = false,
+  savedSignal,
   entryListFailed = false,
   onSubmit,
   onWithdraw,
@@ -119,6 +136,7 @@ export function EditorHeader({
   entryHasDraft = hasUnsavedChanges,
   draftStorageFailed = false,
   entryReadOnly = false,
+  entryUnavailable = false,
   branchStatus,
   userContext,
   branchCreatedBy,
@@ -188,9 +206,19 @@ export function EditorHeader({
           onCollection={onCollectionOpen}
           onRefresh={onFileReload}
           onDiscard={onFileDiscardDraft}
+          onRename={onEntryRename}
+          onDelete={onEntryDelete}
           refreshBlockedReason={branchName ? undefined : 'Open a branch first.'}
           discardBlockedReason={entryHasDraft ? undefined : 'This entry has no unsaved changes.'}
+          changeBlockedReason={
+            branchLockReason ??
+            entryLockReason ??
+            (entryUnavailable
+              ? "This entry's content type isn't known to this editor version yet. Reload in a few minutes."
+              : undefined)
+          }
           entryMenuRef={navigatorToggleRef}
+          allContentRef={allContentRef}
         />
       }
       trailing={
@@ -234,6 +262,8 @@ export function EditorHeader({
                   : undefined)
             }
             saveAllProgress={saveAllProgress}
+            saving={saving}
+            savedSignal={savedSignal}
             entryDirty={hasUnsavedChanges}
             draftStorageFailed={draftStorageFailed}
           />
@@ -334,7 +364,8 @@ function WorkflowButton({
     >
       <Button
         size="sm"
-        color={isWithdrawable ? 'orange' : 'brand'}
+        // Save is the top bar's one filled primary.
+        variant="default"
         style={{ flexShrink: 0 }}
         onClick={() => {
           if (actionBlocked) return

@@ -40,6 +40,8 @@ const meta: Meta<typeof EditorHeader> = {
     onCollectionOpen: noop,
     onFileReload: noop,
     onFileDiscardDraft: noop,
+    onEntryRename: noop,
+    onEntryDelete: noop,
     onEntrySelect: noop,
     onBranchReloadData: noop,
     onBranchDiscardDrafts: noop,
@@ -136,4 +138,20 @@ export const NoEntryOpen: Story = {
     breadcrumbSegments: [{ label: 'All content' }],
     hasUnsavedChanges: false,
   },
+}
+
+const openEntryMenu: Story['play'] = async ({ canvasElement }) => {
+  canvasElement.querySelector<HTMLButtonElement>('[data-testid="file-dropdown-button"]')?.click()
+}
+
+/** The entry menu: refresh, discard, then Rename… and the destructive Delete entry. */
+export const EntryMenu: Story = {
+  args: { hasUnsavedChanges: false },
+  play: openEntryMenu,
+}
+
+/** On a branch in review, Rename… and Delete entry stay in the menu, blocked, with the reason. */
+export const EntryMenuBlocked: Story = {
+  args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
+  play: openEntryMenu,
 }

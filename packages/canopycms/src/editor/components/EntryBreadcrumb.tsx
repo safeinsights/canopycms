@@ -6,6 +6,7 @@ import { useMergedRef } from '@mantine/hooks'
 import { IconChevronDown, IconChevronRight, IconLock } from '@tabler/icons-react'
 import type { BreadcrumbSegment } from '../editor-utils'
 import { EDITOR_ACTIONS } from '../copy'
+import { DestructiveMenuItem } from './DestructiveMenuItem'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 
@@ -22,10 +23,16 @@ export interface EntryBreadcrumbProps {
   onCollection: (collectionPath: string) => void
   onRefresh: () => void
   onDiscard: () => void
+  onRename: () => void
+  onDelete: () => void
   refreshBlockedReason?: string
   discardBlockedReason?: string
+  /** Why the entry can't be renamed or deleted now. */
+  changeBlockedReason?: string
   /** The entry menu's trigger, which stands in for a menu item that opened something. */
   entryMenuRef?: Ref<HTMLButtonElement>
+  /** The "All content" crumb, where focus goes once the open entry is gone. */
+  allContentRef?: Ref<HTMLButtonElement>
 }
 
 /** Whether the element's text is cut short, kept current as it resizes. */
@@ -71,11 +78,20 @@ function CrumbTooltip({
   )
 }
 
-function CollectionCrumb({ label, onClick }: { label: string; onClick: () => void }) {
+function CollectionCrumb({
+  label,
+  onClick,
+  buttonRef,
+}: {
+  label: string
+  onClick: () => void
+  buttonRef?: Ref<HTMLButtonElement>
+}) {
   const [ref, truncated] = useTruncated(label)
   return (
     <CrumbTooltip label={label} truncated={truncated}>
       <Button
+        ref={buttonRef}
         variant="subtle"
         color="gray"
         size="compact-sm"
@@ -114,9 +130,13 @@ export function EntryBreadcrumb({
   onCollection,
   onRefresh,
   onDiscard,
+  onRename,
+  onDelete,
   refreshBlockedReason,
   discardBlockedReason,
+  changeBlockedReason,
   entryMenuRef,
+  allContentRef,
 }: EntryBreadcrumbProps) {
   const trigger = useRef<HTMLButtonElement>(null)
   const triggerRef = useMergedRef(trigger, entryMenuRef)
@@ -157,6 +177,7 @@ export function EntryBreadcrumb({
               ) : (
                 <CollectionCrumb
                   label={segment.label}
+                  buttonRef={index === 0 ? allContentRef : undefined}
                   onClick={() =>
                     segment.collectionPath ? onCollection(segment.collectionPath) : onAllContent()
                   }
@@ -223,6 +244,21 @@ export function EntryBreadcrumb({
                   >
                     Discard changes
                   </ReasonedMenuItem>
+                  <Menu.Divider />
+                  <ReasonedMenuItem
+                    onClick={onRename}
+                    blockedReason={changeBlockedReason}
+                    data-testid="entry-menu-rename"
+                  >
+                    Rename…
+                  </ReasonedMenuItem>
+                  <DestructiveMenuItem
+                    onClick={onDelete}
+                    blockedReason={changeBlockedReason}
+                    data-testid="entry-menu-delete"
+                  >
+                    Delete entry
+                  </DestructiveMenuItem>
                 </Menu.Dropdown>
               </Menu>
             )}

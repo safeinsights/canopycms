@@ -458,11 +458,7 @@ describe('an object list', () => {
     await waitFor(() => expect(threadPaths()).toEqual([]))
 
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^save$/i }).getAttribute('aria-disabled')).toBe(
-        'true',
-      ),
-    )
+    await screen.findByRole('button', { name: 'Saved' })
 
     fireEvent.click(entryButton())
     const popover = await screen.findByTestId('entry-comment-button-popover')

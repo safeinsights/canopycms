@@ -214,6 +214,10 @@ export interface UseDraftManagerReturn {
   modifiedCount: number
   editedFiles: Array<{ path: LogicalPath; label: string }>
   handleSave: () => Promise<void>
+  /** A Save of the open entry is in flight. */
+  singleSaving: boolean
+  /** The last Save that landed; its `seq` rises with each, and the Save button says "Saved". */
+  lastSaved: { branch: string; contentId: string; seq: number } | null
   /**
    * Saves every entry with unsaved changes on the branch, one at a time. Undefined when a run or
    * a single Save is already in flight, or the branch changed or the editor unmounted meanwhile.
@@ -280,6 +284,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   //             the behavior before base versions existed.
   const draftBaseVersionsRef = useRef<Record<string, number | null>>({})
   const [draftStorageFailed, setDraftStorageFailed] = useState(false)
+  const [lastSaved, setLastSaved] = useState<UseDraftManagerReturn['lastSaved']>(null)
   const [saveInFlight, setSaveInFlight] = useState(false)
   const [saveAllProgress, setSaveAllProgress] = useState<SaveAllProgress | null>(null)
   const saveAllRunningRef = useRef(false)
@@ -931,7 +936,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
 
     // Conflict check first: a stale-based draft must not be schema-validated
-    // into a green "Saved" -- and nagging about field errors is noise when the
+    // into a "Saved" -- and nagging about field errors is noise when the
     // save is not going out at all.
     const baseState = draftBaseState()
     if (baseState === 'stale') {
@@ -949,7 +954,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     // Client-side pre-save validation (ED-H1): the same pure schema rules the
     // server enforces authoritatively at the write boundary. Blocks the save
-    // and surfaces per-field errors in the form instead of a green "Saved".
+    // and surfaces per-field errors in the form instead of a "Saved".
     const validationErrors = validateEntryFormValue(entry.schema, entry.format, effectiveValue)
     if (validationErrors.length > 0) {
       setErrorState({ entryId: currentId, errors: toFieldErrorMap(validationErrors) })
@@ -991,12 +996,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       }
       hideEntryGone(currentId)
       settleEntry(currentId)
-      notifications.show({
-        message: 'Saved',
-        color: 'green',
-        autoClose: getNotificationDuration(4000),
-        withCloseButton: true,
-      })
+      // Said on the Save button, not in a toast.
+      setLastSaved((prev) => ({ branch, contentId: currentId, seq: (prev?.seq ?? 0) + 1 }))
       options.onSaved?.()
     } catch (err) {
       console.error(err)
@@ -1607,6 +1608,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     modifiedCount,
     editedFiles,
     handleSave,
+    singleSaving: saveInFlight && !saveAllProgress,
+    lastSaved,
     handleSaveAll,
     saveAllProgress,
     isSaveAllRunning: () => saveAllRunningRef.current,

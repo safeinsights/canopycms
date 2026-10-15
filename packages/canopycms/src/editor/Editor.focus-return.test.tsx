@@ -5,7 +5,7 @@
  */
 import React from 'react'
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
@@ -49,11 +49,14 @@ const okJson = (data: unknown) =>
 
 const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unknown[] } = {}) => {
   const { groups = [], locked = false, threads = [] } = options
+  // The one entry, until a delete removes it.
+  let deleted = false
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (init?.method === 'DELETE') deleted = true
       if (url.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups }))
       if (url.endsWith('/main/comments')) return Promise.resolve(okJson({ threads, users: [] }))
       if (url.endsWith('/api/canopycms/branches')) {
@@ -149,7 +152,7 @@ const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unkno
                 physicalPath: `/content/posts.abc123XYZ789/post.hello.${hello.contentId}.json`,
                 exists: true,
               },
-            ],
+            ].filter(() => !deleted),
             pagination: { hasMore: false, limit: 50 },
           }),
         )
@@ -288,6 +291,53 @@ describe('Refresh from server (file menu)', () => {
 
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
+  })
+})
+
+describe('Rename… and Delete entry (file menu)', () => {
+  it('opens the rename dialog for the open entry, and returns focus to the file menu button', async () => {
+    stubApi()
+    renderEditor()
+    await loaded()
+
+    await activateByKeyboard(fileTrigger(), byTestId('entry-menu-rename'))
+    const modal = await screen.findByTestId('rename-entry-modal')
+    expect((within(modal).getByRole('textbox') as HTMLInputElement).value).toBe('hello')
+    await userEvent.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByTestId('rename-entry-modal')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
+  })
+
+  it('deletes the open entry once confirmed, closing it, and hands focus to "All content"', async () => {
+    stubApi()
+    renderEditor()
+    await loaded()
+
+    await activateByKeyboard(fileTrigger(), byTestId('entry-menu-delete'))
+    const modal = await screen.findByTestId('confirm-delete-modal')
+    expect(modal.textContent).toContain('Delete "Hello"? This cannot be undone.')
+    await userEvent.click(within(modal).getByTestId('confirm-delete-submit'))
+
+    await waitFor(() => expect(fileTrigger().textContent).toBe('No entry open'))
+    const allContent = screen.getAllByTestId('breadcrumb-segment')[0]
+    await waitFor(() => expect(document.activeElement).toBe(allContent))
+  })
+
+  it('blocks both on a locked branch, saying why, and opens neither', async () => {
+    stubApi({ locked: true })
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('read-only-chip')).toBeTruthy())
+
+    await userEvent.click(fileTrigger())
+    for (const id of ['entry-menu-rename', 'entry-menu-delete']) {
+      const item = await screen.findByTestId(id)
+      expect(item.getAttribute('aria-disabled')).toBe('true')
+      expect(item.textContent).toContain('This branch is in review. Withdraw it to make changes.')
+      await userEvent.click(item)
+    }
+    expect(screen.queryByTestId('rename-entry-modal')).toBeNull()
+    expect(screen.queryByTestId('confirm-delete-modal')).toBeNull()
   })
 })
 
