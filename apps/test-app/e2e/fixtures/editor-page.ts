@@ -594,6 +594,26 @@ export class EditorPage {
   }
 
   /**
+   * Run "Save all" from the caret beside Save.
+   */
+  async saveAll(): Promise<void> {
+    await this.page.getByTestId('save-options-button').click()
+    const item = this.page.getByTestId('save-all-menu-item')
+    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await item.click()
+  }
+
+  /** The toast listing what a Save all could not save. */
+  saveAllResult(): Locator {
+    return this.page.getByTestId('save-all-result')
+  }
+
+  /** The branch pill's "N unsaved" count, absent with nothing unsaved. */
+  branchUnsavedCount(): Locator {
+    return this.page.getByTestId('branch-unsaved-count')
+  }
+
+  /**
    * Complete save flow: click save and wait for the content PUT response.
    * Uses waitForResponse instead of notification polling so stale notifications
    * from prior saves don't cause false positives.

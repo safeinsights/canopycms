@@ -232,7 +232,8 @@ describe('EditorHeader - branch pill unsaved count', () => {
       ],
       onEntrySelect,
     })
-    expect(screen.getByTestId('branch-unsaved-count').textContent).toBe('2 unsaved')
+    // " unsaved" shows from `sm`; below it the pill is icon-only and the word is visually hidden.
+    expect(screen.getByTestId('branch-unsaved-count').textContent).toBe('2 unsaved unsaved')
 
     await userEvent.click(screen.getByTestId('branch-dropdown-button'))
     expect((await screen.findByTestId('discard-all-drafts-menu-item')).textContent).toBe(
@@ -272,6 +273,7 @@ describe('EditorHeader - branch menu with no edits', () => {
 
     const discard = screen.getByTestId('discard-all-drafts-menu-item')
     expect(discard.getAttribute('aria-disabled')).toBe('true')
+    expect(discard.textContent).toBe('Discard all changesNothing to discard.')
     await userEvent.click(discard)
     expect(onBranchDiscardDrafts).not.toHaveBeenCalled()
   })

@@ -3,6 +3,7 @@ import type { ApiErrorCode } from '../../api/types'
 import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { isUnanswered } from '../unanswered'
+import { EDITOR_ACTIONS } from '../copy'
 import { SaveApiError } from './useEntryManager'
 
 /**
@@ -42,12 +43,9 @@ export const SAVE_ALL_RESULT_TOAST_ID = 'canopy-save-all-result'
 const ENTRY_GONE_CODE = 'ENTRY_GONE' satisfies ApiErrorCode
 
 export const SAVE_ALL_REASONS = {
-  unanswered:
-    'Saving it may have gone through even though the server didn\'t answer. Open it and choose "Refresh from server" to check before saving again.',
-  earlierUnanswered:
-    'An earlier save of it may have gone through even though the server didn\'t answer. Open it and choose "Refresh from server" to check before saving again.',
-  staleBase:
-    'It changed on the server since your edits started, so saving would overwrite someone else\'s changes. Open it and choose "Refresh from server" to see the latest version (your unsaved edits will be lost).',
+  unanswered: `Saving it may have gone through even though the server didn't answer. Open it and choose "${EDITOR_ACTIONS.refreshFromServer}" to check before saving again.`,
+  earlierUnanswered: `An earlier save of it may have gone through even though the server didn't answer. Open it and choose "${EDITOR_ACTIONS.refreshFromServer}" to check before saving again.`,
+  staleBase: `It changed on the server since your edits started, so saving would overwrite someone else's changes. Open it and choose "${EDITOR_ACTIONS.refreshFromServer}" to see the latest version (your unsaved edits will be lost).`,
   unknownBase:
     'Its unsaved changes come from an older version of the editor. Open it and save it on its own to confirm the overwrite.',
   unavailable: "Its entry type isn't available in this version of the site, so it can't be saved.",
@@ -89,7 +87,9 @@ export function classifySaveAllError(
     ) {
       return { kind: 'landed?' }
     }
-    return { kind: 'conflict', reason: err.serverMessage || SAVE_ALL_REASONS.staleBase }
+    // The version check's own wording names the single-entry recovery, so Save all says it its way.
+    const changed = !err.serverMessage || err.serverMessage === ENTRY_CHANGED_MESSAGE
+    return { kind: 'conflict', reason: changed ? SAVE_ALL_REASONS.staleBase : err.serverMessage }
   }
   if (err.code === SCHEMA_UNAVAILABLE_CODE) return { kind: 'blocked', reason: err.message }
   if (err.status === 422) {

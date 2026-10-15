@@ -53,7 +53,11 @@ export function SaveAllResultMessage({ result, onOpenEntry, onRetry }: SaveAllRe
           </List.Item>
         ))}
       </List>
-      <Text size="sm">Their unsaved changes are kept.</Text>
+      <Text size="sm">
+        {result.failed.length === 1
+          ? 'Its unsaved changes are kept.'
+          : 'Their unsaved changes are kept.'}
+      </Text>
       <Button size="compact-sm" variant="default" w="fit-content" onClick={onRetry}>
         Try again
       </Button>
@@ -84,7 +88,10 @@ export function showSaveAllResult(
   const warningOnly = result.failed.every((f) => f.kind === 'unanswered' || f.kind === 'conflict')
   notifications.show({
     id: SAVE_ALL_RESULT_TOAST_ID,
-    title: `${result.failed.length} of ${entries(result.total)} not saved`,
+    title:
+      result.failed.length === result.total
+        ? `${entries(result.total)} not saved`
+        : `${result.failed.length} of ${entries(result.total)} not saved`,
     message: <SaveAllResultMessage result={result} {...actions} />,
     color: warningOnly ? 'yellow' : 'red',
     autoClose: false,

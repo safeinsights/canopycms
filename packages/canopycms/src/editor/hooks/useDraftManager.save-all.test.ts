@@ -284,6 +284,24 @@ describe('useDraftManager - Save all', () => {
     expect(result.current.drafts[idOf(b)]).toEqual({ title: 'B2' })
   })
 
+  it("says an open entry the server refused as changed needs a refresh, in Save all's words", async () => {
+    draftAll()
+    const { result } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+    server.write(idOf(a), { title: 'someone else' })
+
+    const outcome = await run(result)
+
+    expect(outcome?.failed).toEqual([
+      expect.objectContaining({
+        label: 'Entry a',
+        kind: 'conflict',
+        reason: SAVE_ALL_REASONS.staleBase,
+      }),
+    ])
+    expect(result.current.drafts[idOf(a)]).toEqual({ title: 'A2' })
+  })
+
   it('loads an entry not yet opened for its token before writing it', async () => {
     draftAll()
     const { result } = setup()

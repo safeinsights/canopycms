@@ -5,6 +5,7 @@ import { Badge, Box, Button, Group, Menu, Text, Tooltip, VisuallyHidden } from '
 import { useMergedRef } from '@mantine/hooks'
 import { IconChevronDown, IconChevronRight, IconLock } from '@tabler/icons-react'
 import type { BreadcrumbSegment } from '../editor-utils'
+import { EDITOR_ACTIONS } from '../copy'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 
@@ -65,7 +66,12 @@ export function EntryBreadcrumb({
 
   return (
     <Group gap="xs" wrap="nowrap" miw={0}>
-      <Box component="nav" aria-label="Breadcrumb" miw={0} style={{ flex: '0 1 auto' }}>
+      <Box
+        component="nav"
+        aria-label="Breadcrumb"
+        miw={0}
+        style={{ flex: '0 1 auto', overflow: 'hidden' }}
+      >
         <Group
           component="ol"
           gap={2}
@@ -80,7 +86,8 @@ export function EntryBreadcrumb({
               gap={2}
               wrap="nowrap"
               miw={0}
-              style={{ flex: '0 1 auto' }}
+              // Collections give up their width long before the entry's own crumb does.
+              style={{ flex: '0 100 auto' }}
             >
               {index > 0 && separator}
               {segment.folder ? (
@@ -106,14 +113,7 @@ export function EntryBreadcrumb({
               )}
             </Group>
           ))}
-          <Group
-            component="li"
-            gap={2}
-            wrap="nowrap"
-            miw={0}
-            style={{ flex: '0 0 auto' }}
-            maw="60vw"
-          >
+          <Group component="li" gap={2} wrap="nowrap" miw={64} style={{ flex: '0 1 auto' }}>
             {separator}
             {entryLabel === undefined ? (
               <Text size="sm" c="dimmed" px={4} data-testid="file-dropdown-button">
@@ -161,7 +161,7 @@ export function EntryBreadcrumb({
                     blockedReason={refreshBlockedReason}
                     data-testid="refresh-entry-menu-item"
                   >
-                    Refresh from server
+                    {EDITOR_ACTIONS.refreshFromServer}
                   </ReasonedMenuItem>
                   <ReasonedMenuItem
                     data-testid="discard-file-draft-menu-item"

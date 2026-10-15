@@ -131,7 +131,7 @@ export function SaveSplitButton({
               blockedReason={
                 saveAllBlockedReason ??
                 (saveAllProgress
-                  ? 'Save all is already running.'
+                  ? `${EDITOR_ACTIONS.saveAll} is already running.`
                   : unsavedCount === 0
                     ? 'No entry on this branch has unsaved changes.'
                     : busy
@@ -139,7 +139,9 @@ export function SaveSplitButton({
                       : undefined)
               }
             >
-              {unsavedCount > 0 ? `Save all (${unsavedCount})` : 'Save all'}
+              {unsavedCount > 0
+                ? `${EDITOR_ACTIONS.saveAll} (${unsavedCount})`
+                : EDITOR_ACTIONS.saveAll}
             </ReasonedMenuItem>
           </Menu.Dropdown>
         </Menu>
