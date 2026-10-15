@@ -1716,11 +1716,12 @@ const EditorContent: React.FC<EditorProps> = ({
     [collectionLabels, currentEntry],
   )
 
-  // The browser tab names the open entry and the site; the host page's title comes back on unmount.
+  // The browser tab names the open entry and the site.
   const tabTitle = currentEntry
     ? `${currentEntry.label ?? currentEntry.slug} · ${siteTitle}`
     : siteTitle
-  // Restored only if still the editor's: a route navigated to may have set its own by then.
+  // The host page's title comes back on unmount only if the tab still shows the editor's: a route
+  // navigated to may have set its own by then.
   const writtenTitleRef = useRef<string | null>(null)
   useEffect(() => {
     const hostTitle = document.title

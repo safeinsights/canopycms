@@ -23,7 +23,7 @@ export interface EntryBreadcrumbProps {
   onCollection: (collectionPath: string) => void
   onRefresh: () => void
   onDiscard: () => void
-  /** With `onDelete`, offers "Rename…" and "Delete entry"; absent where they can never apply. */
+  /** With `onDelete`, offers "Rename…" and "Delete entry"; absent where a path rule refuses them. */
   onRename?: () => void
   onDelete?: () => void
   refreshBlockedReason?: string
