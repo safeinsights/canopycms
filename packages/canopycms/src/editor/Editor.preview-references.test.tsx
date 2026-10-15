@@ -27,14 +27,15 @@ interface FrameProps {
   data?: unknown
   isLoading?: unknown
   onMarks?: (marks: { count: number; paths?: string[] }) => void
+  onPreviewError?: (error: { message: string; fieldPath?: string } | null) => void
 }
 
 /** Every `data`/`isLoading` pair the editor hands the preview frame, in render order. */
 const frames: FrameProps[] = []
 
 vi.mock('./PreviewFrame', () => ({
-  PreviewFrame: ({ data, isLoading, onMarks }: FrameProps) => {
-    frames.push({ data, isLoading, onMarks })
+  PreviewFrame: ({ data, isLoading, onMarks, onPreviewError }: FrameProps) => {
+    frames.push({ data, isLoading, onMarks, onPreviewError })
     return <iframe title="preview" />
   },
 }))
@@ -374,5 +375,26 @@ describe('Editor preview marks', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(toggle.getAttribute('aria-description')).toBeNull()
     expect(warnings()).toHaveLength(2)
+  })
+
+  it("names a preview error's field by its labels and shows the page's path without the mount", async () => {
+    stubApi()
+    renderEditor()
+    await waitFor(() => expect(frames.length).toBeGreaterThan(0), { timeout: 10_000 })
+
+    expect(screen.getByRole('button', { name: 'Copy path /posts/hello' })).toBeTruthy()
+
+    act(() => {
+      frames[frames.length - 1].onPreviewError?.({
+        message: 'Unknown speaker',
+        fieldPath: 'blocks[0].speaker',
+      })
+    })
+    expect(await screen.findByText('Blocks › Quote › Speaker: Unknown speaker')).toBeTruthy()
+
+    act(() => {
+      frames[frames.length - 1].onPreviewError?.({ message: 'Unknown speaker', fieldPath: '.' })
+    })
+    expect(await screen.findByText('Unknown speaker')).toBeTruthy()
   })
 })

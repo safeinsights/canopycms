@@ -35,7 +35,7 @@ import type { ContentFormat, EntrySchema, EntryTypeUnavailable, MdxAllowlist } f
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { CustomFieldRenderers, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
-import { PreviewFrame } from './PreviewFrame'
+import { PreviewPane } from './PreviewPane'
 import type { OperatingMode } from '../operating-mode'
 import { EditorShell } from './shell/EditorShell'
 import { PaneLayout } from './shell/PaneLayout'
@@ -348,6 +348,8 @@ const EditorContent: React.FC<EditorProps> = ({
     sideSplitPercent,
     stackedSplitPercent,
     setSplitPercent,
+    previewWidth,
+    setPreviewWidth,
   } = useEditorLayout({ storageKey: editorLayoutStorageKey(basePath) })
 
   // Comments state (shared between useCommentSystem and useBranchManager)
@@ -1509,40 +1511,41 @@ const EditorContent: React.FC<EditorProps> = ({
     data: displayValue,
   })
 
+  const previewErrorField = previewError?.fieldPath
+    ? fieldBreadcrumb(schema, displayValue, previewError.fieldPath).join(' › ')
+    : ''
+
   // An unavailable entry previews nothing: the site cannot read it, and a stored draft would
   // otherwise mount the frame at a page that answers not-found.
   const defaultPreview =
     currentEntry?.previewSrc && previewFrameData && !currentEntryUnavailable ? (
-      <Box pos="relative" w="100%" h="100%">
-        {previewError && (
-          <Alert
-            color="red"
-            title="Preview error"
-            withCloseButton
-            onClose={() => setPreviewError(null)}
-            style={{ position: 'absolute', top: 8, left: 8, right: 8, zIndex: 2 }}
-          >
-            {previewError.fieldPath
-              ? `${previewError.fieldPath}: ${previewError.message}`
-              : previewError.message}
-          </Alert>
-        )}
-        <PreviewFrame
-          src={currentEntry.previewSrc}
-          path={currentEntry.previewSrc}
-          data={previewFrameData}
-          isLoading={previewLoadingState}
-          style={{
-            width: '100%',
-            height: '100%',
-            border: '1px solid var(--mantine-color-default-border)',
-          }}
-          highlightEnabled={highlightEnabled}
-          onPreviewError={setPreviewError}
-          onMarks={onPreviewMarks}
-          assetBase={authenticatedAssetBase(basePath)}
-        />
-      </Box>
+      <PreviewPane
+        src={currentEntry.previewSrc}
+        data={previewFrameData}
+        isLoading={previewLoadingState}
+        highlightEnabled={highlightEnabled}
+        onPreviewError={setPreviewError}
+        onMarks={onPreviewMarks}
+        assetBase={authenticatedAssetBase(basePath)}
+        mount={{ basePath, previewPrefix }}
+        previewWidth={previewWidth}
+        onPreviewWidthChange={setPreviewWidth}
+        notice={
+          previewError && (
+            <Alert
+              color="red"
+              title="Preview error"
+              withCloseButton
+              onClose={() => setPreviewError(null)}
+              radius={0}
+            >
+              {previewErrorField
+                ? `${previewErrorField}: ${previewError.message}`
+                : previewError.message}
+            </Alert>
+          )
+        }
+      />
     ) : (
       <Paper
         withBorder

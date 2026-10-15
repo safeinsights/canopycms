@@ -9,7 +9,7 @@ import {
 } from '../shell/PaneLayout'
 import { isPlainRecord } from '../../validation/field-traversal'
 
-/** @internal Consumed by the preview toolbar, which does not exist yet. */
+/** @internal The preview toolbar's width choice; see `preview-scale.ts`. */
 export type PreviewWidth = 'fit' | 'desktop' | 'tablet' | 'mobile'
 
 const PREVIEW_WIDTHS: readonly PreviewWidth[] = ['fit', 'desktop', 'tablet', 'mobile']
@@ -129,8 +129,8 @@ export interface UseEditorLayoutReturn {
 
 /**
  * Editor layout preferences, persisted to localStorage (read after mount, so SSR renders the
- * defaults; a throwing storage keeps them in memory). `previewWidth` and `contentPanel*` persist
- * ahead of the toolbar and panel that will use them.
+ * defaults; a throwing storage keeps them in memory). `contentPanel*` persist ahead of the panel
+ * that will use them.
  */
 export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayoutReturn {
   const [prefs, setPrefs] = useLocalStorage<EditorLayoutPrefs>({

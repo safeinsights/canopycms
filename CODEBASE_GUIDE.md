@@ -502,7 +502,7 @@ Top-level components and helpers:
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
 - `CommentsPanel.tsx` — comment panel
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group, permission drawers
-- `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; see [Preview Bridge](#preview-bridge)
+- `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; `PreviewPane.tsx` adds the toolbar; see [Preview Bridge](#preview-bridge)
 - `unavailable-entry-type.ts` — unavailable-entry-type wording
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
 - `editor-utils.ts` — `buildPreviewRoute`, `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)

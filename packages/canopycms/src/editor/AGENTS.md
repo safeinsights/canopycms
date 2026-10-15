@@ -56,7 +56,7 @@ or example-app styling, and do not leak editor CSS outward.
 
 `preview-bridge.tsx` is the `postMessage` contract between the editor and a host app's
 preview iframe (draft updates, click-to-focus, highlight) plus the host-page hooks;
-`PreviewFrame.tsx` is the editor's side. _Adopters' public pages_ import the bridge via
+`PreviewFrame.tsx` is the editor's side; `PreviewPane.tsx` adds its toolbar. _Adopters' public pages_ import the bridge via
 `canopycms/preview`, so its message names and payload shapes are a public contract. `isTrustedEditorMessage`/`resolveMessageOrigin` are the origin checks —
 do not weaken them. `preview-asset-base.ts` holds `assetUrl`'s preview prefix; see its header.
 
