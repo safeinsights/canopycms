@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { GatewayRefusalError, MAX_PROTECTED_BRANCHES } from './branch-policy'
 import { GitHubPushError, MAX_FETCH_HAVE } from './github-gateway'
 import { GitHubTransientError, RefusedPushError } from './github-mirror'
-import { redactEgress } from './gateway-egress'
+import { gatewayLogWarn, redactEgress } from './gateway-egress'
 
 /**
  * The GitHub gateway's wire format (worker/github-gateway-http.ts): what each operation sends and
@@ -395,12 +395,16 @@ export function refusedRequestError(message: string, status: number | undefined)
     : new GitHubGatewayProtocolError(message)
 }
 
+/** The message a thrown value that is not an Error crosses with. */
+const NOT_AN_ERROR_MESSAGE = 'The GitHub gateway failed with a value that is not an Error'
+
 /**
  * The envelope for an error leaving the gateway. Every string in it is scrubbed as an error is,
  * by the exact token forms and `redactCredentials`'s patterns (worker/gateway-egress.ts): a
  * credentialed operation already did (`LocalGitHubGateway.credentialed`), and this is the last
  * place anything could slip past it. No stack, no
- * `cause` and no Octokit `request` crosses.
+ * `cause` and no Octokit `request` crosses. A thrown value that is not an Error crosses as a fixed
+ * message and is logged here instead: its string form can be anything, a stack included.
  */
 export function encodeError(err: unknown): ErrorEnvelope {
   const text = (value: string) => redactEgress(value).slice(0, MAX_MESSAGE_LENGTH)
@@ -421,7 +425,8 @@ export function encodeError(err: unknown): ErrorEnvelope {
     return { kind: 'transient', code: err.code, message: text(err.message) }
   }
   if (!(err instanceof Error)) {
-    return { kind: 'error', name: 'Error', message: text(String(err)) }
+    gatewayLogWarn('Answered a thrown value that is not an Error:', text(String(err)))
+    return { kind: 'error', name: 'Error', message: NOT_AN_ERROR_MESSAGE }
   }
   const status = (err as { status?: unknown }).status
   if (typeof status === 'number' && Number.isInteger(status)) {

@@ -785,7 +785,7 @@ describe('materializeAssets existence pass against S3', () => {
     expect(s3.commandCalls(CopyObjectCommand).map((call) => call.args[0].input)).toEqual([
       expect.objectContaining({
         Key: `previews/7/${keys[1]}`,
-        CopySource: `b/${keys[1].replace('=', '%3D')}`,
+        CopySource: `b/${keys[1].replaceAll('=', '%3D')}`,
       }),
     ])
   })

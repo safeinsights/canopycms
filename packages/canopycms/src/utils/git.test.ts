@@ -281,6 +281,55 @@ describe('workflowPushRefusalFile', () => {
   ])('returns null for %s', (_label, message) => {
     expect(workflowPushRefusalFile(message)).toBeNull()
   })
+
+  it('reads a line repeating the lead without the tail in linear time', () => {
+    // A quadratic match takes seconds on this; a linear one, microseconds.
+    const message = 'refusing to allow a '.repeat(50_000)
+    const started = performance.now()
+    expect(workflowPushRefusalFile(message)).toBeNull()
+    expect(workflowPushRefusalFile(`${message}\n${APP_TOKEN_REFUSAL}`)).toBe(
+      '.github/workflows/ci.yml',
+    )
+    expect(performance.now() - started).toBeLessThan(500)
+  })
+
+  it('matches exactly what the rule as a regex matches, on every shape of line', () => {
+    // The rule as a regex: exact, but quadratic on long lines, so only for short ones.
+    const RULE = /refusing to allow an? [^`\n]+? to create or update workflow `([^`\n]+)`/
+    // A refusal's parts in order, each slot's real part first, then its variants: missing,
+    // mangled, doubled, split. Half the time a slot takes its real part, so many lines match.
+    const slots = [
+      ['', 'x (', '`a` ', 'refusing to allow a ', 'line\n'],
+      ['refusing to allow a ', 'refusing to allow an ', 'refusing to allow a', '', 'refusing\n'],
+      ['GitHub App', 'n', ' ', '', 'a`b', 'App\n', 'refusing to allow a '],
+      [' to create or update workflow ', 'to create or update workflow ', '', ' to create'],
+      ['`', '``', '', '\n`'],
+      ['ci.yml', '', 'a\nb', ' to create or update workflow `x'],
+      ['`', '', '\n`', '``'],
+      ['', ' without', ' `x`', '\n'],
+    ]
+    // A fixed seed, so a failure reproduces.
+    let seed = 0x9e3779b9
+    const next = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+      // The high bits: an LCG's low bits cycle with short periods.
+      return seed >>> 16
+    }
+    const refusal = () =>
+      slots
+        .map((variants) => (next() % 2 === 0 ? variants[0] : variants[next() % variants.length]))
+        .join('')
+    let matched = 0
+    for (let n = 0; n < 20_000; n++) {
+      const message = next() % 3 === 0 ? `${refusal()}${refusal()}` : refusal()
+      const expected = RULE.exec(message)?.[1] ?? null
+      if (expected !== null) matched++
+      expect(workflowPushRefusalFile(message), JSON.stringify(message)).toBe(expected)
+    }
+    // Both outcomes are well represented, so the agreement says something.
+    expect(matched).toBeGreaterThan(1_000)
+    expect(matched).toBeLessThan(19_000)
+  })
 })
 
 describe('stageAllExceptCanopyState', () => {

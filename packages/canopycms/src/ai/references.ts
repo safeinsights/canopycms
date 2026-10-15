@@ -14,6 +14,7 @@ import { extractEntryTypeFromFilename, type ContentIdIndex } from '../content-id
 import type { EntryTypeConfig, FieldConfig, FlatSchemaItem, ReferenceFieldConfig } from '../config'
 import { RESTRICTED_REFERENCE_MARKER } from '../entry-schema'
 import { extractEntryLinkIds, type EntryLinkUrlResolver } from '../entry-link-resolver'
+import { trimSlashes } from '../paths/normalize'
 import { getErrorMessage } from '../utils/error'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { resolveEntryTitle } from '../utils/title-field'
@@ -247,7 +248,8 @@ export function createReferenceRendering(
   markdownCopies: { mountPath: string; files: ReadonlyMap<string, string> },
   linkFor?: ReferenceLinkLookup,
 ): ReferenceRendering {
-  const mount = `/${markdownCopies.mountPath.replace(/^\/+|\/+$/g, '')}`.replace(/^\/$/, '')
+  const mountSegment = trimSlashes(markdownCopies.mountPath)
+  const mount = mountSegment === '' ? '' : `/${mountSegment}`
   const entryTypeOf = (id: unknown): { schema?: readonly FieldConfig[]; label?: string } => {
     const location = typeof id === 'string' ? idIndex.findById(id) : null
     if (!location?.collection) return {}

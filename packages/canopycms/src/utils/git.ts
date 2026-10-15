@@ -96,11 +96,11 @@ export function isStaleLeaseRejection(message: string): boolean {
   return message.includes(REJECTED_MARKER) && message.includes(STALE_LEASE_REASON)
 }
 
-// GitHub's reason text when a push would introduce workflow content the credential may not write.
-// It names the credential kind ("a GitHub App", "an OAuth App", ...) and then the file.
-// Both classes stop at a newline, so the match stays on the one status line that carries it.
-const WORKFLOW_REFUSAL_PATTERN =
-  /refusing to allow an? [^`\n]+? to create or update workflow `([^`\n]+)`/
+// GitHub's reason text when a push would introduce workflow content the credential may not write:
+// `refusing to allow <credential kind> to create or update workflow `<file>``, where the kind
+// ("a GitHub App", "an OAuth App", ...) holds no backquote and the file is the next quoted span.
+const WORKFLOW_REFUSAL_LEADS = ['refusing to allow a ', 'refusing to allow an ']
+const WORKFLOW_REFUSAL_TAIL = ' to create or update workflow '
 
 /**
  * The workflow file named by GitHub's refusal of a push that would add workflow content the
@@ -109,9 +109,28 @@ const WORKFLOW_REFUSAL_PATTERN =
  * GitHub refuses only content it does not already hold: carrying a base-branch workflow change by
  * rebase, merge or fast-forward is accepted. Retrying the identical push can never succeed, so the
  * worker fails it fast. The text is GitHub's own, not git's, so no locale pinning is needed.
+ *
+ * A scan of each line's backquote-delimited spans, linear in the message, which is git's output of
+ * any length: this rule as a regex, with its run between lead and tail, is quadratic on a line
+ * that repeats the lead without the tail.
  */
 export function workflowPushRefusalFile(message: string): string | null {
-  return WORKFLOW_REFUSAL_PATTERN.exec(message)?.[1] ?? null
+  for (const line of message.split('\n')) {
+    const spans = line.split('`')
+    // The last span is closed by no backquote, so the file can be at most the one before it.
+    for (let i = 0; i + 2 < spans.length; i++) {
+      const span = spans[i]
+      const file = spans[i + 1]
+      if (file === '' || !span.endsWith(WORKFLOW_REFUSAL_TAIL)) continue
+      const head = span.slice(0, -WORKFLOW_REFUSAL_TAIL.length)
+      const named = WORKFLOW_REFUSAL_LEADS.some((lead) => {
+        const at = head.indexOf(lead)
+        return at !== -1 && at + lead.length < head.length
+      })
+      if (named) return file
+    }
+  }
+  return null
 }
 
 // git's message when `git fetch <remote> <branch>` names a ref the remote does not have. Both

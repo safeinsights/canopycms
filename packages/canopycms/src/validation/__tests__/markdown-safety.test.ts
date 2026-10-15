@@ -9,7 +9,7 @@ const mdx = (source: string) => findUnsafeMarkdown(source, 'mdx')
 const md = (source: string) => findUnsafeMarkdown(source, 'md')
 
 describe('findUnsafeMarkdown: MDX that runs code is refused', () => {
-  const refused: Array<[string, string, RegExp]> = [
+  const refused: Array<[string, string, RegExp | string]> = [
     ['an import', "import Chart from './chart'\n\n# Hi", /import\/export/],
     ['an export', 'export const meta = { a: 1 }', /import\/export/],
     [
@@ -42,8 +42,8 @@ describe('findUnsafeMarkdown: MDX that runs code is refused', () => {
     ['the MDXContent binding', '<MDXContent />', /<MDXContent>/],
     ['the MDXLayout binding', '<MDXLayout>x</MDXLayout>', /<MDXLayout>/],
     ['a dollar-led name', '<$x />', /<\$x>/],
-    ['a script tag', '<script>alert(1)</script>', /<script>/],
-    ['a script tag inline', 'Text <script>alert(1)</script> more', /<script>/],
+    ['a script tag', '<script>alert(1)</script>', '<script>'],
+    ['a script tag inline', 'Text <script>alert(1)</script> more', '<script>'],
     ['an iframe with srcdoc', '<iframe srcdoc="<script>parent.x()</script>" />', /<iframe>/],
     ['an object tag', '<object data="/x.swf" />', /<object>/],
     ['an embed tag', '<embed src="/x" />', /<embed>/],
