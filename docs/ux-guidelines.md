@@ -218,10 +218,11 @@ primary is filled: other badges, icons and indicators take their colour's light 
 
 ## Shell regions
 
-The editor fills the window as one grid: **top bar** (breadcrumb, branch pill, unsaved
-indicator, Save), **banner** (branch-wide notices), **rail** (activity icons), **panel**
-(content tree, branches, comments, media), **main** (preview and form) and **overlays**
-(drawers, modals, toasts). The regions are layout only; features plug into them. New UI goes
+The editor fills the window as one grid: **top bar** (breadcrumb and entry menu, branch pill,
+Submit for review or Withdraw from review, unsaved indicator, Save with Save all), **banner**
+(branch-wide notices), **rail** (activity icons, layout toggle, settings), **panel** (the content
+tree: docked in a wide side-by-side window, else laid over the form), **main** (preview and form)
+and **overlays** (the branches, comments and media drawers, quick open, modals, toasts). The regions are layout only; features plug into them. New UI goes
 into an existing region, and adding a region is a design decision. The unsaved indicator is
 icon-only below `lg`.
 

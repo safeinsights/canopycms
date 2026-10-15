@@ -48,6 +48,8 @@ export interface EditorHeaderProps {
   onSave: () => void
   onSaveAll: () => void
   saveAllProgress: SaveAllProgress | null
+  /** The branch's entry list failed to load and none is held. */
+  entryListFailed?: boolean
   onSubmit: () => void
   onWithdraw: () => void
   /** The open entry has unsaved changes it could save. */
@@ -110,6 +112,7 @@ export function EditorHeader({
   onSave,
   onSaveAll,
   saveAllProgress,
+  entryListFailed = false,
   onSubmit,
   onWithdraw,
   hasUnsavedChanges,
@@ -223,7 +226,12 @@ export function EditorHeader({
             onSaveAll={onSaveAll}
             unsavedCount={modifiedCount}
             saveAllBlockedReason={
-              branchLockReason ?? (branchName ? undefined : 'Open a branch first.')
+              branchLockReason ??
+              (!branchName
+                ? 'Open a branch first.'
+                : entryListFailed && modifiedCount > 0
+                  ? 'The list of entries couldn\'t be loaded, so these changes can\'t be saved yet. Use "Refresh branch" to try again.'
+                  : undefined)
             }
             saveAllProgress={saveAllProgress}
             entryDirty={hasUnsavedChanges}

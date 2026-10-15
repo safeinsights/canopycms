@@ -713,6 +713,16 @@ describe('EditorHeader - Save all', () => {
     expect(onSaveAll).not.toHaveBeenCalled()
   })
 
+  it("blocks Save all with a way to retry when the branch's entry list didn't load", async () => {
+    const onSaveAll = vi.fn()
+    renderHeader({ modifiedCount: 2, entryListFailed: true, onSaveAll })
+    const item = await openSaveOptions()
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.textContent).toContain('Use "Refresh branch" to try again.')
+    await userEvent.click(item)
+    expect(onSaveAll).not.toHaveBeenCalled()
+  })
+
   it('shows progress on Save, blocks it, and announces the run once', async () => {
     const onSave = vi.fn()
     renderHeader({

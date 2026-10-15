@@ -425,6 +425,7 @@ const EditorContent: React.FC<EditorProps> = ({
     currentEntry,
     availableSchemas,
     entriesInitializing,
+    entriesLoadFailed,
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,
@@ -1496,9 +1497,15 @@ const EditorContent: React.FC<EditorProps> = ({
   const branchReturnTarget = () =>
     returnTarget(branchOpenerRef.current, () => branchToggleRef.current)
   const settingsReturnTarget = () => settingsToggleRef.current
-  // The palette replaces the overlay panel; a docked one stays.
+  // The palette replaces the overlay panel; a docked one stays. Opened from inside the overlay,
+  // whose tree then unmounts, it returns focus to the panel's opener.
   const openQuickOpen = () => {
-    if (!quickOpenOpen) setQuickOpenFromOverlay(!contentPanelDocked && navigatorOpen)
+    if (!quickOpenOpen) {
+      const panel = document.getElementById(CONTENT_PANEL_ID)
+      setQuickOpenFromOverlay(
+        !contentPanelDocked && navigatorOpen && !!panel?.contains(document.activeElement),
+      )
+    }
     if (!contentPanelDocked) setNavigatorOpen(false)
     setQuickOpenOpen(true)
   }
@@ -1646,7 +1653,11 @@ const EditorContent: React.FC<EditorProps> = ({
         showMarkDiagnostics={userIsAdmin}
         layout={layout}
         maximized={previewShownMaximized}
-        onMaximizedChange={setPreviewMaximized}
+        onMaximizedChange={(maximized) => {
+          // A docked panel stays beside a maximized preview; an overlay one would sit inert under it.
+          if (maximized && !contentPanelDocked) setNavigatorOpen(false)
+          setPreviewMaximized(maximized)
+        }}
         resizing={paneResizing}
         notice={
           previewError && (
@@ -1876,6 +1887,8 @@ const EditorContent: React.FC<EditorProps> = ({
               onSave={currentEntryUnavailable ? noop : handleSave}
               onSaveAll={runSaveAll}
               saveAllProgress={saveAllProgress}
+              // Save all finds each draft's entry in the list, so with none listed it would save nothing.
+              entryListFailed={entriesLoadFailed && entriesState.length === 0}
               onSubmit={() => {
                 if (branchNameState && !isSaveAllRunning()) {
                   handleSubmit(branchNameState).catch(console.error)

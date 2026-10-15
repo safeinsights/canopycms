@@ -52,7 +52,10 @@ const okJson = (data: unknown) =>
     headers: { 'Content-Type': 'application/json' },
   })
 
-const stubApi = ({ failingSlug }: { failingSlug?: string } = {}) => {
+const stubApi = ({
+  failingSlug,
+  failingEntries,
+}: { failingSlug?: string; failingEntries?: boolean } = {}) => {
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
@@ -107,6 +110,7 @@ const stubApi = ({ failingSlug }: { failingSlug?: string } = {}) => {
         )
       }
       if (url.includes('/entries')) {
+        if (failingEntries) return Promise.resolve(new Response('{}', { status: 500 }))
         return Promise.resolve(
           okJson({
             collections: [
@@ -170,12 +174,13 @@ const storedLayout = (): Record<string, unknown> =>
 
 const renderEditor = ({
   renderPreview,
-}: Pick<React.ComponentProps<typeof Editor>, 'renderPreview'> = {}) =>
+  entries = [hello, second],
+}: Partial<Pick<React.ComponentProps<typeof Editor>, 'renderPreview' | 'entries'>> = {}) =>
   render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000 }}>
       <ApiClientProvider>
         <Editor
-          entries={[hello, second]}
+          entries={entries}
           title="Test Editor"
           branchName="main"
           operatingMode="dev"
@@ -548,6 +553,24 @@ describe('maximized preview', () => {
     expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull()
   })
 
+  it('closes the content overlay when the preview maximizes, and keeps a docked one', async () => {
+    storeLayout({ layout: 'stacked' })
+    await setup(true)
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
+
+    await maximize()
+    expect(panel()).toBeNull()
+    expect(toggle().getAttribute('aria-expanded')).toBe('false')
+
+    cleanup()
+    window.localStorage.clear()
+    await setup(true)
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
+    await maximize()
+    expect(panel()).not.toBeNull()
+    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+  })
+
   it('shows the form while a maximized entry loads, and when its load fails', async () => {
     const consoleSpy = mockConsole()
     onTestFinished(() => consoleSpy.restore())
@@ -577,6 +600,19 @@ describe('maximized preview', () => {
     expect(formPanel().hasAttribute('inert')).toBe(false)
   })
 
+  it('restores when Save all refuses the open entry for field errors', async () => {
+    await setup(true)
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Title/ }), {
+      target: { value: '' },
+    })
+    await maximize()
+
+    fireEvent.click(screen.getByTestId('save-options-button'))
+    fireEvent.click(await screen.findByTestId('save-all-menu-item'))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull())
+    expect(formPanel().hasAttribute('inert')).toBe(false)
+  })
+
   it('gives the content overlay its focus when it opens over a maximized preview', async () => {
     storeLayout({ layout: 'stacked' })
     stubWindowWidth(true)
@@ -587,6 +623,28 @@ describe('maximized preview', () => {
     act(() => toggle().focus())
     fireEvent.click(toggle())
     await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter')))
+  })
+})
+
+describe('Save all', () => {
+  it("blocks Save all while the branch's entry list failed to load", async () => {
+    const consoleSpy = mockConsole()
+    onTestFinished(() => consoleSpy.restore())
+    window.localStorage.setItem(
+      'canopycms:drafts:main',
+      JSON.stringify({ v: 2, drafts: { [hello.contentId]: { title: 'Kept' } }, baseVersions: {} }),
+    )
+    stubWindowWidth(true)
+    stubApi({ failingEntries: true })
+    renderEditor({ entries: [] })
+    await screen.findByText('Could not load content')
+
+    fireEvent.click(screen.getByTestId('save-options-button'))
+    const item = await screen.findByTestId('save-all-menu-item')
+    expect(item.textContent).toContain('Save all (1)')
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.textContent).toContain('Use "Refresh branch" to try again.')
+    expect(consoleSpy).toHaveErrored(/500/)
   })
 })
 

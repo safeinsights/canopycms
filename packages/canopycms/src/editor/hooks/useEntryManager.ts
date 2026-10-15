@@ -80,6 +80,8 @@ export interface UseEntryManagerReturn {
   availableSchemas: string[]
   /** True while the first entry load for the current branch is in flight (initial load, per branch). */
   entriesInitializing: boolean
+  /** The branch's last entries fetch failed; its "Could not load content" toast offers Retry. */
+  entriesLoadFailed: boolean
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
   refreshEntries: (branch?: string) => Promise<EditorEntry[]>
@@ -881,6 +883,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     currentEntry,
     availableSchemas,
     entriesInitializing,
+    entriesLoadFailed: Boolean(options.branchName) && Boolean(entriesError),
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,

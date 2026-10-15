@@ -1179,6 +1179,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     if (validationErrors.length > 0) {
       if (id === currentIdRef.current) {
         setErrorState({ entryId: id, errors: toFieldErrorMap(validationErrors) })
+        latestOptionsRef.current.onSaveBlocked?.()
       }
       return fail('invalid', invalidReason(validationErrors.length))
     }
@@ -1249,6 +1250,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
             const fieldErrors = err instanceof SaveApiError ? err.fieldErrors : undefined
             if (fieldErrors?.length) {
               setErrorState({ entryId: id, errors: toFieldErrorMap(fieldErrors) })
+              latestOptionsRef.current.onSaveBlocked?.()
             }
           }
           return fail(

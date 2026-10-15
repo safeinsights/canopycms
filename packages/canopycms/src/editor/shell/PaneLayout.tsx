@@ -171,7 +171,14 @@ export function PaneLayout({
           className="canopy-pane-separator"
         />
         <Panel id={FORM} minSize={FORM_MIN_PX}>
-          <Box ref={formPanelRef} pos="relative" h="100%" w="100%">
+          <Box
+            ref={formPanelRef}
+            pos="relative"
+            h="100%"
+            w="100%"
+            // `formOverlay` stacks within this pane, so a maximized preview always covers it.
+            style={{ isolation: 'isolate' }}
+          >
             <Box
               ref={formRef}
               data-testid="form-pane"

@@ -184,6 +184,8 @@ describe('PaneLayout', () => {
       true,
     )
     expect(separator().hasAttribute('inert')).toBe(true)
+    // Its own stacking context, so no z-index inside it can lift the overlay over the preview.
+    expect(formPanel.style.isolation).toBe('isolate')
 
     rerenderPanes({ formOverlay: <button type="button">Panel</button> })
     expect(screen.getByTestId('preview-pane').style.position).toBe('')

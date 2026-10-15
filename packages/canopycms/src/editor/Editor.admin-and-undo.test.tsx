@@ -286,6 +286,40 @@ describe('quick open', () => {
     await waitFor(() => expect(screen.queryByTestId('entry-nav-filter')).toBeNull())
   })
 
+  it('returns focus on close to the rail button that opened it over the overlay', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+    await openNavigator()
+    const search = screen.getByTestId('rail-search-button')
+
+    act(() => search.focus())
+    fireEvent.click(search)
+    const input = await screen.findByTestId('quick-open-input')
+    await waitFor(() => expect(screen.queryByTestId('entry-nav-filter')).toBeNull())
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByTestId('quick-open-input')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(search))
+  })
+
+  it("returns focus to the overlay's opener when opened from inside the overlay", async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+    const toggle = screen.getByTestId('content-panel-toggle')
+    act(() => toggle.focus())
+    await openNavigator()
+
+    fireEvent.keyDown(screen.getByTestId('entry-nav-filter'), { key: 'p', ctrlKey: true })
+    const input = await screen.findByTestId('quick-open-input')
+    await waitFor(() => expect(screen.queryByTestId('entry-nav-filter')).toBeNull())
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByTestId('quick-open-input')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(toggle))
+  })
+
   it('does not let the closing drawer hand focus back while the palette opens', async () => {
     stubApi([])
     renderEditor()
