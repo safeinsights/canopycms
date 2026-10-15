@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 
 import { EditorHeader } from './EditorHeader'
@@ -40,6 +41,8 @@ const meta: Meta<typeof EditorHeader> = {
     onCollectionOpen: noop,
     onFileReload: noop,
     onFileDiscardDraft: noop,
+    onEntryRename: noop,
+    onEntryDelete: noop,
     onEntrySelect: noop,
     onBranchReloadData: noop,
     onBranchDiscardDrafts: noop,
@@ -136,4 +139,53 @@ export const NoEntryOpen: Story = {
     breadcrumbSegments: [{ label: 'All content' }],
     hasUnsavedChanges: false,
   },
+}
+
+/** Clicks `testId` once it has rendered, then waits for the menu it opens. */
+const openMenu =
+  (testId: string): Story['play'] =>
+  async ({ canvasElement }) => {
+    const until = async (found: () => Element | null) => {
+      for (let i = 0; i < 50 && !found(); i++) await new Promise((r) => setTimeout(r, 50))
+    }
+    const trigger = () =>
+      canvasElement.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)
+    await until(trigger)
+    trigger()?.click()
+    await until(() => document.querySelector('[role="menu"]'))
+  }
+const openEntryMenu = openMenu('file-dropdown-button')
+
+/** The entry menu: refresh, discard, then Rename… and the destructive Delete entry. */
+export const EntryMenu: Story = {
+  args: { hasUnsavedChanges: false },
+  play: openEntryMenu,
+}
+
+/** On a branch in review, Rename… and Delete entry stay in the menu, blocked, with the reason. */
+export const EntryMenuBlocked: Story = {
+  args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
+  play: openEntryMenu,
+}
+
+/** A Save in flight. */
+export const Saving: Story = {
+  args: { busy: true, saving: true },
+}
+
+/** A Save that has just landed: "Saved" for two seconds, then "Save". */
+export const JustSaved: Story = {
+  args: { hasUnsavedChanges: false, modifiedCount: 2 },
+  render: function JustSavedStory(args) {
+    // Only a signal that rises after mount shows "Saved".
+    const [signal, setSignal] = useState(0)
+    useEffect(() => setSignal(1), [])
+    return <EditorHeader {...args} savedSignal={signal} savedHere />
+  },
+}
+
+/** The branch's entry list failed to load, so Save all can't match drafts to entries. */
+export const SaveAllEntryListFailed: Story = {
+  args: { entryListFailed: true },
+  play: openMenu('save-options-button'),
 }

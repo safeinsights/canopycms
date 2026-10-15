@@ -40,6 +40,12 @@ export interface EditorHeaderProps {
   /** Replaces the open entry with the server's copy. */
   onFileReload: () => void
   onFileDiscardDraft: () => void
+  /** Opens the open entry's rename dialog. */
+  onEntryRename: () => void
+  /** Asks to delete the open entry. */
+  onEntryDelete: () => void
+  /** The "All content" crumb. */
+  allContentRef?: Ref<HTMLButtonElement>
   onEntrySelect: (path: LogicalPath) => void
   /** Re-reads the branch and its entry list, keeping drafts. */
   onBranchReloadData: () => void
@@ -48,6 +54,14 @@ export interface EditorHeaderProps {
   onSave: () => void
   onSaveAll: () => void
   saveAllProgress: SaveAllProgress | null
+  /** A Save of the open entry is in flight. */
+  saving?: boolean
+  /** Rises each time a single Save lands, whichever entry it saved. */
+  savedSignal?: number
+  /** The last Save that landed saved the open entry. */
+  savedHere?: boolean
+  /** The branch's entry list failed to load and none is held. */
+  entryListFailed?: boolean
   onSubmit: () => void
   onWithdraw: () => void
   /** The open entry has unsaved changes it could save. */
@@ -58,6 +72,8 @@ export interface EditorHeaderProps {
   draftStorageFailed?: boolean
   /** The open entry can't be edited by this user (a path rule). */
   entryReadOnly?: boolean
+  /** The open entry's type has no schema in the running code. */
+  entryUnavailable?: boolean
   /** Current branch status (undefined if unknown). */
   branchStatus: BranchStatus | undefined
   /** Current user context for permission checks. */
@@ -103,6 +119,9 @@ export function EditorHeader({
   branchToggleRef,
   onFileReload,
   onFileDiscardDraft,
+  onEntryRename,
+  onEntryDelete,
+  allContentRef,
   onEntrySelect,
   onBranchReloadData,
   onBranchDiscardDrafts,
@@ -110,12 +129,17 @@ export function EditorHeader({
   onSave,
   onSaveAll,
   saveAllProgress,
+  saving = false,
+  savedSignal,
+  savedHere = false,
+  entryListFailed = false,
   onSubmit,
   onWithdraw,
   hasUnsavedChanges,
   entryHasDraft = hasUnsavedChanges,
   draftStorageFailed = false,
   entryReadOnly = false,
+  entryUnavailable = false,
   branchStatus,
   userContext,
   branchCreatedBy,
@@ -185,9 +209,19 @@ export function EditorHeader({
           onCollection={onCollectionOpen}
           onRefresh={onFileReload}
           onDiscard={onFileDiscardDraft}
+          // A path rule's refusal hides them, as the content tree hides that entry's "…" menu.
+          onRename={entryReadOnly ? undefined : onEntryRename}
+          onDelete={entryReadOnly ? undefined : onEntryDelete}
           refreshBlockedReason={branchName ? undefined : 'Open a branch first.'}
           discardBlockedReason={entryHasDraft ? undefined : 'This entry has no unsaved changes.'}
+          changeBlockedReason={
+            branchLockReason ??
+            (entryUnavailable
+              ? "This entry's content type isn't known to this editor version yet. Reload in a few minutes."
+              : undefined)
+          }
           entryMenuRef={navigatorToggleRef}
+          allContentRef={allContentRef}
         />
       }
       trailing={
@@ -223,9 +257,17 @@ export function EditorHeader({
             onSaveAll={onSaveAll}
             unsavedCount={modifiedCount}
             saveAllBlockedReason={
-              branchLockReason ?? (branchName ? undefined : 'Open a branch first.')
+              branchLockReason ??
+              (!branchName
+                ? 'Open a branch first.'
+                : entryListFailed && modifiedCount > 0
+                  ? 'The list of entries couldn\'t be loaded, so these changes can\'t be saved yet. Choose "Refresh branch" in the branch menu to try again.'
+                  : undefined)
             }
             saveAllProgress={saveAllProgress}
+            saving={saving}
+            savedSignal={savedSignal}
+            savedHere={savedHere}
             entryDirty={hasUnsavedChanges}
             draftStorageFailed={draftStorageFailed}
           />
@@ -326,7 +368,9 @@ function WorkflowButton({
     >
       <Button
         size="sm"
-        color={isWithdrawable ? 'orange' : 'brand'}
+        // Save is the top bar's one filled primary; the rest take their colour's light variant.
+        variant="light"
+        color={isWithdrawable ? 'orange' : undefined}
         style={{ flexShrink: 0 }}
         onClick={() => {
           if (actionBlocked) return

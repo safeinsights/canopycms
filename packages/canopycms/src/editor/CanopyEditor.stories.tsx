@@ -38,7 +38,6 @@ const configBundle = defineCanopyConfig({
   gitBotAuthorEmail: 'canopy@example.com',
   editor: {
     title: 'CanopyCMS Editor',
-    subtitle: 'Config-driven wrapper',
     theme: { colors: { brand: '#4f46e5' } },
   },
 })

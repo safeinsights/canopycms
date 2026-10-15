@@ -41,7 +41,6 @@ const baseConfig = {
   gitBotAuthorEmail: 'bot@example.com',
   editor: {
     title: 'Config Title',
-    subtitle: 'Config Subtitle',
     theme: { colors: { brand: '#123456' } },
     previewBase: { 'content/posts': '/blog' },
     previewPrefix: '/preview',
@@ -72,14 +71,13 @@ afterEach(() => {
 })
 
 describe('CanopyEditor', () => {
-  it('derives collections, preview bases, title/subtitle/theme from config', async () => {
+  it('derives collections, preview bases, title/theme from config', async () => {
     capturedProps = undefined
     renderComponent()
     const editor = await screen.findByTestId('mock-editor')
     const props = capturedProps as EditorProps | undefined
 
     expect(editor.textContent).toBe('Config Title')
-    expect(props?.subtitle).toBe('Config Subtitle')
     // First collection is now the content root, posts is a child
     expect(props?.collections?.[0]?.path).toBe('content')
     expect(props?.collections?.[0]?.children?.[0]?.path).toBe('content/posts')

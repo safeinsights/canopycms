@@ -103,7 +103,6 @@ export const WithCollections: Story = {
         <Editor
           entries={entries}
           title="CanopyCMS Editor"
-          subtitle="Schema-driven editing with preview"
           branchName="story/branch"
           collections={collections}
           initialSelectedId={entries[0]?.path}

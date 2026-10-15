@@ -45,6 +45,8 @@ const headerProps: EditorHeaderProps = {
   onCollectionOpen: noop,
   onFileReload: noop,
   onFileDiscardDraft: noop,
+  onEntryRename: noop,
+  onEntryDelete: noop,
   onEntrySelect: noop,
   onBranchReloadData: noop,
   onBranchDiscardDrafts: noop,

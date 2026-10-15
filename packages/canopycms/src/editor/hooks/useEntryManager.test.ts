@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import {
   useEntryManager,
   listAllEntries,
@@ -1266,6 +1266,114 @@ describe('useEntryManager', () => {
       expect(opened.contentId).toBe(mockEntry.contentId)
       return { ...hook, opened }
     }
+
+    it('keeps a renamed entry selected while the list it moved in loads', async () => {
+      const { result, opened } = await mountWithOpenedEntry()
+      act(() => result.current.setSelectedPath(opened.path))
+      mockClient.content.renameEntry.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { newPath: 'entry1-renamed' },
+      })
+      const list = deferredList()
+      mockClient.entries.list.mockReturnValue(list.promise)
+
+      let renaming!: Promise<void>
+      act(() => {
+        renaming = result.current.renameEntry(opened.path, 'renamed')
+      })
+      // Renders while the list still holds only the old path.
+      await act(async () => {})
+      await act(async () => {
+        // Listed first, so it is what the selection would fall back to.
+        list.resolve(
+          listOf(
+            {
+              contentId: unsafeAsContentId('other0000001'),
+              logicalPath: unsafeAsLogicalPath('aaa'),
+            },
+            {
+              contentId: mockEntry.contentId,
+              logicalPath: unsafeAsLogicalPath('entry1-renamed'),
+              slug: unsafeAsSlug('renamed'),
+            },
+          ),
+        )
+        await renaming
+      })
+
+      expect(result.current.selectedPath).toBe('entry1-renamed')
+    })
+
+    it('reports a rename that landed as renamed even when the list then fails to load', async () => {
+      const restoreConsole = setupMockConsole(['error']).restore
+      onTestFinished(restoreConsole)
+      const { result, opened } = await mountWithOpenedEntry()
+      act(() => result.current.setSelectedPath(opened.path))
+      mockClient.content.renameEntry.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { newPath: 'entry1-renamed' },
+      })
+      mockClient.entries.list.mockRejectedValue(new Error('Schema fetch failed: 502'))
+
+      await act(async () => {
+        await result.current.renameEntry(opened.path, 'renamed')
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Entry renamed' }),
+      )
+      // Not listed, so not selected: the selection check would fall back to the first entry.
+      expect(result.current.selectedPath).toBe(opened.path)
+    })
+
+    it('opens the first entry on a branch switch after closeEntry', async () => {
+      mockClient.entries.list.mockResolvedValue(listedAsOpened())
+      const { result, rerender } = renderHook(
+        (props: { branchName: string }) => useEntryManager({ ...defaultOptions, ...props }),
+        { wrapper, initialProps: { branchName: 'main' } },
+      )
+      await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+      act(() => result.current.closeEntry())
+      await waitFor(() => expect(result.current.selectedPath).toBe(''))
+
+      rerender({ branchName: 'feature' })
+      await waitFor(() => expect(result.current.selectedPath).toBe('entry1'))
+    })
+
+    it('leaves an entry chosen while a rename lands open', async () => {
+      const { result, opened } = await mountWithOpenedEntry()
+      act(() => result.current.setSelectedPath(opened.path))
+      mockClient.content.renameEntry.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { newPath: 'entry1-renamed' },
+      })
+      const list = deferredList()
+      mockClient.entries.list.mockReturnValue(list.promise)
+      const renamedList = listOf(
+        { contentId: unsafeAsContentId('other0000001'), logicalPath: unsafeAsLogicalPath('aaa') },
+        {
+          contentId: mockEntry.contentId,
+          logicalPath: unsafeAsLogicalPath('entry1-renamed'),
+          slug: unsafeAsSlug('renamed'),
+        },
+      )
+
+      let renaming!: Promise<void>
+      act(() => {
+        renaming = result.current.renameEntry(opened.path, 'renamed')
+      })
+      await act(async () => {})
+      act(() => result.current.setSelectedPath('aaa'))
+      await act(async () => {
+        list.resolve(renamedList)
+        await renaming
+      })
+
+      expect(result.current.selectedPath).toBe('aaa')
+    })
 
     describe('a rename with no answer', () => {
       let restoreConsole: () => void

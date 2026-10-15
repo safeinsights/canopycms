@@ -10,6 +10,7 @@ import { Modal, Stack, TextInput, Group, Button, Alert, Text } from '@mantine/co
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 
 import { validateEntrySlug } from '../slug'
+import { focusReturnProps } from '../utils/focus-return'
 
 export interface RenameEntryModalProps {
   /** Whether the modal is open */
@@ -32,6 +33,8 @@ export interface RenameEntryModalProps {
   existingSlugs?: ReadonlySet<string>
   /** The URL path the entry will be served at for a slug; undefined when it has no page. */
   previewPath?: (slug: string) => string | undefined
+  /** Where focus goes once it closes; Mantine's default, the element focused at open, without it. */
+  returnFocusTo?: () => HTMLElement | null
 }
 
 export function RenameEntryModal({
@@ -45,6 +48,7 @@ export function RenameEntryModal({
   warning = null,
   existingSlugs,
   previewPath,
+  returnFocusTo,
 }: RenameEntryModalProps) {
   const [newSlug, setNewSlug] = useState(currentSlug)
   const [touched, setTouched] = useState(false)
@@ -85,6 +89,7 @@ export function RenameEntryModal({
       size="md"
       closeOnClickOutside={!isSaving}
       closeOnEscape={!isSaving}
+      {...focusReturnProps(returnFocusTo)}
     >
       <form onSubmit={handleSubmit} noValidate>
         <Stack gap="md" data-testid="rename-entry-modal">

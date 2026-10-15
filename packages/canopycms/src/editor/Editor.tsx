@@ -184,9 +184,7 @@ export interface EditorCollection {
 export interface EditorProps {
   entries: EditorEntry[]
   title: string
-  subtitle?: string
   siteTitle?: string
-  siteSubtitle?: string
   branchName?: string
   operatingMode: OperatingMode
   collections?: EditorCollection[]
@@ -321,10 +319,15 @@ const EditorContent: React.FC<EditorProps> = ({
   const [deletingCollectionPath, setDeletingCollectionPath] = useState<LogicalPath | null>(null)
   const [deleteEntryModalOpen, setDeleteEntryModalOpen] = useState(false)
   const [deletingEntryPath, setDeletingEntryPath] = useState<LogicalPath | null>(null)
+  // Named at open: a delete that lands takes the entry out of the list while the dialog fades.
+  const [deletingEntryLabel, setDeletingEntryLabel] = useState<string>()
   // Set once the server refuses a delete because other entries reference the entry.
   const [deletingEntryReferencedBy, setDeletingEntryReferencedBy] =
     useState<EntryReferencedBy | null>(null)
   const [deleteInProgress, setDeleteInProgress] = useState(false)
+  // A rename or delete asked for from the top bar's entry menu, whose item is gone once it acts.
+  const [entryChangeFromMenu, setEntryChangeFromMenu] = useState(false)
+  const allContentCrumbRef = useRef<HTMLButtonElement>(null)
 
   // Draft compile/render error reported by the preview page (null = renders cleanly)
   const [previewError, setPreviewError] = useState<{ message: string; fieldPath?: string } | null>(
@@ -420,11 +423,13 @@ const EditorContent: React.FC<EditorProps> = ({
   const {
     selectedPath,
     setSelectedPath,
+    closeEntry,
     entries: entriesState,
     collections: collectionsFromApi,
     currentEntry,
     availableSchemas,
     entriesInitializing,
+    entriesLoadFailed,
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,
@@ -531,6 +536,8 @@ const EditorContent: React.FC<EditorProps> = ({
     modifiedCount,
     editedFiles,
     handleSave,
+    singleSaving,
+    lastSaved,
     handleSaveAll,
     saveAllProgress,
     isSaveAllRunning,
@@ -1224,20 +1231,20 @@ const EditorContent: React.FC<EditorProps> = ({
     }
   }
 
-  const handleDeleteEntry = (entryPath: LogicalPath) => {
+  const handleDeleteEntry = (entryPath: LogicalPath, fromMenu = false) => {
+    setEntryChangeFromMenu(fromMenu)
     setDeletingEntryPath(entryPath)
+    setDeletingEntryLabel(entriesState.find((e) => e.path === entryPath)?.label)
     setDeletingEntryReferencedBy(null)
     setDeleteEntryModalOpen(true)
   }
 
-  const closeDeleteEntryModal = () => {
-    setDeleteEntryModalOpen(false)
-    setDeletingEntryPath(null)
-    setDeletingEntryReferencedBy(null)
-  }
+  // What the dialog names stays until the next delete, so its exit shows no change of text.
+  const closeDeleteEntryModal = () => setDeleteEntryModalOpen(false)
 
   const confirmDeleteEntry = async () => {
-    if (!deletingEntryPath) return
+    // Its button stays clickable while the closed dialog fades; that click deletes nothing.
+    if (!deleteEntryModalOpen || !deletingEntryPath) return
     setDeleteInProgress(true)
     try {
       // The user has seen the referencing entries only once the server has named them.
@@ -1248,35 +1255,32 @@ const EditorContent: React.FC<EditorProps> = ({
         setDeletingEntryReferencedBy(result.referencedBy)
         return
       }
-      if (result.ok && selectedPath === deletingEntryPath) {
-        setSelectedPath('')
-      }
+      if (result.ok && selectedPath === deletingEntryPath) closeEntry()
       closeDeleteEntryModal()
     } finally {
       setDeleteInProgress(false)
     }
   }
 
-  const handleRenameEntry = (entryPath: string) => {
-    // Find the entry being renamed
+  const handleRenameEntry = (entryPath: string, fromMenu = false) => {
     const entry = entriesState.find((e) => e.path === entryPath)
     if (!entry) {
       notifications.show({ message: 'Entry not found', color: 'red' })
       return
     }
+    setEntryChangeFromMenu(fromMenu)
     setRenamingEntry(entry)
     setRenameModalError(null)
     setRenameModalOpen(true)
   }
 
   const handleRenameSubmit = async (newSlug: string) => {
-    if (!renamingEntry) return
+    if (!renameModalOpen || !renamingEntry) return
     setRenameModalSaving(true)
     setRenameModalError(null)
     try {
       await renameEntry(renamingEntry.path, newSlug)
       setRenameModalOpen(false)
-      setRenamingEntry(null)
     } catch (err) {
       setRenameModalError({
         message: err instanceof Error ? err.message : 'Rename failed',
@@ -1491,14 +1495,24 @@ const EditorContent: React.FC<EditorProps> = ({
       })
       .catch(console.error)
   }
+  // The entry menu's trigger stands in for its item; once the entry is deleted, "All content".
+  const entryChangeReturnTarget = entryChangeFromMenu
+    ? () => navigatorToggleRef.current ?? allContentCrumbRef.current
+    : undefined
   const navigatorReturnTarget = () =>
     returnTarget(navigatorOpenerRef.current, () => navigatorToggleRef.current)
   const branchReturnTarget = () =>
     returnTarget(branchOpenerRef.current, () => branchToggleRef.current)
   const settingsReturnTarget = () => settingsToggleRef.current
-  // The palette replaces the overlay panel; a docked one stays.
+  // The palette replaces the overlay panel; a docked one stays. Opened from inside the overlay,
+  // whose tree then unmounts, it returns focus to the panel's opener.
   const openQuickOpen = () => {
-    if (!quickOpenOpen) setQuickOpenFromOverlay(!contentPanelDocked && navigatorOpen)
+    if (!quickOpenOpen) {
+      const panel = document.getElementById(CONTENT_PANEL_ID)
+      setQuickOpenFromOverlay(
+        !contentPanelDocked && navigatorOpen && !!panel?.contains(document.activeElement),
+      )
+    }
     if (!contentPanelDocked) setNavigatorOpen(false)
     setQuickOpenOpen(true)
   }
@@ -1513,7 +1527,12 @@ const EditorContent: React.FC<EditorProps> = ({
     () =>
       new Set(
         entriesState
-          .filter((e) => e.collectionPath === renamingEntry?.collectionPath && e.slug)
+          .filter(
+            (e) =>
+              e.collectionPath === renamingEntry?.collectionPath &&
+              e.contentId !== renamingEntry?.contentId &&
+              e.slug,
+          )
           .map((e) => e.slug as string),
       ),
     [entriesState, renamingEntry],
@@ -1646,7 +1665,11 @@ const EditorContent: React.FC<EditorProps> = ({
         showMarkDiagnostics={userIsAdmin}
         layout={layout}
         maximized={previewShownMaximized}
-        onMaximizedChange={setPreviewMaximized}
+        onMaximizedChange={(maximized) => {
+          // A docked panel stays beside a maximized preview; an overlay one would sit inert under it.
+          if (maximized && !contentPanelDocked) setNavigatorOpen(false)
+          setPreviewMaximized(maximized)
+        }}
         resizing={paneResizing}
         notice={
           previewError && (
@@ -1692,6 +1715,24 @@ const EditorContent: React.FC<EditorProps> = ({
     () => buildBreadcrumbSegments(currentEntry, collectionLabels),
     [collectionLabels, currentEntry],
   )
+
+  // The browser tab names the open entry and the site.
+  const tabTitle = currentEntry
+    ? `${currentEntry.label ?? currentEntry.slug} · ${siteTitle}`
+    : siteTitle
+  // The host page's title comes back on unmount only if the tab still shows the editor's: a route
+  // navigated to may have set its own by then.
+  const writtenTitleRef = useRef<string | null>(null)
+  useEffect(() => {
+    const hostTitle = document.title
+    return () => {
+      if (document.title === writtenTitleRef.current) document.title = hostTitle
+    }
+  }, [])
+  useEffect(() => {
+    document.title = tabTitle
+    writtenTitleRef.current = tabTitle
+  }, [tabTitle])
 
   const openBranchManager = () => {
     branchOpenerRef.current = rememberOpener()
@@ -1865,6 +1906,10 @@ const EditorContent: React.FC<EditorProps> = ({
               branchToggleRef={branchToggleRef}
               onFileReload={() => handleReload(() => navigatorToggleRef.current)}
               onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
+              onEntryRename={() => currentEntry && handleRenameEntry(currentEntry.path, true)}
+              onEntryDelete={() => currentEntry && handleDeleteEntry(currentEntry.path, true)}
+              allContentRef={allContentCrumbRef}
+              entryUnavailable={currentEntryUnavailable}
               onEntrySelect={openEntry}
               onBranchReloadData={() => {
                 void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
@@ -1876,6 +1921,17 @@ const EditorContent: React.FC<EditorProps> = ({
               onSave={currentEntryUnavailable ? noop : handleSave}
               onSaveAll={runSaveAll}
               saveAllProgress={saveAllProgress}
+              saving={
+                singleSaving?.branch === branchNameState &&
+                singleSaving.contentId === currentEntry?.contentId
+              }
+              savedSignal={lastSaved?.seq}
+              savedHere={
+                lastSaved?.branch === branchNameState &&
+                lastSaved.contentId === currentEntry?.contentId
+              }
+              // Save all finds each draft's entry in the list, so with none listed it would save nothing.
+              entryListFailed={entriesLoadFailed && entriesState.length === 0}
               onSubmit={() => {
                 if (branchNameState && !isSaveAllRunning()) {
                   handleSubmit(branchNameState).catch(console.error)
@@ -2247,12 +2303,14 @@ const EditorContent: React.FC<EditorProps> = ({
                   entryLabel={renamingEntry.label}
                   currentSlug={renamingEntry.slug || ''}
                   onSave={handleRenameSubmit}
+                  // `renamingEntry` stays until the next rename, so the dialog plays its exit and
+                  // returns focus.
                   onClose={() => {
                     setRenameModalOpen(false)
-                    setRenamingEntry(null)
                     setRenameModalError(null)
                   }}
                   isSaving={renameModalSaving}
+                  returnFocusTo={entryChangeReturnTarget}
                   error={renameModalError?.mayHaveLanded ? null : renameModalError?.message}
                   warning={renameModalError?.mayHaveLanded ? renameModalError.message : null}
                   existingSlugs={renameExistingSlugs}
@@ -2303,16 +2361,17 @@ const EditorContent: React.FC<EditorProps> = ({
 
               <ConfirmDeleteModal
                 isOpen={deleteEntryModalOpen}
-                title="Delete Entry"
+                title="Delete entry"
                 message={
                   deletingEntryReferencedBy
                     ? referencedDeleteMessage(deletingEntryReferencedBy)
-                    : 'Are you sure you want to delete this entry? This cannot be undone.'
+                    : `Delete ${deletingEntryLabel ? `"${deletingEntryLabel}"` : 'this entry'}? This cannot be undone.`
                 }
-                confirmLabel={deletingEntryReferencedBy ? 'Delete anyway' : 'Delete Entry'}
+                confirmLabel={deletingEntryReferencedBy ? 'Delete anyway' : 'Delete entry'}
                 onConfirm={confirmDeleteEntry}
                 onClose={closeDeleteEntryModal}
                 loading={deleteInProgress}
+                returnFocusTo={entryChangeReturnTarget}
               >
                 {deletingEntryReferencedBy && (
                   <ReferencedByList

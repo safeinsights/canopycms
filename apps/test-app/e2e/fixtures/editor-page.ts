@@ -183,6 +183,12 @@ export class EditorPage {
     await this.navigatorItem(label).click()
   }
 
+  /** Whether the navigator shows a collection's children: Mantine's tree renders them as a group. */
+  async isCollectionExpanded(label: string): Promise<boolean> {
+    const node = this.navigatorItem(label).locator('xpath=ancestor::li[@role="treeitem"][1]')
+    return (await node.locator(':scope > ul[role="group"]').count()) > 0
+  }
+
   /**
    * Select an entry by its label in the navigator tree.
    * @param label - The display label of the entry to select
@@ -261,7 +267,16 @@ export class EditorPage {
    */
   async renameEntry(entryLabel: string, newSlug: string): Promise<void> {
     await this.openEntryMenu(entryLabel, 'rename-entry-menu-item')
+    await this.finishRename(newSlug)
+  }
 
+  /** Rename the open entry's slug from the top bar's entry menu, and wait for the modal to close. */
+  async renameOpenEntry(newSlug: string): Promise<void> {
+    await this.openFileMenuItem('entry-menu-rename')
+    await this.finishRename(newSlug)
+  }
+
+  private async finishRename(newSlug: string): Promise<void> {
     const modal = this.page.locator('[data-testid="rename-entry-modal"]')
     await expect(modal).toBeVisible()
     // fill() replaces the pre-filled current slug
@@ -276,6 +291,16 @@ export class EditorPage {
    */
   async startDeleteEntry(entryLabel: string): Promise<Locator> {
     await this.openEntryMenu(entryLabel, 'delete-entry-menu-item')
+    return this.deleteDialog()
+  }
+
+  /** Start deleting the open entry from the top bar's entry menu; returns its visible dialog. */
+  async startDeleteOpenEntry(): Promise<Locator> {
+    await this.openFileMenuItem('entry-menu-delete')
+    return this.deleteDialog()
+  }
+
+  private async deleteDialog(): Promise<Locator> {
     const modal = this.page.locator('[data-testid="confirm-delete-modal"]')
     await expect(modal).toBeVisible()
     return modal
@@ -336,15 +361,20 @@ export class EditorPage {
     await item.click()
   }
 
+  /** Open the top bar's entry menu, on the open entry's crumb, and choose an item. */
+  private async openFileMenuItem(itemTestId: string): Promise<void> {
+    await this.fileDropdownButton.click()
+    const item = this.page.locator(`[data-testid="${itemTestId}"]`)
+    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await item.click()
+  }
+
   /**
    * Open the header's file menu and discard the open entry's unsaved draft. Returns the
    * confirmation dialog; finish with {@link confirmDiscard}.
    */
   async discardEntryDraft(): Promise<Locator> {
-    await this.fileDropdownButton.click()
-    const item = this.page.locator('[data-testid="discard-file-draft-menu-item"]')
-    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-    await item.click()
+    await this.openFileMenuItem('discard-file-draft-menu-item')
     return this.discardDialog('confirm-discard-entry')
   }
 
@@ -609,17 +639,6 @@ export class EditorPage {
    */
   async save(): Promise<void> {
     await this.saveButton.click()
-  }
-
-  /**
-   * Wait for the save success notification to appear.
-   * Uses .first() because multiple saves in quick succession can stack notifications.
-   *
-   * @deprecated Prefer {@link saveAndVerify}, which waits for the network PUT response
-   * instead of the notification and is immune to stale notifications from prior saves.
-   */
-  async waitForSaveNotification(): Promise<void> {
-    await expect(this.notification('Saved').first()).toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
   /**

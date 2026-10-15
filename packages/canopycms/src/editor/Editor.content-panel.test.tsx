@@ -1,13 +1,15 @@
 /**
  * The content panel: docked beside the panes in a wide side-by-side layout, otherwise an overlay on
  * the form pane; its open state and width persist, and a URL asking for no entry opens it. Also
- * how a maximized preview gives way to what needs the form.
+ * how a maximized preview gives way to what needs the form, Save all without an entry list, and
+ * the browser tab's title.
  */
 import React from 'react'
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { SWRConfig } from 'swr'
+import { notifications } from '@mantine/notifications'
 
 import type { EntrySchema } from '../config'
 import type { EditorEntry } from './Editor'
@@ -52,7 +54,10 @@ const okJson = (data: unknown) =>
     headers: { 'Content-Type': 'application/json' },
   })
 
-const stubApi = ({ failingSlug }: { failingSlug?: string } = {}) => {
+const stubApi = ({
+  failingSlug,
+  failingEntries,
+}: { failingSlug?: string; failingEntries?: boolean } = {}) => {
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
@@ -107,6 +112,7 @@ const stubApi = ({ failingSlug }: { failingSlug?: string } = {}) => {
         )
       }
       if (url.includes('/entries')) {
+        if (failingEntries) return Promise.resolve(new Response('{}', { status: 500 }))
         return Promise.resolve(
           okJson({
             collections: [
@@ -170,12 +176,13 @@ const storedLayout = (): Record<string, unknown> =>
 
 const renderEditor = ({
   renderPreview,
-}: Pick<React.ComponentProps<typeof Editor>, 'renderPreview'> = {}) =>
+  entries = [hello, second],
+}: Partial<Pick<React.ComponentProps<typeof Editor>, 'renderPreview' | 'entries'>> = {}) =>
   render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000 }}>
       <ApiClientProvider>
         <Editor
-          entries={[hello, second]}
+          entries={entries}
           title="Test Editor"
           branchName="main"
           operatingMode="dev"
@@ -548,6 +555,24 @@ describe('maximized preview', () => {
     expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull()
   })
 
+  it('closes the content overlay when the preview maximizes, and keeps a docked one', async () => {
+    storeLayout({ layout: 'stacked' })
+    await setup(true)
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
+
+    await maximize()
+    expect(panel()).toBeNull()
+    expect(toggle().getAttribute('aria-expanded')).toBe('false')
+
+    cleanup()
+    window.localStorage.clear()
+    await setup(true)
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
+    await maximize()
+    expect(panel()).not.toBeNull()
+    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+  })
+
   it('shows the form while a maximized entry loads, and when its load fails', async () => {
     const consoleSpy = mockConsole()
     onTestFinished(() => consoleSpy.restore())
@@ -577,6 +602,19 @@ describe('maximized preview', () => {
     expect(formPanel().hasAttribute('inert')).toBe(false)
   })
 
+  it('restores when Save all refuses the open entry for field errors', async () => {
+    await setup(true)
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Title/ }), {
+      target: { value: '' },
+    })
+    await maximize()
+
+    fireEvent.click(screen.getByTestId('save-options-button'))
+    fireEvent.click(await screen.findByTestId('save-all-menu-item'))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull())
+    expect(formPanel().hasAttribute('inert')).toBe(false)
+  })
+
   it('gives the content overlay its focus when it opens over a maximized preview', async () => {
     storeLayout({ layout: 'stacked' })
     stubWindowWidth(true)
@@ -587,6 +625,133 @@ describe('maximized preview', () => {
     act(() => toggle().focus())
     fireEvent.click(toggle())
     await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter')))
+  })
+})
+
+describe('entry menu', () => {
+  it('leaves no entry open once the open one is deleted, focus on "All content"', async () => {
+    await setup(true)
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('entry-menu-delete'))
+    fireEvent.click(await screen.findByTestId('confirm-delete-submit'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('file-dropdown-button').textContent).toBe('No entry open'),
+    )
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getAllByTestId('breadcrumb-segment')[0]),
+    )
+    expect(document.title).toBe('Test Editor')
+  })
+
+  it('deletes once, however often its confirm is pressed as the dialog closes', async () => {
+    await setup(true)
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('entry-menu-delete'))
+    const confirm = await screen.findByTestId('confirm-delete-submit')
+    fireEvent.click(confirm)
+    await waitFor(() =>
+      expect(screen.getByTestId('file-dropdown-button').textContent).toBe('No entry open'),
+    )
+    fireEvent.click(confirm)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const deletes = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'DELETE')
+    expect(deletes).toHaveLength(1)
+  })
+})
+
+describe('saving', () => {
+  it('says "Saving…" on the entry being saved only', async () => {
+    await setup(true)
+    const answered = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (init?.method === 'PUT') await held
+      return answered(input, init)
+    })
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Title/ }), {
+      target: { value: 'Edited' },
+    })
+    fireEvent.click(screen.getByTestId('save-button'))
+    await screen.findByRole('button', { name: 'Saving…' })
+
+    fireEvent.click(await row('second'))
+    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+    expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull()
+    await act(async () => release())
+  })
+
+  it('says "Saved" on the Save button, with no toast, for the entry it saved only', async () => {
+    const show = vi.spyOn(notifications, 'show')
+    onTestFinished(() => show.mockRestore())
+    await setup(true)
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Title/ }), {
+      target: { value: 'Edited' },
+    })
+    fireEvent.click(screen.getByTestId('save-button'))
+    await screen.findByRole('button', { name: 'Saved' })
+    expect(show).not.toHaveBeenCalled()
+
+    fireEvent.click(await row('second'))
+    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+    expect(screen.getByTestId('save-button')).toBe(screen.getByRole('button', { name: 'Save' }))
+  })
+
+  it("blocks Save all while the branch's entry list failed to load", async () => {
+    const consoleSpy = mockConsole()
+    onTestFinished(() => consoleSpy.restore())
+    window.localStorage.setItem(
+      'canopycms:drafts:main',
+      JSON.stringify({ v: 2, drafts: { [hello.contentId]: { title: 'Kept' } }, baseVersions: {} }),
+    )
+    stubWindowWidth(true)
+    stubApi({ failingEntries: true })
+    renderEditor({ entries: [] })
+    await screen.findByText('Could not load content')
+
+    fireEvent.click(screen.getByTestId('save-options-button'))
+    const item = await screen.findByTestId('save-all-menu-item')
+    expect(item.textContent).toContain('Save all (1)')
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.textContent).toContain('Choose "Refresh branch" in the branch menu to try again.')
+    expect(consoleSpy).toHaveErrored(/500/)
+  })
+})
+
+describe('browser tab title', () => {
+  it("names the open entry and the site, and gives the host page's title back on unmount", async () => {
+    document.title = 'Host page'
+    await setup(true)
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+
+    fireEvent.click(await row('second'))
+    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+
+    cleanup()
+    expect(document.title).toBe('Host page')
+  })
+
+  it('leaves a title set after its own alone on unmount, as a route navigated to sets', async () => {
+    document.title = 'Host page'
+    await setup(true)
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+
+    document.title = 'Next page'
+    cleanup()
+    expect(document.title).toBe('Next page')
+  })
+
+  it('names only the site with no entry open', async () => {
+    window.history.replaceState({}, '', '/?entry=')
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await loaded()
+    expect(document.title).toBe('Test Editor')
   })
 })
 

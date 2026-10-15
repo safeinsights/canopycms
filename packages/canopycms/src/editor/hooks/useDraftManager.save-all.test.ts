@@ -479,6 +479,28 @@ describe('useDraftManager - Save all', () => {
     expect(result.current.modifiedCount).toBe(2)
   })
 
+  it("reports a refusal of the open entry's fields, so a hidden form shows again", async () => {
+    draftAll()
+    const fieldError = (label: string) => async () => {
+      throw new SaveApiError(422, `${label}: too long`, [{ fieldPath: 'title', message: 'Long' }])
+    }
+    server.failures.set(idOf(b), fieldError('b'))
+    const onSaveBlocked = vi.fn()
+    const { result } = setup({ onSaveBlocked })
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    await run(result)
+    expect(consoleSpy).toHaveErrored('b: too long')
+    expect(onSaveBlocked).not.toHaveBeenCalled()
+
+    act(() => result.current.setDrafts((prev) => ({ ...prev, [idOf(a)]: { title: 'A3' } })))
+    server.failures.set(idOf(a), fieldError('a'))
+    await run(result)
+    expect(consoleSpy).toHaveErrored('a: too long')
+    expect(onSaveBlocked).toHaveBeenCalledTimes(1)
+    expect(result.current.fieldErrors).toEqual({ title: 'Long' })
+  })
+
   it('refuses an entry that changed on the server since its draft started, without writing it', async () => {
     draftAll()
     server.write(idOf(b), { title: 'someone else' })

@@ -34,6 +34,8 @@ const defaultProps: EditorHeaderProps = {
   onCollectionOpen: vi.fn(),
   onFileReload: vi.fn(),
   onFileDiscardDraft: vi.fn(),
+  onEntryRename: vi.fn(),
+  onEntryDelete: vi.fn(),
   onEntrySelect: vi.fn(),
   onBranchReloadData: vi.fn(),
   onBranchDiscardDrafts: vi.fn(),
@@ -332,7 +334,7 @@ describe('EditorHeader - breadcrumb', () => {
     expect(within(nav).getByText('2024').closest('button')).toBeNull()
   })
 
-  it('offers "Refresh from server" and "Discard changes" in the entry menu', async () => {
+  it('offers "Refresh from server", "Discard changes", "Rename…" and "Delete entry" in the entry menu', async () => {
     const onFileReload = vi.fn()
     renderHeader({ onFileReload })
     await userEvent.click(screen.getByTestId('file-dropdown-button'))
@@ -340,9 +342,56 @@ describe('EditorHeader - breadcrumb', () => {
     expect(items.map((item) => item.textContent)).toEqual([
       'Refresh from server',
       'Discard changes',
+      'Rename…',
+      'Delete entry',
     ])
     await userEvent.click(screen.getByRole('menuitem', { name: 'Refresh from server' }))
     expect(onFileReload).toHaveBeenCalled()
+  })
+
+  it.each([
+    ['Rename…', 'onEntryRename'],
+    ['Delete entry', 'onEntryDelete'],
+  ] as const)('runs "%s" from the entry menu', async (name, handler) => {
+    const run = vi.fn()
+    renderHeader({ [handler]: run })
+    await userEvent.click(screen.getByTestId('file-dropdown-button'))
+    await userEvent.click(await screen.findByRole('menuitem', { name }))
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides Rename… and Delete entry for an entry a path rule refuses, as the tree does', async () => {
+    renderHeader({ entryReadOnly: true, hasUnsavedChanges: false })
+    await userEvent.click(screen.getByTestId('file-dropdown-button'))
+    await screen.findByTestId('refresh-entry-menu-item')
+    expect(screen.queryByTestId('entry-menu-rename')).toBeNull()
+    expect(screen.queryByTestId('entry-menu-delete')).toBeNull()
+  })
+
+  it.each([
+    [
+      'a branch in review',
+      { branchStatus: 'submitted' as const, branchWriteBlocked: true },
+      'This branch is in review. Withdraw it to make changes.',
+    ],
+    [
+      'an entry of an unknown type',
+      { entryUnavailable: true },
+      "This entry's content type isn't known to this editor version yet.",
+    ],
+  ])('blocks Rename… and Delete entry for %s, saying why', async (_what, props, reason) => {
+    const onEntryRename = vi.fn()
+    const onEntryDelete = vi.fn()
+    renderHeader({ ...props, hasUnsavedChanges: false, onEntryRename, onEntryDelete })
+    await userEvent.click(screen.getByTestId('file-dropdown-button'))
+    for (const id of ['entry-menu-rename', 'entry-menu-delete']) {
+      const item = await screen.findByTestId(id)
+      expect(item.getAttribute('aria-disabled')).toBe('true')
+      expect(item.textContent).toContain(reason)
+      await userEvent.click(item)
+    }
+    expect(onEntryRename).not.toHaveBeenCalled()
+    expect(onEntryDelete).not.toHaveBeenCalled()
   })
 
   it('blocks Discard changes with a reason when the entry has no draft', async () => {
@@ -480,7 +529,7 @@ describe('EditorHeader - vocabulary', () => {
   it('labels Save, and Submit for review with no ellipsis, with the shared verbs', () => {
     renderHeader({ userContext: { userId: 'u1' }, branchCreatedBy: 'u1' })
 
-    expect(screen.getByTestId('save-button').textContent).toBe('Save')
+    expect(screen.getByTestId('save-button')).toBe(screen.getByRole('button', { name: 'Save' }))
     expect(screen.getByTestId('submit-button').textContent).toBe('Submit for review')
   })
 
@@ -713,6 +762,16 @@ describe('EditorHeader - Save all', () => {
     expect(onSaveAll).not.toHaveBeenCalled()
   })
 
+  it("blocks Save all with a way to retry when the branch's entry list didn't load", async () => {
+    const onSaveAll = vi.fn()
+    renderHeader({ modifiedCount: 2, entryListFailed: true, onSaveAll })
+    const item = await openSaveOptions()
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.textContent).toContain('Choose "Refresh branch" in the branch menu to try again.')
+    await userEvent.click(item)
+    expect(onSaveAll).not.toHaveBeenCalled()
+  })
+
   it('shows progress on Save, blocks it, and announces the run once', async () => {
     const onSave = vi.fn()
     renderHeader({
@@ -732,6 +791,127 @@ describe('EditorHeader - Save all', () => {
       .map((region) => region.textContent)
       .filter(Boolean)
     expect(announced).toEqual(['Saving 3 entries…'])
+  })
+})
+
+describe('EditorHeader - Save says how it went', () => {
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+  })
+
+  const saveButton = () => screen.getByTestId('save-button')
+  const renderSave = (props: Partial<EditorHeaderProps>) => {
+    const view = render(<EditorHeader {...defaultProps} {...props} />, { wrapper: Wrapper })
+    return (next: Partial<EditorHeaderProps>) =>
+      view.rerender(<EditorHeader {...defaultProps} {...next} />)
+  }
+  const statuses = () =>
+    screen
+      .getAllByRole('status')
+      .map((region) => region.textContent)
+      .filter(Boolean)
+
+  it('reads "Saving…" while the save is out, then "Saved" once, announced, and "Save" again', () => {
+    vi.useFakeTimers()
+    const rerender = renderSave({ busy: true, saving: true })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Saving…' }))
+    expect(saveButton().getAttribute('aria-disabled')).toBe('true')
+
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Saved' }))
+    // Readable, not greyed by disabled styling, though there is nothing left to save.
+    expect(saveButton().getAttribute('aria-disabled')).toBe('true')
+    expect(saveButton().hasAttribute('data-disabled')).toBe(false)
+    expect(statuses()).toEqual(['Saved'])
+
+    act(() => vi.advanceTimersByTime(2000))
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+    expect(statuses()).toEqual([])
+  })
+
+  it('goes back to "Save" as soon as the entry changes again', () => {
+    const rerender = renderSave({ hasUnsavedChanges: false, savedSignal: 0 })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Saved' }))
+    rerender({ hasUnsavedChanges: true, savedSignal: 1, savedHere: true })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+  })
+
+  it('says nothing, then or later, for a save that landed while another entry was open', () => {
+    const rerender = renderSave({ hasUnsavedChanges: false, savedSignal: 0 })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: false })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+  })
+
+  it('says nothing again on returning to the saved entry while "Saved" would still show', () => {
+    const rerender = renderSave({ hasUnsavedChanges: false, savedSignal: 0 })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Saved' }))
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: false })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+  })
+
+  it('says nothing for a save that landed before it was shown', () => {
+    renderHeader({ hasUnsavedChanges: false, savedSignal: 3, savedHere: true })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+  })
+
+  it('says nothing more in a Tooltip while it reads "Saved"', async () => {
+    const rerender = renderSave({ hasUnsavedChanges: false, savedSignal: 0 })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
+    act(() => saveButton().focus())
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(screen.queryByText('No changes to save.')).toBeNull()
+  })
+
+  it('hides the status words, not the icon, on a phone, so Save keeps its width there', () => {
+    renderHeader()
+    const words = [...saveButton().querySelectorAll('.canopy-save-label-text')]
+    expect(words.map((word) => word.textContent)).toEqual(['Saving…', 'Saved'])
+    const rule = [...document.querySelectorAll('style')].find((style) =>
+      style.textContent?.includes('.canopy-save-label-text'),
+    )
+    expect(rule?.textContent).toMatch(/max-width: 47\.99em[^}]*clip/)
+  })
+
+  it('keeps one width whichever label shows', () => {
+    renderHeader()
+    const labels = saveButton().querySelectorAll('[style*="grid-area"]')
+    expect([...labels].map((label) => label.textContent)).toEqual(['Save', 'Saving…', 'Saved'])
+    expect([...labels].filter((label) => label.getAttribute('aria-hidden') === null)).toHaveLength(
+      1,
+    )
+  })
+})
+
+describe('EditorHeader - emphasis', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('lightens the caret beside a greyed Save, so no half of a blocked split button is filled', () => {
+    renderHeader({ hasUnsavedChanges: false })
+    expect(screen.getByTestId('save-button').hasAttribute('data-disabled')).toBe(true)
+    expect(screen.getByTestId('save-options-button').getAttribute('data-variant')).toBe('light')
+  })
+
+  it('fills Save and its caret as the one primary, and leaves Submit and Withdraw secondary', () => {
+    renderHeader({ userContext: { userId: 'u1' }, branchCreatedBy: 'u1' })
+    expect(screen.getByTestId('save-button').getAttribute('data-variant')).toBe('filled')
+    expect(screen.getByTestId('save-options-button').getAttribute('data-variant')).toBe('filled')
+    expect(screen.getByTestId('submit-button').getAttribute('data-variant')).toBe('light')
+    cleanup()
+    renderHeader({
+      branchStatus: 'submitted',
+      branchWriteBlocked: true,
+      userContext: { userId: 'u1' },
+      branchCreatedBy: 'u1',
+    })
+    expect(screen.getByTestId('withdraw-button').getAttribute('data-variant')).toBe('light')
   })
 })
 

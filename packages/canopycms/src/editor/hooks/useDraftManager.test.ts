@@ -409,6 +409,14 @@ describe('useDraftManager', () => {
       title: 'Saved Title',
       body: 'Saved Content',
     })
+    // The Save button says it landed; no toast does.
+    expect(result.current.lastSaved).toEqual({
+      branch: defaultOptions.branchName,
+      contentId: 'abc123def456',
+      seq: 1,
+    })
+    const { notifications } = await import('@mantine/notifications')
+    expect(notifications.show).not.toHaveBeenCalled()
   })
 
   it('clears the draft key (state and localStorage) after a successful save, instead of keeping it forever', async () => {
@@ -869,10 +877,7 @@ describe('useDraftManager', () => {
         })
 
         expect(mockSaveEntry).toHaveBeenCalledTimes(2)
-        const { notifications } = await import('@mantine/notifications')
-        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: 'Saved',
-        })
+        expect(result.current.lastSaved).toMatchObject({ contentId: 'abc123def456' })
       })
 
       it('takes the timed-out warning down when the retry of an unanswered save finds the entry gone', async () => {
@@ -1352,9 +1357,7 @@ describe('useDraftManager', () => {
           await result.current.handleSave()
         })
 
-        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: 'Saved',
-        })
+        expect(result.current.lastSaved).toMatchObject({ contentId: 'abc123def456' })
         expect(notifications.hide).toHaveBeenCalledWith(goneToastId)
       })
 
@@ -1369,9 +1372,7 @@ describe('useDraftManager', () => {
         })
 
         const { notifications } = await import('@mantine/notifications')
-        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: 'Saved',
-        })
+        expect(result.current.lastSaved).toMatchObject({ contentId: 'abc123def456' })
         expect(notifications.hide).not.toHaveBeenCalledWith(goneToastId)
       })
 
@@ -1480,9 +1481,7 @@ describe('useDraftManager', () => {
         })
         expect(mockSaveEntry).toHaveBeenCalledTimes(2)
         // The next save that lands takes the warning down.
-        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: 'Saved',
-        })
+        expect(result.current.lastSaved).toMatchObject({ contentId: 'abc123def456' })
         expect(notifications.hide).toHaveBeenCalledWith('canopy-save-timed-out:abc123def456')
       })
 
