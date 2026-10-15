@@ -893,6 +893,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
 
   const handleSave = async () => {
+    // Save all may be sending this entry with the same token; the loser's 409 would be a false conflict.
+    if (saveAllRunningRef.current) return
     const entry = options.currentEntry
     const branch = options.branchName
     if (!entry || !effectiveValue || !currentId) return
@@ -944,6 +946,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     setSaveInFlight(true)
     try {
       const saved = await options.saveEntry(entry, effectiveValue)
+      if (latestOptionsRef.current.branchName !== branch) return
       // Drop the draft now that it has been persisted, rather than
       // overwriting it with `saved`. `effectiveValue` is `drafts[currentId]
       // ?? loadedValues[currentId]`, and `loadedValues[currentId]` is about
@@ -1113,7 +1116,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     const fail = (
       kind: SaveAllFailure['kind'],
       reason: string,
-      extra?: Pick<SaveAllFailure, 'recreate'>,
+      extra?: Partial<Pick<SaveAllFailure, 'recreate' | 'path'>>,
     ) => ({
       saved: false as const,
       failure: { contentId: id, label: entry.label, path: entry.path, kind, reason, ...extra },
@@ -1153,7 +1156,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     const commitSaved = (saved: FormValue) => {
       // Edits typed while the save was out stay a draft, now based on the version just written.
-      if (!equal(latestRef.current.drafts[id], sent)) {
+      const latest = latestRef.current.drafts[id]
+      if (latest !== undefined && !equal(latest, sent)) {
         const version = latestOptionsRef.current.getEntryVersion?.(id)
         if (version !== undefined) draftBaseVersionsRef.current[id] = version
       }
@@ -1169,7 +1173,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
 
     try {
-      commitSaved(await saveEntry(entry, sent))
+      const saved = await saveEntry(entry, sent)
+      // Another branch's state now: its loaded values and draft bases are not this write's.
+      if (!onBranch()) return undefined
+      commitSaved(saved)
       return { saved: true }
     } catch (err) {
       console.error(err)
@@ -1200,7 +1207,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
             console.error(followErr)
             return fail('conflict', SAVE_ALL_REASONS.goneUnchecked)
           }
-          if (moved) return fail('conflict', SAVE_ALL_REASONS.renamed)
+          // "Open" in the result goes to where the changes moved.
+          if (moved) return fail('conflict', SAVE_ALL_REASONS.renamed, { path: moved.path })
           return fail('conflict', SAVE_ALL_REASONS.deleted, {
             recreate: () => void recreateGoneEntry(entry, branch),
           })
@@ -1221,6 +1229,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     if (saveAllRunningRef.current) return undefined
     saveAllRunningRef.current = true
     const branch = options.branchName
+    // Busy from the first moment, so Save waits through the draft check too.
+    options.setBusy(true)
+    setSaveInFlight(true)
+    setSaveAllProgress({ done: 0, total: latestRef.current.modifiedCount })
     try {
       // A restored draft identical to the server is not a change, so it isn't saved.
       await whenDraftsVerified()
@@ -1236,24 +1248,16 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       const result: SaveAllResult = { branch, total: queue.length, saved: [], failed: [] }
       if (queue.length === 0) return result
       notifications.hide(SAVE_ALL_RESULT_TOAST_ID)
-      options.setBusy(true)
-      setSaveInFlight(true)
       setSaveAllProgress({ done: 0, total: queue.length })
-      try {
-        for (const [index, entry] of queue.entries()) {
-          if (latestOptionsRef.current.branchName !== branch) return undefined
-          const outcome = await saveOneOfAll(entry, branch)
-          if (outcome?.saved) {
-            result.saved.push({ contentId: entry.contentId, label: entry.label, path: entry.path })
-          } else if (outcome) {
-            result.failed.push(outcome.failure)
-          }
-          setSaveAllProgress({ done: index + 1, total: queue.length })
+      for (const [index, entry] of queue.entries()) {
+        if (latestOptionsRef.current.branchName !== branch) return undefined
+        const outcome = await saveOneOfAll(entry, branch)
+        if (outcome?.saved) {
+          result.saved.push({ contentId: entry.contentId, label: entry.label, path: entry.path })
+        } else if (outcome) {
+          result.failed.push(outcome.failure)
         }
-      } finally {
-        setSaveAllProgress(null)
-        setSaveInFlight(false)
-        options.setBusy(false)
+        setSaveAllProgress({ done: index + 1, total: queue.length })
       }
       if (latestOptionsRef.current.branchName !== branch) return undefined
       // Discarded mid-run, so neither saved nor failed.
@@ -1262,6 +1266,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       return result
     } finally {
       saveAllRunningRef.current = false
+      setSaveAllProgress(null)
+      setSaveInFlight(false)
+      options.setBusy(false)
     }
   }
 

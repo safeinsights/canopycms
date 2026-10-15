@@ -73,8 +73,18 @@ export function showSaveAllResult(
   result: SaveAllResult,
   actions: Omit<SaveAllResultMessageProps, 'result'>,
 ): void {
-  if (result.total === 0) return
   notifications.hide(SAVE_ALL_RESULT_TOAST_ID)
+  if (result.total === 0) {
+    // The draft check found every change already on the server.
+    notifications.show({
+      id: SAVE_ALL_RESULT_TOAST_ID,
+      message: 'No changes to save',
+      color: 'blue',
+      autoClose: getNotificationDuration(4000),
+      withCloseButton: true,
+    })
+    return
+  }
   if (result.failed.length === 0) {
     notifications.show({
       id: SAVE_ALL_RESULT_TOAST_ID,

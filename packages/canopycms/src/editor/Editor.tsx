@@ -1449,9 +1449,12 @@ const EditorContent: React.FC<EditorProps> = ({
   }
   // A collection crumb opens the panel as "All content" does, then its collection's row takes focus.
   const [collectionReveal, setCollectionReveal] = useState<{ path: string; seq: number }>()
+  // Only ever rises: the navigator serves each seq once, and the request is cleared once served.
+  const revealSeqRef = useRef(0)
   const revealCollection = (path: string) => {
     openNavigator()
-    setCollectionReveal((prev) => ({ path, seq: (prev?.seq ?? 0) + 1 }))
+    revealSeqRef.current += 1
+    setCollectionReveal({ path, seq: revealSeqRef.current })
   }
   const runSaveAll = () => {
     void handleSaveAll()

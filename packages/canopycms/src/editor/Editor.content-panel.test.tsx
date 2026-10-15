@@ -223,6 +223,15 @@ describe('content panel', () => {
 
     escapeFromPanel()
     expect(panel()).not.toBeNull()
+
+    // Asked again while the docked panel stays open, the row takes focus again.
+    screen.getByTestId('entry-nav-filter').focus()
+    fireEvent.click(screen.getByRole('button', { name: 'Posts' }))
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(
+        'collection:content/posts',
+      ),
+    )
   })
 
   it('keeps its open state and width across a reload', async () => {

@@ -8,6 +8,7 @@ import { ENTRY_CHANGED_MESSAGE, ENTRY_GONE_MESSAGE } from '../../api/entries-con
 import type { EditorEntry } from '../Editor'
 import type { FormValue } from '../FormRenderer'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
+import { mockConsole, type MockConsole } from '../../test-utils/console-spy'
 
 vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn(), hide: vi.fn() },
@@ -119,6 +120,7 @@ const persistedDrafts = (branch: string): Record<string, FormValue> =>
 
 describe('useDraftManager - Save all', () => {
   let server: ReturnType<typeof makeServer>
+  let consoleSpy: MockConsole
   const setBusy = vi.fn()
 
   beforeEach(() => {
@@ -140,9 +142,12 @@ describe('useDraftManager - Save all', () => {
     })
     server = makeServer([a, b, c])
     setBusy.mockReset()
+    // A refused save logs its error, as `handleSave`'s does.
+    consoleSpy = mockConsole()
   })
 
   afterEach(() => {
+    consoleSpy.restore()
     vi.clearAllMocks()
   })
 
@@ -206,6 +211,7 @@ describe('useDraftManager - Save all', () => {
     expect(setBusy).toHaveBeenNthCalledWith(1, true)
     expect(setBusy).toHaveBeenLastCalledWith(false)
     expect(result.current.saveAllProgress).toBeNull()
+    expect(consoleSpy.all().error).toEqual([])
   })
 
   it('reports progress per entry while it runs', async () => {
@@ -252,6 +258,7 @@ describe('useDraftManager - Save all', () => {
     const outcome = await run(result)
 
     expect(outcome?.saved.map((s) => s.label)).toEqual(['Entry a'])
+    expect(consoleSpy).toHaveErrored('Title is too long')
     expect(outcome?.failed).toEqual([
       expect.objectContaining({ label: 'Entry b', kind: 'invalid', reason: 'Title is too long' }),
       expect.objectContaining({ label: 'Entry c', kind: 'error', reason: SAVE_ALL_REASONS.failed }),
@@ -426,7 +433,10 @@ describe('useDraftManager - Save all', () => {
     await waitFor(() => expect(result.current.modifiedCount).toBe(3))
 
     const outcome = await run(result)
-    expect(outcome?.failed).toEqual([expect.objectContaining({ reason: SAVE_ALL_REASONS.renamed })])
+    expect(outcome?.failed).toEqual([
+      // "Open" goes to where the changes moved.
+      expect.objectContaining({ reason: SAVE_ALL_REASONS.renamed, path: 'posts/c2' }),
+    ])
   })
 
   it('keeps edits typed while the entry was saving, based on the version just written', async () => {
@@ -519,6 +529,125 @@ describe('useDraftManager - Save all', () => {
     const { result } = setup()
     const outcome = await run(result)
     expect(outcome).toEqual({ branch: 'feature', total: 0, saved: [], failed: [] })
-    expect(setBusy).not.toHaveBeenCalled()
+    expect(server.order).toEqual([])
+    expect(setBusy).toHaveBeenLastCalledWith(false)
+  })
+
+  /** Holds entry a's write until `release()`, landing it then. */
+  const holdWriteOfA = () => {
+    const held = { release: () => {} }
+    server.failures.set(
+      idOf(a),
+      (value) =>
+        new Promise((resolve) => {
+          held.release = () => {
+            server.tokens.set(idOf(a), server.write(idOf(a), value))
+            resolve(value)
+          }
+        }),
+    )
+    return held
+  }
+
+  const startRun = (result: { current: ReturnType<typeof useDraftManager> }) => {
+    let pending: Promise<SaveAllResult | undefined> = Promise.resolve(undefined)
+    act(() => {
+      pending = result.current.handleSaveAll()
+    })
+    return () => pending
+  }
+
+  it("commits nothing into the next branch's state when a save answers after a switch", async () => {
+    draftAll()
+    // The other branch holds a draft of the same entry, based on a version since replaced.
+    persistDrafts('other', { [idOf(a)]: { title: 'stale other draft' } }, { [idOf(a)]: 1 })
+    const held = holdWriteOfA()
+    const { result, rerender } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    const pending = startRun(result)
+    await waitFor(() => expect(server.order).toContain(idOf(a)))
+    rerender({ branchName: 'other' })
+    await waitFor(() =>
+      expect(result.current.drafts[idOf(a)]).toEqual({ title: 'stale other draft' }),
+    )
+    server.tokens.set(idOf(a), 3)
+    await act(async () => {
+      held.release()
+      await pending()
+    })
+
+    expect(result.current.loadedValues[idOf(a)]).toBeUndefined()
+    // Its base stays the stale one, so saving it is still refused.
+    await act(async () => {
+      await result.current.handleSave()
+    })
+    expect(server.order).toEqual([idOf(a)])
+  })
+
+  it("a single Save answering after a switch commits nothing into the next branch's state", async () => {
+    draftAll()
+    const held = holdWriteOfA()
+    const { result, rerender } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    let pending: Promise<void> = Promise.resolve()
+    act(() => {
+      pending = result.current.handleSave()
+    })
+    await waitFor(() => expect(server.order).toContain(idOf(a)))
+    rerender({ branchName: 'other' })
+    await act(async () => {
+      held.release()
+      await pending
+    })
+    expect(result.current.loadedValues[idOf(a)]).toBeUndefined()
+  })
+
+  it('records no base for a draft discarded while its save was out', async () => {
+    draftAll()
+    const held = holdWriteOfA()
+    const { result } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    const pending = startRun(result)
+    await waitFor(() => expect(server.order).toContain(idOf(a)))
+    act(() => {
+      result.current.setDrafts((prev) => {
+        const next = { ...prev }
+        delete next[idOf(a)]
+        return next
+      })
+    })
+    await act(async () => {
+      held.release()
+      await pending()
+    })
+
+    const stored = JSON.parse(window.localStorage.getItem('canopycms:drafts:feature') ?? '{}') as {
+      baseVersions?: Record<string, unknown>
+    }
+    expect(stored.baseVersions).not.toHaveProperty(idOf(a))
+  })
+
+  it('holds a single Save while Save all runs, from before its draft check', async () => {
+    draftAll()
+    const held = holdWriteOfA()
+    const { result } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    const pending = startRun(result)
+    expect(setBusy).toHaveBeenCalledWith(true)
+    expect(result.current.saveAllProgress).not.toBeNull()
+    await waitFor(() => expect(server.order).toContain(idOf(a)))
+    await act(async () => {
+      await result.current.handleSave()
+    })
+    expect(server.order).toEqual([idOf(a)])
+    await act(async () => {
+      held.release()
+      await pending()
+    })
+    expect(server.order).toHaveLength(3)
   })
 })
