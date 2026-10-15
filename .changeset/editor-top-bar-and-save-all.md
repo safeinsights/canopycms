@@ -18,7 +18,8 @@ its status and how many entries are unsaved, and its menu lists them; its "Reloa
 now "Refresh branch" and re-reads the entry list too. Beside Save, a caret offers "Save all", which
 saves every unsaved entry on the branch and names any it could not save, with the reason, keeping
 their changes. The site title and `editor.subtitle` no longer appear in the header; the rail's
-monogram carries the site title. Below 62em the bar takes two rows, so no control is clipped.
+monogram carries the site title. Below 62em the bar takes two rows, so no control is clipped. A content save refused because the
+branch is mid-rebase now carries `code: 'BRANCH_SYNCING'`.
 
 **To adopt.** Nothing, unless your browser tests find the header by its old text: "Reload entry",
 "Reload all entries", "Recently modified", "No entry selected", or the file menu's "All content"

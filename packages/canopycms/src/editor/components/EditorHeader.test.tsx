@@ -770,4 +770,19 @@ describe('EditorHeader - during Save all', () => {
     expect(save.getAttribute('aria-disabled')).toBe('true')
     expect(save.hasAttribute('data-disabled')).toBe(false)
   })
+
+  it('holds Submit even when an entry load has cleared the shared busy flag', async () => {
+    const onSubmit = vi.fn()
+    renderHeader({
+      busy: false,
+      saveAllProgress: { done: 1, total: 3 },
+      userContext: { userId: 'u1' },
+      branchCreatedBy: 'u1',
+      onSubmit,
+    })
+    const submit = screen.getByTestId('submit-button')
+    expect(submit.getAttribute('aria-disabled')).toBe('true')
+    await userEvent.click(submit)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
 })

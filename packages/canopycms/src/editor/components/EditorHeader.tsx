@@ -296,7 +296,8 @@ function WorkflowButton({
   const statusHasAction = isEditing || isWithdrawable
   const canPerformAction = userHasPermission && statusHasAction
   // Blocked, it stays focusable (`aria-disabled`), so its reason opens on focus.
-  const actionBlocked = !branchName || busy || !canPerformAction
+  // `busy` alone can't hold it: an entry load clears that shared flag mid-run.
+  const actionBlocked = !branchName || busy || savingAll || !canPerformAction
   const waitReason = savingAll ? 'Wait for Save all to finish.' : undefined
 
   return (

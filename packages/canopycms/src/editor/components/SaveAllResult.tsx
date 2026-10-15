@@ -31,7 +31,7 @@ interface SaveAllResultMessageProps {
  * @internal Exported for stories.
  */
 export function SaveAllResultMessage({ result, onOpenEntry, onRetry }: SaveAllResultMessageProps) {
-  const retryable = result.failed.some((failure) => failure.kind === 'error')
+  const retryable = result.failed.some((failure) => failure.kind === 'error' || failure.retryable)
   return (
     <Stack gap={6} data-testid="save-all-result">
       {result.saved.length > 0 && <Text size="sm">{`${entries(result.saved.length)} saved.`}</Text>}
@@ -123,7 +123,8 @@ const renderFailures = (result: SaveAllResult, actions: Actions, update: boolean
  * nothing failed for good, else red, each entry marked by its own severity.
  */
 export function showSaveAllResult(result: SaveAllResult, actions: Actions): void {
-  clearSaveAllResult()
+  shown = undefined
+  notifications.hide(SAVE_ALL_RESULT_TOAST_ID)
   if (result.total === 0 || result.failed.length === 0) {
     notifications.show({
       id: SAVE_ALL_RESULT_TOAST_ID,
@@ -152,8 +153,9 @@ export function settleSaveAllEntry(contentId: string): void {
   renderFailures(shown.result, shown.actions, true)
 }
 
-/** Takes the result down, as when the branch it belongs to is left. */
+/** Takes a partly failed result down, as when the branch it belongs to is left. */
 export function clearSaveAllResult(): void {
+  if (!shown) return
   shown = undefined
   notifications.hide(SAVE_ALL_RESULT_TOAST_ID)
 }

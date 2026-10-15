@@ -61,6 +61,11 @@ describe('SaveAllResultMessage', () => {
     renderMessage(result(failure('a', 'conflict'), failure('b', 'error')))
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
   })
+
+  it('offers Try again for a conflict refused only for now', () => {
+    renderMessage(result({ ...failure('a', 'conflict'), retryable: true }))
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
+  })
 })
 
 describe('showSaveAllResult', () => {

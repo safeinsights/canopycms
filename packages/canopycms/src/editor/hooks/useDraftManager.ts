@@ -442,6 +442,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     prevBranchRef.current = options.branchName
   }, [options.branchName])
 
+  // A result left up would act through this unmounted instance's callbacks.
+  useEffect(() => () => clearSaveAllResult(), [])
+
   // Restore drafts from localStorage on mount or when storageKey changes
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -1123,7 +1126,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     const fail = (
       kind: SaveAllFailure['kind'],
       reason: string,
-      extra?: Partial<Pick<SaveAllFailure, 'recreate' | 'path'>>,
+      extra?: Partial<Pick<SaveAllFailure, 'recreate' | 'path' | 'retryable'>>,
     ) => ({
       saved: false as const,
       failure: { contentId: id, label: entry.label, path: entry.path, kind, reason, ...extra },
@@ -1162,16 +1165,16 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
 
     const commitSaved = (saved: FormValue) => {
-      // Edits typed while the save was out stay a draft, now based on the version just written.
-      const latest = latestRef.current.drafts[id]
-      if (latest !== undefined && !equal(latest, sent)) {
-        const version = latestOptionsRef.current.getEntryVersion?.(id)
-        if (version !== undefined) draftBaseVersionsRef.current[id] = version
-      }
+      // Decided from `prev`, which holds an edit queued but not yet rendered.
       setDrafts((prev) => {
         if (!(id in prev)) return prev
-        // A new object even when the draft stays, so its new base version is persisted.
-        if (!equal(prev[id], sent)) return { ...prev }
+        if (!equal(prev[id], sent)) {
+          // Edits typed while the save was out stay a draft, based on the version just written; a
+          // new object, so that base is persisted. Idempotent, as a strict-mode rerun requires.
+          const version = latestOptionsRef.current.getEntryVersion?.(id)
+          if (version !== undefined) draftBaseVersionsRef.current[id] = version
+          return { ...prev }
+        }
         const next = { ...prev }
         delete next[id]
         return next
@@ -1229,7 +1232,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
               setErrorState({ entryId: id, errors: toFieldErrorMap(fieldErrors) })
             }
           }
-          return fail(outcome.kind, outcome.reason)
+          return fail(
+            outcome.kind,
+            outcome.reason,
+            outcome.retryable ? { retryable: true } : undefined,
+          )
       }
     }
   }
@@ -1270,7 +1277,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         setSaveAllProgress({ done: index + 1, total: queue.length })
       }
       if (latestOptionsRef.current.branchName !== branch) return undefined
-      // Discarded mid-run, so neither saved nor failed.
+      // Discarded or refreshed mid-run, so neither saved nor failed.
+      const { drafts: remaining } = latestRef.current
+      result.failed = result.failed.filter((failure) => failure.contentId in remaining)
       result.total = result.saved.length + result.failed.length
       if (result.saved.length > 0) latestOptionsRef.current.onSaved?.()
       return result
@@ -1390,9 +1399,12 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   const performReload = async () => {
     if (!options.currentEntry || !currentId) return
+    const branch = options.branchName
     options.setBusy(true)
     try {
       const loaded = await options.loadEntry(options.currentEntry)
+      // Content ids repeat across branches; the next branch's state is not this read's.
+      if (latestOptionsRef.current.branchName !== branch) return
       options.onDraftsReset?.(currentId)
       delete reloadRequiredRef.current[currentId]
       notifications.hide(saveMayHaveLandedToastId(currentId))
@@ -1420,6 +1432,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         withCloseButton: true,
       })
     } catch (err) {
+      if (latestOptionsRef.current.branchName !== branch) return
       if (err instanceof EntrySchemaUnavailableError) {
         notifications.show({
           title: 'Not available yet',

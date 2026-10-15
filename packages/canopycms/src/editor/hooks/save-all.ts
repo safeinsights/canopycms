@@ -21,6 +21,8 @@ export interface SaveAllFailure {
   reason: string
   /** "Save as new entry", for an entry deleted since its edits started. */
   recreate?: () => void
+  /** Refused for now only, so the result's "Try again" can pass it. */
+  retryable?: true
 }
 
 export interface SaveAllResult {
@@ -41,6 +43,7 @@ export interface SaveAllProgress {
 export const SAVE_ALL_RESULT_TOAST_ID = 'canopy-save-all-result'
 
 const ENTRY_GONE_CODE = 'ENTRY_GONE' satisfies ApiErrorCode
+const BRANCH_SYNCING_CODE = 'BRANCH_SYNCING' satisfies ApiErrorCode
 
 export const SAVE_ALL_REASONS = {
   unanswered: `Saving it may have gone through even though the server didn't answer. Open it and choose "${EDITOR_ACTIONS.refreshFromServer}" to check before saving again.`,
@@ -76,7 +79,12 @@ export function classifySaveAllError(
   | { kind: 'gone' }
   | { kind: 'landed?' }
   | { kind: 'unanswered' }
-  | { kind: Exclude<SaveAllFailureKind, 'unanswered'>; reason: string; fieldErrors?: boolean } {
+  | {
+      kind: Exclude<SaveAllFailureKind, 'unanswered'>
+      reason: string
+      fieldErrors?: boolean
+      retryable?: true
+    } {
   if (isUnanswered(err)) return { kind: 'unanswered' }
   if (!(err instanceof SaveApiError)) return { kind: 'error', reason: SAVE_ALL_REASONS.failed }
   if (err.status === 409) {
@@ -87,6 +95,9 @@ export function classifySaveAllError(
       (retryOfUnanswered && err.serverMessage === ENTRY_CHANGED_MESSAGE)
     ) {
       return { kind: 'landed?' }
+    }
+    if (err.code === BRANCH_SYNCING_CODE) {
+      return { kind: 'conflict', reason: err.message, retryable: true }
     }
     // The version check's own wording names the single-entry recovery, so Save all says it its way.
     const changed = !err.serverMessage || err.serverMessage === ENTRY_CHANGED_MESSAGE

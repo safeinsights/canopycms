@@ -280,6 +280,108 @@ describe('useDraftManager - Save all', () => {
     expect(notifications.hide).toHaveBeenCalledWith(SAVE_ALL_RESULT_TOAST_ID)
   })
 
+  it('offers a retry for an entry refused only while the branch syncs', async () => {
+    draftAll()
+    server.failures.set(idOf(b), async () => {
+      throw new SaveApiError(
+        409,
+        'The branch is syncing. Try again in a moment.',
+        undefined,
+        'BRANCH_SYNCING',
+      )
+    })
+    const { result } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    const outcome = await run(result)
+    expect(outcome?.failed).toEqual([
+      expect.objectContaining({ kind: 'conflict', retryable: true }),
+    ])
+  })
+
+  it('leaves out of the result an entry discarded while the run went on', async () => {
+    draftAll()
+    server.failures.set(idOf(a), async () => {
+      throw new SaveApiError(500, undefined)
+    })
+    const held = { release: () => {} }
+    server.failures.set(
+      idOf(b),
+      (value) =>
+        new Promise((resolve) => {
+          held.release = () => {
+            server.tokens.set(idOf(b), server.write(idOf(b), value))
+            resolve(value)
+          }
+        }),
+    )
+    const { result } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    const pending = startRun(result)
+    await waitFor(() => expect(server.order).toContain(idOf(b)))
+    act(() => {
+      result.current.setDrafts((prev) => {
+        const next = { ...prev }
+        delete next[idOf(a)]
+        return next
+      })
+    })
+    let outcome: SaveAllResult | undefined
+    await act(async () => {
+      held.release()
+      outcome = await pending()
+    })
+    expect(outcome?.failed).toEqual([])
+    expect(outcome?.total).toBe(2)
+  })
+
+  it('takes its result down when the editor unmounts', async () => {
+    const { unmount } = setup()
+    showSaveAllResult(
+      {
+        branch: 'feature',
+        total: 1,
+        saved: [],
+        failed: [
+          {
+            contentId: idOf(a),
+            label: 'a',
+            path: a.path,
+            kind: 'error',
+            reason: SAVE_ALL_REASONS.failed,
+          },
+        ],
+      },
+      { onOpenEntry: vi.fn(), onRetry: vi.fn() },
+    )
+    const { notifications } = await import('@mantine/notifications')
+    vi.mocked(notifications.hide).mockClear()
+    unmount()
+    expect(notifications.hide).toHaveBeenCalledWith(SAVE_ALL_RESULT_TOAST_ID)
+  })
+
+  it("keeps a refresh answering after a switch out of the next branch's state", async () => {
+    let answer: (value: FormValue) => void = () => {}
+    const { result, rerender } = setup()
+    server.options.loadEntry.mockImplementationOnce(
+      () =>
+        new Promise<FormValue>((resolve) => {
+          answer = resolve
+        }),
+    )
+    let refreshing: Promise<void> = Promise.resolve()
+    act(() => {
+      refreshing = result.current.handleReload()
+    })
+    rerender({ branchName: 'other' })
+    await act(async () => {
+      answer({ title: 'feature copy' })
+      await refreshing
+    })
+    expect(result.current.loadedValues[idOf(a)]).toBeUndefined()
+  })
+
   it("words a path rule's bare refusal as a sentence with a way forward", async () => {
     draftAll()
     server.failures.set(idOf(b), async () => {

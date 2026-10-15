@@ -65,7 +65,8 @@ export interface ApiResponse<TData = unknown> {
  * server runs (a 412, see operating-mode/editor-mode-check.ts); only a rebuild fixes it.
  * `SETTINGS_CHANGED`: a groups or permissions save named a version the file has moved on from (a
  * 409, see `SettingsVersionConflictError`); nothing was saved, and a reload shows the other edit.
- * The other settings 409, a busy file lock, carries no code.
+ * The other settings 409, a busy file lock, carries no code. `BRANCH_SYNCING`: an entry save was
+ * refused because the branch is mid-rebase (a 409); nothing was saved, and a retry soon can pass.
  */
 export type ApiErrorCode =
   | 'SCHEMA_UNAVAILABLE'
@@ -74,3 +75,4 @@ export type ApiErrorCode =
   | 'ENTRY_GONE'
   | 'EDITOR_MODE_MISMATCH'
   | 'SETTINGS_CHANGED'
+  | 'BRANCH_SYNCING'
