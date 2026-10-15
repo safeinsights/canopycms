@@ -29,8 +29,6 @@ const defaultProps: EditorHeaderProps = {
   breadcrumbSegments: ['Posts', 'Hello'],
   editedFiles: [],
   modifiedCount: 0,
-  unresolvedCommentCount: 0,
-  comments: [],
   onNavigatorOpen: vi.fn(),
   onFileReload: vi.fn(),
   onFileDiscardDraft: vi.fn(),
@@ -38,7 +36,6 @@ const defaultProps: EditorHeaderProps = {
   onBranchReloadData: vi.fn(),
   onBranchDiscardDrafts: vi.fn(),
   onBranchManagerOpen: vi.fn(),
-  onCommentsPanelOpen: vi.fn(),
   onSave: vi.fn(),
   onSubmit: vi.fn(),
   hasUnsavedChanges: true,
@@ -353,37 +350,6 @@ describe('EditorHeader - status badge', () => {
   it('renders no badge while the branch status is unknown', () => {
     renderHeader({ branchStatus: undefined })
     expect(document.querySelector('[data-testid^="header-status-badge-"]')).toBeNull()
-  })
-})
-
-describe('EditorHeader - comments indicator', () => {
-  afterEach(() => {
-    cleanup()
-  })
-
-  it('shows the unresolved count, ignoring resolved threads', () => {
-    renderHeader({ comments: [{ resolved: false }, { resolved: true }, { resolved: false }] })
-    expect(screen.getByTestId('comments-unresolved-count').textContent).toBe('2')
-  })
-
-  it('names the unresolved count on the button, and lets clicks pass through the count', () => {
-    renderHeader({ comments: [{ resolved: false }, { resolved: false }] })
-    expect(screen.getByRole('button', { name: 'Comments, 2 unresolved' })).toBeDefined()
-    const count = screen.getByTestId('comments-unresolved-count').parentElement
-    expect(count && getComputedStyle(count).pointerEvents).toBe('none')
-  })
-
-  it('puts the count in the text colour on the count tint', () => {
-    renderHeader({ comments: [{ resolved: false }] })
-    const count = screen.getByTestId('comments-unresolved-count').parentElement as HTMLElement
-    expect(count.style.getPropertyValue('--indicator-color')).toBe('var(--canopy-count-bg)')
-    expect(count.style.getPropertyValue('--indicator-text-color')).toBe('var(--mantine-color-text)')
-  })
-
-  it('shows no count when every thread is resolved', () => {
-    renderHeader({ comments: [{ resolved: true }] })
-    expect(screen.queryByTestId('comments-unresolved-count')).toBeNull()
-    expect(screen.getByTestId('comments-button')).toBeDefined()
   })
 })
 

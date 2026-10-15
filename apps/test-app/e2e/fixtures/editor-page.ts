@@ -3,13 +3,13 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 import { BranchPage } from './branch-page'
 
 /** Entries of the rail's Settings menu, named for what they open. */
-export type SettingsItem = 'Groups' | 'Permissions' | 'Media library' | 'System health'
+export type SettingsItem = 'Groups' | 'Permissions' | 'System health' | 'About'
 
 const SETTINGS_ITEM_TEST_IDS: Record<SettingsItem, string> = {
   Groups: 'settings-menu-groups',
   Permissions: 'settings-menu-permissions',
-  'Media library': 'settings-menu-media-library',
   'System health': 'settings-menu-system-health',
+  About: 'settings-menu-about',
 }
 
 /** 'my-first-post' as 'My First Post'. */
@@ -44,9 +44,12 @@ export class EditorPage {
   // Header elements
   readonly saveButton: Locator
   private readonly fileDropdownButton: Locator
-  private readonly allFilesMenuItem: Locator
 
-  /** The entry navigator (a drawer): the tree of collections and entries. */
+  // Rail elements
+  /** The rail's Content button, which opens and closes the content panel. */
+  readonly contentPanelToggle: Locator
+
+  /** The entry navigator, in the content panel: the tree of collections and entries. */
   readonly contentNavigator: Locator
 
   constructor(page: Page) {
@@ -60,7 +63,9 @@ export class EditorPage {
     // Header elements
     this.fileDropdownButton = page.locator('[data-testid="file-dropdown-button"]')
     this.saveButton = page.locator('[data-testid="save-button"]')
-    this.allFilesMenuItem = page.locator('[data-testid="all-files-menu-item"]')
+
+    // Rail elements
+    this.contentPanelToggle = page.locator('[data-testid="content-panel-toggle"]')
 
     this.contentNavigator = page.locator('[data-testid="entry-navigator"]')
   }
@@ -113,11 +118,14 @@ export class EditorPage {
   }
 
   /**
-   * Open the content navigator via the header's file menu.
+   * Open the content panel from the rail, unless it is open already: docked, it stays open across
+   * entries.
    */
   async openContentNavigator(): Promise<void> {
-    await this.fileDropdownButton.click()
-    await this.allFilesMenuItem.click()
+    await this.contentPanelToggle.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    if ((await this.contentPanelToggle.getAttribute('aria-expanded')) !== 'true') {
+      await this.contentPanelToggle.click()
+    }
     await this.contentNavigator.waitFor({
       state: 'visible',
       timeout: STANDARD_TIMEOUT,
@@ -136,10 +144,12 @@ export class EditorPage {
   }
 
   /**
-   * Close the content navigator so the form pane is interactive.
+   * Close the content panel from the rail, unless it is closed already.
    */
   async closeContentNavigator(): Promise<void> {
-    await this.page.keyboard.press('Escape')
+    if ((await this.contentPanelToggle.getAttribute('aria-expanded')) === 'true') {
+      await this.contentPanelToggle.click()
+    }
     await expect(this.contentNavigator).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
@@ -380,7 +390,7 @@ export class EditorPage {
   }
 
   /**
-   * Open the comments panel from the header.
+   * Open the comments panel from the rail.
    */
   async openComments(): Promise<void> {
     const button = this.page.locator('[data-testid="comments-button"]')
@@ -492,6 +502,13 @@ export class EditorPage {
    */
   noEditableMarksNotice(): Locator {
     return this.page.getByText(/marks no editable elements/)
+  }
+
+  /**
+   * Open the media library from the rail.
+   */
+  async openMediaLibrary(): Promise<void> {
+    await this.page.locator('[data-testid="media-library-button"]').click()
   }
 
   /**

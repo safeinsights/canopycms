@@ -441,20 +441,6 @@ describe('Focus once a menu has closed', () => {
     expect(document.activeElement?.closest('[role="dialog"]')).not.toBeNull()
   })
 
-  it('leaves focus in the drawer that Media library opened', async () => {
-    stubApi()
-    renderEditor()
-    await loaded()
-
-    await activateByKeyboard(settingsTrigger(), byTestId('settings-menu-media-library'))
-    await screen.findByRole('dialog')
-    await waitFor(() => expect(screen.queryByTestId('settings-menu')).toBeNull())
-    await settled()
-
-    expect(document.activeElement).not.toBe(settingsTrigger())
-    expect(document.activeElement?.closest('[role="dialog"]')).not.toBeNull()
-  })
-
   it('a menu dismissed by a press outside it leaves focus where the press left it', async () => {
     stubApi()
     renderEditor()
@@ -473,7 +459,6 @@ describe('Focus once a menu has closed', () => {
 
 describe('Settings menu', () => {
   it.each([
-    ['Media library', 'settings-menu-media-library'],
     ['System health', 'settings-menu-system-health'],
     ['Manage permissions', 'settings-menu-permissions'],
     ['Manage groups', 'settings-menu-groups'],
@@ -492,19 +477,33 @@ describe('Settings menu', () => {
       await waitFor(() => expect(document.activeElement).toBe(settingsTrigger()))
     },
   )
+})
 
-  it('returns focus to the Settings button when the Media library is closed with its close button', async () => {
+describe('Media library (rail)', () => {
+  const mediaButton = () => screen.getByTestId('media-library-button')
+
+  it.each([
+    ['Escape', async () => userEvent.keyboard('{Escape}')],
+    [
+      'its close button',
+      async () => {
+        const close = document.querySelector('.mantine-Drawer-close')
+        if (!(close instanceof HTMLElement)) throw new Error('no drawer close button')
+        fireEvent.click(close)
+      },
+    ],
+  ])('takes focus, and returns it to the Media button when closed with %s', async (_how, close) => {
     stubApi()
     renderEditor()
     await loaded()
 
-    await activateByKeyboard(settingsTrigger(), byTestId('settings-menu-media-library'))
+    focusEl(mediaButton())
+    await userEvent.keyboard('{Enter}')
     const dialog = await screen.findByRole('dialog')
-    const close = document.querySelector('.mantine-Drawer-close')
-    if (!(close instanceof HTMLElement)) throw new Error('no drawer close button')
-    fireEvent.click(close)
+    await waitFor(() => expect(document.activeElement?.closest('[role="dialog"]')).toBe(dialog))
+    await close()
 
     await waitFor(() => expect(dialog.isConnected).toBe(false))
-    await waitFor(() => expect(document.activeElement).toBe(settingsTrigger()))
+    await waitFor(() => expect(document.activeElement).toBe(mediaButton()))
   })
 })

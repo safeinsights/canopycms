@@ -12,7 +12,7 @@ authoritative**. This file is the map.
 | `Editor.tsx`                              | The composition root. See below.                                                                                                                   |
 | `hooks/`                                  | 17 hooks — the real logic. Start here, not in the components. Has its own [README.md](hooks/README.md) covering the SWR data-loading architecture. |
 | `fields/`                                 | Field components per schema type, plus `FieldLabel` and `entry-link/`.                                                                             |
-| `shell/`                                  | `EditorShell`, the full-window grid of regions, and `PaneLayout`, the preview/form split. Layout only.                                             |
+| `shell/`                                  | `EditorShell` (the window grid), `ActivityRail`, `SidePanelHost` and `PaneLayout` (the split). Layout only.                                        |
 | `components/`                             | Presentational pieces used by `Editor.tsx` (header, sidebar, modals).                                                                              |
 | `EditorAuthGate.tsx`                      | Signed-out and mode-mismatch handling, decided from the API's answers. See below.                                                                  |
 | `context/`                                | `ApiClientContext`, `AssetContext`, `EditorStateContext`, `SWRProvider`, `EditorIdentityContext`.                                                  |

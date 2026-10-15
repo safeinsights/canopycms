@@ -22,7 +22,7 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Discard changes**       | Throwing away unsaved edits                                                                | Discard drafts, Revert                      |
 | **entry**, **collection** | A content item, and the folder that holds entries                                          | file, page, item; folder                    |
 | **file**                  | An item in the media library                                                               | asset, media item                           |
-| **Content**               | The drawer of collections and entries; its menu item and breadcrumb root say "All content" | All entries                                 |
+| **Content**               | The panel of collections and entries; its menu item and breadcrumb root read "All content" | All entries                                 |
 
 Branch status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`.
 

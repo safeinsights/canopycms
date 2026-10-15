@@ -1,24 +1,7 @@
-import { useRef, useState, type Ref } from 'react'
-import { ActionIcon, Indicator, Menu, Paper, Stack, Tooltip, VisuallyHidden } from '@mantine/core'
-import { useMergedRef } from '@mantine/hooks'
-import {
-  IconUserCircle,
-  IconLogout,
-  IconPhoto,
-  IconSettings,
-  IconLayoutColumns,
-  IconLayoutRows,
-  IconMarquee,
-  IconActivity,
-  IconInfoCircle,
-  IconExternalLink,
-} from '@tabler/icons-react'
+import { ActionIcon, Indicator, Paper, Stack, Tooltip } from '@mantine/core'
+import { IconLayoutColumns, IconLayoutRows, IconMarquee } from '@tabler/icons-react'
 import type { PaneArrangement } from '../shell/PaneLayout'
 import type { InexactMark } from '../preview-marks'
-import { useMenuItemFocusReturn } from '../utils/focus-return'
-import { CANOPYCMS_VERSION } from '../../version'
-
-const ABOUT_URL = 'https://github.com/safeinsights/canopycms'
 
 export interface EditorSidebarProps {
   /**
@@ -46,52 +29,8 @@ export interface EditorSidebarProps {
    * Callback when highlight toggle is clicked.
    */
   onHighlightToggle: () => void
-
-  /**
-   * Opens the permission manager. Admin-only like `onSystemHealthOpen`: the menu item renders
-   * only when this is provided.
-   */
-  onPermissionManagerOpen?: () => void
-
-  /** Opens the group manager. Admin-only; the menu item renders only when this is provided. */
-  onGroupManagerOpen?: () => void
-
-  /**
-   * Callback when the media library should be opened.
-   */
-  onMediaLibraryOpen: () => void
-
-  /**
-   * Callback when the System Health panel should be opened. Admin-only:
-   * the "System health" menu item only renders when this is provided --
-   * the caller (Editor.tsx) is responsible for the isAdmin() gate.
-   */
-  onSystemHealthOpen?: () => void
-
-  /** Ref to the Settings button, which takes focus back when a panel opened from its menu closes. */
-  settingsToggleRef?: Ref<HTMLButtonElement>
-
-  /**
-   * Custom account component to render (e.g., Clerk's UserButton).
-   * If provided, replaces the default account button.
-   */
-  AccountComponent?: React.ComponentType
-
-  /**
-   * Callback when account button is clicked (if no AccountComponent provided).
-   */
-  onAccountClick?: () => void
-
-  /**
-   * Callback when logout button is clicked.
-   */
-  onLogoutClick?: () => void
 }
 
-/**
- * Sidebar component for the Editor.
- * Contains layout toggle, highlight toggle, settings menu, account button, and logout button.
- */
 const inexactMarksNote = (marks: readonly InexactMark[]): string => {
   const shown = marks.slice(0, 3).map((mark) => mark.path || '""')
   const more = marks.length > shown.length ? `, and ${marks.length - shown.length} more` : ''
@@ -99,6 +38,7 @@ const inexactMarksNote = (marks: readonly InexactMark[]): string => {
   return `${marks.length} preview ${noun} match a field: ${shown.join(', ')}${more}. The browser console names the nearest field of each.`
 }
 
+/** The preview tools beside the panes: the layout toggle and the highlight toggle. */
 export function EditorSidebar({
   layout,
   highlightEnabled,
@@ -106,37 +46,23 @@ export function EditorSidebar({
   previewInexactMarks = [],
   onLayoutChange,
   onHighlightToggle,
-  onPermissionManagerOpen,
-  onGroupManagerOpen,
-  onMediaLibraryOpen,
-  onSystemHealthOpen,
-  settingsToggleRef,
-  AccountComponent,
-  onAccountClick,
-  onLogoutClick,
 }: EditorSidebarProps) {
-  const [settingsOpened, setSettingsOpened] = useState(false)
-  const settingsToggle = useRef<HTMLButtonElement>(null)
-  const settingsMergedRef = useMergedRef(settingsToggle, settingsToggleRef)
-  const settingsMenuFocus = useMenuItemFocusReturn(settingsToggle)
-
   return (
     <Paper
-      withBorder
-      shadow="sm"
+      component="aside"
+      aria-label="Preview tools"
       radius={0}
       style={{
         height: '100%',
-        width: 64,
+        width: 44,
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'space-between',
         alignItems: 'center',
-        padding: '10px 6px',
-        gap: 8,
+        padding: '8px 0',
+        borderInlineStart: '1px solid var(--canopy-input-border)',
       }}
     >
-      <Stack gap="sm" align="center" style={{ width: '100%', paddingTop: 6 }}>
+      <Stack gap="sm" align="center">
         <Tooltip label="Toggle layout" position="left">
           <ActionIcon
             variant="subtle"
@@ -200,102 +126,6 @@ export function EditorSidebar({
             </ActionIcon>
           </Indicator>
         </Tooltip>
-      </Stack>
-      <Stack gap="xs" align="center">
-        <Menu
-          shadow="md"
-          width={220}
-          position="left"
-          opened={settingsOpened}
-          onChange={setSettingsOpened}
-          {...settingsMenuFocus.menu}
-        >
-          <Tooltip label="Settings" position="left" disabled={settingsOpened}>
-            <Menu.Target>
-              <ActionIcon
-                ref={settingsMergedRef}
-                variant="subtle"
-                size="lg"
-                radius="md"
-                aria-label="Settings"
-                data-testid="settings-button"
-              >
-                <IconSettings size={18} />
-              </ActionIcon>
-            </Menu.Target>
-          </Tooltip>
-          <Menu.Dropdown data-testid="settings-menu" {...settingsMenuFocus.dropdown}>
-            <Menu.Label>Settings</Menu.Label>
-            {onPermissionManagerOpen && (
-              <Menu.Item data-testid="settings-menu-permissions" onClick={onPermissionManagerOpen}>
-                Manage permissions
-              </Menu.Item>
-            )}
-            {onGroupManagerOpen && (
-              <Menu.Item data-testid="settings-menu-groups" onClick={onGroupManagerOpen}>
-                Manage groups
-              </Menu.Item>
-            )}
-            <Menu.Item
-              data-testid="settings-menu-media-library"
-              leftSection={<IconPhoto size={14} />}
-              onClick={onMediaLibraryOpen}
-            >
-              Media library
-            </Menu.Item>
-            {onSystemHealthOpen && (
-              <Menu.Item
-                data-testid="settings-menu-system-health"
-                leftSection={<IconActivity size={14} />}
-                onClick={onSystemHealthOpen}
-              >
-                System health
-              </Menu.Item>
-            )}
-            <Menu.Divider />
-            <Menu.Label data-testid="settings-menu-version">{`CanopyCMS ${CANOPYCMS_VERSION}`}</Menu.Label>
-            <Menu.Item
-              component="a"
-              href={ABOUT_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="settings-menu-about"
-              leftSection={<IconInfoCircle size={14} />}
-              rightSection={<IconExternalLink size={14} aria-hidden />}
-            >
-              About CanopyCMS
-              <VisuallyHidden component="span"> (opens in a new tab)</VisuallyHidden>
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-        {AccountComponent ? (
-          <AccountComponent />
-        ) : (
-          <>
-            {onAccountClick && (
-              <ActionIcon
-                variant="subtle"
-                size="lg"
-                radius="md"
-                aria-label="Account"
-                onClick={onAccountClick}
-              >
-                <IconUserCircle size={18} />
-              </ActionIcon>
-            )}
-            {onLogoutClick && (
-              <ActionIcon
-                variant="subtle"
-                size="lg"
-                radius="md"
-                aria-label="Sign out"
-                onClick={onLogoutClick}
-              >
-                <IconLogout size={18} />
-              </ActionIcon>
-            )}
-          </>
-        )}
       </Stack>
     </Paper>
   )

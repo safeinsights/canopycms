@@ -220,9 +220,10 @@ const loaded = async () => {
   })
 }
 
+/** Opens the content panel from the rail, unless it is open already. */
 const openNavigator = async () => {
-  fireEvent.click(screen.getByTestId('file-dropdown-button'))
-  fireEvent.click(await screen.findByTestId('all-files-menu-item'))
+  const toggle = screen.getByTestId('content-panel-toggle')
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
   await screen.findByTestId('entry-nav-item-posts')
 }
 
@@ -258,7 +259,7 @@ describe('admin surfaces', () => {
     await loaded()
 
     fireEvent.click(screen.getByTestId('settings-button'))
-    await screen.findByTestId('settings-menu-media-library')
+    await screen.findByTestId('settings-menu-about')
     for (const item of ['permissions', 'groups', 'system-health']) {
       expect(screen.queryByTestId(`settings-menu-${item}`) !== null).toBe(admin)
     }

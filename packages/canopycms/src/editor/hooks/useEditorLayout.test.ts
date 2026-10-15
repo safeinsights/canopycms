@@ -191,7 +191,7 @@ describe('useEditorLayout persistence', () => {
     expect(a.result.current.layout).toBe('stacked')
     expect(b.result.current.layout).toBe('side')
     expect(stored(editorLayoutStorageKey('/a'))?.layout).toBe('stacked')
-    expect(stored(editorLayoutStorageKey('/b'))?.layout).toBe('side')
+    expect(stored(editorLayoutStorageKey('/b'))?.layout).toBeUndefined()
   })
 
   it("leaves another editor instance's layout alone when one changes it", () => {
@@ -255,6 +255,32 @@ describe('useEditorLayout persistence', () => {
 
     expect(result.current.layout).toBe('stacked')
     expect(result.current.stackedSplitPercent).toBe(61)
+  })
+})
+
+describe('useEditorLayout - default layout', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+  const stored = (): Record<string, unknown> =>
+    JSON.parse(window.localStorage.getItem(editorLayoutStorageKey()) ?? '{}')
+
+  it('follows defaultLayout until the user picks a layout, then keeps the pick', () => {
+    const { result, rerender } = renderHook(
+      ({ defaultLayout }: { defaultLayout: 'side' | 'stacked' }) =>
+        useEditorLayout({ defaultLayout }),
+      { initialProps: { defaultLayout: 'stacked' } },
+    )
+    expect(result.current.layout).toBe('stacked')
+    act(() => result.current.setHighlightEnabled(true))
+    rerender({ defaultLayout: 'side' })
+    expect(result.current.layout).toBe('side')
+    expect(stored()?.layout).toBeUndefined()
+
+    act(() => result.current.setLayout('stacked'))
+    rerender({ defaultLayout: 'side' })
+    expect(result.current.layout).toBe('stacked')
+    expect(stored()?.layout).toBe('stacked')
   })
 })
 

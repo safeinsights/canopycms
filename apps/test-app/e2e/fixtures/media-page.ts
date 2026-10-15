@@ -159,7 +159,7 @@ export class MediaPage {
    * is unusable.
    */
   async openMediaLibraryManage(): Promise<void> {
-    await new EditorPage(this.page).openSettingsItem('Media library')
+    await new EditorPage(this.page).openMediaLibrary()
     await expect(this.filterInput(this.manageDrawer)).toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 

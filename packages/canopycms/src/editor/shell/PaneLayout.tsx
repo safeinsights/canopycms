@@ -45,6 +45,8 @@ export interface PaneLayoutProps {
   onSplitPercentChange?: (arrangement: PaneArrangement, percent: number) => void
   preview?: React.ReactNode
   form?: React.ReactNode
+  /** Laid over the form pane, outside its scrolling: the side panel in overlay mode. */
+  formOverlay?: React.ReactNode
 }
 
 const splitLayout = (percent: number): Layout => ({ [PREVIEW]: percent, [FORM]: 100 - percent })
@@ -57,6 +59,7 @@ export function PaneLayout({
   onSplitPercentChange,
   preview,
   form,
+  formOverlay,
 }: PaneLayoutProps) {
   const groupRef = useGroupRef()
   const separatorRef = useRef<HTMLDivElement>(null)
@@ -120,20 +123,25 @@ export function PaneLayout({
           className="canopy-pane-separator"
         />
         <Panel id={FORM} minSize={FORM_MIN_PX}>
-          <Box
-            ref={formRef}
-            data-testid="form-pane"
-            h="100%"
-            w="100%"
-            style={{
-              // FormHeader reads this to span the padding.
-              '--canopy-form-pane-padding': '20px',
-              padding: 'var(--canopy-form-pane-padding)',
-              overflow: 'auto',
-              backgroundColor: 'var(--canopy-surface-muted)',
-            }}
-          >
-            {form}
+          <Box pos="relative" h="100%" w="100%">
+            <Box
+              ref={formRef}
+              data-testid="form-pane"
+              h="100%"
+              w="100%"
+              style={{
+                // FormHeader reads this to span the padding.
+                '--canopy-form-pane-padding': '20px',
+                padding: 'var(--canopy-form-pane-padding)',
+                overflow: 'auto',
+                backgroundColor: 'var(--canopy-surface-muted)',
+                // Keeps the form's sticky header under `formOverlay`.
+                isolation: 'isolate',
+              }}
+            >
+              {form}
+            </Box>
+            {formOverlay}
           </Box>
         </Panel>
       </Group>

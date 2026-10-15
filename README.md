@@ -1198,7 +1198,7 @@ The editor needs no asset mount point: it loads asset-store images through the s
 
 For local development, omit `media` (uploads go to `.canopy-dev/assets/` via the built-in local adapter), use `{ adapter: 'local', directory: '.canopy-dev/assets' }`, or use your real bucket.
 
-Editors add images through the Media Library (a right-hand drawer from the editor's Settings menu), an `image` field, or the MDX "Insert Image" dialog. Uploads go **straight from the browser to S3** via a presigned POST, and the server then sniffs the real file type, **strips EXIF metadata including GPS, sanitizes SVGs**, hashes the bytes and records the asset. Images are served from `/assets/t/{directives}/…` URLs, stored before release by `materialize-assets` (below) and cached immutably at the CDN; SVGs and PDFs are served statically. Build responsive markup with the client-safe helpers:
+Editors add images through the Media Library (a right-hand drawer from the editor's rail), an `image` field, or the MDX "Insert Image" dialog. Uploads go **straight from the browser to S3** via a presigned POST, and the server then sniffs the real file type, **strips EXIF metadata including GPS, sanitizes SVGs**, hashes the bytes and records the asset. Images are served from `/assets/t/{directives}/…` URLs, stored before release by `materialize-assets` (below) and cached immutably at the CDN; SVGs and PDFs are served statically. Build responsive markup with the client-safe helpers:
 
 ```typescript
 import { assetUrl, assetSrcSet } from 'canopycms'
@@ -1869,7 +1869,7 @@ Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a bran
 
 ### Editing Content
 
-Browse collections in the sidebar and click an entry to open it; create new entries with the "+" button (disabled for an entry type with `maxItems: 1` when one already exists). Edit fields in the form on the left and watch the live preview on the right. "Save" persists changes to your branch — **not** committed yet — and clears your local unsaved draft for that file. "Discard" reverts unsaved changes to the last saved state, confirming first.
+Browse collections in the content panel and click an entry to open it; create new entries with the "+" button (disabled for an entry type with `maxItems: 1` when one already exists). Edit fields in the form on the left and watch the live preview on the right. "Save" persists changes to your branch — **not** committed yet — and clears your local unsaved draft for that file. "Discard" reverts unsaved changes to the last saved state, confirming first.
 
 ### Submitting for Review
 
