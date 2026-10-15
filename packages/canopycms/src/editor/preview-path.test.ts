@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isSamePreviewPath, normalizePreviewPath } from './preview-path'
+import { displayPreviewPath, isSamePreviewPath, normalizePreviewPath } from './preview-path'
 
 describe('normalizePreviewPath', () => {
   it.each([
@@ -31,5 +31,18 @@ describe('isSamePreviewPath', () => {
     expect(isSamePreviewPath('/blog/x?branch=b', '/blog/x?branch=c')).toBe(false)
     expect(isSamePreviewPath('/blog/x?branch=b', '/blog/x')).toBe(false)
     expect(isSamePreviewPath('/base/blog/x', '/blog/x')).toBe(false)
+  })
+})
+
+describe('displayPreviewPath', () => {
+  it.each([
+    ['/blog/x/?branch=b', '/blog/x/'],
+    ['/?branch=feature%2Fa', '/'],
+    ['/blog/x?branch=b&lang=en#top', '/blog/x?lang=en'],
+    ['/base/preview/blog/x', '/base/preview/blog/x'],
+    ['https://other.example.com/p/x?branch=b', 'https://other.example.com/p/x'],
+    ['//cdn.example.com/p?branch=b', '//cdn.example.com/p'],
+  ])('shows %s as %s', (input, expected) => {
+    expect(displayPreviewPath(input)).toBe(expected)
   })
 })
