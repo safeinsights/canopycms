@@ -145,7 +145,7 @@ function LayoutButton({
           setSwitchedTo(LAYOUTS[other].title)
         }}
       />
-      {/* Screen readers rarely re-read a focused button's new name, so the switch is announced. */}
+      {/* Not every screen reader re-reads a focused button's changed name, so the switch is announced. */}
       <VisuallyHidden role="status" data-testid="rail-layout-status">
         {switchedTo}
       </VisuallyHidden>
