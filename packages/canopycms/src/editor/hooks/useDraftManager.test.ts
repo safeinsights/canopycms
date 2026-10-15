@@ -2160,7 +2160,8 @@ describe('useDraftManager', () => {
     const validatedOptions = { ...defaultOptions, currentEntry: validatedEntry }
 
     it('blocks the save and surfaces per-field errors for an invalid draft', async () => {
-      const { result } = renderHook(() => useDraftManager(validatedOptions))
+      const onSaveBlocked = vi.fn()
+      const { result } = renderHook(() => useDraftManager({ ...validatedOptions, onSaveBlocked }))
 
       act(() => {
         result.current.setDrafts({ abc123def456: { title: '', body: 'Content' } })
@@ -2172,6 +2173,7 @@ describe('useDraftManager', () => {
       expect(mockSaveEntry).not.toHaveBeenCalled()
       expect(mockSetBusy).not.toHaveBeenCalled()
       expect(result.current.fieldErrors).toEqual({ title: 'This field is required' })
+      expect(onSaveBlocked).toHaveBeenCalledTimes(1)
       const { notifications } = await import('@mantine/notifications')
       expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
         expect.objectContaining({ color: 'red', title: 'Cannot save yet' }),
@@ -2248,7 +2250,8 @@ describe('useDraftManager', () => {
         ]),
       )
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-      const { result } = renderHook(() => useDraftManager(validatedOptions))
+      const onSaveBlocked = vi.fn()
+      const { result } = renderHook(() => useDraftManager({ ...validatedOptions, onSaveBlocked }))
 
       act(() => {
         result.current.setDrafts({ abc123def456: { title: 'Hello', body: 'Content' } })
@@ -2260,6 +2263,7 @@ describe('useDraftManager', () => {
       expect(result.current.fieldErrors).toEqual({
         author: 'Referenced entry does not exist',
       })
+      expect(onSaveBlocked).toHaveBeenCalledTimes(1)
       consoleErrorSpy.mockRestore()
     })
 

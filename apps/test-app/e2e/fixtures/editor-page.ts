@@ -484,7 +484,7 @@ export class EditorPage {
   }
 
   /**
-   * The rail's preview-highlights toggle; reflects its state in `aria-pressed`.
+   * The preview toolbar's highlights toggle; reflects its state in `aria-pressed`.
    */
   highlightToggle(): Locator {
     return this.page.locator('[data-testid="toggle-highlights-button"]')
@@ -498,10 +498,39 @@ export class EditorPage {
   }
 
   /**
-   * The notice shown when the previewed page marks no editable elements.
+   * The note shown when the previewed page marks no editable elements.
    */
   noEditableMarksNotice(): Locator {
-    return this.page.getByText(/marks no editable elements/)
+    return this.page.getByText('Nothing to highlight')
+  }
+
+  /**
+   * The admin's count of preview marks that name no field, in the preview toolbar.
+   */
+  unmappedMarksChip(): Locator {
+    return this.page.locator('[data-testid="preview-unmapped-chip"]')
+  }
+
+  /**
+   * The preview toolbar's width choice.
+   */
+  previewWidthSelect(): Locator {
+    return this.page.getByRole('textbox', { name: 'Preview width' })
+  }
+
+  /**
+   * The preview toolbar's layout button for `layout`; the current one is `aria-pressed`.
+   */
+  previewLayoutButton(layout: 'side' | 'stacked'): Locator {
+    return this.page.locator(`[data-testid="preview-layout-${layout}"]`)
+  }
+
+  maximizePreviewButton(): Locator {
+    return this.page.locator('[data-testid="preview-maximize-button"]')
+  }
+
+  restorePreviewButton(): Locator {
+    return this.page.locator('[data-testid="preview-restore-button"]')
   }
 
   /**

@@ -121,4 +121,47 @@ test.describe('Preview Bridge', () => {
     await expect(editorPage.previewPane).toContainText('No preview for this entry.')
     await expect(editorPage.previewPane.locator('iframe')).toHaveCount(0)
   })
+
+  test('a maximized preview keeps its page and draft, and Esc restores the form', async ({
+    page,
+  }) => {
+    const previewTitle = editorPage.previewFrame().locator('[data-canopy-path="title"]')
+    const formPanel = page.getByTestId('form-pane').locator('..')
+    const liveTitle = `Maximized-${Date.now()}`
+
+    await editorPage.goto()
+    await editorPage.waitForReady()
+    await editorPage.openContentNavigator()
+    await editorPage.selectEntry('Home Page')
+    await editorPage.fillTextField('title', liveTitle)
+    await expect(previewTitle).toContainText(liveTitle, { timeout: 10000 })
+    // Survives only if the frame is never reloaded.
+    await previewTitle.evaluate(() => Object.assign(window, { __sameFrame: true }))
+
+    await test.step('Maximize covers the form and puts focus on Restore', async () => {
+      await editorPage.maximizePreviewButton().click()
+      await expect(editorPage.restorePreviewButton()).toBeFocused()
+      await expect(formPanel).toHaveAttribute('inert', '')
+      const main = await page.locator('[data-canopy-region="main"]').boundingBox()
+      const preview = await page.getByTestId('preview-pane').boundingBox()
+      for (const side of ['x', 'y', 'width', 'height'] as const) {
+        expect(Math.abs((preview?.[side] ?? 0) - (main?.[side] ?? -9))).toBeLessThanOrEqual(1)
+      }
+      await expect(previewTitle).toContainText(liveTitle)
+    })
+
+    await test.step('Esc restores it and returns focus to Maximize', async () => {
+      await page.keyboard.press('Escape')
+      await expect(editorPage.restorePreviewButton()).toHaveCount(0)
+      await expect(editorPage.maximizePreviewButton()).toBeFocused()
+      await expect(formPanel).not.toHaveAttribute('inert', '')
+      expect(await previewTitle.evaluate(() => '__sameFrame' in window)).toBe(true)
+    })
+
+    await test.step('drafts still reach the same frame', async () => {
+      await editorPage.fillTextField('title', `${liveTitle}-again`)
+      await expect(previewTitle).toContainText(`${liveTitle}-again`, { timeout: 10000 })
+      expect(await previewTitle.evaluate(() => '__sameFrame' in window)).toBe(true)
+    })
+  })
 })

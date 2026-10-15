@@ -1,11 +1,12 @@
 /**
  * The content panel: docked beside the panes in a wide side-by-side layout, otherwise an overlay on
- * the form pane; its open state and width persist, and a URL asking for no entry opens it.
+ * the form pane; its open state and width persist, and a URL asking for no entry opens it. Also
+ * how a maximized preview gives way to what needs the form.
  */
 import React from 'react'
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
 import type { EntrySchema } from '../config'
@@ -14,6 +15,7 @@ import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { editorLayoutStorageKey } from './hooks/useEditorLayout'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
+import { mockConsole } from '../test-utils/console-spy'
 
 // The preview's focus message and the tree scroll fields into view; jsdom has no scrollIntoView.
 Object.defineProperty(Element.prototype, 'scrollIntoView', { value: () => {}, configurable: true })
@@ -28,7 +30,7 @@ afterEach(() => {
   window.history.replaceState({}, '', '/')
 })
 
-const schema: EntrySchema = [{ name: 'title', type: 'string', label: 'Title' }]
+const schema: EntrySchema = [{ name: 'title', type: 'string', label: 'Title', required: true }]
 const entry = (slug: string, contentId: string): EditorEntry => ({
   path: unsafeAsLogicalPath(`content/posts/${slug}`),
   contentId: unsafeAsContentId(contentId),
@@ -50,7 +52,7 @@ const okJson = (data: unknown) =>
     headers: { 'Content-Type': 'application/json' },
   })
 
-const stubApi = () => {
+const stubApi = ({ failingSlug }: { failingSlug?: string } = {}) => {
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
@@ -133,6 +135,9 @@ const stubApi = () => {
             pagination: { hasMore: false, limit: 50 },
           }),
         )
+      }
+      if (failingSlug && url.endsWith(`/content/content/posts/${failingSlug}`)) {
+        return Promise.resolve(new Response('{}', { status: 500 }))
       }
       if (url.includes('/content/content/posts/')) {
         return Promise.resolve(okJson({ title: 'Loaded title', version: 100 }))
@@ -297,12 +302,12 @@ describe('content panel', () => {
     await setup(true)
     expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle layout' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Side by side' }))
     await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('docked'))
   })
 
   it('does not bring a closed docked panel back as an overlay', async () => {
-    window.history.replaceState({}, '', '/?entry=')
+    storeLayout({ contentPanelOpen: true })
     stubWindowWidth(true)
     stubApi()
     renderEditor()
@@ -310,7 +315,7 @@ describe('content panel', () => {
 
     fireEvent.click(toggle())
     expect(panel()).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle layout' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Stacked' }))
     await waitFor(() =>
       expect(
         screen
@@ -428,5 +433,165 @@ describe('content panel', () => {
     renderEditor()
     await waitFor(() => expect(panel()).not.toBeNull())
     expect(panel()?.getAttribute('data-panel-mode')).toBe(wide ? 'docked' : 'overlay')
+  })
+})
+
+describe('maximized preview', () => {
+  const maximize = async () => {
+    fireEvent.click(await screen.findByRole('button', { name: 'Maximize preview' }))
+    await screen.findByRole('button', { name: 'Restore' })
+  }
+  const formPanel = () => screen.getByTestId('form-pane').parentElement as HTMLElement
+
+  it('restores when the preview asks to focus one of its fields', async () => {
+    await setup(true)
+    await maximize()
+    expect(formPanel().hasAttribute('inert')).toBe(true)
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'canopycms:preview:focus', fieldPath: 'title' },
+          origin: window.location.origin,
+        }),
+      )
+    })
+
+    await waitFor(() => expect(formPanel().hasAttribute('inert')).toBe(false))
+    expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull()
+  })
+
+  it('stays maximized while another entry opens from the docked panel', async () => {
+    await setup(true)
+    await maximize()
+    fireEvent.click(await row('second'))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^Copy path/ }).textContent).toContain('second'),
+    )
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeTruthy()
+  })
+
+  it('restores when the content overlay opens over the form', async () => {
+    storeLayout({ layout: 'stacked' })
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await maximize()
+
+    fireEvent.click(toggle())
+    await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay'))
+    expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull()
+  })
+
+  it('shows the form while a maximized entry loads, and when its load fails', async () => {
+    const consoleSpy = mockConsole()
+    onTestFinished(() => consoleSpy.restore())
+    stubWindowWidth(true)
+    stubApi({ failingSlug: 'second' })
+    storeLayout({ contentPanelOpen: true })
+    renderEditor()
+    await loaded()
+    await maximize()
+
+    fireEvent.click(await row('second'))
+    expect(await screen.findByTestId('entry-load-failed')).toBeTruthy()
+    expect(formPanel().hasAttribute('inert')).toBe(false)
+    expect(screen.getByTestId('preview-pane').style.position).toBe('')
+    expect(consoleSpy).toHaveErrored(/Load failed: 500/)
+  })
+
+  it('restores when a save fails validation, whose errors are in the form', async () => {
+    await setup(true)
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Title/ }), {
+      target: { value: '' },
+    })
+    await maximize()
+
+    fireEvent.click(screen.getByTestId('save-button'))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull())
+    expect(formPanel().hasAttribute('inert')).toBe(false)
+  })
+
+  it('gives the content overlay its focus when it opens over a maximized preview', async () => {
+    storeLayout({ layout: 'stacked' })
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await maximize()
+
+    act(() => toggle().focus())
+    fireEvent.click(toggle())
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter')))
+  })
+})
+
+describe('divider resizes', () => {
+  const originalRect = HTMLElement.prototype.getBoundingClientRect
+  const originalResizeObserver = window.ResizeObserver
+
+  // jsdom lays nothing out, and the panel library measures its group before it resizes it.
+  const sizeProps = ['offsetWidth', 'offsetHeight'] as const
+  const originalSizes = sizeProps.map((prop) =>
+    Object.getOwnPropertyDescriptor(HTMLElement.prototype, prop),
+  )
+
+  beforeAll(() => {
+    HTMLElement.prototype.getBoundingClientRect = () => new DOMRect(0, 0, 1000, 800)
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, value: 1000 })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, value: 800 })
+    window.ResizeObserver = class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        const rect = target.getBoundingClientRect()
+        const size = [{ inlineSize: rect.width, blockSize: rect.height }]
+        const entry = { target, contentRect: rect, borderBoxSize: size, contentBoxSize: size }
+        this.callback([entry as unknown as ResizeObserverEntry], this as unknown as ResizeObserver)
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+  })
+  afterAll(() => {
+    HTMLElement.prototype.getBoundingClientRect = originalRect
+    window.ResizeObserver = originalResizeObserver
+    sizeProps.forEach((prop, i) => {
+      const descriptor = originalSizes[i]
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, prop, descriptor)
+    })
+  })
+
+  it('switches the preview width to Fit once a held divider moves, or a key resizes it', async () => {
+    storeLayout({ previewWidth: 'desktop' })
+    await setup(true)
+    const width = () => screen.getByRole('textbox', { name: 'Preview width' })
+    const separator = () => screen.getByRole('separator', { name: 'Resize preview and form' })
+    expect(width()).toHaveProperty('value', 'Desktop')
+
+    // A press alone, as a click that only focuses the divider is, keeps the width.
+    act(() => separator().setAttribute('data-separator', 'active'))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+    act(() => separator().setAttribute('data-separator', 'hover'))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+    expect(width()).toHaveProperty('value', 'Desktop')
+
+    act(() => separator().setAttribute('data-separator', 'active'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    act(() => fireEvent.keyDown(separator(), { key: 'ArrowLeft' }))
+    await waitFor(() => expect(storedLayout().previewWidth).toBe('fit'))
+    expect(width()).toHaveProperty('value', 'Fit')
+    expect(screen.getByTestId('preview-resize-readout')).toBeTruthy()
+    act(() => separator().setAttribute('data-separator', 'hover'))
+    await waitFor(() => expect(screen.queryByTestId('preview-resize-readout')).toBeNull())
+  })
+
+  it('switches the preview width to Fit when a key resizes the divider', async () => {
+    storeLayout({ previewWidth: 'tablet' })
+    await setup(true)
+    act(() =>
+      fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize preview and form' }), {
+        key: 'ArrowRight',
+      }),
+    )
+    await waitFor(() => expect(storedLayout().previewWidth).toBe('fit'))
   })
 })
