@@ -87,6 +87,7 @@ import { RenameEntryModal } from './components/RenameEntryModal'
 import { QuickOpenPalette } from './components/QuickOpenPalette'
 import { rememberOpener, returnTarget } from './utils/focus-return'
 import { modKeyLabel } from './platform'
+import { EDITOR_ACTIONS } from './copy'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { ReferencedByList, referencedDeleteMessage } from './components/ReferencedByList'
@@ -1423,6 +1424,7 @@ const EditorContent: React.FC<EditorProps> = ({
   ])
 
   const quickOpenShortcut = modKeyLabel() === '⌘' ? '⌘P' : 'Ctrl+P'
+  const quickOpenKeys = modKeyLabel() === '⌘' ? 'Meta+P' : 'Control+P'
   // Docked, the content panel's open state is the stored preference; as an overlay it is
   // `navigatorOpen`, which starts open when the URL asks for no entry.
   const contentPanelShown = contentPanelDocked ? contentPanelOpen : navigatorOpen
@@ -1436,7 +1438,7 @@ const EditorContent: React.FC<EditorProps> = ({
     setContentPanelFocusRequest((request) => request + 1)
   }
   const navigatorReturnTarget = () =>
-    returnTarget(navigatorOpenerRef.current, () => contentToggleRef.current)
+    returnTarget(navigatorOpenerRef.current, () => navigatorToggleRef.current)
   const branchReturnTarget = () =>
     returnTarget(branchOpenerRef.current, () => branchToggleRef.current)
   const settingsReturnTarget = () => settingsToggleRef.current
@@ -1649,11 +1651,13 @@ const EditorContent: React.FC<EditorProps> = ({
             !branchContentLocked &&
             (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
               <Menu shadow="md" width={200} withinPortal position="bottom-end">
-                <Menu.Target>
-                  <ActionIcon variant="subtle" color="gray" aria-label="Content actions">
-                    <IconDots size={16} />
-                  </ActionIcon>
-                </Menu.Target>
+                <Tooltip label="Content actions" withinPortal>
+                  <Menu.Target>
+                    <ActionIcon variant="subtle" color="gray" aria-label="Content actions">
+                      <IconDots size={16} />
+                    </ActionIcon>
+                  </Menu.Target>
+                </Tooltip>
                 <Menu.Dropdown>
                   {navCollections[0].onAdd && (
                     <Menu.Item
@@ -1678,12 +1682,13 @@ const EditorContent: React.FC<EditorProps> = ({
                 </Menu.Dropdown>
               </Menu>
             )}
-          <Tooltip label={`Quick open (${quickOpenShortcut})`} withinPortal>
+          <Tooltip label={`${EDITOR_ACTIONS.openEntry} (${quickOpenShortcut})`} withinPortal>
             <ActionIcon
               variant="subtle"
               color="gray"
               onClick={openQuickOpen}
-              aria-label="Quick open"
+              aria-label={EDITOR_ACTIONS.openEntry}
+              aria-keyshortcuts={quickOpenKeys}
               data-testid="quick-open-button"
             >
               <IconSearch size={16} />
@@ -1821,6 +1826,7 @@ const EditorContent: React.FC<EditorProps> = ({
               contentToggleRef={contentToggleRef}
               onQuickOpen={openQuickOpen}
               quickOpenShortcut={quickOpenShortcut}
+              quickOpenKeys={quickOpenKeys}
               branchesOpen={branchManagerOpen}
               onBranchesOpen={openBranchManager}
               onCommentsOpen={
@@ -1851,6 +1857,7 @@ const EditorContent: React.FC<EditorProps> = ({
               <Box style={{ flex: 1, minWidth: 0 }}>
                 <PaneLayout
                   formOverlay={contentPanelDocked ? undefined : contentPanel}
+                  formInert={!contentPanelDocked && contentPanelShown}
                   arrangement={layout}
                   sideSplitPercent={sideSplitPercent}
                   stackedSplitPercent={stackedSplitPercent}

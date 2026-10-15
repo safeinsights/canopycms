@@ -10,7 +10,7 @@ import React, {
   type PointerEvent,
   type ReactNode,
 } from 'react'
-import { CloseButton, Group, Text } from '@mantine/core'
+import { CloseButton, Group, Text, Tooltip } from '@mantine/core'
 import { useWindowEvent } from '@mantine/hooks'
 import { focusIfIdle } from '../utils/focus-return'
 
@@ -251,7 +251,9 @@ export function SidePanelHost({
         </Text>
         <Group gap="xs" wrap="nowrap">
           {actions}
-          <CloseButton aria-label={`Close ${title.toLowerCase()} panel`} onClick={onClose} />
+          <Tooltip label={`Close ${title.toLowerCase()} panel`}>
+            <CloseButton aria-label={`Close ${title.toLowerCase()} panel`} onClick={onClose} />
+          </Tooltip>
         </Group>
       </Group>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{children}</div>

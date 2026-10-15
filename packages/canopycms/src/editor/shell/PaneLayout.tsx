@@ -47,6 +47,8 @@ export interface PaneLayoutProps {
   form?: React.ReactNode
   /** Laid over the form pane, outside its scrolling: the side panel in overlay mode. */
   formOverlay?: React.ReactNode
+  /** Takes the form out of focus and the pointer's reach while an open `formOverlay` hides it. */
+  formInert?: boolean
 }
 
 const splitLayout = (percent: number): Layout => ({ [PREVIEW]: percent, [FORM]: 100 - percent })
@@ -60,6 +62,7 @@ export function PaneLayout({
   preview,
   form,
   formOverlay,
+  formInert = false,
 }: PaneLayoutProps) {
   const groupRef = useGroupRef()
   const separatorRef = useRef<HTMLDivElement>(null)
@@ -75,6 +78,11 @@ export function PaneLayout({
       group.setLayout(splitLayout(percent))
     }
   }, [groupRef, percent, arrangement])
+
+  // React 18 drops an `inert` prop, so it is set on the DOM.
+  useEffect(() => {
+    formRef.current?.toggleAttribute('inert', formInert)
+  }, [formInert])
 
   // An iframe takes the pointer moves a drag needs, so the panes ignore the pointer while the
   // separator is held. Set on the DOM as the attribute flips, before the first move arrives.

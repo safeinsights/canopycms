@@ -26,6 +26,7 @@ const meta: Meta<typeof EditorRail> = {
     onContentToggle: noop,
     onQuickOpen: noop,
     quickOpenShortcut: '⌘P',
+    quickOpenKeys: 'Meta+P',
     branchesOpen: false,
     onBranchesOpen: noop,
     onCommentsOpen: noop,

@@ -4,7 +4,7 @@
  */
 import React from 'react'
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
@@ -197,7 +197,11 @@ const setup = async (wide: boolean) => {
   stubApi()
   renderEditor()
   await waitFor(() => expect(screen.getByTestId('content-panel-toggle')).toBeTruthy())
-  if (!panel()) fireEvent.click(toggle())
+  if (!panel()) {
+    // A real click focuses the button it presses; fireEvent does not.
+    act(() => toggle().focus())
+    fireEvent.click(toggle())
+  }
   await loaded()
 }
 
@@ -245,10 +249,12 @@ describe('content panel', () => {
       storeLayout({ layout })
       await setup(wide)
       expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
-      expect(panel()?.parentElement?.querySelector('[data-testid="form-pane"]')).not.toBeNull()
+      const formPane = panel()?.parentElement?.querySelector('[data-testid="form-pane"]')
+      expect(formPane?.hasAttribute('inert')).toBe(true)
 
       fireEvent.click(await row('second'))
       await waitFor(() => expect(panel()).toBeNull())
+      expect(formPane?.hasAttribute('inert')).toBe(false)
       await waitFor(() => expect(document.activeElement).toBe(toggle()))
 
       fireEvent.click(toggle())
@@ -320,6 +326,27 @@ describe('content panel', () => {
     renderEditor()
     await loaded()
     expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
+  })
+
+  it("returns focus to the file menu's button when an overlay opened from its item closes", async () => {
+    storeLayout({ layout: 'stacked' })
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    fireEvent.click(await screen.findByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('all-files-menu-item'))
+    await loaded()
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter')))
+    // The menu's own focus return must be spent first, or it would answer for the panel's.
+    await waitFor(() => expect(screen.queryByTestId('all-files-menu-item')).toBeNull())
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter'))
+
+    escapeFromPanel()
+    await waitFor(() => expect(panel()).toBeNull())
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByTestId('file-dropdown-button')),
+    )
   })
 
   it('does not restore an overlay open on load', async () => {

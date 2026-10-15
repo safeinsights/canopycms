@@ -62,7 +62,7 @@ test.describe('Navigator search', () => {
 
   for (const [route, open, opener] of [
     [
-      "the panel's Quick open button",
+      "the panel's Open entry button",
       (page: Page) => page.getByTestId('quick-open-button').click(),
       (page: Page) => page.getByTestId('quick-open-button'),
     ],

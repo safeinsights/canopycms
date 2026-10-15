@@ -103,6 +103,7 @@ const EditorChrome = ({
           onContentToggle={() => setPanelOpen((open) => !open)}
           onQuickOpen={noop}
           quickOpenShortcut="⌘P"
+          quickOpenKeys="Meta+P"
           branchesOpen={false}
           onBranchesOpen={noop}
           onCommentsOpen={noop}

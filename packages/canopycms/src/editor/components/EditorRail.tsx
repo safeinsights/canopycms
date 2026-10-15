@@ -19,6 +19,7 @@ import {
 import { ActivityRail, RailButton } from '../shell/ActivityRail'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 import { CANOPYCMS_VERSION } from '../../version'
+import { EDITOR_ACTIONS } from '../copy'
 
 const ABOUT_URL = 'https://github.com/safeinsights/canopycms'
 
@@ -34,6 +35,8 @@ export interface EditorRailProps {
   onQuickOpen: () => void
   /** The quick open shortcut as the platform writes it, such as "⌘P". */
   quickOpenShortcut: string
+  /** The same shortcut for `aria-keyshortcuts`, such as "Meta+P". */
+  quickOpenKeys: string
   branchesOpen: boolean
   onBranchesOpen: () => void
   /** Without it, the Comments button is not offered (no branch, or a mode without comments). */
@@ -109,6 +112,7 @@ export function EditorRail({
   contentToggleRef,
   onQuickOpen,
   quickOpenShortcut,
+  quickOpenKeys,
   branchesOpen,
   onBranchesOpen,
   onCommentsOpen,
@@ -186,14 +190,13 @@ export function EditorRail({
         <>
           <RailButton
             railId="home"
-            label={siteTitle}
+            label={`Open the first entry of ${siteTitle}`}
             icon={
               <Text component="span" fw={700} size="md" aria-hidden>
                 {monogram(siteTitle)}
               </Text>
             }
             tinted
-            aria-description="Opens the first entry"
             data-testid="rail-home-button"
             onClick={onHomeOpen}
           />
@@ -210,7 +213,9 @@ export function EditorRail({
           />
           <RailButton
             railId="search"
-            label={`Search entries (${quickOpenShortcut})`}
+            label={EDITOR_ACTIONS.openEntry}
+            shortcut={quickOpenShortcut}
+            aria-keyshortcuts={quickOpenKeys}
             icon={<IconSearch size={20} />}
             aria-haspopup="dialog"
             data-testid="rail-search-button"

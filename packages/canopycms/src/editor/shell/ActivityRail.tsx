@@ -113,6 +113,8 @@ export interface RailButtonProps extends Omit<ComponentPropsWithoutRef<'button'>
   active?: boolean
   /** Tinted at rest, as the site monogram is. */
   tinted?: boolean
+  /** Shown after the label in the tooltip, as the platform writes it ("⌘P"). */
+  shortcut?: string
   /** A count badge, hidden at zero; the label should say it too. */
   count?: number
   countTestId?: string
@@ -127,6 +129,7 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
     icon,
     active = false,
     tinted = false,
+    shortcut,
     count = 0,
     countTestId,
     tooltipDisabled,
@@ -137,7 +140,8 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
   const button = (
     <ActionIcon
       ref={ref}
-      variant={active || tinted ? 'light' : 'subtle'}
+      // Filled, not tinted, when active: a tint alone would show the state by colour, under 3:1.
+      variant={active ? 'filled' : tinted ? 'light' : 'subtle'}
       color={active || tinted ? undefined : 'gray'}
       size="lg"
       radius="md"
@@ -149,7 +153,11 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
     </ActionIcon>
   )
   return (
-    <Tooltip label={label} position="right" disabled={tooltipDisabled}>
+    <Tooltip
+      label={shortcut ? `${label} (${shortcut})` : label}
+      position="right"
+      disabled={tooltipDisabled}
+    >
       {/* Always mounted, so a count arriving never remounts a focused button. */}
       <Indicator
         label={
@@ -158,6 +166,7 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
           </span>
         }
         size={16}
+        offset={4}
         withBorder
         disabled={count === 0}
         styles={{

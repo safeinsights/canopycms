@@ -18,6 +18,7 @@ const defaultProps = (): EditorRailProps => ({
   onContentToggle: vi.fn(),
   onQuickOpen: vi.fn(),
   quickOpenShortcut: '⌘P',
+  quickOpenKeys: 'Meta+P',
   branchesOpen: false,
   onBranchesOpen: vi.fn(),
   onCommentsOpen: vi.fn(),
@@ -49,9 +50,9 @@ describe('EditorRail - buttons', () => {
     const props = renderRail()
 
     expect(toolbarButtons().map((button) => button.getAttribute('aria-label'))).toEqual([
-      'example site',
+      'Open the first entry of example site',
       'Content',
-      'Search entries (⌘P)',
+      'Open entry',
       'Branches',
       'Comments',
       'Media library',
@@ -97,6 +98,20 @@ describe('EditorRail - buttons', () => {
     renderRail()
     act(() => screen.getByTestId('rail-branches-button').focus())
     expect((await screen.findByRole('tooltip')).textContent).toBe('Branches')
+  })
+
+  it('shows a shortcut in the tooltip and in aria-keyshortcuts, not in the name', async () => {
+    renderRail()
+    const search = screen.getByTestId('rail-search-button')
+    expect(search.getAttribute('aria-keyshortcuts')).toBe('Meta+P')
+    act(() => search.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Open entry (⌘P)')
+  })
+
+  it('fills the button of an open panel, so its state is not a tint alone', () => {
+    renderRail({ contentPanelOpen: true })
+    expect(screen.getByTestId('content-panel-toggle').getAttribute('data-variant')).toBe('filled')
+    expect(screen.getByTestId('rail-branches-button').getAttribute('data-variant')).toBe('subtle')
   })
 })
 
