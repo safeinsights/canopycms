@@ -278,25 +278,11 @@ describe('PreviewPane', () => {
       expect(restoreButton()).toBeNull()
     })
 
-    it('keeps the same frame, so drafts keep streaming, and blocks the layout toggle', () => {
-      const { container, rerender } = render(
+    // The frame surviving maximize is PaneLayout's to keep (its test and the e2e pin that).
+    it('blocks the layout toggle while maximized', () => {
+      render(
         <PreviewPane
           src={src}
-          data={{ title: 'Draft' }}
-          previewWidth="fit"
-          onPreviewWidthChange={vi.fn()}
-          layout="side"
-          onLayoutChange={vi.fn()}
-          maximized={false}
-          onMaximizedChange={vi.fn()}
-        />,
-        { wrapper: Wrapper },
-      )
-      const frame = container.querySelector('iframe')
-      rerender(
-        <PreviewPane
-          src={src}
-          data={{ title: 'Draft, typed on' }}
           previewWidth="fit"
           onPreviewWidthChange={vi.fn()}
           layout="side"
@@ -304,10 +290,10 @@ describe('PreviewPane', () => {
           maximized
           onMaximizedChange={vi.fn()}
         />,
+        { wrapper: Wrapper },
       )
-      expect(container.querySelector('iframe')).toBe(frame)
-      expect(screen.getByRole('button', { name: /^Stacked/ }).hasAttribute('data-disabled')).toBe(
-        true,
+      expect(screen.getByRole('button', { name: 'Stacked' }).getAttribute('aria-disabled')).toBe(
+        'true',
       )
     })
   })

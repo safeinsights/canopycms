@@ -464,7 +464,8 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // The content overlay and a maximized preview hide the form; `navigatorOpen` is only the
   // overlay's. Anything that focuses something in the form reveals it first. Opening an entry
-  // closes the overlay only, so a maximized preview stays maximized while the user browses pages.
+  // closes the overlay only, so the preview stays maximized across entries (see
+  // `previewShownMaximized` for the loads in between).
   const [previewMaximized, setPreviewMaximized] = useState(false)
   const revealForm = () => {
     setNavigatorOpen(false)
@@ -1576,8 +1577,9 @@ const EditorContent: React.FC<EditorProps> = ({
     data: displayValue,
   })
 
-  // Only the default preview has the toolbar that maximizes and restores it. While an entry's
-  // value loads, or after its load fails, the form shows: the choice reapplies once it arrives.
+  // Only the default preview has the toolbar that maximizes and restores it. With no value to
+  // preview (an entry loading, or failed to load, with no draft) the form shows instead, and the
+  // choice reapplies once a value arrives.
   const previewCanMaximize =
     !renderPreview && Boolean(currentEntry?.previewSrc) && !currentEntryUnavailable
   const previewShownMaximized = previewMaximized && previewCanMaximize && Boolean(previewFrameData)

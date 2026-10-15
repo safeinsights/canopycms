@@ -125,7 +125,7 @@ export const PreviewPane = ({
     }
     wasMaximized.current = maximized
   }, [maximized])
-  // Any key from the editor's window, or with focus nowhere, restores: a drawer or modal outside it
+  // Escape from the editor's shell, or with focus nowhere, restores: a drawer or modal outside it
   // closes on its own Escape, an open popup marks its owner, and a text field with text keeps it.
   // Captured, because an open tooltip's dismiss stops the key on the document. A key inside the
   // preview frame never reaches this window.

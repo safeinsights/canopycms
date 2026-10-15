@@ -84,8 +84,7 @@ export function UnmappedMarksChip({ marks }: { marks: readonly InexactMark[] }) 
   const [opened, setOpened] = useState(false)
   const chipRef = useRef<HTMLButtonElement>(null)
   // Focus moves to Close as the dropdown mounts. Close and Escape hand it back to the chip; focus
-  // leaving otherwise just closes it. No focus trap: with nothing else tabbable, Mantine's would
-  // block Tab across the whole page.
+  // leaving otherwise, Tab included, just closes it, so there is no focus trap.
   // Closed when the marks run out, so their return never reopens it and takes focus.
   if (marks.length === 0) {
     if (opened) setOpened(false)
