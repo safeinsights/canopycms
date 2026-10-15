@@ -1283,7 +1283,6 @@ const EditorContent: React.FC<EditorProps> = ({
     try {
       await renameEntry(renamingEntry.path, newSlug)
       setRenameModalOpen(false)
-      setRenamingEntry(null)
     } catch (err) {
       setRenameModalError({
         message: err instanceof Error ? err.message : 'Rename failed',
@@ -2295,9 +2294,10 @@ const EditorContent: React.FC<EditorProps> = ({
                   entryLabel={renamingEntry.label}
                   currentSlug={renamingEntry.slug || ''}
                   onSave={handleRenameSubmit}
+                  // `renamingEntry` stays until the next rename, so the dialog plays its exit and
+                  // returns focus.
                   onClose={() => {
                     setRenameModalOpen(false)
-                    setRenamingEntry(null)
                     setRenameModalError(null)
                   }}
                   isSaving={renameModalSaving}

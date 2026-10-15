@@ -16,7 +16,8 @@ entry the user may not edit, both stay in the menu, blocked, with the reason. A 
 "Saving…" on the button, then "Saved" for two seconds, announced to screen readers, instead of a
 green "Saved" toast; failures still show their toast or alert, and Save all its result. Save is
 the top bar's one filled button; "Submit for review" and "Withdraw from review" are outlined. The
-delete dialog names the entry it deletes.
+delete dialog names the entry it deletes, and renaming the open entry, from either menu, keeps it
+open under its new name instead of opening the first entry.
 
 **To adopt.** Nothing, unless your browser tests wait for a "Saved" toast after Save: wait for the
 save request's response, or for the Save button to read "Saved".

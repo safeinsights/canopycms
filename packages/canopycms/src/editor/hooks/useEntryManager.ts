@@ -654,9 +654,12 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const renaming = entriesState.find((e) => e.path === path)
     const contentId = renaming?.contentId
     const label = renaming?.label ?? path
+    const wasOpen = selectedPath === path
+    // Selected only once the list holds the new path: before that, the selection check would
+    // find it missing and open the first entry instead.
     const landed = async (newPath: string | undefined) => {
-      if (newPath && selectedPath === path) setSelectedPath(newPath)
       await refreshEntries()
+      if (newPath && wasOpen) setSelectedPath(newPath)
       notifications.show({ message: 'Entry renamed', color: 'green' })
     }
     options.setBusy(true)

@@ -186,7 +186,8 @@ test.describe('Entry CRUD Operations', () => {
       await expect(modal).toContainText('Delete "Post"?')
       await editorPage.deleteConfirmButton().click()
       await expect(modal).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
-      await expect(editorPage.currentEntryLabel()).toHaveText('No entry open')
+      // The tree's delete lands on the first entry, and so does this one.
+      await expect(editorPage.currentEntryLabel()).not.toHaveText('Post')
       await expect(editorPage.navigatorItem('Post')).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
     })
   })

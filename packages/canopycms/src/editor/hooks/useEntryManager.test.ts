@@ -1267,6 +1267,44 @@ describe('useEntryManager', () => {
       return { ...hook, opened }
     }
 
+    it('keeps a renamed entry selected while the list it moved in loads', async () => {
+      const { result, opened } = await mountWithOpenedEntry()
+      act(() => result.current.setSelectedPath(opened.path))
+      mockClient.content.renameEntry.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { newPath: 'entry1-renamed' },
+      })
+      const list = deferredList()
+      mockClient.entries.list.mockReturnValue(list.promise)
+
+      let renaming!: Promise<void>
+      act(() => {
+        renaming = result.current.renameEntry(opened.path, 'renamed')
+      })
+      // Renders while the list still holds only the old path.
+      await act(async () => {})
+      await act(async () => {
+        // Listed first, so it is what the selection would fall back to.
+        list.resolve(
+          listOf(
+            {
+              contentId: unsafeAsContentId('other0000001'),
+              logicalPath: unsafeAsLogicalPath('aaa'),
+            },
+            {
+              contentId: mockEntry.contentId,
+              logicalPath: unsafeAsLogicalPath('entry1-renamed'),
+              slug: unsafeAsSlug('renamed'),
+            },
+          ),
+        )
+        await renaming
+      })
+
+      expect(result.current.selectedPath).toBe('entry1-renamed')
+    })
+
     describe('a rename with no answer', () => {
       let restoreConsole: () => void
       beforeEach(() => {

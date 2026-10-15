@@ -49,14 +49,19 @@ const okJson = (data: unknown) =>
 
 const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unknown[] } = {}) => {
   const { groups = [], locked = false, threads = [] } = options
-  // The one entry, until a delete removes it.
+  // The one entry, until a delete removes it or a rename moves it to `hello-two`.
   let deleted = false
+  let renamed = false
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (init?.method === 'DELETE') deleted = true
+      if (init?.method === 'PATCH' && url.includes('/rename-entry/')) {
+        renamed = true
+        return Promise.resolve(okJson({ newPath: 'content/posts/hello-two' }))
+      }
       if (url.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups }))
       if (url.endsWith('/main/comments')) return Promise.resolve(okJson({ threads, users: [] }))
       if (url.endsWith('/api/canopycms/branches')) {
@@ -141,11 +146,11 @@ const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unkno
             ],
             entries: [
               {
-                logicalPath: hello.path,
+                logicalPath: renamed ? 'content/posts/hello-two' : hello.path,
                 contentId: hello.contentId,
                 collectionPath: hello.collectionPath,
                 collectionName: hello.collectionName,
-                slug: hello.slug,
+                slug: renamed ? 'hello-two' : hello.slug,
                 title: hello.label,
                 format: hello.format,
                 entryType: 'post',
@@ -309,7 +314,23 @@ describe('Rename… and Delete entry (file menu)', () => {
     await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
   })
 
-  it('deletes the open entry once confirmed, closing it, and hands focus to "All content"', async () => {
+  it('keeps the entry open under its new slug once renamed', async () => {
+    stubApi()
+    renderEditor()
+    await loaded()
+
+    await activateByKeyboard(fileTrigger(), byTestId('entry-menu-rename'))
+    const input = within(await screen.findByTestId('rename-entry-modal')).getByRole('textbox')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'hello-two{Enter}')
+
+    await waitFor(() => expect(screen.queryByTestId('rename-entry-modal')).toBeNull())
+    await waitFor(() => expect(window.location.search).toContain('hello-two'))
+    expect(fileTrigger().textContent).toBe('Hello')
+    await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
+  })
+
+  it('deletes the open entry once confirmed and, with no entry left to open, focuses "All content"', async () => {
     stubApi()
     renderEditor()
     await loaded()
