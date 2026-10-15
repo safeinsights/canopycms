@@ -179,6 +179,8 @@ export interface UseDraftManagerOptions {
    * instead of the stale label from the last entries fetch.
    */
   onSaved?: () => void
+  /** A save was refused for field errors, which the form now shows. */
+  onSaveBlocked?: () => void
   /**
    * Fired when drafts are thrown away for the server's copy: Discard (one entry, or every entry
    * when `contentId` is undefined) and Reload. Anything built on the discarded draft, such as an
@@ -951,6 +953,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     const validationErrors = validateEntryFormValue(entry.schema, entry.format, effectiveValue)
     if (validationErrors.length > 0) {
       setErrorState({ entryId: currentId, errors: toFieldErrorMap(validationErrors) })
+      options.onSaveBlocked?.()
       notifications.show({
         title: 'Cannot save yet',
         message: `Fix ${validationErrors.length} validation ${validationErrors.length === 1 ? 'issue' : 'issues'} before saving`,
@@ -1025,6 +1028,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         err.fieldErrors.length > 0
       ) {
         setErrorState({ entryId: currentId, errors: toFieldErrorMap(err.fieldErrors) })
+        options.onSaveBlocked?.()
       }
       if (isConflict && err.code === ENTRY_GONE_CODE) {
         // Deleted or renamed since it was read, by someone else or by a delete or rename of this

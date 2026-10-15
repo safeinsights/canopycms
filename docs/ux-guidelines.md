@@ -148,8 +148,8 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 - Bind shortcuts with Mantine's `useHotkeys` as `mod+…`, which is ⌘ on macOS and Ctrl
   elsewhere, scoped to the editor root. A shortcut that must work while typing, such as Save,
   passes `[]` as `tagsToIgnore` and `true` as `triggerOnContentEditable`.
-- Taken: Mod+P quick open, Mod+Alt+M comments, Esc closes the topmost overlay; a docked panel
-  stays open. Planned for WS8:
+- Taken: Mod+P quick open, Mod+Alt+M comments, Esc closes the topmost overlay, else restores a
+  maximized preview; a docked panel stays open. Planned for WS8:
   Mod+S save, Mod+. content panel, Mod+Shift+L layout. Never bind Mod+K (MDXEditor's link), the formatting keys, or the browser's own
   (Mod+W, T, R, L, F).
 - An overlay panel makes what it covers `inert` (`formInert` in

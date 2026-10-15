@@ -1,7 +1,7 @@
 'use client'
 
 import type { CSSProperties, ReactNode } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import {
   ActionIcon,
@@ -13,11 +13,19 @@ import {
   UnstyledButton,
   VisuallyHidden,
 } from '@mantine/core'
-import { useClipboard, useElementSize } from '@mantine/hooks'
+import { useClipboard, useElementSize, useWindowEvent } from '@mantine/hooks'
 import { IconCheck, IconExternalLink, IconRefresh } from '@tabler/icons-react'
 
 import type { PreviewWidth } from './hooks/useEditorLayout'
 import { PreviewFrame, type PreviewMarks } from './PreviewFrame'
+import type { InexactMark } from './preview-marks'
+import {
+  HighlightToggle,
+  LayoutToggle,
+  MaximizeToggle,
+  UnmappedMarksChip,
+} from './PreviewToolbarTools'
+import type { PaneArrangement } from './shell/PaneLayout'
 import { displayPreviewPath, type PreviewMount } from './preview-path'
 import {
   computePreviewViewport,
@@ -34,6 +42,14 @@ const WIDTH_OPTIONS: { value: PreviewWidth; label: string; detail: string }[] = 
 
 const isPreviewWidth = (value: string | null): value is PreviewWidth =>
   WIDTH_OPTIONS.some((option) => option.value === value)
+
+const TEXT_INPUT_TYPES = new Set(['text', 'search', 'email', 'url', 'tel', 'password', 'number'])
+
+const hasTextToClear = (element: HTMLElement): boolean =>
+  ((element instanceof HTMLInputElement && TEXT_INPUT_TYPES.has(element.type)) ||
+    element instanceof HTMLTextAreaElement) &&
+  !element.readOnly &&
+  element.value !== ''
 
 const RELOAD_LABEL = 'Reload preview'
 const OPEN_SAVED_LABEL = 'Open saved version in a new tab'
@@ -54,6 +70,22 @@ export interface PreviewPaneProps {
   onPreviewWidthChange: (width: PreviewWidth) => void
   /** Shown between the toolbar and the preview, such as a preview error. */
   notice?: ReactNode
+  /** With `onHighlightToggle`, the toolbar shows the highlight toggle. */
+  onHighlightToggle?: () => void
+  /** The page marked nothing while highlighting; see `usePreviewMarks`. */
+  marksNothing?: boolean
+  /** Marks naming no field of the entry, counted in the toolbar only with `showMarkDiagnostics`. */
+  inexactMarks?: readonly InexactMark[]
+  /** Admins only: diagnostics of the site's markup are no editor's to act on. */
+  showMarkDiagnostics?: boolean
+  /** With `onLayoutChange`, the toolbar shows the layout toggle. */
+  layout?: PaneArrangement
+  onLayoutChange?: (layout: PaneArrangement) => void
+  /** With `onMaximizedChange`, the toolbar offers Maximize, and Esc restores. */
+  maximized?: boolean
+  onMaximizedChange?: (maximized: boolean) => void
+  /** A drag of the preview/form divider is under way: the preview shows its size over itself. */
+  resizing?: boolean
 }
 
 /**
@@ -68,9 +100,55 @@ export const PreviewPane = ({
   previewWidth,
   onPreviewWidthChange,
   notice,
+  onHighlightToggle,
+  marksNothing,
+  inexactMarks = [],
+  showMarkDiagnostics = false,
+  layout,
+  onLayoutChange,
+  maximized = false,
+  onMaximizedChange,
+  resizing = false,
   ...frameProps
 }: PreviewPaneProps) => {
   const { ref: viewportRef, width, height } = useElementSize()
+  const rootRef = useRef<HTMLDivElement>(null)
+  const maximizeRef = useRef<HTMLButtonElement>(null)
+  const restoreRef = useRef<HTMLButtonElement>(null)
+  // Maximize and Restore swap places, so focus follows to the other. Restoring by other means,
+  // such as a preview click that focuses a form field, leaves focus where that put it.
+  const wasMaximized = useRef(maximized)
+  useLayoutEffect(() => {
+    if (maximized && !wasMaximized.current) restoreRef.current?.focus()
+    if (!maximized && wasMaximized.current && document.activeElement === document.body) {
+      maximizeRef.current?.focus()
+    }
+    wasMaximized.current = maximized
+  }, [maximized])
+  // Escape from the editor's shell, or with focus nowhere, restores: a drawer or modal outside it
+  // closes on its own Escape, an open popup marks its owner, and a text field with text keeps it.
+  // Captured, because an open tooltip's dismiss stops the key on the document. A key inside the
+  // preview frame never reaches this window.
+  useWindowEvent(
+    'keydown',
+    (event) => {
+      if (!maximized || event.key !== 'Escape' || event.defaultPrevented) return
+      const target = event.target
+      if (!(target instanceof HTMLElement)) return
+      const inEditor = rootRef.current?.closest('[data-canopy-shell]')?.contains(target)
+      if (target !== document.body && !(inEditor ?? rootRef.current?.contains(target))) return
+      if (target.isContentEditable || hasTextToClear(target)) return
+      if (
+        target.closest(
+          '[data-mantine-stop-propagation="true"], [aria-haspopup][aria-expanded="true"]',
+        )
+      )
+        return
+      event.preventDefault()
+      onMaximizedChange?.(false)
+    },
+    { capture: true },
+  )
   const clipboard = useClipboard({ timeout: 2000 })
   const reloadButtonRef = useRef<HTMLButtonElement>(null)
   // A dismissed notice takes its focused Close button with it; the toolbar takes the focus back.
@@ -115,6 +193,7 @@ export const PreviewPane = ({
 
   return (
     <Box
+      ref={rootRef}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -132,7 +211,8 @@ export const PreviewPane = ({
         style={{
           // Wraps to a second row, rather than clipping, in a pane too narrow for one.
           minHeight: 32,
-          rowGap: 0,
+          rowGap: 2,
+          paddingBlock: 2,
           flex: '0 0 auto',
           borderBottom: '1px solid var(--mantine-color-default-border)',
           background: 'var(--mantine-color-body)',
@@ -193,8 +273,31 @@ export const PreviewPane = ({
             {formatPreviewWidthReadout(viewport)}
           </Text>
         )}
-        {/* One unit, so a wrapping toolbar never parts the two. */}
+        {(onHighlightToggle || (showMarkDiagnostics && inexactMarks.length > 0)) && (
+          <Group gap={6} wrap="nowrap">
+            {onHighlightToggle && (
+              <HighlightToggle
+                enabled={Boolean(frameProps.highlightEnabled)}
+                onToggle={onHighlightToggle}
+                marksNothing={marksNothing}
+              />
+            )}
+            {showMarkDiagnostics && <UnmappedMarksChip marks={inexactMarks} />}
+          </Group>
+        )}
+        {layout && onLayoutChange && (
+          <LayoutToggle layout={layout} onChange={onLayoutChange} blocked={maximized} />
+        )}
+        {/* One unit, so a wrapping toolbar never parts them. */}
         <Group gap={6} wrap="nowrap">
+          {onMaximizedChange && (
+            <MaximizeToggle
+              maximized={maximized}
+              onChange={onMaximizedChange}
+              maximizeRef={maximizeRef}
+              restoreRef={restoreRef}
+            />
+          )}
           <Tooltip label={RELOAD_LABEL}>
             <ActionIcon
               ref={reloadButtonRef}
@@ -240,6 +343,31 @@ export const PreviewPane = ({
             background: previewWidth === 'fit' ? undefined : 'var(--canopy-surface-muted)',
           }}
         />
+        {resizing && width > 0 && (
+          <Box
+            aria-hidden
+            data-testid="preview-resize-readout"
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              padding: '6px 12px',
+              borderRadius: 6,
+              background: 'var(--mantine-color-body)',
+              color: 'var(--mantine-color-text)',
+              boxShadow: 'var(--mantine-shadow-md)',
+              fontSize: 'var(--mantine-font-size-lg)',
+              fontWeight: 600,
+              fontVariantNumeric: 'tabular-nums',
+              pointerEvents: 'none',
+            }}
+          >
+            {layout === 'stacked'
+              ? `${Math.round(width)} × ${Math.round(height)} px`
+              : `${Math.round(width)} px`}
+          </Box>
+        )}
       </Box>
     </Box>
   )

@@ -5,7 +5,9 @@ import { Alert } from '@mantine/core'
 
 import type { PreviewWidth } from './hooks/useEditorLayout'
 import { CANOPY_PREVIEW_MESSAGE, CANOPY_PREVIEW_READY } from './preview-bridge'
+import type { InexactMark } from './preview-marks'
 import { PreviewPane } from './PreviewPane'
+import type { PaneArrangement } from './shell/PaneLayout'
 
 const meta: Meta<typeof PreviewPane> = {
   title: 'Editor/PreviewPane',
@@ -52,6 +54,13 @@ const Pane = ({
   path = '/posts/hello?branch=feature-a',
   notice,
   onPreviewError,
+  tools = false,
+  initialHighlight = false,
+  marksNothing,
+  inexactMarks,
+  showMarkDiagnostics,
+  initialMaximized = false,
+  resizing,
 }: {
   initialWidth: PreviewWidth
   script?: string
@@ -59,10 +68,35 @@ const Pane = ({
   path?: string
   notice?: ReactNode
   onPreviewError?: (error: { message: string } | null) => void
+  /** Shows the highlight, layout and maximize controls the editor passes. */
+  tools?: boolean
+  initialHighlight?: boolean
+  marksNothing?: boolean
+  inexactMarks?: readonly InexactMark[]
+  showMarkDiagnostics?: boolean
+  initialMaximized?: boolean
+  resizing?: boolean
 }) => {
   // A blob: URL carries this page's origin, so the frame treats it as a same-origin preview.
   const [src] = useState(() => URL.createObjectURL(new Blob([page(script)], { type: 'text/html' })))
   const [previewWidth, setPreviewWidth] = useState(initialWidth)
+  const [highlight, setHighlight] = useState(initialHighlight)
+  const [layout, setLayout] = useState<PaneArrangement>('side')
+  const [maximized, setMaximized] = useState(initialMaximized)
+  const toolProps = tools
+    ? {
+        highlightEnabled: highlight,
+        onHighlightToggle: () => setHighlight((on) => !on),
+        marksNothing,
+        inexactMarks,
+        showMarkDiagnostics,
+        layout,
+        onLayoutChange: setLayout,
+        maximized,
+        onMaximizedChange: setMaximized,
+        resizing,
+      }
+    : {}
   return (
     <div style={{ width: paneWidth, height: '100vh' }}>
       <PreviewPane
@@ -73,6 +107,7 @@ const Pane = ({
         data={{ title: 'Draft title from the form' }}
         previewWidth={previewWidth}
         onPreviewWidthChange={setPreviewWidth}
+        {...toolProps}
       />
     </div>
   )
@@ -134,3 +169,50 @@ const PaneWithNotice = () => {
 }
 
 export const WithNotice: Story = { render: () => <PaneWithNotice /> }
+
+const unmapped: InexactMark[] = [
+  { path: 'hero.subtitle', nearest: 'hero' },
+  { path: 'cta.label' },
+  { path: 'blocks[2].body', nearest: 'blocks[2]' },
+  { path: 'footer' },
+]
+
+/** The editor's controls: highlight, layout and maximize, as an editor sees them. */
+export const WithTools: Story = { render: () => <Pane initialWidth="fit" tools /> }
+
+/** An admin with highlights on sees how many marks name no field; the chip explains them. */
+export const UnmappedMarksAdmin: Story = {
+  render: () => (
+    <Pane initialWidth="fit" tools initialHighlight inexactMarks={unmapped} showMarkDiagnostics />
+  ),
+}
+
+/** The same page for an editor: no diagnostics. */
+export const UnmappedMarksEditor: Story = {
+  render: () => <Pane initialWidth="fit" tools initialHighlight inexactMarks={unmapped} />,
+}
+
+/** Highlights on, and the page marks nothing: the toolbar says so. */
+export const NothingToHighlight: Story = {
+  render: () => <Pane initialWidth="fit" tools initialHighlight marksNothing />,
+}
+
+/** Maximized: a labelled Restore, the layout toggle blocked with its reason; Esc restores. */
+export const Maximized: Story = { render: () => <Pane initialWidth="fit" tools initialMaximized /> }
+
+/** The readout a divider drag shows over the preview. */
+export const Resizing: Story = { render: () => <Pane initialWidth="fit" tools resizing /> }
+
+/** Every control in a 360 px pane: the toolbar wraps in units. */
+export const WithToolsNarrowPane: Story = {
+  render: () => (
+    <Pane
+      initialWidth="fit"
+      paneWidth={360}
+      tools
+      initialHighlight
+      inexactMarks={unmapped}
+      showMarkDiagnostics
+    />
+  ),
+}

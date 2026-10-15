@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { useState } from 'react'
-import { Box, Center, Stack, Text } from '@mantine/core'
+import { Center, Stack, Text } from '@mantine/core'
 
 import { EditorShell, type EditorShellProps } from './EditorShell'
 import { PaneLayout, type PaneArrangement } from './PaneLayout'
@@ -8,7 +8,6 @@ import { SidePanelHost, type SidePanelHostProps } from './SidePanelHost'
 import { BranchLockBanner } from '../components/BranchLockBanner'
 import { EditorHeader, type EditorHeaderProps } from '../components/EditorHeader'
 import { EditorRail } from '../components/EditorRail'
-import { EditorSidebar } from '../components/EditorSidebar'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 
 const noop = () => {}
@@ -120,22 +119,12 @@ const EditorChrome = ({
       }
       panel={mode === 'docked' ? panel : undefined}
       main={
-        <Box display="flex" h="100%">
-          <Box style={{ flex: 1, minWidth: 0 }}>
-            <PaneLayout
-              arrangement={arrangement}
-              preview={<Placeholder name="Preview" />}
-              form={<Placeholder name="Form" />}
-              formOverlay={mode === 'overlay' ? panel : undefined}
-            />
-          </Box>
-          <EditorSidebar
-            layout={arrangement}
-            highlightEnabled={false}
-            onLayoutChange={noop}
-            onHighlightToggle={noop}
-          />
-        </Box>
+        <PaneLayout
+          arrangement={arrangement}
+          preview={<Placeholder name="Preview" />}
+          form={<Placeholder name="Form" />}
+          formOverlay={mode === 'overlay' ? panel : undefined}
+        />
       }
     />
   )

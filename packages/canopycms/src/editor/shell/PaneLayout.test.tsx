@@ -136,4 +136,58 @@ describe('PaneLayout', () => {
     expect(separator().getAttribute('aria-valuemin')).toBe(String(SPLIT_PERCENT_MIN))
     expect(separator().getAttribute('aria-valuemax')).toBe(String(SPLIT_PERCENT_MAX))
   })
+
+  it('reports a held separator once it moves the split, and once as it is let go', async () => {
+    const onSeparatorDrag = vi.fn()
+    renderPanes({ onSeparatorDrag })
+    const grab = () => act(() => separator().setAttribute('data-separator', 'active'))
+    const letGo = () => act(() => separator().setAttribute('data-separator', 'hover'))
+    const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+
+    // A press alone, as a click that only focuses the separator is, reports nothing.
+    grab()
+    await settle()
+    letGo()
+    await settle()
+    expect(onSeparatorDrag).not.toHaveBeenCalled()
+
+    grab()
+    await settle()
+    act(() => fireEvent.keyDown(separator(), { key: 'ArrowRight' }))
+    act(() => fireEvent.keyDown(separator(), { key: 'ArrowRight' }))
+    expect(onSeparatorDrag.mock.calls).toEqual([[true]])
+    letGo()
+    await waitFor(() => expect(onSeparatorDrag.mock.calls).toEqual([[true], [false]]))
+  })
+
+  it('takes no resize while the preview is maximized', () => {
+    const onSplitPercentChange = vi.fn()
+    renderPanes({ previewMaximized: true, onSplitPercentChange })
+    act(() => fireEvent.keyDown(separator(), { key: 'ArrowRight' }))
+    expect(onSplitPercentChange).not.toHaveBeenCalled()
+  })
+
+  it('lays a maximized preview over the form, which goes inert, without remounting it', () => {
+    const { rerenderPanes } = renderPanes({ formOverlay: <button type="button">Panel</button> })
+    const frame = screen.getByTitle('Preview')
+    const formPanel = screen.getByTestId('form-pane').parentElement as HTMLElement
+    expect(formPanel.hasAttribute('inert')).toBe(false)
+
+    rerenderPanes({ formOverlay: <button type="button">Panel</button>, previewMaximized: true })
+    const preview = screen.getByTestId('preview-pane')
+    expect(preview.style.position).toBe('absolute')
+    expect(preview.style.inset).toBe('0')
+    expect(screen.getByTitle('Preview')).toBe(frame)
+    // The form and the overlay over it both sit under the preview, out of the Tab order.
+    expect(formPanel.hasAttribute('inert')).toBe(true)
+    expect(formPanel.contains(screen.getByRole('button', { name: 'Panel', hidden: true }))).toBe(
+      true,
+    )
+    expect(separator().hasAttribute('inert')).toBe(true)
+
+    rerenderPanes({ formOverlay: <button type="button">Panel</button> })
+    expect(screen.getByTestId('preview-pane').style.position).toBe('')
+    expect(formPanel.hasAttribute('inert')).toBe(false)
+    expect(separator().hasAttribute('inert')).toBe(false)
+  })
 })
