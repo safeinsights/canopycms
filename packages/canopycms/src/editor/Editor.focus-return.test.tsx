@@ -333,7 +333,7 @@ describe('Rename… and Delete entry (file menu)', () => {
     await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
   })
 
-  it('deletes the open entry once confirmed and, with no entry left to open, focuses "All content"', async () => {
+  it('deletes the open entry once confirmed, leaving none open, and focuses "All content"', async () => {
     stubApi()
     renderEditor()
     await loaded()

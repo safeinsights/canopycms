@@ -628,6 +628,24 @@ describe('maximized preview', () => {
   })
 })
 
+describe('entry menu', () => {
+  it('leaves no entry open once the open one is deleted, focus on "All content"', async () => {
+    await setup(true)
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('entry-menu-delete'))
+    fireEvent.click(await screen.findByTestId('confirm-delete-submit'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('file-dropdown-button').textContent).toBe('No entry open'),
+    )
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getAllByTestId('breadcrumb-segment')[0]),
+    )
+    expect(document.title).toBe('Test Editor')
+  })
+})
+
 describe('saving', () => {
   it('says "Saving…" on the entry being saved only', async () => {
     await setup(true)
@@ -682,7 +700,7 @@ describe('saving', () => {
     const item = await screen.findByTestId('save-all-menu-item')
     expect(item.textContent).toContain('Save all (1)')
     expect(item.getAttribute('aria-disabled')).toBe('true')
-    expect(item.textContent).toContain('Use "Refresh branch" to try again.')
+    expect(item.textContent).toContain('Choose "Refresh branch" in the branch menu to try again.')
     expect(consoleSpy).toHaveErrored(/500/)
   })
 })

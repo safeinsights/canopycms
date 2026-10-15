@@ -3,7 +3,13 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Box, Button, Loader, Menu, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useReducedMotion } from '@mantine/hooks'
-import { IconAlertTriangle, IconCheck, IconChevronDown, IconCircleDot } from '@tabler/icons-react'
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconChevronDown,
+  IconCircleDot,
+  IconLoader2,
+} from '@tabler/icons-react'
 import { EDITOR_ACTIONS } from '../copy'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
@@ -39,6 +45,17 @@ const SAVED_SHOWN_MS = 2000
 
 type SaveLabel = 'save' | 'saving' | 'saved'
 
+// Below `sm` the status words are visually hidden, so Save keeps its own width beside an icon.
+const LABEL_TEXT_CLASS = 'canopy-save-label-text'
+const LABEL_STYLES = `
+@media (max-width: 47.99em) {
+  .${LABEL_TEXT_CLASS} {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+}
+`
+
 /**
  * Every label in one grid cell, only `shown` visible, so the button keeps the widest one's width
  * and the top bar never shifts.
@@ -48,23 +65,26 @@ function SaveLabels({ shown, spinner }: { shown: SaveLabel; spinner: boolean }) 
     save: EDITOR_ACTIONS.save,
     saving: (
       <>
-        {spinner && (
-          <Box component="span" display="inline-flex" w={14}>
-            {shown === 'saving' && <Loader size={14} color="currentColor" />}
-          </Box>
-        )}
-        Saving…
+        <Box component="span" display="inline-flex" w={14}>
+          {shown === 'saving' &&
+            (spinner ? (
+              <Loader size={14} color="currentColor" />
+            ) : (
+              <IconLoader2 size={14} aria-hidden="true" />
+            ))}
+        </Box>
+        <span className={LABEL_TEXT_CLASS}>Saving…</span>
       </>
     ),
     saved: (
       <>
         <IconCheck size={14} aria-hidden="true" />
-        Saved
+        <span className={LABEL_TEXT_CLASS}>Saved</span>
       </>
     ),
   }
   return (
-    <Box component="span" style={{ display: 'inline-grid' }}>
+    <Box component="span" pos="relative" style={{ display: 'inline-grid' }}>
       {(Object.keys(labels) as SaveLabel[]).map((key) => (
         <Box
           key={key}
@@ -120,6 +140,8 @@ export function SaveSplitButton({
     const timer = setTimeout(() => setFlashing(undefined), SAVED_SHOWN_MS)
     return () => clearTimeout(timer)
   }, [flashing])
+  // Blocked, Save stays focusable (`aria-disabled`, not `disabled`), so its reason opens on focus.
+  const saveBlocked = !!saveBlockedReason || busy || !!saveAllProgress
   const label: SaveLabel = saving
     ? 'saving'
     : flashing !== undefined &&
@@ -129,8 +151,7 @@ export function SaveSplitButton({
         !saveAllProgress
       ? 'saved'
       : 'save'
-  // Blocked, Save stays focusable (`aria-disabled`, not `disabled`), so its reason opens on focus.
-  const saveBlocked = !!saveBlockedReason || busy || !!saveAllProgress
+  const saveGreyed = saveBlocked && !saveAllProgress && label === 'save'
   const indicatorText = draftStorageFailed
     ? 'Unsaved · not kept on this device'
     : 'Unsaved · kept on this device'
@@ -170,10 +191,12 @@ export function SaveSplitButton({
             ? 'Saved'
             : ''}
       </VisuallyHidden>
+      <style>{LABEL_STYLES}</style>
       <Button.Group style={{ flexShrink: 0 }}>
         <Tooltip
           label={saveBlockedReason}
-          disabled={!saveBlockedReason || busy}
+          // Not beside "Saving…" or "Saved", which already say what happened.
+          disabled={!saveBlockedReason || busy || label !== 'save'}
           multiline
           maw={280}
         >
@@ -190,7 +213,7 @@ export function SaveSplitButton({
               if (!saveBlocked) onSave()
             }}
             // A progress or "Saved" label stays readable: disabled styling takes it under 4.5:1.
-            data-disabled={saveBlocked && !saveAllProgress && label === 'save' ? true : undefined}
+            data-disabled={saveGreyed ? true : undefined}
             aria-disabled={saveBlocked ? true : undefined}
           >
             {saveAllProgress ? (
@@ -205,7 +228,8 @@ export function SaveSplitButton({
             <Menu.Target>
               <Button
                 ref={caret}
-                variant="filled"
+                // Light beside a greyed Save, so a blocked split button shows no filled half.
+                variant={saveGreyed ? 'light' : 'filled'}
                 size="sm"
                 px={8}
                 aria-label="Save options"

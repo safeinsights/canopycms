@@ -320,7 +320,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const [deleteEntryModalOpen, setDeleteEntryModalOpen] = useState(false)
   const [deletingEntryPath, setDeletingEntryPath] = useState<LogicalPath | null>(null)
   // Named at open: a delete that lands takes the entry out of the list while the dialog fades.
-  const [deletingEntryLabel, setDeletingEntryLabel] = useState('')
+  const [deletingEntryLabel, setDeletingEntryLabel] = useState<string>()
   // Set once the server refuses a delete because other entries reference the entry.
   const [deletingEntryReferencedBy, setDeletingEntryReferencedBy] =
     useState<EntryReferencedBy | null>(null)
@@ -423,6 +423,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const {
     selectedPath,
     setSelectedPath,
+    closeEntry,
     entries: entriesState,
     collections: collectionsFromApi,
     currentEntry,
@@ -1233,7 +1234,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const handleDeleteEntry = (entryPath: LogicalPath, fromMenu = false) => {
     setEntryChangeFromMenu(fromMenu)
     setDeletingEntryPath(entryPath)
-    setDeletingEntryLabel(entriesState.find((e) => e.path === entryPath)?.label ?? 'this entry')
+    setDeletingEntryLabel(entriesState.find((e) => e.path === entryPath)?.label)
     setDeletingEntryReferencedBy(null)
     setDeleteEntryModalOpen(true)
   }
@@ -1253,9 +1254,7 @@ const EditorContent: React.FC<EditorProps> = ({
         setDeletingEntryReferencedBy(result.referencedBy)
         return
       }
-      if (result.ok && selectedPath === deletingEntryPath) {
-        setSelectedPath('')
-      }
+      if (result.ok && selectedPath === deletingEntryPath) closeEntry()
       closeDeleteEntryModal()
     } finally {
       setDeleteInProgress(false)
@@ -2364,7 +2363,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 message={
                   deletingEntryReferencedBy
                     ? referencedDeleteMessage(deletingEntryReferencedBy)
-                    : `Delete "${deletingEntryLabel}"? This cannot be undone.`
+                    : `Delete ${deletingEntryLabel ? `"${deletingEntryLabel}"` : 'this entry'}? This cannot be undone.`
                 }
                 confirmLabel={deletingEntryReferencedBy ? 'Delete anyway' : 'Delete entry'}
                 onConfirm={confirmDeleteEntry}

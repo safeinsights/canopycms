@@ -360,11 +360,19 @@ describe('EditorHeader - breadcrumb', () => {
     expect(run).toHaveBeenCalledTimes(1)
   })
 
+  it('hides Rename… and Delete entry for an entry a path rule refuses, as the tree does', async () => {
+    renderHeader({ entryReadOnly: true, hasUnsavedChanges: false })
+    await userEvent.click(screen.getByTestId('file-dropdown-button'))
+    await screen.findByTestId('refresh-entry-menu-item')
+    expect(screen.queryByTestId('entry-menu-rename')).toBeNull()
+    expect(screen.queryByTestId('entry-menu-delete')).toBeNull()
+  })
+
   it.each([
     [
-      'an entry a path rule refuses',
-      { entryReadOnly: true },
-      "You don't have edit access to this entry.",
+      'a branch in review',
+      { branchStatus: 'submitted' as const, branchWriteBlocked: true },
+      'This branch is in review. Withdraw it to make changes.',
     ],
     [
       'an entry of an unknown type',
@@ -759,7 +767,7 @@ describe('EditorHeader - Save all', () => {
     renderHeader({ modifiedCount: 2, entryListFailed: true, onSaveAll })
     const item = await openSaveOptions()
     expect(item.getAttribute('aria-disabled')).toBe('true')
-    expect(item.textContent).toContain('Use "Refresh branch" to try again.')
+    expect(item.textContent).toContain('Choose "Refresh branch" in the branch menu to try again.')
     await userEvent.click(item)
     expect(onSaveAll).not.toHaveBeenCalled()
   })
@@ -843,6 +851,24 @@ describe('EditorHeader - Save says how it went', () => {
     expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
   })
 
+  it('says nothing more in a Tooltip while it reads "Saved"', async () => {
+    const rerender = renderSave({ hasUnsavedChanges: false, savedSignal: 0 })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
+    act(() => saveButton().focus())
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(screen.queryByText('No changes to save.')).toBeNull()
+  })
+
+  it('hides the status words, not the icon, on a phone, so Save keeps its width there', () => {
+    renderHeader()
+    const words = [...saveButton().querySelectorAll('.canopy-save-label-text')]
+    expect(words.map((word) => word.textContent)).toEqual(['Saving…', 'Saved'])
+    const rule = [...document.querySelectorAll('style')].find((style) =>
+      style.textContent?.includes('.canopy-save-label-text'),
+    )
+    expect(rule?.textContent).toMatch(/max-width: 47\.99em[^}]*clip/)
+  })
+
   it('keeps one width whichever label shows', () => {
     renderHeader()
     const labels = saveButton().querySelectorAll('[style*="grid-area"]')
@@ -856,6 +882,12 @@ describe('EditorHeader - Save says how it went', () => {
 describe('EditorHeader - emphasis', () => {
   afterEach(() => {
     cleanup()
+  })
+
+  it('lightens the caret beside a greyed Save, so no half of a blocked split button is filled', () => {
+    renderHeader({ hasUnsavedChanges: false })
+    expect(screen.getByTestId('save-button').hasAttribute('data-disabled')).toBe(true)
+    expect(screen.getByTestId('save-options-button').getAttribute('data-variant')).toBe('light')
   })
 
   it('fills Save and its caret as the one primary, and leaves Submit and Withdraw secondary', () => {

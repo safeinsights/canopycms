@@ -23,8 +23,9 @@ export interface EntryBreadcrumbProps {
   onCollection: (collectionPath: string) => void
   onRefresh: () => void
   onDiscard: () => void
-  onRename: () => void
-  onDelete: () => void
+  /** With `onDelete`, offers "Rename…" and "Delete entry"; absent where they can never apply. */
+  onRename?: () => void
+  onDelete?: () => void
   refreshBlockedReason?: string
   discardBlockedReason?: string
   /** Why the entry can't be renamed or deleted now. */
@@ -244,21 +245,25 @@ export function EntryBreadcrumb({
                   >
                     Discard changes
                   </ReasonedMenuItem>
-                  <Menu.Divider />
-                  <ReasonedMenuItem
-                    onClick={onRename}
-                    blockedReason={changeBlockedReason}
-                    data-testid="entry-menu-rename"
-                  >
-                    Rename…
-                  </ReasonedMenuItem>
-                  <DestructiveMenuItem
-                    onClick={onDelete}
-                    blockedReason={changeBlockedReason}
-                    data-testid="entry-menu-delete"
-                  >
-                    Delete entry
-                  </DestructiveMenuItem>
+                  {onRename && onDelete && (
+                    <>
+                      <Menu.Divider />
+                      <ReasonedMenuItem
+                        onClick={onRename}
+                        blockedReason={changeBlockedReason}
+                        data-testid="entry-menu-rename"
+                      >
+                        Rename…
+                      </ReasonedMenuItem>
+                      <DestructiveMenuItem
+                        onClick={onDelete}
+                        blockedReason={changeBlockedReason}
+                        data-testid="entry-menu-delete"
+                      >
+                        Delete entry
+                      </DestructiveMenuItem>
+                    </>
+                  )}
                 </Menu.Dropdown>
               </Menu>
             )}

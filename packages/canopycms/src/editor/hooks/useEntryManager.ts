@@ -67,6 +67,8 @@ export interface UseEntryManagerOptions {
 export interface UseEntryManagerReturn {
   selectedPath: string
   setSelectedPath: (path: string) => void
+  /** Leaves no entry open, as after deleting the open one, instead of opening the first. */
+  closeEntry: () => void
   entries: EditorEntry[]
   setEntries: (entries: EditorEntry[]) => void
   collections: EditorCollection[]
@@ -218,10 +220,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   selectedPathRef.current = selectedPath
   // Counts selections through the returned setter, not this hook's own fallbacks.
   const selectionsByCallerRef = useRef(0)
-  const selectEntryPath = useCallback((path: string) => {
-    selectionsByCallerRef.current += 1
-    setSelectedPath(path)
-  }, [])
   const [navigatorOpen, setNavigatorOpen] = useState(() => readUrlEntry() === '')
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
@@ -305,6 +303,15 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   }
   // Honoured until any entry is selected; after that a lost selection opens the first again.
   const noEntryRequested = useRef(initialUrlEntry.current === '')
+  const selectEntryPath = useCallback((path: string) => {
+    selectionsByCallerRef.current += 1
+    setSelectedPath(path)
+  }, [])
+  // No entry open, as the URL's empty `entry` asks, where a lost selection opens the first.
+  const closeEntry = useCallback(() => {
+    noEntryRequested.current = true
+    selectEntryPath('')
+  }, [selectEntryPath])
 
   const collectionByPath = useMemo(() => {
     const map = new Map<LogicalPath, EditorCollection>()
@@ -890,6 +897,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   return {
     selectedPath,
     setSelectedPath: selectEntryPath,
+    closeEntry,
     entries: entriesState,
     setEntries,
     collections: collectionsState,

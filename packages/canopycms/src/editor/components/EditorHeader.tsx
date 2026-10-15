@@ -209,13 +209,13 @@ export function EditorHeader({
           onCollection={onCollectionOpen}
           onRefresh={onFileReload}
           onDiscard={onFileDiscardDraft}
-          onRename={onEntryRename}
-          onDelete={onEntryDelete}
+          // A path rule's refusal hides them, as the content tree hides that entry's "…" menu.
+          onRename={entryReadOnly ? undefined : onEntryRename}
+          onDelete={entryReadOnly ? undefined : onEntryDelete}
           refreshBlockedReason={branchName ? undefined : 'Open a branch first.'}
           discardBlockedReason={entryHasDraft ? undefined : 'This entry has no unsaved changes.'}
           changeBlockedReason={
             branchLockReason ??
-            entryLockReason ??
             (entryUnavailable
               ? "This entry's content type isn't known to this editor version yet. Reload in a few minutes."
               : undefined)
@@ -261,7 +261,7 @@ export function EditorHeader({
               (!branchName
                 ? 'Open a branch first.'
                 : entryListFailed && modifiedCount > 0
-                  ? 'The list of entries couldn\'t be loaded, so these changes can\'t be saved yet. Use "Refresh branch" to try again.'
+                  ? 'The list of entries couldn\'t be loaded, so these changes can\'t be saved yet. Choose "Refresh branch" in the branch menu to try again.'
                   : undefined)
             }
             saveAllProgress={saveAllProgress}
