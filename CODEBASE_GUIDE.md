@@ -549,7 +549,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm; adopts server-sanitized names
 - `create-branch-request.ts` — `requestBranchCreate`: a 90 s create deadline, settled by the branch list
 - `useEntryManager.ts` — entry loading/saving, `readEntryValue`, `adoptEntryVersion`, `listAllEntries` cursors
-- `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; verifies restored drafts; `applySubmitStamps`; `handleSaveAll` (outcomes in `save-all.ts`)
+- `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; `singleSaving`/`lastSaved`; verifies restored drafts; `applySubmitStamps`; `handleSaveAll` (outcomes in `save-all.ts`)
 - `useSchemaManager.ts` — schema mutations, returning result objects
 - `useCommentSystem.ts` — comment CRUD
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
@@ -587,7 +587,7 @@ Field components, in `editor/fields/`:
 
 Components, in `editor/components/`:
 
-- `EditorHeader.tsx` — the top bar's contents: `EntryBreadcrumb`, `BranchPill`, Submit/Withdraw, `SaveSplitButton`; `SaveAllResult` is Save all's toast
+- `EditorHeader.tsx` — the top bar: `EntryBreadcrumb` and its entry menu, `BranchPill`, Submit/Withdraw, `SaveSplitButton` (Saving…/Saved); `SaveAllResult` is Save all's toast
 - `BranchLockBanner.tsx` — the read-only banners and `branchLockState`
 - `EditorRail.tsx` — the rail's buttons and Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs

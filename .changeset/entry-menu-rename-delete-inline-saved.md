@@ -15,7 +15,7 @@ row: Entry menu renames and deletes; Save shows Saved, no toast
 entry the user may not edit, both stay in the menu, blocked, with the reason. A Save reads
 "Saving…" on the button, then "Saved" for two seconds, announced to screen readers, instead of a
 green "Saved" toast; failures still show their toast or alert, and Save all its result. Save is
-the top bar's one filled button; "Submit for review" and "Withdraw from review" are outlined. The
+the top bar's one filled button; "Submit for review" and "Withdraw from review" are tinted. The
 delete dialog names the entry it deletes, and renaming the open entry, from either menu, keeps it
 open under its new name instead of opening the first entry.
 

@@ -364,8 +364,9 @@ function WorkflowButton({
     >
       <Button
         size="sm"
-        // Save is the top bar's one filled primary.
-        variant="default"
+        // Save is the top bar's one filled primary; the rest take their colour's light variant.
+        variant="light"
+        color={isWithdrawable ? 'orange' : undefined}
         style={{ flexShrink: 0 }}
         onClick={() => {
           if (actionBlocked) return

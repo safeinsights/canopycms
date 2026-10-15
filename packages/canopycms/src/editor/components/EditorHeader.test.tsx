@@ -854,7 +854,7 @@ describe('EditorHeader - emphasis', () => {
     renderHeader({ userContext: { userId: 'u1' }, branchCreatedBy: 'u1' })
     expect(screen.getByTestId('save-button').getAttribute('data-variant')).toBe('filled')
     expect(screen.getByTestId('save-options-button').getAttribute('data-variant')).toBe('filled')
-    expect(screen.getByTestId('submit-button').getAttribute('data-variant')).toBe('default')
+    expect(screen.getByTestId('submit-button').getAttribute('data-variant')).toBe('light')
     cleanup()
     renderHeader({
       branchStatus: 'submitted',
@@ -862,7 +862,7 @@ describe('EditorHeader - emphasis', () => {
       userContext: { userId: 'u1' },
       branchCreatedBy: 'u1',
     })
-    expect(screen.getByTestId('withdraw-button').getAttribute('data-variant')).toBe('default')
+    expect(screen.getByTestId('withdraw-button').getAttribute('data-variant')).toBe('light')
   })
 })
 
