@@ -324,6 +324,9 @@ describe('Rename… and Delete entry (file menu)', () => {
     await userEvent.clear(input)
     await userEvent.type(input, 'hello-two{Enter}')
 
+    // Its own new slug is never a clash, even as the closing dialog sees the refreshed list.
+    await waitFor(() => expect(window.location.search).toContain('hello-two'))
+    expect(screen.queryByText(/already exists/)).toBeNull()
     await waitFor(() => expect(screen.queryByTestId('rename-entry-modal')).toBeNull())
     await waitFor(() => expect(window.location.search).toContain('hello-two'))
     expect(fileTrigger().textContent).toBe('Hello')
@@ -341,6 +344,8 @@ describe('Rename… and Delete entry (file menu)', () => {
     await userEvent.click(within(modal).getByTestId('confirm-delete-submit'))
 
     await waitFor(() => expect(fileTrigger().textContent).toBe('No entry open'))
+    // Its last render, the entry already gone from the list, still names it.
+    expect(modal.textContent).toContain('Delete "Hello"?')
     const allContent = screen.getAllByTestId('breadcrumb-segment')[0]
     await waitFor(() => expect(document.activeElement).toBe(allContent))
   })

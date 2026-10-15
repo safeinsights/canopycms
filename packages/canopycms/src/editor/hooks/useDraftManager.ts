@@ -214,8 +214,8 @@ export interface UseDraftManagerReturn {
   modifiedCount: number
   editedFiles: Array<{ path: LogicalPath; label: string }>
   handleSave: () => Promise<void>
-  /** A Save of the open entry is in flight. */
-  singleSaving: boolean
+  /** The entry a single Save is writing, while it is in flight. */
+  singleSaving: { branch: string; contentId: string } | null
   /** The last Save that landed; its `seq` rises with each, and the Save button says "Saved". */
   lastSaved: { branch: string; contentId: string; seq: number } | null
   /**
@@ -285,6 +285,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const draftBaseVersionsRef = useRef<Record<string, number | null>>({})
   const [draftStorageFailed, setDraftStorageFailed] = useState(false)
   const [lastSaved, setLastSaved] = useState<UseDraftManagerReturn['lastSaved']>(null)
+  const [singleSaving, setSingleSaving] = useState<UseDraftManagerReturn['singleSaving']>(null)
   const [saveInFlight, setSaveInFlight] = useState(false)
   const [saveAllProgress, setSaveAllProgress] = useState<SaveAllProgress | null>(null)
   const saveAllRunningRef = useRef(false)
@@ -972,6 +973,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     options.setBusy(true)
     setSaveInFlight(true)
+    setSingleSaving({ branch, contentId: currentId })
     singleSaveRef.current = true
     try {
       const saved = await options.saveEntry(entry, effectiveValue)
@@ -1107,6 +1109,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       }
     } finally {
       singleSaveRef.current = false
+      setSingleSaving(null)
       setSaveInFlight(false)
       options.setBusy(false)
     }
@@ -1608,7 +1611,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     modifiedCount,
     editedFiles,
     handleSave,
-    singleSaving: saveInFlight && !saveAllProgress,
+    singleSaving,
     lastSaved,
     handleSaveAll,
     saveAllProgress,

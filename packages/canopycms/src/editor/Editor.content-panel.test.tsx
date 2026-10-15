@@ -629,6 +629,27 @@ describe('maximized preview', () => {
 })
 
 describe('saving', () => {
+  it('says "Saving…" on the entry being saved only', async () => {
+    await setup(true)
+    const answered = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (init?.method === 'PUT') await held
+      return answered(input, init)
+    })
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Title/ }), {
+      target: { value: 'Edited' },
+    })
+    fireEvent.click(screen.getByTestId('save-button'))
+    await screen.findByRole('button', { name: 'Saving…' })
+
+    fireEvent.click(await row('second'))
+    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+    expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull()
+    await act(async () => release())
+  })
+
   it('says "Saved" on the Save button, with no toast, for the entry it saved only', async () => {
     const show = vi.spyOn(notifications, 'show')
     onTestFinished(() => show.mockRestore())
@@ -677,6 +698,16 @@ describe('browser tab title', () => {
 
     cleanup()
     expect(document.title).toBe('Host page')
+  })
+
+  it('leaves a title set after its own alone on unmount, as a route navigated to sets', async () => {
+    document.title = 'Host page'
+    await setup(true)
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+
+    document.title = 'Next page'
+    cleanup()
+    expect(document.title).toBe('Next page')
   })
 
   it('names only the site with no entry open', async () => {

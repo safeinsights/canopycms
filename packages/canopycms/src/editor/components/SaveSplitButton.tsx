@@ -24,8 +24,10 @@ export interface SaveSplitButtonProps {
   saveAllProgress: SaveAllProgress | null
   /** A Save of the open entry is in flight. */
   saving?: boolean
-  /** Rises each time a Save of the open entry lands; undefined for another entry's. */
+  /** Rises each time a single Save lands, whichever entry it saved. */
   savedSignal?: number
+  /** The last Save that landed saved the open entry. */
+  savedHere?: boolean
   /** The open entry has unsaved changes. */
   entryDirty: boolean
   /** Writing drafts to localStorage failed, so they live only in this tab. */
@@ -98,18 +100,20 @@ export function SaveSplitButton({
   saveAllProgress,
   saving = false,
   savedSignal,
+  savedHere = false,
   entryDirty,
   draftStorageFailed,
 }: SaveSplitButtonProps) {
   const caret = useRef<HTMLButtonElement>(null)
   const menuFocus = useMenuItemFocusReturn(caret)
   const reducedMotion = useReducedMotion()
-  // Each landed Save shows "Saved" once, for its own entry; one landed before mount shows nothing.
+  // Each landed Save shows "Saved" once, as it lands and only on its own entry: one that landed
+  // before mount or while another entry was open shows nothing later.
   const [seenSignal, setSeenSignal] = useState(savedSignal ?? 0)
   const [flashing, setFlashing] = useState<number>()
   if (savedSignal !== undefined && savedSignal > seenSignal) {
     setSeenSignal(savedSignal)
-    setFlashing(savedSignal)
+    setFlashing(savedHere ? savedSignal : undefined)
   }
   useEffect(() => {
     if (flashing === undefined) return
@@ -118,7 +122,11 @@ export function SaveSplitButton({
   }, [flashing])
   const label: SaveLabel = saving
     ? 'saving'
-    : flashing !== undefined && flashing === savedSignal && !entryDirty && !saveAllProgress
+    : flashing !== undefined &&
+        flashing === savedSignal &&
+        savedHere &&
+        !entryDirty &&
+        !saveAllProgress
       ? 'saved'
       : 'save'
   // Blocked, Save stays focusable (`aria-disabled`, not `disabled`), so its reason opens on focus.

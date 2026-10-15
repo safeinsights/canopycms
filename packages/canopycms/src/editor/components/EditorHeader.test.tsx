@@ -810,7 +810,7 @@ describe('EditorHeader - Save says how it went', () => {
     expect(saveButton()).toBe(screen.getByRole('button', { name: 'Saving…' }))
     expect(saveButton().getAttribute('aria-disabled')).toBe('true')
 
-    rerender({ hasUnsavedChanges: false, savedSignal: 1 })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
     expect(saveButton()).toBe(screen.getByRole('button', { name: 'Saved' }))
     // Readable, not greyed by disabled styling, though there is nothing left to save.
     expect(saveButton().getAttribute('aria-disabled')).toBe('true')
@@ -824,14 +824,22 @@ describe('EditorHeader - Save says how it went', () => {
 
   it('goes back to "Save" as soon as the entry changes again', () => {
     const rerender = renderSave({ hasUnsavedChanges: false, savedSignal: 0 })
-    rerender({ hasUnsavedChanges: false, savedSignal: 1 })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
     expect(saveButton()).toBe(screen.getByRole('button', { name: 'Saved' }))
-    rerender({ hasUnsavedChanges: true, savedSignal: 1 })
+    rerender({ hasUnsavedChanges: true, savedSignal: 1, savedHere: true })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+  })
+
+  it('says nothing, then or later, for a save that landed while another entry was open', () => {
+    const rerender = renderSave({ hasUnsavedChanges: false, savedSignal: 0 })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: false })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
     expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
   })
 
   it('says nothing for a save that landed before it was shown', () => {
-    renderHeader({ hasUnsavedChanges: false, savedSignal: 3 })
+    renderHeader({ hasUnsavedChanges: false, savedSignal: 3, savedHere: true })
     expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
   })
 

@@ -654,12 +654,22 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const renaming = entriesState.find((e) => e.path === path)
     const contentId = renaming?.contentId
     const label = renaming?.label ?? path
-    const wasOpen = selectedPath === path
+    // As `refreshAndOpen`: the new path opens only if the user is still on the entry and branch.
+    const branch = options.branchName
+    const stillOnIt = selectedPathRef.current === path
+    const selections = selectionsByCallerRef.current
     // Selected only once the list holds the new path: before that, the selection check would
     // find it missing and open the first entry instead.
     const landed = async (newPath: string | undefined) => {
       await refreshEntries()
-      if (newPath && wasOpen) setSelectedPath(newPath)
+      if (
+        newPath &&
+        stillOnIt &&
+        selections === selectionsByCallerRef.current &&
+        branch === currentBranchRef.current
+      ) {
+        setSelectedPath(newPath)
+      }
       notifications.show({ message: 'Entry renamed', color: 'green' })
     }
     options.setBusy(true)

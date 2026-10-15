@@ -56,8 +56,10 @@ export interface EditorHeaderProps {
   saveAllProgress: SaveAllProgress | null
   /** A Save of the open entry is in flight. */
   saving?: boolean
-  /** Rises each time a Save of the open entry lands. */
+  /** Rises each time a single Save lands, whichever entry it saved. */
   savedSignal?: number
+  /** The last Save that landed saved the open entry. */
+  savedHere?: boolean
   /** The branch's entry list failed to load and none is held. */
   entryListFailed?: boolean
   onSubmit: () => void
@@ -129,6 +131,7 @@ export function EditorHeader({
   saveAllProgress,
   saving = false,
   savedSignal,
+  savedHere = false,
   entryListFailed = false,
   onSubmit,
   onWithdraw,
@@ -264,6 +267,7 @@ export function EditorHeader({
             saveAllProgress={saveAllProgress}
             saving={saving}
             savedSignal={savedSignal}
+            savedHere={savedHere}
             entryDirty={hasUnsavedChanges}
             draftStorageFailed={draftStorageFailed}
           />

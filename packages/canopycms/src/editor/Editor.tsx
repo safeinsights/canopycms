@@ -319,6 +319,8 @@ const EditorContent: React.FC<EditorProps> = ({
   const [deletingCollectionPath, setDeletingCollectionPath] = useState<LogicalPath | null>(null)
   const [deleteEntryModalOpen, setDeleteEntryModalOpen] = useState(false)
   const [deletingEntryPath, setDeletingEntryPath] = useState<LogicalPath | null>(null)
+  // Named at open: a delete that lands takes the entry out of the list while the dialog fades.
+  const [deletingEntryLabel, setDeletingEntryLabel] = useState('')
   // Set once the server refuses a delete because other entries reference the entry.
   const [deletingEntryReferencedBy, setDeletingEntryReferencedBy] =
     useState<EntryReferencedBy | null>(null)
@@ -1231,17 +1233,13 @@ const EditorContent: React.FC<EditorProps> = ({
   const handleDeleteEntry = (entryPath: LogicalPath, fromMenu = false) => {
     setEntryChangeFromMenu(fromMenu)
     setDeletingEntryPath(entryPath)
+    setDeletingEntryLabel(entriesState.find((e) => e.path === entryPath)?.label ?? 'this entry')
     setDeletingEntryReferencedBy(null)
     setDeleteEntryModalOpen(true)
   }
 
-  const deletingEntryLabel =
-    entriesState.find((e) => e.path === deletingEntryPath)?.label ?? 'this entry'
-  const closeDeleteEntryModal = () => {
-    setDeleteEntryModalOpen(false)
-    setDeletingEntryPath(null)
-    setDeletingEntryReferencedBy(null)
-  }
+  // What the dialog names stays until the next delete, so its exit shows no change of text.
+  const closeDeleteEntryModal = () => setDeleteEntryModalOpen(false)
 
   const confirmDeleteEntry = async () => {
     if (!deletingEntryPath) return
@@ -1529,7 +1527,12 @@ const EditorContent: React.FC<EditorProps> = ({
     () =>
       new Set(
         entriesState
-          .filter((e) => e.collectionPath === renamingEntry?.collectionPath && e.slug)
+          .filter(
+            (e) =>
+              e.collectionPath === renamingEntry?.collectionPath &&
+              e.contentId !== renamingEntry?.contentId &&
+              e.slug,
+          )
           .map((e) => e.slug as string),
       ),
     [entriesState, renamingEntry],
@@ -1717,14 +1720,17 @@ const EditorContent: React.FC<EditorProps> = ({
   const tabTitle = currentEntry
     ? `${currentEntry.label ?? currentEntry.slug} · ${siteTitle}`
     : siteTitle
+  // Restored only if still the editor's: a route navigated to may have set its own by then.
+  const writtenTitleRef = useRef<string | null>(null)
   useEffect(() => {
     const hostTitle = document.title
     return () => {
-      document.title = hostTitle
+      if (document.title === writtenTitleRef.current) document.title = hostTitle
     }
   }, [])
   useEffect(() => {
     document.title = tabTitle
+    writtenTitleRef.current = tabTitle
   }, [tabTitle])
 
   const openBranchManager = () => {
@@ -1914,12 +1920,14 @@ const EditorContent: React.FC<EditorProps> = ({
               onSave={currentEntryUnavailable ? noop : handleSave}
               onSaveAll={runSaveAll}
               saveAllProgress={saveAllProgress}
-              saving={singleSaving}
-              savedSignal={
+              saving={
+                singleSaving?.branch === branchNameState &&
+                singleSaving.contentId === currentEntry?.contentId
+              }
+              savedSignal={lastSaved?.seq}
+              savedHere={
                 lastSaved?.branch === branchNameState &&
                 lastSaved.contentId === currentEntry?.contentId
-                  ? lastSaved.seq
-                  : undefined
               }
               // Save all finds each draft's entry in the list, so with none listed it would save nothing.
               entryListFailed={entriesLoadFailed && entriesState.length === 0}
