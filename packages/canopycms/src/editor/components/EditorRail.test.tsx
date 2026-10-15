@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, render, screen, cleanup, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { EditorRail, type EditorRailProps } from './EditorRail'
+import { Menu } from '@mantine/core'
+import { EditorRail, SettingsMenu, type EditorRailProps } from './EditorRail'
 import { CanopyCMSProvider } from '../theme'
 import { CANOPYCMS_VERSION } from '../../version'
 
@@ -242,6 +243,18 @@ describe('EditorRail - Settings menu', () => {
     expect(about.getAttribute('href')).toBe('https://github.com/safeinsights/canopycms')
     expect(about.getAttribute('target')).toBe('_blank')
     expect(about.getAttribute('rel')).toBe('noopener noreferrer')
+  })
+})
+
+describe('SettingsMenu', () => {
+  it('offers no Settings button when it has no items', () => {
+    render(<SettingsMenu items={[]} />, { wrapper: Wrapper })
+    expect(screen.queryByTestId('settings-button')).toBeNull()
+  })
+
+  it('offers the button when it has an item', () => {
+    render(<SettingsMenu items={[<Menu.Item key="one">One</Menu.Item>]} />, { wrapper: Wrapper })
+    expect(screen.getByTestId('settings-button')).toBeDefined()
   })
 })
 

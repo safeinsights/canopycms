@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, type Ref } from 'react'
+import { useRef, useState, type ReactElement, type Ref } from 'react'
 import { ActionIcon, Menu, Stack, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useMergedRef } from '@mantine/hooks'
 import {
@@ -55,6 +55,48 @@ export interface EditorRailProps {
   onLogoutClick?: () => void
 }
 
+/**
+ * @internal Exported for tests. The Settings button and its menu of `items`; with none, no
+ * button, since a menu that opens empty offers nothing.
+ */
+export function SettingsMenu({
+  items,
+  toggleRef,
+}: {
+  items: readonly ReactElement[]
+  toggleRef?: Ref<HTMLButtonElement>
+}) {
+  const [opened, setOpened] = useState(false)
+  const toggle = useRef<HTMLButtonElement>(null)
+  const mergedRef = useMergedRef(toggle, toggleRef)
+  const menuFocus = useMenuItemFocusReturn(toggle)
+  if (items.length === 0) return null
+  return (
+    <Menu
+      shadow="md"
+      width={220}
+      position="right-end"
+      opened={opened}
+      onChange={setOpened}
+      {...menuFocus.menu}
+    >
+      <Menu.Target>
+        <RailButton
+          railId="settings"
+          label="Settings"
+          icon={<IconSettings size={20} />}
+          tooltipDisabled={opened}
+          ref={mergedRef}
+          data-testid="settings-button"
+        />
+      </Menu.Target>
+      <Menu.Dropdown data-testid="settings-menu" {...menuFocus.dropdown}>
+        {items}
+      </Menu.Dropdown>
+    </Menu>
+  )
+}
+
 const monogram = (title: string): string => Array.from(title.trim())[0]?.toUpperCase() ?? '?'
 
 /** The editor's activity rail: what `ActivityRail` lays out, wired to the editor's surfaces. */
@@ -83,10 +125,58 @@ export function EditorRail({
   onAccountClick,
   onLogoutClick,
 }: EditorRailProps) {
-  const [settingsOpened, setSettingsOpened] = useState(false)
-  const settingsToggle = useRef<HTMLButtonElement>(null)
-  const settingsMergedRef = useMergedRef(settingsToggle, settingsToggleRef)
-  const settingsMenuFocus = useMenuItemFocusReturn(settingsToggle)
+  const adminItems = [
+    onPermissionManagerOpen && (
+      <Menu.Item
+        key="permissions"
+        data-testid="settings-menu-permissions"
+        onClick={onPermissionManagerOpen}
+      >
+        Manage permissions
+      </Menu.Item>
+    ),
+    onGroupManagerOpen && (
+      <Menu.Item key="groups" data-testid="settings-menu-groups" onClick={onGroupManagerOpen}>
+        Manage groups
+      </Menu.Item>
+    ),
+    onSystemHealthOpen && (
+      <Menu.Item
+        key="system-health"
+        data-testid="settings-menu-system-health"
+        leftSection={<IconActivity size={14} />}
+        onClick={onSystemHealthOpen}
+      >
+        System health
+      </Menu.Item>
+    ),
+  ].filter((item): item is ReactElement => !!item)
+  // Every user gets the version, which bug reports need, so the menu is never empty today.
+  const settingsItems: ReactElement[] = [
+    ...(adminItems.length > 0
+      ? [
+          <Menu.Label key="admin">Settings</Menu.Label>,
+          ...adminItems,
+          <Menu.Divider key="divider" />,
+        ]
+      : []),
+    <Menu.Label key="version" data-testid="settings-menu-version">
+      {`CanopyCMS ${CANOPYCMS_VERSION}`}
+    </Menu.Label>,
+    <Menu.Item
+      key="about"
+      component="a"
+      href={ABOUT_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-testid="settings-menu-about"
+      leftSection={<IconInfoCircle size={14} />}
+      rightSection={<IconExternalLink size={14} aria-hidden />}
+    >
+      About CanopyCMS
+      <VisuallyHidden component="span"> (opens in a new tab)</VisuallyHidden>
+    </Menu.Item>,
+  ]
   const commentsLabel =
     unresolvedCommentCount > 0 ? `Comments, ${unresolvedCommentCount} unresolved` : 'Comments'
 
@@ -160,70 +250,7 @@ export function EditorRail({
           />
         </>
       }
-      bottom={
-        <Menu
-          shadow="md"
-          width={220}
-          position="right-end"
-          opened={settingsOpened}
-          onChange={setSettingsOpened}
-          {...settingsMenuFocus.menu}
-        >
-          <Menu.Target>
-            <RailButton
-              railId="settings"
-              label="Settings"
-              icon={<IconSettings size={20} />}
-              tooltipDisabled={settingsOpened}
-              ref={settingsMergedRef}
-              data-testid="settings-button"
-            />
-          </Menu.Target>
-          <Menu.Dropdown data-testid="settings-menu" {...settingsMenuFocus.dropdown}>
-            {(onPermissionManagerOpen || onGroupManagerOpen || onSystemHealthOpen) && (
-              <>
-                <Menu.Label>Settings</Menu.Label>
-                {onPermissionManagerOpen && (
-                  <Menu.Item
-                    data-testid="settings-menu-permissions"
-                    onClick={onPermissionManagerOpen}
-                  >
-                    Manage permissions
-                  </Menu.Item>
-                )}
-                {onGroupManagerOpen && (
-                  <Menu.Item data-testid="settings-menu-groups" onClick={onGroupManagerOpen}>
-                    Manage groups
-                  </Menu.Item>
-                )}
-                {onSystemHealthOpen && (
-                  <Menu.Item
-                    data-testid="settings-menu-system-health"
-                    leftSection={<IconActivity size={14} />}
-                    onClick={onSystemHealthOpen}
-                  >
-                    System health
-                  </Menu.Item>
-                )}
-                <Menu.Divider />
-              </>
-            )}
-            <Menu.Label data-testid="settings-menu-version">{`CanopyCMS ${CANOPYCMS_VERSION}`}</Menu.Label>
-            <Menu.Item
-              component="a"
-              href={ABOUT_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="settings-menu-about"
-              leftSection={<IconInfoCircle size={14} />}
-              rightSection={<IconExternalLink size={14} aria-hidden />}
-            >
-              About CanopyCMS
-              <VisuallyHidden component="span"> (opens in a new tab)</VisuallyHidden>
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      }
+      bottom={<SettingsMenu items={settingsItems} toggleRef={settingsToggleRef} />}
       account={
         AccountComponent ? (
           <AccountComponent />

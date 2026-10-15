@@ -61,8 +61,9 @@ export const SettingsMenuForAdmin: Story = {
   play: openSettings,
 }
 
-/** An editor's Settings menu: the admin items are not offered, only the version and About. */
-export const SettingsMenuForEditor: Story = {
+/** A non-admin's Settings menu: the admin items are not offered, only the version and About. */
+export const SettingsMenuForNonAdmin: Story = {
+  name: 'Non-admin: Settings shows only About/version',
   args: {
     onPermissionManagerOpen: undefined,
     onGroupManagerOpen: undefined,
