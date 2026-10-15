@@ -527,6 +527,7 @@ const EditorContent: React.FC<EditorProps> = ({
     handleSave,
     handleSaveAll,
     saveAllProgress,
+    isSaveAllRunning,
     handleDiscardDrafts,
     handleDiscardFileDraft,
     handleReload,
@@ -1839,10 +1840,14 @@ const EditorContent: React.FC<EditorProps> = ({
               onSaveAll={runSaveAll}
               saveAllProgress={saveAllProgress}
               onSubmit={() => {
-                if (branchNameState) handleSubmit(branchNameState).catch(console.error)
+                if (branchNameState && !isSaveAllRunning()) {
+                  handleSubmit(branchNameState).catch(console.error)
+                }
               }}
               onWithdraw={() => {
-                if (branchNameState) handleWithdraw(branchNameState).catch(console.error)
+                if (branchNameState && !isSaveAllRunning()) {
+                  handleWithdraw(branchNameState).catch(console.error)
+                }
               }}
             />
           }
@@ -2060,6 +2065,9 @@ const EditorContent: React.FC<EditorProps> = ({
                   mode={operatingMode}
                   user={userContext}
                   currentBranchName={currentBranch?.name ?? branchNameState}
+                  currentWorkflowBlockedReason={
+                    saveAllProgress ? 'Wait for Save all to finish.' : undefined
+                  }
                   onSelect={async (name) => {
                     try {
                       await handleBranchChange(name)
@@ -2071,10 +2079,13 @@ const EditorContent: React.FC<EditorProps> = ({
                   }}
                   onBeforeCreate={confirmCreateBranch}
                   onCreate={handleCreateBranch}
+                  // A Save all mid-run on the open branch would be submitted partway through.
                   onSubmit={(name) => {
+                    if (name === branchNameState && isSaveAllRunning()) return
                     handleSubmit(name).catch((err) => console.error(err))
                   }}
                   onWithdraw={(name) => {
+                    if (name === branchNameState && isSaveAllRunning()) return
                     handleWithdraw(name).catch((err) => console.error(err))
                   }}
                   onRequestChanges={(name) => {

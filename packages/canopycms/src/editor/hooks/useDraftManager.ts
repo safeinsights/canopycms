@@ -219,6 +219,8 @@ export interface UseDraftManagerReturn {
   handleSaveAll: () => Promise<SaveAllResult | undefined>
   /** Set while Save all runs. */
   saveAllProgress: SaveAllProgress | null
+  /** Whether Save all is running now, read at the moment of a click rather than a render. */
+  isSaveAllRunning: () => boolean
   handleDiscardDrafts: (returnFocusTo?: () => HTMLElement | null) => void
   /** `announce` toasts the discard, for a draft the form isn't showing (a read-only branch's). */
   handleDiscardFileDraft: (
@@ -279,6 +281,13 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const [saveInFlight, setSaveInFlight] = useState(false)
   const [saveAllProgress, setSaveAllProgress] = useState<SaveAllProgress | null>(null)
   const saveAllRunningRef = useRef(false)
+  const mountedRef = useRef(true)
+  // Entries a Save, refresh or discard settled while Save all ran: its result no longer applies.
+  const settledDuringRunRef = useRef(new Set<string>())
+  const settleEntry = (id: string) => {
+    if (saveAllRunningRef.current) settledDuringRunRef.current.add(id)
+    settleSaveAllEntry(id)
+  }
   const singleSaveRef = useRef(false)
   // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN, or when the retry of
   // a timed-out save was refused as a version conflict. That save may have landed, so re-sending
@@ -443,7 +452,13 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }, [options.branchName])
 
   // A result left up would act through this unmounted instance's callbacks.
-  useEffect(() => () => clearSaveAllResult(), [])
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      clearSaveAllResult()
+    }
+  }, [])
 
   // Restore drafts from localStorage on mount or when storageKey changes
   useEffect(() => {
@@ -801,7 +816,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           return equal(latest, value) ? rest : { ...rest, [created.contentId]: latest }
         })
       }
-      if (created) settleSaveAllEntry(id)
+      if (created) settleEntry(id)
       notifications.show({
         message: created ? 'Saved as a new entry' : RECREATED_NOT_LISTED_MESSAGE,
         color: 'green',
@@ -972,7 +987,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         notifications.hide(saveTimedOutToastId(currentId))
       }
       hideEntryGone(currentId)
-      settleSaveAllEntry(currentId)
+      settleEntry(currentId)
       notifications.show({
         message: 'Saved',
         color: 'green',
@@ -1245,6 +1260,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     // A Save in flight would race this run's write of the same entry, with the same token.
     if (saveAllRunningRef.current || singleSaveRef.current) return undefined
     saveAllRunningRef.current = true
+    settledDuringRunRef.current = new Set()
     const branch = options.branchName
     // Busy from the first moment, so Save waits through the draft check too.
     options.setBusy(true)
@@ -1267,7 +1283,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       clearSaveAllResult()
       setSaveAllProgress({ done: 0, total: queue.length })
       for (const [index, entry] of queue.entries()) {
-        if (latestOptionsRef.current.branchName !== branch) return undefined
+        if (latestOptionsRef.current.branchName !== branch || !mountedRef.current) return undefined
         const outcome = await saveOneOfAll(entry, branch)
         if (outcome?.saved) {
           result.saved.push({ contentId: entry.contentId, label: entry.label, path: entry.path })
@@ -1276,10 +1292,14 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         }
         setSaveAllProgress({ done: index + 1, total: queue.length })
       }
-      if (latestOptionsRef.current.branchName !== branch) return undefined
-      // Discarded or refreshed mid-run, so neither saved nor failed.
+      // Unmounted: a result would act through this gone instance's callbacks.
+      if (latestOptionsRef.current.branchName !== branch || !mountedRef.current) return undefined
+      // Discarded, refreshed or saved mid-run, so neither saved nor failed by this run.
       const { drafts: remaining } = latestRef.current
-      result.failed = result.failed.filter((failure) => failure.contentId in remaining)
+      const settled = settledDuringRunRef.current
+      result.failed = result.failed.filter(
+        (failure) => failure.contentId in remaining && !settled.has(failure.contentId),
+      )
       result.total = result.saved.length + result.failed.length
       if (result.saved.length > 0) latestOptionsRef.current.onSaved?.()
       return result
@@ -1297,6 +1317,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
     goneEntriesRef.current.clear()
     clearSaveAllResult()
+    if (saveAllRunningRef.current) {
+      for (const id of Object.keys(latestRef.current.drafts)) settledDuringRunRef.current.add(id)
+    }
     options.onDraftsReset?.()
     setDrafts({})
     setErrorState(null)
@@ -1345,7 +1368,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
     options.onDraftsReset?.(currentId)
     hideEntryGone(currentId)
-    settleSaveAllEntry(currentId)
+    settleEntry(currentId)
     setErrorState(null)
     setDrafts((prev) => {
       const next = { ...prev }
@@ -1412,7 +1435,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         notifications.hide(saveTimedOutToastId(currentId))
       }
       hideEntryGone(currentId)
-      settleSaveAllEntry(currentId)
+      settleEntry(currentId)
       setLoadedValues((prev) => ({ ...prev, [currentId]: loaded }))
       // Drop the draft rather than seeding it with `loaded`. `effectiveValue`
       // falls back to `loadedValues`, so the rendered value is identical --
@@ -1580,6 +1603,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     handleSave,
     handleSaveAll,
     saveAllProgress,
+    isSaveAllRunning: () => saveAllRunningRef.current,
     handleDiscardDrafts,
     handleDiscardFileDraft,
     handleReload,

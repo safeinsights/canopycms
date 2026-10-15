@@ -336,6 +336,60 @@ describe('useDraftManager - Save all', () => {
     expect(outcome?.total).toBe(2)
   })
 
+  it('reports nothing for a run that finishes after the editor unmounted', async () => {
+    // One entry, so only the check after the last write can catch it.
+    persistDrafts('feature', { [idOf(a)]: { title: 'A2' } }, { [idOf(a)]: 1 })
+    const held = holdWriteOfA()
+    const { result, unmount } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(1))
+
+    const pending = startRun(result)
+    await waitFor(() => expect(server.order).toContain(idOf(a)))
+    unmount()
+    let outcome: SaveAllResult | undefined = { branch: 'x', total: 1, saved: [], failed: [] }
+    await act(async () => {
+      held.release()
+      outcome = await pending()
+    })
+    expect(outcome).toBeUndefined()
+    expect(server.order).toEqual([idOf(a)])
+  })
+
+  it('leaves out an entry refreshed mid-run, even once edited again', async () => {
+    draftAll()
+    server.failures.set(idOf(a), async () => {
+      throw new SaveApiError(500, undefined)
+    })
+    const held = { release: () => {} }
+    server.failures.set(
+      idOf(b),
+      (value) =>
+        new Promise((resolve) => {
+          held.release = () => {
+            server.tokens.set(idOf(b), server.write(idOf(b), value))
+            resolve(value)
+          }
+        }),
+    )
+    const { result } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    const pending = startRun(result)
+    await waitFor(() => expect(server.order).toContain(idOf(b)))
+    await act(async () => {
+      await result.current.handleReload()
+    })
+    act(() => {
+      result.current.setDrafts((prev) => ({ ...prev, [idOf(a)]: { title: 'A again' } }))
+    })
+    let outcome: SaveAllResult | undefined
+    await act(async () => {
+      held.release()
+      outcome = await pending()
+    })
+    expect(outcome?.failed).toEqual([])
+  })
+
   it('takes its result down when the editor unmounts', async () => {
     const { unmount } = setup()
     showSaveAllResult(
