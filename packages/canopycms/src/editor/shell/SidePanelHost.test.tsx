@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React, { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -127,6 +127,39 @@ describe('SidePanelHost', () => {
         </SidePanelHost>,
       )
       expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Filter' }))
+    })
+
+    it('hands focus to a data-autofocus element that renders after it was asked', async () => {
+      const { rerender, props } = renderPanel({ opened: false })
+      rerender(<SidePanelHost {...props} opened focusRequest={1} />)
+      expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Content' }))
+
+      rerender(
+        <SidePanelHost {...props} opened focusRequest={1}>
+          <input aria-label="Filter" data-autofocus />
+        </SidePanelHost>,
+      )
+      await waitFor(() =>
+        expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Filter' })),
+      )
+    })
+
+    it('leaves a late data-autofocus element alone once focus has moved on', async () => {
+      const { rerender, props } = renderPanel({ opened: false })
+      rerender(
+        <SidePanelHost {...props} opened focusRequest={1}>
+          <button>Inside</button>
+        </SidePanelHost>,
+      )
+      act(() => screen.getByRole('button', { name: 'Inside' }).focus())
+      rerender(
+        <SidePanelHost {...props} opened focusRequest={1}>
+          <button>Inside</button>
+          <input aria-label="Filter" data-autofocus />
+        </SidePanelHost>,
+      )
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Inside' }))
     })
 
     it('leaves focus alone when it is open on mount, or closes without focus inside', () => {

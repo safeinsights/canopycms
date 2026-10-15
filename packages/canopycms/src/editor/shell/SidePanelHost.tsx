@@ -106,12 +106,28 @@ export function SidePanelHost({
   const shownWidth = clamp(dragWidth ?? width, minWidth, maxWidth)
 
   useEffect(() => {
-    if (opened && focusRequest !== servedFocusRequest.current) {
-      const panel = panelRef.current
-      const target = panel?.querySelector<HTMLElement>('[data-autofocus]') ?? panel
-      target?.focus({ preventScroll: true })
-    }
+    const panel = panelRef.current
+    const asked = opened && focusRequest !== servedFocusRequest.current
     servedFocusRequest.current = focusRequest
+    if (!asked || !panel) return
+    const autofocus = () => panel.querySelector<HTMLElement>('[data-autofocus]')
+    const field = autofocus()
+    if (field) {
+      field.focus({ preventScroll: true })
+      return
+    }
+    // The field may render with content still loading: it takes focus when it arrives, unless
+    // focus has moved off the panel by then.
+    panel.focus({ preventScroll: true })
+    const observer = new MutationObserver(() => {
+      if (document.activeElement !== panel) return observer.disconnect()
+      const arrived = autofocus()
+      if (!arrived) return
+      observer.disconnect()
+      arrived.focus({ preventScroll: true })
+    })
+    observer.observe(panel, { childList: true, subtree: true })
+    return () => observer.disconnect()
   }, [opened, focusRequest])
 
   useEffect(() => {

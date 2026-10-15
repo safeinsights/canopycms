@@ -76,6 +76,8 @@ test.describe('Navigator search', () => {
       page,
     }) => {
       await editorPage.openContentNavigator()
+      // Mod+P pressed before the filter has focus would return focus elsewhere.
+      await expect(page.getByTestId('entry-nav-filter')).toBeFocused({ timeout: SHORT_TIMEOUT })
 
       await open(page)
       await expect(page.getByTestId('quick-open-input')).toBeVisible({ timeout: STANDARD_TIMEOUT })

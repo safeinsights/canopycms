@@ -399,6 +399,14 @@ describe('content panel', () => {
     expect(await screen.findByTestId('form-comments-menu')).toBeDefined()
   })
 
+  it('closes the overlay when the rail opens the first entry', async () => {
+    storeLayout({ layout: 'stacked' })
+    await setup(true)
+    fireEvent.click(screen.getByTestId('rail-home-button'))
+    await waitFor(() => expect(panel()).toBeNull())
+    expect(screen.getByTestId('form-pane').hasAttribute('inert')).toBe(false)
+  })
+
   it('does not restore an overlay open on load', async () => {
     storeLayout({ contentPanelOpen: true })
     stubWindowWidth(false)

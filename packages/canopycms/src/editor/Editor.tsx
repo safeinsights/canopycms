@@ -462,6 +462,14 @@ const EditorContent: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
   })
 
+  // Only the content overlay hides the form, and `navigatorOpen` is only the overlay's. Anything
+  // that focuses or opens something in the form reveals it first.
+  const revealForm = () => setNavigatorOpen(false)
+  const openEntry = (path: string) => {
+    setSelectedPath(path)
+    revealForm()
+  }
+
   // An open overlay docks open, as the URL's ask for no entry does at load; `navigatorOpen` is only
   // the overlay's, so a docked panel never resurfaces as one. Waits for the stored layout, whose
   // arrival could otherwise dock an overlay the stacked layout keeps.
@@ -591,8 +599,7 @@ const EditorContent: React.FC<EditorProps> = ({
       setBranchManagerOpen(open)
     },
     onCommentsChange: setCommentsForBranchSummaries,
-    // Only the overlay hides the form, and `navigatorOpen` is only the overlay's.
-    onRevealForm: () => setNavigatorOpen(false),
+    onRevealForm: revealForm,
   })
 
   const {
@@ -711,6 +718,7 @@ const EditorContent: React.FC<EditorProps> = ({
         return restored ? { ...prev, [contentId]: restored } : prev
       })
       // The toast's Undo button unmounts with it, so focus goes to the restored row once rendered.
+      revealForm()
       requestAnimationFrame(() => {
         const target = findFieldTarget(restoredPath)
         if (target) focusFieldTarget(target.element)
@@ -1733,10 +1741,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 }))
           }
           selectedPath={selectedPath}
-          onSelect={(id) => {
-            setSelectedPath(id)
-            if (!contentPanelDocked) setNavigatorOpen(false)
-          }}
+          onSelect={openEntry}
           onTreeControllerReady={handleTreeControllerReady}
           expandedStateRef={treeExpandedStateRef}
           onExpandedStateChange={handleExpandedStateChange}
@@ -1790,7 +1795,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchToggleRef={branchToggleRef}
               onFileReload={() => handleReload(() => navigatorToggleRef.current)}
               onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
-              onEntrySelect={setSelectedPath}
+              onEntrySelect={openEntry}
               onBranchReloadData={handleReloadBranchData}
               onBranchDiscardDrafts={() => handleDiscardDrafts(() => branchToggleRef.current)}
               onBranchManagerOpen={openBranchManager}
@@ -1817,7 +1822,7 @@ const EditorContent: React.FC<EditorProps> = ({
               siteTitle={siteTitle}
               onHomeOpen={() => {
                 const first = entriesState[0]
-                if (first) setSelectedPath(first.path)
+                if (first) openEntry(first.path)
               }}
               contentPanelOpen={contentPanelShown}
               contentPanelId={CONTENT_PANEL_ID}
@@ -2229,7 +2234,7 @@ const EditorContent: React.FC<EditorProps> = ({
                     referencedBy={deletingEntryReferencedBy}
                     onOpenEntry={(entryPath) => {
                       closeDeleteEntryModal()
-                      setSelectedPath(entryPath)
+                      openEntry(entryPath)
                     }}
                   />
                 )}
