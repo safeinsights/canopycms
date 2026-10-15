@@ -2,13 +2,16 @@
 
 import React, {
   forwardRef,
+  useId,
   useLayoutEffect,
   useRef,
+  useState,
   type ComponentPropsWithoutRef,
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import { ActionIcon, Indicator, Stack, Tooltip } from '@mantine/core'
+import { ActionIcon, Indicator, Stack, Tooltip, VisuallyHidden } from '@mantine/core'
+import { useElementSize, useMergedRef } from '@mantine/hooks'
 
 const ACTIVITY_RAIL_WIDTH = 44
 
@@ -31,6 +34,10 @@ export interface ActivityRailProps {
 export function ActivityRail({ top, bottom, account }: ActivityRailProps) {
   const toolbarRef = useRef<HTMLDivElement>(null)
   const currentRef = useRef<string | null>(null)
+  // Re-renders on a resize, so the check below runs again.
+  const { ref: sizeRef } = useElementSize<HTMLDivElement>()
+  const mergedToolbarRef = useMergedRef(toolbarRef, sizeRef)
+  const [overflowing, setOverflowing] = useState(false)
 
   const items = () =>
     Array.from(toolbarRef.current?.querySelectorAll<HTMLElement>(`[${RAIL_ITEM_ATTR}]`) ?? [])
@@ -43,6 +50,13 @@ export function ActivityRail({ top, bottom, account }: ActivityRailProps) {
     for (const item of all) item.tabIndex = item === (stop ?? all[0]) ? 0 : -1
   }
   useLayoutEffect(placeTabStop)
+
+  // Only a rail too short for its buttons scrolls: a scroll container clips sideways too, and at
+  // full height nothing, such as a two-digit count badge, should be cut off.
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current
+    if (toolbar) setOverflowing(toolbar.scrollHeight > toolbar.clientHeight)
+  })
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const all = items()
@@ -76,14 +90,23 @@ export function ActivityRail({ top, bottom, account }: ActivityRailProps) {
       }}
     >
       <Stack
-        ref={toolbarRef}
+        ref={mergedToolbarRef}
         role="toolbar"
         aria-orientation="vertical"
         aria-label="Activities"
         gap={6}
         py={8}
         align="center"
-        style={{ flex: 1, minHeight: 0 }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          ...(overflowing && {
+            alignSelf: 'stretch',
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            scrollbarWidth: 'none',
+          }),
+        }}
         onKeyDown={onKeyDown}
         onFocus={(event) => {
           const id = event.target.getAttribute(RAIL_ITEM_ATTR)
@@ -119,6 +142,8 @@ export interface RailButtonProps extends Omit<ComponentPropsWithoutRef<'button'>
   count?: number
   countTestId?: string
   tooltipDisabled?: boolean
+  /** Disables the button, which stays focusable, and its tooltip gives this reason instead. */
+  disabledReason?: string
 }
 
 /** A rail button: icon only, named by `label`, which its tooltip repeats on hover and focus. */
@@ -133,10 +158,13 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
     count = 0,
     countTestId,
     tooltipDisabled,
+    disabledReason,
+    onClick,
     ...rest
   },
   ref,
 ) {
+  const reasonId = useId()
   const button = (
     <ActionIcon
       ref={ref}
@@ -147,14 +175,23 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
       radius="md"
       aria-label={label}
       {...rest}
+      aria-disabled={disabledReason ? true : rest['aria-disabled']}
+      aria-describedby={disabledReason ? reasonId : rest['aria-describedby']}
+      data-disabled={disabledReason ? true : undefined}
+      onClick={disabledReason ? undefined : onClick}
       {...{ [RAIL_ITEM_ATTR]: railId }}
     >
       {icon}
+      {disabledReason && (
+        <VisuallyHidden component="span" id={reasonId}>
+          {disabledReason}
+        </VisuallyHidden>
+      )}
     </ActionIcon>
   )
   return (
     <Tooltip
-      label={shortcut ? `${label} (${shortcut})` : label}
+      label={disabledReason ?? (shortcut ? `${label} (${shortcut})` : label)}
       position="right"
       disabled={tooltipDisabled}
     >

@@ -26,6 +26,8 @@ const defaultProps = (): EditorRailProps => ({
   unresolvedCommentCount: 0,
   mediaLibraryOpen: false,
   onMediaLibraryOpen: vi.fn(),
+  layout: 'side',
+  onLayoutChange: vi.fn(),
   onPermissionManagerOpen: vi.fn(),
   onGroupManagerOpen: vi.fn(),
   onSystemHealthOpen: vi.fn(),
@@ -56,6 +58,7 @@ describe('EditorRail - buttons', () => {
       'Branches',
       'Comments',
       'Media library',
+      'Switch to stacked layout (now side by side)',
       'Settings',
     ])
     expect(screen.getByTestId('rail-home-button').textContent).toBe('E')
@@ -141,6 +144,25 @@ describe('EditorRail - keyboard', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sign out' }))
   })
 
+  it('scrolls only a rail too short for its buttons, so a full-height rail clips nothing', () => {
+    const props = defaultProps()
+    const { rerender } = render(<EditorRail {...props} />, { wrapper: Wrapper })
+    const toolbar = screen.getByRole('toolbar')
+    const contentHeight = (height: number) =>
+      Object.defineProperty(toolbar, 'scrollHeight', { value: height, configurable: true })
+    Object.defineProperty(toolbar, 'clientHeight', { value: 300, configurable: true })
+    expect(toolbar.style.overflowY).toBe('')
+
+    contentHeight(340)
+    rerender(<EditorRail {...props} unresolvedCommentCount={1} />)
+    expect(toolbar.style.overflowY).toBe('auto')
+    expect(toolbar.style.overflowX).toBe('hidden')
+
+    contentHeight(300)
+    rerender(<EditorRail {...props} unresolvedCommentCount={2} />)
+    expect(toolbar.style.overflowY).toBe('')
+  })
+
   it('moves the Tab stop to the first button when the one holding it goes', () => {
     const props = defaultProps()
     const { rerender } = render(<EditorRail {...props} />, { wrapper: Wrapper })
@@ -151,6 +173,64 @@ describe('EditorRail - keyboard', () => {
     expect(toolbarButtons().filter((button) => button.tabIndex === 0)).toEqual([
       screen.getByTestId('rail-home-button'),
     ])
+  })
+})
+
+describe('EditorRail - layout', () => {
+  const layoutButton = () => screen.getByTestId('rail-layout-button')
+  const icon = () => layoutButton().querySelector('svg')?.getAttribute('class')
+  const status = () => screen.getByTestId('rail-layout-status')
+
+  it('names and shows the current layout, and switches to the other', async () => {
+    const props = defaultProps()
+    const { rerender } = render(<EditorRail {...props} />, { wrapper: Wrapper })
+    expect(layoutButton().getAttribute('aria-label')).toBe(
+      'Switch to stacked layout (now side by side)',
+    )
+    expect(icon()).toContain('tabler-icon-layout-columns')
+    expect(status().getAttribute('role')).toBe('status')
+    expect(status().textContent).toBe('')
+    await userEvent.click(layoutButton())
+    expect(props.onLayoutChange).toHaveBeenLastCalledWith('stacked')
+    expect(status().textContent).toBe('Stacked layout')
+
+    rerender(<EditorRail {...props} layout="stacked" />)
+    expect(layoutButton().getAttribute('aria-label')).toBe(
+      'Switch to side by side layout (now stacked)',
+    )
+    expect(icon()).toContain('tabler-icon-layout-rows')
+    await userEvent.click(layoutButton())
+    expect(props.onLayoutChange).toHaveBeenLastCalledWith('side')
+    expect(status().textContent).toBe('Side by side layout')
+  })
+
+  it('sits in the bottom group, just above Settings', () => {
+    renderRail()
+    expect(toolbarButtons().slice(-2)).toEqual([
+      layoutButton(),
+      screen.getByTestId('settings-button'),
+    ])
+  })
+
+  it('says why it is blocked while the preview is maximized, stays focusable and does nothing', async () => {
+    const props = renderRail({ layoutBlocked: true })
+    const button = layoutButton()
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    expect(button.hasAttribute('disabled')).toBe(false)
+    expect(button.getAttribute('aria-label')).toBe('Switch to stacked layout (now side by side)')
+    const reason = 'Restore the preview to change the layout.'
+    expect(
+      document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent,
+    ).toBe(reason)
+
+    await userEvent.click(button)
+    expect(props.onLayoutChange).not.toHaveBeenCalled()
+    expect(status().textContent).toBe('')
+
+    act(() => screen.getByTestId('settings-button').focus())
+    await userEvent.keyboard('{ArrowUp}')
+    expect(document.activeElement).toBe(button)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(reason)
   })
 })
 

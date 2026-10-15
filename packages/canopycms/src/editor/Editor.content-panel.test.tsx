@@ -168,7 +168,9 @@ const storeLayout = (prefs: Record<string, unknown>) =>
 const storedLayout = (): Record<string, unknown> =>
   JSON.parse(window.localStorage.getItem(editorLayoutStorageKey()) ?? '{}')
 
-const renderEditor = () =>
+const renderEditor = ({
+  renderPreview,
+}: Pick<React.ComponentProps<typeof Editor>, 'renderPreview'> = {}) =>
   render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000 }}>
       <ApiClientProvider>
@@ -178,12 +180,18 @@ const renderEditor = () =>
           branchName="main"
           operatingMode="dev"
           themeOptions={{}}
+          renderPreview={renderPreview}
         />
       </ApiClientProvider>
     </SWRConfig>,
   )
 
 const toggle = () => screen.getByTestId('content-panel-toggle')
+const layoutButton = () => screen.getByTestId('rail-layout-button')
+const splitOrientation = () =>
+  screen
+    .getByRole('separator', { name: 'Resize preview and form' })
+    .getAttribute('aria-orientation')
 const panel = () => screen.queryByTestId('content-panel')
 const loaded = () => screen.findByTestId('entry-nav-item-posts', {}, { timeout: 3000 })
 
@@ -329,7 +337,7 @@ describe('content panel', () => {
     await setup(true)
     expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Side by side' }))
+    fireEvent.click(layoutButton())
     await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('docked'))
   })
 
@@ -342,14 +350,8 @@ describe('content panel', () => {
 
     fireEvent.click(toggle())
     expect(panel()).toBeNull()
-    fireEvent.click(await screen.findByRole('button', { name: 'Stacked' }))
-    await waitFor(() =>
-      expect(
-        screen
-          .getByRole('separator', { name: 'Resize preview and form' })
-          .getAttribute('aria-orientation'),
-      ).toBe('horizontal'),
-    )
+    fireEvent.click(layoutButton())
+    await waitFor(() => expect(splitOrientation()).toBe('horizontal'))
     expect(panel()).toBeNull()
   })
 
@@ -458,12 +460,53 @@ describe('content panel', () => {
   })
 })
 
+describe('layout button', () => {
+  it('switches the layout with no entry open, and stores the choice', async () => {
+    window.history.replaceState({}, '', '/?entry=')
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await loaded()
+    expect(screen.getAllByText('Select an item to start editing.').length).toBeGreaterThan(0)
+    expect(splitOrientation()).toBe('vertical')
+
+    fireEvent.click(layoutButton())
+    await waitFor(() => expect(splitOrientation()).toBe('horizontal'))
+    expect(storedLayout().layout).toBe('stacked')
+  })
+
+  it("switches the layout around an adopter's renderPreview, which has no toolbar", async () => {
+    window.history.replaceState({}, '', `/?entry=${hello.path}`)
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor({ renderPreview: () => <div data-testid="custom-preview" /> })
+    await screen.findByTestId('custom-preview')
+    expect(screen.queryByRole('button', { name: 'Maximize preview' })).toBeNull()
+
+    fireEvent.click(layoutButton())
+    await waitFor(() => expect(splitOrientation()).toBe('horizontal'))
+    expect(storedLayout().layout).toBe('stacked')
+  })
+})
+
 describe('maximized preview', () => {
   const maximize = async () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Maximize preview' }))
     await screen.findByRole('button', { name: 'Restore' })
   }
   const formPanel = () => screen.getByTestId('form-pane').parentElement as HTMLElement
+
+  it('blocks the layout button while maximized, and frees it on restore', async () => {
+    await setup(true)
+    expect(layoutButton().getAttribute('aria-disabled')).toBeNull()
+    await maximize()
+    expect(layoutButton().getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(layoutButton())
+    expect(splitOrientation()).toBe('vertical')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
+    await waitFor(() => expect(layoutButton().getAttribute('aria-disabled')).toBeNull())
+  })
 
   it('restores when the preview asks to focus one of its fields', async () => {
     await setup(true)

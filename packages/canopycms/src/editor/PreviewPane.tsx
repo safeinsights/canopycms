@@ -19,12 +19,7 @@ import { IconCheck, IconExternalLink, IconRefresh } from '@tabler/icons-react'
 import type { PreviewWidth } from './hooks/useEditorLayout'
 import { PreviewFrame, type PreviewMarks } from './PreviewFrame'
 import type { InexactMark } from './preview-marks'
-import {
-  HighlightToggle,
-  LayoutToggle,
-  MaximizeToggle,
-  UnmappedMarksChip,
-} from './PreviewToolbarTools'
+import { HighlightToggle, MaximizeToggle, UnmappedMarksChip } from './PreviewToolbarTools'
 import type { PaneArrangement } from './shell/PaneLayout'
 import { displayPreviewPath, type PreviewMount } from './preview-path'
 import {
@@ -78,9 +73,8 @@ export interface PreviewPaneProps {
   inexactMarks?: readonly InexactMark[]
   /** Admins only: diagnostics of the site's markup are no editor's to act on. */
   showMarkDiagnostics?: boolean
-  /** With `onLayoutChange`, the toolbar shows the layout toggle. */
+  /** Shapes the size readout shown while the divider is dragged. */
   layout?: PaneArrangement
-  onLayoutChange?: (layout: PaneArrangement) => void
   /** With `onMaximizedChange`, the toolbar offers Maximize, and Esc restores. */
   maximized?: boolean
   onMaximizedChange?: (maximized: boolean) => void
@@ -105,7 +99,6 @@ export const PreviewPane = ({
   inexactMarks = [],
   showMarkDiagnostics = false,
   layout,
-  onLayoutChange,
   maximized = false,
   onMaximizedChange,
   resizing = false,
@@ -284,9 +277,6 @@ export const PreviewPane = ({
             )}
             {showMarkDiagnostics && <UnmappedMarksChip marks={inexactMarks} />}
           </Group>
-        )}
-        {layout && onLayoutChange && (
-          <LayoutToggle layout={layout} onChange={onLayoutChange} blocked={maximized} />
         )}
         {/* One unit, so a wrapping toolbar never parts them. */}
         <Group gap={6} wrap="nowrap">
