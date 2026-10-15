@@ -53,6 +53,11 @@ export interface SidePanelHostProps {
   /** Called when a drag ends and on each resize key. */
   onWidthChange: (width: number) => void
   onClose: () => void
+  /**
+   * Bumped by the caller each time the user asks for the panel, open or not: each new value moves
+   * focus in. Opening alone never does, as a panel also opens when stored state loads.
+   */
+  focusRequest?: number
   /** Where focus goes when the panel closes with focus inside it. */
   returnFocusTo?: () => HTMLElement | null
   /** Controls beside the title, before the close button. */
@@ -67,8 +72,8 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 /**
  * A titled side panel, resizable from its inline-end edge. Docked, it is a column of the shell;
  * as an overlay it covers the form pane only, so the preview stays in view, and Escape closes it.
- * Opening moves focus to its `data-autofocus` element, else to the panel; closing with focus inside
- * returns focus to `returnFocusTo`.
+ * A `focusRequest` moves focus to its `data-autofocus` element, else to the panel; closing with
+ * focus inside returns focus to `returnFocusTo`.
  */
 export function SidePanelHost({
   title,
@@ -79,6 +84,7 @@ export function SidePanelHost({
   maxWidth,
   onWidthChange,
   onClose,
+  focusRequest = 0,
   returnFocusTo,
   actions,
   children,
@@ -91,22 +97,32 @@ export function SidePanelHost({
   const panelRef = useRef<HTMLElement>(null)
   const focusInside = useRef(false)
   const wasOpened = useRef(opened)
+  const servedFocusRequest = useRef(focusRequest)
   const drag = useRef<{ startX: number; startWidth: number; width: number; sign: number } | null>(
     null,
   )
   const [dragWidth, setDragWidth] = useState<number | null>(null)
+  if (!opened && dragWidth !== null) setDragWidth(null)
   const shownWidth = clamp(dragWidth ?? width, minWidth, maxWidth)
 
-  // Only an open after mount takes focus: a panel restored open on load leaves it where it is.
   useEffect(() => {
-    if (opened && !wasOpened.current) {
+    if (opened && focusRequest !== servedFocusRequest.current) {
       const panel = panelRef.current
       const target = panel?.querySelector<HTMLElement>('[data-autofocus]') ?? panel
       target?.focus({ preventScroll: true })
     }
-    if (!opened && wasOpened.current && focusInside.current) {
-      focusInside.current = false
-      focusIfIdle(returnFocusTo?.() ?? null)
+    servedFocusRequest.current = focusRequest
+  }, [opened, focusRequest])
+
+  useEffect(() => {
+    if (!opened && wasOpened.current) {
+      // Its separator is gone, and with it the pointer capture that would have ended a drag.
+      drag.current = null
+      document.body.removeAttribute(RESIZING_ATTR)
+      if (focusInside.current) {
+        focusInside.current = false
+        focusIfIdle(returnFocusTo?.() ?? null)
+      }
     }
     wasOpened.current = opened
   }, [opened, returnFocusTo])

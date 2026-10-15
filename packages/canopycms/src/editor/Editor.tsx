@@ -349,8 +349,10 @@ const EditorContent: React.FC<EditorProps> = ({
   const commentUserId = userContext?.userId ?? currentUser
 
   // Below 64em (1024px) the editor starts stacked and the content panel never docks.
-  const wideWindow = useMediaQuery('(min-width: 64em)', true, { getInitialValueInEffect: false })
+  const wideWindow =
+    useMediaQuery('(min-width: 64em)', true, { getInitialValueInEffect: false }) !== false
   const {
+    loaded: layoutLoaded,
     layout,
     setLayout,
     highlightEnabled,
@@ -460,11 +462,15 @@ const EditorContent: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
   })
 
-  // A URL asking for no entry opens the docked panel too. Runs after the stored layout loads.
+  // An open overlay docks open, as the URL's ask for no entry does at load; `navigatorOpen` is only
+  // the overlay's, so a docked panel never resurfaces as one. Waits for the stored layout, whose
+  // arrival could otherwise dock an overlay the stacked layout keeps.
   useEffect(() => {
-    if (navigatorOpen) setContentPanelOpen(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, for the URL read at mount
-  }, [])
+    if (layoutLoaded && contentPanelDocked && navigatorOpen) {
+      setContentPanelOpen(true)
+      setNavigatorOpen(false)
+    }
+  }, [layoutLoaded, contentPanelDocked, navigatorOpen, setContentPanelOpen, setNavigatorOpen])
 
   // Keeps the entry-type list referentially stable while the create modal shows
   // the same collection: a new array on every render would churn Mantine's
@@ -1422,9 +1428,12 @@ const EditorContent: React.FC<EditorProps> = ({
   const contentPanelShown = contentPanelDocked ? contentPanelOpen : navigatorOpen
   const setContentPanelShown = (open: boolean) =>
     contentPanelDocked ? setContentPanelOpen(open) : setNavigatorOpen(open)
+  // Bumped on every ask for the panel, so one already open still takes focus.
+  const [contentPanelFocusRequest, setContentPanelFocusRequest] = useState(0)
   const openNavigator = () => {
     navigatorOpenerRef.current = rememberOpener()
     setContentPanelShown(true)
+    setContentPanelFocusRequest((request) => request + 1)
   }
   const navigatorReturnTarget = () =>
     returnTarget(navigatorOpenerRef.current, () => contentToggleRef.current)
@@ -1629,6 +1638,7 @@ const EditorContent: React.FC<EditorProps> = ({
       maxWidth={CONTENT_PANEL_WIDTH_MAX}
       onWidthChange={setContentPanelWidth}
       onClose={() => setContentPanelShown(false)}
+      focusRequest={contentPanelFocusRequest}
       // Quick open takes focus as it replaces the overlay.
       returnFocusTo={() => (quickOpenOpen ? null : navigatorReturnTarget())}
       data-testid="content-panel"

@@ -49,15 +49,25 @@ const separator = () => screen.getByRole('separator', { name: 'Resize content pa
 /** A toggle that opens and closes the panel, as the rail's Content button does. */
 function Harness({ initiallyOpen = false }: { initiallyOpen?: boolean }) {
   const [opened, setOpened] = useState(initiallyOpen)
+  const [focusRequest, setFocusRequest] = useState(0)
   const toggle = useRef<HTMLButtonElement>(null)
   return (
     <CanopyCMSProvider>
-      <button ref={toggle} onClick={() => setOpened((open) => !open)}>
+      <button
+        ref={toggle}
+        onClick={() => {
+          if (!opened) setFocusRequest((request) => request + 1)
+          setOpened((open) => !open)
+        }}
+      >
         Toggle
       </button>
+      <button onClick={() => setOpened(true)}>Open quietly</button>
+      <button onClick={() => setFocusRequest((request) => request + 1)}>Ask again</button>
       <SidePanelHost
         {...baseProps()}
         opened={opened}
+        focusRequest={focusRequest}
         onClose={() => setOpened(false)}
         returnFocusTo={() => toggle.current}
       />
@@ -86,7 +96,7 @@ describe('SidePanelHost', () => {
   })
 
   describe('focus', () => {
-    it('takes focus when it opens, and returns it to the opener when it closes', () => {
+    it('takes focus when asked to open, and returns it to the opener when it closes', () => {
       render(<Harness />)
       const toggle = screen.getByRole('button', { name: 'Toggle' })
       act(() => toggle.focus())
@@ -99,10 +109,20 @@ describe('SidePanelHost', () => {
       expect(document.activeElement).toBe(toggle)
     })
 
-    it('focuses its data-autofocus element when it opens', () => {
+    it('takes focus again when asked while open, but not when it opens unasked', () => {
+      render(<Harness />)
+      fireEvent.click(screen.getByRole('button', { name: 'Open quietly' }))
+      expect(screen.getByRole('region', { name: 'Content' })).toBeDefined()
+      expect(document.activeElement).toBe(document.body)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Ask again' }))
+      expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Content' }))
+    })
+
+    it('focuses its data-autofocus element when asked', () => {
       const { rerender, props } = renderPanel({ opened: false })
       rerender(
-        <SidePanelHost {...props} opened>
+        <SidePanelHost {...props} opened focusRequest={1}>
           <input aria-label="Filter" data-autofocus />
         </SidePanelHost>,
       )
@@ -168,6 +188,24 @@ describe('SidePanelHost', () => {
       fireEvent.pointerUp(handle, { clientX: 900, pointerId: 1 })
       expect(props.onWidthChange).toHaveBeenCalledExactlyOnceWith(400)
       expect(document.body.hasAttribute('data-canopy-panel-resizing')).toBe(false)
+    })
+
+    it('abandons a drag when it closes mid-drag, so it reopens idle', () => {
+      const { rerender, props } = renderPanel({ mode: 'overlay' })
+      const handle = separator()
+      handle.setPointerCapture = vi.fn()
+      fireEvent.pointerDown(handle, { button: 0, clientX: 300, pointerId: 1 })
+      fireEvent.pointerMove(handle, { clientX: 340, pointerId: 1 })
+
+      rerender(<SidePanelHost {...props} opened={false} />)
+      expect(document.body.hasAttribute('data-canopy-panel-resizing')).toBe(false)
+
+      rerender(<SidePanelHost {...props} opened />)
+      expect(separator().hasAttribute('data-dragging')).toBe(false)
+      expect(screen.getByRole('region').style.width).toBe('280px')
+      fireEvent.pointerMove(separator(), { clientX: 400, pointerId: 1 })
+      expect(screen.getByRole('region').style.width).toBe('280px')
+      expect(props.onWidthChange).not.toHaveBeenCalled()
     })
 
     it('lets the iframes have the pointer back when it unmounts mid-drag', () => {

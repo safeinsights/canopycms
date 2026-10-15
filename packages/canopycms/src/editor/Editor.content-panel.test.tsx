@@ -269,6 +269,59 @@ describe('content panel', () => {
     expect(split.getAttribute('aria-orientation')).toBe(separator)
   })
 
+  it('leaves focus alone when it loads open, and takes it when asked for while open', async () => {
+    storeLayout({ contentPanelOpen: true })
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await loaded()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(document.activeElement).toBe(document.body)
+
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('all-files-menu-item'))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter')))
+  })
+
+  it('docks an open overlay open when the layout turns side by side', async () => {
+    storeLayout({ layout: 'stacked' })
+    await setup(true)
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle layout' }))
+    await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('docked'))
+  })
+
+  it('does not bring a closed docked panel back as an overlay', async () => {
+    window.history.replaceState({}, '', '/?entry=')
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('docked'))
+
+    fireEvent.click(toggle())
+    expect(panel()).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle layout' }))
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('separator', { name: 'Resize preview and form' })
+          .getAttribute('aria-orientation'),
+      ).toBe('horizontal'),
+    )
+    expect(panel()).toBeNull()
+  })
+
+  it('keeps a URL-opened overlay open when the stored layout is stacked', async () => {
+    storeLayout({ layout: 'stacked' })
+    window.history.replaceState({}, '', '/?entry=')
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await loaded()
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
+  })
+
   it('does not restore an overlay open on load', async () => {
     storeLayout({ contentPanelOpen: true })
     stubWindowWidth(false)

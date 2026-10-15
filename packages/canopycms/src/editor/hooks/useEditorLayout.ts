@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { useLocalStorage } from '@mantine/hooks'
+import { useLocalStorage, useMounted } from '@mantine/hooks'
 import {
   DEFAULT_SIDE_SPLIT_PERCENT,
   DEFAULT_STACKED_SPLIT_PERCENT,
@@ -113,6 +113,8 @@ export interface UseEditorLayoutOptions {
 }
 
 export interface UseEditorLayoutReturn {
+  /** The stored preferences have been read; until then every value is its default. */
+  loaded: boolean
   layout: PaneArrangement
   setLayout: (layout: PaneArrangement) => void
   highlightEnabled: boolean
@@ -141,6 +143,9 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
     // Each tab keeps its own layout; a change elsewhere reaches only tabs opened later.
     sync: false,
   })
+  // Mounted in the same effect pass as the storage read above, and after it, so the render that
+  // first sees `loaded` also sees the stored values.
+  const loaded = useMounted()
 
   const setLayout = useCallback(
     (layout: PaneArrangement) => setPrefs((prev) => ({ ...prev, layout })),
@@ -180,6 +185,7 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
   )
 
   return {
+    loaded,
     layout: prefs.layout ?? options?.defaultLayout ?? 'side',
     setLayout,
     highlightEnabled: prefs.highlightEnabled,
