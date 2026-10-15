@@ -315,6 +315,20 @@ describe('errors across the socket', () => {
     expect(isPermanentTaskFailure(caught)).toBe(false)
   })
 
+  it('sends a thrown value that is not an Error as a fixed message, and logs it on the gateway', async () => {
+    const thrown = 'Error: local detail\n    at secret (/srv/gateway/internal.js:1:1)'
+
+    const caught = await across(thrown)
+
+    expect(caught).toBeInstanceOf(Error)
+    expect(caught).toMatchObject({
+      name: 'Error',
+      message: 'The GitHub gateway failed with a value that is not an Error',
+    })
+    expect(isPermanentTaskFailure(caught)).toBe(false)
+    expect(consoleSpy.all().warn.join('\n')).toContain('local detail')
+  })
+
   it('sends no stack, no cause, no request and no header outside the classified ones', async () => {
     const original = await octokitErrorFor(500, { message: 'Server Error' })
     Object.assign((original as Error & { response: { headers: object } }).response.headers, {

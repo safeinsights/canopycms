@@ -130,17 +130,26 @@ const REGISTRY_LAG =
   /\b(?:code (?:ETARGET|E404|ENOTFOUND)|ERR_PNPM_(?:NO_MATCHING_VERSION|FETCH_404))\b/
 const REGISTRY_RETRY_DELAYS_S = [60, 120, 240]
 
+// `run`, with output saved to `teeFile` too, on its own spawn so `run` never starts a shell. The
+// script is fixed; the command arrives as its positional parameters, which bash never re-parses.
+function runTeed(cmd, args, teeFile, { cwd, env } = {}) {
+  log(`$ ${[cmd, ...args].join(' ')}${cwd ? `   (in ${cwd})` : ''}`)
+  const result = spawnSync(
+    'bash',
+    ['-o', 'pipefail', '-c', '"$@" 2>&1 | tee "$SMOKE_TEE_FILE"', 'bash', cmd, ...args],
+    { cwd, env: { ...process.env, ...env, SMOKE_TEE_FILE: teeFile }, stdio: 'inherit' },
+  )
+  if (result.error) throw result.error
+  return result
+}
+
 /** `run`, retried on registry lag; `tee` keeps output streaming while saving it to match. */
 function runRetryingRegistryLag(cmd, args, { cwd, env } = {}) {
   const teeDir = mkdtempSync(path.join(os.tmpdir(), 'canopy-smoke-tee-'))
   const teeFile = path.join(teeDir, 'output.log')
   try {
     for (let attempt = 0; ; attempt++) {
-      const result = run(
-        'bash',
-        ['-o', 'pipefail', '-c', '"$@" 2>&1 | tee "$SMOKE_TEE_FILE"', 'bash', cmd, ...args],
-        { cwd, env: { ...env, SMOKE_TEE_FILE: teeFile }, allowFailure: true },
-      )
+      const result = runTeed(cmd, args, teeFile, { cwd, env })
       if (result.status === 0) return result
       const lag = REGISTRY_LAG.exec(readFileSync(teeFile, 'utf8'))
       const delay = REGISTRY_RETRY_DELAYS_S[attempt]

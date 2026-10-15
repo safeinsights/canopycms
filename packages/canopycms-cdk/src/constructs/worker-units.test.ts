@@ -93,8 +93,9 @@ function userDataLines(t: Template): string[] {
 /** The body of every `cat > <target> << 'X'` heredoc, in order. */
 function heredocs(all: string[], target: string): string[][] {
   const bodies: string[][] = []
+  const literal = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   all.forEach((line, i) => {
-    const open = new RegExp(`^\\s*cat > ${target.replace(/[.]/g, '\\.')} << '(\\w+)'$`).exec(line)
+    const open = new RegExp(`^\\s*cat > ${literal} << '(\\w+)'$`).exec(line)
     if (!open) return
     const end = all.indexOf(open[1], i + 1)
     expect(end, `no end to the heredoc for ${target}`).toBeGreaterThan(i)

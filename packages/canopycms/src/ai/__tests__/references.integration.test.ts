@@ -236,6 +236,17 @@ describe('generateAIContent: reference fields', () => {
     }
   })
 
+  it('trims a mountPath that is a long run of slashes inside, in linear time', async () => {
+    // A quadratic trim takes seconds on this; a linear one, microseconds.
+    const mountPath = `/a${'/'.repeat(200_000)}b/`
+    const started = performance.now()
+    const { files } = await generate({ mountPath })
+    expect(performance.now() - started).toBeLessThan(2_000)
+    expect(files.get('posts/first.md')).toContain(
+      `**Author:** ${link('Alice Example', '/people/alice', `/a${'/'.repeat(200_000)}b`)}`,
+    )
+  })
+
   describe('a target whose own markdown fails to render', () => {
     const failSecret: AIContentConfig['fieldTransforms'] = {
       person: {
