@@ -11,6 +11,8 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | Say                       | For                                                                                        | Not                                         |
 | ------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------- |
 | **Save**                  | Writing the open entry to the branch                                                       | Save file, Commit                           |
+| **Save all**              | Saving every unsaved entry on the branch                                                   | Save branch                                 |
+| **Refresh from server**   | Replacing the open entry with its saved copy                                               | Reload entry                                |
 | **Submit for review**     | Committing the branch and opening its pull request                                         | Submit branch, Publish                      |
 | **Withdraw from review**  | Taking a submitted branch back for editing                                                 | Withdraw branch                             |
 | **Request changes**       | A reviewer sending a branch back to its editor                                             | Reject                                      |
@@ -221,7 +223,7 @@ indicator, Save), **banner** (branch-wide notices), **rail** (activity icons), *
 (content tree, branches, comments, media), **main** (preview and form) and **overlays**
 (drawers, modals, toasts). The regions are layout only; features plug into them. New UI goes
 into an existing region, and adding a region is a design decision. The unsaved indicator is
-icon-only below `lg`; its presentation is provisional until the shell redesign settles.
+icon-only below `lg`.
 
 ## Enforcement
 

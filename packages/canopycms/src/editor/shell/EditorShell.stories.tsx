@@ -26,8 +26,6 @@ const Placeholder = ({ name, minWidth }: { name: string; minWidth?: number }) =>
 )
 
 const headerProps: EditorHeaderProps = {
-  siteTitle: 'Example Site',
-  headerTitle: 'Hello',
   currentEntry: {
     path: unsafeAsLogicalPath('posts/hello'),
     contentId: unsafeAsContentId('abc123def456'),
@@ -37,10 +35,14 @@ const headerProps: EditorHeaderProps = {
   branchName: 'feature/landing',
   operatingMode: 'prod',
   busy: false,
-  breadcrumbSegments: ['Posts', 'Hello'],
+  breadcrumbSegments: [
+    { label: 'All content' },
+    { label: 'Posts', collectionPath: 'content/posts' },
+  ],
   editedFiles: [],
   modifiedCount: 0,
   onNavigatorOpen: noop,
+  onCollectionOpen: noop,
   onFileReload: noop,
   onFileDiscardDraft: noop,
   onEntrySelect: noop,
@@ -48,6 +50,8 @@ const headerProps: EditorHeaderProps = {
   onBranchDiscardDrafts: noop,
   onBranchManagerOpen: noop,
   onSave: noop,
+  onSaveAll: noop,
+  saveAllProgress: null,
   onSubmit: noop,
   onWithdraw: noop,
   hasUnsavedChanges: false,
@@ -95,7 +99,7 @@ const EditorChrome = ({
       banner={<BranchLockBanner {...props} />}
       rail={
         <EditorRail
-          siteTitle={props.siteTitle}
+          siteTitle="Example Site"
           onHomeOpen={noop}
           contentPanelOpen={panelOpen}
           contentPanelId="story-content-panel"

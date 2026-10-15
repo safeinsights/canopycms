@@ -968,9 +968,27 @@ describe('buildCollectionLabels', () => {
 })
 
 describe('buildBreadcrumbSegments', () => {
+  const labelsOf = (segments: Array<{ label: string }>) => segments.map((s) => s.label)
+
+  it('gives collection crumbs their path, and slug folders none', () => {
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('content/posts/2024/new-year'),
+      label: 'New Year Post',
+      schema: [],
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      slug: '2024/new-year',
+      contentId: unsafeAsContentId('test123456789'),
+    }
+    expect(buildBreadcrumbSegments(entry, new Map([['content/posts', 'Blog posts']]))).toEqual([
+      { label: 'All content' },
+      { label: 'Blog posts', collectionPath: 'content/posts' },
+      { label: '2024', folder: true },
+    ])
+  })
+
   it('returns only "All content" when no entry is provided', () => {
     const labels = new Map<string, string>()
-    expect(buildBreadcrumbSegments(undefined, labels)).toEqual(['All content'])
+    expect(labelsOf(buildBreadcrumbSegments(undefined, labels))).toEqual(['All content'])
   })
 
   it('returns only "All content" for entry without collectionPath', () => {
@@ -981,7 +999,7 @@ describe('buildBreadcrumbSegments', () => {
       contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map<string, string>()
-    expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All content'])
+    expect(labelsOf(buildBreadcrumbSegments(entry, labels))).toEqual(['All content'])
   })
 
   it('returns "All content" for single-level collection (root level)', () => {
@@ -995,7 +1013,7 @@ describe('buildBreadcrumbSegments', () => {
     }
     const labels = new Map([['posts', 'Posts']])
     // Single-level collection: parts = ['posts'], loop starts at i=1 which is >= length, so no segments added
-    expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All content'])
+    expect(labelsOf(buildBreadcrumbSegments(entry, labels))).toEqual(['All content'])
   })
 
   it('shows hierarchy for nested collections', () => {
@@ -1013,7 +1031,7 @@ describe('buildBreadcrumbSegments', () => {
       ['content/docs/guides', 'Guides'],
     ])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     // Should include: All content, Documentation, Guides (skips 'Content' which is the root)
     expect(result).toEqual(['All content', 'Documentation', 'Guides'])
@@ -1035,7 +1053,7 @@ describe('buildBreadcrumbSegments', () => {
       ['content/docs/api/v2', 'Version 2'],
     ])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     expect(result).toEqual(['All content', 'Documentation', 'API Reference', 'Version 2'])
   })
@@ -1055,7 +1073,7 @@ describe('buildBreadcrumbSegments', () => {
       ['content/docs/guides', 'Guides'],
     ])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     // Should skip the missing 'Documentation' segment
     expect(result).toEqual(['All content', 'Guides'])
@@ -1072,7 +1090,7 @@ describe('buildBreadcrumbSegments', () => {
     }
     const labels = new Map([['posts', 'Posts']])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     // Should include slug path segments (minus the last one which is the file name)
     expect(result).toEqual(['All content', '2024', '01'])
@@ -1092,7 +1110,7 @@ describe('buildBreadcrumbSegments', () => {
       ['content/posts', 'Blog Posts'],
     ])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     // Collection hierarchy + slug segments
     expect(result).toEqual(['All content', 'Blog Posts', '2024', '01'])
@@ -1112,7 +1130,7 @@ describe('buildBreadcrumbSegments', () => {
       ['content/settings', 'Settings'],
     ])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     expect(result).toEqual(['All content', 'Settings'])
   })

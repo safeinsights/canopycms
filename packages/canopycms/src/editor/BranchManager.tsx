@@ -181,6 +181,8 @@ export interface BranchManagerProps {
   user?: UserContext
   /** The branch the editor has open: listed first, marked, and offered its workflow action rather than Open. */
   currentBranchName?: string
+  /** Why the open branch's Submit or Withdraw must wait, such as a Save all still writing it. */
+  currentWorkflowBlockedReason?: string
   onSelect?: (name: string) => void
   /** Awaited before the spinner starts, so a confirmation it shows never reads as a hung create. `false` abandons the create. */
   onBeforeCreate?: () => Promise<boolean>
@@ -279,6 +281,7 @@ const isReviewerOfOthersSubmission = (b: BranchSummary, user: UserContext | unde
 interface BranchCardProps {
   branch: BranchSummary
   isCurrent: boolean
+  workflowBlockedReason?: string
   user?: UserContext
   onSelect?: (name: string) => void
   onSubmit?: (name: string) => void
@@ -297,6 +300,7 @@ interface BranchCardProps {
 const BranchCard: React.FC<BranchCardProps> = ({
   branch: b,
   isCurrent,
+  workflowBlockedReason,
   user,
   onSelect,
   onSubmit,
@@ -308,7 +312,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
 }) => {
   const statusBadge = branchStatusPresentation(b.status, b.isProtected)
   const perms = getBranchPermissions(b, user)
-  const workflow = workflowAction(b, perms, onSubmit, onWithdraw)
+  const action = workflowAction(b, perms, onSubmit, onWithdraw)
+  const workflow =
+    action && workflowBlockedReason ? { ...action, blockedReason: workflowBlockedReason } : action
   const userIsAdmin = isAdmin(user?.groups)
 
   const requestChanges: BranchWorkflowAction | undefined =
@@ -565,6 +571,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   mode,
   user,
   currentBranchName,
+  currentWorkflowBlockedReason,
   onSelect,
   onBeforeCreate,
   onCreate,
@@ -713,6 +720,9 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                 key={b.name}
                 branch={b}
                 isCurrent={b.name === currentBranchName}
+                workflowBlockedReason={
+                  b.name === currentBranchName ? currentWorkflowBlockedReason : undefined
+                }
                 user={user}
                 onSelect={onSelect}
                 onSubmit={onSubmit}

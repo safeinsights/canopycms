@@ -497,6 +497,7 @@ Top-level components and helpers:
 - `shell/PaneLayout.tsx` — the resizable preview/form split
 - `shell/ActivityRail.tsx` — the left rail, one roving Tab stop
 - `shell/SidePanelHost.tsx` — a resizable side panel, docked or over the form
+- `shell/TopBar.tsx` — the 48px top bar, wrapping below `md`
 - `EntryNavigator.tsx` — entry tree: filter, unsaved dots, read-only locks, conflict badges
 - `entry-search.ts` — label/slug match, collection grouping
 - `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
@@ -507,7 +508,7 @@ Top-level components and helpers:
 - `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; `PreviewPane.tsx` adds the toolbar, its controls in `PreviewToolbarTools.tsx`; see [Preview Bridge](#preview-bridge)
 - `unavailable-entry-type.ts` — unavailable-entry-type wording
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
-- `editor-utils.ts` — `buildPreviewRoute`, `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)
+- `editor-utils.ts` — `buildPreviewRoute`, `buildPreviewSrc`, `buildBreadcrumbSegments`; see [Preview URL Construction](#preview-url-construction)
 - `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
 - `preview-asset-base.ts` — the preview's asset-route prefix `assetUrl` reads
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
@@ -548,7 +549,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm; adopts server-sanitized names
 - `create-branch-request.ts` — `requestBranchCreate`: a 90 s create deadline, settled by the branch list
 - `useEntryManager.ts` — entry loading/saving, `readEntryValue`, `adoptEntryVersion`, `listAllEntries` cursors
-- `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; verifies restored drafts; `applySubmitStamps`
+- `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; verifies restored drafts; `applySubmitStamps`; `handleSaveAll` (outcomes in `save-all.ts`)
 - `useSchemaManager.ts` — schema mutations, returning result objects
 - `useCommentSystem.ts` — comment CRUD
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
@@ -586,7 +587,7 @@ Field components, in `editor/fields/`:
 
 Components, in `editor/components/`:
 
-- `EditorHeader.tsx` — save, submit
+- `EditorHeader.tsx` — the top bar's contents: `EntryBreadcrumb`, `BranchPill`, Submit/Withdraw, `SaveSplitButton`; `SaveAllResult` is Save all's toast
 - `BranchLockBanner.tsx` — the read-only banners and `branchLockState`
 - `EditorRail.tsx` — the rail's buttons and Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs

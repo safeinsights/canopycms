@@ -678,7 +678,7 @@ const writeContentHandler = async (
           ok: false,
           status: 409,
           error: err.message,
-          ...(err.outcome === 'unknown' ? { code: 'WRITE_OUTCOME_UNKNOWN' as const } : {}),
+          code: err.outcome === 'unknown' ? 'WRITE_OUTCOME_UNKNOWN' : 'BRANCH_SYNCING',
         }
       }
       // [F1] Also not an editor collision: this content ID is quarantined on two files

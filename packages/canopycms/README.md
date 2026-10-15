@@ -87,7 +87,6 @@ export default defineCanopyConfig({
   gitBotAuthorEmail: 'canopy@example.com',
   editor: {
     title: 'CanopyCMS Editor', // optional UI defaults
-    subtitle: 'Edit content',
     theme: {
       colors: { brand: '#4f46e5' },
     },
