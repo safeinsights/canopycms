@@ -169,7 +169,7 @@ test.describe('Preview highlights and click-to-focus', () => {
         mark.setAttribute('data-canopy-path', 'byline.nam')
         node.after(mark)
       })
-      await expect(editorPage.unmappedMarksChip()).toHaveText('1 unmapped')
+      await expect(editorPage.unmappedMarksChip()).toHaveText('1 unmapped preview mark')
       await editorPage.unmappedMarksChip().click()
       await expect(page.getByRole('dialog')).toContainText(
         "One element on this page carries a field mark that doesn't match a field of this entry: byline.nam.",
