@@ -42,7 +42,7 @@ export interface PreviewPaneProps {
   src: string
   /** The page's path for the bridge and the toolbar; defaults to `src`. */
   path?: string
-  /** Where the preview routes are mounted, which the toolbar's path leaves out. */
+  /** Where the preview routes are mounted; the toolbar's path leaves out the `previewPrefix`. */
   mount?: PreviewMount
   data?: unknown
   isLoading?: unknown
@@ -82,8 +82,8 @@ export const PreviewPane = ({
     }
     hadNotice.current = Boolean(notice)
   }, [notice])
-  // Reloading remounts the frame for a fresh handshake. It drops a reported error too: the
-  // reloaded page reports it again if the draft still fails.
+  // Reloading remounts the frame for a fresh handshake. It drops a reported error too: a page
+  // that reports draft errors reports it again once the reloaded page renders the draft.
   const [reloads, setReloads] = useState(0)
   const reload = () => {
     setReloads((count) => count + 1)

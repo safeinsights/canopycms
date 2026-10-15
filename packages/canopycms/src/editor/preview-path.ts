@@ -42,7 +42,8 @@ const stripPreviewPrefix = (url: string, { basePath, previewPrefix }: PreviewMou
 /**
  * The previewed page's path on the site, as the preview toolbar shows and copies it: without the
  * `previewPrefix` mount, the `branch` query the top bar already names, or a fragment. A relative
- * URL stays relative; an absolute one keeps its origin, since it may be another site.
+ * URL stays relative. An absolute one keeps its origin, since it may be another site, unless an
+ * absolute `previewPrefix` mount is what was taken out.
  */
 export const displayPreviewPath = (src: string, mount: PreviewMount = {}): string => {
   const url = stripPreviewPrefix(src, mount)
@@ -52,7 +53,8 @@ export const displayPreviewPath = (src: string, mount: PreviewMount = {}): strin
   } catch {
     return url
   }
-  // Filtered as raw text: a URLSearchParams round trip would re-encode the query it keeps.
+  // Filtered as text: a URLSearchParams round trip would form-encode the query it keeps (`flag`
+  // becomes `flag=`, `%20` becomes `+`).
   const query = parsed.search
     .slice(1)
     .split('&')

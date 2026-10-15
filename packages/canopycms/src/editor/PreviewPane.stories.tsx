@@ -90,7 +90,7 @@ export const Tablet: Story = { render: () => <Pane initialWidth="tablet" /> }
 /** 390 px, centred in a wider pane. */
 export const Mobile: Story = { render: () => <Pane initialWidth="mobile" /> }
 
-/** A 360 px pane: the path truncates and Desktop scales to fit. */
+/** A 360 px pane: the toolbar wraps and Desktop scales to fit. */
 export const NarrowPane: Story = { render: () => <Pane initialWidth="desktop" paneWidth={360} /> }
 
 /** The preview never sends ready: 5s after load the chip appears; its Retry is the toolbar's reload. */
