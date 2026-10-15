@@ -15,7 +15,6 @@ export default defineCanopyConfig({
     // The editor previews through app/preview/[[...path]], which renders a branch on request.
     previewPrefix: '/preview',
     title: 'CanopyCMS Editor',
-    subtitle: 'Edit entries with live preview',
     theme: {
       colors: {
         brand: '#4f46e5',

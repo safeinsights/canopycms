@@ -9,7 +9,6 @@ export default defineCanopyConfig({
   gitBotAuthorEmail: 'test@example.com',
   editor: {
     title: 'Test Editor',
-    subtitle: 'For E2E testing',
     theme: {
       colors: {
         brand: '#4f46e5',

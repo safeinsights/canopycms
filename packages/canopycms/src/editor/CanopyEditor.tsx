@@ -17,7 +17,6 @@ export interface CanopyEditorProps extends Omit<
   | 'previewPrefix'
   | 'mdxAllow'
   | 'title'
-  | 'subtitle'
   | 'themeOptions'
   | 'entries'
   | 'contentRoot'
@@ -43,7 +42,6 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
   const resolvedBranchName =
     branchName ?? config.defaultActiveBranch ?? config.defaultBaseBranch ?? ''
   const resolvedTitle = config.editor?.title ?? 'CanopyCMS Editor'
-  const resolvedSubtitle = config.editor?.subtitle
   const resolvedTheme = (config.editor?.theme as EditorProps['themeOptions']) ?? undefined
 
   // The gate owns the SWRProvider (keyed by user id), so it sits between the API client and the
@@ -58,7 +56,6 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
         <Editor
           entries={entries}
           title={resolvedTitle}
-          subtitle={resolvedSubtitle}
           branchName={resolvedBranchName}
           operatingMode={config.mode}
           initialSelectedId={initialSelectedId}

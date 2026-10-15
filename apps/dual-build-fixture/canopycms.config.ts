@@ -25,7 +25,6 @@ export default defineCanopyConfig({
   gitBotAuthorEmail: 'dual-build-fixture@example.com',
   editor: {
     title: 'Dual-Build Fixture Editor',
-    subtitle: 'CI safety net for the static/cms build split',
     theme: {
       colors: {
         brand: '#4f46e5',

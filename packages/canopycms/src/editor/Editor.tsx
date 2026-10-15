@@ -184,9 +184,7 @@ export interface EditorCollection {
 export interface EditorProps {
   entries: EditorEntry[]
   title: string
-  subtitle?: string
   siteTitle?: string
-  siteSubtitle?: string
   branchName?: string
   operatingMode: OperatingMode
   collections?: EditorCollection[]
@@ -1703,6 +1701,20 @@ const EditorContent: React.FC<EditorProps> = ({
     () => buildBreadcrumbSegments(currentEntry, collectionLabels),
     [collectionLabels, currentEntry],
   )
+
+  // The browser tab names the open entry and the site; the host page's title comes back on unmount.
+  const tabTitle = currentEntry
+    ? `${currentEntry.label ?? currentEntry.slug} · ${siteTitle}`
+    : siteTitle
+  useEffect(() => {
+    const hostTitle = document.title
+    return () => {
+      document.title = hostTitle
+    }
+  }, [])
+  useEffect(() => {
+    document.title = tabTitle
+  }, [tabTitle])
 
   const openBranchManager = () => {
     branchOpenerRef.current = rememberOpener()

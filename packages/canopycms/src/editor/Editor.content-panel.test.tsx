@@ -1,7 +1,8 @@
 /**
  * The content panel: docked beside the panes in a wide side-by-side layout, otherwise an overlay on
  * the form pane; its open state and width persist, and a URL asking for no entry opens it. Also
- * how a maximized preview gives way to what needs the form.
+ * how a maximized preview gives way to what needs the form, Save all without an entry list, and
+ * the browser tab's title.
  */
 import React from 'react'
 
@@ -645,6 +646,29 @@ describe('Save all', () => {
     expect(item.getAttribute('aria-disabled')).toBe('true')
     expect(item.textContent).toContain('Use "Refresh branch" to try again.')
     expect(consoleSpy).toHaveErrored(/500/)
+  })
+})
+
+describe('browser tab title', () => {
+  it("names the open entry and the site, and gives the host page's title back on unmount", async () => {
+    document.title = 'Host page'
+    await setup(true)
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+
+    fireEvent.click(await row('second'))
+    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+
+    cleanup()
+    expect(document.title).toBe('Host page')
+  })
+
+  it('names only the site with no entry open', async () => {
+    window.history.replaceState({}, '', '/?entry=')
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await loaded()
+    expect(document.title).toBe('Test Editor')
   })
 })
 
