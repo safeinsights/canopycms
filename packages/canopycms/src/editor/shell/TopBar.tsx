@@ -14,7 +14,7 @@ export interface TopBarProps {
 
 /**
  * The shell's top bar: one 48px row from `md` up. Narrower, `leading` takes a row of its own
- * above `trailing`, so no control is ever clipped. Layout only.
+ * above `trailing`, which wraps rather than clip a control. Layout only.
  */
 export function TopBar({ leading, trailing }: TopBarProps) {
   return (
@@ -34,8 +34,8 @@ export function TopBar({ leading, trailing }: TopBarProps) {
         {leading}
       </Box>
       <Group
-        gap="xs"
-        wrap="nowrap"
+        gap={6}
+        wrap="wrap"
         align="center"
         justify="flex-end"
         flex={{ base: '1 0 100%', md: '0 1 auto' }}

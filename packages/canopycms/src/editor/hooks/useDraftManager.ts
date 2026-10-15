@@ -16,11 +16,11 @@ import type { ApiErrorCode } from '../../api/types'
 import { isUnanswered } from '../unanswered'
 import { withItemKeys } from '../../item-keys'
 import { RetryToastMessage } from '../components/RetryToastMessage'
+import { clearSaveAllResult, settleSaveAllEntry } from '../components/SaveAllResult'
 import {
   classifySaveAllError,
   invalidReason,
   SAVE_ALL_REASONS,
-  SAVE_ALL_RESULT_TOAST_ID,
   type SaveAllFailure,
   type SaveAllProgress,
   type SaveAllResult,
@@ -436,7 +436,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
       goneEntriesRef.current.clear()
       // Its entries, and their "Open" and "Save as new entry" buttons, are the old branch's.
-      notifications.hide(SAVE_ALL_RESULT_TOAST_ID)
+      clearSaveAllResult()
       reconciledDraftIdsRef.current = new Set()
     }
     prevBranchRef.current = options.branchName
@@ -798,6 +798,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           return equal(latest, value) ? rest : { ...rest, [created.contentId]: latest }
         })
       }
+      if (created) settleSaveAllEntry(id)
       notifications.show({
         message: created ? 'Saved as a new entry' : RECREATED_NOT_LISTED_MESSAGE,
         color: 'green',
@@ -968,6 +969,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         notifications.hide(saveTimedOutToastId(currentId))
       }
       hideEntryGone(currentId)
+      settleSaveAllEntry(currentId)
       notifications.show({
         message: 'Saved',
         color: 'green',
@@ -1255,7 +1257,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         })
       const result: SaveAllResult = { branch, total: queue.length, saved: [], failed: [] }
       if (queue.length === 0) return result
-      notifications.hide(SAVE_ALL_RESULT_TOAST_ID)
+      clearSaveAllResult()
       setSaveAllProgress({ done: 0, total: queue.length })
       for (const [index, entry] of queue.entries()) {
         if (latestOptionsRef.current.branchName !== branch) return undefined
@@ -1285,6 +1287,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     timedOutSavesRef.current.clear()
     for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
     goneEntriesRef.current.clear()
+    clearSaveAllResult()
     options.onDraftsReset?.()
     setDrafts({})
     setErrorState(null)
@@ -1333,6 +1336,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
     options.onDraftsReset?.(currentId)
     hideEntryGone(currentId)
+    settleSaveAllEntry(currentId)
     setErrorState(null)
     setDrafts((prev) => {
       const next = { ...prev }
@@ -1396,6 +1400,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         notifications.hide(saveTimedOutToastId(currentId))
       }
       hideEntryGone(currentId)
+      settleSaveAllEntry(currentId)
       setLoadedValues((prev) => ({ ...prev, [currentId]: loaded }))
       // Drop the draft rather than seeding it with `loaded`. `effectiveValue`
       // falls back to `loadedValues`, so the rendered value is identical --
@@ -1427,7 +1432,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       }
       console.error(err)
       notifications.show({
-        message: 'Reload failed',
+        message: "Couldn't refresh from the server. Your changes are still here; try again.",
         color: 'red',
         autoClose: getNotificationDuration(6000),
         withCloseButton: true,

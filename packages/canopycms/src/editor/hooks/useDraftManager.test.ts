@@ -568,7 +568,7 @@ describe('useDraftManager', () => {
         expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
           expect.objectContaining({
             message:
-              'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).',
+              'This entry changed since you opened it. Choose "Refresh from server" to see the latest version (your unsaved edits will be lost).',
             color: 'yellow',
           }),
         )
@@ -727,7 +727,7 @@ describe('useDraftManager', () => {
 
         expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
           message:
-            'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).',
+            'This entry changed since you opened it. Choose "Refresh from server" to see the latest version (your unsaved edits will be lost).',
         })
         expect(mockSaveEntry).toHaveBeenCalledTimes(1)
         expect(notifications.hide).toHaveBeenCalledWith('canopy-save-may-have-landed:abc123def456')
@@ -1410,7 +1410,7 @@ describe('useDraftManager', () => {
         })
 
         expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: 'Reload failed',
+          message: "Couldn't refresh from the server. Your changes are still here; try again.",
         })
         expect(notifications.hide).not.toHaveBeenCalledWith(goneToastId)
       })
@@ -2108,7 +2108,9 @@ describe('useDraftManager', () => {
       expect.objectContaining({ title: 'Not available yet', message: 'not known yet' }),
     )
     expect(vi.mocked(notifications.show)).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'Reload failed' }),
+      expect.objectContaining({
+        message: "Couldn't refresh from the server. Your changes are still here; try again.",
+      }),
     )
     expect(mockSetBusy).toHaveBeenLastCalledWith(false)
   })
@@ -2425,7 +2427,7 @@ describe('useDraftManager', () => {
       expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
         expect.objectContaining({
           message:
-            'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).',
+            'This entry changed since you opened it. Choose "Refresh from server" to see the latest version (your unsaved edits will be lost).',
           color: 'yellow',
         }),
       )

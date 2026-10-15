@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useRef, type Ref } from 'react'
+import React, { useEffect, useRef, useState, type ReactElement, type Ref } from 'react'
 import { Badge, Box, Button, Group, Menu, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useMergedRef } from '@mantine/hooks'
 import { IconChevronDown, IconChevronRight, IconLock } from '@tabler/icons-react'
@@ -28,11 +28,69 @@ export interface EntryBreadcrumbProps {
   entryMenuRef?: Ref<HTMLButtonElement>
 }
 
-const crumbText = (label: string) => (
-  <Text span inherit truncate="end" display="block">
+/** Whether the element's text is cut short, kept current as it resizes. */
+function useTruncated(label: string) {
+  const ref = useRef<HTMLParagraphElement>(null)
+  const [truncated, setTruncated] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const check = () => setTruncated(el.scrollWidth > el.clientWidth)
+    check()
+    const observer = new ResizeObserver(check)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [label])
+  return [ref, truncated] as const
+}
+
+const crumbText = (label: string, ref: Ref<HTMLParagraphElement>) => (
+  <Text ref={ref} span inherit truncate="end" display="block">
     {label}
   </Text>
 )
+
+/** A cut-short crumb shows its full label in a Tooltip, on hover and on focus. */
+function CrumbTooltip({
+  label,
+  truncated,
+  children,
+}: {
+  label: string
+  truncated: boolean
+  children: ReactElement
+}) {
+  return (
+    <Tooltip
+      label={label}
+      disabled={!truncated}
+      events={{ hover: true, focus: true, touch: false }}
+    >
+      {children}
+    </Tooltip>
+  )
+}
+
+function CollectionCrumb({ label, onClick }: { label: string; onClick: () => void }) {
+  const [ref, truncated] = useTruncated(label)
+  return (
+    <CrumbTooltip label={label} truncated={truncated}>
+      <Button
+        variant="subtle"
+        color="gray"
+        size="compact-sm"
+        fw={400}
+        miw={0}
+        maw={180}
+        onClick={onClick}
+        data-testid="breadcrumb-segment"
+        styles={{ label: { minWidth: 0 } }}
+      >
+        {crumbText(label, ref)}
+      </Button>
+    </CrumbTooltip>
+  )
+}
 
 const separator = (
   <IconChevronRight
@@ -63,6 +121,7 @@ export function EntryBreadcrumb({
   const trigger = useRef<HTMLButtonElement>(null)
   const triggerRef = useMergedRef(trigger, entryMenuRef)
   const menuFocus = useMenuItemFocusReturn(trigger)
+  const [entryLabelRef, entryTruncated] = useTruncated(entryLabel ?? '')
 
   return (
     <Group gap="xs" wrap="nowrap" miw={0}>
@@ -70,7 +129,8 @@ export function EntryBreadcrumb({
         component="nav"
         aria-label="Breadcrumb"
         miw={0}
-        style={{ flex: '0 1 auto', overflow: 'hidden' }}
+        // Clips crumbs that overflow, padded by the focus ring's reach so the ring is not clipped.
+        style={{ flex: '0 1 auto', overflow: 'hidden', padding: 4, margin: -4 }}
       >
         <Group
           component="ol"
@@ -95,21 +155,12 @@ export function EntryBreadcrumb({
                   {segment.label}
                 </Text>
               ) : (
-                <Button
-                  variant="subtle"
-                  color="gray"
-                  size="compact-sm"
-                  fw={400}
-                  miw={0}
-                  maw={180}
+                <CollectionCrumb
+                  label={segment.label}
                   onClick={() =>
                     segment.collectionPath ? onCollection(segment.collectionPath) : onAllContent()
                   }
-                  data-testid="breadcrumb-segment"
-                  styles={{ label: { minWidth: 0 } }}
-                >
-                  {crumbText(segment.label)}
-                </Button>
+                />
               )}
             </Group>
           ))}
@@ -121,40 +172,42 @@ export function EntryBreadcrumb({
               </Text>
             ) : (
               <Menu withinPortal shadow="sm" position="bottom-start" {...menuFocus.menu}>
-                <Menu.Target>
-                  <Button
-                    ref={triggerRef}
-                    variant="subtle"
-                    color="gray"
-                    size="compact-sm"
-                    fw={600}
-                    miw={0}
-                    maw="100%"
-                    aria-current="page"
-                    rightSection={<IconChevronDown size={14} aria-hidden="true" />}
-                    data-testid="file-dropdown-button"
-                    styles={{ label: { minWidth: 0, gap: 6 } }}
-                  >
-                    {crumbText(entryLabel)}
-                    {entryDirty && (
-                      <>
-                        <Box
-                          component="span"
-                          aria-hidden="true"
-                          w={8}
-                          h={8}
-                          style={{
-                            borderRadius: '50%',
-                            flexShrink: 0,
-                            background: 'var(--mantine-color-text)',
-                          }}
-                          data-testid="entry-unsaved-dot"
-                        />
-                        <VisuallyHidden component="span">, unsaved changes</VisuallyHidden>
-                      </>
-                    )}
-                  </Button>
-                </Menu.Target>
+                <CrumbTooltip label={entryLabel} truncated={entryTruncated}>
+                  <Menu.Target>
+                    <Button
+                      ref={triggerRef}
+                      variant="subtle"
+                      color="gray"
+                      size="compact-sm"
+                      fw={600}
+                      miw={0}
+                      maw="100%"
+                      aria-current="page"
+                      rightSection={<IconChevronDown size={14} aria-hidden="true" />}
+                      data-testid="file-dropdown-button"
+                      styles={{ label: { minWidth: 0, gap: 6 } }}
+                    >
+                      {crumbText(entryLabel, entryLabelRef)}
+                      {entryDirty && (
+                        <>
+                          <Box
+                            component="span"
+                            aria-hidden="true"
+                            w={8}
+                            h={8}
+                            style={{
+                              borderRadius: '50%',
+                              flexShrink: 0,
+                              background: 'var(--mantine-color-text)',
+                            }}
+                            data-testid="entry-unsaved-dot"
+                          />
+                          <VisuallyHidden component="span">, unsaved changes</VisuallyHidden>
+                        </>
+                      )}
+                    </Button>
+                  </Menu.Target>
+                </CrumbTooltip>
                 <Menu.Dropdown {...menuFocus.dropdown}>
                   <ReasonedMenuItem
                     onClick={onRefresh}

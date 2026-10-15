@@ -734,3 +734,40 @@ describe('EditorHeader - Save all', () => {
     expect(announced).toEqual(['Saving 3 entries…'])
   })
 })
+
+describe('EditorHeader - while branch details load', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('names no lock and no status until they arrive', () => {
+    renderHeader({ branchLoading: true, branchWriteBlocked: true, branchStatus: undefined })
+    expect(screen.queryByTestId('read-only-chip')).toBeNull()
+    expect(document.querySelector('[data-testid^="header-status-badge-"]')).toBeNull()
+  })
+})
+
+describe('EditorHeader - during Save all', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('says why Submit waits, and keeps the progress label out of disabled styling', async () => {
+    renderHeader({
+      busy: true,
+      saveAllProgress: { done: 0, total: 2 },
+      userContext: { userId: 'u1' },
+      branchCreatedBy: 'u1',
+    })
+    const submit = screen.getByTestId('submit-button')
+    expect(submit.getAttribute('aria-disabled')).toBe('true')
+    await act(async () => {
+      submit.focus()
+    })
+    expect(await screen.findByText('Wait for Save all to finish.')).toBeTruthy()
+
+    const save = screen.getByTestId('save-button')
+    expect(save.getAttribute('aria-disabled')).toBe('true')
+    expect(save.hasAttribute('data-disabled')).toBe(false)
+  })
+})

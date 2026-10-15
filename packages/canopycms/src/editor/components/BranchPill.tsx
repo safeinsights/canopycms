@@ -6,6 +6,7 @@ import { useMediaQuery, useMergedRef } from '@mantine/hooks'
 import { IconChevronDown, IconGitBranch } from '@tabler/icons-react'
 import type { LogicalPath } from '../../paths/types'
 import { EDITOR_ACTIONS } from '../copy'
+import { DestructiveMenuItem } from './DestructiveMenuItem'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 
@@ -67,6 +68,8 @@ export function BranchPill({
             size="sm"
             miw={0}
             px={{ base: 8, sm: 14 }}
+            // The count is the bar's one branch-wide unsaved signal: the row wraps before it clips.
+            style={{ flexShrink: 0 }}
             leftSection={<IconGitBranch size={16} aria-hidden="true" />}
             rightSection={wide ? <IconChevronDown size={14} aria-hidden="true" /> : undefined}
             loading={!branchName && loading}
@@ -139,7 +142,8 @@ export function BranchPill({
             </Menu.Item>
           ))
         )}
-        <ReasonedMenuItem
+        <Menu.Divider />
+        <DestructiveMenuItem
           data-testid="discard-all-drafts-menu-item"
           onClick={onDiscardAll}
           blockedReason={noBranch ?? (unsaved === 0 ? 'Nothing to discard.' : undefined)}
@@ -147,7 +151,7 @@ export function BranchPill({
           {unsaved > 0
             ? `Discard all changes (${plural(unsaved, 'entry', 'entries')})`
             : 'Discard all changes'}
-        </ReasonedMenuItem>
+        </DestructiveMenuItem>
       </Menu.Dropdown>
     </Menu>
   )

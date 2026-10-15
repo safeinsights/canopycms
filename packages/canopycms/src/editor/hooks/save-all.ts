@@ -50,6 +50,7 @@ export const SAVE_ALL_REASONS = {
     'Its unsaved changes come from an older version of the editor. Open it and save it on its own to confirm the overwrite.',
   unavailable: "Its entry type isn't available in this version of the site, so it can't be saved.",
   noEditAccess: "You don't have edit access to it.",
+  forbidden: "You don't have permission to save it. Ask a CanopyCMS admin for access.",
   loadFailed: "It couldn't be loaded from the server, so it wasn't saved. Try Save all again.",
   renamed:
     "It was renamed since your edits started, so it wasn't saved. Your changes moved with it: save again.",
@@ -95,6 +96,10 @@ export function classifySaveAllError(
   if (err.status === 422) {
     return { kind: 'invalid', reason: err.message, fieldErrors: !!err.fieldErrors?.length }
   }
-  if (err.status === 403) return { kind: 'blocked', reason: err.message }
+  // A path rule's refusal says only "Forbidden"; the guards' own refusals explain themselves.
+  if (err.status === 403) {
+    const bare = !err.serverMessage || err.serverMessage === 'Forbidden'
+    return { kind: 'blocked', reason: bare ? SAVE_ALL_REASONS.forbidden : err.serverMessage }
+  }
   return { kind: 'error', reason: SAVE_ALL_REASONS.failed }
 }

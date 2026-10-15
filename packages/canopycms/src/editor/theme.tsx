@@ -228,7 +228,11 @@ const canopyComponents = {
   }),
   ModalCloseButton: Modal.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
   DrawerCloseButton: Drawer.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
-  Notification: Notification.extend({ defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS } }),
+  // Mantine dims a titled toast's text to gray.6 / dark.2, about 3.3:1.
+  Notification: Notification.extend({
+    defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS },
+    styles: { description: { color: 'var(--mantine-color-text)' } },
+  }),
   // A light yellow Alert's title, icon and close button are yellow on pale yellow, under 2:1, so
   // they take the text colour; the tint and the icon's shape still mark it a warning.
   Alert: Alert.extend({

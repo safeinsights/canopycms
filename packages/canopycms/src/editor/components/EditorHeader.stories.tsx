@@ -105,6 +105,22 @@ export const NarrowUnsaved: Story = {
   parameters: phone,
 }
 
+/** The widest phone case: in review, many unsaved; the pill keeps its count and the row wraps. */
+export const NarrowInReviewManyUnsaved: Story = {
+  parameters: phone,
+  args: {
+    branchStatus: 'submitted',
+    branchWriteBlocked: true,
+    hasUnsavedChanges: false,
+    modifiedCount: 12,
+  },
+}
+
+/** Before branch details arrive: no lock chip or status yet, as nothing is known. */
+export const BranchLoading: Story = {
+  args: { branchLoading: true, branchWriteBlocked: true, hasUnsavedChanges: false },
+}
+
 export const SaveAllInProgress: Story = {
   args: { busy: true, saveAllProgress: { done: 1, total: 3 } },
 }

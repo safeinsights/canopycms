@@ -1,15 +1,24 @@
 'use client'
 
 import React from 'react'
-import { Anchor, Button, List, Stack, Text } from '@mantine/core'
+import { Anchor, Box, Button, Group, List, Stack, Text, VisuallyHidden } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
+import { IconAlertTriangle, IconCircleX } from '@tabler/icons-react'
 import type { LogicalPath } from '../../paths/types'
-import { SAVE_ALL_RESULT_TOAST_ID, type SaveAllResult } from '../hooks/save-all'
+import {
+  SAVE_ALL_RESULT_TOAST_ID,
+  type SaveAllFailure,
+  type SaveAllResult,
+} from '../hooks/save-all'
 import { getNotificationDuration } from '../utils/env'
 
 const entries = (count: number) => `${count} ${count === 1 ? 'entry' : 'entries'}`
 
-export interface SaveAllResultMessageProps {
+/** Nothing is lost yet: no answer, or a change made elsewhere. */
+const isWarning = (failure: SaveAllFailure) =>
+  failure.kind === 'unanswered' || failure.kind === 'conflict'
+
+interface SaveAllResultMessageProps {
   result: SaveAllResult
   onOpenEntry: (path: LogicalPath) => void
   /** Runs Save all again over whatever is still unsaved. */
@@ -17,39 +26,57 @@ export interface SaveAllResultMessageProps {
 }
 
 /**
- * Names every entry Save all could not save, each opening that entry, with its reason.
+ * Names every entry Save all could not save, each opening that entry, with its reason and a
+ * warning or error mark. "Try again" is offered only when a failure is one a retry can pass.
  * @internal Exported for stories.
  */
 export function SaveAllResultMessage({ result, onOpenEntry, onRetry }: SaveAllResultMessageProps) {
+  const retryable = result.failed.some((failure) => failure.kind === 'error')
   return (
     <Stack gap={6} data-testid="save-all-result">
       {result.saved.length > 0 && <Text size="sm">{`${entries(result.saved.length)} saved.`}</Text>}
       <List size="sm" spacing={6} listStyleType="none" pl={0}>
         {result.failed.map((failure) => (
           <List.Item key={failure.contentId} data-testid="save-all-failure">
-            <Anchor
-              component="button"
-              type="button"
-              size="sm"
-              fw={600}
-              onClick={() => onOpenEntry(failure.path)}
-            >
-              {failure.label}
-            </Anchor>
-            <Text size="sm" span>
-              {`: ${failure.reason}`}
-            </Text>
-            {failure.recreate && (
-              <Button
-                display="block"
-                mt={4}
-                size="compact-xs"
-                variant="default"
-                onClick={failure.recreate}
+            <Group gap={6} wrap="nowrap" align="flex-start">
+              <Box
+                component="span"
+                display="inline-flex"
+                mt={2}
+                aria-hidden="true"
+                c={isWarning(failure) ? 'var(--mantine-color-text)' : 'var(--canopy-danger-text)'}
               >
-                Save as new entry
-              </Button>
-            )}
+                {isWarning(failure) ? <IconAlertTriangle size={16} /> : <IconCircleX size={16} />}
+              </Box>
+              <div>
+                <VisuallyHidden component="span">
+                  {isWarning(failure) ? 'Warning: ' : 'Error: '}
+                </VisuallyHidden>
+                <Anchor
+                  component="button"
+                  type="button"
+                  size="sm"
+                  fw={600}
+                  onClick={() => onOpenEntry(failure.path)}
+                >
+                  {failure.label}
+                </Anchor>
+                <Text size="sm" span>
+                  {`: ${failure.reason}`}
+                </Text>
+                {failure.recreate && (
+                  <Button
+                    display="block"
+                    mt={4}
+                    size="compact-xs"
+                    variant="default"
+                    onClick={failure.recreate}
+                  >
+                    Save as new entry
+                  </Button>
+                )}
+              </div>
+            </Group>
           </List.Item>
         ))}
       </List>
@@ -58,53 +85,75 @@ export function SaveAllResultMessage({ result, onOpenEntry, onRetry }: SaveAllRe
           ? 'Its unsaved changes are kept.'
           : 'Their unsaved changes are kept.'}
       </Text>
-      <Button size="compact-sm" variant="default" w="fit-content" onClick={onRetry}>
-        Try again
-      </Button>
+      {retryable && (
+        <Button size="compact-sm" variant="default" w="fit-content" onClick={onRetry}>
+          Try again
+        </Button>
+      )}
     </Stack>
   )
 }
 
-/**
- * Reports a finished Save all in one toast. Partly failed, it stays until dismissed: yellow when
- * nothing failed for good (no answer, or changed elsewhere), else red.
- */
-export function showSaveAllResult(
-  result: SaveAllResult,
-  actions: Omit<SaveAllResultMessageProps, 'result'>,
-): void {
-  notifications.hide(SAVE_ALL_RESULT_TOAST_ID)
-  if (result.total === 0) {
-    // The draft check found every change already on the server.
-    notifications.show({
-      id: SAVE_ALL_RESULT_TOAST_ID,
-      message: 'No changes to save',
-      color: 'blue',
-      autoClose: getNotificationDuration(4000),
-      withCloseButton: true,
-    })
-    return
-  }
-  if (result.failed.length === 0) {
-    notifications.show({
-      id: SAVE_ALL_RESULT_TOAST_ID,
-      message: `${entries(result.saved.length)} saved`,
-      color: 'green',
-      autoClose: getNotificationDuration(4000),
-      withCloseButton: true,
-    })
-    return
-  }
-  const warningOnly = result.failed.every((f) => f.kind === 'unanswered' || f.kind === 'conflict')
-  notifications.show({
+type Actions = Omit<SaveAllResultMessageProps, 'result'>
+
+// The result on screen, so an entry settled elsewhere (saved, refreshed, discarded) leaves it.
+let shown: { result: SaveAllResult; actions: Actions } | undefined
+
+const renderFailures = (result: SaveAllResult, actions: Actions, update: boolean) => {
+  const data = {
     id: SAVE_ALL_RESULT_TOAST_ID,
     title:
       result.failed.length === result.total
         ? `${entries(result.total)} not saved`
         : `${result.failed.length} of ${entries(result.total)} not saved`,
     message: <SaveAllResultMessage result={result} {...actions} />,
-    color: warningOnly ? 'yellow' : 'red',
-    autoClose: false,
+    color: result.failed.every(isWarning) ? 'yellow' : 'red',
+    autoClose: false as const,
     withCloseButton: true,
-  })
+    onClose: () => {
+      shown = undefined
+    },
+  }
+  if (update) notifications.update(data)
+  else notifications.show(data)
+}
+
+/**
+ * Reports a finished Save all in one toast. Partly failed, it stays until dismissed: yellow when
+ * nothing failed for good, else red, each entry marked by its own severity.
+ */
+export function showSaveAllResult(result: SaveAllResult, actions: Actions): void {
+  clearSaveAllResult()
+  if (result.total === 0 || result.failed.length === 0) {
+    notifications.show({
+      id: SAVE_ALL_RESULT_TOAST_ID,
+      // An empty run found every change already on the server, or discarded meanwhile.
+      message: result.total === 0 ? 'No changes to save' : `${entries(result.saved.length)} saved`,
+      color: result.total === 0 ? 'blue' : 'green',
+      autoClose: getNotificationDuration(4000),
+      withCloseButton: true,
+    })
+    return
+  }
+  shown = { result, actions }
+  renderFailures(result, actions, false)
+}
+
+/** Takes an entry out of the result on screen, and the toast down with its last entry. */
+export function settleSaveAllEntry(contentId: string): void {
+  if (!shown) return
+  const failed = shown.result.failed.filter((failure) => failure.contentId !== contentId)
+  if (failed.length === shown.result.failed.length) return
+  if (failed.length === 0) {
+    clearSaveAllResult()
+    return
+  }
+  shown = { ...shown, result: { ...shown.result, failed } }
+  renderFailures(shown.result, shown.actions, true)
+}
+
+/** Takes the result down, as when the branch it belongs to is left. */
+export function clearSaveAllResult(): void {
+  shown = undefined
+  notifications.hide(SAVE_ALL_RESULT_TOAST_ID)
 }

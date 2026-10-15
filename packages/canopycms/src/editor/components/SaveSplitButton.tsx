@@ -100,7 +100,8 @@ export function SaveSplitButton({
             onClick={() => {
               if (!saveBlocked) onSave()
             }}
-            data-disabled={saveBlocked ? true : undefined}
+            // Its progress label stays readable: disabled styling would take it under 2:1.
+            data-disabled={saveBlocked && !saveAllProgress ? true : undefined}
             aria-disabled={saveBlocked ? true : undefined}
           >
             {saveAllProgress

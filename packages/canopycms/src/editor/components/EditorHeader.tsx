@@ -78,6 +78,8 @@ export interface EditorHeaderProps {
   branchReadOnly?: boolean
   /** Server-computed: content writes are rejected on this branch; see `branchLockState`. */
   branchWriteBlocked?: boolean
+  /** Branch details have not arrived yet, so the fail-closed lock defaults name nothing yet. */
+  branchLoading?: boolean
 }
 
 /**
@@ -118,6 +120,7 @@ export function EditorHeader({
   branchIsProtected = false,
   branchReadOnly = false,
   branchWriteBlocked = false,
+  branchLoading = false,
 }: EditorHeaderProps) {
   const { statusLocked, branchDataUnavailable } = branchLockState({
     branchStatus,
@@ -151,7 +154,9 @@ export function EditorHeader({
 
   const presentation = branchStatusPresentation(branchStatus, branchIsProtected)
   const status =
-    clientOperatingStrategy(operatingMode ?? 'prod').supportsStatusBadge() && presentation
+    !branchLoading &&
+    clientOperatingStrategy(operatingMode ?? 'prod').supportsStatusBadge() &&
+    presentation
       ? {
           label: presentation.label,
           value: branchIsProtected ? 'protected' : String(branchStatus),
@@ -167,7 +172,11 @@ export function EditorHeader({
           entryLabel={currentEntry ? (currentEntry.label ?? currentEntry.slug) : undefined}
           entryDirty={hasUnsavedChanges}
           readOnlyReason={
-            currentEntry || branchName ? (branchLockReason ?? entryLockReason) : undefined
+            branchLoading
+              ? undefined
+              : currentEntry || branchName
+                ? (branchLockReason ?? entryLockReason)
+                : undefined
           }
           onAllContent={onNavigatorOpen}
           onCollection={onCollectionOpen}
@@ -202,6 +211,7 @@ export function EditorHeader({
             branchIsProtected={branchIsProtected}
             onSubmit={onSubmit}
             onWithdraw={onWithdraw}
+            savingAll={!!saveAllProgress}
           />
           <SaveSplitButton
             onSave={onSave}
@@ -232,7 +242,7 @@ type WorkflowButtonProps = Pick<
   | 'branchAccess'
   | 'onSubmit'
   | 'onWithdraw'
-> & { branchIsProtected: boolean }
+> & { branchIsProtected: boolean; savingAll: boolean }
 
 /** Submit for review, or Withdraw from review once submitted or approved. */
 function WorkflowButton({
@@ -245,6 +255,7 @@ function WorkflowButton({
   branchIsProtected,
   onSubmit,
   onWithdraw,
+  savingAll,
 }: WorkflowButtonProps) {
   const isSubmitted = branchStatus === 'submitted'
   const isEditing = branchStatus === 'editing'
@@ -286,6 +297,7 @@ function WorkflowButton({
   const canPerformAction = userHasPermission && statusHasAction
   // Blocked, it stays focusable (`aria-disabled`), so its reason opens on focus.
   const actionBlocked = !branchName || busy || !canPerformAction
+  const waitReason = savingAll ? 'Wait for Save all to finish.' : undefined
 
   return (
     <Tooltip
@@ -295,15 +307,16 @@ function WorkflowButton({
         // than left to the early return above, which hides this button
         // today only as a side effect of `branchIsProtected`'s `?? true`
         // default -- not a guarantee this arm stays unreachable.
-        branchStatus === undefined
+        waitReason ??
+        (branchStatus === undefined
           ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
           : !statusHasAction
             ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
             : !userHasPermission
               ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
-              : ''
+              : '')
       }
-      disabled={canPerformAction}
+      disabled={canPerformAction && !waitReason}
       multiline
       maw={320}
     >

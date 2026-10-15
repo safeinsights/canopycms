@@ -1463,7 +1463,15 @@ const EditorContent: React.FC<EditorProps> = ({
   const runSaveAll = () => {
     void handleSaveAll()
       .then((result) => {
-        if (result) showSaveAllResult(result, { onOpenEntry: openEntry, onRetry: runSaveAll })
+        if (!result) return
+        showSaveAllResult(result, {
+          // Focus goes to the entry's menu, where its reason's "Refresh from server" is.
+          onOpenEntry: (path) => {
+            openEntry(path)
+            requestAnimationFrame(() => navigatorToggleRef.current?.focus())
+          },
+          onRetry: runSaveAll,
+        })
       })
       .catch(console.error)
   }
@@ -1811,6 +1819,8 @@ const EditorContent: React.FC<EditorProps> = ({
               branchIsProtected={currentBranch?.isProtected ?? true}
               branchReadOnly={currentBranch?.readOnly}
               branchWriteBlocked={branchContentLocked}
+              // A failed fetch leaves the list empty too; the banner says that one.
+              branchLoading={!currentBranch && (branchesLoading || branchSummaries.length === 0)}
               onNavigatorOpen={openNavigator}
               onCollectionOpen={revealCollection}
               navigatorToggleRef={navigatorToggleRef}

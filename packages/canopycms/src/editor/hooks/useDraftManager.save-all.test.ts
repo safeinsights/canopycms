@@ -1,7 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDraftManager, type UseDraftManagerOptions } from './useDraftManager'
-import { SAVE_ALL_REASONS, type SaveAllResult } from './save-all'
+import { SAVE_ALL_REASONS, SAVE_ALL_RESULT_TOAST_ID, type SaveAllResult } from './save-all'
+import { showSaveAllResult } from '../components/SaveAllResult'
 import { SaveApiError } from './useEntryManager'
 import { ApiTimeoutError } from '../../api/request-deadline'
 import { ENTRY_CHANGED_MESSAGE, ENTRY_GONE_MESSAGE } from '../../api/entries-constants'
@@ -14,7 +15,8 @@ vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn(), hide: vi.fn() },
 }))
 vi.mock('@mantine/modals', () => ({
-  modals: { openConfirmModal: vi.fn() },
+  // Confirms at once, as a discard's confirm would be confirmed.
+  modals: { openConfirmModal: vi.fn((o: { onConfirm?: () => void }) => o.onConfirm?.()) },
 }))
 
 const entry = (id: string, extra: Partial<EditorEntry> = {}): EditorEntry => ({
@@ -240,6 +242,56 @@ describe('useDraftManager - Save all', () => {
       await pending
     })
     expect(result.current.saveAllProgress).toBeNull()
+  })
+
+  it('takes an entry out of the result on screen once a Save or a discard settles it', async () => {
+    draftAll()
+    const { result } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+    const failed = (id: string) => ({
+      contentId: id,
+      label: id,
+      path: unsafeAsLogicalPath(id),
+      kind: 'error' as const,
+      reason: SAVE_ALL_REASONS.failed,
+    })
+    showSaveAllResult(
+      { branch: 'feature', total: 2, saved: [], failed: [failed(idOf(a))] },
+      { onOpenEntry: vi.fn(), onRetry: vi.fn() },
+    )
+    const { notifications } = await import('@mantine/notifications')
+    // Showing it hides any earlier result first.
+    vi.mocked(notifications.hide).mockClear()
+
+    await act(async () => {
+      await result.current.handleSave()
+    })
+    expect(notifications.hide).toHaveBeenCalledWith(SAVE_ALL_RESULT_TOAST_ID)
+
+    vi.mocked(notifications.hide).mockClear()
+    showSaveAllResult(
+      { branch: 'feature', total: 2, saved: [], failed: [failed(idOf(b))] },
+      { onOpenEntry: vi.fn(), onRetry: vi.fn() },
+    )
+    vi.mocked(notifications.hide).mockClear()
+    act(() => {
+      result.current.handleDiscardDrafts()
+    })
+    expect(notifications.hide).toHaveBeenCalledWith(SAVE_ALL_RESULT_TOAST_ID)
+  })
+
+  it("words a path rule's bare refusal as a sentence with a way forward", async () => {
+    draftAll()
+    server.failures.set(idOf(b), async () => {
+      throw new SaveApiError(403, 'Forbidden')
+    })
+    const { result } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    const outcome = await run(result)
+    expect(outcome?.failed).toEqual([
+      expect.objectContaining({ kind: 'blocked', reason: SAVE_ALL_REASONS.forbidden }),
+    ])
   })
 
   it('keeps the entries that saved when others fail, and names each failure and its reason', async () => {
