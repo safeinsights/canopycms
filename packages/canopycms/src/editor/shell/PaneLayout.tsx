@@ -79,7 +79,7 @@ export function PaneLayout({
     }
   }, [groupRef, percent, arrangement])
 
-  // React 18 drops an `inert` prop, so it is set on the DOM. A layout effect, so it changes before
+  // React 18 has no `inert` prop, so it is set on the DOM. A layout effect, so it changes before
   // any passive effect of the same commit tries to focus into the form or out of the overlay.
   useLayoutEffect(() => {
     formRef.current?.toggleAttribute('inert', formInert)

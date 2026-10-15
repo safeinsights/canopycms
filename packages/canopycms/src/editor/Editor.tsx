@@ -296,14 +296,14 @@ const EditorContent: React.FC<EditorProps> = ({
   const collectionOpeningRef = useRef(0)
 
   const [quickOpenOpen, setQuickOpenOpen] = useState(false)
-  const [quickOpenFromDrawer, setQuickOpenFromDrawer] = useState(false)
+  const [quickOpenFromOverlay, setQuickOpenFromOverlay] = useState(false)
   const navigatorToggleRef = useRef<HTMLButtonElement>(null)
   const mediaButtonRef = useRef<HTMLButtonElement>(null)
   const branchToggleRef = useRef<HTMLButtonElement>(null)
   const settingsToggleRef = useRef<HTMLButtonElement>(null)
   // Null when the branches drawer opened from a menu item; see `rememberOpener`.
   const branchOpenerRef = useRef<HTMLElement | null>(null)
-  // Null when the drawer opened from a menu item, which unmounts on click, or with focus on the page.
+  // Null when the panel opened from a menu item, which unmounts on click, or with focus on the page.
   const navigatorOpenerRef = useRef<HTMLElement | null>(null)
   const quickOpenOpenRef = useRef(false)
   useEffect(() => {
@@ -1453,7 +1453,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const settingsReturnTarget = () => settingsToggleRef.current
   // The palette replaces the overlay panel; a docked one stays.
   const openQuickOpen = () => {
-    if (!quickOpenOpen) setQuickOpenFromDrawer(!contentPanelDocked && navigatorOpen)
+    if (!quickOpenOpen) setQuickOpenFromOverlay(!contentPanelDocked && navigatorOpen)
     if (!contentPanelDocked) setNavigatorOpen(false)
     setQuickOpenOpen(true)
   }
@@ -1474,7 +1474,7 @@ const EditorContent: React.FC<EditorProps> = ({
     [entriesState, renamingEntry],
   )
 
-  // Tree expansion state - persists across drawer close/open
+  // Tree expansion state - persists across panel close/open
   const treeExpandedStateRef = useRef<Record<string, boolean>>({})
 
   const treeControllerRef = useRef<TreeController | null>(null)
@@ -2003,7 +2003,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 opened={quickOpenOpen}
                 onOpen={openQuickOpen}
                 onClose={() => setQuickOpenOpen(false)}
-                returnFocusTo={quickOpenFromDrawer ? navigatorReturnTarget : undefined}
+                returnFocusTo={quickOpenFromOverlay ? navigatorReturnTarget : undefined}
                 entries={entriesState}
                 // The hidden root's entries sit at the top of the tree, so they get no heading here either.
                 collectionLabel={(path) =>

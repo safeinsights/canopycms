@@ -201,7 +201,7 @@ const setup = async (wide: boolean) => {
   renderEditor()
   await waitFor(() => expect(screen.getByTestId('content-panel-toggle')).toBeTruthy())
   if (!panel()) {
-    // A real click focuses the button it presses; fireEvent does not.
+    // A click in Chromium focuses the button it presses; fireEvent does not.
     act(() => toggle().focus())
     fireEvent.click(toggle())
   }
