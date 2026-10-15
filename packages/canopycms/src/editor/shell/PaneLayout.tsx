@@ -19,7 +19,8 @@ const PREVIEW_LIMITS = { minSize: `${SPLIT_PERCENT_MIN}%`, maxSize: `${SPLIT_PER
 
 const SEPARATOR_STYLES = `
 .canopy-pane-separator {
-  flex-basis: 8px;
+  min-width: 8px;
+  min-height: 8px;
   background: var(--canopy-surface-muted);
   box-shadow: inset 0 0 0 1px var(--canopy-input-border);
 }

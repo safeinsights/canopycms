@@ -204,7 +204,7 @@ export function EditorSidebar({
       <Stack gap="xs" align="center">
         <Menu
           shadow="md"
-          width={200}
+          width={220}
           position="left"
           opened={settingsOpened}
           onChange={setSettingsOpened}
