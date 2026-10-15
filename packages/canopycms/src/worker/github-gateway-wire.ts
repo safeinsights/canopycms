@@ -425,7 +425,7 @@ export function encodeError(err: unknown): ErrorEnvelope {
     return { kind: 'transient', code: err.code, message: text(err.message) }
   }
   if (!(err instanceof Error)) {
-    gatewayLogWarn('Answered a thrown value that is not an Error:', err)
+    gatewayLogWarn('Answered a thrown value that is not an Error:', text(String(err)))
     return { kind: 'error', name: 'Error', message: NOT_AN_ERROR_MESSAGE }
   }
   const status = (err as { status?: unknown }).status
