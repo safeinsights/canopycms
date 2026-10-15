@@ -18,7 +18,7 @@ import {
 import { useIsomorphicEffect } from '@mantine/hooks'
 import { IconChevronsDown, IconChevronsUp, IconListTree } from '@tabler/icons-react'
 
-/** The padding of the scroller the form sits in, which `EditorPanes` sets; 0 where unset. */
+/** The padding of the scroller the form sits in, which `shell/PaneLayout.tsx` sets; 0 where unset. */
 const PANE_PADDING = 'var(--canopy-form-pane-padding, 0px)'
 
 /** Below this header width "Outline" shows its icon alone, so the controls never clip. */

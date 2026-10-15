@@ -12,7 +12,8 @@ function reactFiberKey(element: Element): string | undefined {
  * @internal Exported for tests. The host page's chrome around `anchor`, an element the editor
  * renders in place: the `<body>` child holding it, plus every `<body>` child the same copy of React
  * rendered (a Next.js root layout's header and footer). That copy's fiber key has a random suffix,
- * so portal containers and other libraries' roots, such as Clerk's, never match it.
+ * so portal containers and the roots other libraries create, such as MDXEditor's popup
+ * container, never match it.
  */
 export function findHostChrome(anchor: Element): HTMLElement[] {
   const body = anchor.ownerDocument.body

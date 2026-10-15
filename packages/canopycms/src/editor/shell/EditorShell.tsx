@@ -33,9 +33,9 @@ const region = (area: string): CSSProperties => ({ gridArea: area, minWidth: 0, 
 
 /**
  * The editor's window: a full-viewport grid of regions (top bar, banner, rail, panel, main,
- * overlays), portalled into `<body>` above the host page, whose chrome it hides, makes inert and stops scrolling.
- * Layout only: features plug into the regions. The rail sits at the inline end, opposite the
- * toasts (`theme.tsx`).
+ * overlays), portalled into `<body>` above the host page, whose chrome it hides and makes inert
+ * and whose scrolling it stops. Layout only: features plug into the regions. The rail sits at the
+ * inline end, opposite the toasts (`theme.tsx`).
  */
 export function EditorShell({ topBar, banner, rail, panel, main, overlays }: EditorShellProps) {
   const anchorRef = useRef<HTMLSpanElement>(null)
@@ -45,8 +45,8 @@ export function EditorShell({ topBar, banner, rail, panel, main, overlays }: Edi
     <>
       <span ref={anchorRef} hidden data-canopy-shell-anchor />
       <Portal>
-        {/* No isolation: it would cancel scrolling in overlays outside this React tree, such as
-            Clerk's account modal. The scroll bar lock alone stops the host page scrolling. */}
+        {/* No isolation: it would cancel wheel and touch scrolling in any overlay outside this
+            React tree. The scroll bar lock alone stops the host page scrolling. */}
         <RemoveScroll noIsolation removeScrollBar style={gridStyle} data-canopy-shell="">
           {topBar && (
             <header style={region('topbar')} data-canopy-region="topbar">

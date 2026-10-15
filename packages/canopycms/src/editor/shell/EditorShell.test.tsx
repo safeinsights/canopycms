@@ -9,7 +9,7 @@ import { CanopyCMSProvider } from '../theme'
 
 const foreignRoots: HTMLElement[] = []
 
-/** A root another library creates with the DOM API, as Clerk does for its popups. */
+/** A root another library creates with the DOM API, as MDXEditor does for its popups. */
 const addForeignRoot = (): HTMLElement => {
   const root = document.createElement('div')
   root.innerHTML = '<button>Foreign popup</button>'

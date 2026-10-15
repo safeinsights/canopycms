@@ -118,7 +118,7 @@ const handler = (input: RequestInfo | URL, init?: RequestInit) => {
   )
 }
 
-/** Installed while rendering, before the editor's API client captures `fetch`. */
+/** Installed while rendering, before the editor's API client captures `fetch` (`api/client.ts:383`). */
 const MockFetch: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [original] = useState(() => {
     const previous = global.fetch
