@@ -286,7 +286,12 @@ function GateScreen({ children }: { children: React.ReactNode }) {
     <EditorShell
       main={
         <Box h="100%" style={{ overflowY: 'auto' }}>
-          <Center mih="100%" p="md">
+          {/* Safe, so a screen wider or taller than the window keeps its start edge reachable. */}
+          <Center
+            mih="100%"
+            p="md"
+            style={{ justifyContent: 'safe center', alignItems: 'safe center' }}
+          >
             {children}
           </Center>
         </Box>
