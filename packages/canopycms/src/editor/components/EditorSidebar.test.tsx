@@ -3,6 +3,7 @@ import { act, render, screen, cleanup, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { EditorSidebar, type EditorSidebarProps } from './EditorSidebar'
 import { CanopyCMSProvider } from '../theme'
+import { CANOPYCMS_VERSION } from '../../version'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
   <CanopyCMSProvider>{children}</CanopyCMSProvider>
@@ -11,9 +12,6 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
 const defaultProps: EditorSidebarProps = {
   layout: 'side',
   highlightEnabled: false,
-  sidebarWidth: 60,
-  headerHeight: 60,
-  footerHeight: 40,
   onLayoutChange: vi.fn(),
   onHighlightToggle: vi.fn(),
   onPermissionManagerOpen: vi.fn(),
@@ -172,5 +170,24 @@ describe('EditorSidebar - inexact marks count', () => {
     expect(count.textContent).toBe('1')
     expect(count.style.getPropertyValue('--indicator-color')).toBe('var(--canopy-count-bg-orange)')
     expect(count.style.getPropertyValue('--indicator-text-color')).toBe('var(--mantine-color-text)')
+  })
+})
+
+describe('EditorSidebar - About', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('shows the version and links About to the project in a new tab, saying so', async () => {
+    render(<EditorSidebar {...defaultProps} />, { wrapper: Wrapper })
+    await userEvent.click(screen.getByLabelText('Settings'))
+
+    expect((await screen.findByTestId('settings-menu-version')).textContent).toBe(
+      `CanopyCMS ${CANOPYCMS_VERSION}`,
+    )
+    const about = screen.getByRole('menuitem', { name: 'About CanopyCMS (opens in a new tab)' })
+    expect(about.getAttribute('href')).toBe('https://github.com/safeinsights/canopycms')
+    expect(about.getAttribute('target')).toBe('_blank')
+    expect(about.getAttribute('rel')).toBe('noopener noreferrer')
   })
 })

@@ -11,6 +11,10 @@ export interface DebugOptions {
   throwOnError?: boolean
 }
 
+/** False where no `process` exists: a browser bundle with no shim for it, such as Storybook's. */
+const envFlag = (name: 'CANOPYCMS_DEBUG' | 'E2E_DEBUG'): boolean =>
+  typeof process !== 'undefined' && process.env[name] === 'true'
+
 const LOG_LEVELS: Record<LogLevel, number> = {
   DEBUG: 0,
   INFO: 1,
@@ -28,7 +32,7 @@ export class DebugLogger {
 
   private shouldLog(level: LogLevel): boolean {
     // Check enabled at call time to support runtime env var changes
-    const enabled = this.options.enabled ?? process.env.CANOPYCMS_DEBUG === 'true'
+    const enabled = this.options.enabled ?? envFlag('CANOPYCMS_DEBUG')
     if (!enabled) return false
 
     const minLevel = this.options.minLevel ?? 'DEBUG'
@@ -124,7 +128,7 @@ export function createDebugLogger(options?: DebugOptions): DebugLogger {
  * @internal No importer; deletion candidate in safeinsights/canopycms#725.
  */
 export const testLogger = createDebugLogger({
-  enabled: process.env.E2E_DEBUG === 'true',
+  enabled: envFlag('E2E_DEBUG'),
   prefix: 'E2E',
   throwOnError: false,
 })

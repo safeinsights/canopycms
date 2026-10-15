@@ -493,7 +493,8 @@ Top-level components and helpers:
 - `CanopyEditorPage.tsx` — page-level shell resolving branch and entry from the URL
 - `EditorAuthGate.tsx` — between `ApiClientProvider` and `Editor`; signed-out decided by API 401s, sign-in full-screen before mount, overlay after
 - `Editor.tsx` — the composition root
-- `EditorPanes.tsx` — pane layout
+- `shell/EditorShell.tsx` — the full-window grid of regions over the host page
+- `shell/PaneLayout.tsx` — the resizable preview/form split
 - `EntryNavigator.tsx` — entry tree: filter, unsaved dots, read-only locks, conflict badges
 - `entry-search.ts` — label/slug match, collection grouping
 - `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
@@ -583,8 +584,9 @@ Field components, in `editor/fields/`:
 
 Components, in `editor/components/`:
 
-- `EditorHeader.tsx` — save, submit, the read-only banner
-- `EditorFooter.tsx` / `EditorSidebar.tsx` — chrome
+- `EditorHeader.tsx` — save, submit
+- `BranchLockBanner.tsx` — the read-only banners and `branchLockState`
+- `EditorSidebar.tsx` — the rail
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `QuickOpenPalette.tsx` — Mod+P quick-open palette
 - `BranchesDrawer.tsx` — Branches drawer

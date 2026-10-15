@@ -1308,6 +1308,8 @@ editor: {
 
 **Preview URLs.** The pane loads each entry's `urlPath` with `?branch=`. `previewBase` overrides it by a root entry's path (the whole route), else collection path or name (plus the slug); `false` means no page, and the pane says so. `previewPrefix` precedes every route. Both get `basePath` and `trailingSlash`. An absolute `previewBase` skips the prefix, `basePath` and `trailingSlash`; an absolute prefix skips `basePath`.
 
+**Your root layout.** The editor route renders inside your root layout. The editor still takes the whole window: it draws over your layout's header and footer, hides them, takes them out of the Tab order and stops the page scrolling. Their scripts still run, so keep analytics, consent banners and global fetches out of the editor route with a route group for the public site, or a pathname check.
+
 ### Custom Field Renderers
 
 Every [field type](#field-types) ships with a default control. `customRenderers` replaces the control for one or more types, keyed by the field's `type`, without forking the editor:

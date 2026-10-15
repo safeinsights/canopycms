@@ -2400,10 +2400,10 @@ describe('preview pane', () => {
 
   it("frames a root entry's own page, not the site root", async () => {
     stubApi()
-    const { container } = renderSelected(about)
+    const { baseElement } = renderSelected(about)
 
     await waitFor(() =>
-      expect(container.querySelector('iframe')?.getAttribute('src')).toBe(
+      expect(baseElement.querySelector('iframe')?.getAttribute('src')).toBe(
         '/edit/preview/about?branch=main',
       ),
     )
@@ -2411,7 +2411,7 @@ describe('preview pane', () => {
 
   it('says an entry with no page has no preview, and frames nothing', async () => {
     stubApi()
-    const { container } = renderSelected(settings)
+    const { baseElement } = renderSelected(settings)
 
     await waitFor(() =>
       expect(
@@ -2419,6 +2419,6 @@ describe('preview pane', () => {
       ).toBe('Loaded'),
     )
     expect(screen.getByText('No preview for this entry.')).toBeTruthy()
-    expect(container.querySelector('iframe')).toBeNull()
+    expect(baseElement.querySelector('iframe')).toBeNull()
   })
 })

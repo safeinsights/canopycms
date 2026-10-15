@@ -1,26 +1,26 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback } from 'react'
 import { useLocalStorage } from '@mantine/hooks'
 import {
   DEFAULT_SIDE_SPLIT_PERCENT,
   DEFAULT_STACKED_SPLIT_PERCENT,
   SPLIT_PERCENT_MAX,
   SPLIT_PERCENT_MIN,
-  type PaneLayout,
-} from '../EditorPanes'
+  type PaneArrangement,
+} from '../shell/PaneLayout'
 import { isPlainRecord } from '../../validation/field-traversal'
 
 /** @internal The preview toolbar's width choice; see `preview-scale.ts`. */
 export type PreviewWidth = 'fit' | 'desktop' | 'tablet' | 'mobile'
 
 const PREVIEW_WIDTHS: readonly PreviewWidth[] = ['fit', 'desktop', 'tablet', 'mobile']
-const PANE_LAYOUTS: readonly PaneLayout[] = ['side', 'stacked']
+const PANE_LAYOUTS: readonly PaneArrangement[] = ['side', 'stacked']
 
 const CONTENT_PANEL_WIDTH_MIN = 240
 const CONTENT_PANEL_WIDTH_MAX = 400
 
 /** The persisted layout preferences: one JSON object under one storage key. */
 interface EditorLayoutPrefs {
-  layout: PaneLayout
+  layout: PaneArrangement
   highlightEnabled: boolean
   sideSplitPercent: number
   stackedSplitPercent: number
@@ -111,28 +111,26 @@ export interface UseEditorLayoutOptions {
 }
 
 export interface UseEditorLayoutReturn {
-  layout: PaneLayout
-  setLayout: (layout: PaneLayout) => void
+  layout: PaneArrangement
+  setLayout: (layout: PaneArrangement) => void
   highlightEnabled: boolean
   setHighlightEnabled: (enabled: boolean) => void
   sideSplitPercent: number
   stackedSplitPercent: number
   /** Stores the clamped primary-pane size for one layout; a non-finite percent is ignored. */
-  setSplitPercent: (layout: PaneLayout, percent: number) => void
+  setSplitPercent: (layout: PaneArrangement, percent: number) => void
   previewWidth: PreviewWidth
   setPreviewWidth: (width: PreviewWidth) => void
   contentPanelOpen: boolean
   setContentPanelOpen: (open: boolean) => void
   contentPanelWidth: number
   setContentPanelWidth: (width: number) => void
-  headerRef: React.RefObject<HTMLDivElement>
-  headerHeight: number
 }
 
 /**
- * Editor layout: preferences persisted to localStorage (read after mount, so SSR renders the
- * defaults; a throwing storage keeps them in memory) plus the measured, unpersisted header height.
- * `contentPanel*` persist ahead of the panel that will use them.
+ * Editor layout preferences, persisted to localStorage (read after mount, so SSR renders the
+ * defaults; a throwing storage keeps them in memory). `contentPanel*` persist ahead of the panel
+ * that will use them.
  */
 export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayoutReturn {
   const [prefs, setPrefs] = useLocalStorage<EditorLayoutPrefs>({
@@ -142,11 +140,9 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
     // Each tab keeps its own layout; a change elsewhere reaches only tabs opened later.
     sync: false,
   })
-  const [headerHeight, setHeaderHeight] = useState<number>(80)
-  const headerRef = useRef<HTMLDivElement | null>(null)
 
   const setLayout = useCallback(
-    (layout: PaneLayout) => setPrefs((prev) => ({ ...prev, layout })),
+    (layout: PaneArrangement) => setPrefs((prev) => ({ ...prev, layout })),
     [setPrefs],
   )
   const setHighlightEnabled = useCallback(
@@ -154,7 +150,7 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
     [setPrefs],
   )
   const setSplitPercent = useCallback(
-    (layout: PaneLayout, percent: number) => {
+    (layout: PaneArrangement, percent: number) => {
       if (!Number.isFinite(percent)) return
       const clamped = clampSplitPercent(percent)
       setPrefs((prev) =>
@@ -182,20 +178,6 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
     [setPrefs],
   )
 
-  useEffect(() => {
-    if (!headerRef.current) return
-
-    const node = headerRef.current
-    const updateHeight = () => setHeaderHeight(node.getBoundingClientRect().height || 80)
-
-    updateHeight()
-
-    const observer = new ResizeObserver(updateHeight)
-    observer.observe(node)
-
-    return () => observer.disconnect()
-  }, [])
-
   return {
     layout: prefs.layout,
     setLayout,
@@ -210,7 +192,5 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
     setContentPanelOpen,
     contentPanelWidth: prefs.contentPanelWidth,
     setContentPanelWidth,
-    headerRef,
-    headerHeight,
   }
 }
