@@ -49,6 +49,10 @@ export interface PaneLayoutProps {
   formOverlay?: React.ReactNode
   /** Takes the form out of focus and the pointer's reach while an open `formOverlay` hides it. */
   formInert?: boolean
+  /** Lays the preview over the whole layout, form and separator inert, without remounting it. */
+  previewMaximized?: boolean
+  /** Called as a pointer drag of the separator starts and ends. */
+  onSeparatorDrag?: (dragging: boolean) => void
 }
 
 const splitLayout = (percent: number): Layout => ({ [PREVIEW]: percent, [FORM]: 100 - percent })
@@ -63,11 +67,14 @@ export function PaneLayout({
   form,
   formOverlay,
   formInert = false,
+  previewMaximized = false,
+  onSeparatorDrag,
 }: PaneLayoutProps) {
   const groupRef = useGroupRef()
   const separatorRef = useRef<HTMLDivElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
   const formRef = useRef<HTMLDivElement>(null)
+  const formPanelRef = useRef<HTMLDivElement>(null)
   const percent = arrangement === 'side' ? sideSplitPercent : stackedSplitPercent
 
   // Stored sizes load after mount, and the group must never remount: that would reload the preview.
@@ -83,18 +90,28 @@ export function PaneLayout({
   // any passive effect of the same commit tries to focus into the form or out of the overlay.
   useLayoutEffect(() => {
     formRef.current?.toggleAttribute('inert', formInert)
-  }, [formInert])
+    formPanelRef.current?.toggleAttribute('inert', previewMaximized)
+    separatorRef.current?.toggleAttribute('inert', previewMaximized)
+  }, [formInert, previewMaximized])
+
+  const onSeparatorDragRef = useRef(onSeparatorDrag)
+  useEffect(() => {
+    onSeparatorDragRef.current = onSeparatorDrag
+  }, [onSeparatorDrag])
 
   // An iframe takes the pointer moves a drag needs, so the panes ignore the pointer while the
   // separator is held. Set on the DOM as the attribute flips, before the first move arrives.
   useEffect(() => {
     const separator = separatorRef.current
     if (!separator) return
+    let wasHeld = false
     const observer = new MutationObserver(() => {
       const held = separator.getAttribute('data-separator') === 'active'
       for (const pane of [previewRef.current, formRef.current]) {
         if (pane) pane.style.pointerEvents = held ? 'none' : ''
       }
+      if (held !== wasHeld) onSeparatorDragRef.current?.(held)
+      wasHeld = held
     })
     observer.observe(separator, { attributes: true, attributeFilter: ['data-separator'] })
     return () => observer.disconnect()
@@ -113,15 +130,21 @@ export function PaneLayout({
           if (meta.isUserInteraction && next !== undefined)
             onSplitPercentChange?.(arrangement, next)
         }}
-        style={{ height: '100%', width: '100%' }}
+        // The maximized preview's containing block: the panels themselves are unpositioned.
+        style={{ height: '100%', width: '100%', position: 'relative' }}
       >
         <Panel id={PREVIEW} {...PREVIEW_LIMITS}>
           <Box
             ref={previewRef}
             data-testid="preview-pane"
+            data-maximized={previewMaximized || undefined}
             h="100%"
             w="100%"
-            style={{ overflow: 'auto' }}
+            style={
+              previewMaximized
+                ? { overflow: 'auto', position: 'absolute', inset: 0, zIndex: 1 }
+                : { overflow: 'auto' }
+            }
           >
             {preview}
           </Box>
@@ -132,7 +155,7 @@ export function PaneLayout({
           className="canopy-pane-separator"
         />
         <Panel id={FORM} minSize={FORM_MIN_PX}>
-          <Box pos="relative" h="100%" w="100%">
+          <Box ref={formPanelRef} pos="relative" h="100%" w="100%">
             <Box
               ref={formRef}
               data-testid="form-pane"

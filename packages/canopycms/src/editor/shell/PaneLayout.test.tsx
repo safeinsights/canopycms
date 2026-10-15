@@ -136,4 +136,42 @@ describe('PaneLayout', () => {
     expect(separator().getAttribute('aria-valuemin')).toBe(String(SPLIT_PERCENT_MIN))
     expect(separator().getAttribute('aria-valuemax')).toBe(String(SPLIT_PERCENT_MAX))
   })
+
+  it('reports a held separator once as it is grabbed and once as it is let go', async () => {
+    const onSeparatorDrag = vi.fn()
+    renderPanes({ onSeparatorDrag })
+
+    act(() => separator().setAttribute('data-separator', 'hover'))
+    act(() => separator().setAttribute('data-separator', 'active'))
+    await waitFor(() => expect(onSeparatorDrag).toHaveBeenCalledWith(true))
+    act(() => separator().setAttribute('data-separator', 'hover'))
+    await waitFor(() => expect(onSeparatorDrag).toHaveBeenLastCalledWith(false))
+    act(() => separator().setAttribute('data-separator', 'inactive'))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(onSeparatorDrag.mock.calls).toEqual([[true], [false]])
+  })
+
+  it('lays a maximized preview over the form, which goes inert, without remounting it', () => {
+    const { rerenderPanes } = renderPanes({ formOverlay: <button type="button">Panel</button> })
+    const frame = screen.getByTitle('Preview')
+    const formPanel = screen.getByTestId('form-pane').parentElement as HTMLElement
+    expect(formPanel.hasAttribute('inert')).toBe(false)
+
+    rerenderPanes({ formOverlay: <button type="button">Panel</button>, previewMaximized: true })
+    const preview = screen.getByTestId('preview-pane')
+    expect(preview.style.position).toBe('absolute')
+    expect(preview.style.inset).toBe('0')
+    expect(screen.getByTitle('Preview')).toBe(frame)
+    // The form and the overlay over it both sit under the preview, out of the Tab order.
+    expect(formPanel.hasAttribute('inert')).toBe(true)
+    expect(formPanel.contains(screen.getByRole('button', { name: 'Panel', hidden: true }))).toBe(
+      true,
+    )
+    expect(separator().hasAttribute('inert')).toBe(true)
+
+    rerenderPanes({ formOverlay: <button type="button">Panel</button> })
+    expect(screen.getByTestId('preview-pane').style.position).toBe('')
+    expect(formPanel.hasAttribute('inert')).toBe(false)
+    expect(separator().hasAttribute('inert')).toBe(false)
+  })
 })

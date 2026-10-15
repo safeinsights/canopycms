@@ -1,6 +1,7 @@
 /**
  * The content panel: docked beside the panes in a wide side-by-side layout, otherwise an overlay on
- * the form pane; its open state and width persist, and a URL asking for no entry opens it.
+ * the form pane; its open state and width persist, and a URL asking for no entry opens it. Also
+ * how a maximized preview gives way to what needs the form.
  */
 import React from 'react'
 
@@ -297,12 +298,12 @@ describe('content panel', () => {
     await setup(true)
     expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle layout' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Side by side' }))
     await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('docked'))
   })
 
   it('does not bring a closed docked panel back as an overlay', async () => {
-    window.history.replaceState({}, '', '/?entry=')
+    storeLayout({ contentPanelOpen: true })
     stubWindowWidth(true)
     stubApi()
     renderEditor()
@@ -310,7 +311,7 @@ describe('content panel', () => {
 
     fireEvent.click(toggle())
     expect(panel()).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle layout' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Stacked' }))
     await waitFor(() =>
       expect(
         screen
@@ -428,5 +429,70 @@ describe('content panel', () => {
     renderEditor()
     await waitFor(() => expect(panel()).not.toBeNull())
     expect(panel()?.getAttribute('data-panel-mode')).toBe(wide ? 'docked' : 'overlay')
+  })
+})
+
+describe('maximized preview', () => {
+  const maximize = async () => {
+    fireEvent.click(await screen.findByRole('button', { name: 'Maximize preview' }))
+    await screen.findByRole('button', { name: 'Restore' })
+  }
+  const formPanel = () => screen.getByTestId('form-pane').parentElement as HTMLElement
+
+  it('restores when the preview asks to focus one of its fields', async () => {
+    await setup(true)
+    await maximize()
+    expect(formPanel().hasAttribute('inert')).toBe(true)
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'canopycms:preview:focus', fieldPath: 'title' },
+          origin: window.location.origin,
+        }),
+      )
+    })
+
+    await waitFor(() => expect(formPanel().hasAttribute('inert')).toBe(false))
+    expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull()
+  })
+
+  it('stays maximized while another entry opens from the docked panel', async () => {
+    await setup(true)
+    await maximize()
+    fireEvent.click(await row('second'))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^Copy path/ }).textContent).toContain('second'),
+    )
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeTruthy()
+  })
+
+  it('restores when the content overlay opens over the form', async () => {
+    storeLayout({ layout: 'stacked' })
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await maximize()
+
+    fireEvent.click(toggle())
+    await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay'))
+    expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull()
+  })
+
+  it('switches the preview width to Fit when the divider is dragged', async () => {
+    storeLayout({ previewWidth: 'desktop' })
+    await setup(true)
+    expect(screen.getByRole('textbox', { name: 'Preview width' })).toHaveProperty(
+      'value',
+      'Desktop',
+    )
+
+    act(() =>
+      screen
+        .getByRole('separator', { name: 'Resize preview and form' })
+        .setAttribute('data-separator', 'active'),
+    )
+    await waitFor(() => expect(storedLayout().previewWidth).toBe('fit'))
+    expect(screen.getByRole('textbox', { name: 'Preview width' })).toHaveProperty('value', 'Fit')
   })
 })

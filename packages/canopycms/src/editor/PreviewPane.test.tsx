@@ -2,8 +2,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useState } from 'react'
+
 import type { PreviewWidth } from './hooks/useEditorLayout'
-import { PreviewPane } from './PreviewPane'
+import { PreviewPane, type PreviewPaneProps } from './PreviewPane'
 import { CanopyCMSProvider } from './theme'
 
 const paneSize = vi.hoisted(() => ({ width: 0, height: 0 }))
@@ -171,5 +173,163 @@ describe('PreviewPane', () => {
     expect(link.getAttribute('href')).toBe(src)
     expect(link.getAttribute('target')).toBe('_blank')
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  })
+
+  describe('maximize', () => {
+    // Holds `maximized` the way the editor does, so focus moves can be watched end to end.
+    const Maximizable = (props: Partial<PreviewPaneProps>) => {
+      const [maximized, setMaximized] = useState(false)
+      return (
+        <>
+          <button type="button">Outside</button>
+          <PreviewPane
+            src={src}
+            data={{ title: 'Draft' }}
+            previewWidth="fit"
+            onPreviewWidthChange={vi.fn()}
+            maximized={maximized}
+            onMaximizedChange={setMaximized}
+            {...props}
+          />
+        </>
+      )
+    }
+    const restoreButton = () => screen.queryByRole('button', { name: 'Restore' })
+
+    it('moves focus to Restore on entering, and back to Maximize on restoring', async () => {
+      render(<Maximizable />, { wrapper: Wrapper })
+      const maximize = screen.getByRole('button', { name: 'Maximize preview' })
+      act(() => maximize.focus())
+      fireEvent.click(maximize)
+      expect(document.activeElement).toBe(restoreButton())
+
+      fireEvent.click(restoreButton()!)
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Maximize preview' }))
+    })
+
+    it('restores on Escape from inside the pane, or with focus nowhere', async () => {
+      render(<Maximizable />, { wrapper: Wrapper })
+      fireEvent.click(screen.getByRole('button', { name: 'Maximize preview' }))
+      fireEvent.keyDown(restoreButton()!, { key: 'Escape' })
+      expect(restoreButton()).toBeNull()
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Maximize preview' }))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Maximize preview' }))
+      act(() => (document.activeElement as HTMLElement).blur())
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(restoreButton()).toBeNull()
+    })
+
+    it('leaves Escape from outside the pane, or from an open dropdown, to them', async () => {
+      render(<Maximizable />, { wrapper: Wrapper })
+      fireEvent.click(screen.getByRole('button', { name: 'Maximize preview' }))
+
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Outside' }), { key: 'Escape' })
+      expect(restoreButton()).toBeTruthy()
+
+      const width = screen.getByRole('textbox', { name: 'Preview width' })
+      await userEvent.click(width)
+      await screen.findByRole('option', { name: /Tablet/ })
+      fireEvent.keyDown(width, { key: 'Escape' })
+      expect(restoreButton()).toBeTruthy()
+
+      const cancelled = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
+      cancelled.preventDefault()
+      act(() => {
+        restoreButton()!.dispatchEvent(cancelled)
+      })
+      expect(restoreButton()).toBeTruthy()
+    })
+
+    it('keeps the same frame, so drafts keep streaming, and blocks the layout toggle', () => {
+      const { container, rerender } = render(
+        <PreviewPane
+          src={src}
+          data={{ title: 'Draft' }}
+          previewWidth="fit"
+          onPreviewWidthChange={vi.fn()}
+          layout="side"
+          onLayoutChange={vi.fn()}
+          maximized={false}
+          onMaximizedChange={vi.fn()}
+        />,
+        { wrapper: Wrapper },
+      )
+      const frame = container.querySelector('iframe')
+      rerender(
+        <PreviewPane
+          src={src}
+          data={{ title: 'Draft, typed on' }}
+          previewWidth="fit"
+          onPreviewWidthChange={vi.fn()}
+          layout="side"
+          onLayoutChange={vi.fn()}
+          maximized
+          onMaximizedChange={vi.fn()}
+        />,
+      )
+      expect(container.querySelector('iframe')).toBe(frame)
+      expect(screen.getByRole('button', { name: /^Stacked/ }).hasAttribute('data-disabled')).toBe(
+        true,
+      )
+    })
+  })
+
+  it('shows its width over the preview while the divider is dragged', () => {
+    paneSize.width = 1024
+    paneSize.height = 600
+    const pane = (props: Partial<PreviewPaneProps>) => (
+      <PreviewPane
+        src={src}
+        previewWidth="fit"
+        onPreviewWidthChange={vi.fn()}
+        layout="side"
+        {...props}
+      />
+    )
+    const readout = () => screen.queryByTestId('preview-resize-readout')
+    const { rerender } = render(pane({}), { wrapper: Wrapper })
+    expect(readout()).toBeNull()
+
+    rerender(pane({ resizing: true }))
+    expect(readout()?.textContent).toBe('1024 px')
+    expect(readout()?.getAttribute('aria-hidden')).toBe('true')
+
+    rerender(pane({ resizing: true, layout: 'stacked' }))
+    expect(readout()?.textContent).toBe('1024 × 600 px')
+  })
+
+  it('counts unmapped marks for an admin only, and shows only the controls it is given', () => {
+    const marks = [{ path: 'subtitle' }]
+    const { rerender } = render(
+      <PreviewPane
+        src={src}
+        previewWidth="fit"
+        onPreviewWidthChange={vi.fn()}
+        highlightEnabled
+        inexactMarks={marks}
+      />,
+      { wrapper: Wrapper },
+    )
+    expect(screen.queryByTestId('preview-unmapped-chip')).toBeNull()
+    for (const name of ['Highlight fields in the preview', 'Side by side', 'Maximize preview']) {
+      expect(screen.queryByRole('button', { name })).toBeNull()
+    }
+
+    rerender(
+      <PreviewPane
+        src={src}
+        previewWidth="fit"
+        onPreviewWidthChange={vi.fn()}
+        highlightEnabled
+        inexactMarks={marks}
+        showMarkDiagnostics
+      />,
+    )
+    expect(screen.getByTestId('preview-unmapped-chip').textContent).toBe('1 unmapped')
   })
 })

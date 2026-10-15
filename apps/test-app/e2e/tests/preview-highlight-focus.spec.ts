@@ -56,7 +56,7 @@ const expectHighlightToggles = async (editorPage: EditorPage, marked: Locator[])
     .poll(async () => (await markCounts(page)).at(-1) ?? 0)
     .toBeGreaterThanOrEqual(marked.length)
   await expect(editorPage.noEditableMarksNotice()).toHaveCount(0)
-  await expect(toggle).not.toHaveAttribute('aria-description')
+  await expect(editorPage.unmappedMarksChip()).toHaveCount(0)
 
   await editorPage.toggleHighlights()
   await expect(toggle).toHaveAttribute('aria-pressed', 'false')
@@ -156,7 +156,7 @@ test.describe('Preview highlights and click-to-focus', () => {
       await expectFieldFocused(page, 'byline.name')
     })
 
-    await test.step('a mark naming no field is counted on the toggle and logged', async () => {
+    await test.step('a mark naming no field is counted for the admin and logged', async () => {
       const warnings: string[] = []
       page.on('console', (message) => {
         if (message.type() === 'warning') warnings.push(message.text())
@@ -169,9 +169,10 @@ test.describe('Preview highlights and click-to-focus', () => {
         mark.setAttribute('data-canopy-path', 'byline.nam')
         node.after(mark)
       })
-      await expect(toggle).toHaveAttribute(
-        'aria-description',
-        /^1 preview mark doesn't match a field: byline\.nam\./,
+      await expect(editorPage.unmappedMarksChip()).toHaveText('1 unmapped')
+      await editorPage.unmappedMarksChip().click()
+      await expect(page.getByRole('dialog')).toContainText(
+        "One element on this page carries a field mark that doesn't match a field of this entry: byline.nam.",
       )
       await expect
         .poll(() => warnings)

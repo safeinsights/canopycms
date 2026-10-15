@@ -12,7 +12,7 @@ export interface MediaLibraryProps {
   opened: boolean
   onClose: () => void
   /**
-   * 'manage': right-side Drawer opened from the EditorSidebar Settings menu.
+   * 'manage': right-side Drawer opened from the rail's Media button.
    * 'picker': Modal used by ImageField ("Browse library"/"Replace") and the
    * MDX image dialog's "From library" tab.
    */
