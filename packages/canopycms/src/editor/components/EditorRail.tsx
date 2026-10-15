@@ -108,10 +108,15 @@ export function SettingsMenu({
 
 const LAYOUTS: Record<
   PaneArrangement,
-  { name: string; other: PaneArrangement; Icon: typeof IconLayoutColumns }
+  { name: string; title: string; other: PaneArrangement; Icon: typeof IconLayoutColumns }
 > = {
-  side: { name: 'side by side', other: 'stacked', Icon: IconLayoutColumns },
-  stacked: { name: 'stacked', other: 'side', Icon: IconLayoutRows },
+  side: {
+    name: 'side by side',
+    title: 'Side by side layout',
+    other: 'stacked',
+    Icon: IconLayoutColumns,
+  },
+  stacked: { name: 'stacked', title: 'Stacked layout', other: 'side', Icon: IconLayoutRows },
 }
 
 /** One button that shows the current layout and switches to the other. */
@@ -124,17 +129,27 @@ function LayoutButton({
   onChange: (layout: PaneArrangement) => void
   blocked?: boolean
 }) {
+  const [switchedTo, setSwitchedTo] = useState('')
   const { name, other, Icon } = LAYOUTS[layout]
   return (
-    <RailButton
-      railId="layout"
-      label={`Layout: ${name}. Switch to ${LAYOUTS[other].name}`}
-      icon={<Icon size={20} />}
-      disabledReason={blocked ? 'Restore the preview to change the layout.' : undefined}
-      data-testid="rail-layout-button"
-      data-layout={layout}
-      onClick={() => onChange(other)}
-    />
+    <>
+      <RailButton
+        railId="layout"
+        label={`Switch to ${LAYOUTS[other].name} layout (now ${name})`}
+        icon={<Icon size={20} />}
+        disabledReason={blocked ? 'Restore the preview to change the layout.' : undefined}
+        data-testid="rail-layout-button"
+        data-layout={layout}
+        onClick={() => {
+          onChange(other)
+          setSwitchedTo(LAYOUTS[other].title)
+        }}
+      />
+      {/* Screen readers rarely re-read a focused button's new name, so the switch is announced. */}
+      <VisuallyHidden role="status" data-testid="rail-layout-status">
+        {switchedTo}
+      </VisuallyHidden>
+    </>
   )
 }
 

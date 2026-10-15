@@ -84,7 +84,15 @@ export function ActivityRail({ top, bottom, account }: ActivityRailProps) {
         gap={6}
         py={8}
         align="center"
-        style={{ flex: 1, minHeight: 0 }}
+        // Scrolls rather than running under the account control in a short window.
+        style={{
+          flex: 1,
+          minHeight: 0,
+          alignSelf: 'stretch',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          scrollbarWidth: 'none',
+        }}
         onKeyDown={onKeyDown}
         onFocus={(event) => {
           const id = event.target.getAttribute(RAIL_ITEM_ATTR)
@@ -152,11 +160,11 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
       size="lg"
       radius="md"
       aria-label={label}
-      aria-disabled={disabledReason ? true : undefined}
-      aria-describedby={disabledReason ? reasonId : undefined}
+      {...rest}
+      aria-disabled={disabledReason ? true : rest['aria-disabled']}
+      aria-describedby={disabledReason ? reasonId : rest['aria-describedby']}
       data-disabled={disabledReason ? true : undefined}
       onClick={disabledReason ? undefined : onClick}
-      {...rest}
       {...{ [RAIL_ITEM_ATTR]: railId }}
     >
       {icon}
@@ -181,7 +189,8 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
           </span>
         }
         size={16}
-        offset={4}
+        // Inside the rail's width, which the scrolling toolbar clips to.
+        offset={6}
         withBorder
         disabled={count === 0}
         styles={{
