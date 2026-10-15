@@ -64,7 +64,7 @@ test.describe('Permissions and Groups', () => {
       await editorPage.waitForReady()
 
       await editorPage.openSettingsMenu()
-      await expect(editorPage.settingsMenuItem('Media library')).toBeVisible()
+      await expect(editorPage.settingsMenuItem('About')).toBeVisible()
       await expect(editorPage.settingsMenuItem('Permissions')).toHaveCount(0)
       await expect(editorPage.settingsMenuItem('Groups')).toHaveCount(0)
       await expect(editorPage.settingsMenuItem('System health')).toHaveCount(0)

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useLayoutEffect, useRef } from 'react'
 import { Box } from '@mantine/core'
 import { Group, Panel, Separator, useGroupRef, type Layout } from 'react-resizable-panels'
 
@@ -45,6 +45,10 @@ export interface PaneLayoutProps {
   onSplitPercentChange?: (arrangement: PaneArrangement, percent: number) => void
   preview?: React.ReactNode
   form?: React.ReactNode
+  /** Laid over the form pane, outside its scrolling: the side panel in overlay mode. */
+  formOverlay?: React.ReactNode
+  /** Takes the form out of focus and the pointer's reach while an open `formOverlay` hides it. */
+  formInert?: boolean
 }
 
 const splitLayout = (percent: number): Layout => ({ [PREVIEW]: percent, [FORM]: 100 - percent })
@@ -57,6 +61,8 @@ export function PaneLayout({
   onSplitPercentChange,
   preview,
   form,
+  formOverlay,
+  formInert = false,
 }: PaneLayoutProps) {
   const groupRef = useGroupRef()
   const separatorRef = useRef<HTMLDivElement>(null)
@@ -72,6 +78,12 @@ export function PaneLayout({
       group.setLayout(splitLayout(percent))
     }
   }, [groupRef, percent, arrangement])
+
+  // React 18 has no `inert` prop, so it is set on the DOM. A layout effect, so it changes before
+  // any passive effect of the same commit tries to focus into the form or out of the overlay.
+  useLayoutEffect(() => {
+    formRef.current?.toggleAttribute('inert', formInert)
+  }, [formInert])
 
   // An iframe takes the pointer moves a drag needs, so the panes ignore the pointer while the
   // separator is held. Set on the DOM as the attribute flips, before the first move arrives.
@@ -120,20 +132,25 @@ export function PaneLayout({
           className="canopy-pane-separator"
         />
         <Panel id={FORM} minSize={FORM_MIN_PX}>
-          <Box
-            ref={formRef}
-            data-testid="form-pane"
-            h="100%"
-            w="100%"
-            style={{
-              // FormHeader reads this to span the padding.
-              '--canopy-form-pane-padding': '20px',
-              padding: 'var(--canopy-form-pane-padding)',
-              overflow: 'auto',
-              backgroundColor: 'var(--canopy-surface-muted)',
-            }}
-          >
-            {form}
+          <Box pos="relative" h="100%" w="100%">
+            <Box
+              ref={formRef}
+              data-testid="form-pane"
+              h="100%"
+              w="100%"
+              style={{
+                // FormHeader reads this to span the padding.
+                '--canopy-form-pane-padding': '20px',
+                padding: 'var(--canopy-form-pane-padding)',
+                overflow: 'auto',
+                backgroundColor: 'var(--canopy-surface-muted)',
+                // Keeps the form's sticky header under `formOverlay`.
+                isolation: 'isolate',
+              }}
+            >
+              {form}
+            </Box>
+            {formOverlay}
           </Box>
         </Panel>
       </Group>

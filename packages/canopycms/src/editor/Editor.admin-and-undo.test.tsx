@@ -220,9 +220,10 @@ const loaded = async () => {
   })
 }
 
+/** Opens the content panel from the rail, unless it is open already. */
 const openNavigator = async () => {
-  fireEvent.click(screen.getByTestId('file-dropdown-button'))
-  fireEvent.click(await screen.findByTestId('all-files-menu-item'))
+  const toggle = screen.getByTestId('content-panel-toggle')
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
   await screen.findByTestId('entry-nav-item-posts')
 }
 
@@ -258,7 +259,7 @@ describe('admin surfaces', () => {
     await loaded()
 
     fireEvent.click(screen.getByTestId('settings-button'))
-    await screen.findByTestId('settings-menu-media-library')
+    await screen.findByTestId('settings-menu-about')
     for (const item of ['permissions', 'groups', 'system-health']) {
       expect(screen.queryByTestId(`settings-menu-${item}`) !== null).toBe(admin)
     }
@@ -569,6 +570,25 @@ describe('Undo after Remove', () => {
     const restored = await screen.findByRole('group', { name: '/b' })
     await waitFor(() => expect(restored.contains(document.activeElement)).toBe(true))
     expect(document.activeElement).not.toBe(restored)
+  })
+
+  it('closes the content overlay over the form before focusing the restored row', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+
+    await removeRow('/b')
+    await waitFor(() => expect(persistedHrefs(hello.contentId)).toEqual(['/a']))
+    // jsdom matches no media query, so the panel is an overlay on the form.
+    await openNavigator()
+    expect(screen.getByTestId('form-pane').hasAttribute('inert')).toBe(true)
+    const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
+    act(() => fireEvent.click(message.getByRole('button', { name: /^Undo removing / })))
+
+    await waitFor(() => expect(screen.queryByTestId('content-panel')).toBeNull())
+    expect(screen.getByTestId('form-pane').hasAttribute('inert')).toBe(false)
+    const restored = await screen.findByRole('group', { name: '/b' })
+    await waitFor(() => expect(restored.contains(document.activeElement)).toBe(true))
   })
 
   it('moves focus to the row that came back, when the list shrank below its old index', async () => {

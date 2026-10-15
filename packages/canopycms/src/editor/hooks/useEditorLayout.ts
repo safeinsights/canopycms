@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { useLocalStorage } from '@mantine/hooks'
+import { useLocalStorage, useMounted } from '@mantine/hooks'
 import {
   DEFAULT_SIDE_SPLIT_PERCENT,
   DEFAULT_STACKED_SPLIT_PERCENT,
@@ -15,12 +15,13 @@ export type PreviewWidth = 'fit' | 'desktop' | 'tablet' | 'mobile'
 const PREVIEW_WIDTHS: readonly PreviewWidth[] = ['fit', 'desktop', 'tablet', 'mobile']
 const PANE_LAYOUTS: readonly PaneArrangement[] = ['side', 'stacked']
 
-const CONTENT_PANEL_WIDTH_MIN = 240
-const CONTENT_PANEL_WIDTH_MAX = 400
+export const CONTENT_PANEL_WIDTH_MIN = 240
+export const CONTENT_PANEL_WIDTH_MAX = 400
 
 /** The persisted layout preferences: one JSON object under one storage key. */
 interface EditorLayoutPrefs {
-  layout: PaneArrangement
+  /** Unset until the user picks one, so it follows `defaultLayout`; JSON drops it while unset. */
+  layout?: PaneArrangement
   highlightEnabled: boolean
   sideSplitPercent: number
   stackedSplitPercent: number
@@ -34,7 +35,6 @@ interface EditorLayoutPrefs {
  * storage reader on the default value.
  */
 export const DEFAULT_EDITOR_LAYOUT_PREFS: EditorLayoutPrefs = {
-  layout: 'side',
   highlightEnabled: false,
   sideSplitPercent: DEFAULT_SIDE_SPLIT_PERCENT,
   stackedSplitPercent: DEFAULT_STACKED_SPLIT_PERCENT,
@@ -83,7 +83,7 @@ export function parseEditorLayoutPrefs(raw: string | undefined): EditorLayoutPre
   if (!isPlainRecord(parsed)) return defaults
 
   return {
-    layout: oneOf(PANE_LAYOUTS, parsed.layout, defaults.layout),
+    layout: PANE_LAYOUTS.find((layout) => layout === parsed.layout),
     highlightEnabled: boolOr(parsed.highlightEnabled, defaults.highlightEnabled),
     sideSplitPercent: numberOr(
       parsed.sideSplitPercent,
@@ -108,9 +108,13 @@ export function parseEditorLayoutPrefs(raw: string | undefined): EditorLayoutPre
 export interface UseEditorLayoutOptions {
   /** Where the preferences persist; defaults to `editorLayoutStorageKey()`. */
   storageKey?: string
+  /** The layout until the user picks one; defaults to side by side. */
+  defaultLayout?: PaneArrangement
 }
 
 export interface UseEditorLayoutReturn {
+  /** The stored preferences have been read; until then every value is its default. */
+  loaded: boolean
   layout: PaneArrangement
   setLayout: (layout: PaneArrangement) => void
   highlightEnabled: boolean
@@ -129,8 +133,7 @@ export interface UseEditorLayoutReturn {
 
 /**
  * Editor layout preferences, persisted to localStorage (read after mount, so SSR renders the
- * defaults; a throwing storage keeps them in memory). `contentPanel*` persist ahead of the panel
- * that will use them.
+ * defaults; a throwing storage keeps them in memory).
  */
 export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayoutReturn {
   const [prefs, setPrefs] = useLocalStorage<EditorLayoutPrefs>({
@@ -140,6 +143,9 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
     // Each tab keeps its own layout; a change elsewhere reaches only tabs opened later.
     sync: false,
   })
+  // Mounted in the same effect pass as the storage read above, and after it, so the render that
+  // first sees `loaded` also sees the stored values.
+  const loaded = useMounted()
 
   const setLayout = useCallback(
     (layout: PaneArrangement) => setPrefs((prev) => ({ ...prev, layout })),
@@ -179,7 +185,8 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
   )
 
   return {
-    layout: prefs.layout,
+    loaded,
+    layout: prefs.layout ?? options?.defaultLayout ?? 'side',
     setLayout,
     highlightEnabled: prefs.highlightEnabled,
     setHighlightEnabled,

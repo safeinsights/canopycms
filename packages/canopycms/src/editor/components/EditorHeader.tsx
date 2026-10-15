@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Group,
-  Indicator,
   Menu,
   Paper,
   Stack,
@@ -80,16 +79,6 @@ export interface EditorHeaderProps {
   modifiedCount: number
 
   /**
-   * Number of unresolved comments.
-   */
-  unresolvedCommentCount: number
-
-  /**
-   * Unresolved comments (for filtering).
-   */
-  comments: Array<{ resolved: boolean }>
-
-  /**
    * Callback to open the entry navigator.
    */
   onNavigatorOpen: () => void
@@ -129,11 +118,6 @@ export interface EditorHeaderProps {
    * Callback to open the branch manager.
    */
   onBranchManagerOpen: () => void
-
-  /**
-   * Callback to open the comments panel.
-   */
-  onCommentsPanelOpen: () => void
 
   /**
    * Callback to save the current file.
@@ -219,7 +203,7 @@ function MenuEmptyText({
 
 /**
  * Header component for the Editor.
- * Contains site info, file navigation, breadcrumbs, branch selector, comments button, and action buttons.
+ * Contains site info, file navigation, breadcrumbs, branch selector and action buttons.
  */
 export function EditorHeader({
   siteTitle,
@@ -232,8 +216,6 @@ export function EditorHeader({
   breadcrumbSegments,
   editedFiles,
   modifiedCount,
-  unresolvedCommentCount: _,
-  comments,
   onNavigatorOpen,
   navigatorToggleRef,
   branchToggleRef,
@@ -243,7 +225,6 @@ export function EditorHeader({
   onBranchReloadData,
   onBranchDiscardDrafts,
   onBranchManagerOpen,
-  onCommentsPanelOpen,
   onSave,
   onSubmit,
   hasUnsavedChanges,
@@ -294,7 +275,6 @@ export function EditorHeader({
               : ''
 
   const statusPresentation = branchStatusPresentation(branchStatus, branchIsProtected)
-  const unresolvedCount = comments.filter((t) => !t.resolved).length
 
   return (
     <Paper shadow="md" withBorder radius={0} px={0} py={0}>
@@ -458,36 +438,6 @@ export function EditorHeader({
                   >
                     {statusPresentation.label}
                   </Badge>
-                )}
-
-              {clientOperatingStrategy(operatingMode ?? 'prod').supportsComments() &&
-                branchName && (
-                  <Indicator
-                    label={<span data-testid="comments-unresolved-count">{unresolvedCount}</span>}
-                    size={18}
-                    withBorder
-                    disabled={unresolvedCount === 0}
-                    styles={{
-                      indicator: {
-                        pointerEvents: 'none',
-                        // Mantine paints the pill again in a ::before, from this variable.
-                        '--indicator-color': 'var(--canopy-count-bg)',
-                        '--indicator-text-color': 'var(--mantine-color-text)',
-                      },
-                    }}
-                  >
-                    <Button
-                      variant="outline"
-                      color="gray"
-                      onClick={onCommentsPanelOpen}
-                      data-testid="comments-button"
-                      aria-label={
-                        unresolvedCount > 0 ? `Comments, ${unresolvedCount} unresolved` : undefined
-                      }
-                    >
-                      Comments
-                    </Button>
-                  </Indicator>
                 )}
             </Group>
           </Stack>

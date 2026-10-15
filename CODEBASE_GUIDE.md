@@ -495,6 +495,8 @@ Top-level components and helpers:
 - `Editor.tsx` — the composition root
 - `shell/EditorShell.tsx` — the full-window grid of regions over the host page
 - `shell/PaneLayout.tsx` — the resizable preview/form split
+- `shell/ActivityRail.tsx` — the left rail, one roving Tab stop
+- `shell/SidePanelHost.tsx` — a resizable side panel, docked or over the form
 - `EntryNavigator.tsx` — entry tree: filter, unsaved dots, read-only locks, conflict badges
 - `entry-search.ts` — label/slug match, collection grouping
 - `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
@@ -586,7 +588,8 @@ Components, in `editor/components/`:
 
 - `EditorHeader.tsx` — save, submit
 - `BranchLockBanner.tsx` — the read-only banners and `branchLockState`
-- `EditorSidebar.tsx` — the rail
+- `EditorRail.tsx` — the rail's buttons and Settings menu
+- `EditorSidebar.tsx` — the preview tools
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `QuickOpenPalette.tsx` — Mod+P quick-open palette
 - `BranchesDrawer.tsx` — Branches drawer

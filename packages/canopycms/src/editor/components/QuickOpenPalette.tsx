@@ -9,9 +9,10 @@ import { IconSearch } from '@tabler/icons-react'
 
 import { filterEntries, groupEntriesByCollection } from '../entry-search'
 import { modKeyLabel } from '../platform'
+import { EDITOR_ACTIONS } from '../copy'
 import { FOCUS_RETURN_ATTR, focusIfIdle } from '../utils/focus-return'
 
-/** Marks an overlay Mod+P may open over: the navigator drawer, and the palette's own closing dialog. */
+/** @internal Exported for tests. Marks an overlay Mod+P may open over: the palette's own closing dialog. */
 export const QUICK_OPEN_REPLACES_ATTR = 'data-quick-open-replaces'
 
 /**
@@ -112,7 +113,7 @@ export function QuickOpenPalette({
     <Modal
       opened={opened}
       onClose={onClose}
-      title="Open entry"
+      title={EDITOR_ACTIONS.openEntry}
       size="lg"
       yOffset="10vh"
       returnFocus={!returnFocusTo}

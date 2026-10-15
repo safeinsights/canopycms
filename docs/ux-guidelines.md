@@ -22,7 +22,7 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Discard changes**       | Throwing away unsaved edits                                                                | Discard drafts, Revert                      |
 | **entry**, **collection** | A content item, and the folder that holds entries                                          | file, page, item; folder                    |
 | **file**                  | An item in the media library                                                               | asset, media item                           |
-| **Content**               | The drawer of collections and entries; its menu item and breadcrumb root say "All content" | All entries                                 |
+| **Content**               | The panel of collections and entries; its menu item and breadcrumb root read "All content" | All entries                                 |
 
 Branch status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`.
 
@@ -146,9 +146,13 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 - Bind shortcuts with Mantine's `useHotkeys` as `mod+…`, which is ⌘ on macOS and Ctrl
   elsewhere, scoped to the editor root. A shortcut that must work while typing, such as Save,
   passes `[]` as `tagsToIgnore` and `true` as `triggerOnContentEditable`.
-- Taken: Mod+P quick open, Mod+Alt+M comments, Esc closes the topmost panel. Planned for WS8:
+- Taken: Mod+P quick open, Mod+Alt+M comments, Esc closes the topmost overlay; a docked panel
+  stays open. Planned for WS8:
   Mod+S save, Mod+. content panel, Mod+Shift+L layout. Never bind Mod+K (MDXEditor's link), the formatting keys, or the browser's own
   (Mod+W, T, R, L, F).
+- An overlay panel makes what it covers `inert` (`formInert` in
+  `packages/canopycms/src/editor/shell/PaneLayout.tsx`), and anything that targets the covered
+  part closes it first (`revealForm` in `packages/canopycms/src/editor/Editor.tsx`).
 - Tooltips and the shortcut sheet show the platform's modifier.
 - Every action is reachable by keyboard, focus follows visual order, and closing an overlay
   returns focus to the control that opened it. A menu item is gone once it acts, so its menu's

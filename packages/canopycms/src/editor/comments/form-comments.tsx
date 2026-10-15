@@ -164,7 +164,8 @@ export const FormCommentsMenu: React.FC<FormCommentsMenuProps> = ({ comments, en
     const form = triggerRef.current?.closest('[data-form-renderer]')
     if (!formComments || !form) return
     const active = document.activeElement
-    if (inOtherOverlay(active, form)) return
+    // An inert form is covered by the content panel's overlay.
+    if (inOtherOverlay(active, form) || form.closest('[inert]')) return
     event.preventDefault()
     const field = active && form.contains(active) ? active.closest(FIELD_SCOPE_SELECTOR) : null
     const path = field?.getAttribute('data-canopy-field')

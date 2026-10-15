@@ -165,7 +165,19 @@ const canopyComponents = {
           }
         : { root: {} },
   }),
-  ActionIcon: ActionIcon.extend({ defaultProps: { size: 'sm' } }),
+  ActionIcon: ActionIcon.extend({
+    defaultProps: { size: 'sm' },
+    vars: (theme, props) =>
+      (props.variant ?? 'filled') === 'filled' && isPrimary(theme, props.color)
+        ? {
+            root: {
+              '--ai-bg': 'var(--canopy-primary-fill)',
+              '--ai-hover': 'var(--canopy-primary-fill-hover)',
+              '--ai-color': 'var(--mantine-color-white)',
+            },
+          }
+        : { root: {} },
+  }),
   // Tooltips open on focus and touch too, so an icon-only control's name reaches the keyboard.
   Tooltip: Tooltip.extend({ defaultProps: { events: { hover: true, focus: true, touch: true } } }),
   // A default input's border is `--canopy-input-border`; errored and focused ones keep Mantine's.
@@ -453,7 +465,7 @@ export const CanopyCMSProvider: React.FC<CanopyCMSProviderProps> = ({
       {/* Confirms open from inside Drawers (level 'modal'), so sit a level above; notifications stay higher. */}
       <style data-canopy-styles dangerouslySetInnerHTML={{ __html: CANOPY_STYLES }} />
       <ModalsProvider modalProps={{ zIndex: getDefaultZIndex('popover') }}>
-        {withNotifications ? <Notifications position="bottom-left" /> : null}
+        {withNotifications ? <Notifications position="bottom-right" /> : null}
         {children}
       </ModalsProvider>
     </MantineProvider>

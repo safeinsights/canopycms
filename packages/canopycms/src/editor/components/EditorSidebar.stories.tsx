@@ -17,11 +17,6 @@ const meta: Meta<typeof EditorSidebar> = {
     highlightEnabled: false,
     onLayoutChange: () => {},
     onHighlightToggle: () => {},
-    onMediaLibraryOpen: () => {},
-    onSystemHealthOpen: () => {},
-    onPermissionManagerOpen: () => {},
-    onGroupManagerOpen: () => {},
-    onLogoutClick: () => {},
   },
 }
 
@@ -36,21 +31,4 @@ export const HighlightsWithInexactMarks: Story = {
     highlightEnabled: true,
     previewInexactMarks: [{ path: 'hero.subtitle', nearest: 'hero' }, { path: 'sidebar' }],
   },
-}
-
-/** The Settings menu as an admin sees it: permissions, groups, media library, system health. */
-export const SettingsMenuOpen: Story = {
-  play: async ({ canvasElement }) => {
-    canvasElement.querySelector<HTMLButtonElement>('[data-testid="settings-button"]')?.click()
-  },
-}
-
-/** An editor's Settings menu: the admin items are not offered. */
-export const SettingsMenuForEditor: Story = {
-  args: {
-    onPermissionManagerOpen: undefined,
-    onGroupManagerOpen: undefined,
-    onSystemHealthOpen: undefined,
-  },
-  play: SettingsMenuOpen.play,
 }

@@ -724,6 +724,30 @@ describe('useCommentSystem', () => {
     }
   })
 
+  it.each([
+    ['a field', 'handleJumpToField'],
+    ['an entry', 'handleJumpToEntry'],
+  ] as const)('uncovers the form when a jump to %s lands', (_what, jump) => {
+    vi.useFakeTimers()
+    try {
+      const onRevealForm = vi.fn()
+      const { result } = renderHook(() => useCommentSystem({ ...defaultOptions, onRevealForm }), {
+        wrapper,
+      })
+      act(() => {
+        if (jump === 'handleJumpToField') result.current.handleJumpToField('entry1', 'title', 't1')
+        else result.current.handleJumpToEntry('entry1', 't1')
+      })
+      expect(onRevealForm).not.toHaveBeenCalled()
+      act(() => {
+        vi.runOnlyPendingTimers()
+      })
+      expect(onRevealForm).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   describe('preview focus on a path with no field of its own', () => {
     const focusOn = (fieldPath: string, fields: string[]) => {
       const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })

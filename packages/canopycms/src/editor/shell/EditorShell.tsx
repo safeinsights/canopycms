@@ -22,9 +22,9 @@ const gridStyle: CSSProperties = {
   // under Mantine's drawers and modals, leaving the layer between for MDXEditor's popups.
   zIndex: getDefaultZIndex('modal') - 2,
   display: 'grid',
-  gridTemplateAreas: '"topbar topbar topbar" "banner banner banner" "panel main rail"',
+  gridTemplateAreas: '"topbar topbar topbar" "banner banner banner" "rail panel main"',
   gridTemplateRows: 'auto auto minmax(0, 1fr)',
-  gridTemplateColumns: 'auto minmax(0, 1fr) auto',
+  gridTemplateColumns: 'auto auto minmax(0, 1fr)',
   background: 'var(--canopy-surface-subtle)',
   color: 'var(--mantine-color-text)',
 }
@@ -35,7 +35,7 @@ const region = (area: string): CSSProperties => ({ gridArea: area, minWidth: 0, 
  * The editor's window: a full-viewport grid of regions (top bar, banner, rail, panel, main,
  * overlays), portalled into `<body>` above the host page, whose chrome it hides and makes inert
  * and whose scrolling it stops. Layout only: features plug into the regions. The rail sits at the
- * inline end, opposite the toasts (`theme.tsx`).
+ * inline start, opposite the toasts (`theme.tsx`), and comes first after the banner in focus order.
  */
 export function EditorShell({ topBar, banner, rail, panel, main, overlays }: EditorShellProps) {
   const anchorRef = useRef<HTMLSpanElement>(null)
@@ -56,17 +56,17 @@ export function EditorShell({ topBar, banner, rail, panel, main, overlays }: Edi
           <div style={region('banner')} data-canopy-region="banner">
             {banner}
           </div>
+          {rail && (
+            <aside style={region('rail')} data-canopy-region="rail" aria-label="Editor tools">
+              {rail}
+            </aside>
+          )}
           <div style={region('panel')} data-canopy-region="panel">
             {panel}
           </div>
           <main style={region('main')} data-canopy-region="main">
             {main}
           </main>
-          {rail && (
-            <aside style={region('rail')} data-canopy-region="rail" aria-label="Editor tools">
-              {rail}
-            </aside>
-          )}
           {/* Absolute, so nothing an overlay leaves in place takes a grid cell. */}
           <div style={{ position: 'absolute' }} data-canopy-region="overlays">
             {overlays}

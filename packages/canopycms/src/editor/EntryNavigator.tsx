@@ -987,7 +987,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           rightSection={
             query ? <CloseButton size="sm" aria-label="Clear filter" onClick={clearFilter} /> : null
           }
-          // Mantine closes the drawer on Escape from a window listener that reads this attribute.
+          // Mantine's drawers and modals ignore an Escape from an element with this attribute.
           data-mantine-stop-propagation={query ? 'true' : undefined}
           data-testid="entry-nav-filter"
         />
