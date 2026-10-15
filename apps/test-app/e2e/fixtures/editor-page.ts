@@ -183,6 +183,12 @@ export class EditorPage {
     await this.navigatorItem(label).click()
   }
 
+  /** Whether the navigator shows a collection's children: Mantine's tree renders them as a group. */
+  async isCollectionExpanded(label: string): Promise<boolean> {
+    const node = this.navigatorItem(label).locator('xpath=ancestor::li[@role="treeitem"][1]')
+    return (await node.locator(':scope > ul[role="group"]').count()) > 0
+  }
+
   /**
    * Select an entry by its label in the navigator tree.
    * @param label - The display label of the entry to select

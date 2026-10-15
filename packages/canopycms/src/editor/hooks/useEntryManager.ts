@@ -301,7 +301,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   if (initialUrlEntry.current === undefined) {
     initialUrlEntry.current = readUrlEntry()
   }
-  // Honoured until any entry is selected; after that a lost selection opens the first again.
+  // Set by the URL's empty `entry` or by `closeEntry`; honoured until an entry is selected or the
+  // branch changes, after which a lost selection opens the first again.
   const noEntryRequested = useRef(initialUrlEntry.current === '')
   const selectEntryPath = useCallback((path: string) => {
     selectionsByCallerRef.current += 1
@@ -665,12 +666,16 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const branch = options.branchName
     const stillOnIt = selectedPathRef.current === path
     const selections = selectionsByCallerRef.current
-    // Selected only once the list holds the new path: before that, the selection check would
-    // find it missing and open the first entry instead.
+    // The rename landed whatever the refresh does. The new path is selected only once the list
+    // holds it: before that, the selection check would find it missing and open the first entry.
     const landed = async (newPath: string | undefined) => {
-      await refreshEntries()
+      const listed = await refreshEntries().catch((err: unknown) => {
+        console.error(err)
+        return null
+      })
       if (
         newPath &&
+        listed?.some((e) => e.path === newPath) &&
         stillOnIt &&
         selections === selectionsByCallerRef.current &&
         branch === currentBranchRef.current
@@ -724,6 +729,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (isInitialMount.current) {
       isInitialMount.current = false
     } else {
+      noEntryRequested.current = false
       setSelectedPath('')
       // Bound version-map growth across switches. Correctness no longer
       // depends on this clear: tokens are keyed by `${branch}:${contentId}`

@@ -644,6 +644,23 @@ describe('entry menu', () => {
     )
     expect(document.title).toBe('Test Editor')
   })
+
+  it('deletes once, however often its confirm is pressed as the dialog closes', async () => {
+    await setup(true)
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('entry-menu-delete'))
+    const confirm = await screen.findByTestId('confirm-delete-submit')
+    fireEvent.click(confirm)
+    await waitFor(() =>
+      expect(screen.getByTestId('file-dropdown-button').textContent).toBe('No entry open'),
+    )
+    fireEvent.click(confirm)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const deletes = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'DELETE')
+    expect(deletes).toHaveLength(1)
+  })
 })
 
 describe('saving', () => {

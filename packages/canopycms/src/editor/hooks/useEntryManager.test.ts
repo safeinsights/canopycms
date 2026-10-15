@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import {
   useEntryManager,
   listAllEntries,
@@ -1303,6 +1303,43 @@ describe('useEntryManager', () => {
       })
 
       expect(result.current.selectedPath).toBe('entry1-renamed')
+    })
+
+    it('reports a rename that landed as renamed even when the list then fails to load', async () => {
+      const restoreConsole = setupMockConsole(['error']).restore
+      onTestFinished(restoreConsole)
+      const { result, opened } = await mountWithOpenedEntry()
+      act(() => result.current.setSelectedPath(opened.path))
+      mockClient.content.renameEntry.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { newPath: 'entry1-renamed' },
+      })
+      mockClient.entries.list.mockRejectedValue(new Error('Schema fetch failed: 502'))
+
+      await act(async () => {
+        await result.current.renameEntry(opened.path, 'renamed')
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Entry renamed' }),
+      )
+      // Not listed, so not selected: the selection check would fall back to the first entry.
+      expect(result.current.selectedPath).toBe(opened.path)
+    })
+
+    it('opens the first entry on a branch switch after closeEntry', async () => {
+      mockClient.entries.list.mockResolvedValue(listedAsOpened())
+      const { result, rerender } = renderHook(
+        (props: { branchName: string }) => useEntryManager({ ...defaultOptions, ...props }),
+        { wrapper, initialProps: { branchName: 'main' } },
+      )
+      await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+      act(() => result.current.closeEntry())
+      await waitFor(() => expect(result.current.selectedPath).toBe(''))
+
+      rerender({ branchName: 'feature' })
+      await waitFor(() => expect(result.current.selectedPath).toBe('entry1'))
     })
 
     it('leaves an entry chosen while a rename lands open', async () => {

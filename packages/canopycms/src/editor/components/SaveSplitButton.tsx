@@ -131,6 +131,12 @@ export function SaveSplitButton({
   // before mount or while another entry was open shows nothing later.
   const [seenSignal, setSeenSignal] = useState(savedSignal ?? 0)
   const [flashing, setFlashing] = useState<number>()
+  // Leaving the saved entry ends its "Saved", so a quick return doesn't show or announce it again.
+  const [wasHere, setWasHere] = useState(savedHere)
+  if (wasHere !== savedHere) {
+    setWasHere(savedHere)
+    if (!savedHere) setFlashing(undefined)
+  }
   if (savedSignal !== undefined && savedSignal > seenSignal) {
     setSeenSignal(savedSignal)
     setFlashing(savedHere ? savedSignal : undefined)

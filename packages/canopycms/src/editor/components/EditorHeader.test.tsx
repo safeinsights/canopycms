@@ -846,6 +846,15 @@ describe('EditorHeader - Save says how it went', () => {
     expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
   })
 
+  it('says nothing again on returning to the saved entry while "Saved" would still show', () => {
+    const rerender = renderSave({ hasUnsavedChanges: false, savedSignal: 0 })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Saved' }))
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: false })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+  })
+
   it('says nothing for a save that landed before it was shown', () => {
     renderHeader({ hasUnsavedChanges: false, savedSignal: 3, savedHere: true })
     expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))

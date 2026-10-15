@@ -1243,7 +1243,8 @@ const EditorContent: React.FC<EditorProps> = ({
   const closeDeleteEntryModal = () => setDeleteEntryModalOpen(false)
 
   const confirmDeleteEntry = async () => {
-    if (!deletingEntryPath) return
+    // Its button stays clickable while the closed dialog fades; that click deletes nothing.
+    if (!deleteEntryModalOpen || !deletingEntryPath) return
     setDeleteInProgress(true)
     try {
       // The user has seen the referencing entries only once the server has named them.
@@ -1274,7 +1275,7 @@ const EditorContent: React.FC<EditorProps> = ({
   }
 
   const handleRenameSubmit = async (newSlug: string) => {
-    if (!renamingEntry) return
+    if (!renameModalOpen || !renamingEntry) return
     setRenameModalSaving(true)
     setRenameModalError(null)
     try {

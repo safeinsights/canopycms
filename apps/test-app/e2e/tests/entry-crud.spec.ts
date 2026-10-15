@@ -103,20 +103,21 @@ test.describe('Entry CRUD Operations', () => {
     await test.step('reload and verify renamed entry persists', async () => {
       await page.reload()
       await editorPage.waitForReady()
+      // The renamed entry stays open across the reload, so the navigator opens expanded to it.
+      await expect(editorPage.currentEntryLabel()).toContainText('Post', {
+        timeout: STANDARD_TIMEOUT,
+      })
       await editorPage.openContentNavigator()
-
       await editorPage.navigatorItem('Posts').waitFor({
         state: 'visible',
         timeout: STANDARD_TIMEOUT,
       })
-      // The renamed entry stays open, so the navigator expands Posts to it; a click would collapse
-      // it, so expand only if it hasn't appeared (as in "create a new entry").
+      if (!(await editorPage.isCollectionExpanded('Posts'))) {
+        await editorPage.toggleCollection('Posts')
+      }
+
       // Label stays "Post" (rename only changes the slug, not the title)
-      const navItem = editorPage.navigatorItem('Post')
-      await navItem
-        .waitFor({ state: 'visible', timeout: 1500 })
-        .catch(() => editorPage.toggleCollection('Posts'))
-      await expect(navItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.navigatorItem('Post')).toBeVisible({ timeout: STANDARD_TIMEOUT })
     })
   })
 
@@ -190,7 +191,11 @@ test.describe('Entry CRUD Operations', () => {
       await editorPage.deleteConfirmButton().click()
       await expect(modal).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(editorPage.currentEntryLabel()).toHaveText('No entry open')
-      await expect(editorPage.navigatorItem('Post')).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect
+        .poll(() => findContentFile('posts.qrstuvwxyz12/post.renamed-from-top-bar.'), {
+          timeout: STANDARD_TIMEOUT,
+        })
+        .toBeNull()
     })
   })
 
