@@ -256,3 +256,29 @@ export const Default: Story = {
     )
   },
 }
+
+/** A maximized preview laid over the whole layout; the form and the separator are inert under it. */
+export const PreviewMaximized: Story = {
+  render: () => (
+    <Box style={{ height: '90vh' }}>
+      <PaneLayout
+        arrangement="side"
+        previewMaximized
+        preview={
+          <Box p="lg" bg="var(--canopy-surface-subtle)" h="100%">
+            <PostPreview post={initialPost} authorName={authors[0]?.name} />
+          </Box>
+        }
+        form={
+          <Box p="lg">
+            <FormRenderer
+              fields={postSchema}
+              value={initialPost as unknown as FormValue}
+              onChange={() => {}}
+            />
+          </Box>
+        }
+      />
+    </Box>
+  ),
+}

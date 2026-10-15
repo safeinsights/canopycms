@@ -117,16 +117,19 @@ export const PreviewPane = ({
     }
     wasMaximized.current = maximized
   }, [maximized])
-  // Only a key from inside this pane, or with focus nowhere, restores: a drawer closes on its own
-  // Escape, and an open dropdown or popover marks its target to keep it. Captured, because an open
-  // tooltip's dismiss stops the key on the document.
+  // Any key from the editor's window, or with focus nowhere, restores: a drawer or modal outside it
+  // closes on its own Escape, an open dropdown or popover marks its target to keep it, and a text
+  // field keeps it for itself. Captured, because an open tooltip's dismiss stops the key on the
+  // document. A key inside the preview frame never reaches this window.
   useWindowEvent(
     'keydown',
     (event) => {
       if (!maximized || event.key !== 'Escape' || event.defaultPrevented) return
       const target = event.target
-      if (!(target instanceof Element)) return
-      if (target !== document.body && !rootRef.current?.contains(target)) return
+      if (!(target instanceof HTMLElement)) return
+      const inEditor = rootRef.current?.closest('[data-canopy-shell]')?.contains(target)
+      if (target !== document.body && !(inEditor ?? rootRef.current?.contains(target))) return
+      if (target.isContentEditable || target.matches('input:not([readonly]), textarea')) return
       if (target.closest('[data-mantine-stop-propagation="true"], [aria-expanded="true"]')) return
       event.preventDefault()
       onMaximizedChange?.(false)
@@ -195,7 +198,8 @@ export const PreviewPane = ({
         style={{
           // Wraps to a second row, rather than clipping, in a pane too narrow for one.
           minHeight: 32,
-          rowGap: 0,
+          rowGap: 2,
+          paddingBlock: 2,
           flex: '0 0 auto',
           borderBottom: '1px solid var(--mantine-color-default-border)',
           background: 'var(--mantine-color-body)',

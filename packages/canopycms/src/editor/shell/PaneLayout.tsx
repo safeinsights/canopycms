@@ -41,7 +41,7 @@ export interface PaneLayoutProps {
   sideSplitPercent?: number
   /** The preview's share (percent) above the form; follows this prop when it changes. */
   stackedSplitPercent?: number
-  /** Called when a drag or a keyboard resize ends, with the preview's percent. */
+  /** Called when a drag or a keyboard resize changes the split, with the preview's percent. */
   onSplitPercentChange?: (arrangement: PaneArrangement, percent: number) => void
   preview?: React.ReactNode
   form?: React.ReactNode
@@ -51,7 +51,7 @@ export interface PaneLayoutProps {
   formInert?: boolean
   /** Lays the preview over the whole layout, form and separator inert, without remounting it. */
   previewMaximized?: boolean
-  /** Called as a pointer drag of the separator starts and ends. */
+  /** Called as a held separator first moves the split, and as it is let go after that. */
   onSeparatorDrag?: (dragging: boolean) => void
 }
 
@@ -98,24 +98,29 @@ export function PaneLayout({
   useEffect(() => {
     onSeparatorDragRef.current = onSeparatorDrag
   }, [onSeparatorDrag])
+  // A press alone is no drag: one that only focuses the separator must not report one.
+  const hold = useRef<{ start: number; moved: boolean } | null>(null)
 
   // An iframe takes the pointer moves a drag needs, so the panes ignore the pointer while the
   // separator is held. Set on the DOM as the attribute flips, before the first move arrives.
   useEffect(() => {
     const separator = separatorRef.current
     if (!separator) return
-    let wasHeld = false
     const observer = new MutationObserver(() => {
       const held = separator.getAttribute('data-separator') === 'active'
       for (const pane of [previewRef.current, formRef.current]) {
         if (pane) pane.style.pointerEvents = held ? 'none' : ''
       }
-      if (held !== wasHeld) onSeparatorDragRef.current?.(held)
-      wasHeld = held
+      if (held && !hold.current) {
+        hold.current = { start: groupRef.current?.getLayout()[PREVIEW] ?? 0, moved: false }
+      } else if (!held && hold.current) {
+        if (hold.current.moved) onSeparatorDragRef.current?.(false)
+        hold.current = null
+      }
     })
     observer.observe(separator, { attributes: true, attributeFilter: ['data-separator'] })
     return () => observer.disconnect()
-  }, [])
+  }, [groupRef])
 
   const side = arrangement === 'side'
   return (
@@ -125,9 +130,20 @@ export function PaneLayout({
         groupRef={groupRef}
         orientation={side ? 'horizontal' : 'vertical'}
         defaultLayout={splitLayout(percent)}
+        // The hidden separator would otherwise still take drags over a maximized preview: the
+        // library hit-tests separators by their rectangles, which `inert` leaves in place.
+        disabled={previewMaximized}
+        onLayoutChange={(layout) => {
+          const next = layout[PREVIEW]
+          const held = hold.current
+          if (held && !held.moved && next !== undefined && Math.abs(next - held.start) > 0.01) {
+            held.moved = true
+            onSeparatorDragRef.current?.(true)
+          }
+        }}
         onLayoutChanged={(layout, meta) => {
           const next = layout[PREVIEW]
-          if (meta.isUserInteraction && next !== undefined)
+          if (meta.isUserInteraction && next !== undefined && Math.abs(next - percent) > 0.01)
             onSplitPercentChange?.(arrangement, next)
         }}
         // The maximized preview's containing block: the panels themselves are unpositioned.

@@ -245,6 +245,23 @@ describe('PreviewPane', () => {
       expect(restoreButton()).toBeTruthy()
     })
 
+    it("restores on Escape from anywhere in the editor's window, but not from a text field", () => {
+      render(
+        <div data-canopy-shell="">
+          <button type="button">Rail</button>
+          <input aria-label="Filter" />
+          <Maximizable />
+        </div>,
+        { wrapper: Wrapper },
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Maximize preview' }))
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Filter' }), { key: 'Escape' })
+      expect(restoreButton()).toBeTruthy()
+
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Rail' }), { key: 'Escape' })
+      expect(restoreButton()).toBeNull()
+    })
+
     it('keeps the same frame, so drafts keep streaming, and blocks the layout toggle', () => {
       const { container, rerender } = render(
         <PreviewPane
@@ -330,6 +347,6 @@ describe('PreviewPane', () => {
         showMarkDiagnostics
       />,
     )
-    expect(screen.getByTestId('preview-unmapped-chip').textContent).toBe('1 unmapped')
+    expect(screen.getByTestId('preview-unmapped-chip').textContent).toBe('1 unmapped preview mark')
   })
 })

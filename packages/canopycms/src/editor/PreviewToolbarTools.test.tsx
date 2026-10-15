@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -69,7 +69,7 @@ describe('UnmappedMarksChip', () => {
     render(<UnmappedMarksChip marks={[{ path: 'hero.subtitle', nearest: 'hero' }]} />, {
       wrapper: Wrapper,
     })
-    const chip = screen.getByRole('button', { name: '1 unmapped' })
+    const chip = screen.getByRole('button', { name: '1 unmapped preview mark' })
     expect(chip.style.background).toBe('var(--canopy-count-bg-orange)')
     expect(chip.style.color).toBe('var(--mantine-color-text)')
   })
@@ -81,19 +81,35 @@ describe('UnmappedMarksChip', () => {
       />,
       { wrapper: Wrapper },
     )
-    fireEvent.click(screen.getByRole('button', { name: '4 unmapped' }))
+    fireEvent.click(screen.getByRole('button', { name: '4 unmapped preview marks' }))
     const dialog = await screen.findByRole('dialog')
     expect(dialog.textContent).toContain(
-      '4 elements on this page carry field marks that don\'t match a field of this entry: a, b.c, "", and 1 more. Highlights and click-to-focus skip them.',
+      '4 elements on this page carry field marks that don\'t match a field of this entry: a, b.c, "", and 1 more. They\'re outlined, but clicking one focuses no field.',
     )
-    expect(dialog.textContent).toContain('The browser console names the nearest field of each')
+    expect(dialog.textContent).toContain('The browser console names the nearest field of each,')
+    // Only the paths are set as code, not the count after them.
+    const code = [...dialog.querySelectorAll('span')].map((span) => span.textContent)
+    expect(code).toContain('a, b.c, ""')
+  })
+
+  it('takes focus when it opens, and gives it back to the chip on Escape', async () => {
+    render(<UnmappedMarksChip marks={[{ path: 'x' }]} />, { wrapper: Wrapper })
+    const chip = screen.getByRole('button', { name: '1 unmapped preview mark' })
+    act(() => chip.focus())
+    fireEvent.click(chip)
+    const dialog = await screen.findByRole('dialog')
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
+
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(chip))
   })
 
   it('speaks of one mark in the singular', async () => {
     render(<UnmappedMarksChip marks={[{ path: 'x' }]} />, { wrapper: Wrapper })
-    fireEvent.click(screen.getByRole('button', { name: '1 unmapped' }))
+    fireEvent.click(screen.getByRole('button', { name: '1 unmapped preview mark' }))
     expect((await screen.findByRole('dialog')).textContent).toContain(
-      "One element on this page carries a field mark that doesn't match a field of this entry: x. Highlights and click-to-focus skip it.",
+      "One element on this page carries a field mark that doesn't match a field of this entry: x. It's outlined, but clicking it focuses no field.The browser console names the nearest field of it,",
     )
   })
 })
@@ -124,9 +140,12 @@ describe('LayoutToggle', () => {
   it('says why it is blocked while the preview is maximized, and does nothing', async () => {
     const onChange = vi.fn()
     render(<LayoutToggle layout="side" onChange={onChange} blocked />, { wrapper: Wrapper })
-    const stacked = screen.getByRole('button', { name: /^Stacked/ })
-    expect(stacked.hasAttribute('data-disabled')).toBe(true)
-    expect(stacked.textContent).toContain('Restore the preview to change the layout.')
+    const stacked = screen.getByRole('button', { name: 'Stacked' })
+    expect(stacked.getAttribute('aria-disabled')).toBe('true')
+    const describedBy = stacked.getAttribute('aria-describedby') ?? ''
+    expect(document.getElementById(describedBy)?.textContent).toBe(
+      'Restore the preview to change the layout.',
+    )
 
     fireEvent.click(stacked)
     expect(onChange).not.toHaveBeenCalled()

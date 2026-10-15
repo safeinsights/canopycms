@@ -137,18 +137,34 @@ describe('PaneLayout', () => {
     expect(separator().getAttribute('aria-valuemax')).toBe(String(SPLIT_PERCENT_MAX))
   })
 
-  it('reports a held separator once as it is grabbed and once as it is let go', async () => {
+  it('reports a held separator once it moves the split, and once as it is let go', async () => {
     const onSeparatorDrag = vi.fn()
     renderPanes({ onSeparatorDrag })
+    const grab = () => act(() => separator().setAttribute('data-separator', 'active'))
+    const letGo = () => act(() => separator().setAttribute('data-separator', 'hover'))
+    const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 20)))
 
-    act(() => separator().setAttribute('data-separator', 'hover'))
-    act(() => separator().setAttribute('data-separator', 'active'))
-    await waitFor(() => expect(onSeparatorDrag).toHaveBeenCalledWith(true))
-    act(() => separator().setAttribute('data-separator', 'hover'))
-    await waitFor(() => expect(onSeparatorDrag).toHaveBeenLastCalledWith(false))
-    act(() => separator().setAttribute('data-separator', 'inactive'))
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(onSeparatorDrag.mock.calls).toEqual([[true], [false]])
+    // A press alone, as a click that only focuses the separator is, reports nothing.
+    grab()
+    await settle()
+    letGo()
+    await settle()
+    expect(onSeparatorDrag).not.toHaveBeenCalled()
+
+    grab()
+    await settle()
+    act(() => fireEvent.keyDown(separator(), { key: 'ArrowRight' }))
+    act(() => fireEvent.keyDown(separator(), { key: 'ArrowRight' }))
+    expect(onSeparatorDrag.mock.calls).toEqual([[true]])
+    letGo()
+    await waitFor(() => expect(onSeparatorDrag.mock.calls).toEqual([[true], [false]]))
+  })
+
+  it('takes no resize while the preview is maximized', () => {
+    const onSplitPercentChange = vi.fn()
+    renderPanes({ previewMaximized: true, onSplitPercentChange })
+    act(() => fireEvent.keyDown(separator(), { key: 'ArrowRight' }))
+    expect(onSplitPercentChange).not.toHaveBeenCalled()
   })
 
   it('lays a maximized preview over the form, which goes inert, without remounting it', () => {

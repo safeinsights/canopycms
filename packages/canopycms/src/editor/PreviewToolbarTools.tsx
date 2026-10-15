@@ -68,25 +68,29 @@ export function HighlightToggle({ enabled, onToggle, marksNothing = false }: Hig
   )
 }
 
-const markList = (marks: readonly InexactMark[]): string => {
-  const shown = marks.slice(0, 3).map((mark) => mark.path || '""')
-  const more = marks.length > shown.length ? `, and ${marks.length - shown.length} more` : ''
-  return `${shown.join(', ')}${more}`
-}
+const LISTED = 3
+
+const markList = (marks: readonly InexactMark[]): string =>
+  marks
+    .slice(0, LISTED)
+    .map((mark) => mark.path || '""')
+    .join(', ')
 
 /** The admin's count of preview marks that name no field of the entry; see `findInexactMarks`. */
 export function UnmappedMarksChip({ marks }: { marks: readonly InexactMark[] }) {
   if (marks.length === 0) return null
   const one = marks.length === 1
   return (
-    <Popover width={300} position="bottom-end" withArrow shadow="md" returnFocus>
+    // Focus moves in, so Escape and Tab out close it and return focus to the chip.
+    <Popover width={300} position="bottom-end" withArrow shadow="md" trapFocus returnFocus>
       <Popover.Target>
         <UnstyledButton
           data-testid="preview-unmapped-chip"
           style={{
             flexShrink: 0,
             borderRadius: 999,
-            padding: '1px 8px',
+            minHeight: 24,
+            padding: '0 8px',
             fontSize: 'var(--mantine-font-size-xs)',
             fontWeight: 600,
             whiteSpace: 'nowrap',
@@ -95,6 +99,7 @@ export function UnmappedMarksChip({ marks }: { marks: readonly InexactMark[] }) 
           }}
         >
           {marks.length} unmapped
+          <VisuallyHidden> preview {one ? 'mark' : 'marks'}</VisuallyHidden>
         </UnstyledButton>
       </Popover.Target>
       <Popover.Dropdown>
@@ -109,11 +114,14 @@ export function UnmappedMarksChip({ marks }: { marks: readonly InexactMark[] }) 
             <Text component="span" ff="monospace" size="xs" style={{ overflowWrap: 'anywhere' }}>
               {markList(marks)}
             </Text>
-            . Highlights and click-to-focus skip {one ? 'it' : 'them'}.
+            {marks.length > LISTED ? `, and ${marks.length - LISTED} more` : ''}.{' '}
+            {one
+              ? "It's outlined, but clicking it focuses no field."
+              : "They're outlined, but clicking one focuses no field."}
           </Text>
           <Text size="sm">
-            The browser console names the nearest field of each, for the site&apos;s developer to
-            correct in its fieldProps.
+            The browser console names the nearest field of {one ? 'it' : 'each'}, for the
+            site&apos;s developer to correct in its fieldProps.
           </Text>
         </Stack>
       </Popover.Dropdown>
@@ -137,16 +145,19 @@ export interface LayoutToggleProps {
 
 /** The form/preview arrangement as a pair of pressed buttons, so the current one shows. */
 export function LayoutToggle({ layout, onChange, blocked = false }: LayoutToggleProps) {
+  const reasonId = useId()
   return (
     <Group role="group" aria-label="Layout" gap={2} wrap="nowrap">
       {LAYOUTS.map(({ value, label, Icon }) => (
         <Tooltip key={value} label={blocked ? LAYOUT_BLOCKED : label}>
           <ActionIcon
-            variant={layout === value ? 'light' : 'subtle'}
+            variant={layout === value ? 'filled' : 'subtle'}
             color={layout === value ? 'brand' : 'gray'}
             size="md"
             aria-label={label}
             aria-pressed={layout === value}
+            aria-disabled={blocked || undefined}
+            aria-describedby={blocked ? reasonId : undefined}
             data-disabled={blocked || undefined}
             data-testid={`preview-layout-${value}`}
             onClick={() => {
@@ -154,10 +165,10 @@ export function LayoutToggle({ layout, onChange, blocked = false }: LayoutToggle
             }}
           >
             <Icon size={16} />
-            {blocked && <VisuallyHidden>{LAYOUT_BLOCKED}</VisuallyHidden>}
           </ActionIcon>
         </Tooltip>
       ))}
+      {blocked && <VisuallyHidden id={reasonId}>{LAYOUT_BLOCKED}</VisuallyHidden>}
     </Group>
   )
 }

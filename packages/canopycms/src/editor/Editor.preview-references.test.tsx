@@ -357,7 +357,7 @@ describe('Editor preview marks', () => {
 
     fireEvent.click(toggle)
     report(['title', 'byline.person', 'byline.person.name', 'subtitle'])
-    await waitFor(() => expect(chip()?.textContent).toBe('2 unmapped'))
+    await waitFor(() => expect(chip()?.textContent).toBe('2 unmapped preview marks'))
     fireEvent.click(chip()!)
     expect((await screen.findByRole('dialog')).textContent).toContain(
       "2 elements on this page carry field marks that don't match a field of this entry: byline.person.name, subtitle.",

@@ -1453,6 +1453,8 @@ const EditorContent: React.FC<EditorProps> = ({
   const [contentPanelFocusRequest, setContentPanelFocusRequest] = useState(0)
   const openNavigator = () => {
     navigatorOpenerRef.current = rememberOpener()
+    // In the same commit as the overlay mounts, so its focus request meets no inert form panel.
+    if (!contentPanelDocked) setPreviewMaximized(false)
     setContentPanelShown(true)
     setContentPanelFocusRequest((request) => request + 1)
   }
@@ -1572,12 +1574,18 @@ const EditorContent: React.FC<EditorProps> = ({
     data: displayValue,
   })
 
-  // Only the default preview has the toolbar that maximizes and restores it.
+  // Only the default preview has the toolbar that maximizes and restores it. While an entry's
+  // value loads, or after its load fails, the form shows: the choice reapplies once it arrives.
   const previewCanMaximize =
     !renderPreview && Boolean(currentEntry?.previewSrc) && !currentEntryUnavailable
+  const previewShownMaximized = previewMaximized && previewCanMaximize && Boolean(previewFrameData)
   useEffect(() => {
     if (!previewCanMaximize) setPreviewMaximized(false)
   }, [previewCanMaximize])
+  // A failed save's errors are in the form.
+  useEffect(() => {
+    if (Object.keys(fieldErrors).length > 0) setPreviewMaximized(false)
+  }, [fieldErrors])
   const [paneResizing, setPaneResizing] = useState(false)
 
   const previewErrorField = previewError?.fieldPath
@@ -1608,7 +1616,7 @@ const EditorContent: React.FC<EditorProps> = ({
         showMarkDiagnostics={userIsAdmin}
         layout={layout}
         onLayoutChange={setLayout}
-        maximized={previewMaximized && previewCanMaximize}
+        maximized={previewShownMaximized}
         onMaximizedChange={setPreviewMaximized}
         resizing={paneResizing}
         notice={
@@ -1892,16 +1900,19 @@ const EditorContent: React.FC<EditorProps> = ({
               <PaneLayout
                 formOverlay={contentPanelDocked ? undefined : contentPanel}
                 formInert={contentOverlayShown}
-                previewMaximized={previewMaximized && previewCanMaximize}
+                previewMaximized={previewShownMaximized}
+                // Sizing the pane, by pointer or key, gives the page the pane's width.
                 onSeparatorDrag={(dragging) => {
                   setPaneResizing(dragging)
-                  // The user is sizing the pane, so the page takes the pane's width.
                   if (dragging) setPreviewWidth('fit')
                 }}
                 arrangement={layout}
                 sideSplitPercent={sideSplitPercent}
                 stackedSplitPercent={stackedSplitPercent}
-                onSplitPercentChange={setSplitPercent}
+                onSplitPercentChange={(arrangement, percent) => {
+                  setSplitPercent(arrangement, percent)
+                  setPreviewWidth('fit')
+                }}
                 preview={
                   renderPreview && currentEntry && !currentEntryUnavailable
                     ? renderPreview(currentEntry, displayValue)
