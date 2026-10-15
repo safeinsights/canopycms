@@ -105,15 +105,18 @@ test.describe('Entry CRUD Operations', () => {
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
 
-      // Expand the Posts collection (collapsed after reload)
       await editorPage.navigatorItem('Posts').waitFor({
         state: 'visible',
         timeout: STANDARD_TIMEOUT,
       })
-      await editorPage.toggleCollection('Posts')
-
+      // The renamed entry stays open, so the navigator expands Posts to it; a click would collapse
+      // it, so expand only if it hasn't appeared (as in "create a new entry").
       // Label stays "Post" (rename only changes the slug, not the title)
-      await expect(editorPage.navigatorItem('Post')).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      const navItem = editorPage.navigatorItem('Post')
+      await navItem
+        .waitFor({ state: 'visible', timeout: 1500 })
+        .catch(() => editorPage.toggleCollection('Posts'))
+      await expect(navItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
     })
   })
 
