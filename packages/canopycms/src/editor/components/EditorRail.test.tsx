@@ -144,9 +144,23 @@ describe('EditorRail - keyboard', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sign out' }))
   })
 
-  it('scrolls its buttons in a short window rather than running under the account control', () => {
-    renderRail()
-    expect(getComputedStyle(screen.getByRole('toolbar')).overflowY).toBe('auto')
+  it('scrolls only a rail too short for its buttons, so a full-height rail clips nothing', () => {
+    const props = defaultProps()
+    const { rerender } = render(<EditorRail {...props} />, { wrapper: Wrapper })
+    const toolbar = screen.getByRole('toolbar')
+    const contentHeight = (height: number) =>
+      Object.defineProperty(toolbar, 'scrollHeight', { value: height, configurable: true })
+    Object.defineProperty(toolbar, 'clientHeight', { value: 300, configurable: true })
+    expect(toolbar.style.overflowY).toBe('')
+
+    contentHeight(340)
+    rerender(<EditorRail {...props} unresolvedCommentCount={1} />)
+    expect(toolbar.style.overflowY).toBe('auto')
+    expect(toolbar.style.overflowX).toBe('hidden')
+
+    contentHeight(300)
+    rerender(<EditorRail {...props} unresolvedCommentCount={2} />)
+    expect(toolbar.style.overflowY).toBe('')
   })
 
   it('moves the Tab stop to the first button when the one holding it goes', () => {

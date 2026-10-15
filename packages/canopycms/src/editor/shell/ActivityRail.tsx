@@ -5,11 +5,13 @@ import React, {
   useId,
   useLayoutEffect,
   useRef,
+  useState,
   type ComponentPropsWithoutRef,
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
 import { ActionIcon, Indicator, Stack, Tooltip, VisuallyHidden } from '@mantine/core'
+import { useElementSize, useMergedRef } from '@mantine/hooks'
 
 const ACTIVITY_RAIL_WIDTH = 44
 
@@ -32,6 +34,10 @@ export interface ActivityRailProps {
 export function ActivityRail({ top, bottom, account }: ActivityRailProps) {
   const toolbarRef = useRef<HTMLDivElement>(null)
   const currentRef = useRef<string | null>(null)
+  // Re-renders on a resize, so the check below runs again.
+  const { ref: sizeRef } = useElementSize<HTMLDivElement>()
+  const mergedToolbarRef = useMergedRef(toolbarRef, sizeRef)
+  const [overflowing, setOverflowing] = useState(false)
 
   const items = () =>
     Array.from(toolbarRef.current?.querySelectorAll<HTMLElement>(`[${RAIL_ITEM_ATTR}]`) ?? [])
@@ -44,6 +50,13 @@ export function ActivityRail({ top, bottom, account }: ActivityRailProps) {
     for (const item of all) item.tabIndex = item === (stop ?? all[0]) ? 0 : -1
   }
   useLayoutEffect(placeTabStop)
+
+  // Only a rail too short for its buttons scrolls: a scroll container clips sideways too, and at
+  // full height nothing, such as a two-digit count badge, should be cut off.
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current
+    if (toolbar) setOverflowing(toolbar.scrollHeight > toolbar.clientHeight)
+  })
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const all = items()
@@ -77,21 +90,22 @@ export function ActivityRail({ top, bottom, account }: ActivityRailProps) {
       }}
     >
       <Stack
-        ref={toolbarRef}
+        ref={mergedToolbarRef}
         role="toolbar"
         aria-orientation="vertical"
         aria-label="Activities"
         gap={6}
         py={8}
         align="center"
-        // Scrolls rather than running under the account control in a short window.
         style={{
           flex: 1,
           minHeight: 0,
-          alignSelf: 'stretch',
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          scrollbarWidth: 'none',
+          ...(overflowing && {
+            alignSelf: 'stretch',
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            scrollbarWidth: 'none',
+          }),
         }}
         onKeyDown={onKeyDown}
         onFocus={(event) => {
@@ -189,8 +203,7 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
           </span>
         }
         size={16}
-        // Inside the rail's width, which the scrolling toolbar clips to.
-        offset={6}
+        offset={4}
         withBorder
         disabled={count === 0}
         styles={{
