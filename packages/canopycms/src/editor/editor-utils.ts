@@ -284,7 +284,7 @@ export interface BreadcrumbSegment {
 
 /**
  * Builds breadcrumb segments for an entry based on its collection hierarchy, starting with
- * "All content". The first path part is the content root, which the tree does not show.
+ * "All content". The first path part is skipped as the content root, which the tree does not show.
  */
 export const buildBreadcrumbSegments = (
   currentEntry: EditorEntry | undefined,

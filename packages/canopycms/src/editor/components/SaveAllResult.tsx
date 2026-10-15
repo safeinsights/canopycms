@@ -102,10 +102,12 @@ let shown: { result: SaveAllResult; actions: Actions } | undefined
 const renderFailures = (result: SaveAllResult, actions: Actions, update: boolean) => {
   const data = {
     id: SAVE_ALL_RESULT_TOAST_ID,
-    title:
+    // An unanswered save may have landed, so "not saved" would claim more than is known.
+    title: `${
       result.failed.length === result.total
-        ? `${entries(result.total)} not saved`
-        : `${result.failed.length} of ${entries(result.total)} not saved`,
+        ? entries(result.total)
+        : `${result.failed.length} of ${entries(result.total)}`
+    } ${result.failed.some((failure) => failure.kind === 'unanswered') ? 'may not have saved' : 'not saved'}`,
     message: <SaveAllResultMessage result={result} {...actions} />,
     color: result.failed.every(isWarning) ? 'yellow' : 'red',
     autoClose: false as const,
@@ -128,7 +130,7 @@ export function showSaveAllResult(result: SaveAllResult, actions: Actions): void
   if (result.total === 0 || result.failed.length === 0) {
     notifications.show({
       id: SAVE_ALL_RESULT_TOAST_ID,
-      // An empty run found every change already on the server, or discarded meanwhile.
+      // An empty run found every change already on the server, or settled meanwhile.
       message: result.total === 0 ? 'No changes to save' : `${entries(result.saved.length)} saved`,
       color: result.total === 0 ? 'blue' : 'green',
       autoClose: getNotificationDuration(4000),
@@ -149,7 +151,8 @@ export function settleSaveAllEntry(contentId: string): void {
     clearSaveAllResult()
     return
   }
-  shown = { ...shown, result: { ...shown.result, failed } }
+  // Settled, the entry is no longer part of the run the title counts.
+  shown = { ...shown, result: { ...shown.result, failed, total: shown.result.total - 1 } }
   renderFailures(shown.result, shown.actions, true)
 }
 

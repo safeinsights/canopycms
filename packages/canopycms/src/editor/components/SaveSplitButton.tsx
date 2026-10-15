@@ -12,7 +12,7 @@ export interface SaveSplitButtonProps {
   onSave: () => void
   /** Why Save can't act now; empty when it can. */
   saveBlockedReason: string
-  /** A save is briefly in flight: Save waits without a reason. */
+  /** The editor is loading or saving: Save waits without a reason. */
   busy: boolean
   onSaveAll: () => void
   /** Entries on the branch with unsaved changes. */
@@ -100,7 +100,7 @@ export function SaveSplitButton({
             onClick={() => {
               if (!saveBlocked) onSave()
             }}
-            // Its progress label stays readable: disabled styling would take it under 2:1.
+            // Its progress label stays readable: disabled styling takes it far under 4.5:1.
             data-disabled={saveBlocked && !saveAllProgress ? true : undefined}
             aria-disabled={saveBlocked ? true : undefined}
           >

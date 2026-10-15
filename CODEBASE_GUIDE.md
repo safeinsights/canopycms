@@ -497,7 +497,7 @@ Top-level components and helpers:
 - `shell/PaneLayout.tsx` — the resizable preview/form split
 - `shell/ActivityRail.tsx` — the left rail, one roving Tab stop
 - `shell/SidePanelHost.tsx` — a resizable side panel, docked or over the form
-- `shell/TopBar.tsx` — the 48px top bar, two rows below `md`
+- `shell/TopBar.tsx` — the 48px top bar, wrapping below `md`
 - `EntryNavigator.tsx` — entry tree: filter, unsaved dots, read-only locks, conflict badges
 - `entry-search.ts` — label/slug match, collection grouping
 - `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers

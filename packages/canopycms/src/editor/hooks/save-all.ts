@@ -39,7 +39,7 @@ export interface SaveAllProgress {
   total: number
 }
 
-/** One result toast at a time: a new run replaces it, and a branch switch takes it down. */
+/** One result toast at a time: a new run replaces it, and leaving its branch takes a partly failed one down. */
 export const SAVE_ALL_RESULT_TOAST_ID = 'canopy-save-all-result'
 
 const ENTRY_GONE_CODE = 'ENTRY_GONE' satisfies ApiErrorCode
@@ -60,7 +60,7 @@ export const SAVE_ALL_REASONS = {
   deleted:
     'It was deleted since your edits started, so it wasn\'t saved. Choose "Save as new entry" to keep your changes.',
   goneUnchecked:
-    "It was deleted or renamed since your edits started, so it wasn't saved, and the editor couldn't check which. Reload the page: if it was renamed, your changes moved with it.",
+    'It was deleted or renamed since your edits started, so it wasn\'t saved, and the editor couldn\'t check which. Choose "Refresh branch" in the branch menu: if it was renamed, your changes moved with it.',
   failed: 'Save failed. Try again.',
 } as const
 

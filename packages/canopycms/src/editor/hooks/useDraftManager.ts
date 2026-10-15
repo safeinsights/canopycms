@@ -213,8 +213,8 @@ export interface UseDraftManagerReturn {
   editedFiles: Array<{ path: LogicalPath; label: string }>
   handleSave: () => Promise<void>
   /**
-   * Saves every entry with unsaved changes on the branch, one at a time. Undefined when a run is
-   * already in flight, or the branch changed before it started.
+   * Saves every entry with unsaved changes on the branch, one at a time. Undefined when a run or
+   * a single Save is already in flight, or the branch changed or the editor unmounted meanwhile.
    */
   handleSaveAll: () => Promise<SaveAllResult | undefined>
   /** Set while Save all runs. */
@@ -1128,7 +1128,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
    * One entry of Save all, through the same checks as `handleSave`: held saves, the draft's base
    * version, schema validation, then the OCC-checked write. An entry not opened this session has
    * no token yet, so it is loaded first, which also lets the base check see whether it moved on.
-   * Returns undefined when the draft went away meanwhile.
+   * Returns undefined when the draft went away or the branch changed meanwhile.
    */
   const saveOneOfAll = async (
     entry: EditorEntry,

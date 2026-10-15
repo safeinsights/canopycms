@@ -12,7 +12,7 @@ import { useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface BranchPillProps {
   branchName: string
-  /** Branches are still loading, so there is no name yet. */
+  /** The editor is busy; with no branch name yet, that is the branch list loading. */
   loading: boolean
   /** The status label ("Editing", "In review", "Protected"), when the mode shows one. */
   status?: { label: string; testId: string; value: string }

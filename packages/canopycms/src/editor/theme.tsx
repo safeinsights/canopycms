@@ -228,7 +228,7 @@ const canopyComponents = {
   }),
   ModalCloseButton: Modal.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
   DrawerCloseButton: Drawer.CloseButton.extend({ defaultProps: CLOSE_BUTTON_PROPS }),
-  // Mantine dims a titled toast's text to gray.6 / dark.2, about 3.3:1.
+  // Mantine dims a titled toast's text to gray.6 / dark.2, under 4.5:1 on its surface.
   Notification: Notification.extend({
     defaultProps: { closeButtonProps: CLOSE_BUTTON_PROPS },
     styles: { description: { color: 'var(--mantine-color-text)' } },

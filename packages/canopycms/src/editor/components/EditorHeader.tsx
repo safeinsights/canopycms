@@ -78,7 +78,10 @@ export interface EditorHeaderProps {
   branchReadOnly?: boolean
   /** Server-computed: content writes are rejected on this branch; see `branchLockState`. */
   branchWriteBlocked?: boolean
-  /** Branch details have not arrived yet, so the fail-closed lock defaults name nothing yet. */
+  /**
+   * No branch details yet (loading, or the list failed and the banner says so): the fail-closed
+   * lock defaults are guesses, so neither the chip nor the status names them.
+   */
   branchLoading?: boolean
 }
 
@@ -143,7 +146,7 @@ export function EditorHeader({
   const entryLockReason = entryReadOnly
     ? "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it."
     : undefined
-  // The Tooltip hides it while a save is in flight.
+  // The Tooltip hides it while the editor is busy.
   const saveBlockedReason =
     branchLockReason ??
     (!branchName

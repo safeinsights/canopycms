@@ -82,12 +82,20 @@ describe('showSaveAllResult', () => {
     showSaveAllResult(result(failure('a', 'conflict'), failure('b', 'error')), actions)
     settleSaveAllEntry('b')
     expect(notifications.update).toHaveBeenLastCalledWith(
-      expect.objectContaining({ title: '1 of 3 entries not saved', color: 'yellow' }),
+      // The settled entry leaves the count too.
+      expect.objectContaining({ title: '1 of 2 entries not saved', color: 'yellow' }),
     )
     settleSaveAllEntry('unrelated')
     expect(notifications.update).toHaveBeenCalledTimes(1)
     settleSaveAllEntry('a')
     expect(notifications.hide).toHaveBeenLastCalledWith('canopy-save-all-result')
+  })
+
+  it("doesn't claim an entry whose save got no answer was not saved", () => {
+    showSaveAllResult(result(failure('a', 'unanswered')), actions)
+    expect(notifications.show).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: '1 of 2 entries may not have saved' }),
+    )
   })
 
   it('says so when the run found nothing left to save', () => {
