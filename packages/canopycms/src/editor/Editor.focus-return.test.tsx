@@ -274,7 +274,7 @@ describe('Discard all changes (branch menu)', () => {
   )
 })
 
-describe('Reload entry (file menu)', () => {
+describe('Refresh from server (file menu)', () => {
   it('returns focus to the file menu button when the confirm over a draft is cancelled', async () => {
     stubApi()
     renderEditor()
@@ -282,7 +282,7 @@ describe('Reload entry (file menu)', () => {
     await editTitle()
 
     await activateByKeyboard(fileTrigger(), () =>
-      screen.findByRole('menuitem', { name: 'Reload entry' }),
+      screen.findByRole('menuitem', { name: 'Refresh from server' }),
     )
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
 
@@ -391,18 +391,8 @@ describe('Focus once a menu has closed', () => {
   const settled = () => act(() => new Promise((resolve) => setTimeout(resolve, 60)))
 
   it.each([
-    ['Reload entry', fileTrigger, () => screen.findByRole('menuitem', { name: 'Reload entry' })],
-    ['Discard changes with nothing to lose', fileTrigger, byTestId('discard-file-draft-menu-item')],
-    [
-      'Reload all entries',
-      branchTrigger,
-      () => screen.findByRole('menuitem', { name: 'Reload all entries' }),
-    ],
-    [
-      'Discard all changes with nothing modified',
-      branchTrigger,
-      byTestId('discard-all-drafts-menu-item'),
-    ],
+    ['Refresh from server', fileTrigger, byTestId('refresh-entry-menu-item')],
+    ['Refresh branch', branchTrigger, byTestId('refresh-branch-menu-item')],
   ])('%s leaves focus on its menu button', async (_name, trigger, find) => {
     stubApi()
     renderEditor()
@@ -413,18 +403,18 @@ describe('Focus once a menu has closed', () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger()))
   })
 
-  it('picking a recently modified entry leaves focus on the file menu button', async () => {
+  it('picking an unsaved entry leaves focus on the branch pill', async () => {
     stubApi()
     renderEditor()
     await loaded()
     await editTitle()
 
-    await activateByKeyboard(fileTrigger(), async () => {
+    await activateByKeyboard(branchTrigger(), async () => {
       const items = await screen.findAllByRole('menuitem', { name: 'Hello' })
       return items[0]
     })
 
-    await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
+    await waitFor(() => expect(document.activeElement).toBe(branchTrigger()))
   })
 
   it('leaves focus in the drawer that Switch branch… opened', async () => {

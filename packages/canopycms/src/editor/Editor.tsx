@@ -83,6 +83,7 @@ import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
 import { BranchLockBanner, EditorHeader, EditorRail, EditorSidebar } from './components'
+import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { QuickOpenPalette } from './components/QuickOpenPalette'
 import { rememberOpener, returnTarget } from './utils/focus-return'
@@ -243,9 +244,7 @@ export const Editor: React.FC<EditorProps> = (props) => (
 const EditorContent: React.FC<EditorProps> = ({
   entries,
   title,
-  subtitle,
   siteTitle = title,
-  siteSubtitle = subtitle,
   branchName = '',
   collections,
   contentRoot,
@@ -526,6 +525,8 @@ const EditorContent: React.FC<EditorProps> = ({
     modifiedCount,
     editedFiles,
     handleSave,
+    handleSaveAll,
+    saveAllProgress,
     handleDiscardDrafts,
     handleDiscardFileDraft,
     handleReload,
@@ -1446,6 +1447,19 @@ const EditorContent: React.FC<EditorProps> = ({
     setContentPanelShown(true)
     setContentPanelFocusRequest((request) => request + 1)
   }
+  // A collection crumb opens the panel as "All content" does, then its collection's row takes focus.
+  const [collectionReveal, setCollectionReveal] = useState<{ path: string; seq: number }>()
+  const revealCollection = (path: string) => {
+    openNavigator()
+    setCollectionReveal((prev) => ({ path, seq: (prev?.seq ?? 0) + 1 }))
+  }
+  const runSaveAll = () => {
+    void handleSaveAll()
+      .then((result) => {
+        if (result) showSaveAllResult(result, { onOpenEntry: openEntry, onRetry: runSaveAll })
+      })
+      .catch(console.error)
+  }
   const navigatorReturnTarget = () =>
     returnTarget(navigatorOpenerRef.current, () => navigatorToggleRef.current)
   const branchReturnTarget = () =>
@@ -1621,7 +1635,6 @@ const EditorContent: React.FC<EditorProps> = ({
       </Paper>
     )
 
-  const headerTitle = currentEntry?.label ?? currentEntry?.slug ?? title
   const breadcrumbSegments = useMemo(
     () => buildBreadcrumbSegments(currentEntry, collectionLabels),
     [collectionLabels, currentEntry],
@@ -1752,6 +1765,8 @@ const EditorContent: React.FC<EditorProps> = ({
           loading={entriesInitializing}
           readOnly={branchContentLocked}
           dirtyPaths={dirtyPaths}
+          revealCollection={collectionReveal}
+          onRevealed={() => setCollectionReveal(undefined)}
         />
       </Box>
     </SidePanelHost>
@@ -1763,9 +1778,6 @@ const EditorContent: React.FC<EditorProps> = ({
         <EditorShell
           topBar={
             <EditorHeader
-              siteTitle={siteTitle}
-              siteSubtitle={siteSubtitle}
-              headerTitle={headerTitle}
               currentEntry={currentEntry}
               branchName={branchNameState}
               operatingMode={operatingMode}
@@ -1776,6 +1788,8 @@ const EditorContent: React.FC<EditorProps> = ({
               modifiedCount={modifiedCount}
               // A draft kept for an unavailable entry stays in storage but cannot be saved.
               hasUnsavedChanges={!currentEntryUnavailable && !contentReadOnly && isSelectedDirty()}
+              entryHasDraft={isSelectedDirty()}
+              entryReadOnly={currentEntry?.canEdit === false}
               draftStorageFailed={draftStorageFailed}
               userContext={userContext}
               branchCreatedBy={currentBranch?.createdBy}
@@ -1791,15 +1805,22 @@ const EditorContent: React.FC<EditorProps> = ({
               branchReadOnly={currentBranch?.readOnly}
               branchWriteBlocked={branchContentLocked}
               onNavigatorOpen={openNavigator}
+              onCollectionOpen={revealCollection}
               navigatorToggleRef={navigatorToggleRef}
               branchToggleRef={branchToggleRef}
               onFileReload={() => handleReload(() => navigatorToggleRef.current)}
               onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
               onEntrySelect={openEntry}
-              onBranchReloadData={handleReloadBranchData}
+              onBranchReloadData={() => {
+                void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
+                  console.error,
+                )
+              }}
               onBranchDiscardDrafts={() => handleDiscardDrafts(() => branchToggleRef.current)}
               onBranchManagerOpen={openBranchManager}
               onSave={currentEntryUnavailable ? noop : handleSave}
+              onSaveAll={runSaveAll}
+              saveAllProgress={saveAllProgress}
               onSubmit={() => {
                 if (branchNameState) handleSubmit(branchNameState).catch(console.error)
               }}

@@ -1556,3 +1556,57 @@ describe('EntryNavigator', () => {
     })
   })
 })
+
+describe('EntryNavigator - revealing a collection', () => {
+  const nested: EntryNavCollection[] = [
+    {
+      path: unsafeAsLogicalPath('content/docs'),
+      label: 'Docs',
+      type: 'collection',
+      entries: [{ path: unsafeAsLogicalPath('content/docs/intro'), label: 'Intro' }],
+      children: [
+        {
+          path: unsafeAsLogicalPath('content/docs/guides'),
+          label: 'Guides',
+          type: 'collection',
+          entries: [{ path: unsafeAsLogicalPath('content/docs/guides/setup'), label: 'Setup' }],
+        },
+      ],
+    },
+  ]
+
+  it('clears the filter, expands the collection and its ancestors, and focuses its row', async () => {
+    const onRevealed = vi.fn()
+    const { rerender, props } = renderEntryNavigator({ collections: nested })
+    fireEvent.change(screen.getByTestId('entry-nav-filter'), { target: { value: 'intro' } })
+
+    rerender(
+      <CanopyCMSProvider>
+        <EntryNavigator
+          {...props}
+          collections={nested}
+          revealCollection={{ path: 'content/docs/guides', seq: 1 }}
+          onRevealed={onRevealed}
+        />
+      </CanopyCMSProvider>,
+    )
+
+    await waitFor(() => expect(onRevealed).toHaveBeenCalledTimes(1))
+    expect((screen.getByTestId('entry-nav-filter') as HTMLInputElement).value).toBe('')
+    const row = document.activeElement as HTMLElement
+    expect(row.getAttribute('role')).toBe('treeitem')
+    expect(row.dataset.value).toBe('collection:content/docs/guides')
+    expect(screen.getByText('Setup')).toBeTruthy()
+  })
+
+  it('reports a collection the tree does not show as done, moving no focus', async () => {
+    const onRevealed = vi.fn()
+    renderEntryNavigator({
+      collections: nested,
+      revealCollection: { path: 'content/missing', seq: 1 },
+      onRevealed,
+    })
+    await waitFor(() => expect(onRevealed).toHaveBeenCalledTimes(1))
+    expect(document.activeElement).toBe(document.body)
+  })
+})

@@ -1128,9 +1128,7 @@ describe('Editor integration', () => {
 
     // Navigate to entry B via the File menu -> All content -> entry click,
     // while A is still in flight.
-    fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    await waitFor(() => expect(screen.getByTestId('all-files-menu-item')).toBeDefined())
-    fireEvent.click(screen.getByTestId('all-files-menu-item'))
+    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
     await waitFor(() => expect(screen.getByTestId('entry-nav-item-world')).toBeDefined())
     fireEvent.click(screen.getByTestId('entry-nav-item-world'))
 
@@ -1680,11 +1678,7 @@ describe('Editor integration', () => {
     // "Content actions" button (Add entry/Add collection for the root), which
     // reads navCollections[0].onAdd directly and would otherwise bypass
     // EntryNavigator's gating entirely.
-    fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    await waitFor(() => {
-      expect(screen.getByTestId('all-files-menu-item')).toBeDefined()
-    })
-    fireEvent.click(screen.getByTestId('all-files-menu-item'))
+    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
 
     await waitFor(() => {
       expect(screen.getByTestId('entry-nav-item-posts')).toBeDefined()
@@ -1971,11 +1965,7 @@ describe('Editor integration', () => {
     }
 
     const openNavigatorAndFindSubA = async () => {
-      fireEvent.click(screen.getByTestId('file-dropdown-button'))
-      await waitFor(() => {
-        expect(screen.getByTestId('all-files-menu-item')).toBeDefined()
-      })
-      fireEvent.click(screen.getByTestId('all-files-menu-item'))
+      fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
       // hiddenRootPath collapses the single "content/posts" root (contentRoot
       // is pinned to it below), so its children render directly at the top
       // level with no expand click needed.

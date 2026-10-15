@@ -287,9 +287,27 @@ describe('content panel', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(document.activeElement).toBe(document.body)
 
-    fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    fireEvent.click(await screen.findByTestId('all-files-menu-item'))
+    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
     await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter')))
+  })
+
+  it("opens the panel on a collection crumb's collection, its row focused", async () => {
+    window.history.replaceState({}, '', `/?entry=${hello.path}`)
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await waitFor(() =>
+      expect(screen.getByTestId('file-dropdown-button').textContent).toContain('hello'),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Posts' }))
+
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(
+        'collection:content/posts',
+      ),
+    )
+    expect(panel()).not.toBeNull()
   })
 
   it('docks an open overlay open when the layout turns side by side', async () => {
@@ -331,25 +349,20 @@ describe('content panel', () => {
     expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
   })
 
-  it("returns focus to the file menu's button when an overlay opened from its item closes", async () => {
+  it('returns focus to the "All content" crumb when the overlay it opened closes', async () => {
     storeLayout({ layout: 'stacked' })
     stubWindowWidth(true)
     stubApi()
     renderEditor()
-    fireEvent.click(await screen.findByTestId('file-dropdown-button'))
-    fireEvent.click(await screen.findByTestId('all-files-menu-item'))
+    const crumb = screen.getAllByTestId('breadcrumb-segment')[0]
+    crumb.focus()
+    fireEvent.click(crumb)
     await loaded()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter')))
-    // The menu's own focus return must be spent first, or it would answer for the panel's.
-    await waitFor(() => expect(screen.queryByTestId('all-files-menu-item')).toBeNull())
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter'))
 
     escapeFromPanel()
     await waitFor(() => expect(panel()).toBeNull())
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByTestId('file-dropdown-button')),
-    )
+    await waitFor(() => expect(document.activeElement).toBe(crumb))
   })
 
   it('uncovers the form when the preview asks to focus one of its fields', async () => {

@@ -751,7 +751,7 @@ describe('Undo is one-shot and ends with the draft', () => {
     const toast = undoToastOf()
 
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    fireEvent.click(await screen.findByText('Reload entry'))
+    fireEvent.click(await screen.findByText('Refresh from server'))
     await waitFor(() => expect(notifications.hide).toHaveBeenCalledWith(toast.id))
     await waitFor(() => expect(screen.getByRole('group', { name: '/b' })).toBeTruthy())
 

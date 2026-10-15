@@ -16,6 +16,15 @@ import type { ApiErrorCode } from '../../api/types'
 import { isUnanswered } from '../unanswered'
 import { withItemKeys } from '../../item-keys'
 import { RetryToastMessage } from '../components/RetryToastMessage'
+import {
+  classifySaveAllError,
+  invalidReason,
+  SAVE_ALL_REASONS,
+  SAVE_ALL_RESULT_TOAST_ID,
+  type SaveAllFailure,
+  type SaveAllProgress,
+  type SaveAllResult,
+} from './save-all'
 
 /** @internal Exported for tests. */
 export const SAVE_TIMED_OUT_MESSAGE =
@@ -23,7 +32,7 @@ export const SAVE_TIMED_OUT_MESSAGE =
 
 /** @internal Exported for tests. Shown when a save may already have landed, until a reload. */
 export const SAVE_MAY_HAVE_LANDED_MESSAGE =
-  'Your last save may already have gone through. Before saving again, choose "Reload entry" in the menu under the entry\'s name; your unsaved edits will be lost.'
+  'Your last save may already have gone through. Before saving again, choose "Refresh from server" in the entry\'s menu, on its name; your unsaved edits will be lost.'
 
 const saveMayHaveLandedToastId = (contentId: string) => `canopy-save-may-have-landed:${contentId}`
 
@@ -203,6 +212,13 @@ export interface UseDraftManagerReturn {
   modifiedCount: number
   editedFiles: Array<{ path: LogicalPath; label: string }>
   handleSave: () => Promise<void>
+  /**
+   * Saves every entry with unsaved changes on the branch, one at a time. Undefined when a run is
+   * already in flight, or the branch changed before it started.
+   */
+  handleSaveAll: () => Promise<SaveAllResult | undefined>
+  /** Set while Save all runs. */
+  saveAllProgress: SaveAllProgress | null
   handleDiscardDrafts: (returnFocusTo?: () => HTMLElement | null) => void
   /** `announce` toasts the discard, for a draft the form isn't showing (a read-only branch's). */
   handleDiscardFileDraft: (
@@ -261,6 +277,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const draftBaseVersionsRef = useRef<Record<string, number | null>>({})
   const [draftStorageFailed, setDraftStorageFailed] = useState(false)
   const [saveInFlight, setSaveInFlight] = useState(false)
+  const [saveAllProgress, setSaveAllProgress] = useState<SaveAllProgress | null>(null)
+  const saveAllRunningRef = useRef(false)
   // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN, or when the retry of
   // a timed-out save was refused as a version conflict. That save may have landed, so re-sending
   // the token would bounce off the user's own write; held until re-read.
@@ -287,6 +305,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   // Draft keys are now content IDs, not paths
   const currentId = options.currentEntry?.contentId
+  const currentIdRef = useRef(currentId)
+  currentIdRef.current = currentId
   const selectedValue = currentId ? drafts[currentId] : undefined
   const loadedValue = currentId ? loadedValues[currentId] : undefined
   const effectiveValue = selectedValue ?? loadedValue
@@ -370,13 +390,23 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   )
 
   // Async callbacks outlive the render that created them; these give them current values.
-  const latestRef = useRef({ drafts, loadedValues, unresolvedCount: 0, modifiedCount, editedFiles })
+  const latestRef = useRef({
+    drafts,
+    loadedValues,
+    unresolvedCount: 0,
+    modifiedCount,
+    editedFiles,
+    dirtyIds,
+    entryById,
+  })
   latestRef.current = {
     drafts,
     loadedValues,
     unresolvedCount: unresolvedIds.length,
     modifiedCount,
     editedFiles,
+    dirtyIds,
+    entryById,
   }
   const latestOptionsRef = useRef(options)
   latestOptionsRef.current = options
@@ -404,6 +434,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       timedOutSavesRef.current.clear()
       for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
       goneEntriesRef.current.clear()
+      // Its entries, and their "Open" and "Save as new entry" buttons, are the old branch's.
+      notifications.hide(SAVE_ALL_RESULT_TOAST_ID)
       reconciledDraftIdsRef.current = new Set()
     }
     prevBranchRef.current = options.branchName
@@ -847,7 +879,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           'This draft was saved by an earlier version of the editor, which did not record ' +
           'which version of the entry it was based on. Saving it will overwrite the copy ' +
           'currently on the server, including any changes made by someone else since. ' +
-          'Choose "Reload entry" or "Discard changes" in the menu under the entry\'s title ' +
+          'Choose "Refresh from server" or "Discard changes" in the entry\'s menu, on its name, ' +
           'instead if you would rather not risk that.',
         labels: { confirm: 'Save anyway', cancel: 'Cancel' },
         confirmProps: { color: 'red' },
@@ -1047,6 +1079,192 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
   }
 
+  /**
+   * A save that got no answer landed if the server now holds exactly what was sent. Only that
+   * answer settles it: a differing value may be the server's normalisation of a save that did
+   * land, so it leaves the token alone and the retry's 409 decides, as for `handleSave`.
+   */
+  const settleUnansweredSave = async (entry: EditorEntry, sent: FormValue) => {
+    const { readEntryValue, loadEntry } = latestOptionsRef.current
+    try {
+      if (!readEntryValue || !equal(await readEntryValue(entry), sent)) return undefined
+      const loaded = await loadEntry(entry)
+      return equal(loaded, sent) ? loaded : undefined
+    } catch (err) {
+      console.error(err)
+      return undefined
+    }
+  }
+
+  /**
+   * One entry of Save all, through the same checks as `handleSave`: held saves, the draft's base
+   * version, schema validation, then the OCC-checked write. An entry not opened this session has
+   * no token yet, so it is loaded first, which also lets the base check see whether it moved on.
+   * Returns undefined when the draft went away meanwhile.
+   */
+  const saveOneOfAll = async (
+    entry: EditorEntry,
+    branch: string,
+  ): Promise<{ saved: true } | { saved: false; failure: SaveAllFailure } | undefined> => {
+    const id = entry.contentId
+    const sent = latestRef.current.drafts[id]
+    if (sent === undefined) return undefined
+    const onBranch = () => latestOptionsRef.current.branchName === branch
+    const fail = (
+      kind: SaveAllFailure['kind'],
+      reason: string,
+      extra?: Pick<SaveAllFailure, 'recreate'>,
+    ) => ({
+      saved: false as const,
+      failure: { contentId: id, label: entry.label, path: entry.path, kind, reason, ...extra },
+    })
+    const { getEntryVersion, loadEntry, saveEntry } = latestOptionsRef.current
+
+    if (entry.unavailable) return fail('blocked', SAVE_ALL_REASONS.unavailable)
+    if (entry.canEdit === false) return fail('blocked', SAVE_ALL_REASONS.noEditAccess)
+    if (id in reloadRequiredRef.current) {
+      if (reloadRequiredRef.current[id] === getEntryVersion?.(id)) {
+        return fail('unanswered', SAVE_ALL_REASONS.earlierUnanswered)
+      }
+      delete reloadRequiredRef.current[id]
+      notifications.hide(saveMayHaveLandedToastId(id))
+    }
+    if (getEntryVersion?.(id) === undefined) {
+      try {
+        await loadEntry(entry)
+      } catch (err) {
+        console.error(err)
+        return fail('error', SAVE_ALL_REASONS.loadFailed)
+      }
+      if (!onBranch()) return undefined
+    }
+    const base = draftBaseVersionsRef.current[id]
+    if (base === null) return fail('conflict', SAVE_ALL_REASONS.unknownBase)
+    if (base !== undefined && base !== getEntryVersion?.(id)) {
+      return fail('conflict', SAVE_ALL_REASONS.staleBase)
+    }
+    const validationErrors = validateEntryFormValue(entry.schema, entry.format, sent)
+    if (validationErrors.length > 0) {
+      if (id === currentIdRef.current) {
+        setErrorState({ entryId: id, errors: toFieldErrorMap(validationErrors) })
+      }
+      return fail('invalid', invalidReason(validationErrors.length))
+    }
+
+    const commitSaved = (saved: FormValue) => {
+      // Edits typed while the save was out stay a draft, now based on the version just written.
+      if (!equal(latestRef.current.drafts[id], sent)) {
+        const version = latestOptionsRef.current.getEntryVersion?.(id)
+        if (version !== undefined) draftBaseVersionsRef.current[id] = version
+      }
+      setDrafts((prev) => {
+        if (!(id in prev) || !equal(prev[id], sent)) return prev
+        const next = { ...prev }
+        delete next[id]
+        return next
+      })
+      setLoadedValues((prev) => ({ ...prev, [id]: saved }))
+      if (timedOutSavesRef.current.delete(id)) notifications.hide(saveTimedOutToastId(id))
+      hideEntryGone(id)
+    }
+
+    try {
+      commitSaved(await saveEntry(entry, sent))
+      return { saved: true }
+    } catch (err) {
+      console.error(err)
+      if (!onBranch()) return undefined
+      const outcome = classifySaveAllError(err, timedOutSavesRef.current.has(id))
+      switch (outcome.kind) {
+        case 'unanswered': {
+          const landed = await settleUnansweredSave(entry, sent)
+          if (!onBranch()) return undefined
+          if (landed) {
+            commitSaved(landed)
+            return { saved: true }
+          }
+          timedOutSavesRef.current.add(id)
+          return fail('unanswered', SAVE_ALL_REASONS.unanswered)
+        }
+        case 'landed?':
+          reloadRequiredRef.current[id] = getEntryVersion?.(id)
+          timedOutSavesRef.current.delete(id)
+          notifications.hide(saveTimedOutToastId(id))
+          return fail('unanswered', SAVE_ALL_REASONS.earlierUnanswered)
+        case 'gone': {
+          if (timedOutSavesRef.current.delete(id)) notifications.hide(saveTimedOutToastId(id))
+          let moved: EditorEntry | undefined
+          try {
+            moved = await latestOptionsRef.current.followMovedEntry?.(entry)
+          } catch (followErr) {
+            console.error(followErr)
+            return fail('conflict', SAVE_ALL_REASONS.goneUnchecked)
+          }
+          if (moved) return fail('conflict', SAVE_ALL_REASONS.renamed)
+          return fail('conflict', SAVE_ALL_REASONS.deleted, {
+            recreate: () => void recreateGoneEntry(entry, branch),
+          })
+        }
+        default:
+          if (outcome.kind === 'invalid' && id === currentIdRef.current) {
+            const fieldErrors = err instanceof SaveApiError ? err.fieldErrors : undefined
+            if (fieldErrors?.length) {
+              setErrorState({ entryId: id, errors: toFieldErrorMap(fieldErrors) })
+            }
+          }
+          return fail(outcome.kind, outcome.reason)
+      }
+    }
+  }
+
+  const handleSaveAll = async (): Promise<SaveAllResult | undefined> => {
+    if (saveAllRunningRef.current) return undefined
+    saveAllRunningRef.current = true
+    const branch = options.branchName
+    try {
+      // A restored draft identical to the server is not a change, so it isn't saved.
+      await whenDraftsVerified()
+      if (latestOptionsRef.current.branchName !== branch) return undefined
+      const { dirtyIds: ids, entryById: byId } = latestRef.current
+      const current = currentIdRef.current
+      const queue = [...ids]
+        .sort((a, b) => Number(b === current) - Number(a === current))
+        .flatMap((id) => {
+          const entry = byId.get(id)
+          return entry ? [entry] : []
+        })
+      const result: SaveAllResult = { branch, total: queue.length, saved: [], failed: [] }
+      if (queue.length === 0) return result
+      notifications.hide(SAVE_ALL_RESULT_TOAST_ID)
+      options.setBusy(true)
+      setSaveInFlight(true)
+      setSaveAllProgress({ done: 0, total: queue.length })
+      try {
+        for (const [index, entry] of queue.entries()) {
+          if (latestOptionsRef.current.branchName !== branch) return undefined
+          const outcome = await saveOneOfAll(entry, branch)
+          if (outcome?.saved) {
+            result.saved.push({ contentId: entry.contentId, label: entry.label, path: entry.path })
+          } else if (outcome) {
+            result.failed.push(outcome.failure)
+          }
+          setSaveAllProgress({ done: index + 1, total: queue.length })
+        }
+      } finally {
+        setSaveAllProgress(null)
+        setSaveInFlight(false)
+        options.setBusy(false)
+      }
+      if (latestOptionsRef.current.branchName !== branch) return undefined
+      // Discarded mid-run, so neither saved nor failed.
+      result.total = result.saved.length + result.failed.length
+      if (result.saved.length > 0) latestOptionsRef.current.onSaved?.()
+      return result
+    } finally {
+      saveAllRunningRef.current = false
+    }
+  }
+
   const performDiscardDrafts = () => {
     for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
     timedOutSavesRef.current.clear()
@@ -1176,7 +1394,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         return next
       })
       notifications.show({
-        message: 'Reloaded',
+        message: 'Refreshed from server',
         color: 'blue',
         autoClose: getNotificationDuration(3000),
         withCloseButton: true,
@@ -1217,9 +1435,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       return
     }
     openConfirm({
-      title: 'Reload entry',
-      children: 'Reload this entry from the server? Unsaved changes to this entry will be lost.',
-      labels: { confirm: 'Reload', cancel: 'Cancel' },
+      title: 'Refresh from server',
+      children:
+        "Replace this entry with the server's copy? Unsaved changes to this entry will be lost.",
+      labels: { confirm: 'Refresh', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
         void performReload()
@@ -1326,6 +1545,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     modifiedCount,
     editedFiles,
     handleSave,
+    handleSaveAll,
+    saveAllProgress,
     handleDiscardDrafts,
     handleDiscardFileDraft,
     handleReload,
