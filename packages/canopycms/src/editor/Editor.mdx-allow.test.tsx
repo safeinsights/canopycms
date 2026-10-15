@@ -152,11 +152,11 @@ async function underlineButtons(mdxAllow?: MdxAllowlist): Promise<number> {
     // The rich-text editor is a lazy chunk, slow to load under a full run.
     await waitFor(
       () => {
-        expect(view.container.querySelector('.canopy-mdx-content')).not.toBeNull()
+        expect(view.baseElement.querySelector('.canopy-mdx-content')).not.toBeNull()
       },
       { timeout: 15000 },
     )
-    return view.container.querySelectorAll('[aria-label="Underline"], [title="Underline"]').length
+    return view.baseElement.querySelectorAll('[aria-label="Underline"], [title="Underline"]').length
   } finally {
     view.unmount()
   }

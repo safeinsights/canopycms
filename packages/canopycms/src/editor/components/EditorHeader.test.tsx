@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, render, screen, cleanup, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
+import { BranchLockBanner } from './BranchLockBanner'
 import { CanopyCMSProvider } from '../theme'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { EditorEntry } from '../Editor'
@@ -45,8 +46,17 @@ const defaultProps: EditorHeaderProps = {
   onWithdraw: vi.fn(),
 }
 
-const renderHeader = (overrides: Partial<EditorHeaderProps> = {}) =>
-  render(<EditorHeader {...defaultProps} {...overrides} />, { wrapper: Wrapper })
+/** The header with the lock banner Editor.tsx renders under it from the same branch props. */
+const renderHeader = (overrides: Partial<EditorHeaderProps> = {}) => {
+  const props = { ...defaultProps, ...overrides }
+  return render(
+    <>
+      <EditorHeader {...props} />
+      <BranchLockBanner {...props} />
+    </>,
+    { wrapper: Wrapper },
+  )
+}
 
 describe('EditorHeader - review lock', () => {
   afterEach(() => {

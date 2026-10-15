@@ -1,6 +1,5 @@
-import { forwardRef, useRef, type ReactNode, type Ref } from 'react'
+import { useRef, type ReactNode, type Ref } from 'react'
 import {
-  Alert,
   Badge,
   Box,
   Button,
@@ -15,7 +14,7 @@ import {
   VisuallyHidden,
 } from '@mantine/core'
 import { useMergedRef } from '@mantine/hooks'
-import { IconFolderOpen, IconChevronDown, IconGitBranch, IconLock } from '@tabler/icons-react'
+import { IconFolderOpen, IconChevronDown, IconGitBranch } from '@tabler/icons-react'
 import type { OperatingMode } from '../../operating-mode'
 import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
@@ -26,6 +25,7 @@ import { branchStatusPresentation } from '../branch-status'
 import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
+import { branchLockState } from './BranchLockBanner'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
@@ -188,17 +188,10 @@ export interface EditorHeaderProps {
    */
   branchIsProtected?: boolean
 
-  /**
-   * Whether the current branch is read-only (protected base branch in prod).
-   * Disables Save and shows the "create a branch" banner below. Default false.
-   */
+  /** Whether the current branch is read-only (protected base branch in prod); disables Save. */
   branchReadOnly?: boolean
 
-  /**
-   * Server-computed: content writes are rejected on this branch, for either
-   * reason (base-branch read-only, or a status past 'editing'). Combined with
-   * `branchReadOnly` to pick which of the two banners to show. Default false.
-   */
+  /** Server-computed: content writes are rejected on this branch; see `branchLockState`. */
   branchWriteBlocked?: boolean
 }
 
@@ -228,60 +221,47 @@ function MenuEmptyText({
  * Header component for the Editor.
  * Contains site info, file navigation, breadcrumbs, branch selector, comments button, and action buttons.
  */
-export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(function EditorHeader(
-  {
-    siteTitle,
-    siteSubtitle,
-    headerTitle,
-    currentEntry,
-    branchName,
-    operatingMode,
-    busy,
-    breadcrumbSegments,
-    editedFiles,
-    modifiedCount,
-    unresolvedCommentCount: _,
-    comments,
-    onNavigatorOpen,
-    navigatorToggleRef,
-    branchToggleRef,
-    onFileReload,
-    onFileDiscardDraft,
-    onEntrySelect,
-    onBranchReloadData,
-    onBranchDiscardDrafts,
-    onBranchManagerOpen,
-    onCommentsPanelOpen,
-    onSave,
-    onSubmit,
-    hasUnsavedChanges,
-    draftStorageFailed = false,
+export function EditorHeader({
+  siteTitle,
+  siteSubtitle,
+  headerTitle,
+  currentEntry,
+  branchName,
+  operatingMode,
+  busy,
+  breadcrumbSegments,
+  editedFiles,
+  modifiedCount,
+  unresolvedCommentCount: _,
+  comments,
+  onNavigatorOpen,
+  navigatorToggleRef,
+  branchToggleRef,
+  onFileReload,
+  onFileDiscardDraft,
+  onEntrySelect,
+  onBranchReloadData,
+  onBranchDiscardDrafts,
+  onBranchManagerOpen,
+  onCommentsPanelOpen,
+  onSave,
+  onSubmit,
+  hasUnsavedChanges,
+  draftStorageFailed = false,
+  branchStatus,
+  onWithdraw,
+  userContext,
+  branchCreatedBy,
+  branchAccess,
+  branchIsProtected = false,
+  branchReadOnly = false,
+  branchWriteBlocked = false,
+}: EditorHeaderProps) {
+  const { statusLocked, branchDataUnavailable } = branchLockState({
     branchStatus,
-    onWithdraw,
-    userContext,
-    branchCreatedBy,
-    branchAccess,
-    branchIsProtected = false,
-    branchReadOnly = false,
-    branchWriteBlocked = false,
-  }: EditorHeaderProps,
-  ref,
-) {
-  // `branchWriteBlocked` is the server's own answer (getBranchProtection), so
-  // Save is never enabled for a write the API would reject; a client-side
-  // derivation could drift from it. `branchReadOnly` only picks which banner
-  // to show -- base-branch read-only takes precedence over a workflow status
-  // lock.
-  const statusLocked = branchWriteBlocked && !branchReadOnly
-
-  // Covers two cases where `branchStatus` can't be trusted to describe the lock
-  // honestly: branch data still loading (`branchStatus` is undefined, so the
-  // banner would otherwise interpolate "Branch is undefined...") and version
-  // skew (an old server omits `branchWriteBlocked` while still reporting
-  // status: 'editing', which would otherwise assert a lock the status
-  // contradicts). In both cases the banner says data is unavailable instead.
-  const branchDataUnavailable =
-    statusLocked && (branchStatus === undefined || branchStatus === 'editing')
+    branchReadOnly,
+    branchWriteBlocked,
+  })
 
   const fileToggle = useRef<HTMLButtonElement>(null)
   const fileToggleRef = useMergedRef(fileToggle, navigatorToggleRef)
@@ -317,21 +297,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   const unresolvedCount = comments.filter((t) => !t.resolved).length
 
   return (
-    <Paper
-      ref={ref}
-      shadow="md"
-      withBorder
-      radius={0}
-      px={0}
-      py={0}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 70,
-      }}
-    >
+    <Paper shadow="md" withBorder radius={0} px={0} py={0}>
       <Box px="md" py="sm">
         <Group justify="space-between" align="center" wrap="nowrap">
           <Stack gap={2} style={{ minWidth: 0 }}>
@@ -651,47 +617,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
             })()}
           </Group>
         </Group>
-        {branchReadOnly && (
-          <Alert
-            icon={<IconLock size={16} />}
-            color="yellow"
-            variant="light"
-            mt="sm"
-            data-testid="protected-branch-banner"
-          >
-            <Group justify="space-between" align="center" gap="sm" wrap="wrap">
-              <Text size="sm">
-                {`You are viewing the protected base branch "${branchName}". Content is read-only — create a branch to make changes.`}
-              </Text>
-              <Button variant="default" onClick={onBranchManagerOpen}>
-                {`${EDITOR_ACTIONS.newBranch}…`}
-              </Button>
-            </Group>
-          </Alert>
-        )}
-        {statusLocked && (
-          <Alert
-            icon={<IconLock size={16} />}
-            color="yellow"
-            variant="light"
-            mt="sm"
-            data-testid="status-locked-banner"
-          >
-            <Group justify="space-between" align="center" gap="sm" wrap="wrap">
-              <Text size="sm">
-                {branchDataUnavailable
-                  ? `Branch details for "${branchName}" could not be loaded, so content is locked until they arrive. Use Switch branch… to retry.`
-                  : branchStatus === 'submitted'
-                    ? `Branch "${branchName}" is submitted for review and locked for edits. Withdraw it from review to make changes.`
-                    : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
-              </Text>
-              <Button variant="default" onClick={onBranchManagerOpen}>
-                {`${EDITOR_ACTIONS.switchBranch}…`}
-              </Button>
-            </Group>
-          </Alert>
-        )}
       </Box>
     </Paper>
   )
-})
+}

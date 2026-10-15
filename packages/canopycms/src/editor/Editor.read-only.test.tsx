@@ -213,7 +213,7 @@ const titleInput = async (): Promise<HTMLInputElement> => {
 describe('Editor on a read-only branch', () => {
   it('writes no draft from typing or from the markdown editor mounting', async () => {
     stubApi([protectedMain])
-    const { container } = renderEditor()
+    const { baseElement } = renderEditor()
     await waitFor(() => expect(screen.getByTestId('protected-branch-banner')).toBeTruthy())
 
     const input = await titleInput()
@@ -221,9 +221,9 @@ describe('Editor on a read-only branch', () => {
     fireEvent.change(input, { target: { value: 'Typed title' } })
 
     await waitFor(() => {
-      expect(container.querySelector('.canopy-mdx-content')?.getAttribute('contenteditable')).toBe(
-        'false',
-      )
+      expect(
+        baseElement.querySelector('.canopy-mdx-content')?.getAttribute('contenteditable'),
+      ).toBe('false')
     })
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
 

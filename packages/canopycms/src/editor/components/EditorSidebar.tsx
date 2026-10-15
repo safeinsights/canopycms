@@ -1,5 +1,5 @@
 import { useRef, useState, type Ref } from 'react'
-import { ActionIcon, Indicator, Menu, Paper, Stack, Tooltip } from '@mantine/core'
+import { ActionIcon, Indicator, Menu, Paper, Stack, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useMergedRef } from '@mantine/hooks'
 import {
   IconUserCircle,
@@ -10,16 +10,21 @@ import {
   IconLayoutRows,
   IconMarquee,
   IconActivity,
+  IconInfoCircle,
+  IconExternalLink,
 } from '@tabler/icons-react'
-import type { PaneLayout } from '../EditorPanes'
+import type { PaneArrangement } from '../shell/PaneLayout'
 import type { InexactMark } from '../preview-marks'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
+import { CANOPYCMS_VERSION } from '../../version'
+
+const ABOUT_URL = 'https://github.com/safeinsights/canopycms'
 
 export interface EditorSidebarProps {
   /**
    * Current layout mode (side or stacked).
    */
-  layout: PaneLayout
+  layout: PaneArrangement
 
   /**
    * Whether field highlighting is enabled.
@@ -33,24 +38,9 @@ export interface EditorSidebarProps {
   previewInexactMarks?: readonly InexactMark[]
 
   /**
-   * Width of the sidebar in pixels.
-   */
-  sidebarWidth: number
-
-  /**
-   * Height of the header in pixels (for positioning).
-   */
-  headerHeight: number
-
-  /**
-   * Height of the footer in pixels (for positioning).
-   */
-  footerHeight: number
-
-  /**
    * Callback when layout changes.
    */
-  onLayoutChange: (layout: PaneLayout) => void
+  onLayoutChange: (layout: PaneArrangement) => void
 
   /**
    * Callback when highlight toggle is clicked.
@@ -114,9 +104,6 @@ export function EditorSidebar({
   highlightEnabled,
   previewMarksNothing = false,
   previewInexactMarks = [],
-  sidebarWidth,
-  headerHeight,
-  footerHeight,
   onLayoutChange,
   onHighlightToggle,
   onPermissionManagerOpen,
@@ -139,11 +126,8 @@ export function EditorSidebar({
       shadow="sm"
       radius={0}
       style={{
-        position: 'fixed',
-        top: headerHeight,
-        bottom: footerHeight,
-        right: 0,
-        width: sidebarWidth,
+        height: '100%',
+        width: 64,
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
@@ -220,7 +204,7 @@ export function EditorSidebar({
       <Stack gap="xs" align="center">
         <Menu
           shadow="md"
-          width={200}
+          width={220}
           position="left"
           opened={settingsOpened}
           onChange={setSettingsOpened}
@@ -268,6 +252,20 @@ export function EditorSidebar({
                 System health
               </Menu.Item>
             )}
+            <Menu.Divider />
+            <Menu.Label data-testid="settings-menu-version">{`CanopyCMS ${CANOPYCMS_VERSION}`}</Menu.Label>
+            <Menu.Item
+              component="a"
+              href={ABOUT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="settings-menu-about"
+              leftSection={<IconInfoCircle size={14} />}
+              rightSection={<IconExternalLink size={14} aria-hidden />}
+            >
+              About CanopyCMS
+              <VisuallyHidden component="span"> (opens in a new tab)</VisuallyHidden>
+            </Menu.Item>
           </Menu.Dropdown>
         </Menu>
         {AccountComponent ? (

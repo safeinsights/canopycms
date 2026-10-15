@@ -2,7 +2,6 @@
 
 export type { CanopyClientConfig, EditorSignInProps } from './config'
 export type { CustomFieldRenderers, CustomFieldRenderProps } from './editor/FormRenderer'
-export * from './editor/EditorPanes'
 export * from './editor/EntryNavigator'
 export * from './editor/Editor'
 export { PreviewFrame } from './editor/PreviewFrame'

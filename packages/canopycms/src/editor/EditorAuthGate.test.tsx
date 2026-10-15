@@ -138,6 +138,15 @@ describe('EditorAuthGate', () => {
     probeFetches = 0
   })
 
+  it('shows its own screens in the full-window shell, before the editor mounts', () => {
+    renderGate()
+    const checking = screen.getByTestId('canopy-auth-checking')
+    expect(checking.closest('[data-canopy-shell]')).not.toBeNull()
+    // The shell locks page scroll, so a screen taller than the window scrolls itself.
+    const scroller = checking.closest<HTMLElement>('[data-canopy-region="main"] > *')
+    expect(scroller?.style.overflowY).toBe('auto')
+  })
+
   it('mounts the editor once the server accepts the session, sharing its one whoami', async () => {
     renderGate()
     expect(screen.getByTestId('canopy-auth-checking')).toBeTruthy()
