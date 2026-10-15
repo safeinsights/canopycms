@@ -7,7 +7,6 @@ import type { PreviewWidth } from './hooks/useEditorLayout'
 import { CANOPY_PREVIEW_MESSAGE, CANOPY_PREVIEW_READY } from './preview-bridge'
 import type { InexactMark } from './preview-marks'
 import { PreviewPane } from './PreviewPane'
-import type { PaneArrangement } from './shell/PaneLayout'
 
 const meta: Meta<typeof PreviewPane> = {
   title: 'Editor/PreviewPane',
@@ -68,7 +67,7 @@ const Pane = ({
   path?: string
   notice?: ReactNode
   onPreviewError?: (error: { message: string } | null) => void
-  /** Shows the highlight, layout and maximize controls the editor passes. */
+  /** Shows the highlight and maximize controls the editor passes. */
   tools?: boolean
   initialHighlight?: boolean
   marksNothing?: boolean
@@ -81,7 +80,6 @@ const Pane = ({
   const [src] = useState(() => URL.createObjectURL(new Blob([page(script)], { type: 'text/html' })))
   const [previewWidth, setPreviewWidth] = useState(initialWidth)
   const [highlight, setHighlight] = useState(initialHighlight)
-  const [layout, setLayout] = useState<PaneArrangement>('side')
   const [maximized, setMaximized] = useState(initialMaximized)
   const toolProps = tools
     ? {
@@ -90,8 +88,7 @@ const Pane = ({
         marksNothing,
         inexactMarks,
         showMarkDiagnostics,
-        layout,
-        onLayoutChange: setLayout,
+        layout: 'side' as const,
         maximized,
         onMaximizedChange: setMaximized,
         resizing,
@@ -177,7 +174,7 @@ const unmapped: InexactMark[] = [
   { path: 'footer' },
 ]
 
-/** The editor's controls: highlight, layout and maximize, as an editor sees them. */
+/** The editor's controls: highlight and maximize, as an editor sees them. */
 export const WithTools: Story = { render: () => <Pane initialWidth="fit" tools /> }
 
 /** An admin with highlights on sees how many marks name no field; the chip explains them. */
@@ -197,7 +194,7 @@ export const NothingToHighlight: Story = {
   render: () => <Pane initialWidth="fit" tools initialHighlight marksNothing />,
 }
 
-/** Maximized: a labelled Restore, the layout toggle blocked with its reason; Esc restores. */
+/** Maximized: a labelled Restore; Esc restores. */
 export const Maximized: Story = { render: () => <Pane initialWidth="fit" tools initialMaximized /> }
 
 /** The readout a divider drag shows over the preview. */

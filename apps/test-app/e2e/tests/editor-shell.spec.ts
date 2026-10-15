@@ -51,14 +51,14 @@ test.describe('Editor shell', () => {
   test('the layout, preview width and highlights survive a reload', async ({ page }) => {
     await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
-    await editorPage.previewLayoutButton('stacked').click()
+    await editorPage.layoutButton().click()
     await editorPage.previewWidthSelect().click()
     await page.getByRole('option', { name: /Tablet/ }).click()
     await editorPage.toggleHighlights()
 
     await page.reload()
     await editorPage.waitForReady()
-    await expect(editorPage.previewLayoutButton('stacked')).toHaveAttribute('aria-pressed', 'true')
+    await expect(editorPage.layoutButton()).toHaveAttribute('data-layout', 'stacked')
     await expect(editorPage.previewWidthSelect()).toHaveValue('Tablet')
     await expect(editorPage.highlightToggle()).toHaveAttribute('aria-pressed', 'true')
   })

@@ -26,6 +26,8 @@ const defaultProps = (): EditorRailProps => ({
   unresolvedCommentCount: 0,
   mediaLibraryOpen: false,
   onMediaLibraryOpen: vi.fn(),
+  layout: 'side',
+  onLayoutChange: vi.fn(),
   onPermissionManagerOpen: vi.fn(),
   onGroupManagerOpen: vi.fn(),
   onSystemHealthOpen: vi.fn(),
@@ -56,6 +58,7 @@ describe('EditorRail - buttons', () => {
       'Branches',
       'Comments',
       'Media library',
+      'Layout: side by side. Switch to stacked',
       'Settings',
     ])
     expect(screen.getByTestId('rail-home-button').textContent).toBe('E')
@@ -151,6 +154,58 @@ describe('EditorRail - keyboard', () => {
     expect(toolbarButtons().filter((button) => button.tabIndex === 0)).toEqual([
       screen.getByTestId('rail-home-button'),
     ])
+  })
+})
+
+describe('EditorRail - layout', () => {
+  const layoutButton = () => screen.getByTestId('rail-layout-button')
+  const icon = () => layoutButton().querySelector('svg')?.getAttribute('class')
+
+  it('names and shows the current layout, and switches to the other', async () => {
+    const props = defaultProps()
+    const { rerender } = render(<EditorRail {...props} />, { wrapper: Wrapper })
+    expect(layoutButton().getAttribute('aria-label')).toBe(
+      'Layout: side by side. Switch to stacked',
+    )
+    expect(icon()).toContain('tabler-icon-layout-columns')
+    await userEvent.click(layoutButton())
+    expect(props.onLayoutChange).toHaveBeenLastCalledWith('stacked')
+
+    rerender(<EditorRail {...props} layout="stacked" />)
+    expect(layoutButton().getAttribute('aria-label')).toBe(
+      'Layout: stacked. Switch to side by side',
+    )
+    expect(icon()).toContain('tabler-icon-layout-rows')
+    await userEvent.click(layoutButton())
+    expect(props.onLayoutChange).toHaveBeenLastCalledWith('side')
+  })
+
+  it('sits in the bottom group, just above Settings', () => {
+    renderRail()
+    expect(toolbarButtons().slice(-2)).toEqual([
+      layoutButton(),
+      screen.getByTestId('settings-button'),
+    ])
+  })
+
+  it('says why it is blocked while the preview is maximized, stays focusable and does nothing', async () => {
+    const props = renderRail({ layoutBlocked: true })
+    const button = layoutButton()
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    expect(button.hasAttribute('disabled')).toBe(false)
+    expect(button.getAttribute('aria-label')).toBe('Layout: side by side. Switch to stacked')
+    const reason = 'Restore the preview to change the layout.'
+    expect(
+      document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent,
+    ).toBe(reason)
+
+    await userEvent.click(button)
+    expect(props.onLayoutChange).not.toHaveBeenCalled()
+
+    act(() => screen.getByTestId('settings-button').focus())
+    await userEvent.keyboard('{ArrowUp}')
+    expect(document.activeElement).toBe(button)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(reason)
   })
 })
 

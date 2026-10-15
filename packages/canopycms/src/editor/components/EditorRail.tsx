@@ -9,6 +9,8 @@ import {
   IconFiles,
   IconGitBranch,
   IconInfoCircle,
+  IconLayoutColumns,
+  IconLayoutRows,
   IconLogout,
   IconMessageCircle,
   IconPhoto,
@@ -17,6 +19,7 @@ import {
   IconUserCircle,
 } from '@tabler/icons-react'
 import { ActivityRail, RailButton } from '../shell/ActivityRail'
+import type { PaneArrangement } from '../shell/PaneLayout'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 import { CANOPYCMS_VERSION } from '../../version'
 import { EDITOR_ACTIONS } from '../copy'
@@ -45,6 +48,10 @@ export interface EditorRailProps {
   mediaLibraryOpen: boolean
   onMediaLibraryOpen: () => void
   mediaButtonRef?: Ref<HTMLButtonElement>
+  layout: PaneArrangement
+  onLayoutChange: (layout: PaneArrangement) => void
+  /** The preview is maximized, so the layout has nothing to arrange. */
+  layoutBlocked?: boolean
   /** Admin-only, like the other two below: each Settings item renders only when given. */
   onPermissionManagerOpen?: () => void
   onGroupManagerOpen?: () => void
@@ -99,6 +106,38 @@ export function SettingsMenu({
   )
 }
 
+const LAYOUTS: Record<
+  PaneArrangement,
+  { name: string; other: PaneArrangement; Icon: typeof IconLayoutColumns }
+> = {
+  side: { name: 'side by side', other: 'stacked', Icon: IconLayoutColumns },
+  stacked: { name: 'stacked', other: 'side', Icon: IconLayoutRows },
+}
+
+/** One button that shows the current layout and switches to the other. */
+function LayoutButton({
+  layout,
+  onChange,
+  blocked = false,
+}: {
+  layout: PaneArrangement
+  onChange: (layout: PaneArrangement) => void
+  blocked?: boolean
+}) {
+  const { name, other, Icon } = LAYOUTS[layout]
+  return (
+    <RailButton
+      railId="layout"
+      label={`Layout: ${name}. Switch to ${LAYOUTS[other].name}`}
+      icon={<Icon size={20} />}
+      disabledReason={blocked ? 'Restore the preview to change the layout.' : undefined}
+      data-testid="rail-layout-button"
+      data-layout={layout}
+      onClick={() => onChange(other)}
+    />
+  )
+}
+
 const monogram = (title: string): string => Array.from(title.trim())[0]?.toUpperCase() ?? '?'
 
 /** The editor's activity rail: what `ActivityRail` lays out, wired to the editor's surfaces. */
@@ -119,6 +158,9 @@ export function EditorRail({
   mediaLibraryOpen,
   onMediaLibraryOpen,
   mediaButtonRef,
+  layout,
+  onLayoutChange,
+  layoutBlocked,
   onPermissionManagerOpen,
   onGroupManagerOpen,
   onSystemHealthOpen,
@@ -252,7 +294,12 @@ export function EditorRail({
           />
         </>
       }
-      bottom={<SettingsMenu items={settingsItems} toggleRef={settingsToggleRef} />}
+      bottom={
+        <>
+          <LayoutButton layout={layout} onChange={onLayoutChange} blocked={layoutBlocked} />
+          <SettingsMenu items={settingsItems} toggleRef={settingsToggleRef} />
+        </>
+      }
       account={
         AccountComponent ? (
           <AccountComponent />

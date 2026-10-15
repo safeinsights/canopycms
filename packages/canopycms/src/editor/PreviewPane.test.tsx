@@ -277,25 +277,6 @@ describe('PreviewPane', () => {
       fireEvent.keyDown(filter, { key: 'Escape' })
       expect(restoreButton()).toBeNull()
     })
-
-    // The frame surviving maximize is PaneLayout's to keep (its test and the e2e pin that).
-    it('blocks the layout toggle while maximized', () => {
-      render(
-        <PreviewPane
-          src={src}
-          previewWidth="fit"
-          onPreviewWidthChange={vi.fn()}
-          layout="side"
-          onLayoutChange={vi.fn()}
-          maximized
-          onMaximizedChange={vi.fn()}
-        />,
-        { wrapper: Wrapper },
-      )
-      expect(screen.getByRole('button', { name: 'Stacked' }).getAttribute('aria-disabled')).toBe(
-        'true',
-      )
-    })
   })
 
   it('shows its width over the preview while the divider is dragged', () => {
@@ -335,7 +316,7 @@ describe('PreviewPane', () => {
       { wrapper: Wrapper },
     )
     expect(screen.queryByTestId('preview-unmapped-chip')).toBeNull()
-    for (const name of ['Highlight fields in the preview', 'Side by side', 'Maximize preview']) {
+    for (const name of ['Highlight fields in the preview', 'Maximize preview']) {
       expect(screen.queryByRole('button', { name })).toBeNull()
     }
 

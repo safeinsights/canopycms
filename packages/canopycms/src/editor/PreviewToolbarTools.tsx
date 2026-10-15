@@ -14,16 +14,9 @@ import {
   UnstyledButton,
   VisuallyHidden,
 } from '@mantine/core'
-import {
-  IconArrowsMaximize,
-  IconArrowsMinimize,
-  IconLayoutColumns,
-  IconLayoutRows,
-  IconMarquee,
-} from '@tabler/icons-react'
+import { IconArrowsMaximize, IconArrowsMinimize, IconMarquee } from '@tabler/icons-react'
 
 import type { InexactMark } from './preview-marks'
-import type { PaneArrangement } from './shell/PaneLayout'
 
 const HIGHLIGHT_LABEL = 'Highlight fields in the preview'
 const NOTHING_MARKED_NOTE =
@@ -171,50 +164,6 @@ export function UnmappedMarksChip({ marks }: { marks: readonly InexactMark[] }) 
         </Stack>
       </Popover.Dropdown>
     </Popover>
-  )
-}
-
-const LAYOUTS: { value: PaneArrangement; label: string; Icon: typeof IconLayoutColumns }[] = [
-  { value: 'side', label: 'Side by side', Icon: IconLayoutColumns },
-  { value: 'stacked', label: 'Stacked', Icon: IconLayoutRows },
-]
-
-const LAYOUT_BLOCKED = 'Restore the preview to change the layout.'
-
-export interface LayoutToggleProps {
-  layout: PaneArrangement
-  onChange: (layout: PaneArrangement) => void
-  /** The preview is maximized, so the layout has nothing to arrange. */
-  blocked?: boolean
-}
-
-/** The form/preview arrangement as a pair of pressed buttons, so the current one shows. */
-export function LayoutToggle({ layout, onChange, blocked = false }: LayoutToggleProps) {
-  const reasonId = useId()
-  return (
-    <Group role="group" aria-label="Layout" gap={2} wrap="nowrap">
-      {LAYOUTS.map(({ value, label, Icon }) => (
-        <Tooltip key={value} label={blocked ? LAYOUT_BLOCKED : label}>
-          <ActionIcon
-            variant={layout === value ? 'filled' : 'subtle'}
-            color={layout === value ? 'brand' : 'gray'}
-            size="md"
-            aria-label={label}
-            aria-pressed={layout === value}
-            aria-disabled={blocked || undefined}
-            aria-describedby={blocked ? reasonId : undefined}
-            data-disabled={blocked || undefined}
-            data-testid={`preview-layout-${value}`}
-            onClick={() => {
-              if (!blocked) onChange(value)
-            }}
-          >
-            <Icon size={16} />
-          </ActionIcon>
-        </Tooltip>
-      ))}
-      {blocked && <VisuallyHidden id={reasonId}>{LAYOUT_BLOCKED}</VisuallyHidden>}
-    </Group>
   )
 }
 

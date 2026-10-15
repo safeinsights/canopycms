@@ -2,13 +2,14 @@
 
 import React, {
   forwardRef,
+  useId,
   useLayoutEffect,
   useRef,
   type ComponentPropsWithoutRef,
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import { ActionIcon, Indicator, Stack, Tooltip } from '@mantine/core'
+import { ActionIcon, Indicator, Stack, Tooltip, VisuallyHidden } from '@mantine/core'
 
 const ACTIVITY_RAIL_WIDTH = 44
 
@@ -119,6 +120,8 @@ export interface RailButtonProps extends Omit<ComponentPropsWithoutRef<'button'>
   count?: number
   countTestId?: string
   tooltipDisabled?: boolean
+  /** Disables the button, which stays focusable, and its tooltip gives this reason instead. */
+  disabledReason?: string
 }
 
 /** A rail button: icon only, named by `label`, which its tooltip repeats on hover and focus. */
@@ -133,10 +136,13 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
     count = 0,
     countTestId,
     tooltipDisabled,
+    disabledReason,
+    onClick,
     ...rest
   },
   ref,
 ) {
+  const reasonId = useId()
   const button = (
     <ActionIcon
       ref={ref}
@@ -146,15 +152,24 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
       size="lg"
       radius="md"
       aria-label={label}
+      aria-disabled={disabledReason ? true : undefined}
+      aria-describedby={disabledReason ? reasonId : undefined}
+      data-disabled={disabledReason ? true : undefined}
+      onClick={disabledReason ? undefined : onClick}
       {...rest}
       {...{ [RAIL_ITEM_ATTR]: railId }}
     >
       {icon}
+      {disabledReason && (
+        <VisuallyHidden component="span" id={reasonId}>
+          {disabledReason}
+        </VisuallyHidden>
+      )}
     </ActionIcon>
   )
   return (
     <Tooltip
-      label={shortcut ? `${label} (${shortcut})` : label}
+      label={disabledReason ?? (shortcut ? `${label} (${shortcut})` : label)}
       position="right"
       disabled={tooltipDisabled}
     >

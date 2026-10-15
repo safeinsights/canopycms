@@ -1645,7 +1645,6 @@ const EditorContent: React.FC<EditorProps> = ({
         inexactMarks={previewInexactMarks}
         showMarkDiagnostics={userIsAdmin}
         layout={layout}
-        onLayoutChange={setLayout}
         maximized={previewShownMaximized}
         onMaximizedChange={setPreviewMaximized}
         resizing={paneResizing}
@@ -1926,6 +1925,9 @@ const EditorContent: React.FC<EditorProps> = ({
               mediaLibraryOpen={mediaLibraryOpen}
               onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
               mediaButtonRef={mediaButtonRef}
+              layout={layout}
+              onLayoutChange={setLayout}
+              layoutBlocked={previewShownMaximized}
               onPermissionManagerOpen={
                 userIsAdmin ? () => setPermissionManagerOpen(true) : undefined
               }

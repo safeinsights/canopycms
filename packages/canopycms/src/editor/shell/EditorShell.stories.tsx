@@ -69,6 +69,7 @@ const EditorChrome = ({
   panelMode?: SidePanelHostProps['mode']
 }) => {
   const props = { ...headerProps, ...header }
+  const [layout, setLayout] = useState(arrangement)
   const [panelOpen, setPanelOpen] = useState(panelMode !== undefined)
   const [panelWidth, setPanelWidth] = useState(280)
   const mode = panelMode ?? 'docked'
@@ -114,13 +115,15 @@ const EditorChrome = ({
           unresolvedCommentCount={2}
           mediaLibraryOpen={false}
           onMediaLibraryOpen={noop}
+          layout={layout}
+          onLayoutChange={setLayout}
           onLogoutClick={noop}
         />
       }
       panel={mode === 'docked' ? panel : undefined}
       main={
         <PaneLayout
-          arrangement={arrangement}
+          arrangement={layout}
           preview={<Placeholder name="Preview" />}
           form={<Placeholder name="Form" />}
           formOverlay={mode === 'overlay' ? panel : undefined}

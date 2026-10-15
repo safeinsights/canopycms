@@ -519,10 +519,10 @@ export class EditorPage {
   }
 
   /**
-   * The preview toolbar's layout button for `layout`; the current one is `aria-pressed`.
+   * The rail's layout button; its `data-layout` is the current layout, and a click switches it.
    */
-  previewLayoutButton(layout: 'side' | 'stacked'): Locator {
-    return this.page.locator(`[data-testid="preview-layout-${layout}"]`)
+  layoutButton(): Locator {
+    return this.page.locator('[data-testid="rail-layout-button"]')
   }
 
   maximizePreviewButton(): Locator {
