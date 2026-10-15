@@ -1,5 +1,5 @@
 import { useRef, useState, type Ref } from 'react'
-import { ActionIcon, Indicator, Menu, Paper, Stack, Text, Tooltip } from '@mantine/core'
+import { ActionIcon, Indicator, Menu, Paper, Stack, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useMergedRef } from '@mantine/hooks'
 import {
   IconUserCircle,
@@ -11,6 +11,7 @@ import {
   IconMarquee,
   IconActivity,
   IconInfoCircle,
+  IconExternalLink,
 } from '@tabler/icons-react'
 import type { PaneArrangement } from '../shell/PaneLayout'
 import type { InexactMark } from '../preview-marks'
@@ -203,7 +204,7 @@ export function EditorSidebar({
       <Stack gap="xs" align="center">
         <Menu
           shadow="md"
-          width={220}
+          width={200}
           position="left"
           opened={settingsOpened}
           onChange={setSettingsOpened}
@@ -252,6 +253,7 @@ export function EditorSidebar({
               </Menu.Item>
             )}
             <Menu.Divider />
+            <Menu.Label data-testid="settings-menu-version">{`CanopyCMS ${CANOPYCMS_VERSION}`}</Menu.Label>
             <Menu.Item
               component="a"
               href={ABOUT_URL}
@@ -259,13 +261,10 @@ export function EditorSidebar({
               rel="noopener noreferrer"
               data-testid="settings-menu-about"
               leftSection={<IconInfoCircle size={14} />}
-              rightSection={
-                <Text size="xs" c="dimmed">
-                  {`v${CANOPYCMS_VERSION}`}
-                </Text>
-              }
+              rightSection={<IconExternalLink size={14} aria-hidden />}
             >
               About CanopyCMS
+              <VisuallyHidden component="span"> (opens in a new tab)</VisuallyHidden>
             </Menu.Item>
           </Menu.Dropdown>
         </Menu>

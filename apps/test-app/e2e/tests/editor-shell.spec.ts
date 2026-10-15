@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
-import { SHORT_TIMEOUT } from '../fixtures/timeouts'
+import { LONG_TIMEOUT, SHORT_TIMEOUT } from '../fixtures/timeouts'
 
 /** The editor owns the window: it fills the viewport, the page never scrolls, and the split persists. */
 test.describe('Editor shell', () => {
@@ -43,5 +43,26 @@ test.describe('Editor shell', () => {
     await expect
       .poll(() => editorPage.paneSplitPercent(), { timeout: SHORT_TIMEOUT })
       .toBeCloseTo(dragged, 0)
+  })
+
+  test("the rich-text editor's popups paint above the shell", async ({ page }) => {
+    await editorPage.createPost('popup-layer-post', 'Popup Layer Post')
+    const body = editorPage.richTextField('Body')
+    await body.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
+    await body.click()
+
+    await page.getByRole('combobox', { name: 'Block type' }).click()
+    const listbox = page.getByRole('listbox')
+    await expect(listbox).toBeVisible({ timeout: SHORT_TIMEOUT })
+    // Both are stacking contexts at the root, so their z-indexes decide which paints on top. A hit
+    // test cannot: the open select turns pointer events off everywhere else.
+    const [popupLayer, shellLayer] = await listbox.evaluate((list) => {
+      const zOf = (el: Element | null) => Number(el ? getComputedStyle(el).zIndex : NaN)
+      return [
+        zOf(list.closest('.mdxeditor-popup-container')),
+        zOf(document.querySelector('[data-canopy-shell]')),
+      ]
+    })
+    expect(popupLayer).toBeGreaterThan(shellLayer)
   })
 })

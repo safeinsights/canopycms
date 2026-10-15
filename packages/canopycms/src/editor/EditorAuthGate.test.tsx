@@ -138,6 +138,11 @@ describe('EditorAuthGate', () => {
     probeFetches = 0
   })
 
+  it('shows its own screens in the full-window shell, before the editor mounts', () => {
+    renderGate()
+    expect(screen.getByTestId('canopy-auth-checking').closest('[data-canopy-shell]')).not.toBeNull()
+  })
+
   it('mounts the editor once the server accepts the session, sharing its one whoami', async () => {
     renderGate()
     expect(screen.getByTestId('canopy-auth-checking')).toBeTruthy()

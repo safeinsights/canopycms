@@ -36,6 +36,7 @@ import {
 } from './context/ApiClientContext'
 import { EditorIdentityContext, type EditorIdentity } from './context/EditorIdentityContext'
 import { SWRProvider } from './context/SWRProvider'
+import { EditorShell } from './shell/EditorShell'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
 
 type GatePhase = 'checking' | 'signed-in' | 'signed-out' | 'error'
@@ -201,34 +202,42 @@ export function EditorAuthGate({
     if (modeMismatchNotice) {
       return (
         <CanopyCMSProvider {...themeOptions} withNotifications={false}>
-          <Center mih="100vh" p="md">
-            {modeMismatchNotice}
-          </Center>
+          <EditorShell
+            main={
+              <Center h="100%" p="md">
+                {modeMismatchNotice}
+              </Center>
+            }
+          />
         </CanopyCMSProvider>
       )
     }
     return (
       <CanopyCMSProvider {...themeOptions} withNotifications={false}>
-        <Center mih="100vh" p="md">
-          {state.phase === 'signed-out' ? (
-            <Stack align="center" gap="md" data-testid="canopy-sign-in-screen">
-              {signIn}
-            </Stack>
-          ) : state.phase === 'error' ? (
-            <RetryNotice
-              title="Couldn't load the editor"
-              error={state.error ?? 'Unknown error'}
-              onRetry={retryInitial}
-            />
-          ) : (
-            <Stack align="center" gap="xs" data-testid="canopy-auth-checking">
-              <Loader />
-              <Text size="sm" c="dimmed">
-                Checking sign-in…
-              </Text>
-            </Stack>
-          )}
-        </Center>
+        <EditorShell
+          main={
+            <Center h="100%" p="md">
+              {state.phase === 'signed-out' ? (
+                <Stack align="center" gap="md" data-testid="canopy-sign-in-screen">
+                  {signIn}
+                </Stack>
+              ) : state.phase === 'error' ? (
+                <RetryNotice
+                  title="Couldn't load the editor"
+                  error={state.error ?? 'Unknown error'}
+                  onRetry={retryInitial}
+                />
+              ) : (
+                <Stack align="center" gap="xs" data-testid="canopy-auth-checking">
+                  <Loader />
+                  <Text size="sm" c="dimmed">
+                    Checking sign-in…
+                  </Text>
+                </Stack>
+              )}
+            </Center>
+          }
+        />
       </CanopyCMSProvider>
     )
   }

@@ -27,6 +27,39 @@ export function findHostChrome(anchor: Element): HTMLElement[] {
   return [root, ...siblings].filter((element) => element instanceof HTMLElement)
 }
 
+interface Hold {
+  count: number
+  restore: () => void
+}
+
+/** Per element, so a second editor mounted at once never restores what the first still hides. */
+const holds = new WeakMap<HTMLElement, Hold>()
+
+function hide(element: HTMLElement): () => void {
+  let hold = holds.get(element)
+  if (!hold) {
+    const wasInert = element.hasAttribute('inert')
+    const { visibility } = element.style
+    element.setAttribute('inert', '')
+    element.style.visibility = 'hidden'
+    hold = {
+      count: 0,
+      restore: () => {
+        if (!wasInert) element.removeAttribute('inert')
+        element.style.visibility = visibility
+      },
+    }
+    holds.set(element, hold)
+  }
+  hold.count++
+  const held = hold
+  return () => {
+    if (--held.count > 0) return
+    holds.delete(element)
+    held.restore()
+  }
+}
+
 /**
  * Makes the host's chrome inert and hidden while the editor is mounted: Tab never leaves the
  * editor, and chrome with its own z-index never paints over the shell. Applied once, at mount,
@@ -37,16 +70,7 @@ export function useHideHostChrome(anchorRef: RefObject<Element | null>): void {
   useEffect(() => {
     const anchor = anchorRef.current
     if (!anchor) return
-    const restores = findHostChrome(anchor).map((element) => {
-      const wasInert = element.hasAttribute('inert')
-      const { visibility } = element.style
-      element.setAttribute('inert', '')
-      element.style.visibility = 'hidden'
-      return () => {
-        if (!wasInert) element.removeAttribute('inert')
-        element.style.visibility = visibility
-      }
-    })
-    return () => restores.forEach((restore) => restore())
+    const releases = findHostChrome(anchor).map(hide)
+    return () => releases.forEach((release) => release())
   }, [anchorRef])
 }

@@ -132,4 +132,24 @@ describe('EditorShell', () => {
     inside.focus()
     expect(document.activeElement).toBe(inside)
   })
+
+  it('keeps the host hidden until the last of two shells unmounts', async () => {
+    const Two = ({ first }: { first: boolean }) => (
+      <>
+        {first && <Shell />}
+        <Shell />
+      </>
+    )
+    const { container, rerender, unmount } = render(<Two first />)
+    await waitFor(() => expect(document.querySelectorAll('[data-canopy-shell]')).toHaveLength(2))
+
+    rerender(<Two first={false} />)
+    expect(document.querySelectorAll('[data-canopy-shell]')).toHaveLength(1)
+    expect(container.hasAttribute('inert')).toBe(true)
+    expect(container.style.visibility).toBe('hidden')
+
+    unmount()
+    expect(container.hasAttribute('inert')).toBe(false)
+    expect(container.style.visibility).toBe('')
+  })
 })

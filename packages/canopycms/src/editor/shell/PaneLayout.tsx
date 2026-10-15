@@ -14,7 +14,23 @@ export const DEFAULT_STACKED_SPLIT_PERCENT = 58
 
 const PREVIEW = 'canopy-preview'
 const FORM = 'canopy-form'
-const PANE_MIN_PX = 120
+// The panes' limits are the stored split's, so a drag never ends somewhere storage would move.
+const PREVIEW_LIMITS = { minSize: `${SPLIT_PERCENT_MIN}%`, maxSize: `${SPLIT_PERCENT_MAX}%` }
+
+const SEPARATOR_STYLES = `
+.canopy-pane-separator {
+  flex-basis: 8px;
+  background: var(--canopy-surface-muted);
+  box-shadow: inset 0 0 0 1px var(--canopy-input-border);
+}
+.canopy-pane-separator:is([data-separator='hover'], [data-separator='active']) {
+  background: var(--canopy-focus-ring);
+}
+.canopy-pane-separator:focus-visible {
+  outline: 2px solid var(--canopy-focus-ring);
+  outline-offset: -2px;
+}
+`
 
 export interface PaneLayoutProps {
   arrangement: PaneArrangement
@@ -71,53 +87,53 @@ export function PaneLayout({
 
   const side = arrangement === 'side'
   return (
-    <Group
-      groupRef={groupRef}
-      orientation={side ? 'horizontal' : 'vertical'}
-      defaultLayout={splitLayout(percent)}
-      onLayoutChanged={(layout, meta) => {
-        const next = layout[PREVIEW]
-        if (meta.isUserInteraction && next !== undefined) onSplitPercentChange?.(arrangement, next)
-      }}
-      style={{ height: '100%', width: '100%' }}
-    >
-      <Panel id={PREVIEW} minSize={PANE_MIN_PX}>
-        <Box
-          ref={previewRef}
-          data-testid="preview-pane"
-          h="100%"
-          w="100%"
-          style={{ overflow: 'auto' }}
-        >
-          {preview}
-        </Box>
-      </Panel>
-      <Separator
-        elementRef={separatorRef}
-        aria-label="Resize preview and form"
-        style={{
-          flexBasis: 8,
-          background: 'var(--canopy-surface-muted)',
-          boxShadow: 'inset 0 0 0 1px var(--mantine-color-default-border)',
+    <>
+      <style>{SEPARATOR_STYLES}</style>
+      <Group
+        groupRef={groupRef}
+        orientation={side ? 'horizontal' : 'vertical'}
+        defaultLayout={splitLayout(percent)}
+        onLayoutChanged={(layout, meta) => {
+          const next = layout[PREVIEW]
+          if (meta.isUserInteraction && next !== undefined)
+            onSplitPercentChange?.(arrangement, next)
         }}
-      />
-      <Panel id={FORM} minSize={PANE_MIN_PX}>
-        <Box
-          ref={formRef}
-          data-testid="form-pane"
-          h="100%"
-          w="100%"
-          style={{
-            // FormHeader reads this to span the padding.
-            '--canopy-form-pane-padding': '20px',
-            padding: 'var(--canopy-form-pane-padding)',
-            overflow: 'auto',
-            backgroundColor: 'var(--canopy-surface-muted)',
-          }}
-        >
-          {form}
-        </Box>
-      </Panel>
-    </Group>
+        style={{ height: '100%', width: '100%' }}
+      >
+        <Panel id={PREVIEW} {...PREVIEW_LIMITS}>
+          <Box
+            ref={previewRef}
+            data-testid="preview-pane"
+            h="100%"
+            w="100%"
+            style={{ overflow: 'auto' }}
+          >
+            {preview}
+          </Box>
+        </Panel>
+        <Separator
+          elementRef={separatorRef}
+          aria-label="Resize preview and form"
+          className="canopy-pane-separator"
+        />
+        <Panel id={FORM}>
+          <Box
+            ref={formRef}
+            data-testid="form-pane"
+            h="100%"
+            w="100%"
+            style={{
+              // FormHeader reads this to span the padding.
+              '--canopy-form-pane-padding': '20px',
+              padding: 'var(--canopy-form-pane-padding)',
+              overflow: 'auto',
+              backgroundColor: 'var(--canopy-surface-muted)',
+            }}
+          >
+            {form}
+          </Box>
+        </Panel>
+      </Group>
+    </>
   )
 }

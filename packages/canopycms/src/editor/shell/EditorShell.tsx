@@ -6,7 +6,7 @@ import { RemoveScroll } from 'react-remove-scroll'
 import { useHideHostChrome } from './host-chrome'
 
 export interface EditorShellProps {
-  topBar: ReactNode
+  topBar?: ReactNode
   banner?: ReactNode
   rail?: ReactNode
   panel?: ReactNode
@@ -60,9 +60,9 @@ export function EditorShell({ topBar, banner, rail, panel, main, overlays }: Edi
           <main style={region('main')} data-canopy-region="main">
             {main}
           </main>
-          <div style={region('rail')} data-canopy-region="rail">
+          <aside style={region('rail')} data-canopy-region="rail" aria-label="Editor tools">
             {rail}
-          </div>
+          </aside>
           {/* Absolute, so nothing an overlay leaves in place takes a grid cell. */}
           <div style={{ position: 'absolute' }} data-canopy-region="overlays">
             {overlays}

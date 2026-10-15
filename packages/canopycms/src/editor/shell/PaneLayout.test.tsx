@@ -2,7 +2,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import React from 'react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { PaneLayout, type PaneLayoutProps } from './PaneLayout'
+import {
+  PaneLayout,
+  SPLIT_PERCENT_MAX,
+  SPLIT_PERCENT_MIN,
+  type PaneLayoutProps,
+} from './PaneLayout'
 import { CanopyCMSProvider } from '../theme'
 
 const originalRect = HTMLElement.prototype.getBoundingClientRect
@@ -119,5 +124,16 @@ describe('PaneLayout', () => {
 
     act(() => separator().setAttribute('data-separator', 'hover'))
     await waitFor(() => panes.forEach((pane) => expect(pane.style.pointerEvents).toBe('')))
+  })
+
+  it('holds a resize to the stored range, on screen as in what it reports', () => {
+    const onSplitPercentChange = vi.fn()
+    renderPanes({ sideSplitPercent: 80, onSplitPercentChange })
+
+    for (let i = 0; i < 4; i++) act(() => fireEvent.keyDown(separator(), { key: 'ArrowRight' }))
+    expect(onSplitPercentChange).toHaveBeenLastCalledWith('side', SPLIT_PERCENT_MAX)
+    expect(previewShare().style.flexGrow).toBe(String(SPLIT_PERCENT_MAX))
+    expect(separator().getAttribute('aria-valuemin')).toBe(String(SPLIT_PERCENT_MIN))
+    expect(separator().getAttribute('aria-valuemax')).toBe(String(SPLIT_PERCENT_MAX))
   })
 })
