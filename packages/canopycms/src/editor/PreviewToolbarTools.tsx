@@ -1,7 +1,7 @@
 'use client'
 
 import type { Ref } from 'react'
-import { useId } from 'react'
+import { useId, useRef, useState } from 'react'
 
 import {
   ActionIcon,
@@ -70,6 +70,9 @@ export function HighlightToggle({ enabled, onToggle, marksNothing = false }: Hig
 
 const LISTED = 3
 
+// Module-level, so React never re-calls it on a re-render and pulls focus back while closing.
+const focusOnMount = (node: HTMLElement | null) => node?.focus()
+
 const markList = (marks: readonly InexactMark[]): string =>
   marks
     .slice(0, LISTED)
@@ -78,14 +81,33 @@ const markList = (marks: readonly InexactMark[]): string =>
 
 /** The admin's count of preview marks that name no field of the entry; see `findInexactMarks`. */
 export function UnmappedMarksChip({ marks }: { marks: readonly InexactMark[] }) {
+  const [opened, setOpened] = useState(false)
+  const chipRef = useRef<HTMLButtonElement>(null)
+  // Focus moves to Close as the dropdown mounts. Close and Escape hand it back to the chip; focus
+  // leaving otherwise just closes it. No focus trap: with nothing else tabbable, Mantine's would
+  // block Tab across the whole page.
   if (marks.length === 0) return null
   const one = marks.length === 1
+  const closeToChip = () => {
+    setOpened(false)
+    chipRef.current?.focus()
+  }
   return (
-    // Focus moves in, so Escape and Tab out close it and return focus to the chip.
-    <Popover width={300} position="bottom-end" withArrow shadow="md" trapFocus returnFocus>
+    <Popover
+      opened={opened}
+      onChange={setOpened}
+      closeOnEscape={false}
+      width={300}
+      position="bottom-end"
+      withArrow
+      shadow="md"
+    >
       <Popover.Target>
         <UnstyledButton
+          ref={chipRef}
           data-testid="preview-unmapped-chip"
+          // A controlled Popover's target toggles nothing itself.
+          onClick={() => setOpened((open) => !open)}
           style={{
             flexShrink: 0,
             borderRadius: 999,
@@ -102,7 +124,14 @@ export function UnmappedMarksChip({ marks }: { marks: readonly InexactMark[] }) 
           <VisuallyHidden> preview {one ? 'mark' : 'marks'}</VisuallyHidden>
         </UnstyledButton>
       </Popover.Target>
-      <Popover.Dropdown>
+      <Popover.Dropdown
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') closeToChip()
+        }}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setOpened(false)
+        }}
+      >
         <Stack gap={6}>
           <Text size="sm" fw={600}>
             Unmapped preview marks
@@ -116,13 +145,18 @@ export function UnmappedMarksChip({ marks }: { marks: readonly InexactMark[] }) 
             </Text>
             {marks.length > LISTED ? `, and ${marks.length - LISTED} more` : ''}.{' '}
             {one
-              ? "It's outlined, but clicking it focuses no field."
-              : "They're outlined, but clicking one focuses no field."}
+              ? "It's outlined, and clicking it focuses its nearest field, if it has one."
+              : "They're outlined, and clicking one focuses its nearest field, if it has one."}
           </Text>
           <Text size="sm">
             The browser console names the nearest field of {one ? 'it' : 'each'}, for the
             site&apos;s developer to correct in its fieldProps.
           </Text>
+          <Group justify="flex-end">
+            <Button ref={focusOnMount} size="compact-sm" variant="default" onClick={closeToChip}>
+              Close
+            </Button>
+          </Group>
         </Stack>
       </Popover.Dropdown>
     </Popover>

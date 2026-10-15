@@ -84,7 +84,7 @@ describe('UnmappedMarksChip', () => {
     fireEvent.click(screen.getByRole('button', { name: '4 unmapped preview marks' }))
     const dialog = await screen.findByRole('dialog')
     expect(dialog.textContent).toContain(
-      '4 elements on this page carry field marks that don\'t match a field of this entry: a, b.c, "", and 1 more. They\'re outlined, but clicking one focuses no field.',
+      '4 elements on this page carry field marks that don\'t match a field of this entry: a, b.c, "", and 1 more. They\'re outlined, and clicking one focuses its nearest field, if it has one.',
     )
     expect(dialog.textContent).toContain('The browser console names the nearest field of each,')
     // Only the paths are set as code, not the count after them.
@@ -92,24 +92,49 @@ describe('UnmappedMarksChip', () => {
     expect(code).toContain('a, b.c, ""')
   })
 
-  it('takes focus when it opens, and gives it back to the chip on Escape', async () => {
+  it('puts focus on Close, and gives it back to the chip on Escape or Close', async () => {
     render(<UnmappedMarksChip marks={[{ path: 'x' }]} />, { wrapper: Wrapper })
     const chip = screen.getByRole('button', { name: '1 unmapped preview mark' })
-    act(() => chip.focus())
     fireEvent.click(chip)
-    const dialog = await screen.findByRole('dialog')
-    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close' })),
+    )
 
     fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    await waitFor(() => expect(document.activeElement).toBe(chip))
+    expect(document.activeElement).toBe(chip)
+
+    fireEvent.click(chip)
+    fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(document.activeElement).toBe(chip)
+  })
+
+  it('closes when focus leaves it, and leaves Tab elsewhere alone', async () => {
+    render(
+      <>
+        <UnmappedMarksChip marks={[{ path: 'x' }]} />
+        <input aria-label="Elsewhere" />
+      </>,
+      { wrapper: Wrapper },
+    )
+    fireEvent.click(screen.getByRole('button', { name: '1 unmapped preview mark' }))
+    const close = await screen.findByRole('button', { name: 'Close' })
+    const elsewhere = screen.getByRole('textbox', { name: 'Elsewhere' })
+
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    elsewhere.dispatchEvent(tab)
+    expect(tab.defaultPrevented).toBe(false)
+
+    fireEvent.blur(close, { relatedTarget: elsewhere })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
   it('speaks of one mark in the singular', async () => {
     render(<UnmappedMarksChip marks={[{ path: 'x' }]} />, { wrapper: Wrapper })
     fireEvent.click(screen.getByRole('button', { name: '1 unmapped preview mark' }))
     expect((await screen.findByRole('dialog')).textContent).toContain(
-      "One element on this page carries a field mark that doesn't match a field of this entry: x. It's outlined, but clicking it focuses no field.The browser console names the nearest field of it,",
+      "One element on this page carries a field mark that doesn't match a field of this entry: x. It's outlined, and clicking it focuses its nearest field, if it has one.The browser console names the nearest field of it,",
     )
   })
 })

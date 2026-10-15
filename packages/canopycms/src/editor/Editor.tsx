@@ -1582,9 +1582,12 @@ const EditorContent: React.FC<EditorProps> = ({
   useEffect(() => {
     if (!previewCanMaximize) setPreviewMaximized(false)
   }, [previewCanMaximize])
-  // A failed save's errors are in the form.
+  // A save that newly shows errors shows the form they are in; errors easing later leave it be.
+  const hadFieldErrors = useRef(false)
   useEffect(() => {
-    if (Object.keys(fieldErrors).length > 0) setPreviewMaximized(false)
+    const hasErrors = Object.keys(fieldErrors).length > 0
+    if (hasErrors && !hadFieldErrors.current) setPreviewMaximized(false)
+    hadFieldErrors.current = hasErrors
   }, [fieldErrors])
   const [paneResizing, setPaneResizing] = useState(false)
 

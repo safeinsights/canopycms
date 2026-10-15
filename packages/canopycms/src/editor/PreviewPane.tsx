@@ -43,6 +43,14 @@ const WIDTH_OPTIONS: { value: PreviewWidth; label: string; detail: string }[] = 
 const isPreviewWidth = (value: string | null): value is PreviewWidth =>
   WIDTH_OPTIONS.some((option) => option.value === value)
 
+const TEXT_INPUT_TYPES = new Set(['text', 'search', 'email', 'url', 'tel', 'password', 'number'])
+
+const hasTextToClear = (element: HTMLElement): boolean =>
+  ((element instanceof HTMLInputElement && TEXT_INPUT_TYPES.has(element.type)) ||
+    element instanceof HTMLTextAreaElement) &&
+  !element.readOnly &&
+  element.value !== ''
+
 const RELOAD_LABEL = 'Reload preview'
 const OPEN_SAVED_LABEL = 'Open saved version in a new tab'
 
@@ -118,9 +126,9 @@ export const PreviewPane = ({
     wasMaximized.current = maximized
   }, [maximized])
   // Any key from the editor's window, or with focus nowhere, restores: a drawer or modal outside it
-  // closes on its own Escape, an open dropdown or popover marks its target to keep it, and a text
-  // field keeps it for itself. Captured, because an open tooltip's dismiss stops the key on the
-  // document. A key inside the preview frame never reaches this window.
+  // closes on its own Escape, an open popup marks its owner, and a text field with text keeps it.
+  // Captured, because an open tooltip's dismiss stops the key on the document. A key inside the
+  // preview frame never reaches this window.
   useWindowEvent(
     'keydown',
     (event) => {
@@ -129,8 +137,13 @@ export const PreviewPane = ({
       if (!(target instanceof HTMLElement)) return
       const inEditor = rootRef.current?.closest('[data-canopy-shell]')?.contains(target)
       if (target !== document.body && !(inEditor ?? rootRef.current?.contains(target))) return
-      if (target.isContentEditable || target.matches('input:not([readonly]), textarea')) return
-      if (target.closest('[data-mantine-stop-propagation="true"], [aria-expanded="true"]')) return
+      if (target.isContentEditable || hasTextToClear(target)) return
+      if (
+        target.closest(
+          '[data-mantine-stop-propagation="true"], [aria-haspopup][aria-expanded="true"]',
+        )
+      )
+        return
       event.preventDefault()
       onMaximizedChange?.(false)
     },

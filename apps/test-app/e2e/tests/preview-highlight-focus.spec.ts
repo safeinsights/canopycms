@@ -174,6 +174,10 @@ test.describe('Preview highlights and click-to-focus', () => {
       await expect(page.getByRole('dialog')).toContainText(
         "One element on this page carries a field mark that doesn't match a field of this entry: byline.nam.",
       )
+      await expect(page.getByRole('dialog').getByRole('button', { name: 'Close' })).toBeFocused()
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await expect(editorPage.unmappedMarksChip()).toBeFocused()
       await expect
         .poll(() => warnings)
         .toContainEqual(expect.stringContaining('"byline.nam", which names no field'))

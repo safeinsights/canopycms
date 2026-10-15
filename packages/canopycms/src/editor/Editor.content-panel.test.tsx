@@ -579,7 +579,9 @@ describe('divider resizes', () => {
     act(() => fireEvent.keyDown(separator(), { key: 'ArrowLeft' }))
     await waitFor(() => expect(storedLayout().previewWidth).toBe('fit'))
     expect(width()).toHaveProperty('value', 'Fit')
+    expect(screen.getByTestId('preview-resize-readout')).toBeTruthy()
     act(() => separator().setAttribute('data-separator', 'hover'))
+    await waitFor(() => expect(screen.queryByTestId('preview-resize-readout')).toBeNull())
   })
 
   it('switches the preview width to Fit when a key resizes the divider', async () => {

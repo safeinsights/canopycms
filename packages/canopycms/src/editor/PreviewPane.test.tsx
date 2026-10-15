@@ -245,20 +245,36 @@ describe('PreviewPane', () => {
       expect(restoreButton()).toBeTruthy()
     })
 
-    it("restores on Escape from anywhere in the editor's window, but not from a text field", () => {
+    it("restores on Escape from anywhere in the editor's window, but not from a field with text", () => {
       render(
         <div data-canopy-shell="">
-          <button type="button">Rail</button>
+          <button type="button" aria-expanded="true">
+            Rail
+          </button>
+          <button type="button" aria-haspopup="menu" aria-expanded="true">
+            Open menu
+          </button>
           <input aria-label="Filter" />
           <Maximizable />
         </div>,
         { wrapper: Wrapper },
       )
       fireEvent.click(screen.getByRole('button', { name: 'Maximize preview' }))
-      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Filter' }), { key: 'Escape' })
+      const filter = screen.getByRole('textbox', { name: 'Filter' })
+      fireEvent.change(filter, { target: { value: 'abc' } })
+      fireEvent.keyDown(filter, { key: 'Escape' })
       expect(restoreButton()).toBeTruthy()
 
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Open menu' }), { key: 'Escape' })
+      expect(restoreButton()).toBeTruthy()
+
+      // A disclosure for a docked panel is no popup.
       fireEvent.keyDown(screen.getByRole('button', { name: 'Rail' }), { key: 'Escape' })
+      expect(restoreButton()).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Maximize preview' }))
+      fireEvent.change(filter, { target: { value: '' } })
+      fireEvent.keyDown(filter, { key: 'Escape' })
       expect(restoreButton()).toBeNull()
     })
 
