@@ -7,7 +7,7 @@ const meta: Meta<typeof EditorSidebar> = {
   parameters: { layout: 'fullscreen' },
   decorators: [
     (Story) => (
-      <div style={{ height: 320, position: 'relative', transform: 'translateZ(0)' }}>
+      <div style={{ height: 320, display: 'flex', justifyContent: 'flex-end' }}>
         <Story />
       </div>
     ),
@@ -15,9 +15,6 @@ const meta: Meta<typeof EditorSidebar> = {
   args: {
     layout: 'side',
     highlightEnabled: false,
-    sidebarWidth: 60,
-    headerHeight: 0,
-    footerHeight: 0,
     onLayoutChange: () => {},
     onHighlightToggle: () => {},
     onMediaLibraryOpen: () => {},

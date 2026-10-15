@@ -11,9 +11,6 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
 const defaultProps: EditorSidebarProps = {
   layout: 'side',
   highlightEnabled: false,
-  sidebarWidth: 60,
-  headerHeight: 60,
-  footerHeight: 40,
   onLayoutChange: vi.fn(),
   onHighlightToggle: vi.fn(),
   onPermissionManagerOpen: vi.fn(),

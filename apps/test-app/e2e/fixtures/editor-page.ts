@@ -38,6 +38,8 @@ export class EditorPage {
   // Panes
   readonly formPane: Locator
   readonly previewPane: Locator
+  /** The separator between the preview and the form; its `aria-valuenow` is the preview's percent. */
+  readonly paneSplitter: Locator
 
   // Header elements
   readonly saveButton: Locator
@@ -53,6 +55,7 @@ export class EditorPage {
     // Panes
     this.formPane = page.locator('[data-testid="form-pane"]')
     this.previewPane = page.locator('[data-testid="preview-pane"]')
+    this.paneSplitter = page.getByRole('separator', { name: 'Resize preview and form' })
 
     // Header elements
     this.fileDropdownButton = page.locator('[data-testid="file-dropdown-button"]')
@@ -90,6 +93,23 @@ export class EditorPage {
       this.formPane.waitFor({ state: 'visible', timeout: LONG_TIMEOUT }),
       this.previewPane.waitFor({ state: 'visible', timeout: LONG_TIMEOUT }),
     ])
+  }
+
+  /** The preview's share of the split, in percent. */
+  async paneSplitPercent(): Promise<number> {
+    return Number(await this.paneSplitter.getAttribute('aria-valuenow'))
+  }
+
+  /** Drags the split by `dx` pixels with a real pointer, across the preview iframe when `dx` < 0. */
+  async dragPaneSplit(dx: number): Promise<void> {
+    const box = await this.paneSplitter.boundingBox()
+    if (!box) throw new Error('The pane splitter is not visible')
+    const x = box.x + box.width / 2
+    const y = box.y + box.height / 2
+    await this.page.mouse.move(x, y)
+    await this.page.mouse.down()
+    await this.page.mouse.move(x + dx, y, { steps: 5 })
+    await this.page.mouse.up()
   }
 
   /**

@@ -75,4 +75,13 @@ if (typeof window !== 'undefined') {
   if (!Range.prototype.getClientRects) {
     Range.prototype.getClientRects = () => Object.assign([], { item: () => null })
   }
+
+  // Every jsdom rect is empty at (0, 0), where pointer events land too, so react-resizable-panels
+  // would take every click as a grab of the pane separator. Move separators out of reach.
+  const getRect = Element.prototype.getBoundingClientRect
+  Element.prototype.getBoundingClientRect = function (this: Element) {
+    return this.hasAttribute('data-separator')
+      ? new DOMRect(-10_000, -10_000, 0, 0)
+      : getRect.call(this)
+  }
 }

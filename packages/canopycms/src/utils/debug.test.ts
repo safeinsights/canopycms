@@ -37,6 +37,17 @@ describe('DebugLogger', () => {
     expect(console.log).not.toHaveBeenCalled()
   })
 
+  it('logs nothing, and does not throw, where no process global exists', () => {
+    const logger = createDebugLogger()
+    vi.stubGlobal('process', undefined)
+    try {
+      logger.debug('test', 'message')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(console.log).not.toHaveBeenCalled()
+  })
+
   it('checks CANOPYCMS_DEBUG env var at call time, not construction time', () => {
     // Create logger before env var is set
     const logger = createDebugLogger()
