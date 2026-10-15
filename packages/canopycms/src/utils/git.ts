@@ -97,8 +97,8 @@ export function isStaleLeaseRejection(message: string): boolean {
 }
 
 // GitHub's reason text when a push would introduce workflow content the credential may not write:
-// `refusing to allow <credential kind> to create or update workflow `<file>``, where the kind is
-// "a GitHub App", "an OAuth App", ... and nothing but the file is backquoted.
+// `refusing to allow <credential kind> to create or update workflow `<file>``, where the kind
+// ("a GitHub App", "an OAuth App", ...) holds no backquote and the file is the next quoted span.
 const WORKFLOW_REFUSAL_LEADS = ['refusing to allow a ', 'refusing to allow an ']
 const WORKFLOW_REFUSAL_TAIL = ' to create or update workflow '
 
@@ -111,8 +111,8 @@ const WORKFLOW_REFUSAL_TAIL = ' to create or update workflow '
  * worker fails it fast. The text is GitHub's own, not git's, so no locale pinning is needed.
  *
  * A scan of each line's backquote-delimited spans, linear in the message, which is git's output of
- * any length: a regex with a run between lead and tail is quadratic on a line that repeats the
- * lead without the tail.
+ * any length: this rule as a regex, with its run between lead and tail, is quadratic on a line
+ * that repeats the lead without the tail.
  */
 export function workflowPushRefusalFile(message: string): string | null {
   for (const line of message.split('\n')) {

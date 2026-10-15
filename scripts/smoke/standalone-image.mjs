@@ -130,8 +130,9 @@ const REGISTRY_LAG =
   /\b(?:code (?:ETARGET|E404|ENOTFOUND)|ERR_PNPM_(?:NO_MATCHING_VERSION|FETCH_404))\b/
 const REGISTRY_RETRY_DELAYS_S = [60, 120, 240]
 
-// `run`, with output saved to `teeFile` too, on its own spawn so `run` never starts a shell. The
-// script is fixed; the command arrives as its positional parameters, which bash never re-parses.
+// Run a command with its output streamed and saved to `teeFile`, returning whatever it exits
+// with. Its own spawn, so `run` never starts a shell. The script is fixed; the command arrives as
+// its positional parameters, which bash never re-parses.
 function runTeed(cmd, args, teeFile, { cwd, env } = {}) {
   log(`$ ${[cmd, ...args].join(' ')}${cwd ? `   (in ${cwd})` : ''}`)
   const result = spawnSync(
