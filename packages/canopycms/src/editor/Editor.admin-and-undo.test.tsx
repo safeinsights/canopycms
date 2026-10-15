@@ -1094,96 +1094,110 @@ describe('a collection write with no answer', () => {
     expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('notes')
   })
 
-  it("keeps a create's draft through a create under another parent that succeeds", async () => {
-    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
-    const answerOthers = fetchMock.getMockImplementation()!
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = urlOf(input)
-      if (init?.method === 'POST' && url.endsWith('/schema/collections')) {
-        const body = JSON.parse(String(init.body)) as { parentPath?: string }
-        return body.parentPath === 'content/posts'
-          ? gatewayPage()
-          : okJson({ collectionPath: 'content/pages/drafts', contentId: 'drf123456789' })
-      }
-      const response = await answerOthers(input, init)
-      if (!url.includes('/schema') || url.includes('/schema/')) return response
-      const data = (await response.json()).data
-      data.flatSchema.push({
-        type: 'collection',
-        logicalPath: 'content/pages',
-        name: 'pages',
-        label: 'Pages',
-        entries: [{ name: 'page', format: 'json', schema }],
+  // Two full create round trips on a loaded tree, near 2s alone; vitest's 5s default fails a busy CI shard.
+  it(
+    "keeps a create's draft through a create under another parent that succeeds",
+    { timeout: 15000 },
+    async () => {
+      const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+      const answerOthers = fetchMock.getMockImplementation()!
+      fetchMock.mockImplementation(async (input, init) => {
+        const url = urlOf(input)
+        if (init?.method === 'POST' && url.endsWith('/schema/collections')) {
+          const body = JSON.parse(String(init.body)) as { parentPath?: string }
+          return body.parentPath === 'content/posts'
+            ? gatewayPage()
+            : okJson({ collectionPath: 'content/pages/drafts', contentId: 'drf123456789' })
+        }
+        const response = await answerOthers(input, init)
+        if (!url.includes('/schema') || url.includes('/schema/')) return response
+        const data = (await response.json()).data
+        data.flatSchema.push({
+          type: 'collection',
+          logicalPath: 'content/pages',
+          name: 'pages',
+          label: 'Pages',
+          entries: [{ name: 'page', format: 'json', schema }],
+        })
+        return okJson(data)
       })
-      return okJson(data)
-    })
-    renderEditor()
-    await loaded()
-    await openNavigator()
-    const user = userEvent.setup()
-    await createNotesCollection(user)
+      renderEditor()
+      await loaded()
+      await openNavigator()
+      const user = userEvent.setup()
+      await createNotesCollection(user)
 
-    fireEvent.click(await screen.findByTestId('collection-menu-pages'))
-    fireEvent.click(await screen.findByText('Add sub-collection…'))
-    const other = await screen.findByRole('dialog', { name: 'Create collection' })
-    await user.type(within(other).getByLabelText(/^Name/), 'drafts')
-    await user.click(within(other).getByRole('button', { name: 'Add entry type…' }))
-    const addDialog = await screen.findByRole('dialog', { name: 'Add entry type' })
-    await user.type(within(addDialog).getByLabelText(/^Name/), 'draft')
-    await user.click(within(addDialog).getByRole('button', { name: 'Add entry type' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add entry type' })).toBeNull())
-    await user.click(within(other).getByRole('button', { name: 'Create collection' }))
-    await waitFor(() =>
-      expect(screen.queryByRole('dialog', { name: 'Create collection' })).toBeNull(),
-    )
+      fireEvent.click(await screen.findByTestId('collection-menu-pages'))
+      fireEvent.click(await screen.findByText('Add sub-collection…'))
+      const other = await screen.findByRole('dialog', { name: 'Create collection' })
+      await user.type(within(other).getByLabelText(/^Name/), 'drafts')
+      await user.click(within(other).getByRole('button', { name: 'Add entry type…' }))
+      const addDialog = await screen.findByRole('dialog', { name: 'Add entry type' })
+      await user.type(within(addDialog).getByLabelText(/^Name/), 'draft')
+      await user.click(within(addDialog).getByRole('button', { name: 'Add entry type' }))
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Add entry type' })).toBeNull(),
+      )
+      await user.click(within(other).getByRole('button', { name: 'Create collection' }))
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Create collection' })).toBeNull(),
+      )
 
-    const dialog = await reopenCreate()
-    expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('notes')
-  })
+      const dialog = await reopenCreate()
+      expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('notes')
+    },
+  )
 
-  it("keeps a create's draft through another create from a dialog it did not fill", async () => {
-    const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
-    const answerOthers = fetchMock.getMockImplementation()!
-    let creates = 0
-    let failSchemaReads = false
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = urlOf(input)
-      if (init?.method === 'POST' && url.endsWith('/schema/collections')) {
-        creates++
-        return creates === 1
-          ? gatewayPage()
-          : okJson({ collectionPath: 'content/posts/other', contentId: 'oth123456789' })
-      }
-      if (failSchemaReads && url.includes('/schema') && !url.includes('/schema/')) {
-        return gatewayPage()
-      }
-      return answerOthers(input, init)
-    })
-    renderEditor()
-    await loaded()
-    await openNavigator()
-    const user = userEvent.setup()
-    await createNotesCollection(user)
+  // Two full create round trips on a loaded tree, near 2s alone; vitest's 5s default fails a busy CI shard.
+  it(
+    "keeps a create's draft through another create from a dialog it did not fill",
+    { timeout: 15000 },
+    async () => {
+      const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
+      const answerOthers = fetchMock.getMockImplementation()!
+      let creates = 0
+      let failSchemaReads = false
+      fetchMock.mockImplementation(async (input, init) => {
+        const url = urlOf(input)
+        if (init?.method === 'POST' && url.endsWith('/schema/collections')) {
+          creates++
+          return creates === 1
+            ? gatewayPage()
+            : okJson({ collectionPath: 'content/posts/other', contentId: 'oth123456789' })
+        }
+        if (failSchemaReads && url.includes('/schema') && !url.includes('/schema/')) {
+          return gatewayPage()
+        }
+        return answerOthers(input, init)
+      })
+      renderEditor()
+      await loaded()
+      await openNavigator()
+      const user = userEvent.setup()
+      await createNotesCollection(user)
 
-    // Reopened while the tree can't be read, the dialog is empty; "other" is created from it.
-    failSchemaReads = true
-    const empty = await reopenCreate()
-    failSchemaReads = false
-    expect((within(empty).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('')
-    await user.type(within(empty).getByLabelText(/^Name/), 'other')
-    await user.click(within(empty).getByRole('button', { name: 'Add entry type…' }))
-    const addDialog = await screen.findByRole('dialog', { name: 'Add entry type' })
-    await user.type(within(addDialog).getByLabelText(/^Name/), 'item')
-    await user.click(within(addDialog).getByRole('button', { name: 'Add entry type' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add entry type' })).toBeNull())
-    await user.click(within(empty).getByRole('button', { name: 'Create collection' }))
-    await waitFor(() =>
-      expect(screen.queryByRole('dialog', { name: 'Create collection' })).toBeNull(),
-    )
+      // Reopened while the tree can't be read, the dialog is empty; "other" is created from it.
+      failSchemaReads = true
+      const empty = await reopenCreate()
+      failSchemaReads = false
+      expect((within(empty).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('')
+      await user.type(within(empty).getByLabelText(/^Name/), 'other')
+      await user.click(within(empty).getByRole('button', { name: 'Add entry type…' }))
+      const addDialog = await screen.findByRole('dialog', { name: 'Add entry type' })
+      await user.type(within(addDialog).getByLabelText(/^Name/), 'item')
+      await user.click(within(addDialog).getByRole('button', { name: 'Add entry type' }))
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Add entry type' })).toBeNull(),
+      )
+      await user.click(within(empty).getByRole('button', { name: 'Create collection' }))
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Create collection' })).toBeNull(),
+      )
 
-    const dialog = await reopenCreate()
-    expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('notes')
-  })
+      const dialog = await reopenCreate()
+      expect((within(dialog).getByLabelText(/^Name/) as HTMLInputElement).value).toBe('notes')
+    },
+  )
 
   it('fills a details save in again when the collection is reopened', async () => {
     const fetchMock = stubApi([RESERVED_GROUPS.ADMINS])
