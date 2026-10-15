@@ -1599,6 +1599,31 @@ describe('EntryNavigator - revealing a collection', () => {
     expect(screen.getByText('Setup')).toBeTruthy()
   })
 
+  it('keeps the collection open when the cleared filter had matched inside it', async () => {
+    const onRevealed = vi.fn()
+    const { rerender, props } = renderEntryNavigator({ collections: nested })
+    fireEvent.change(screen.getByTestId('entry-nav-filter'), { target: { value: 'setup' } })
+    await screen.findByText('Setup')
+
+    rerender(
+      <CanopyCMSProvider>
+        <EntryNavigator
+          {...props}
+          collections={nested}
+          revealCollection={{ path: 'content/docs/guides', seq: 1 }}
+          onRevealed={onRevealed}
+        />
+      </CanopyCMSProvider>,
+    )
+
+    await waitFor(() => expect(onRevealed).toHaveBeenCalledTimes(1))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect((document.activeElement as HTMLElement).dataset.value).toBe(
+      'collection:content/docs/guides',
+    )
+    expect(screen.getByText('Setup')).toBeTruthy()
+  })
+
   it('reports a collection the tree does not show as done, moving no focus', async () => {
     const onRevealed = vi.fn()
     renderEntryNavigator({

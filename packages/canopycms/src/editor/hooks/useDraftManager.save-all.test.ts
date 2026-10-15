@@ -604,6 +604,76 @@ describe('useDraftManager - Save all', () => {
     expect(result.current.loadedValues[idOf(a)]).toBeUndefined()
   })
 
+  it('persists the new base of edits typed during the save, so a reload keeps them saveable', async () => {
+    persistDrafts('feature', { [idOf(a)]: { title: 'A2' } }, { [idOf(a)]: 1 })
+    const held = holdWriteOfA()
+    const { result } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(1))
+
+    const pending = startRun(result)
+    await waitFor(() => expect(server.order).toContain(idOf(a)))
+    act(() => {
+      result.current.setDrafts((prev) => ({ ...prev, [idOf(a)]: { title: 'A3' } }))
+    })
+    await act(async () => {
+      held.release()
+      await pending()
+    })
+
+    const stored = JSON.parse(window.localStorage.getItem('canopycms:drafts:feature') ?? '{}') as {
+      baseVersions?: Record<string, number>
+    }
+    expect(stored.baseVersions?.[idOf(a)]).toBe(server.stored.get(idOf(a))?.version)
+  })
+
+  it('does not start while a single Save is out', async () => {
+    draftAll()
+    const held = holdWriteOfA()
+    const { result } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    let saving: Promise<void> = Promise.resolve()
+    act(() => {
+      saving = result.current.handleSave()
+    })
+    await waitFor(() => expect(server.order).toContain(idOf(a)))
+    expect(await run(result)).toBeUndefined()
+    await act(async () => {
+      held.release()
+      await saving
+    })
+    expect(server.order).toEqual([idOf(a)])
+  })
+
+  it("leaves a single Save's late failure off the next branch", async () => {
+    draftAll()
+    let fail: () => void = () => {}
+    server.failures.set(
+      idOf(a),
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = () => reject(new ApiTimeoutError('PUT', '/api/content', 30000))
+        }),
+    )
+    const { result, rerender } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    let saving: Promise<void> = Promise.resolve()
+    act(() => {
+      saving = result.current.handleSave()
+    })
+    await waitFor(() => expect(server.order).toContain(idOf(a)))
+    rerender({ branchName: 'other' })
+    await act(async () => {
+      fail()
+      await saving
+    })
+    const { notifications } = await import('@mantine/notifications')
+    expect(notifications.show).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: `canopy-save-timed-out:${idOf(a)}` }),
+    )
+  })
+
   it('records no base for a draft discarded while its save was out', async () => {
     draftAll()
     const held = holdWriteOfA()

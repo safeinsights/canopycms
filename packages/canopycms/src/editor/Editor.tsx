@@ -1456,6 +1456,10 @@ const EditorContent: React.FC<EditorProps> = ({
     revealSeqRef.current += 1
     setCollectionReveal({ path, seq: revealSeqRef.current })
   }
+  // An ask the panel closed on before serving it must not fire when the panel next opens.
+  useEffect(() => {
+    if (!contentPanelShown) setCollectionReveal(undefined)
+  }, [contentPanelShown])
   const runSaveAll = () => {
     void handleSaveAll()
       .then((result) => {

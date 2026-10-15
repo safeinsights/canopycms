@@ -279,6 +279,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const [saveInFlight, setSaveInFlight] = useState(false)
   const [saveAllProgress, setSaveAllProgress] = useState<SaveAllProgress | null>(null)
   const saveAllRunningRef = useRef(false)
+  const singleSaveRef = useRef(false)
   // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN, or when the retry of
   // a timed-out save was refused as a version conflict. That save may have landed, so re-sending
   // the token would bounce off the user's own write; held until re-read.
@@ -944,6 +945,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     options.setBusy(true)
     setSaveInFlight(true)
+    singleSaveRef.current = true
     try {
       const saved = await options.saveEntry(entry, effectiveValue)
       if (latestOptionsRef.current.branchName !== branch) return
@@ -975,6 +977,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       options.onSaved?.()
     } catch (err) {
       console.error(err)
+      // Content ids repeat across branches: none of what follows belongs on the next one.
+      if (latestOptionsRef.current.branchName !== branch) return
       const isConflict = err instanceof SaveApiError && err.status === 409
       // 422 = rejected by server-side schema validation or the adopter's
       // validateEntry hook; show its message and map per-field errors (e.g.
@@ -1077,6 +1081,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         })
       }
     } finally {
+      singleSaveRef.current = false
       setSaveInFlight(false)
       options.setBusy(false)
     }
@@ -1162,7 +1167,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         if (version !== undefined) draftBaseVersionsRef.current[id] = version
       }
       setDrafts((prev) => {
-        if (!(id in prev) || !equal(prev[id], sent)) return prev
+        if (!(id in prev)) return prev
+        // A new object even when the draft stays, so its new base version is persisted.
+        if (!equal(prev[id], sent)) return { ...prev }
         const next = { ...prev }
         delete next[id]
         return next
@@ -1226,7 +1233,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   const handleSaveAll = async (): Promise<SaveAllResult | undefined> => {
-    if (saveAllRunningRef.current) return undefined
+    // A Save in flight would race this run's write of the same entry, with the same token.
+    if (saveAllRunningRef.current || singleSaveRef.current) return undefined
     saveAllRunningRef.current = true
     const branch = options.branchName
     // Busy from the first moment, so Save waits through the draft check too.
