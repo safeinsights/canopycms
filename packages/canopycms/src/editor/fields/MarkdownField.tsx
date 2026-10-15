@@ -317,7 +317,8 @@ const editorWrapperStyle: React.CSSProperties = {
  * rather than scrolling sideways (`toolbar-wrap.ts` hides a separator left at a row's edge).
  * MDXEditor's dark theme leaves its page background white, so editor and popups take tokens; in
  * dark mode its drop shadow vanishes over a subtle panel, so popups take a dropdown's border.
- * Its popups portal into `<body>` at z-index 2, under the editor shell, so they take the popover layer.
+ * Its popups portal into `<body>` at z-index 2, under the editor shell; they take the layer between
+ * the shell and Mantine's drawers and modals, so a drawer or modal still covers them.
  */
 const EditorContentStyles: React.FC = () => (
   <style>{`
@@ -325,7 +326,7 @@ const EditorContentStyles: React.FC = () => (
     .mdxeditor .canopy-mdx-toolbar { flex-wrap: wrap; overflow-x: visible; }
     .mdxeditor { --basePageBg: var(--mantine-color-body); }
     .mdxeditor-popup-container { --basePageBg: var(--canopy-surface-subtle); }
-    body > .mdxeditor-popup-container { z-index: var(--mantine-z-index-popover); }
+    body > .mdxeditor-popup-container { z-index: calc(var(--mantine-z-index-modal) - 1); }
     [data-mantine-color-scheme='dark'] .mdxeditor-popup-container :is([data-radix-popper-content-wrapper] > *, [role='dialog']) {
       border: 1px solid var(--mantine-color-default-border);
     }

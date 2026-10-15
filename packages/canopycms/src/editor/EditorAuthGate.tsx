@@ -21,7 +21,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
-import { Alert, Button, Center, Loader, Modal, Paper, Stack, Text, Title } from '@mantine/core'
+import { Alert, Box, Button, Center, Loader, Modal, Paper, Stack, Text, Title } from '@mantine/core'
 import { useSWRConfig } from 'swr'
 
 import type { EditorSignInProps } from '../config'
@@ -202,42 +202,32 @@ export function EditorAuthGate({
     if (modeMismatchNotice) {
       return (
         <CanopyCMSProvider {...themeOptions} withNotifications={false}>
-          <EditorShell
-            main={
-              <Center h="100%" p="md">
-                {modeMismatchNotice}
-              </Center>
-            }
-          />
+          <GateScreen>{modeMismatchNotice}</GateScreen>
         </CanopyCMSProvider>
       )
     }
     return (
       <CanopyCMSProvider {...themeOptions} withNotifications={false}>
-        <EditorShell
-          main={
-            <Center h="100%" p="md">
-              {state.phase === 'signed-out' ? (
-                <Stack align="center" gap="md" data-testid="canopy-sign-in-screen">
-                  {signIn}
-                </Stack>
-              ) : state.phase === 'error' ? (
-                <RetryNotice
-                  title="Couldn't load the editor"
-                  error={state.error ?? 'Unknown error'}
-                  onRetry={retryInitial}
-                />
-              ) : (
-                <Stack align="center" gap="xs" data-testid="canopy-auth-checking">
-                  <Loader />
-                  <Text size="sm" c="dimmed">
-                    Checking sign-in…
-                  </Text>
-                </Stack>
-              )}
-            </Center>
-          }
-        />
+        <GateScreen>
+          {state.phase === 'signed-out' ? (
+            <Stack align="center" gap="md" data-testid="canopy-sign-in-screen">
+              {signIn}
+            </Stack>
+          ) : state.phase === 'error' ? (
+            <RetryNotice
+              title="Couldn't load the editor"
+              error={state.error ?? 'Unknown error'}
+              onRetry={retryInitial}
+            />
+          ) : (
+            <Stack align="center" gap="xs" data-testid="canopy-auth-checking">
+              <Loader />
+              <Text size="sm" c="dimmed">
+                Checking sign-in…
+              </Text>
+            </Stack>
+          )}
+        </GateScreen>
       </CanopyCMSProvider>
     )
   }
@@ -287,6 +277,21 @@ export function EditorAuthGate({
         </CanopyCMSProvider>
       )}
     </EditorIdentityContext.Provider>
+  )
+}
+
+/** A screen shown in the editor's place, scrolling when it is taller than the window. */
+function GateScreen({ children }: { children: React.ReactNode }) {
+  return (
+    <EditorShell
+      main={
+        <Box h="100%" style={{ overflowY: 'auto' }}>
+          <Center mih="100%" p="md">
+            {children}
+          </Center>
+        </Box>
+      }
+    />
   )
 }
 

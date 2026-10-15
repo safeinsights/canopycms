@@ -18,9 +18,9 @@ export interface EditorShellProps {
 const gridStyle: CSSProperties = {
   position: 'fixed',
   inset: 0,
-  // Widgets a host adds outside its React tree bring their own z-index, so the shell takes the
-  // highest layer under Mantine's drawers and modals.
-  zIndex: getDefaultZIndex('modal') - 1,
+  // Widgets a host adds outside its React tree bring their own z-index, so the shell sits just
+  // under Mantine's drawers and modals, leaving the layer between for MDXEditor's popups.
+  zIndex: getDefaultZIndex('modal') - 2,
   display: 'grid',
   gridTemplateAreas: '"topbar topbar topbar" "banner banner banner" "panel main rail"',
   gridTemplateRows: 'auto auto minmax(0, 1fr)',
@@ -48,9 +48,11 @@ export function EditorShell({ topBar, banner, rail, panel, main, overlays }: Edi
         {/* No isolation: it would cancel scrolling in overlays outside this React tree, such as
             Clerk's account modal. The scroll bar lock alone stops the host page scrolling. */}
         <RemoveScroll noIsolation removeScrollBar style={gridStyle} data-canopy-shell="">
-          <header style={region('topbar')} data-canopy-region="topbar">
-            {topBar}
-          </header>
+          {topBar && (
+            <header style={region('topbar')} data-canopy-region="topbar">
+              {topBar}
+            </header>
+          )}
           <div style={region('banner')} data-canopy-region="banner">
             {banner}
           </div>
@@ -60,9 +62,11 @@ export function EditorShell({ topBar, banner, rail, panel, main, overlays }: Edi
           <main style={region('main')} data-canopy-region="main">
             {main}
           </main>
-          <aside style={region('rail')} data-canopy-region="rail" aria-label="Editor tools">
-            {rail}
-          </aside>
+          {rail && (
+            <aside style={region('rail')} data-canopy-region="rail" aria-label="Editor tools">
+              {rail}
+            </aside>
+          )}
           {/* Absolute, so nothing an overlay leaves in place takes a grid cell. */}
           <div style={{ position: 'absolute' }} data-canopy-region="overlays">
             {overlays}

@@ -14,8 +14,10 @@ export const DEFAULT_STACKED_SPLIT_PERCENT = 58
 
 const PREVIEW = 'canopy-preview'
 const FORM = 'canopy-form'
-// The panes' limits are the stored split's, so a drag never ends somewhere storage would move.
+// The preview's limits are the stored split's, so a drag never ends somewhere storage would move;
+// the form also keeps a usable minimum in a narrow window.
 const PREVIEW_LIMITS = { minSize: `${SPLIT_PERCENT_MIN}%`, maxSize: `${SPLIT_PERCENT_MAX}%` }
+const FORM_MIN_PX = 160
 
 const SEPARATOR_STYLES = `
 .canopy-pane-separator {
@@ -117,7 +119,7 @@ export function PaneLayout({
           aria-label="Resize preview and form"
           className="canopy-pane-separator"
         />
-        <Panel id={FORM}>
+        <Panel id={FORM} minSize={FORM_MIN_PX}>
           <Box
             ref={formRef}
             data-testid="form-pane"

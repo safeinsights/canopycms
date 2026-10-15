@@ -48,7 +48,9 @@ test.describe('Editor shell', () => {
       .toBeCloseTo(dragged, 0)
   })
 
-  test("the rich-text editor's popups paint above the shell", async ({ page }) => {
+  test("the rich-text editor's popups paint above the shell and below its drawers", async ({
+    page,
+  }) => {
     await editorPage.createPost('popup-layer-post', 'Popup Layer Post')
     const body = editorPage.richTextField('Body')
     await body.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
@@ -59,13 +61,18 @@ test.describe('Editor shell', () => {
     await expect(listbox).toBeVisible({ timeout: SHORT_TIMEOUT })
     // Both are stacking contexts at the root, so their z-indexes decide which paints on top. A hit
     // test cannot: the open select turns pointer events off everywhere else.
-    const [popupLayer, shellLayer] = await listbox.evaluate((list) => {
+    const [popupLayer, shellLayer, modalLayer] = await listbox.evaluate((list) => {
       const zOf = (el: Element | null) => Number(el ? getComputedStyle(el).zIndex : NaN)
       return [
         zOf(list.closest('.mdxeditor-popup-container')),
         zOf(document.querySelector('[data-canopy-shell]')),
+        Number(
+          getComputedStyle(document.documentElement).getPropertyValue('--mantine-z-index-modal'),
+        ),
       ]
     })
     expect(popupLayer).toBeGreaterThan(shellLayer)
+    // A drawer or modal opened over the form still covers them.
+    expect(popupLayer).toBeLessThan(modalLayer)
   })
 })

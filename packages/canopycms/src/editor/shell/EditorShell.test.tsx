@@ -152,4 +152,16 @@ describe('EditorShell', () => {
     expect(container.hasAttribute('inert')).toBe(false)
     expect(container.style.visibility).toBe('')
   })
+
+  it('leaves out the landmarks of regions given no content', async () => {
+    render(
+      <CanopyCMSProvider>
+        <EditorShell main={<p>Main</p>} />
+      </CanopyCMSProvider>,
+    )
+    await waitFor(() => expect(shell()).not.toBeNull())
+    expect(shell().querySelector('header')).toBeNull()
+    expect(shell().querySelector('aside')).toBeNull()
+    expect(screen.getByRole('main').textContent).toBe('Main')
+  })
 })
