@@ -134,6 +134,37 @@ describe('PreviewPane', () => {
     expect(iframe().parentElement?.parentElement?.contains(notice)).toBe(false)
   })
 
+  it('hands focus to the toolbar when the notice goes with the focus in it', () => {
+    const { rerender } = renderPane({ notice: <button type="button">Close notice</button> })
+    screen.getByRole('button', { name: 'Close notice' }).focus()
+    rerender(
+      <PreviewPane
+        src={src}
+        data={{ title: 'Draft' }}
+        previewWidth="fit"
+        onPreviewWidthChange={vi.fn()}
+      />,
+    )
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Reload preview' }))
+  })
+
+  it('leaves focus elsewhere alone when the notice goes', () => {
+    const outside = document.createElement('input')
+    document.body.appendChild(outside)
+    const { rerender } = renderPane({ notice: <div role="alert">Preview error</div> })
+    outside.focus()
+    rerender(
+      <PreviewPane
+        src={src}
+        data={{ title: 'Draft' }}
+        previewWidth="fit"
+        onPreviewWidthChange={vi.fn()}
+      />,
+    )
+    expect(document.activeElement).toBe(outside)
+    outside.remove()
+  })
+
   it('opens the saved version of the page in a new tab', () => {
     renderPane()
     const link = screen.getByRole('link', { name: 'Open saved version in a new tab' })

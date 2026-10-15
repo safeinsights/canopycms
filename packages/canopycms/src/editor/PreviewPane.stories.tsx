@@ -51,12 +51,14 @@ const Pane = ({
   paneWidth = '100%',
   path = '/posts/hello?branch=feature-a',
   notice,
+  onPreviewError,
 }: {
   initialWidth: PreviewWidth
   script?: string
   paneWidth?: string | number
   path?: string
   notice?: ReactNode
+  onPreviewError?: (error: { message: string } | null) => void
 }) => {
   // A blob: URL carries this page's origin, so the frame treats it as a same-origin preview.
   const [src] = useState(() => URL.createObjectURL(new Blob([page(script)], { type: 'text/html' })))
@@ -67,6 +69,7 @@ const Pane = ({
         src={src}
         path={path}
         notice={notice}
+        onPreviewError={onPreviewError}
         data={{ title: 'Draft title from the form' }}
         previewWidth={previewWidth}
         onPreviewWidthChange={setPreviewWidth}
@@ -104,16 +107,30 @@ export const LongPathNarrowPane: Story = {
   ),
 }
 
-/** A preview error sits between the toolbar and the page, never over the page. */
-export const WithNotice: Story = {
-  render: () => (
+/** A preview error sits between the toolbar and the page, never over it; Close and Reload clear it. */
+const PaneWithNotice = () => {
+  const [error, setError] = useState<string | null>(
+    'Page sections › Hero › Heading: Unexpected closing tag',
+  )
+  return (
     <Pane
       initialWidth="desktop"
+      onPreviewError={(next) => setError(next?.message ?? null)}
       notice={
-        <Alert color="red" title="Preview error" withCloseButton radius={0}>
-          Page sections › Hero › Heading: Unexpected closing tag
-        </Alert>
+        error && (
+          <Alert
+            color="red"
+            title="Preview error"
+            withCloseButton
+            onClose={() => setError(null)}
+            radius={0}
+          >
+            {error}
+          </Alert>
+        )
       }
     />
-  ),
+  )
 }
+
+export const WithNotice: Story = { render: () => <PaneWithNotice /> }

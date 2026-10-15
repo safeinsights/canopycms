@@ -1512,6 +1512,10 @@ const EditorContent: React.FC<EditorProps> = ({
     data: displayValue,
   })
 
+  const previewErrorField = previewError?.fieldPath
+    ? fieldBreadcrumb(schema, displayValue, previewError.fieldPath).join(' › ')
+    : ''
+
   // An unavailable entry previews nothing: the site cannot read it, and a stored draft would
   // otherwise mount the frame at a page that answers not-found.
   const defaultPreview =
@@ -1536,8 +1540,8 @@ const EditorContent: React.FC<EditorProps> = ({
               onClose={() => setPreviewError(null)}
               radius={0}
             >
-              {previewError.fieldPath
-                ? `${fieldBreadcrumb(schema, displayValue, previewError.fieldPath).join(' › ')}: ${previewError.message}`
+              {previewErrorField
+                ? `${previewErrorField}: ${previewError.message}`
                 : previewError.message}
             </Alert>
           )

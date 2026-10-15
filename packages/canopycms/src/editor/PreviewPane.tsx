@@ -1,7 +1,7 @@
 'use client'
 
 import type { CSSProperties, ReactNode } from 'react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   ActionIcon,
@@ -73,6 +73,15 @@ export const PreviewPane = ({
   const { ref: viewportRef, width, height } = useElementSize()
   const clipboard = useClipboard({ timeout: 2000 })
   const reloadButtonRef = useRef<HTMLButtonElement>(null)
+  // A dismissed notice takes its focused Close button with it; the toolbar takes the focus back.
+  // Focus anywhere else, such as a form field while a draft starts compiling, stays put.
+  const hadNotice = useRef(false)
+  useEffect(() => {
+    if (hadNotice.current && !notice && document.activeElement === document.body) {
+      reloadButtonRef.current?.focus()
+    }
+    hadNotice.current = Boolean(notice)
+  }, [notice])
   // Reloading remounts the frame for a fresh handshake. It drops a reported error too: the
   // reloaded page reports it again if the draft still fails.
   const [reloads, setReloads] = useState(0)
@@ -133,7 +142,7 @@ export const PreviewPane = ({
           label={copyStatus || copyLabel}
           multiline
           maw={360}
-          style={{ wordBreak: 'break-all' }}
+          style={{ overflowWrap: 'anywhere' }}
         >
           <UnstyledButton
             onClick={() => clipboard.copy(shownPath)}

@@ -391,5 +391,10 @@ describe('Editor preview marks', () => {
       })
     })
     expect(await screen.findByText('Blocks › Quote › Speaker: Unknown speaker')).toBeTruthy()
+
+    act(() => {
+      frames[frames.length - 1].onPreviewError?.({ message: 'Unknown speaker', fieldPath: '.' })
+    })
+    expect(await screen.findByText('Unknown speaker')).toBeTruthy()
   })
 })
