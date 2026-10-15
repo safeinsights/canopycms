@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { userEvent } from '@testing-library/user-event'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
   HighlightToggle,
@@ -108,6 +109,37 @@ describe('UnmappedMarksChip', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(document.activeElement).toBe(chip)
+  })
+
+  it('closes on a second click of the chip, with real focus moves', async () => {
+    // jsdom's document never has focus, which would hide the blur this click causes.
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    onTestFinished(() => {
+      vi.restoreAllMocks()
+    })
+    const user = userEvent.setup()
+    render(<UnmappedMarksChip marks={[{ path: 'x' }]} />, { wrapper: Wrapper })
+    const chip = screen.getByRole('button', { name: '1 unmapped preview mark' })
+    await user.click(chip)
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close' })),
+    )
+    await user.click(chip)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(chip)
+  })
+
+  it('stays closed when its marks run out and come back', async () => {
+    const { rerender } = render(<UnmappedMarksChip marks={[{ path: 'x' }]} />, {
+      wrapper: Wrapper,
+    })
+    fireEvent.click(screen.getByRole('button', { name: '1 unmapped preview mark' }))
+    await screen.findByRole('dialog')
+    rerender(<UnmappedMarksChip marks={[]} />)
+    rerender(<UnmappedMarksChip marks={[{ path: 'y' }]} />)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('closes when focus leaves it, and leaves Tab elsewhere alone', async () => {

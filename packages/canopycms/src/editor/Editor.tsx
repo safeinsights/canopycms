@@ -553,6 +553,8 @@ const EditorContent: React.FC<EditorProps> = ({
     followMovedEntry,
     recreateEntry,
     setBusy: setEntriesLoading,
+    // The errors are in the form.
+    onSaveBlocked: () => setPreviewMaximized(false),
     onSaved: () => {
       void refreshEntries(branchNameState).catch((err) =>
         console.error('Failed to refresh entries after save', err),
@@ -1582,13 +1584,6 @@ const EditorContent: React.FC<EditorProps> = ({
   useEffect(() => {
     if (!previewCanMaximize) setPreviewMaximized(false)
   }, [previewCanMaximize])
-  // A save that newly shows errors shows the form they are in; errors easing later leave it be.
-  const hadFieldErrors = useRef(false)
-  useEffect(() => {
-    const hasErrors = Object.keys(fieldErrors).length > 0
-    if (hasErrors && !hadFieldErrors.current) setPreviewMaximized(false)
-    hadFieldErrors.current = hasErrors
-  }, [fieldErrors])
   const [paneResizing, setPaneResizing] = useState(false)
 
   const previewErrorField = previewError?.fieldPath

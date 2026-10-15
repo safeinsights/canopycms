@@ -86,7 +86,11 @@ export function UnmappedMarksChip({ marks }: { marks: readonly InexactMark[] }) 
   // Focus moves to Close as the dropdown mounts. Close and Escape hand it back to the chip; focus
   // leaving otherwise just closes it. No focus trap: with nothing else tabbable, Mantine's would
   // block Tab across the whole page.
-  if (marks.length === 0) return null
+  // Closed when the marks run out, so their return never reopens it and takes focus.
+  if (marks.length === 0) {
+    if (opened) setOpened(false)
+    return null
+  }
   const one = marks.length === 1
   const closeToChip = () => {
     setOpened(false)
@@ -107,7 +111,12 @@ export function UnmappedMarksChip({ marks }: { marks: readonly InexactMark[] }) 
           ref={chipRef}
           data-testid="preview-unmapped-chip"
           // A controlled Popover's target toggles nothing itself.
-          onClick={() => setOpened((open) => !open)}
+          // Pressed while open, it keeps focus in the dropdown, whose blur would close it first
+          // and let this click reopen it.
+          onMouseDown={(event) => {
+            if (opened) event.preventDefault()
+          }}
+          onClick={() => (opened ? closeToChip() : setOpened(true))}
           style={{
             flexShrink: 0,
             borderRadius: 999,
@@ -129,7 +138,10 @@ export function UnmappedMarksChip({ marks }: { marks: readonly InexactMark[] }) 
           if (event.key === 'Escape') closeToChip()
         }}
         onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget)) setOpened(false)
+          // Not when the window itself loses focus, such as to the browser's console.
+          if (document.hasFocus() && !event.currentTarget.contains(event.relatedTarget)) {
+            setOpened(false)
+          }
         }}
       >
         <Stack gap={6}>
