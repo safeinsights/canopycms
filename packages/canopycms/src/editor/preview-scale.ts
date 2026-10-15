@@ -48,8 +48,9 @@ export function computePreviewViewport(
   }
 }
 
-/** The readout beside the width selector: the CSS width, plus the scale when it is below 100%. */
+/** The readout beside the width selector: the CSS width, plus the scale when it rounds below 100%. */
 export function formatPreviewWidthReadout({ frameWidth, scale }: PreviewViewport): string {
   const px = `${Math.round(frameWidth)} px`
-  return scale < 1 ? `${px} at ${Math.round(scale * 100)}%` : px
+  const percent = Math.round(scale * 100)
+  return percent < 100 ? `${px} at ${percent}%` : px
 }

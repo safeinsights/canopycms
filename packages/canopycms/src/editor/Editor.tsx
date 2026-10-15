@@ -1524,6 +1524,7 @@ const EditorContent: React.FC<EditorProps> = ({
         onPreviewError={setPreviewError}
         onMarks={onPreviewMarks}
         assetBase={authenticatedAssetBase(basePath)}
+        mount={{ basePath, previewPrefix }}
         previewWidth={previewWidth}
         onPreviewWidthChange={setPreviewWidth}
         notice={
@@ -1533,10 +1534,10 @@ const EditorContent: React.FC<EditorProps> = ({
               title="Preview error"
               withCloseButton
               onClose={() => setPreviewError(null)}
-              style={{ position: 'absolute', top: 8, left: 8, right: 8, zIndex: 2 }}
+              radius={0}
             >
               {previewError.fieldPath
-                ? `${previewError.fieldPath}: ${previewError.message}`
+                ? `${fieldBreadcrumb(schema, displayValue, previewError.fieldPath).join(' › ')}: ${previewError.message}`
                 : previewError.message}
             </Alert>
           )

@@ -1,5 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
+
+import { Alert } from '@mantine/core'
 
 import type { PreviewWidth } from './hooks/useEditorLayout'
 import { CANOPY_PREVIEW_MESSAGE, CANOPY_PREVIEW_READY } from './preview-bridge'
@@ -47,10 +49,14 @@ const Pane = ({
   initialWidth,
   script = bridgeScript,
   paneWidth = '100%',
+  path = '/posts/hello?branch=feature-a',
+  notice,
 }: {
   initialWidth: PreviewWidth
   script?: string
   paneWidth?: string | number
+  path?: string
+  notice?: ReactNode
 }) => {
   // A blob: URL carries this page's origin, so the frame treats it as a same-origin preview.
   const [src] = useState(() => URL.createObjectURL(new Blob([page(script)], { type: 'text/html' })))
@@ -59,7 +65,8 @@ const Pane = ({
     <div style={{ width: paneWidth, height: '100vh' }}>
       <PreviewPane
         src={src}
-        path="/posts/hello?branch=feature-a"
+        path={path}
+        notice={notice}
         data={{ title: 'Draft title from the form' }}
         previewWidth={previewWidth}
         onPreviewWidthChange={setPreviewWidth}
@@ -85,3 +92,28 @@ export const NarrowPane: Story = { render: () => <Pane initialWidth="desktop" pa
 
 /** The preview never sends ready: 5s after load the chip appears; its Retry is the toolbar's reload. */
 export const LiveUpdatesOff: Story = { render: () => <Pane initialWidth="fit" script="" /> }
+
+/** A long path truncates; its full text is in the Copy path tooltip. */
+export const LongPathNarrowPane: Story = {
+  render: () => (
+    <Pane
+      initialWidth="mobile"
+      paneWidth={360}
+      path="/docs/getting-started/installing-the-command-line-tools-on-every-platform?branch=feature-a"
+    />
+  ),
+}
+
+/** A preview error sits between the toolbar and the page, never over the page. */
+export const WithNotice: Story = {
+  render: () => (
+    <Pane
+      initialWidth="desktop"
+      notice={
+        <Alert color="red" title="Preview error" withCloseButton radius={0}>
+          Page sections › Hero › Heading: Unexpected closing tag
+        </Alert>
+      }
+    />
+  ),
+}

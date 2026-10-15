@@ -23,7 +23,12 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
 const src = '/preview/posts/hello?branch=feature-a'
 
 const renderPane = (
-  props: { previewWidth?: PreviewWidth; onPreviewWidthChange?: (w: PreviewWidth) => void } = {},
+  props: {
+    previewWidth?: PreviewWidth
+    onPreviewWidthChange?: (w: PreviewWidth) => void
+    onPreviewError?: (error: { message: string } | null) => void
+    notice?: React.ReactNode
+  } = {},
 ) => {
   const utils = render(
     <PreviewPane
@@ -31,6 +36,8 @@ const renderPane = (
       data={{ title: 'Draft' }}
       previewWidth={props.previewWidth ?? 'fit'}
       onPreviewWidthChange={props.onPreviewWidthChange ?? vi.fn()}
+      onPreviewError={props.onPreviewError}
+      notice={props.notice}
     />,
     { wrapper: Wrapper },
   )
@@ -93,11 +100,13 @@ describe('PreviewPane', () => {
     expect(onPreviewWidthChange).toHaveBeenCalledWith('tablet')
   })
 
-  it('reloads the preview with a fresh iframe', async () => {
-    const { iframe } = renderPane()
+  it('reloads the preview with a fresh iframe and clears a reported error', async () => {
+    const onPreviewError = vi.fn()
+    const { iframe } = renderPane({ onPreviewError })
     const first = iframe()
     await userEvent.click(screen.getByRole('button', { name: 'Reload preview' }))
     expect(iframe()).not.toBe(first)
+    expect(onPreviewError).toHaveBeenCalledWith(null)
   })
 
   it("serves the chip's Retry with the same reload", () => {
@@ -112,6 +121,17 @@ describe('PreviewPane', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(iframe().parentElement).not.toBe(frame)
     expect(screen.queryByText('Live updates off')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Reload preview' }))
+  })
+
+  it('puts the notice between the toolbar and the preview, not over it', () => {
+    const { iframe } = renderPane({ notice: <div role="alert">Preview error</div> })
+    const notice = screen.getByRole('alert')
+    expect(notice.contains(iframe())).toBe(false)
+    expect(notice.parentElement?.contains(iframe())).toBe(true)
+    expect(notice.parentElement?.contains(screen.getByTestId('preview-toolbar'))).toBe(true)
+    expect(notice.closest('[data-testid="preview-toolbar"]')).toBeNull()
+    expect(iframe().parentElement?.parentElement?.contains(notice)).toBe(false)
   })
 
   it('opens the saved version of the page in a new tab', () => {

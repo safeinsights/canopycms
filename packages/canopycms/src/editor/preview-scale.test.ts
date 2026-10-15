@@ -68,6 +68,10 @@ describe('formatPreviewWidthReadout', () => {
     expect(formatPreviewWidthReadout(computePreviewViewport('tablet', 1000, 600))).toBe('768 px')
   })
 
+  it('leaves out a scale that rounds to 100%', () => {
+    expect(formatPreviewWidthReadout(computePreviewViewport('desktop', 1278, 600))).toBe('1280 px')
+  })
+
   it('adds the rounded scale when scaled down', () => {
     expect(formatPreviewWidthReadout(computePreviewViewport('desktop', 800, 600))).toBe(
       '1280 px at 63%',

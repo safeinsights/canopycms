@@ -1,7 +1,7 @@
 'use client'
 
 import type { CSSProperties, ReactNode } from 'react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import {
   ActionIcon,
@@ -18,7 +18,7 @@ import { IconCheck, IconExternalLink, IconRefresh } from '@tabler/icons-react'
 
 import type { PreviewWidth } from './hooks/useEditorLayout'
 import { PreviewFrame, type PreviewMarks } from './PreviewFrame'
-import { displayPreviewPath } from './preview-path'
+import { displayPreviewPath, type PreviewMount } from './preview-path'
 import {
   computePreviewViewport,
   formatPreviewWidthReadout,
@@ -42,6 +42,8 @@ export interface PreviewPaneProps {
   src: string
   /** The page's path for the bridge and the toolbar; defaults to `src`. */
   path?: string
+  /** Where the preview routes are mounted, which the toolbar's path leaves out. */
+  mount?: PreviewMount
   data?: unknown
   isLoading?: unknown
   highlightEnabled?: boolean
@@ -50,7 +52,7 @@ export interface PreviewPaneProps {
   onMarks?: (marks: PreviewMarks) => void
   previewWidth: PreviewWidth
   onPreviewWidthChange: (width: PreviewWidth) => void
-  /** Shown over the top of the preview, below the toolbar, such as a preview error. */
+  /** Shown between the toolbar and the preview, such as a preview error. */
   notice?: ReactNode
 }
 
@@ -62,6 +64,7 @@ export interface PreviewPaneProps {
 export const PreviewPane = ({
   src,
   path = src,
+  mount,
   previewWidth,
   onPreviewWidthChange,
   notice,
@@ -69,11 +72,16 @@ export const PreviewPane = ({
 }: PreviewPaneProps) => {
   const { ref: viewportRef, width, height } = useElementSize()
   const clipboard = useClipboard({ timeout: 2000 })
-  // Reloading remounts the frame, so the reload starts a fresh handshake as Retry does.
+  const reloadButtonRef = useRef<HTMLButtonElement>(null)
+  // Reloading remounts the frame for a fresh handshake. It drops a reported error too: the
+  // reloaded page reports it again if the draft still fails.
   const [reloads, setReloads] = useState(0)
-  const reload = () => setReloads((count) => count + 1)
+  const reload = () => {
+    setReloads((count) => count + 1)
+    frameProps.onPreviewError?.(null)
+  }
 
-  const shownPath = displayPreviewPath(path)
+  const shownPath = displayPreviewPath(path, mount)
   const viewport = computePreviewViewport(previewWidth, width, height)
   const iframeStyle: CSSProperties | undefined =
     previewWidth === 'fit'
@@ -94,6 +102,7 @@ export const PreviewPane = ({
     : clipboard.error
       ? "Couldn't copy the path"
       : ''
+  const copyLabel = `Copy path ${shownPath}`
 
   return (
     <Box
@@ -120,10 +129,15 @@ export const PreviewPane = ({
           background: 'var(--mantine-color-body)',
         }}
       >
-        <Tooltip label={copyStatus || 'Copy path'}>
+        <Tooltip
+          label={copyStatus || copyLabel}
+          multiline
+          maw={360}
+          style={{ wordBreak: 'break-all' }}
+        >
           <UnstyledButton
             onClick={() => clipboard.copy(shownPath)}
-            aria-label={`Copy path ${shownPath}`}
+            aria-label={copyLabel}
             style={{ flex: '1 1 80px', minWidth: 0, borderRadius: 4, padding: '2px 4px' }}
           >
             <Text component="span" size="xs" ff="monospace" truncate="end" display="block">
@@ -153,7 +167,8 @@ export const PreviewPane = ({
                 style={{ visibility: checked ? 'visible' : 'hidden' }}
               />
               <span style={{ flex: 1 }}>{option.label}</span>
-              <Text size="xs" c="dimmed">
+              {/* Inherits the option's colour, which stays legible on the highlighted fill. */}
+              <Text component="span" size="xs">
                 {WIDTH_OPTIONS.find((o) => o.value === option.value)?.detail}
               </Text>
             </Group>
@@ -169,33 +184,46 @@ export const PreviewPane = ({
             {formatPreviewWidthReadout(viewport)}
           </Text>
         )}
-        <Tooltip label={RELOAD_LABEL}>
-          <ActionIcon variant="subtle" size="md" aria-label={RELOAD_LABEL} onClick={reload}>
-            <IconRefresh size={16} />
-          </ActionIcon>
-        </Tooltip>
-        <Tooltip label={OPEN_SAVED_LABEL}>
-          <ActionIcon
-            component="a"
-            href={src}
-            target="_blank"
-            rel="noopener noreferrer"
-            variant="subtle"
-            size="md"
-            aria-label={OPEN_SAVED_LABEL}
-          >
-            <IconExternalLink size={16} />
-          </ActionIcon>
-        </Tooltip>
+        {/* One unit, so a wrapping toolbar never parts the two. */}
+        <Group gap={6} wrap="nowrap">
+          <Tooltip label={RELOAD_LABEL}>
+            <ActionIcon
+              ref={reloadButtonRef}
+              variant="subtle"
+              size="md"
+              aria-label={RELOAD_LABEL}
+              onClick={reload}
+            >
+              <IconRefresh size={16} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label={OPEN_SAVED_LABEL}>
+            <ActionIcon
+              component="a"
+              href={src}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="subtle"
+              size="md"
+              aria-label={OPEN_SAVED_LABEL}
+            >
+              <IconExternalLink size={16} />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
       </Group>
+      {notice}
       <Box ref={viewportRef} pos="relative" style={{ flex: '1 1 auto', minHeight: 0 }}>
-        {notice}
         <PreviewFrame
           key={reloads}
           src={src}
           path={path}
           {...frameProps}
-          onReload={reload}
+          onReload={() => {
+            // Retry goes with the frame it sits in; the toolbar's reload offers the same action.
+            reload()
+            reloadButtonRef.current?.focus()
+          }}
           iframeStyle={iframeStyle}
           style={{
             position: 'absolute',
