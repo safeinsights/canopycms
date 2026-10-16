@@ -258,7 +258,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
   // avatar is cut with an ellipsis when long, so its tooltip gives the full name too; with no
   // tooltip, the name carries it as a title.
   const tooltip = variant === 'full' ? '' : [personLabel, detail].filter(Boolean).join(', ')
-  const nameTitle = showEmailTooltip && detail ? undefined : personLabel
+  const nameTitle = showEmailTooltip && tooltip ? undefined : personLabel
 
   const renderContent = () => {
     const avatar = renderAvatar()

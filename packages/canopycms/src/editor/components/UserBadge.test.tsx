@@ -804,6 +804,27 @@ describe('UserBadge', () => {
       )
     })
 
+    it('never carries a title beside its tooltip, with or without an email', async () => {
+      const { name, unmount } = await renderChip()
+      expect(name.getAttribute('title')).toBeNull()
+      unmount()
+
+      const noEmail = render(
+        <UserBadge
+          userId="photo-user"
+          getUserMetadata={vi.fn()}
+          cachedUser={{ ...photoUser, email: '' }}
+          showBadge
+        />,
+        { wrapper: Wrapper },
+      )
+      const nameNoEmail = await screen.findByText(longName)
+      expect(nameNoEmail.getAttribute('title')).toBeNull()
+      await userEvent.hover(nameNoEmail)
+      expect((await screen.findByRole('tooltip')).textContent).toBe(longName)
+      noEmail.unmount()
+    })
+
     it('gives the full name as a title when no tooltip opens', async () => {
       const { name } = await renderChip({ showEmailTooltip: false })
       expect(name.getAttribute('title')).toBe(longName)

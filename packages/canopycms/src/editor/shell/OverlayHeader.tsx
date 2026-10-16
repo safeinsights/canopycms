@@ -46,7 +46,10 @@ export interface OverlayDrawerProps
   children: React.ReactNode
 }
 
-/** A Mantine `Drawer` with an `OverlayHeader`, a blurred backdrop and a body padded under the rule. */
+/**
+ * A Mantine `Drawer` with an `OverlayHeader`, a blurred backdrop and a body padded under the rule.
+ * It is a `Drawer.Root`, so theme overrides for it go under `DrawerRoot`, not `Drawer`.
+ */
 export const OverlayDrawer: React.FC<OverlayDrawerProps> = ({
   title,
   adornment,
