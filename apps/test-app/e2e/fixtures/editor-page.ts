@@ -657,7 +657,7 @@ export class EditorPage {
     return this.page.getByTestId('save-all-result')
   }
 
-  /** The branch pill's "N unsaved" count, absent with nothing unsaved. */
+  /** The branch pill's unsaved count, a dot and a number named "N entries with unsaved changes", absent with nothing unsaved. */
   branchUnsavedCount(): Locator {
     return this.page.getByTestId('branch-unsaved-count')
   }
