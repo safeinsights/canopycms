@@ -50,7 +50,7 @@ test.describe('Editor shell', () => {
 
   test('the layout, preview width and highlights survive a reload', async ({ page }) => {
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
     await expect(editorPage.layoutButton()).toHaveAttribute('data-layout', 'side')
     await editorPage.layoutButton().click()
     await editorPage.previewWidthSelect().click()

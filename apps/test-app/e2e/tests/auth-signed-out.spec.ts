@@ -67,7 +67,7 @@ test.describe('Signed-out users (dev auth)', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
 
     const unsaved = `Lapsed-${Date.now()}`
     await editorPage.fillTextField('title', unsaved)

@@ -38,8 +38,8 @@ test.describe('YAML Format and isTitle Flag', () => {
 
     await test.step('open entry navigator and select Settings entry', async () => {
       await editorPage.openContentNavigator()
-      // isTitle: true on siteName means the navigator shows the siteName value "Test Site"
-      await editorPage.selectEntry('Test Site')
+      // A single-entry type is named by its type label, "Settings", not its siteName title
+      await editorPage.selectEntry('Settings')
       await editorPage.closeContentNavigator()
     })
 
@@ -62,7 +62,7 @@ test.describe('YAML Format and isTitle Flag', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Test Site')
+      await editorPage.selectEntry('Settings')
       await editorPage.closeContentNavigator()
     })
 
@@ -101,7 +101,7 @@ test.describe('YAML Format and isTitle Flag', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Test Site')
+      await editorPage.selectEntry('Settings')
       await editorPage.closeContentNavigator()
 
       await editorPage.fillTextField('siteName', uniqueSiteName)
@@ -119,31 +119,24 @@ test.describe('YAML Format and isTitle Flag', () => {
     })
   })
 
-  test('isTitle flag: navigator shows siteName value as entry label', async ({ page }) => {
+  test('single-entry type: navigator shows the type label, whatever its title says', async ({
+    page,
+  }) => {
     await test.step('open editor and open navigator', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
     })
 
-    await test.step('verify Settings entry appears with isTitle value "Test Site"', async () => {
-      // With isTitle: true on siteName (value = "Test Site"), the navigator label
-      // should be "Test Site" rather than the entry type label "Settings"
-      const navItem = editorPage.navigatorItem('Test Site')
-      await expect(navItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
-
-      // The entry type label "Settings" should NOT appear as a nav item
-      // (it's still the collection label, but not the individual entry label)
-      const settingsTypeItem = editorPage.navigatorItem('Settings')
-      await expect(settingsTypeItem).not.toBeVisible()
+    await test.step('the Settings entry is named "Settings", not its siteName "Test Site"', async () => {
+      await expect(editorPage.navigatorItem('Settings')).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.navigatorItem('Test Site')).toHaveCount(0)
     })
 
-    await test.step('update siteName and verify navigator label updates after reload', async () => {
-      // Select the entry
-      await editorPage.selectEntry('Test Site')
+    await test.step('renaming the site leaves the label as it is after reload', async () => {
+      await editorPage.selectEntry('Settings')
       await editorPage.closeContentNavigator()
 
-      // Change siteName
       await editorPage.fillTextField('siteName', 'Renamed Site')
       await editorPage.saveAndVerify()
 
@@ -151,10 +144,9 @@ test.describe('YAML Format and isTitle Flag', () => {
       await page.reload()
       await editorPage.waitForReady()
 
-      // Open navigator and verify the updated label
       await editorPage.openContentNavigator()
-      const renamedItem = editorPage.navigatorItem('Renamed Site')
-      await expect(renamedItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.navigatorItem('Settings')).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.navigatorItem('Renamed Site')).toHaveCount(0)
     })
   })
 

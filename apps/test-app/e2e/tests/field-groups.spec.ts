@@ -25,7 +25,7 @@ test.describe('Inline field group UI', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       // Close navigator so form pane is fully interactive
       await editorPage.closeContentNavigator()
     })

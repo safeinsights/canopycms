@@ -33,7 +33,7 @@ test.describe('Save all', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await editorPage.fillTextField('title', homeTitle)
       await editorPage.createPost(postSlug, postSavedTitle)

@@ -206,7 +206,7 @@ test.describe('Branch State Badges', () => {
 
     await test.step('the form is read-only', async () => {
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       const title = editorPage.getFieldInput('title')
       await expect(title).not.toBeEditable()
       await expect(title).toHaveAttribute('readonly', '')
@@ -242,7 +242,7 @@ test.describe('Branch State Badges', () => {
 
       // Prove editing genuinely works again, not just that the banner is gone.
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.fillTextField('title', `Restored-${Date.now()}`)
       await editorPage.saveAndVerify()
     })

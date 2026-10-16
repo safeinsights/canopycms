@@ -53,7 +53,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
 
     // Step 5: Make some edits
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
     const testValue = `Branch-Test-${Date.now()}`
     await editorPage.fillTextField('title', testValue)
     await editorPage.saveAndVerify()
