@@ -108,7 +108,7 @@ export function useAssetLibrary(opened: boolean, includeHidden = false): UseAsse
           return
         }
         // A cursor seen before means the listing moved under the walk (the local store restarts
-        // from page 1 when its anchor asset is deleted), so pages may be missing: never report
+        // from page 1 when its anchor's meta file is gone), so pages may be missing: never report
         // that as complete. Retry starts over.
         if (requested.current.has(next)) {
           failedCursor.current = undefined
