@@ -124,9 +124,11 @@ describe('FormHeader', () => {
         <FormHeader title="About us" outline={[]} onSelect={vi.fn()} />
       </CanopyCMSProvider>,
     )
-    const height = `${PANE_HEADER_HEIGHT}px`
-    expect(screen.getByTestId('form-header').style.minHeight).toBe(height)
-    expect(screen.getByTestId('preview-toolbar').style.minHeight).toBe(height)
+    expect(screen.getByTestId('form-header').style.minHeight).toBe(`${PANE_HEADER_HEIGHT}px`)
+    // The preview pane's 1px top border sits above its toolbar.
+    expect(screen.getByTestId('preview-toolbar').style.minHeight).toBe(
+      `${PANE_HEADER_HEIGHT - 1}px`,
+    )
   })
 
   describe('outline tree', () => {
