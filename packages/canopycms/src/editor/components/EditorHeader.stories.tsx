@@ -65,6 +65,7 @@ export const Saved: Story = {
   args: { hasUnsavedChanges: false, editedFiles: [], modifiedCount: 0 },
 }
 
+/** In review: Submit becomes Withdraw and Save is blocked. The lock banner, not shown here, says why. */
 export const InReview: Story = {
   args: {
     branchStatus: 'submitted',
@@ -75,7 +76,10 @@ export const InReview: Story = {
   },
 }
 
-/** The protected base branch: "Protected" status, no Submit, Save blocked with its reason. */
+/**
+ * The protected base branch: "Protected" status, no Submit, Save blocked with its reason. The
+ * lock banner, not shown here, says it is read-only.
+ */
 export const ReadOnly: Story = {
   args: {
     branchName: 'main',
@@ -91,6 +95,16 @@ export const ReadOnly: Story = {
 /** A path rule refuses this entry to this user, on an editable branch. */
 export const EntryReadOnly: Story = {
   args: { entryReadOnly: true, hasUnsavedChanges: false },
+}
+
+/** A path rule refuses this entry on a locked branch: the chip stays, as withdrawing won't unlock it. */
+export const EntryReadOnlyInReview: Story = {
+  args: {
+    entryReadOnly: true,
+    branchStatus: 'submitted',
+    branchWriteBlocked: true,
+    hasUnsavedChanges: false,
+  },
 }
 
 /** At 390px the breadcrumb takes its own row, so "Withdraw from review" is never clipped. */
@@ -115,7 +129,7 @@ export const NarrowInReviewManyUnsaved: Story = {
   },
 }
 
-/** Before branch details arrive: no lock chip or status yet, as nothing is known. */
+/** Before branch details arrive: no chip or status yet, as nothing is known. */
 export const BranchLoading: Story = {
   args: { branchLoading: true, branchWriteBlocked: true, hasUnsavedChanges: false },
 }

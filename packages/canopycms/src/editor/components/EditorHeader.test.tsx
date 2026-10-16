@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, render, screen, cleanup, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
-import { BranchLockBanner } from './BranchLockBanner'
+import { BranchLockBanner, branchLockBannerShown } from './BranchLockBanner'
 import { UnsavedMark } from './UnsavedMark'
 import { CanopyCMSProvider } from '../theme'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
@@ -264,7 +264,7 @@ describe('EditorHeader - branch pill unsaved count', () => {
       render(<UnsavedMark data-testid="reference-mark" />, { wrapper: Wrapper }).container,
     ).getByTestId('reference-mark')
     const style = reference.getAttribute('style')
-    expect(style).toContain('--canopy-focus-ring')
+    expect(style).toContain('--canopy-unsaved-mark')
     const pillDot = screen
       .getByTestId('branch-unsaved-count')
       .querySelector('[aria-hidden="true"]:empty')
@@ -462,6 +462,23 @@ describe('EditorHeader - breadcrumb', () => {
   })
 })
 
+describe('branchLockBannerShown', () => {
+  it.each([
+    [{ branchStatus: 'editing' as const }, false],
+    [{ branchStatus: 'editing' as const, branchReadOnly: true }, true],
+    [{ branchStatus: 'submitted' as const, branchWriteBlocked: true }, true],
+    [{ branchStatus: undefined, branchWriteBlocked: true }, true],
+  ])('is the condition under which the banner renders: %j', (lock, shown) => {
+    expect(branchLockBannerShown(lock)).toBe(shown)
+    const { container } = render(
+      <BranchLockBanner {...lock} branchName="x" onBranchManagerOpen={vi.fn()} />,
+      { wrapper: Wrapper },
+    )
+    expect(container.querySelector('[data-testid$="banner"]') !== null).toBe(shown)
+    cleanup()
+  })
+})
+
 describe('EditorHeader - read-only chip', () => {
   afterEach(() => {
     cleanup()
@@ -479,10 +496,12 @@ describe('EditorHeader - read-only chip', () => {
     expect(screen.queryByTestId('read-only-chip')).toBeNull()
   })
 
-  it('is hidden under the banner even when the entry is read-only too', () => {
+  it("stays beside the banner for an entry read-only for its own reason, giving that reason, not the branch's", () => {
     renderHeader({ entryReadOnly: true, branchStatus: 'approved', branchWriteBlocked: true })
     expect(screen.getByTestId('status-locked-banner')).toBeTruthy()
-    expect(screen.queryByTestId('read-only-chip')).toBeNull()
+    const chip = screen.getByTestId('read-only-chip')
+    expect(chip.textContent).toContain("You don't have edit access to this entry.")
+    expect(chip.textContent).not.toContain('Withdraw it')
   })
 
   it('stays for an entry alone being read-only on a branch that takes writes', () => {
@@ -562,6 +581,8 @@ describe('EditorHeader - unsaved changes kept on this device', () => {
     const save = screen.getByTestId('save-button')
     const description = document.getElementById(save.getAttribute('aria-describedby') ?? '')
     expect(description?.textContent).toBe(KEPT)
+    // Hidden, so browse mode doesn't read it a second time beside the description.
+    expect(description?.hasAttribute('hidden')).toBe(true)
   })
 
   it("shows it in Save's Tooltip on focus, for keyboard users", async () => {
@@ -581,7 +602,10 @@ describe('EditorHeader - unsaved changes kept on this device', () => {
     const save = screen.getByTestId('save-button')
     expect(save.hasAttribute('aria-describedby')).toBe(false)
     act(() => save.focus())
-    expect((await screen.findByRole('tooltip')).textContent).toContain('This branch is in review.')
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip.textContent).toContain('This branch is in review.')
+    // The Tooltip's own description, which an explicit `aria-describedby={undefined}` would drop.
+    expect(save.getAttribute('aria-describedby')).toBe(tooltip.id)
   })
 
   it('keeps a warning in the bar when storing drafts failed', () => {

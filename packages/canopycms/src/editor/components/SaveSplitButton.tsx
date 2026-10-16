@@ -203,7 +203,12 @@ export function SaveSplitButton({
             ? 'Saved'
             : ''}
       </VisuallyHidden>
-      {keptHint && <VisuallyHidden id={keptHintId}>{keptHint}</VisuallyHidden>}
+      {/* `hidden`, so browse mode doesn't read it a second time; `aria-describedby` still can. */}
+      {keptHint && (
+        <span hidden id={keptHintId}>
+          {keptHint}
+        </span>
+      )}
       <style>{LABEL_STYLES}</style>
       <Button.Group style={{ flexShrink: 0 }}>
         <Tooltip

@@ -1332,7 +1332,7 @@ describe('EntryNavigator', () => {
         render(<UnsavedMark data-testid="reference-mark" />, { wrapper: CanopyCMSProvider })
           .container,
       ).getByTestId('reference-mark')
-      expect(reference.getAttribute('style')).toContain('--canopy-focus-ring')
+      expect(reference.getAttribute('style')).toContain('--canopy-unsaved-mark')
       expect(entryDot.getAttribute('style')).toBe(reference.getAttribute('style'))
       const collectionDot = within(screen.getByTestId('entry-nav-item-posts')).getByRole('img', {
         name: 'Contains unsaved changes',
