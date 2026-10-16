@@ -45,63 +45,16 @@ Nothing in this section is edited by hand: each entry is a `.changeset/` file, w
 assembles here and labels with the first int that carries it, and a stable release moves the
 entries under **Released**.
 
-<!-- legacy:start -->
+---
 
-The entries below predate changesets and keep their hand-written labels.
+## Released
 
-| int | Area     | Change                                                                                                                                                                                      | Action                       |
-| --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| 93  | Branches | [Path rules match logical paths](#path-permission-rules-now-take-effect-below-the-content-root--security-fix-breaking-for-rules-written-with-on-disk-names)                                 | Review rules                 |
-| 93  | Branches | [`.canopy-meta/` must not be committed](#canopy-meta-must-not-be-committed-and-system-health-says-so)                                                                                       | If tracked                   |
-| 93  | Branches | [`autoCreateSettingsPR` removed](#settings-saves-only-push-the-settings-branch--breaking-config-autocreatesettingspr-is-removed)                                                            | Required                     |
-| 93  | Reading  | [Listings take `branch`; reads report `slug`/`urlPath`](#content-reads-listings-take-a-branch-and-reads-report-slug-and-urlpath) (102)                                                      | Index pages                  |
-| 93  | Editing  | [Field descriptions, list-card titles, `public/` images](#field-editing-descriptions-list-card-titles-and-public-images) (96, 103)                                                          | None                         |
-| 93  | Branches | [Commits name editors; submit refuses an empty branch](#commits-name-their-editors-and-submit-refuses-a-branch-with-nothing-to-submit) (108, 110)                                           | Scripts                      |
-| 94  | Branches | [Reads never create a branch](#reads-never-create-a-requested-branch--security-fix-breaking-for-some-direct-createcontentreader-callers)                                                    | Direct callers               |
-| 94  | Preview  | [Preview URLs: one prefix, `trailingSlash`, own page](#preview-urls-take-one-prefix-follow-trailingslash-and-load-each-entrys-own-page--breaking-env) (98)                                  | Required                     |
-| 94  | Preview  | [`createPreviewPage`, `/preview` entries](#the-preview-route-and-preview-entries--breaking-imports) (95, 101, 103)                                                                          | Required                     |
-| 94  | Refs     | [Restricted and missing references](#a-reference-resolves-to-its-target-a-restricted-stub-or-a-missing-stub--security-fix-breaking-types-and-build) (106)                                   | Required                     |
-| 94  | CDK      | [`attachTo`, editor response headers](#canopycms-cdk-canopycmsserviceattachto-and-editor-response-headers--behaviour-change-if-you-frame-the-cms)                                           | If hand-wired or framed      |
-| 94  | Ops      | [System health shows the build](#system-health-shows-which-build-is-running)                                                                                                                | Optional                     |
-| 100 | Branches | [Crash-safe branch creation](#fast-crash-safe-branch-creation--behaviour-change-branch-clones-hold-only-the-content-root)                                                                   | Upgrade together             |
-| 100 | Ops      | [Prod workspace defaults to `/mnt/efs`](#the-prod-workspace-defaults-to-mntefs--behaviour-change-if-you-run-prod-without-canopycms_workspace_root)                                          | Non-CDK prod                 |
-| 100 | Assets   | [`AssetSupport` serves from S3 only](#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking)                                                                                      | Required                     |
-| 100 | Assets   | [`collect-asset-refs`, `materialize-assets`](#collect-asset-refs-and-materialize-assets-store-a-builds-images-before-release) (104)                                                         | With S3-only                 |
-| 100 | Assets   | [Editor images via signed-in route](#the-editor-and-its-live-preview-load-images-through-the-signed-in-asset-route)                                                                         | CSP, origin                  |
-| 100 | Assets   | [`assetUrl` applies crop](#asseturl-applies-an-image-values-crop--behaviour-change-for-cropped-images)                                                                                      | Scale `<img>`                |
-| 100 | Assets   | [`media.publicBaseUrl` removed; wider limits](#mediapublicbaseurl-is-removed-and-image-limits-are-wider--breaking-config)                                                                   | Delete key                   |
-| 101 | Editing  | [Saves rewrite only what changed](#a-save-rewrites-only-what-changed) (103)                                                                                                                 | None                         |
-| 102 | Auth     | [`unauthenticatedStatus: 419`](#unauthenticatedstatus-answer-signed-out-api-calls-with-419)                                                                                                 | Basic-auth sites             |
-| 105 | Editing  | [MDXEditor 4.3](#the-markdown-editor-runs-mdxeditor-43)                                                                                                                                     | Direct deps                  |
-| 106 | Refs     | [AI content links references](#ai-content-links-a-reference-to-its-target--behaviour-change-for-ai-output-and-ai-config-callbacks)                                                          | AI config                    |
-| 106 | Refs     | [Deleting a referenced entry asks](#deleting-a-referenced-entry-asks-first--behaviour-change-on-the-delete-api)                                                                             | Scripts                      |
-| 107 | Schema   | [Unknown schemas cost one entry type](#a-schema-the-running-code-lacks-costs-one-entry-type-and-holds-the-worker--behaviour-change)                                                         | Rare                         |
-| 108 | MDX      | [MDX that runs code is refused](#mdx-content-that-runs-code-is-refused-at-save--breaking-behaviour) (109, 110)                                                                              | Required                     |
-| 108 | Worker   | [On-demand worker, drain; `spotMaxPrice` removed](#canopycms-cdk-the-worker-drains-before-replacement-and-runs-on-demand--breaking-props-spotmaxprice-is-removed-behaviour-and-cost-change) | If set                       |
-| 109 | Worker   | [Hardened worker instance](#canopycms-cdk-the-worker-instance-is-hardened--an-existing-stack-upgrades-in-two-deploys-behaviour-and-cost-change)                                             | Two deploys                  |
-| 109 | Worker   | [Failed or stopped worker says why](#a-failed-or-stopped-worker-says-why--behaviour-change-on-the-not-ready-503-new-worker-apis)                                                            | Custom entrypoint            |
-| 109 | Worker   | [CI worker roll; worker-down alarm](#canopycms-cdk-ci-can-roll-the-worker-with-a-parameter-and-alarm-when-it-stops-syncing--new-opt-in)                                                     | Optional                     |
-| 109 | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required                     |
-| 110 | Worker   | [Worker needs a state directory](#canopycms-cdk-the-worker-needs-a-state-directory--deploy-the-template-before-the-bundle)                                                                  | Template first               |
-| 110 | Ops      | [Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)                                           | Base ≠ repo default          |
-| 111 | CDK      | [Example workflow's triggers and checks](#the-aws-example-workflow-gains-the-templates-triggers-and-dependency-checks)                                                                      | If copied by hand            |
-| 111 | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts            |
-| 111 | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images            |
-| 111 | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins               |
-| 112 | Worker   | [Bundle states the template it needs](#canopycms-cdk-a-worker-bundle-states-the-template-it-needs--template-first-for-the-gate-only)                                                        | Template first               |
-| 112 | Worker   | [Poisoned `remote.git` re-clones](#a-poisoned-remotegit-re-clones-itself)                                                                                                                   | None                         |
-| 112 | Worker   | [Nano worker boots reliably](#canopycms-cdk-a-t4gnano-worker-boots-reliably--behaviour-change-a-deploy-replaces-the-worker)                                                                 | Deploy                       |
-| 112 | Worker   | [Worker never pushes base or default branch](#the-worker-never-pushes-the-base-or-default-branch--security-fix) (114)                                                                       | Protect base on GitHub       |
-| 112 | Worker   | [Worker log is root-owned](#canopycms-cdk-the-workers-log-is-root-owned--security-fix)                                                                                                      | Deploy; hand-installed units |
-| 113 | Worker   | [Push logs say whether GitHub moved](#the-workers-push-logs-say-whether-github-moved)                                                                                                       | None                         |
-| 113 | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
-| 113 | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
-| 114 | Worker   | [GitHub objects cross as bundles](#the-worker-moves-objects-between-github-and-remotegit-as-bundles)                                                                                        | None                         |
-| 114 | AI       | [`noindex` entries leave AI content](#ai-content-leaves-out-noindex-entries--behaviour-change-for-ai-output)                                                                                | `exclude.noindex: false`     |
-| 114 | Worker   | [Worker follows a rebased or deleted branch](#the-worker-follows-a-rebased-or-deleted-github-branch)                                                                                        | None                         |
-| 114 | Worker   | [Worker holds no secret (contract 2)](#canopycms-cdk-the-worker-holds-no-secret--security-fix-template-first-contract-2)                                                                    | Template first               |
+### 0.1.0
 
-### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
+<!-- changeset: legacy-unreleased -->
+<!-- changeset: nice-boxes-battle -->
+
+#### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
 **What changed.**
 
@@ -121,7 +74,7 @@ served at `/` without an `index` slug needs `'content/<slug>': '/'`, or re-model
 **Now deletable.** `previewBase` keys that only added a shared prefix or restate a root entry's own
 URL.
 
-### The preview route and `/preview` entries — **breaking (imports)**
+#### The preview route and `/preview` entries — **breaking (imports)**
 
 **What changed.**
 
@@ -155,7 +108,7 @@ URL.
 **Now deletable.** A hand-built branch-preview route, and CSS layer or specificity workarounds that
 kept site styles ahead of Mantine's in the preview.
 
-### Preview `fieldProps` is typed, with server-safe helpers — **breaking (types and schemas)**
+#### Preview `fieldProps` is typed, with server-safe helpers — **breaking (types and schemas)**
 
 **What changed.** (int.109) `fieldProps` checks each path against the view's content type, and
 `canopycms` exports `FieldProps`, `FieldAttrs`, `fieldAttrs` and `scopeFieldProps`, callable from
@@ -172,7 +125,7 @@ as literal segments, or type that component's prop as plain `FieldProps`. Pass `
 `fieldProps` defaults; schema-walking tests for misspelled mark paths, once components are typed
 (the editor flags another block template's field).
 
-### A reference resolves to its target, a restricted stub, or a missing stub — **security fix; breaking (types and build)**
+#### A reference resolves to its target, a restricted stub, or a missing stub — **security fix; breaking (types and build)**
 
 **What changed.**
 
@@ -210,7 +163,7 @@ optional if it was required.
 content-integrity test checking reference fields against entry ids, and top-level-only reference
 fields kept for the preview's sake.
 
-### AI content links a reference to its target — **behaviour change for `/ai` output and AI config callbacks**
+#### AI content links a reference to its target — **behaviour change for `/ai` output and AI config callbacks**
 
 **What changed.** (int.106) A `reference` field renders as a link to its target, not the stored id:
 a byline reading `**Author:** 5NVkkrB1MJUv` now links the name `Alice` to that entry's page, then to
@@ -232,7 +185,7 @@ matching: search your AI config for each reference field's name.
 
 **Now deletable.** A `fieldTransforms` entry that looked up a reference id to print its title.
 
-### AI content leaves out `noindex` entries — **behaviour change for `/ai` output**
+#### AI content leaves out `noindex` entries — **behaviour change for `/ai` output**
 
 **What changed.** (int.114) AI content leaves out entries marked `noindex`, both from
 `generate-ai-content` and from the `/ai` route, using the same predicate as the sitemap and robots
@@ -248,7 +201,7 @@ shows [the recipe](README.md#ai-content-configuration).
 
 **Now deletable.** An `exclude.where` that re-read the `noindex` flag by hand.
 
-### Deleting a referenced entry asks first — **behaviour change on the delete API**
+#### Deleting a referenced entry asks first — **behaviour change on the delete API**
 
 **What changed.** (int.106) Deleting an entry that other entries reference (by field or `entry:`
 link) returns 409 with `data.referencedBy`: the referencing entries the user may read, and a
@@ -257,7 +210,7 @@ link) returns 409 with `data.referencedBy`: the referencing entries the user may
 
 **To adopt.** Only scripts calling the delete endpoint: pass the flag or handle the 409.
 
-### `mdx` content that runs code is refused at save — **breaking (behaviour)**
+#### `mdx` content that runs code is refused at save — **breaking (behaviour)**
 
 **What changed.** (int.108) An `mdx` field or body refuses `{…}` expressions other than comments and
 plain values, `import`/`export`, and tags, attributes and URL schemes outside a safe set; other
@@ -278,7 +231,7 @@ build lists it.
 `javascript:` links in MDX or markdown rendered as MDX, and the path-prefix matching behind its
 entry-type gate. Keep a rule checking that the body compiles.
 
-### A save rewrites only what changed
+#### A save rewrites only what changed
 
 **What changed.**
 
@@ -298,7 +251,7 @@ entry-type gate. Keep a rule checking that the body compiles.
 **Now deletable.** A formatter pass or `.prettierignore` entry over CMS-written content that only
 undoes the editor's re-folding, restyling or date rewriting.
 
-### The markdown editor runs MDXEditor 4.3
+#### The markdown editor runs MDXEditor 4.3
 
 **What changed.** (int.105) `@mdxeditor/editor` is `^4.3.2` (Lexical 0.48), up from `^3.52.4`.
 Two-paragraph list items, multi-block quotes and code fences in any language edit in rich text.
@@ -306,7 +259,7 @@ Two-paragraph list items, multi-block quotes and code fences in any language edi
 **To adopt.** Nothing, unless your app depends on `@mdxeditor/editor` or `lexical` directly: align
 those versions so one copy loads.
 
-### Unsaved group and permission changes show, and closing asks first
+#### Unsaved group and permission changes show, and closing asks first
 
 **What changed.** (int.113) Manage Groups and Manage Permissions still save as one batch, but now
 mark unsaved changes, keep the save bar in view, and ask before closing or leaving drops them. The
@@ -314,7 +267,7 @@ group dialog's buttons read "Add" and "Apply", since neither saves.
 
 **To adopt.** Nothing.
 
-### Field editing: descriptions, list-card titles, and `public/` images
+#### Field editing: descriptions, list-card titles, and `public/` images
 
 **What changed.**
 
@@ -332,7 +285,7 @@ image, upload a raster copy to the media library. For card titles:
 
 **Now deletable.** Editor hints worked into a field's `label` because `description` never showed.
 
-### Content reads: listings take a `branch`, and reads report `slug` and `urlPath`
+#### Content reads: listings take a `branch`, and reads report `slug` and `urlPath`
 
 **What changed.**
 
@@ -345,7 +298,7 @@ branch.
 
 **Now deletable.** Code parsing a slug or URL back out of `path` or `entry.path`.
 
-### Path-permission rules now take effect below the content root — **security fix; breaking for rules written with on-disk names**
+#### Path-permission rules now take effect below the content root — **security fix; breaking for rules written with on-disk names**
 
 **What changed.** (int.93) Rules match an entry's logical path (`content/blog/my-post`). Enforcement
 checked the id-suffixed on-disk path, so collection and entry rules matched nothing; only a glob
@@ -358,7 +311,7 @@ extension in logical form (`content/blog/**`, `content/about`).
 
 **Now deletable.** A content-root grant working around inert collection grants.
 
-### Reads never create a requested branch — **security fix; breaking for some direct `createContentReader` callers**
+#### Reads never create a requested branch — **security fix; breaking for some direct `createContentReader` callers**
 
 **What changed.** (int.94) A branch other than the active one must exist and be readable by the
 user, or `read()`/`readByUrlPath()` treat it as not found; no workspace is created per `?branch=`
@@ -369,7 +322,7 @@ passes `allowCreateBranch: true`, never with a request's branch.
 
 **Now deletable.** Checks that allow-list `?branch=` before it reaches `read()`.
 
-### Fast, crash-safe branch creation — **behaviour change: branch clones hold only the content root**
+#### Fast, crash-safe branch creation — **behaviour change: branch clones hold only the content root**
 
 **What changed.** (int.100) A branch is built under a staging name and appears only when complete.
 The worker repairs branch directories an interrupted create or delete left wedged, and owns
@@ -383,7 +336,7 @@ changed `contentRoot` reaches existing clones within a worker cycle of the API r
 **Now deletable.** Manual EFS cleanup of provisioning locks or half-made branch directories, and
 `remote.git` gc scripts.
 
-### `.canopy-meta/` must not be committed, and System health says so
+#### `.canopy-meta/` must not be committed, and System health says so
 
 **What changed.** (int.93) The schema cache lives in each branch clone's `.git/canopycms/`. Sync,
 editor submits and `canopycms sync` ignore `.canopy-meta/`, and System health shows the base
@@ -397,7 +350,7 @@ repaired or re-created.
 **Now deletable.** Any local step that resets or reformats `.canopy-meta/` files before a commit or
 a format check.
 
-### Commits name their editors, and submit refuses a branch with nothing to submit
+#### Commits name their editors, and submit refuses a branch with nothing to submit
 
 **What changed.**
 
@@ -412,7 +365,7 @@ a format check.
 
 **To adopt.** Scripts calling submit: save a change first, or handle the 400.
 
-### Settings saves only push the settings branch — **breaking (config): `autoCreateSettingsPR` is removed**
+#### Settings saves only push the settings branch — **breaking (config): `autoCreateSettingsPR` is removed**
 
 **What changed.** (int.93) The orphan settings branch can never get a PR, so groups and permissions
 saves only push the branch, and no failing PR task lands in System health.
@@ -421,7 +374,7 @@ saves only push the branch, and no failing PR task lands in System health.
 
 **Now deletable.** Filters that hid the failed settings-PR tasks.
 
-### A schema the running code lacks costs one entry type, and holds the worker — **behaviour change**
+#### A schema the running code lacks costs one entry type, and holds the worker — **behaviour change**
 
 **What changed.** (int.107) When synced content names an entry schema the running code lacks, only
 that entry type goes unavailable: the editor says so, and its entries answer 503 with
@@ -434,7 +387,7 @@ Public types gain optional `unavailable` on `EntryTypeConfig` and `FlatSchemaIte
 **To adopt.** Code that builds a `SchemaResolutionResult` adds `issues`. A custom worker entrypoint
 can pass `schemaHoldMaxMs` to `CmsWorker`.
 
-### `canopycms-cdk`: the worker drains before replacement and runs on-demand — **breaking (props): `spotMaxPrice` is removed; behaviour and cost change**
+#### `canopycms-cdk`: the worker drains before replacement and runs on-demand — **breaking (props): `spotMaxPrice` is removed; behaviour and cost change**
 
 **What changed.** (int.108) The worker is one on-demand `t4g.nano` by default (about $3 a month,
 against spot's $1–2); a spot shortage could leave no worker: on a first deploy the editor's API answers 503 "CMS worker not
@@ -451,7 +404,7 @@ drain applies from the deploy after this one.
 
 **Now deletable.** Any override stripping `InstanceMarketOptions` from the worker's launch template.
 
-### `canopycms-cdk`: the worker instance is hardened — **an existing stack upgrades in two deploys; behaviour and cost change**
+#### `canopycms-cdk`: the worker instance is hardened — **an existing stack upgrades in two deploys; behaviour and cost change**
 
 **Upgrade an existing stack in two deploys:**
 
@@ -481,7 +434,7 @@ key, grant the Auto Scaling service-linked role on it. Pass `workerMaxInstanceLi
 **Now deletable.** Any override adding `MetadataOptions`, an encrypted root volume or an EFS
 `FileSystemPolicy`, or narrowing the worker role's asset-bucket grant.
 
-### `canopycms-cdk`: the worker needs a state directory — **deploy the template before the bundle**
+#### `canopycms-cdk`: the worker needs a state directory — **deploy the template before the bundle**
 
 **What changed.** (int.110) The worker's git keeps the GitHub credential in a private mirror
 under the unit's `StateDirectory=`, and the worker does not start without it.
@@ -491,14 +444,14 @@ new template before CI rolls an int.110 or later bundle; a parameter-only change
 the new unit, so the new bundle exits at start. A hand-installed unit needs
 `StateDirectory=canopy-worker` under `[Service]`.
 
-### A poisoned `remote.git` re-clones itself
+#### A poisoned `remote.git` re-clones itself
 
 **What changed.** (int.112) A `remote.git` missing its base branch is re-cloned unless an unpushed ref would be
 lost; the refusal names those refs. A tampered config still refuses and needs an operator.
 
 **To adopt.** Nothing.
 
-### A failed or stopped worker says why — **behaviour change on the not-ready 503; new worker APIs**
+#### A failed or stopped worker says why — **behaviour change on the not-ready 503; new worker APIs**
 
 **What changed.** (int.109) While the latest start's recorded failure stands, the prod not-ready 503
 is `WORKER_FAILED`: no `Retry-After`, the failure named to admins, account ids masked.
@@ -510,7 +463,7 @@ failure and exits non-zero on `selfStopped`, with a code outside `RestartPrevent
 
 **Now deletable.** A watchdog that restarts an idle worker process.
 
-### `canopycms-cdk`: CI can roll the worker with a parameter, and alarm when it stops syncing — **new, opt-in**
+#### `canopycms-cdk`: CI can roll the worker with a parameter, and alarm when it stops syncing — **new, opt-in**
 
 **What changed.** (int.109)
 
@@ -528,7 +481,7 @@ failure and exits non-zero on `selfStopped`, with a code outside `RestartPrevent
 **Now deletable.** A manual `cdk deploy` after each canopycms bump whose only purpose is moving the
 worker, and a hand-built alarm on the worker log group.
 
-### `canopycms-cdk`: a `t4g.nano` worker boots reliably — **behaviour change: a deploy replaces the worker**
+#### `canopycms-cdk`: a `t4g.nano` worker boots reliably — **behaviour change: a deploy replaces the worker**
 
 **What changed.** (int.112) The boot's `dnf upgrade` could be OOM-killed on every retry. A 1 GiB
 swap file now goes on first; an upgrade that still fails starts the worker unpatched and notifies
@@ -540,7 +493,7 @@ not Template first and the worker contract stays at 1.
 
 **Now deletable.** An instance type above `t4g.nano` chosen only to get the boot through.
 
-### `canopycms-cdk`: the worker's log is root-owned — **security fix**
+#### `canopycms-cdk`: the worker's log is root-owned — **security fix**
 
 **What changed.** (int.112) `/var/log/canopy-worker` and `worker.log` are root-owned, and the unit
 drops `LogsDirectory=`. systemd opens the log as root, following symlinks, before the sandbox
@@ -558,7 +511,7 @@ contract is unchanged. A hand-installed unit needs the same change:
 
 **Now deletable.** Nothing.
 
-### The worker never pushes the base or default branch — **security fix**
+#### The worker never pushes the base or default branch — **security fix**
 
 **What changed.** (int.112) The worker refuses to push, plainly or replacing history, to the base
 branch or GitHub's default branch, whatever a task asks, and fails the task permanently.
@@ -574,14 +527,14 @@ its bypass list. Set `CANOPYCMS_BASE_BRANCH` (the construct's `baseBranch`) expl
 it, the gateway protects only GitHub's default branch and your list; the worker still refuses the
 base it detected, warning when that base is neither.
 
-### The worker's push logs say whether GitHub moved
+#### The worker's push logs say whether GitHub moved
 
 **What changed.** (int.113) `Pushed … to GitHub` is logged only when the branch moved, saying
 where from; an unmoved branch logs at debug level. An unchanged settings branch is not pushed.
 
 **To adopt.** Nothing.
 
-### The worker hands git its GitHub credential in a per-command file — **security fix; dev behaviour change**
+#### The worker hands git its GitHub credential in a per-command file — **security fix; dev behaviour change**
 
 **What changed.** (int.113) The token leaves git URLs: each GitHub fetch and push reads it from a
 `0600` file named by `GIT_CONFIG_GLOBAL`, deleted afterwards. For those commands the file replaces
@@ -591,7 +544,7 @@ stops applying and no keychain credential is tried.
 **To adopt.** Nothing in production. In dev, move a global-config proxy or CA to `HTTPS_PROXY` or
 `GIT_SSL_CAINFO`.
 
-### The worker moves objects between GitHub and `remote.git` as bundles
+#### The worker moves objects between GitHub and `remote.git` as bundles
 
 **What changed.** (int.114) The worker moves objects between GitHub and
 `remote.git` as git bundles. A new instance's first sync fetches the whole repository from GitHub,
@@ -601,7 +554,7 @@ and operations may reuse GitHub fetches under 30 seconds old.
 mirror, so the root volume needs room for two
 ([details](docs/deploying-to-aws.md#the-worker-instance)).
 
-### The worker follows a rebased or deleted GitHub branch
+#### The worker follows a rebased or deleted GitHub branch
 
 **What changed.** (int.114) When a branch is rebased and force-pushed on GitHub, or deleted there, the
 worker now updates or deletes its own copy of it instead of warning about it on every sync. A rebased
@@ -610,7 +563,7 @@ health lists it with what to do.
 
 **To adopt.** Nothing.
 
-### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
+#### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
 
 **What changed.** (int.112) The worker unit carries a contract version
 (`Environment=CANOPYCMS_WORKER_CONTRACT=<n>`). Parameter mode outputs it as `WorkerContract`, and
@@ -627,7 +580,7 @@ copies its `Environment=CANOPYCMS_WORKER_CONTRACT=` line from `worker/canopy-wor
 
 **Now deletable.** Deciding from the template diff whether a bundle-only roll is safe.
 
-### `canopycms-cdk`: the worker holds no secret — **security fix; template first (contract 2)**
+#### `canopycms-cdk`: the worker holds no secret — **security fix; template first (contract 2)**
 
 **What changed.** (int.114) The worker runs with no network and no secret. `canopy-github`, a gateway
 service under its own user with no view of EFS, holds the GitHub credential and the Clerk key, and
@@ -641,7 +594,7 @@ takes `worker/`'s three units and `gateway.env.example`
 ([steps](docs/deploying-to-aws.md#installing-the-units-by-hand)). After the first deploy, run the
 [checklist](docs/deploying-to-aws.md#first-deploy-checklist).
 
-### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS**
+#### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS**
 
 **What changed.** (int.94) `cmsService.attachTo(distribution, { viewerRequestFunction?, behaviorOverrides? })`
 adds the editor's behaviors (`/edit`, `/edit/*`, `/api/canopycms/*`) to a distribution you already
@@ -662,12 +615,12 @@ gate, and read the synth warning if your distribution has custom error responses
 `x-forwarded-host` function made for them, and any response-headers policy added only to stop
 framing.
 
-### `unauthenticatedStatus`: answer signed-out API calls with 419
+#### `unauthenticatedStatus`: answer signed-out API calls with 419
 
 **To adopt.** (int.102) Set `unauthenticatedStatus: 419` if your pages sit behind HTTP Basic auth on
 the editor's origin; the editor still detects sign-out. Otherwise nothing.
 
-### Auth plugins look users up in batches
+#### Auth plugins look users up in batches
 
 **What changed.** (int.111) `AuthPlugin` gains an optional `getUsersMetadata(userIds)`, and the
 editor batches its user-badge lookups.
@@ -675,7 +628,7 @@ editor batches its user-badge lookups.
 **To adopt.** Nothing. A custom auth plugin may implement it; otherwise the server falls back to
 bounded single lookups.
 
-### The CMS image builds a prod editor, and a mode mismatch blocks the editor — **behaviour change: a hand-built image can fail its build**
+#### The CMS image builds a prod editor, and a mode mismatch blocks the editor — **behaviour change: a hand-built image can fail its build**
 
 **What changed.** (int.111) `Dockerfile.cms` defaults `NEXT_PUBLIC_CANOPY_MODE` to `prod`, not
 `dev`, and fails its build on any value but `prod` or `dev`. An editor built for the other mode than its
@@ -684,7 +637,7 @@ server runs now gets a blocking screen naming that variable, not a sign-in that 
 **To adopt.** A hand-built image running a dev-mode server passes
 `--build-arg NEXT_PUBLIC_CANOPY_MODE=dev`.
 
-### Prod detects an unset `defaultBaseBranch` instead of assuming `main` — **behaviour change: startup can fail**
+#### Prod detects an unset `defaultBaseBranch` instead of assuming `main` — **behaviour change: startup can fail**
 
 **What changed.** (int.110) Unset, prod reads the base branch from the HEAD of the workspace's `remote.git`,
 which the worker points at the branch it uses. Before the worker creates `remote.git`, requests
@@ -698,7 +651,7 @@ does not follow a later change of GitHub's default branch, so set it before a cu
 
 **Now deletable.** A `defaultBaseBranch: 'main'` in a repository whose default branch is `main`.
 
-### The prod workspace defaults to `/mnt/efs` — **behaviour change if you run prod without `CANOPYCMS_WORKSPACE_ROOT`**
+#### The prod workspace defaults to `/mnt/efs` — **behaviour change if you run prod without `CANOPYCMS_WORKSPACE_ROOT`**
 
 **What changed.** (int.100) With `CANOPYCMS_WORKSPACE_ROOT` unset, prod mode keeps its branches,
 settings, task queue and auth cache under `/mnt/efs` instead of `/mnt/efs/workspace`
@@ -709,7 +662,7 @@ the worker, so CDK deployments are unaffected.
 `/mnt/efs/workspace` to keep your existing workspace, or move that directory's contents up to
 `/mnt/efs`.
 
-### System health shows which build is running
+#### System health shows which build is running
 
 **What changed.** (int.94) System health gains a Build section (canopycms version, source revision,
 worker version, media-storage state) and warns when API and worker versions differ.
@@ -722,7 +675,7 @@ worker version, media-storage state) and warns when API and worker versions diff
 
 **Now deletable.** Hand-rolled version or commit stamping, or a build-info endpoint.
 
-### The AWS example workflow gains the template's triggers and dependency checks
+#### The AWS example workflow gains the template's triggers and dependency checks
 
 **What changed.** (int.111) Like the one `init-deploy aws` writes, `examples/aws-deployment/deploy-cms.yml`
 now deploys on `next.config.*`, `middleware.ts` and `public/**` changes, and checks `canopycms` and
@@ -730,7 +683,7 @@ now deploys on `next.config.*`, `middleware.ts` and `public/**` changes, and che
 
 **To adopt.** If you copied it by hand, add those `paths:` and packages.
 
-### `GET /admin/branch-health` scans for duplicate content IDs only on request — **behaviour change**
+#### `GET /admin/branch-health` scans for duplicate content IDs only on request — **behaviour change**
 
 **What changed.** (int.111) The duplicate-ID scan runs only with `?duplicates=1`, under a 20 s
 budget. Each healthy entry then carries `duplicateIdScan` (`none`, `found` or `unknown`), replacing
@@ -738,7 +691,7 @@ budget. Each healthy entry then carries `duplicateIdScan` (`none`, `found` or `u
 
 **To adopt.** Scripts reading `duplicateContentIds`: pass `duplicates=1`, read `duplicateIdScan`.
 
-### `canopycms-cdk`: `AssetSupport` serves images from S3 only — **breaking**
+#### `canopycms-cdk`: `AssetSupport` serves images from S3 only — **breaking**
 
 **What changed.** (int.100) `/assets/*` and `/assets/t/*` come from the bucket alone, with an
 optional `replicaBucket` for 5xx failover. An unmaterialized URL is a 403; no transform Lambda or
@@ -755,7 +708,7 @@ opt-in and those props, and pass `replicaBucket` if you replicate `assets/`.
 
 **Now deletable.** Your `assets/t/` expiry rule, before leaving lazy mode.
 
-### `collect-asset-refs` and `materialize-assets` store a build's images before release
+#### `collect-asset-refs` and `materialize-assets` store a build's images before release
 
 **What changed.** (int.100) `canopycms collect-asset-refs <outDir>` writes the image keys a static
 build references to `<outDir>/canopy-asset-refs.json`. `canopycms materialize-assets --refs <file>`
@@ -770,7 +723,7 @@ Run `materialize-assets` before the release is served, with the S3 grants the RE
 
 **Now deletable.** A pre-release warm-up step that requests image URLs to get them transformed.
 
-### The editor and its live preview load images through the signed-in asset route
+#### The editor and its live preview load images through the signed-in asset route
 
 **What changed.** (int.100) The editor loads asset-store images from
 `GET /api/canopycms/assets/raw/…` under your `basePath`, which transforms on demand and, on S3,
@@ -787,7 +740,7 @@ same-origin or set `lazyPublicTransforms: true`.
 
 **Now deletable.** Code passing `assetBaseUrl` into the editor.
 
-### `assetUrl` applies an image value's crop — **behaviour change for cropped images**
+#### `assetUrl` applies an image value's crop — **behaviour change for cropped images**
 
 **What changed.** (int.100) `assetUrl`/`assetSrcSet` apply an `image` value's `crop`; `opts.crop`
 overrides.
@@ -796,7 +749,7 @@ overrides.
 
 **Now deletable.** Copying `value.crop` into `opts.crop`.
 
-### `media.publicBaseUrl` is removed, and image limits are wider — **breaking (config)**
+#### `media.publicBaseUrl` is removed, and image limits are wider — **breaking (config)**
 
 **What changed.** (int.100) Nothing read `media.publicBaseUrl`, and the strict `media` schema fails a
 config that sets it. Uploads go up to 24 MP (6000×4000), up from 16.7 MP. Widths are any integer up
@@ -808,11 +761,556 @@ asset URLs.
 
 **Now deletable.** Anything that only fed `publicBaseUrl`, and rounding widths to a multiple of 160.
 
-<!-- legacy:end -->
+#### AI content can withhold or redirect a link to an entry with no page
 
----
+<!-- changeset: ai-reference-link-hook -->
 
-## Released
+_First in int.115._
+
+**What changed.** The AI export linked every exported reference target to its page URL, even
+when the site gives that entry no page. A new `AIContentConfig.referenceLink(target, { body,
+defaultUrl })` decides where links to an exported entry point. The decision covers both reference
+fields and body `entry:` links, so the two kinds of link agree. Return a URL to link there
+instead. Return `false` when the target has no page: its title then renders as plain text, with
+no page link and no markdown-version link, and an inline `entry:` link becomes its text. Return
+`undefined` to keep the default. `body` is the target's stored MD/MDX body, and none of it reaches the entries that link to it. The callback runs once per target per run, may be async, and never sees a missing target or
+one the exclusions leave out. A throw or any other return is logged and treated as `false`.
+
+**To adopt.** If your site's routes, sitemap or bylines decide that some entries have no page,
+apply the same rule here, for example `referenceLink: (target, { body }) =>
+!body?.trim() ? false : undefined` in `defineAIContentConfig` from `canopycms/ai`. See
+[AI Content Configuration](README.md#ai-content-configuration).
+
+**Now deletable.** A `fieldTransforms` entry that re-renders a reference field only to drop or
+change its link.
+
+#### `toPlainText` takes an entry body and keeps prose after a leading `---` — **behaviour change**
+
+<!-- changeset: to-plain-text-body-only -->
+
+_First in int.115._
+
+**What changed.** `toPlainText` from `canopycms/ai` no longer parses front matter. It used to,
+so a body that opened with a `---` thematic break was read as the start of a front-matter block
+and everything after it was dropped: `toPlainText('---\n\nA bio.\n')` returned `''`, so a
+"has prose" check judged the entry empty and a search index got no text for it. A body whose
+opening `---` was followed by lines that are not valid YAML made it throw. It now returns
+`'A bio.'`, and never parses YAML. Front matter in the input is read as prose.
+
+**To adopt.** Pass the value of the entry's body field, such as `entry.data.body` when the schema
+names that field `body`. The content store has already split it from its front matter. A caller
+holding a whole `.md`/`.mdx` file splits it first:
+
+```ts
+import matter from 'gray-matter'
+import { toPlainText } from 'canopycms/ai'
+
+const text = toPlainText(matter(file, {}).content)
+```
+
+#### People without a name show "Name unavailable"
+
+<!-- changeset: people-without-a-name-show-name-unavailable -->
+
+_First in int.115._
+
+**What changed.** The Clerk plugin no longer uses the Clerk user id as a user's name: a user with no full name or username has an empty name, and the editor shows "Name unavailable" wherever that person appears. Core and the editor also treat a blank name, or one equal to the user id, as no name: `/users/:userId`, `/users/batch` and the `users` lists on comments and branches return an empty `name` for that person. The users snapshot the worker writes follows the same rule.
+
+#### Branch access lists stay with admins and reviewers — **behaviour change**
+
+<!-- changeset: branch-access-list-withheld-from-non-privileged -->
+
+_First in int.115._
+
+**What changed.** Every branch response (the listing, create, the workflow actions, status and
+access updates) sends a caller who is not an admin or reviewer only the `access.allowedUsers` and
+`access.allowedGroups` entries naming them or their groups, and counts the rest in a new
+`withheldAccess` field. A branch card's access list shows the people the viewer can name, then
+"and N others", instead of a row of "Name unavailable" avatars.
+
+#### A branch lockdown outranks the branch's access list — **security fix**
+
+<!-- changeset: branch-lockdown-outranks-branch-acl -->
+
+_First in int.115._
+
+**What changed.** A branch whose `access.managerOrAdminAllowed` is `true` admits only admins and
+reviewers, whatever its `allowedUsers` and `allowedGroups` list. An access list used to switch the
+lockdown off, so a listed editor, or a creator who listed themselves, could read, edit, comment
+on, submit and withdraw a locked branch. The branch list hides a locked branch from editors, and
+the editor's Submit and Withdraw controls follow the same rule.
+
+**To adopt.** Nothing, unless a site relied on an access list admitting editors to a locked
+branch: those editors lose access. To give it back, set `managerOrAdminAllowed` to `false` in
+that branch's `branch.json`, and the access list decides again.
+
+#### The base-branch conflict notice stays until the branch merges — **behaviour change**
+
+<!-- changeset: conflict-notice-persists-until-merge -->
+
+_First in int.115._
+
+**What changed.** When the CMS brings a branch up to date and keeps the branch's version of an
+entry the base branch also changed, the "updated on the base branch" notice and the branch's
+conflict count now stay until the branch merges, so a reviewer still sees which entries replaced a
+base change. They used to clear on the next sync, about five minutes later. README's new [Drafts
+and Unpublishing](README.md#drafts-and-unpublishing) section covers long-lived branches and
+unpublishing.
+
+#### The editor calls the content drawer "All content"
+
+<!-- changeset: all-content-label -->
+
+_First in int.115._
+
+**What changed.** The first breadcrumb segment and the file menu item that opens the content drawer say "All content" instead of "All entries", since the drawer holds collections as well as entries.
+
+**To adopt.** Nothing, unless your browser tests find either by the text "All entries".
+
+#### The Branches drawer shows one action per branch, and comments reply in place
+
+<!-- changeset: branches-drawer-and-comment-replies -->
+
+_First in int.115._
+
+**What changed.** The drawer lists the open branch first, with one action per card and the rest
+in a "…" menu, in the editor's vocabulary. A thread's Reply opens a box under it.
+
+**To adopt.** Nothing, unless your browser tests click the old drawer buttons or labels. Every
+form has a "Field comments" button, so tests that find buttons by `/comment/i` may match more than
+one; and the editor listens for Ctrl+Alt+M (⌘⌥M on macOS) on the whole document, taking it while a
+form is open.
+
+#### An object's Clear offers Undo, and refusals say why
+
+<!-- changeset: clear-undo-and-clearer-refusals -->
+
+_First in int.115._
+
+**What changed.** An optional object's Clear raises the same Undo toast as a list item's Remove,
+and Undo returns focus to the object. A Remove toast says when the item's open comment threads moved
+to "Comment on this entry". A collection your path permissions refuse new entries in says "You can't
+add entries here." in place of its hidden menu. The group and permission managers show a version
+conflict in yellow; the API marks it with the new error code `SETTINGS_CHANGED`.
+
+`sanitizeHref` returns its fallback for `undefined` or `null`, which a live preview's draft can
+pass for a link field it doesn't hold yet, instead of throwing.
+
+#### The collection dialog says what saves at once
+
+<!-- changeset: collection-dialog-says-what-saves -->
+
+_First in int.115._
+
+**What changed.** Editing a collection, entry-type changes still save to the branch at once, and
+the dialog now says so; name, label and slug save from "Save collection details". The dismiss
+button reads "Discard changes", "Close" or "Cancel" to match what it does. Entry-type results show
+inline instead of as toasts.
+
+**To adopt.** Nothing, unless browser tests click the old buttons or wait for those toasts.
+
+#### Comments and branches name their people for every editor — **behaviour change on two APIs**
+
+<!-- changeset: comments-and-branches-name-their-people -->
+
+_First in int.115._
+
+**What changed.** `GET /:branch/comments` adds `users`: the id, name and avatar URL, never the
+email, of everyone who wrote or resolved a thread the requester may read. `GET /branches` adds the
+same for each listed branch's creator, but not its access list. Every editor now sees those names.
+Your auth plugin answers through the `/users/batch` cache; a failed lookup leaves the names out.
+
+**To adopt.** Nothing, unless you call either API yourself: read `data.users`.
+
+#### A date picker, a form header, and a toolbar that wraps
+
+<!-- changeset: date-picker-form-header-wrapping-toolbar -->
+
+_First in int.115._
+
+**What changed.** A `datetime` field is a Mantine `DateTimePicker`, still stored as ISO UTC. The
+form has a sticky header with the entry's title and type, an "Outline" of its fields and rows to
+jump to, and Expand or Collapse all lists. The markdown toolbar wraps in a narrow form. canopycms
+now depends on `@mantine/dates` and `dayjs`, and loads `@mantine/dates/styles.css` with its other
+editor styles.
+
+**To adopt.** Nothing. Browser tests that typed into a `datetime-local` input pick a date instead.
+
+#### Editor colours reach 4.5:1 in light and dark mode
+
+<!-- changeset: editor-colours-reach-contrast-in-both-schemes -->
+
+_First in int.115._
+
+**What changed.** The editor theme draws each colour's text, light and subtle variants at 4.5:1,
+uses primary shade 7 in light mode, fills primary Buttons and Badges at 4.5:1 under white text in
+both schemes (`--canopy-primary-fill`), and sets placeholders,
+dark-mode dimmed text, input borders (3:1), destructive and error text, and editor panels from
+scheme-aware variables, so `colorScheme="dark"` leaves no light surface behind. Every Tooltip
+opens on keyboard focus. Date-time fields follow the browser's 12- or 24-hour clock and read a
+date-only value as local midnight; empty header menus show a focusable item saying why.
+
+**To adopt.** Nothing, unless visual snapshots or browser tests assert the old colours, or click
+the navigator's "Delete…" or "Delete collection…", now "Delete entry" and "Delete collection". A
+`themeOverride` setting `primaryShade` or `components.Tooltip.defaultProps.events` replaces these
+defaults.
+
+**Now deletable.** Local overrides that darkened light buttons, badges, placeholders or input
+borders for contrast.
+
+#### Editor contrast, and blocked buttons stay focusable
+
+<!-- changeset: editor-contrast-and-focusable-blocked-buttons -->
+
+_First in int.115._
+
+**What changed.** Dimmed editor text is `gray.7`, or `dark.1` in dark mode. Filled red buttons
+are `red.8`; filled orange, `orange.6` with black text. A blocked Save, Submit, Withdraw, Purge or
+menu item is `aria-disabled`, not `disabled`, so its reason shows on focus. The header's entry
+menu says "Reload entry" and "Discard changes".
+
+**To adopt.** A `themeOverride` setting `components.Button.vars` replaces the editor's filled red
+and orange Button resolver, and one setting `components.Alert.vars` replaces the resolver that
+gives a light yellow Alert's title, icon and close button the text colour.
+Browser tests check `aria-disabled`; Playwright's `toBeDisabled` reads it. Tests that click the
+old "Reload File" or "Discard File Draft" use the new labels.
+
+**Now deletable.** Local overrides that darkened the same text or buttons.
+
+#### Editor focus rings and checked controls reach 3:1 for any brand
+
+<!-- changeset: editor-focus-ring-and-control-contrast -->
+
+_First in int.115._
+
+**What changed.** Focus rings, focused borders, checked controls and the active tab draw in
+`--canopy-focus-ring`, the first step of your primary colour at 3:1 on the editor's surfaces, so
+a dark brand such as `#1e3a8a` is lightened in dark mode and a checked control's tick turns black
+where white would not show. Unchecked Checkbox, Radio and Switch borders take
+`--canopy-input-border`. Selected options and dates sit on `--canopy-primary-fill`. Badges are
+sentence case, coloured badges use their light variant, dark-mode dimmed text and input
+descriptions are italic, the navigator's entry badge shows the entry type's label, count badges show
+their tint instead of the primary colour, and Markdown popups have a border in dark mode.
+
+**To adopt.** Nothing, unless visual snapshots or browser tests assert the old colours or badge
+text, such as the System Health panel's "corrupt metadata", now "Corrupt metadata". A
+`themeOverride` that sets `primaryShade` moves where the ring starts.
+
+#### Editor requests time out instead of hanging
+
+<!-- changeset: editor-requests-time-out -->
+
+_First in int.115._
+
+**What changed.** Every editor API request has a deadline: 75 s, 90 s for branch create, and 180
+s for submit, admin branch scans and repairs, and the proxied upload. Past it the editor says so.
+A save keeps your changes. A write with no answer, or a gateway's error page, may still have gone
+through, so the editor says that rather than inviting a blind retry, and reloads what it can. The
+content and branch-list load failures offer Retry. A comments panel or popover held open by a
+write in flight says why.
+
+**To adopt.** Nothing, unless browser tests hold an API response for longer than a deadline to
+observe a busy state; keep such holds under it.
+
+#### Field editing: descriptions, list-card titles, and public/ images, continued
+
+<!-- changeset: list-card-titles-and-block-descriptions -->
+
+_First in int.115._
+
+Continues [Field editing: descriptions, list-card titles, and public/ images](#field-editing-descriptions-list-card-titles-and-public-images).
+
+**What changed.** A list card with no `itemTitleField`, or whose `itemTitleField` value is blank,
+takes its title from its first non-blank `string` field, then "Item N" (or its `itemLabel`, as in
+"Team member N"). A block template's `description` now renders; see
+[List items and blocks collapse](#list-items-and-blocks-collapse-and-reorder-from-one-menu).
+
+#### List items and blocks collapse, and reorder from one menu
+
+<!-- changeset: list-items-and-blocks-collapse -->
+
+_First in int.115._
+
+**What changed.** Object-list items and block sections are collapsible rows with a drag handle
+and a "…" menu: Move up, Move down, Duplicate, Remove. Blocks are added from "Add section" or the
+"+" above any block; both menus show each template's `description`, as does an open block. A
+`list: true` object takes an optional `itemLabel` ("team member") naming its items.
+
+**To adopt.** Optionally set `itemLabel`. Browser tests that clicked a row's "Remove", "Move block
+up" or the "Add block..." select use the row's `Actions for <title>` menu (`Actions for <title>, <secondary>` when the row shows
+a second value) or "Add section".
+
+**Now deletable.** Template labels that repeated the template's description.
+
+#### "Add entry" follows path permissions; admin panels and labels tidied
+
+<!-- changeset: navigator-add-follows-path-access-and-ux-batch2-rest -->
+
+_First in int.115._
+
+**What changed.** The entries listing (`GET /:branch/entries`) gains `collectionAccess`, one
+`canAddEntry` per listed collection, and the navigator offers "Add entry…" only where it is true.
+The group and permission managers always name people, never show a raw id, confirm before their
+save bar's "Discard changes", and keep Delete off the built-in groups. A read-only toggle can be
+focused and announces its state. The sync-failed badge's reason opens on focus and touch. Editor
+labels such as "All entries", "Manage permissions" and "Create group" are now in sentence case.
+Discarding an entry's changes toasts only for a read-only branch's hidden draft, where the form shows
+no change.
+
+#### Quick open, a navigator filter, title-first new entries, and media search
+
+<!-- changeset: quick-open-navigator-filter-media-search -->
+
+_First in int.115._
+
+**What changed.** Ctrl+P (⌘P on macOS) opens a quick-open list of entries from anywhere in the
+editor, even inside a text field, unless another dialog is open (the Content drawer gives way to
+it), so the browser's print shortcut never prints while the editor
+is open. The navigator filters by title or slug. "Add entry" asks for the title first, when the
+entry type has a title field, and derives the slug from it until the slug is edited. The media
+library searches, sorts and filters all its files, in a grid or a list.
+
+**To adopt.** Nothing, unless browser tests add an entry by typing only a slug: fill in "Title"
+too when the entry type has one.
+
+#### A save never brings back a deleted or moved entry — **behaviour change**
+
+<!-- changeset: save-never-recreates-deleted-entry -->
+
+_First in int.115._
+
+**What changed.** A save of an entry that was deleted or moved since it was opened is now refused
+with a 409 (code `ENTRY_GONE`) instead of quietly re-creating it, which undid the other editor's
+delete or left a second copy beside a renamed entry. For a renamed entry the editor opens it under
+its new name with the changes still in the form, ready to save again. For a deleted one it keeps
+the changes and offers "Save as new entry", a deliberate create. This also covers an editor's own
+delete or rename that got no answer. Creating an entry is unchanged.
+
+#### Submit names unsaved entries; unanswered writes recover more
+
+<!-- changeset: submit-warns-unsaved-and-unanswered-writes-recover -->
+
+_First in int.115._
+
+**What changed.** Submitting a branch with unsaved edits names the entries the submit leaves
+out, and its confirm reads "Submit anyway". After a write the server never answered, the editor
+re-reads what it touched: a comment the reload shows counts as posted, otherwise it is a yellow
+warning; a rename the re-list shows under its new name keeps that entry selected, otherwise the
+rename dialog warns in yellow; and a collection create or details save fills its dialog in again
+on the next open, unless a fresh read then shows it landed (a create only once a read rules it
+out). The save-outcome toasts name their
+entry. A lookup sent as a POST that times out says to try again. Removing a staged entry type
+from a new collection goes at once, with Undo in the dialog.
+
+#### Unlabelled fields and block templates show their names as words
+
+<!-- changeset: unlabelled-fields-read-as-words -->
+
+_First in int.115._
+
+**What changed.** A field, group or block template with no `label` shows its name in sentence case,
+`metaText` as "Meta text", in its form label, the outline, comment and validation breadcrumbs, the
+block picker and the Remove toast.
+
+**To adopt.** Nothing, unless your browser tests find such a field by its raw name. Give it a
+`label` to choose the words yourself.
+
+#### Stable releases follow the changes they carry, and ship their changelog
+
+<!-- changeset: stable-releases-from-changesets -->
+
+_First in int.115._
+
+**What changed.** A stable version is now chosen by what it carries: a minor when an entry asks
+adopters to act, a patch otherwise. The first one is `0.1.0`. Each stable build ships this
+changelog as `node_modules/canopycms/CHANGELOG.md`, with its links pinned to the release commit,
+as int builds already do.
+
+**To adopt.** Nothing. With `0.1.0` and later, a `^0.1.0` range takes patches without action.
+
+#### List items and blocks carry a `_key`, and field comments follow it — **behaviour change**
+
+<!-- changeset: list-items-and-blocks-carry-keys -->
+
+_First in int.115._
+
+**What changed.** Every object-list item and block now has a `_key`, a short string that names it
+among its list's items. A move or an edit keeps it; Add, insert and Duplicate get new ones. The
+editor writes keys into the file on the next save, so the first save of an entry adds a `_key`
+line to each of its list items and blocks. Until then, reads give an item without one a key made
+from its content. A comment on a field inside a list item or block now follows that item. A
+comment whose item was removed stays on the entry, under "Comment on this entry", marked "On a
+removed item".
+
+Reads return `_key`, and so does the data a `validateEntry` hook is given: `TypeFromEntrySchema`
+types it as an optional `_key?: string` on list items and blocks. A block keeps it beside
+`template`, never inside `value`. The unknown-field warnings never report it.
+
+**To adopt.** Rename any schema field named `_key`: the config now refuses it. If your code,
+a `validateEntry` hook included, checks content against a strict schema, allow `_key` on list
+items and blocks. Don't spread a list item onto a DOM element (`<li {...item}>`), or it renders
+a `_key` attribute. `_key` also suits React's `key` when rendering a list.
+
+#### `stampOnPublish` dates a new entry at its first submit
+
+<!-- changeset: datetime-stamp-on-publish -->
+
+_First in int.115._
+
+**What changed.** A top-level `datetime` field can set `stampOnPublish: true`. When Canopy first
+submits an entry the base branch does not have, it fills that field, if empty, with the submit's
+time, in the commit it pushes. A set value is never overwritten, and an entry already on the base
+branch, even renamed or moved, or merged without a Canopy submit, is never stamped. The field's description
+states the rule, the submit toast counts the entries dated, and after a submit that succeeds the
+editor carries an unsaved draft of a stamped entry onto its stamped version.
+The flag is refused off a top-level `datetime`, on `list: true`, and with `required: true`.
+
+**To adopt.** Add `stampOnPublish: true` to the date field your site sorts or labels by, such as
+`{ name: 'publishedAt', type: 'datetime', stampOnPublish: true }`. See [Stamping a publication date](README.md#stamping-a-publication-date).
+
+**Now deletable.** A build step or hook that writes a missing publication date into new entries.
+
+#### A left activity rail and a docked content panel
+
+<!-- changeset: editor-activity-rail -->
+
+_First in 0.1.0._
+
+**What changed.** A rail down the editor's left edge opens the content panel, quick open, the
+Branches and Comments drawers and the media library, with Settings and the account control at its
+foot. Comments open from the rail only, with the unresolved count on the button, and the media
+library has its own button instead of a Settings menu item. In a wide side-by-side window the
+content panel docks beside the preview and stays open as you move between entries. Its width and
+whether it is open survive a reload. Narrower than 1024px, or stacked, it lays over the form
+only, so the preview stays in view. Below 1024px the editor also starts stacked until you choose
+a layout. Notifications moved to the bottom-right corner, opposite the rail.
+
+#### `editor.subtitle` removed; the tab names the open entry — **breaking (`editor.subtitle` removed)**
+
+<!-- changeset: editor-subtitle-removed-tab-title -->
+
+_First in 0.1.0._
+
+**What changed.** `editor.subtitle` is no longer a config option, and `Editor` no longer takes
+`subtitle` or `siteSubtitle`: nothing has shown them since the top bar replaced the old header.
+While the editor is mounted, the browser tab reads "Entry label · Site title", or the site title
+with no entry open, and your page's own title comes back when it unmounts, unless a page navigated to has set its own.
+
+**To adopt.** Delete `editor.subtitle` from your config; it was no longer shown.
+
+#### The editor takes over the window — **breaking (`EditorPanes` export removed)**
+
+<!-- changeset: editor-takes-over-the-window -->
+
+_First in 0.1.0._
+
+**What changed.** The editor renders as one full-window layer above your page, so a header or
+footer your root layout renders no longer pushes it down or makes the page scroll. While it is
+mounted, its sign-in and loading screens included, your layout's elements are hidden and out of
+the Tab order, and the page does not scroll; unmount restores them. The footer is gone: the version and an "About CanopyCMS" link are
+in the Settings menu. The two read-only banners sit in their own row under the header. The
+preview/form divider is now keyboard-resizable within the same 15–85% the split was always
+stored at, and `react-split-pane` is no longer a dependency.
+`EditorPanes`, `EditorPanesProps`, the `PaneLayout` type and the `SPLIT_PERCENT_*` and `DEFAULT_*_SPLIT_PERCENT` constants are
+no longer exported from `canopycms/client`. See
+[Your root layout](README.md#editor-customization).
+
+**To adopt.** Nothing, unless you import `EditorPanes` or those constants: render `CanopyEditor`
+instead, which lays out its own panes. Hiding your site chrome on the editor route is now
+optional, but keeping analytics and global fetches out of it is still worthwhile.
+
+**Now deletable.** A wrapper that drops the site header and footer on the editor route only to
+stop them shifting the editor.
+
+#### The editor's top bar, with Save all — **behaviour change**
+
+<!-- changeset: editor-top-bar-and-save-all -->
+
+_First in 0.1.0._
+
+**What changed.** The editor's header is a 48px top bar. Its breadcrumb's crumbs navigate: "All
+content" opens the content panel, and a collection crumb opens it on that collection. The open
+entry's crumb holds the entry menu, whose "Reload entry" is now "Refresh from server". A
+"Read-only" chip says why the entry or branch takes no edits. The branch pill shows the branch,
+its status and how many entries are unsaved, and its menu lists them; its "Reload all entries" is
+now "Refresh branch" and re-reads the entry list too. Beside Save, a caret offers "Save all", which
+saves every unsaved entry on the branch and names any it could not save, with the reason, keeping
+their changes. The site title and `editor.subtitle` no longer appear in the header; the rail's
+monogram carries the site title. Below 62em the breadcrumb takes its own row and the actions wrap, so no control is clipped. A content save refused because the
+branch is mid-rebase now carries `code: 'BRANCH_SYNCING'`.
+
+**To adopt.** Nothing, unless your browser tests find the header by its old text: "Reload entry",
+"Reload all entries", "Recently modified", "No entry selected", or the file menu's "All content"
+item, which the breadcrumb's "All content" replaces.
+
+#### Rename and delete from the entry menu; Save says "Saved" itself — **behaviour change**
+
+<!-- changeset: entry-menu-rename-delete-inline-saved -->
+
+_First in 0.1.0._
+
+**What changed.** The open entry's menu, on its name in the top bar, offers "Rename…" and
+"Delete entry", through the same dialogs as the content panel's. On a locked branch both stay in
+the menu, blocked, with the reason; for an entry a path rule refuses they are hidden, as in the
+content panel. A Save reads "Saving…" on the button, then "Saved" for two seconds, announced to
+screen readers, instead of a green "Saved" toast; on a phone the button shows a spinner, then a
+check. Failures still show their toast or alert, and Save all its result. Save is the top bar's
+one filled button; "Submit for review" and "Withdraw from review" are tinted. From either menu,
+deleting the open entry leaves no entry open instead of opening the first, and renaming it keeps
+it open under its new name. The delete dialog names the entry.
+
+**To adopt.** Nothing, unless your browser tests wait for a "Saved" toast after Save: wait for the
+save request's response, or for the Save button to read "Saved".
+
+#### The preview has a toolbar with device widths, reload and the saved version
+
+<!-- changeset: preview-toolbar -->
+
+_First in 0.1.0._
+
+**What changed.** A toolbar above the editor's preview shows the page's path on your site
+(without `editor.previewPrefix` or `?branch=`), which copies on click. Its width selector
+renders the page at Fit, Desktop (1280 px), Tablet (768 px) or Mobile (390 px): the iframe takes
+exactly that CSS width, so your site's own breakpoints apply, scaled down when the pane is
+narrower. The choice persists per browser. Reload reloads the preview, the same action as the
+"Live updates off" Retry. "Open saved version" opens the page's `?branch=` URL in a new tab,
+which shows the branch's last saved state, without unsaved edits. A preview error now sits
+between the toolbar and the page instead of over it, naming the field by its labels. A custom
+`renderPreview` gets no toolbar. `PreviewFrame` takes two new optional props, `iframeStyle` and
+`onReload`.
+
+#### The preview toolbar holds the highlight toggle and maximizes the preview; the layout toggle moves to the rail
+
+<!-- changeset: preview-toolbar-controls -->
+
+_First in 0.1.0._
+
+**What changed.** The highlight toggle moves from the strip at the editor's right edge into the
+preview toolbar, and the layout toggle into the rail, above Settings, so it works with any
+preview or none; the strip is gone. The layout button shows the current layout and switches to
+the other; while the preview is maximized it says to restore the preview first. Layout, preview
+width and highlights persist per browser. Maximize lays the preview over the preview and form
+area, without reloading it, and drafts keep reaching it. Restore brings the form back, and so
+does Esc unless focus is inside the page. Anything that needs the form restores it too: a click
+on a highlighted element, which scrolls to its field, opening the content panel over the form,
+or a save refused for field errors. Dragging the divider between preview and form shows the
+preview's width over it, and resizing the panes, by drag or key, switches the width to Fit.
+Admins with highlights on see an "N unmapped" chip when the page marks fields that don't exist
+in the entry. It explains what that means and points to the browser console, which names the
+nearest field of each. Editors see no such diagnostics. A custom `renderPreview`, and an entry
+with no preview page, get no toolbar.
+
+#### Linear-time mount paths and push refusals, and a fixed message for non-Error gateway failures — **security fix**
+
+<!-- changeset: codeql-release-alerts -->
+
+_First in 0.1.0._
+
+**What changed.** The AI export trims slashes from `AIContentConfig.mountPath`, and the worker
+and its GitHub gateway recognise GitHub's refusal of a workflow push, in time linear in their
+length; a long run of slashes or a repeated phrase took seconds before. When the gateway fails with
+a thrown value that is not an `Error`, the worker gets a fixed message and the gateway's log gets
+the value, scrubbed and capped, since it could hold a stack.
 
 ### 0.0.67
 
