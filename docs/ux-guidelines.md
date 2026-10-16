@@ -8,23 +8,24 @@ The standard for every change to the CanopyCMS editor (`packages/canopycms/src/e
 One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 `packages/canopycms/src/editor/copy.ts`.
 
-| Say                       | For                                                                                        | Not                                         |
-| ------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------- |
-| **Save**                  | Writing the open entry to the branch                                                       | Save file, Commit                           |
-| **Save all**              | Saving every unsaved entry on the branch                                                   | Save branch                                 |
-| **Refresh from server**   | Replacing the open entry with its saved copy                                               | Reload entry                                |
-| **Submit for review**     | Committing the branch and opening its pull request                                         | Submit branch, Publish                      |
-| **Withdraw from review**  | Taking a submitted branch back for editing                                                 | Withdraw branch                             |
-| **Request changes**       | A reviewer sending a branch back to its editor                                             | Reject                                      |
-| **Switch branch**         | Opening another branch                                                                     | Change branch, Change / Manage              |
-| **New branch**            | Creating a branch                                                                          | Create branch, except as its form's confirm |
-| **Remove**                | Taking an item out of a list or field; unlisting an entry type                             | Clear, Delete                               |
-| **Clear**                 | Resetting an optional object field to unset                                                | Remove                                      |
-| **Delete**                | Destroying a stored entry, collection, branch or group                                     | Remove                                      |
-| **Discard changes**       | Throwing away unsaved edits                                                                | Discard drafts, Revert                      |
-| **entry**, **collection** | A content item, and the folder that holds entries                                          | file, page, item; folder                    |
-| **file**                  | An item in the media library                                                               | asset, media item                           |
-| **Content**               | The panel of collections and entries; its menu item and breadcrumb root read "All content" | All entries                                 |
+| Say                       | For                                                            | Not                                         |
+| ------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
+| **Save**                  | Writing the open entry to the branch                           | Save file, Commit                           |
+| **Save all**              | Saving every unsaved entry on the branch                       | Save branch                                 |
+| **Refresh from server**   | Replacing the open entry with its saved copy                   | Reload entry                                |
+| **Submit for review**     | Committing the branch and opening its pull request             | Submit branch, Publish                      |
+| **Withdraw from review**  | Taking a submitted branch back for editing                     | Withdraw branch                             |
+| **Request changes**       | A reviewer sending a branch back to its editor                 | Reject                                      |
+| **Switch branch**         | Opening another branch                                         | Change branch, Change / Manage              |
+| **New branch**            | Creating a branch                                              | Create branch, except as its form's confirm |
+| **Remove**                | Taking an item out of a list or field; unlisting an entry type | Clear, Delete                               |
+| **Clear**                 | Resetting an optional object field to unset                    | Remove                                      |
+| **Delete**                | Destroying a stored entry, collection, branch or group         | Remove                                      |
+| **Discard changes**       | Throwing away unsaved edits                                    | Discard drafts, Revert                      |
+| **entry**, **collection** | A content item, and the folder that holds entries              | file, page, item; folder                    |
+| **file**                  | An item in the media library                                   | asset, media item                           |
+| **Content**               | The panel of collections and entries                           | All entries                                 |
+| **Change URL**            | Changing an entry's slug; "Change slug" without a page         | Rename                                      |
 
 Branch status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`.
 
@@ -35,7 +36,7 @@ Branch status labels and colours come from `packages/canopycms/src/editor/branch
 - **Buttons start with a verb** and name the result. A confirm repeats the action's verb
   ("Delete entry"), never "OK" or "Yes"; a form's confirm may add its noun ("Create branch").
 - **`…`, the single character,** marks an in-progress state ("Saving…") or a command that
-  asks for more input ("Rename…"). None on a command that acts at once or only opens a
+  asks for more input ("Change URL…"). None on a command that acts at once or only opens a
   confirm or a menu ("Delete branch", "Add section"); never three ASCII dots.
 - **One primary action per card, by role**: on the open branch's card, a reviewer of someone
   else's submission sees "Request changes" and anyone else its workflow action; other cards
@@ -76,13 +77,13 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
   names the thing, states the consequences (`ReferencedByList` lists entries that reference
   it), and its red confirm button repeats the verb.
 - **Undo instead of confirm** for removals inside a form: a list item, block or image goes at
-  once, and a toast offers Undo, as does an optional object's Clear. Undo updates the current
-  draft rather than restoring a snapshot, and moves focus to the restored row or object. Inside a
-  modal, the Undo is the dialog's own status line: a toast would sit outside its focus trap.
+  once, and a toast offers Undo; an optional object's Clear leaves "Undo clear" behind. Undo
+  updates the current draft rather than restoring a snapshot, and moves focus to the restored row
+  or object. Inside a modal, the Undo is the dialog's own status line: a toast would sit outside
+  its focus trap.
 - A removed item's comment threads move to the entry's thread, labelled "On a removed item", and
   the Remove toast says so.
-- Never both. A removal with no restore UI, such as "Remove from library", confirms: an Undo
-  would be false.
+- Never both. A removal most users can't restore, such as "Remove from library", confirms.
 
 ## Disabled controls
 
@@ -220,9 +221,9 @@ primary is filled: other badges, icons and indicators take their colour's light 
 
 The editor fills the window as one grid: **top bar** (breadcrumb and entry menu, branch pill,
 Submit or Withdraw, unsaved indicator, Save and Save all), **banner** (branch-wide notices),
-**rail** (activity icons, layout, settings), **panel** (content tree, docked when wide and side by
-side, else over the form), **main** (preview and form) and **overlays** (branches, comments and
-media drawers, quick open, modals, toasts). The regions are layout only; features plug into them. New UI goes
+**rail** (activity icons, layout, settings), **panel** (content tree, docked when wide, in the
+form row when stacked, else over the form), **main** (preview and form) and **overlays** (drawers,
+quick open, modals, toasts). The regions are layout only; features plug into them. New UI goes
 into an existing region, and adding a region is a design decision. The unsaved indicator is
 icon-only below `lg`.
 

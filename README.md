@@ -513,7 +513,7 @@ Common options on any field:
   description: 'Hint',    // Optional: help text shown under the label in the editor
   required: true,         // Optional: validation requirement
   list: true,             // Optional: allow multiple values
-  isTitle: true,          // Optional: the entry's title in the editor sidebar
+  isTitle: true,          // Optional: names the entry (single-entry types use their label)
 }
 ```
 
@@ -1215,7 +1215,7 @@ import { assetUrl, assetSrcSet } from 'canopycms'
 
 **`image` fields** hold `{ src, alt, width, height, crop? }`: alt text is enforced, and a crop is a directive, not a derived file. Passing the value to `assetUrl`/`assetSrcSet` applies its crop (`opts.crop` overrides). `width`/`height` are the uncropped original's; scale them by `crop.w`/`crop.h`. Declare an `aspect` (`'16:9'`, `'1:1'`) to enable the crop step, and `altOptional: true` for decorative images.
 
-**Permissions** — any authenticated editor can upload and list assets. Deleting one from the library requires being an admin **or** the uploader, and removes only the library record; existing content references keep resolving.
+**Permissions** — any authenticated editor can upload and list assets. Removing one from the library requires being an admin **or** the uploader and only hides it, so content keeps resolving.
 
 > **The asset store is site-wide, not branch-scoped.** Assets are content-addressed and shared (which is what lets a branch merge avoid moving files), so branch and path ACLs do **not** apply to them: any authenticated editor can list and fetch every asset in the site, including images uploaded on branches they cannot otherwise access. Treat "uploaded to CanopyCMS" as visible to your whole editorial team — confidential material does not belong in the asset store.
 

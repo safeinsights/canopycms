@@ -11,7 +11,7 @@ Asset store v2 (S3/Local adapters, `factory.ts` consumes `media` config), finali
 
 ## Create-only writes
 
-`putOriginal`, `putPublicObject`, `copyPublicObject` and `putMetaIfAbsent` return `CreateOnlyResult` (`types.ts`). S3 funnels them through `createIfAbsent` (`store-s3.ts`, `IfNoneMatch: '*'`); local through `createExclusive` (`store-local.ts`: a temp file under `.asset-tmp/`, then `link()`), except `putMetaIfAbsent`'s `wx` open. In canopycms-cdk, `AssetSupport`'s `enforceCreateOnlyWrites` denies every unconditional put to the content-addressed prefixes.
+`putOriginal`, `putPublicObject`, `copyPublicObject`, `putMetaIfAbsent`, `hideAsset` return `CreateOnlyResult` (`types.ts`). S3 funnels them through `createIfAbsent` (`store-s3.ts`, `IfNoneMatch: '*'`); local through `createExclusive` (`store-local.ts`: a temp file under `.asset-tmp/`, then `link()`), except `putMetaIfAbsent`'s `wx` open. In canopycms-cdk, `AssetSupport`'s `enforceCreateOnlyWrites` denies every unconditional put to the content-addressed prefixes.
 
 ## Materialize
 
