@@ -18,6 +18,8 @@ import {
 import { useIsomorphicEffect } from '@mantine/hooks'
 import { IconChevronsDown, IconChevronsUp, IconListTree } from '@tabler/icons-react'
 
+import { PANE_HEADER_HEIGHT } from './pane-header'
+
 /** The padding of the scroller the form sits in, which `shell/PaneLayout.tsx` sets; 0 where unset. */
 const PANE_PADDING = 'var(--canopy-form-pane-padding, 0px)'
 
@@ -47,6 +49,7 @@ export interface OutlineNode {
 }
 
 export interface FormHeaderProps {
+  /** The entry's name, for assistive tech only: the top bar's breadcrumb shows it. */
   title: string
   /** The entry type's label, shown as a badge. */
   typeLabel?: string
@@ -115,7 +118,7 @@ const OutlineList: React.FC<{
 )
 
 /**
- * The form's sticky header: which entry this is, an outline of its fields to jump to, and
+ * The form's sticky header: the entry's type, an outline of its fields to jump to, and
  * Expand all / Collapse all for every list and block field in it.
  */
 export const FormHeader: React.FC<FormHeaderProps> = ({
@@ -159,23 +162,24 @@ export const FormHeader: React.FC<FormHeaderProps> = ({
         top: `calc(-1 * ${PANE_PADDING})`,
         zIndex: 3,
         margin: `calc(-1 * ${PANE_PADDING}) calc(-1 * ${PANE_PADDING}) 0`,
-        padding: `8px ${PANE_PADDING}`,
+        display: 'flex',
+        alignItems: 'center',
+        minHeight: PANE_HEADER_HEIGHT,
+        padding: `2px ${PANE_PADDING}`,
         backgroundColor: 'var(--canopy-surface-muted)',
         borderBottom: '1px solid var(--mantine-color-default-border)',
       }}
     >
-      <Group gap="xs" wrap="nowrap">
-        <Text fw={600} size="sm" truncate="end" style={{ minWidth: 0 }}>
-          {title}
-        </Text>
+      <Group gap="xs" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+        <VisuallyHidden data-testid="form-header-title">{title}</VisuallyHidden>
         {typeLabel && (
           <Badge
             variant="light"
             color="gray"
             size="sm"
             tt="none"
-            // Gives way before the title in a narrow pane.
-            style={{ flexShrink: 2, minWidth: 0 }}
+            // Gives way before the controls in a narrow pane.
+            style={{ minWidth: 0 }}
           >
             {typeLabel}
           </Badge>

@@ -31,13 +31,26 @@ const renderModal = (extra: Partial<React.ComponentProps<typeof RenameEntryModal
 }
 
 describe('RenameEntryModal', () => {
-  it('names the entry being renamed and starts from its current slug', async () => {
+  it('is titled "Change URL" and starts from the current slug', async () => {
     renderModal()
 
-    expect(screen.getByText('Rename entry')).toBeTruthy()
-    expect(screen.getByText('Renaming “Hello World”')).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Change URL' })).toBeTruthy()
+    expect(submitButton().textContent).toBe('Change URL')
     expect(slugInput().value).toBe('hello-world')
     await waitFor(() => expect(document.activeElement).toBe(slugInput()))
+  })
+
+  it("says the entry's name comes from its title field, which it names when it can", () => {
+    renderModal({ titleFieldLabel: 'Hero › Heading' })
+    expect(screen.getByTestId('change-url-help').textContent).toBe(
+      'This changes the URL and file name of “Hello World”, not its name, which comes from its “Hero › Heading” field. Edit that field in the form to change the name.',
+    )
+
+    cleanup()
+    renderModal()
+    expect(screen.getByTestId('change-url-help').textContent).toContain(
+      'not its name, which comes from its title field.',
+    )
   })
 
   it.each([
@@ -55,7 +68,7 @@ describe('RenameEntryModal', () => {
     expect(alert.getAttribute('style')).toContain(colour)
   })
 
-  it('does not offer Rename until the slug changes', () => {
+  it('does not offer Change URL until the slug changes', () => {
     renderModal()
 
     expect(submitButton().disabled).toBe(true)
@@ -115,7 +128,7 @@ describe('RenameEntryModal', () => {
     expect(screen.queryByText('An entry with this slug already exists')).toBeNull()
   })
 
-  it('saves the new slug with the Rename button', async () => {
+  it('saves the new slug with the Change URL button', async () => {
     const user = userEvent.setup()
     const { onSave } = renderModal()
 

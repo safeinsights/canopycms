@@ -57,7 +57,9 @@ import {
   buildCollectionLabels,
   entryStatusLabel,
   entryTypeLabel,
+  entryTypeLine,
   buildBreadcrumbSegments,
+  titleFieldLabel,
 } from './editor-utils'
 import {
   useEditorLayout,
@@ -85,7 +87,7 @@ import { usePreviewMarks } from './hooks/usePreviewMarks'
 import { BranchLockBanner, EditorHeader, EditorRail } from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
-import { QuickOpenPalette } from './components/QuickOpenPalette'
+import { QuickOpenPalette, type QuickOpenEntry } from './components/QuickOpenPalette'
 import { rememberOpener, returnTarget } from './utils/focus-return'
 import { modKeyLabel } from './platform'
 import { EDITOR_ACTIONS } from './copy'
@@ -327,7 +329,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const [deleteInProgress, setDeleteInProgress] = useState(false)
   // A rename or delete asked for from the top bar's entry menu, whose item is gone once it acts.
   const [entryChangeFromMenu, setEntryChangeFromMenu] = useState(false)
-  const allContentCrumbRef = useRef<HTMLButtonElement>(null)
+  const contentToggleRef = useRef<HTMLButtonElement>(null)
 
   // Draft compile/render error reported by the preview page (null = renders cleanly)
   const [previewError, setPreviewError] = useState<{ message: string; fieldPath?: string } | null>(
@@ -463,6 +465,8 @@ const EditorContent: React.FC<EditorProps> = ({
         contentRoot,
         basePath,
       }),
+    resolvePreviewRoute: (entry) =>
+      buildPreviewRoute(entry, { previewBaseByCollection, contentRoot }),
     setBusy: setEntriesLoading,
   })
 
@@ -1467,7 +1471,8 @@ const EditorContent: React.FC<EditorProps> = ({
     setContentPanelShown(true)
     setContentPanelFocusRequest((request) => request + 1)
   }
-  // A collection crumb opens the panel as "All content" does, then its collection's row takes focus.
+  // A collection crumb opens the panel as the rail's Content button does, then its collection's row
+  // takes focus.
   const [collectionReveal, setCollectionReveal] = useState<{ path: string; seq: number }>()
   // Only ever rises: the navigator serves each seq once, and the request is cleared once served.
   const revealSeqRef = useRef(0)
@@ -1495,9 +1500,10 @@ const EditorContent: React.FC<EditorProps> = ({
       })
       .catch(console.error)
   }
-  // The entry menu's trigger stands in for its item; once the entry is deleted, "All content".
+  // The entry menu's trigger stands in for its item; once the entry is deleted, the rail's Content
+  // button, where another entry is found.
   const entryChangeReturnTarget = entryChangeFromMenu
-    ? () => navigatorToggleRef.current ?? allContentCrumbRef.current
+    ? () => navigatorToggleRef.current ?? contentToggleRef.current
     : undefined
   const navigatorReturnTarget = () =>
     returnTarget(navigatorOpenerRef.current, () => navigatorToggleRef.current)
@@ -1597,6 +1603,21 @@ const EditorContent: React.FC<EditorProps> = ({
       ),
     }),
     [entriesState],
+  )
+
+  // Quick open names each entry's type and route under its label.
+  const quickOpenEntries = useMemo<QuickOpenEntry[]>(
+    () =>
+      entriesState.map((e) => ({
+        path: e.path,
+        label: e.label,
+        slug: e.slug,
+        collectionPath: e.collectionPath,
+        collectionName: e.collectionName,
+        typeLabel: entryTypeLine(activeCollections, e),
+        route: buildPreviewRoute(e, { previewBaseByCollection, contentRoot }),
+      })),
+    [entriesState, activeCollections, previewBaseByCollection, contentRoot],
   )
 
   const CenteredMessage = ({ children }: { children: React.ReactNode }) => (
@@ -1900,7 +1921,6 @@ const EditorContent: React.FC<EditorProps> = ({
               branchWriteBlocked={branchContentLocked}
               // A failed fetch leaves the list empty too; the banner says that one.
               branchLoading={!currentBranch && (branchesLoading || branchSummaries.length === 0)}
-              onNavigatorOpen={openNavigator}
               onCollectionOpen={revealCollection}
               navigatorToggleRef={navigatorToggleRef}
               branchToggleRef={branchToggleRef}
@@ -1908,7 +1928,6 @@ const EditorContent: React.FC<EditorProps> = ({
               onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
               onEntryRename={() => currentEntry && handleRenameEntry(currentEntry.path, true)}
               onEntryDelete={() => currentEntry && handleDeleteEntry(currentEntry.path, true)}
-              allContentRef={allContentCrumbRef}
               entryUnavailable={currentEntryUnavailable}
               onEntrySelect={openEntry}
               onBranchReloadData={() => {
@@ -1955,16 +1974,12 @@ const EditorContent: React.FC<EditorProps> = ({
           }
           rail={
             <EditorRail
-              siteTitle={siteTitle}
-              onHomeOpen={() => {
-                const first = entriesState[0]
-                if (first) openEntry(first.path)
-              }}
               contentPanelOpen={contentPanelShown}
               contentPanelId={CONTENT_PANEL_ID}
               onContentToggle={() =>
                 contentPanelShown ? setContentPanelShown(false) : openNavigator()
               }
+              contentToggleRef={contentToggleRef}
               onQuickOpen={openQuickOpen}
               quickOpenShortcut={quickOpenShortcut}
               quickOpenKeys={quickOpenKeys}
@@ -2139,7 +2154,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 onOpen={openQuickOpen}
                 onClose={() => setQuickOpenOpen(false)}
                 returnFocusTo={quickOpenFromOverlay ? navigatorReturnTarget : undefined}
-                entries={entriesState}
+                entries={quickOpenEntries}
                 // The hidden root's entries sit at the top of the tree, so they get no heading here either.
                 collectionLabel={(path) =>
                   path === hiddenRootPath ? '' : collectionLabels.get(path)
@@ -2301,6 +2316,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 <RenameEntryModal
                   isOpen={renameModalOpen}
                   entryLabel={renamingEntry.label}
+                  titleFieldLabel={titleFieldLabel(renamingEntry.schema)}
                   currentSlug={renamingEntry.slug || ''}
                   onSave={handleRenameSubmit}
                   // `renamingEntry` stays until the next rename, so the dialog plays its exit and

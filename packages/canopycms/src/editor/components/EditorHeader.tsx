@@ -29,8 +29,6 @@ export interface EditorHeaderProps {
   editedFiles: Array<{ path: LogicalPath; label: string }>
   /** Entries with unsaved changes on the branch. */
   modifiedCount: number
-  /** Opens the content panel. */
-  onNavigatorOpen: () => void
   /** Opens the content panel on a collection. */
   onCollectionOpen: (collectionPath: string) => void
   /** The entry menu's trigger. */
@@ -40,12 +38,10 @@ export interface EditorHeaderProps {
   /** Replaces the open entry with the server's copy. */
   onFileReload: () => void
   onFileDiscardDraft: () => void
-  /** Opens the open entry's rename dialog. */
+  /** Opens the open entry's "Change URL" dialog. */
   onEntryRename: () => void
   /** Asks to delete the open entry. */
   onEntryDelete: () => void
-  /** The "All content" crumb. */
-  allContentRef?: Ref<HTMLButtonElement>
   onEntrySelect: (path: LogicalPath) => void
   /** Re-reads the branch and its entry list, keeping drafts. */
   onBranchReloadData: () => void
@@ -113,7 +109,6 @@ export function EditorHeader({
   breadcrumbSegments,
   editedFiles,
   modifiedCount,
-  onNavigatorOpen,
   onCollectionOpen,
   navigatorToggleRef,
   branchToggleRef,
@@ -121,7 +116,6 @@ export function EditorHeader({
   onFileDiscardDraft,
   onEntryRename,
   onEntryDelete,
-  allContentRef,
   onEntrySelect,
   onBranchReloadData,
   onBranchDiscardDrafts,
@@ -205,7 +199,6 @@ export function EditorHeader({
                 ? (branchLockReason ?? entryLockReason)
                 : undefined
           }
-          onAllContent={onNavigatorOpen}
           onCollection={onCollectionOpen}
           onRefresh={onFileReload}
           onDiscard={onFileDiscardDraft}
@@ -221,7 +214,6 @@ export function EditorHeader({
               : undefined)
           }
           entryMenuRef={navigatorToggleRef}
-          allContentRef={allContentRef}
         />
       }
       trailing={

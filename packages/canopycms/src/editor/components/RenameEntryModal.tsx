@@ -1,8 +1,9 @@
 'use client'
 
 /**
- * Allows changing the slug (middle segment) of an entry filename.
- * The content ID is preserved, so drafts and references remain intact.
+ * "Change URL": changes an entry's slug, the middle segment of its file name, which sets its URL.
+ * Its name stays, since it comes from its title field. The content ID is preserved, so drafts and
+ * references remain intact.
  */
 
 import { useState } from 'react'
@@ -11,12 +12,15 @@ import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 
 import { validateEntrySlug } from '../slug'
 import { focusReturnProps } from '../utils/focus-return'
+import { EDITOR_ACTIONS } from '../copy'
 
 export interface RenameEntryModalProps {
   /** Whether the modal is open */
   isOpen: boolean
   /** Current entry label for display */
   entryLabel: string
+  /** The label of the field the entry's name comes from (`titleFieldLabel`), if it has one. */
+  titleFieldLabel?: string
   /** Current slug value */
   currentSlug: string
   /** Called when save is clicked */
@@ -40,6 +44,7 @@ export interface RenameEntryModalProps {
 export function RenameEntryModal({
   isOpen,
   entryLabel,
+  titleFieldLabel,
   currentSlug,
   onSave,
   onClose,
@@ -85,7 +90,7 @@ export function RenameEntryModal({
     <Modal
       opened={isOpen}
       onClose={onClose}
-      title={<Text fw={600}>Rename entry</Text>}
+      title={<Text fw={600}>{EDITOR_ACTIONS.changeUrl}</Text>}
       size="md"
       closeOnClickOutside={!isSaving}
       closeOnEscape={!isSaving}
@@ -105,8 +110,10 @@ export function RenameEntryModal({
             )
           )}
 
-          <Text size="sm" c="dimmed">
-            Renaming “{entryLabel}”
+          <Text size="sm" c="dimmed" data-testid="change-url-help">
+            This changes the URL and file name of “{entryLabel}”, not its name, which comes from its{' '}
+            {titleFieldLabel ? `“${titleFieldLabel}” field` : 'title field'}. Edit that field in the
+            form to change the name.
           </Text>
 
           <TextInput
@@ -138,7 +145,7 @@ export function RenameEntryModal({
               disabled={newSlug === currentSlug}
               data-testid="rename-entry-submit"
             >
-              Rename
+              {EDITOR_ACTIONS.changeUrl}
             </Button>
           </Group>
         </Stack>

@@ -15,4 +15,5 @@ export const EDITOR_ACTIONS = {
   remove: 'Remove',
   clear: 'Clear',
   openEntry: 'Open entry',
+  changeUrl: 'Change URL',
 } as const

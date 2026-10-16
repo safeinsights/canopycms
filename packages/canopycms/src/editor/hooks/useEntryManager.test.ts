@@ -172,6 +172,45 @@ describe('useEntryManager', () => {
     expect(result.current.selectedPath).toBe('entry1')
   })
 
+  describe('with no entry asked for', () => {
+    const at = (name: string, previewSrc?: string): EditorEntry => ({
+      ...mockEntry,
+      path: unsafeAsLogicalPath(name),
+      slug: name,
+      previewSrc,
+    })
+    const settings = at('settings')
+    const about = at('about', '/about')
+    const home = at('home', '/')
+    const routes: Record<string, string> = { about: '/about', home: '/' }
+
+    it('opens the home page, the entry routed at /, wherever it is listed', async () => {
+      const { result } = renderHook(
+        () =>
+          useEntryManager({
+            ...defaultOptions,
+            initialEntries: [settings, about, home],
+            resolvePreviewRoute: (entry) => routes[entry.path],
+          }),
+        { wrapper },
+      )
+      await waitFor(() => expect(result.current.selectedPath).toBe('home'))
+    })
+
+    it('opens the first entry with a preview when none is routed at /', async () => {
+      const { result } = renderHook(
+        () =>
+          useEntryManager({
+            ...defaultOptions,
+            initialEntries: [settings, about],
+            resolvePreviewRoute: (entry) => routes[entry.path],
+          }),
+        { wrapper },
+      )
+      await waitFor(() => expect(result.current.selectedPath).toBe('about'))
+    })
+  })
+
   describe('a create or rename that times out', () => {
     let restoreConsole: () => void
     beforeEach(() => {
@@ -1429,7 +1468,7 @@ describe('useEntryManager', () => {
           err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
         })
         expect(err).toBeInstanceOf(MayHaveLandedError)
-        expect(String(err)).toContain(`Renaming "${opened.label}" may have gone through`)
+        expect(String(err)).toContain(`Changing the URL of "${opened.label}" may have gone through`)
       })
 
       it('leaves the outcome unknown when the entry is still at its old path', async () => {
@@ -1443,7 +1482,7 @@ describe('useEntryManager', () => {
           err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
         })
         expect(err).toBeInstanceOf(MayHaveLandedError)
-        expect(String(err)).toContain(`Renaming "${opened.label}" may have gone through`)
+        expect(String(err)).toContain(`Changing the URL of "${opened.label}" may have gone through`)
       })
 
       it('leaves the outcome unknown when the entries cannot be re-read', async () => {

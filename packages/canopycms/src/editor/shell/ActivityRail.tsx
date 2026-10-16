@@ -18,7 +18,7 @@ const ACTIVITY_RAIL_WIDTH = 44
 const RAIL_ITEM_ATTR = 'data-rail-item'
 
 export interface ActivityRailProps {
-  /** Rail buttons from the top: the monogram, then the activities. */
+  /** Rail buttons from the top: the activities. */
   top: ReactNode
   /** Rail buttons pinned to the bottom, such as Settings. */
   bottom?: ReactNode
@@ -134,8 +134,6 @@ export interface RailButtonProps extends Omit<ComponentPropsWithoutRef<'button'>
   icon: ReactNode
   /** Highlights the button while its panel or drawer is open. */
   active?: boolean
-  /** Tinted at rest, as the site monogram is. */
-  tinted?: boolean
   /** Shown after the label in the tooltip, as the platform writes it ("⌘P"). */
   shortcut?: string
   /** A count badge, hidden at zero; the label should say it too. */
@@ -153,7 +151,6 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
     label,
     icon,
     active = false,
-    tinted = false,
     shortcut,
     count = 0,
     countTestId,
@@ -168,9 +165,9 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
   const button = (
     <ActionIcon
       ref={ref}
-      // Filled, not tinted, when active: a tint alone would show the state by colour, under 3:1.
-      variant={active ? 'filled' : tinted ? 'light' : 'subtle'}
-      color={active || tinted ? undefined : 'gray'}
+      // Filled when active: a tint alone would show the state by colour, under 3:1.
+      variant={active ? 'filled' : 'subtle'}
+      color={active ? undefined : 'gray'}
       size="lg"
       radius="md"
       aria-label={label}

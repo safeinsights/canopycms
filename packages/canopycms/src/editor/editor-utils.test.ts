@@ -12,7 +12,11 @@ import {
   entryStatusLabel,
   entryTypeLabel,
   buildBreadcrumbSegments,
+  buildPreviewRoute,
   calculatePathToEntry,
+  entryTypeLine,
+  resolveHomeEntry,
+  titleFieldLabel,
 } from './editor-utils'
 import type { EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
@@ -980,18 +984,17 @@ describe('buildBreadcrumbSegments', () => {
       contentId: unsafeAsContentId('test123456789'),
     }
     expect(buildBreadcrumbSegments(entry, new Map([['content/posts', 'Blog posts']]))).toEqual([
-      { label: 'All content' },
       { label: 'Blog posts', collectionPath: 'content/posts' },
       { label: '2024', folder: true },
     ])
   })
 
-  it('returns only "All content" when no entry is provided', () => {
+  it('returns no crumbs when no entry is provided', () => {
     const labels = new Map<string, string>()
-    expect(labelsOf(buildBreadcrumbSegments(undefined, labels))).toEqual(['All content'])
+    expect(buildBreadcrumbSegments(undefined, labels)).toEqual([])
   })
 
-  it('returns only "All content" for entry without collectionPath', () => {
+  it('returns no crumbs for an entry without collectionPath', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('test'),
       label: 'Test',
@@ -999,10 +1002,10 @@ describe('buildBreadcrumbSegments', () => {
       contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map<string, string>()
-    expect(labelsOf(buildBreadcrumbSegments(entry, labels))).toEqual(['All content'])
+    expect(buildBreadcrumbSegments(entry, labels)).toEqual([])
   })
 
-  it('returns "All content" for single-level collection (root level)', () => {
+  it('returns no crumbs for a single-level collection (root level)', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('posts/hello'),
       label: 'Hello',
@@ -1013,7 +1016,7 @@ describe('buildBreadcrumbSegments', () => {
     }
     const labels = new Map([['posts', 'Posts']])
     // Single-level collection: parts = ['posts'], loop starts at i=1 which is >= length, so no segments added
-    expect(labelsOf(buildBreadcrumbSegments(entry, labels))).toEqual(['All content'])
+    expect(buildBreadcrumbSegments(entry, labels)).toEqual([])
   })
 
   it('shows hierarchy for nested collections', () => {
@@ -1033,8 +1036,8 @@ describe('buildBreadcrumbSegments', () => {
 
     const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
-    // Should include: All content, Documentation, Guides (skips 'Content' which is the root)
-    expect(result).toEqual(['All content', 'Documentation', 'Guides'])
+    // Skips 'Content', which is the root
+    expect(result).toEqual(['Documentation', 'Guides'])
   })
 
   it('shows hierarchy for deeply nested collections', () => {
@@ -1055,7 +1058,7 @@ describe('buildBreadcrumbSegments', () => {
 
     const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
-    expect(result).toEqual(['All content', 'Documentation', 'API Reference', 'Version 2'])
+    expect(result).toEqual(['Documentation', 'API Reference', 'Version 2'])
   })
 
   it('skips missing labels in hierarchy', () => {
@@ -1076,7 +1079,7 @@ describe('buildBreadcrumbSegments', () => {
     const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     // Should skip the missing 'Documentation' segment
-    expect(result).toEqual(['All content', 'Guides'])
+    expect(result).toEqual(['Guides'])
   })
 
   it('includes slug path segments for nested slugs', () => {
@@ -1093,7 +1096,7 @@ describe('buildBreadcrumbSegments', () => {
     const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     // Should include slug path segments (minus the last one which is the file name)
-    expect(result).toEqual(['All content', '2024', '01'])
+    expect(result).toEqual(['2024', '01'])
   })
 
   it('combines collection hierarchy and slug segments', () => {
@@ -1113,7 +1116,7 @@ describe('buildBreadcrumbSegments', () => {
     const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     // Collection hierarchy + slug segments
-    expect(result).toEqual(['All content', 'Blog Posts', '2024', '01'])
+    expect(result).toEqual(['Blog Posts', '2024', '01'])
   })
 
   it('works for root entry types with maxItems: 1', () => {
@@ -1132,7 +1135,7 @@ describe('buildBreadcrumbSegments', () => {
 
     const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
-    expect(result).toEqual(['All content', 'Settings'])
+    expect(result).toEqual(['Settings'])
   })
 })
 
@@ -1454,5 +1457,203 @@ describe('entryTypeLabel', () => {
     expect(entryTypeLabel(collections, entry('content'))).toBeUndefined()
     expect(entryTypeLabel(collections, entry('content', ''))).toBeUndefined()
     expect(entryTypeLabel(undefined, entry('content'))).toBeUndefined()
+  })
+})
+
+describe('resolveHomeEntry', () => {
+  type Entry = { name: string; collectionPath: string; slug: string; previewSrc?: string }
+  const entry = (name: string, collectionPath: string, slug: string, preview = true): Entry => ({
+    name,
+    collectionPath,
+    slug,
+    previewSrc: preview ? `/src/${name}` : undefined,
+  })
+  const settings = entry('settings', 'content', 'settings', false)
+  const home = entry('home', 'content', 'index')
+  const about = entry('about', 'content/pages', 'about')
+  const nameOf = (
+    entries: Entry[],
+    previewBaseByCollection?: Record<string, string | false>,
+  ): string | undefined =>
+    resolveHomeEntry(entries, (e) =>
+      buildPreviewRoute(e, { previewBaseByCollection, contentRoot: 'content' }),
+    )?.name
+
+  it('opens the entry routed at /, ahead of entries listed before it', () => {
+    expect(nameOf([settings, about, home])).toBe('home')
+  })
+
+  it('reads / with a query or fragment as the home page, but not /index/ or /preview/', () => {
+    expect(nameOf([settings, about, home], { content: '/?draft=1' })).toBe('home')
+    expect(nameOf([settings, about, home], { content: '/#top' })).toBe('home')
+    expect(nameOf([settings, about, home], { content: '/preview/' })).toBe('about')
+    expect(nameOf([settings, about, home], { content: '/index/' })).toBe('about')
+  })
+
+  it('finds a page routed at / by its own previewBase key, or by its collection', () => {
+    const landing = entry('landing', 'content', 'landing')
+    expect(nameOf([settings, about, landing], { 'content/landing': '/' })).toBe('landing')
+    const pagesIndex = entry('pages-index', 'content/pages', 'index')
+    expect(nameOf([settings, about, pagesIndex], { 'content/pages': '/' })).toBe('pages-index')
+  })
+
+  it("is never another site's root page", () => {
+    expect(nameOf([settings, about, home], { content: 'https://example.com/' })).toBe('about')
+  })
+
+  it('ignores the preview prefix and base path, which only the iframe src carries', () => {
+    const prefixed = buildPreviewSrc(
+      { ...home, previewSrc: undefined },
+      {
+        contentRoot: 'content',
+        previewPrefix: '/preview',
+        basePath: '/site',
+        trailingSlash: true,
+      },
+    )
+    expect(prefixed).toBe('/site/preview/')
+    expect(nameOf([settings, about, { ...home, previewSrc: prefixed }])).toBe('home')
+  })
+
+  it('falls back to the first entry with a preview, then to the first entry', () => {
+    expect(nameOf([settings, about])).toBe('about')
+    expect(nameOf([settings, { ...about, previewSrc: undefined }])).toBe('settings')
+    expect(resolveHomeEntry([settings, about])?.name).toBe('about')
+  })
+
+  it('is undefined for no entries', () => {
+    expect(nameOf([])).toBeUndefined()
+  })
+})
+
+describe('singleton entries', () => {
+  const flatSchema: FlatSchemaItem[] = [
+    {
+      type: 'entry-type',
+      logicalPath: unsafeAsLogicalPath('content/settings'),
+      name: 'settings',
+      label: 'Site settings',
+      parentPath: unsafeAsLogicalPath('content'),
+      format: 'json',
+      schema: [],
+      maxItems: 1,
+    },
+    {
+      type: 'entry-type',
+      logicalPath: unsafeAsLogicalPath('content/footer'),
+      name: 'footer',
+      parentPath: unsafeAsLogicalPath('content'),
+      format: 'json',
+      schema: [],
+      maxItems: 1,
+    },
+    {
+      type: 'entry-type',
+      logicalPath: unsafeAsLogicalPath('content/page'),
+      name: 'page',
+      label: 'Page',
+      parentPath: unsafeAsLogicalPath('content'),
+      format: 'json',
+      schema: [],
+      maxItems: 5,
+    },
+  ]
+  const listed = (slug: string, entryType: string): ListEntriesResponse['entries'][number] => ({
+    logicalPath: unsafeAsLogicalPath(`content/${slug}`),
+    contentId: unsafeAsContentId(slug.padEnd(12, 'x')),
+    slug: unsafeAsSlug(slug),
+    collectionPath: unsafeAsLogicalPath('content'),
+    collectionName: 'content',
+    format: 'json',
+    entryType,
+    physicalPath: unsafeAsPhysicalPath(`content/${slug}.json`),
+    title: `Title of ${slug}`,
+    exists: true,
+  })
+  const labels = buildEntriesFromListResponse({
+    response: {
+      entries: [listed('site', 'settings'), listed('footer', 'footer'), listed('about', 'page')],
+      pagination: { hasMore: false, limit: 50 },
+    },
+    resolvePreviewSrc: () => undefined,
+    flatSchema,
+  }).map((e) => e.label)
+
+  it("are labelled by their type's label, not their title", () => {
+    expect(labels[0]).toBe('Site settings')
+  })
+
+  it('keep their title when their type has no label, as other entries do', () => {
+    expect(labels[1]).toBe('Title of footer')
+    expect(labels[2]).toBe('Title of about')
+  })
+
+  const collections: EditorCollection[] = [
+    {
+      path: unsafeAsLogicalPath('content'),
+      name: 'content',
+      type: 'collection',
+      format: 'json',
+      entryTypes: [
+        { name: 'settings', label: 'Site settings', format: 'json', maxItems: 1 },
+        { name: 'footer', format: 'json', maxItems: 1 },
+        { name: 'page', label: 'Page', format: 'json' },
+      ],
+    },
+  ]
+  const at = (entryType: string, status = entryType) => ({
+    collectionPath: unsafeAsLogicalPath('content'),
+    entryType,
+    status,
+  })
+
+  it('show no type line, since their label already names the type', () => {
+    expect(entryTypeLine(collections, at('settings'))).toBeUndefined()
+    expect(entryStatusLabel(collections, at('settings'))).toBeUndefined()
+    expect(entryTypeLine(collections, at('page'))).toBe('Page')
+    expect(entryStatusLabel(collections, at('page'))).toBe('Page')
+  })
+
+  it("show the type line of an unlabelled one, whose label is its title, and a missing one's", () => {
+    expect(entryTypeLine(collections, at('footer'))).toBe('Footer')
+    expect(entryStatusLabel(collections, at('settings', 'missing'))).toBe('Missing')
+  })
+})
+
+describe('titleFieldLabel', () => {
+  it("is the title field's label, else its name as words", () => {
+    expect(
+      titleFieldLabel([{ name: 'heading', type: 'string', label: 'Page heading', isTitle: true }]),
+    ).toBe('Page heading')
+    expect(
+      titleFieldLabel([
+        { name: 'body', type: 'mdx' },
+        { name: 'title', type: 'string' },
+      ]),
+    ).toBe('Title')
+  })
+
+  it('names a nested title field after its objects, through inline groups', () => {
+    expect(
+      titleFieldLabel([
+        {
+          type: 'group',
+          name: 'top',
+          fields: [
+            {
+              name: 'hero',
+              type: 'object',
+              label: 'Hero',
+              fields: [{ name: 'heading', type: 'string', isTitle: true }],
+            },
+          ],
+        },
+      ]),
+    ).toBe('Hero › Heading')
+  })
+
+  it('is undefined for a schema with no title field', () => {
+    expect(titleFieldLabel([{ name: 'body', type: 'mdx' }])).toBeUndefined()
+    expect(titleFieldLabel([])).toBeUndefined()
   })
 })

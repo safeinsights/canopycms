@@ -37,8 +37,9 @@ import {
   IconTrash,
 } from '@tabler/icons-react'
 
-import { calculatePathToEntry } from './editor-utils'
+import { calculatePathToEntry, MISSING_ENTRY_LABEL } from './editor-utils'
 import { matchesEntryQuery } from './entry-search'
+import { EDITOR_ACTIONS } from './copy'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { UnavailableTypeMessage } from './components/UnavailableTypeMessage'
@@ -68,6 +69,7 @@ export interface EntryNavItem {
   label: string
   /** Matched by the filter; the last segment of `path` when absent. */
   slug?: string
+  /** The row's second line: the entry's type, or `MISSING_ENTRY_LABEL` (`entryStatusLabel`). */
   status?: string
   collectionPath?: LogicalPath
   contentId?: ContentId // 12-char embedded ID for ordering
@@ -109,7 +111,7 @@ export interface EntryNavigatorProps {
   onExpandedStateChange?: (state: Record<string, boolean>) => void
   /** Called when user requests to delete an entry */
   onDeleteEntry?: (path: LogicalPath) => void
-  /** Called when user requests to rename an entry */
+  /** Called when the user asks to change an entry's URL (its slug) */
   onRenameEntry?: (path: LogicalPath) => void
   /** Called when user reorders an entry within a collection */
   onReorderEntry?: (
@@ -207,14 +209,17 @@ const firstEntryPath = (nodes: TreeNodeData[], query: string): string | undefine
 }
 
 /**
- * A row's title, truncated with an ellipsis. Its full text shows in a tooltip, and only while the
- * text is cut: the width is measured when the pointer or focus enters the row, not on every render.
+ * A line of a row, truncated with an ellipsis. Its full text shows in a tooltip, and only while
+ * the text is cut: the width is measured when the pointer or focus enters the row, not on every
+ * render.
  */
-const TruncatedLabel: React.FC<{ label: string; highlight: string; fw: number }> = ({
-  label,
-  highlight,
-  fw,
-}) => {
+const TruncatedLabel: React.FC<{
+  label: string
+  highlight?: string
+  fw?: number
+  size?: 'sm' | 'xs'
+  c?: string
+}> = ({ label, highlight = '', fw, size = 'sm', c }) => {
   const elementRef = useRef<HTMLElement | null>(null)
   const [truncated, setTruncated] = useState(false)
   const setElement = useCallback((node: HTMLElement | null) => {
@@ -243,7 +248,7 @@ const TruncatedLabel: React.FC<{ label: string; highlight: string; fw: number }>
         <Highlight
           ref={setElement}
           highlight={highlight}
-          size="sm"
+          size={size}
           fw={fw}
           truncate="end"
           style={{ minWidth: 0 }}
@@ -251,7 +256,7 @@ const TruncatedLabel: React.FC<{ label: string; highlight: string; fw: number }>
           {label}
         </Highlight>
       ) : (
-        <Text ref={setElement} size="sm" fw={fw} truncate="end" style={{ minWidth: 0 }}>
+        <Text ref={setElement} size={size} fw={fw} c={c} truncate="end" style={{ minWidth: 0 }}>
           {label}
         </Text>
       )}
@@ -806,48 +811,57 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             >
               <Chevron expanded={expanded} visible={showChevron} />
             </Box>
-            <TruncatedLabel
-              label={label}
-              highlight={filtering ? query.trim() : ''}
-              fw={selected ? 600 : 500}
-            />
-            {showEntryDirtyDot && <UnsavedDot label="Unsaved changes" />}
-            {showCollectionDirtyDot && <UnsavedDot label="Contains unsaved changes" />}
-            {status && (
-              <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0, maxWidth: 96 }}>
-                {status}
-              </Badge>
-            )}
-            {conflictNotice && (
-              <Tooltip
-                label="This content was updated on the base branch — a reviewer will reconcile"
-                withArrow
-              >
-                <Badge
-                  size="xs"
-                  variant="light"
-                  color="orange"
-                  data-testid="conflict-badge"
-                  style={{ flexShrink: 0 }}
-                >
-                  Conflict
-                </Badge>
-              </Tooltip>
-            )}
-            {entryLocked && (
-              <Tooltip label="You can't edit this entry" withinPortal>
-                <Box
-                  component="span"
-                  role="img"
-                  aria-label="You can't edit this entry"
-                  data-testid="entry-lock"
-                  c="dimmed"
-                  style={{ display: 'inline-flex', flexShrink: 0 }}
-                >
-                  <IconLock size={14} aria-hidden />
+            <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
+              <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+                <TruncatedLabel
+                  label={label}
+                  highlight={filtering ? query.trim() : ''}
+                  fw={selected ? 600 : 500}
+                />
+                {showEntryDirtyDot && <UnsavedDot label="Unsaved changes" />}
+                {showCollectionDirtyDot && <UnsavedDot label="Contains unsaved changes" />}
+                {conflictNotice && (
+                  <Tooltip
+                    label="This content was updated on the base branch — a reviewer will reconcile"
+                    withArrow
+                  >
+                    <Badge
+                      size="xs"
+                      variant="light"
+                      color="orange"
+                      data-testid="conflict-badge"
+                      style={{ flexShrink: 0 }}
+                    >
+                      Conflict
+                    </Badge>
+                  </Tooltip>
+                )}
+                {entryLocked && (
+                  <Tooltip label="You can't edit this entry" withinPortal>
+                    <Box
+                      component="span"
+                      role="img"
+                      aria-label="You can't edit this entry"
+                      data-testid="entry-lock"
+                      c="dimmed"
+                      style={{ display: 'inline-flex', flexShrink: 0 }}
+                    >
+                      <IconLock size={14} aria-hidden />
+                    </Box>
+                  </Tooltip>
+                )}
+              </Group>
+              {status && (
+                <Box data-testid="entry-nav-type" style={{ minWidth: 0 }}>
+                  <TruncatedLabel
+                    label={status}
+                    size="xs"
+                    // A missing file is an error, in error text, not a dimmed type.
+                    c={status === MISSING_ENTRY_LABEL ? 'var(--canopy-danger-text)' : 'dimmed'}
+                  />
                 </Box>
-              </Tooltip>
-            )}
+              )}
+            </Stack>
           </Group>
           <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
             {hasCollectionMenu && (
@@ -967,7 +981,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                       }}
                       data-testid="rename-entry-menu-item"
                     >
-                      Rename…
+                      {EDITOR_ACTIONS.changeUrl}…
                     </Menu.Item>
                   )}
                   {onReorderEntry && contentId && parentCollectionPath && (

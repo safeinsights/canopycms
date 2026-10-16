@@ -57,7 +57,8 @@ const okJson = (data: unknown) =>
 const stubApi = ({
   failingSlug,
   failingEntries,
-}: { failingSlug?: string; failingEntries?: boolean } = {}) => {
+  listed = [hello, second],
+}: { failingSlug?: string; failingEntries?: boolean; listed?: EditorEntry[] } = {}) => {
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
@@ -126,7 +127,7 @@ const stubApi = ({
                 order: [],
               },
             ],
-            entries: [hello, second].map((e) => ({
+            entries: listed.map((e) => ({
               logicalPath: e.path,
               contentId: e.contentId,
               collectionPath: e.collectionPath,
@@ -177,7 +178,10 @@ const storedLayout = (): Record<string, unknown> =>
 const renderEditor = ({
   renderPreview,
   entries = [hello, second],
-}: Partial<Pick<React.ComponentProps<typeof Editor>, 'renderPreview' | 'entries'>> = {}) =>
+  previewBaseByCollection,
+}: Partial<
+  Pick<React.ComponentProps<typeof Editor>, 'renderPreview' | 'entries' | 'previewBaseByCollection'>
+> = {}) =>
   render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000 }}>
       <ApiClientProvider>
@@ -188,6 +192,7 @@ const renderEditor = ({
           operatingMode="dev"
           themeOptions={{}}
           renderPreview={renderPreview}
+          previewBaseByCollection={previewBaseByCollection}
         />
       </ApiClientProvider>
     </SWRConfig>,
@@ -316,8 +321,12 @@ describe('content panel', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(document.activeElement).toBe(document.body)
 
-    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter')))
+    fireEvent.click(screen.getByRole('button', { name: 'Posts' }))
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(
+        'collection:content/posts',
+      ),
+    )
   })
 
   it("opens the panel on a collection crumb's collection, its row focused", async () => {
@@ -372,16 +381,20 @@ describe('content panel', () => {
     expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
   })
 
-  it('returns focus to the "All content" crumb when the overlay it opened closes', async () => {
+  it('returns focus to the collection crumb when the overlay it opened closes', async () => {
     storeLayout({ layout: 'stacked' })
+    window.history.replaceState({}, '', `/?entry=${hello.path}`)
     stubWindowWidth(true)
     stubApi()
     renderEditor()
-    const crumb = screen.getAllByTestId('breadcrumb-segment')[0]
+    const crumb = await screen.findByRole('button', { name: 'Posts' })
     crumb.focus()
     fireEvent.click(crumb)
-    await loaded()
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter')))
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(
+        'collection:content/posts',
+      ),
+    )
 
     escapeFromPanel()
     await waitFor(() => expect(panel()).toBeNull())
@@ -435,14 +448,6 @@ describe('content panel', () => {
     expect(await screen.findByTestId('form-comments-menu')).toBeDefined()
   })
 
-  it('closes the overlay when the rail opens the first entry', async () => {
-    storeLayout({ layout: 'stacked' })
-    await setup(true)
-    fireEvent.click(screen.getByTestId('rail-home-button'))
-    await waitFor(() => expect(panel()).toBeNull())
-    expect(screen.getByTestId('form-pane').hasAttribute('inert')).toBe(false)
-  })
-
   it('does not restore an overlay open on load', async () => {
     storeLayout({ contentPanelOpen: true })
     stubWindowWidth(false)
@@ -464,6 +469,31 @@ describe('content panel', () => {
     renderEditor()
     await waitFor(() => expect(panel()).not.toBeNull())
     expect(panel()?.getAttribute('data-panel-mode')).toBe(wide ? 'docked' : 'overlay')
+  })
+
+  it('opens the home page, the entry routed at /, when the URL names no entry', async () => {
+    const index = entry('index', 'jkl012GHI789')
+    stubWindowWidth(true)
+    stubApi({ listed: [hello, second, index] })
+    renderEditor({
+      entries: [hello, second, index],
+      previewBaseByCollection: { 'content/posts': '/' },
+    })
+    await waitFor(() => expect(document.title).toBe('index · Test Editor'))
+    expect(new URL(window.location.href).searchParams.get('entry')).toBe(index.path)
+  })
+
+  it("names each entry's type and route under it in quick open", async () => {
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+    fireEvent.click(screen.getByTestId('rail-search-button'))
+    const details = await screen.findAllByTestId('quick-open-option-detail')
+    expect(details.map((detail) => detail.textContent)).toEqual([
+      'Post · /posts/hello',
+      'Post · /posts/second',
+    ])
   })
 })
 
@@ -629,7 +659,7 @@ describe('maximized preview', () => {
 })
 
 describe('entry menu', () => {
-  it('leaves no entry open once the open one is deleted, focus on "All content"', async () => {
+  it("leaves no entry open once the open one is deleted, focus on the rail's Content button", async () => {
     await setup(true)
     await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
@@ -639,9 +669,7 @@ describe('entry menu', () => {
     await waitFor(() =>
       expect(screen.getByTestId('file-dropdown-button').textContent).toBe('No entry open'),
     )
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getAllByTestId('breadcrumb-segment')[0]),
-    )
+    await waitFor(() => expect(document.activeElement).toBe(toggle()))
     expect(document.title).toBe('Test Editor')
   })
 

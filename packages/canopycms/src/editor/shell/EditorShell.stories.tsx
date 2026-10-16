@@ -35,13 +35,9 @@ const headerProps: EditorHeaderProps = {
   branchName: 'feature/landing',
   operatingMode: 'prod',
   busy: false,
-  breadcrumbSegments: [
-    { label: 'All content' },
-    { label: 'Posts', collectionPath: 'content/posts' },
-  ],
+  breadcrumbSegments: [{ label: 'Posts', collectionPath: 'content/posts' }],
   editedFiles: [],
   modifiedCount: 0,
-  onNavigatorOpen: noop,
   onCollectionOpen: noop,
   onFileReload: noop,
   onFileDiscardDraft: noop,
@@ -102,8 +98,6 @@ const EditorChrome = ({
       banner={<BranchLockBanner {...props} />}
       rail={
         <EditorRail
-          siteTitle="Example Site"
-          onHomeOpen={noop}
           contentPanelOpen={panelOpen}
           contentPanelId="story-content-panel"
           onContentToggle={() => setPanelOpen((open) => !open)}

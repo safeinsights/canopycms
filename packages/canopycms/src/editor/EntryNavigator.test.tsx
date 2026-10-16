@@ -505,19 +505,50 @@ describe('EntryNavigator', () => {
     })
   })
 
-  describe('entry status badge', () => {
-    it('shows status badge on entries with status', () => {
+  describe('entry type line', () => {
+    const typeLine = (row: HTMLElement) => within(row).queryByTestId('entry-nav-type')
+
+    it('shows the type dimmed on a second line under the title, with no badge', () => {
       renderEntryNavigator({
-        items: [
-          {
-            path: unsafeAsLogicalPath('posts/hello'),
-            label: 'Hello World',
-            status: 'draft',
-          },
-        ],
+        items: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World', status: 'Post' }],
       })
 
-      expect(screen.getByText('draft')).toBeTruthy()
+      const row = screen.getByTestId('entry-nav-item-hello-world')
+      const type = typeLine(row)!
+      expect(type.textContent).toBe('Post')
+      expect(type.querySelector('p')?.getAttribute('style')).toContain('--mantine-color-dimmed')
+      expect(
+        within(row).getByText('Hello World').compareDocumentPosition(type) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+      expect(row.querySelector('.mantine-Badge-root')).toBeNull()
+    })
+
+    it('shows Missing in error text in place of the type', () => {
+      renderEntryNavigator({
+        items: [{ path: unsafeAsLogicalPath('posts/gone'), label: 'Gone', status: 'Missing' }],
+      })
+
+      const type = typeLine(screen.getByTestId('entry-nav-item-gone'))!
+      expect(type.textContent).toBe('Missing')
+      expect(type.querySelector('p')?.getAttribute('style')).toContain('--canopy-danger-text')
+    })
+
+    it('keeps an entry without a type, and a collection, on one line', () => {
+      renderEntryNavigator({
+        collections: [
+          {
+            path: unsafeAsLogicalPath('posts'),
+            label: 'Posts',
+            type: 'collection',
+            entries: [{ path: unsafeAsLogicalPath('posts/settings'), label: 'Site settings' }],
+          },
+        ],
+        expandedStateRef: { current: { 'collection:posts': true } },
+      })
+
+      expect(typeLine(screen.getByTestId('entry-nav-item-posts'))).toBeNull()
+      expect(typeLine(screen.getByTestId('entry-nav-item-site-settings'))).toBeNull()
     })
   })
 
@@ -1360,7 +1391,7 @@ describe('EntryNavigator', () => {
       expect(dividers()).toHaveLength(0)
     })
 
-    it('orders the entry menu as rename, move, then a divider and a red delete', async () => {
+    it('orders the entry menu as Change URL, move, then a divider and a red delete', async () => {
       const user = userEvent.setup()
       renderEntryNavigator({
         collections: [
@@ -1386,7 +1417,7 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('entry-menu-first'))
       await screen.findByRole('menu')
 
-      const rename = screen.getByText('Rename…')
+      const rename = screen.getByText('Change URL…')
       const up = screen.getByText('Move up')
       const down = screen.getByText('Move down')
       const del = screen.getByText('Delete entry')
