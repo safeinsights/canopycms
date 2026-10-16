@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { displayPreviewPath, isSamePreviewPath, normalizePreviewPath } from './preview-path'
+import {
+  displayPreviewPath,
+  isSamePreviewPath,
+  normalizePreviewPath,
+  siteChromeSrc,
+} from './preview-path'
 
 describe('normalizePreviewPath', () => {
   it.each([
@@ -67,5 +72,62 @@ describe('displayPreviewPath with the preview mount', () => {
     ],
   ])('shows %s under %j as %s', (src, mount, expected) => {
     expect(displayPreviewPath(src, mount)).toBe(expected)
+  })
+})
+
+describe('the site header and footer query', () => {
+  it('names the same page with or without chrome=1', () => {
+    expect(normalizePreviewPath('/preview/x?branch=b&chrome=1')).toBe('/preview/x?branch=b')
+    expect(normalizePreviewPath('/preview/x/?chrome=1')).toBe('/preview/x')
+    expect(isSamePreviewPath('/preview/x?branch=b&chrome=1', '/preview/x?branch=b')).toBe(true)
+    expect(isSamePreviewPath('/preview/x?chrome=1&branch=b', '/preview/x/?branch=b')).toBe(true)
+  })
+
+  it("keeps a site's own chrome query that is not the toggle's", () => {
+    expect(normalizePreviewPath('/x?chrome=dark')).toBe('/x?chrome=dark')
+    expect(isSamePreviewPath('/x?chrome=dark', '/x')).toBe(false)
+  })
+
+  it('leaves chrome=1 out of the shown path', () => {
+    expect(
+      displayPreviewPath('/preview/posts/x?branch=b&chrome=1', { previewPrefix: '/preview' }),
+    ).toBe('/posts/x')
+    expect(displayPreviewPath('/p?chrome=1&lang=en')).toBe('/p?lang=en')
+  })
+})
+
+describe('siteChromeSrc', () => {
+  it.each([
+    [
+      '/preview/posts/x?branch=b',
+      { previewPrefix: '/preview' },
+      '/preview/posts/x?branch=b&chrome=1',
+    ],
+    ['/preview/posts/x/', { previewPrefix: '/preview' }, '/preview/posts/x/?chrome=1'],
+    ['/preview?branch=b#top', { previewPrefix: '/preview' }, '/preview?branch=b&chrome=1#top'],
+    ['/preview/x?', { previewPrefix: '/preview' }, '/preview/x?chrome=1'],
+    ['/preview/x?chrome=1', { previewPrefix: '/preview' }, '/preview/x?chrome=1'],
+    [
+      '/b/preview/x?branch=b',
+      { basePath: '/b', previewPrefix: '/preview' },
+      '/b/preview/x?branch=b&chrome=1',
+    ],
+    [
+      'https://cms.example.com/preview/x?branch=b',
+      { previewPrefix: 'https://cms.example.com/preview' },
+      'https://cms.example.com/preview/x?branch=b&chrome=1',
+    ],
+  ])('asks %s under %j for the header and footer', (src, mount, expected) => {
+    expect(siteChromeSrc(src, mount)).toBe(expected)
+  })
+
+  it.each([
+    ['/posts/x?branch=b', {}],
+    ['/posts/x?branch=b', { previewPrefix: '/preview' }],
+    ['/previewer/x', { previewPrefix: '/preview' }],
+    ['https://other.example.com/preview/x?branch=b', { previewPrefix: '/preview' }],
+    ['/preview/x', { basePath: '/b', previewPrefix: '/preview' }],
+  ])("leaves %s under %j alone: it is a page of the site's own", (src, mount) => {
+    expect(siteChromeSrc(src, mount)).toBeUndefined()
   })
 })

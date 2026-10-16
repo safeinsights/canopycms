@@ -5,6 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 
 import type { PreviewWidth } from './hooks/useEditorLayout'
+import {
+  CANOPY_PREVIEW_MARKS,
+  CANOPY_PREVIEW_MESSAGE,
+  CANOPY_PREVIEW_READY,
+} from './preview-bridge'
 import { PreviewPane, type PreviewPaneProps } from './PreviewPane'
 import { CanopyCMSProvider } from './theme'
 
@@ -331,5 +336,161 @@ describe('PreviewPane', () => {
       />,
     )
     expect(screen.getByTestId('preview-unmapped-chip').textContent).toBe('1 unmapped preview mark')
+  })
+
+  describe('while the next entry loads', () => {
+    const nextSrc = '/preview/posts/world?branch=feature-a'
+    const pane = (props: Partial<PreviewPaneProps>) => (
+      <PreviewPane
+        src={src}
+        data={{ title: 'Hello draft' }}
+        previewWidth="fit"
+        onPreviewWidthChange={vi.fn()}
+        mount={{ previewPrefix: '/preview' }}
+        {...props}
+      />
+    )
+    const iframe = () => document.querySelector('iframe') as HTMLIFrameElement
+    const sentDrafts = (spy: { mock: { calls: unknown[][] } }) =>
+      spy.mock.calls
+        .map(([message]) => message as { type?: string; path?: string; data?: unknown })
+        .filter((message) => message.type === CANOPY_PREVIEW_MESSAGE)
+    const ready = (from: HTMLIFrameElement) =>
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: CANOPY_PREVIEW_READY, path: from.getAttribute('src') },
+            origin: window.location.origin,
+            source: from.contentWindow,
+          }),
+        )
+      })
+
+    it('keeps the toolbar and the last page, dimmed, then frames the next with its own draft', () => {
+      const { rerender } = render(pane({}), { wrapper: Wrapper })
+      const toolbar = screen.getByTestId('preview-toolbar')
+      const first = iframe()
+      const firstPost = vi.spyOn(first.contentWindow as Window, 'postMessage')
+
+      // Data handed over while pending is not the next entry's draft yet, so the held page gets none.
+      rerender(pane({ src: nextSrc, data: { title: 'Not yet' }, pending: true }))
+      expect(screen.getByTestId('preview-toolbar')).toBe(toolbar)
+      expect(iframe()).toBe(first)
+      expect(first.getAttribute('src')).toBe(src)
+      expect(first.hasAttribute('inert')).toBe(true)
+      expect(first.parentElement?.getAttribute('aria-busy')).toBe('true')
+      expect(screen.getByRole('progressbar', { name: 'Loading the entry' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Copy path /posts/world' })).toBeTruthy()
+      ready(first)
+      expect(sentDrafts(firstPost)).toEqual([])
+
+      rerender(pane({ src: nextSrc, data: { title: 'World draft' } }))
+      expect(screen.getByTestId('preview-toolbar')).toBe(toolbar)
+      const next = iframe()
+      expect(next).not.toBe(first)
+      expect(next.getAttribute('src')).toBe(nextSrc)
+      expect(next.hasAttribute('inert')).toBe(false)
+      expect(screen.queryByRole('progressbar', { name: 'Loading the entry' })).toBeNull()
+      const nextPost = vi.spyOn(next.contentWindow as Window, 'postMessage')
+      ready(next)
+      expect(sentDrafts(nextPost)).toEqual([
+        expect.objectContaining({ path: nextSrc, data: { title: 'World draft' } }),
+      ])
+      expect(sentDrafts(firstPost)).toEqual([])
+    })
+
+    it('reports no marks from the page it holds', () => {
+      const onMarks = vi.fn()
+      const { rerender } = render(pane({ onMarks }), { wrapper: Wrapper })
+      const first = iframe()
+      rerender(pane({ src: nextSrc, data: undefined, pending: true, onMarks }))
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: CANOPY_PREVIEW_MARKS, count: 0 },
+            origin: window.location.origin,
+            source: first.contentWindow,
+          }),
+        )
+      })
+      expect(onMarks).not.toHaveBeenCalled()
+    })
+
+    it('holds a skeleton under the toolbar when no page has been framed yet', () => {
+      render(pane({ data: undefined, pending: true }), { wrapper: Wrapper })
+      expect(screen.getByTestId('preview-toolbar')).toBeTruthy()
+      expect(screen.getByTestId('preview-loading-skeleton')).toBeTruthy()
+      expect(iframe()).toBeNull()
+    })
+  })
+
+  describe('the site header and footer', () => {
+    const pane = (props: Partial<PreviewPaneProps>) => (
+      <PreviewPane
+        src={src}
+        data={{ title: 'Draft' }}
+        previewWidth="fit"
+        onPreviewWidthChange={vi.fn()}
+        mount={{ previewPrefix: '/preview' }}
+        onSiteChromeChange={vi.fn()}
+        {...props}
+      />
+    )
+    const toggle = () => screen.queryByRole('button', { name: 'Site header and footer' })
+    const sayReady = (siteChrome?: boolean) => {
+      const frame = document.querySelector('iframe') as HTMLIFrameElement
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: CANOPY_PREVIEW_READY,
+              path: frame.getAttribute('src'),
+              ...(siteChrome === undefined ? {} : { siteChrome }),
+            },
+            origin: window.location.origin,
+            source: frame.contentWindow,
+          }),
+        )
+      })
+    }
+
+    it('offers the toggle once the page says it renders them', async () => {
+      const onSiteChromeChange = vi.fn()
+      render(pane({ onSiteChromeChange }), { wrapper: Wrapper })
+      expect(toggle()).toBeNull()
+      sayReady(true)
+      expect(toggle()?.getAttribute('aria-pressed')).toBe('false')
+      await userEvent.click(toggle() as HTMLElement)
+      expect(onSiteChromeChange).toHaveBeenCalledWith(true)
+    })
+
+    it('offers no toggle when the page says nothing of them', () => {
+      render(pane({}), { wrapper: Wrapper })
+      sayReady()
+      expect(toggle()).toBeNull()
+    })
+
+    it("offers no toggle for a page outside the preview mount, which is the site's own", () => {
+      render(pane({ src: '/posts/hello?branch=feature-a', siteChrome: true }), {
+        wrapper: Wrapper,
+      })
+      sayReady(true)
+      expect(toggle()).toBeNull()
+      expect(document.querySelector('iframe')?.getAttribute('src')).toBe(
+        '/posts/hello?branch=feature-a',
+      )
+    })
+
+    it('frames and opens the page with chrome=1 while on, and shows its path without it', () => {
+      render(pane({ siteChrome: true }), { wrapper: Wrapper })
+      sayReady(true)
+      const chromeSrc = '/preview/posts/hello?branch=feature-a&chrome=1'
+      expect(document.querySelector('iframe')?.getAttribute('src')).toBe(chromeSrc)
+      expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
+      expect(
+        screen.getByRole('link', { name: 'Open saved version in a new tab' }).getAttribute('href'),
+      ).toBe(chromeSrc)
+      expect(screen.getByRole('button', { name: 'Copy path /posts/hello' })).toBeTruthy()
+    })
   })
 })

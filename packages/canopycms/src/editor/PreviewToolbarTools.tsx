@@ -14,7 +14,12 @@ import {
   UnstyledButton,
   VisuallyHidden,
 } from '@mantine/core'
-import { IconArrowsMaximize, IconArrowsMinimize, IconMarquee } from '@tabler/icons-react'
+import {
+  IconArrowsMaximize,
+  IconArrowsMinimize,
+  IconLayoutNavbar,
+  IconMarquee,
+} from '@tabler/icons-react'
 
 import type { InexactMark } from './preview-marks'
 
@@ -58,6 +63,33 @@ export function HighlightToggle({ enabled, onToggle, marksNothing = false }: Hig
         </Tooltip>
       )}
     </Group>
+  )
+}
+
+const SITE_CHROME_LABEL = 'Site header and footer'
+
+/** Shows and hides the site's header and footer around the previewed page. */
+export function SiteChromeToggle({
+  enabled,
+  onToggle,
+}: {
+  enabled: boolean
+  onToggle: () => void
+}) {
+  return (
+    <Tooltip label={SITE_CHROME_LABEL}>
+      <ActionIcon
+        variant={enabled ? 'filled' : 'subtle'}
+        color={enabled ? 'brand' : 'gray'}
+        size="md"
+        aria-pressed={enabled}
+        aria-label={SITE_CHROME_LABEL}
+        data-testid="toggle-site-chrome-button"
+        onClick={onToggle}
+      >
+        <IconLayoutNavbar size={16} />
+      </ActionIcon>
+    </Tooltip>
   )
 }
 

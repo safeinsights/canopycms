@@ -1,7 +1,7 @@
 'use client'
 
 import type { CSSProperties } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import {
   CANOPY_PREVIEW_ERROR,
@@ -15,6 +15,7 @@ import {
   MARK_REPORT_LIMITS,
   type PreviewErrorMessage,
   type PreviewMarksMessage,
+  type PreviewReadyMessage,
   resolveMessageOrigin,
 } from './preview-bridge'
 
@@ -71,7 +72,7 @@ const sendDraftUpdate = (
  * Lightweight iframe wrapper to keep the preview in sync with form state.
  * It posts the latest draft data to the iframe after load and when data changes. A progress bar
  * runs until the preview's ready message arrives; when none does, a "Live updates off" chip offers
- * to reload the preview.
+ * to reload the preview. While `busy`, the page stays in view, dimmed and inert, under the bar.
  */
 export const PreviewFrame = ({
   src,
@@ -86,6 +87,8 @@ export const PreviewFrame = ({
   assetBase,
   iframeStyle,
   onReload,
+  onSiteChrome,
+  busy = false,
 }: {
   src: string
   path: string
@@ -110,6 +113,13 @@ export const PreviewFrame = ({
   iframeStyle?: CSSProperties
   /** Replaces the chip's Retry, for a host whose own reload control remounts the frame. */
   onReload?: () => void
+  /**
+   * Called with whether the page can render the site's header and footer, from its ready message;
+   * `false` once it has had `READY_TIMEOUT_MS` to say so and has not.
+   */
+  onSiteChrome?: (supported: boolean) => void
+  /** The editor is loading the next page's data: this page stays in view, dimmed and inert. */
+  busy?: boolean
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Pin the preview origin from the src prop: outbound messages target it (never '*'),
@@ -152,6 +162,11 @@ export const PreviewFrame = ({
   const syncPending = hasDraft && handshake === 'waiting'
   const liveUpdatesOff = hasDraft && handshake === 'missing'
 
+  // React 18 has no `inert` prop, so it is set on the DOM.
+  useLayoutEffect(() => {
+    iframeRef.current?.toggleAttribute('inert', busy)
+  }, [busy, retries, src])
+
   // Inject the progress bar keyframe animation once per page.
   useEffect(() => {
     const styleId = 'canopycms-preview-sync-style'
@@ -193,12 +208,18 @@ export const PreviewFrame = ({
   const postHighlightRef = useRef(postHighlight)
   const onPreviewErrorRef = useRef(onPreviewError)
   const onMarksRef = useRef(onMarks)
+  const onSiteChromeRef = useRef(onSiteChrome)
   useEffect(() => {
     postRef.current = post
     postHighlightRef.current = postHighlight
     onPreviewErrorRef.current = onPreviewError
     onMarksRef.current = onMarks
+    onSiteChromeRef.current = onSiteChrome
   })
+
+  useEffect(() => {
+    if (handshake === 'missing') onSiteChromeRef.current?.(false)
+  }, [handshake])
 
   useEffect(() => {
     post()
@@ -223,6 +244,7 @@ export const PreviewFrame = ({
         postRef.current()
         postHighlightRef.current()
         setHandshake('ready')
+        onSiteChromeRef.current?.((event.data as Partial<PreviewReadyMessage>).siteChrome === true)
       } else if (type === CANOPY_PREVIEW_ERROR) {
         const msg = event.data as Partial<PreviewErrorMessage>
         // Shape-check the payload: an adopter passing an Error object (instead of
@@ -246,11 +268,15 @@ export const PreviewFrame = ({
   }, [previewOrigin])
 
   return (
-    <div className={className} style={{ position: 'relative', overflow: 'hidden', ...style }}>
-      {syncPending && (
+    <div
+      className={className}
+      aria-busy={busy || undefined}
+      style={{ position: 'relative', overflow: 'hidden', ...style }}
+    >
+      {(syncPending || busy) && (
         <div
           role="progressbar"
-          aria-label="Connecting to the preview"
+          aria-label={busy ? 'Loading the entry' : 'Connecting to the preview'}
           style={{
             position: 'absolute',
             top: 0,
@@ -329,6 +355,9 @@ export const PreviewFrame = ({
           height: '100%',
           border: 'none',
           ...iframeStyle,
+          // Eased, so a page that arrives at once barely dims.
+          transition: 'opacity 150ms',
+          ...(busy ? { opacity: 0.5 } : {}),
         }}
         onLoad={() => {
           post()

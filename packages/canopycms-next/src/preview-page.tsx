@@ -101,6 +101,13 @@ export interface CreatePreviewPageOptions {
    * framed page only from an editor on the same site, so a cross-site editor previews nothing.
    */
   editorOrigin?: string
+  /**
+   * Wraps every view on the server, so a preview can show the site's header and footer. It
+   * receives the view as `children`, and `chrome`: whether to render them. Given a layout, the
+   * editor's preview toolbar offers a "Site header and footer" toggle, which adds `?chrome=1` to
+   * the preview's URL; without it, `chrome` is `false` and the layout renders the page alone.
+   */
+  layout?: (props: { children: ReactNode; chrome: boolean }) => ReactNode
 }
 
 /**
@@ -147,6 +154,9 @@ export function createPreviewPageFor(
     const [{ path = [] }, query] = await Promise.all([params, searchParams])
     const branch = query.branch
     if (Array.isArray(branch)) notFound()
+    const Layout = options.layout
+    const inLayout = (view: ReactElement): ReactElement =>
+      Layout ? <Layout chrome={query.chrome === '1'}>{view}</Layout> : view
     const canopy = await getCanopy()
     // Branch ACLs can grant an anonymous user the base branch, and this route is deployed like the
     // editor's routes (canopycms-cdk's `attachTo` `previewPrefix`), outside any site-wide gate.
@@ -163,14 +173,16 @@ export function createPreviewPageFor(
     const previewAssetBase = readAssetBase(authenticatedAssetBase(config.basePath))
     previewRequest().assetBase = previewAssetBase
     setServerPreviewAssetBaseGetter(readPreviewRequestAssetBase)
+    const previewSiteChrome = Layout ? true : undefined
     if (!hasLoader(viewEntry)) {
       const View: (props: CanopyPreviewProps<never> & PreviewRouteProps) => ReactNode = viewEntry
-      return (
+      return inLayout(
         <View
           initialData={result.data}
           editorOrigin={options.editorOrigin}
           previewAssetBase={previewAssetBase}
-        />
+          previewSiteChrome={previewSiteChrome}
+        />,
       )
     }
     const { meta } = result
@@ -188,13 +200,14 @@ export function createPreviewPageFor(
     const View = viewEntry.view as (
       props: CanopyPreviewProps<never, unknown> & PreviewRouteProps,
     ) => ReactNode
-    return (
+    return inLayout(
       <View
         initialData={result.data}
         editorOrigin={options.editorOrigin}
         extras={extras}
         previewAssetBase={previewAssetBase}
-      />
+        previewSiteChrome={previewSiteChrome}
+      />,
     )
   }
 }

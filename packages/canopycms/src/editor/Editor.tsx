@@ -370,6 +370,8 @@ const EditorContent: React.FC<EditorProps> = ({
     setSplitPercent,
     previewWidth,
     setPreviewWidth,
+    siteChrome,
+    setSiteChrome,
     contentPanelOpen,
     setContentPanelOpen,
     contentPanelWidth,
@@ -1653,12 +1655,18 @@ const EditorContent: React.FC<EditorProps> = ({
     data: displayValue,
   })
 
-  // Only the default preview has the toolbar that maximizes and restores it. With no value to
-  // preview (an entry loading, or failed to load, with no draft) the form shows instead, and the
-  // choice reapplies once a value arrives.
+  // Only the default preview has the toolbar that maximizes and restores it. It stays maximized
+  // while an entry loads. With no value after a failed load and no draft, the form shows instead,
+  // and the choice reapplies once a value arrives.
   const previewCanMaximize =
     !renderPreview && Boolean(currentEntry?.previewSrc) && !currentEntryUnavailable
-  const previewShownMaximized = previewMaximized && previewCanMaximize && Boolean(previewFrameData)
+  // The open entry's data is loading, not failed: the preview keeps its last page, dimmed.
+  const previewPending =
+    previewCanMaximize &&
+    !previewFrameData &&
+    loadFailedKey !== `${branchNameState}:${currentEntry?.contentId}`
+  const previewShownMaximized =
+    previewMaximized && previewCanMaximize && (Boolean(previewFrameData) || previewPending)
   useEffect(() => {
     if (!previewCanMaximize) setPreviewMaximized(false)
   }, [previewCanMaximize])
@@ -1669,11 +1677,13 @@ const EditorContent: React.FC<EditorProps> = ({
     : ''
 
   // An unavailable entry previews nothing: the site cannot read it, and a stored draft would
-  // otherwise mount the frame at a page that answers not-found.
+  // otherwise mount the frame at a page that answers not-found. The pane stays mounted while an
+  // entry loads, so its toolbar never leaves on a switch.
   const defaultPreview =
-    currentEntry?.previewSrc && previewFrameData && !currentEntryUnavailable ? (
+    currentEntry?.previewSrc && (previewFrameData || previewPending) && !currentEntryUnavailable ? (
       <PreviewPane
         src={currentEntry.previewSrc}
+        pending={previewPending}
         data={previewFrameData}
         isLoading={previewLoadingState}
         highlightEnabled={highlightEnabled}
@@ -1698,6 +1708,8 @@ const EditorContent: React.FC<EditorProps> = ({
           setPreviewMaximized(maximized)
         }}
         resizing={paneResizing}
+        siteChrome={siteChrome}
+        onSiteChromeChange={setSiteChrome}
         notice={
           previewError && (
             <Alert

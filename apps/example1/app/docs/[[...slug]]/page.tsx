@@ -1,6 +1,7 @@
 import React from 'react'
 import { notFound } from 'next/navigation'
 import { DocPreview } from '../../components/DocView'
+import { SiteChrome } from '../../components/SiteChrome'
 import type { DocContent } from '../../schemas'
 import { contentStaticParams, readByUrlPath } from '../../lib/canopy'
 
@@ -20,7 +21,11 @@ const DocPage = async ({ params }: { params: Promise<Params> }) => {
   const slugParts = slug || []
 
   if (slugParts.length === 0) {
-    return <div>Docs landing page - TODO</div>
+    return (
+      <SiteChrome>
+        <div>Docs landing page - TODO</div>
+      </SiteChrome>
+    )
   }
 
   // Phase-selecting read: build context at build, branch-aware runtime context at request time.
@@ -29,7 +34,11 @@ const DocPage = async ({ params }: { params: Promise<Params> }) => {
 
   if (!result) return notFound()
 
-  return <DocPreview initialData={result.data} />
+  return (
+    <SiteChrome>
+      <DocPreview initialData={result.data} />
+    </SiteChrome>
+  )
 }
 
 export default DocPage
