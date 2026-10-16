@@ -629,6 +629,8 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       ]
     : branches
 
+  const hasBranchThreads = comments.some((t) => t.type === 'branch')
+
   return (
     <Stack
       h="100%"
@@ -636,7 +638,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       gap={0}
       data-testid="branch-manager"
     >
-      {currentUserId && onAddComment && onResolveThread && (
+      {currentUserId && onAddComment && onResolveThread && hasBranchThreads && (
         <Stack pt="sm">
           <BranchComments
             comments={comments}
