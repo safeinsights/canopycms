@@ -41,8 +41,6 @@ export type FieldRemoval = (
    * back once one has changed, so an item never lands in whichever block now holds its index.
    */
   anchors?: RemovalAnchor[]
-  /** `clear` for an optional object's Clear, which its toast calls clearing, not removing. */
-  action?: 'remove' | 'clear'
 }
 
 const findField = (fields: readonly FieldConfig[], name: string): FieldConfig | undefined => {
@@ -205,6 +203,12 @@ export function restoreRemoval(
   const restored = setAt(value, path, next)
   return isPlainRecord(restored) ? restored : undefined
 }
+
+/** Where a removal's moved threads went, said with its Undo; undefined when none moved. */
+export const movedThreadsNote = (count: number): string | undefined =>
+  count > 0
+    ? `Its ${count === 1 ? 'comment thread' : `${count} comment threads`} moved to "Comment on this entry".`
+    : undefined
 
 /**
  * How many open field threads a removal at `path` moves to the entry: those inside it keyed to an

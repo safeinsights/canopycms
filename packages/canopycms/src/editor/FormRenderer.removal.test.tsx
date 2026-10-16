@@ -110,8 +110,7 @@ describe('FormRenderer removals', () => {
     })
   })
 
-  it('reports a cleared object with its value, as a clear', () => {
-    const seo = { summary: 'Saved' }
+  it('reports no Clear: an object offers its Undo in the form, not in a toast', async () => {
     const { onRemoved, onChange } = renderForm(
       [
         {
@@ -121,17 +120,12 @@ describe('FormRenderer removals', () => {
           fields: [{ name: 'summary', type: 'string', label: 'Summary' }],
         },
       ],
-      { seo },
+      { seo: { summary: 'Saved' } },
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Clear "SEO"' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for SEO' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Clear "SEO"' }))
     expect(onChange).toHaveBeenLastCalledWith({ seo: undefined })
-    expect(onRemoved).toHaveBeenCalledWith({
-      kind: 'value',
-      path: ['seo'],
-      value: seo,
-      label: '"SEO"',
-      action: 'clear',
-    })
+    expect(onRemoved).not.toHaveBeenCalled()
   })
 
   it('names an item with no text by its position, which the toast then states', async () => {

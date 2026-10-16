@@ -218,6 +218,20 @@ export const Default: Story = {
 }
 
 /**
+ * After "Clear "SEO"" from the SEO group's "…" menu: its label row offers "Undo clear" until the
+ * group is edited, another entry opens, or the entry is saved.
+ */
+export const AfterClear: Story = {
+  ...Default,
+  play: async () => {
+    document.querySelector<HTMLButtonElement>('button[aria-label="Actions for SEO"]')?.click()
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const items = document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')
+    ;[...items].find((item) => item.textContent === 'Clear "SEO"')?.click()
+  },
+}
+
+/**
  * In a scroller like the editor's form pane: the header stays at the top while the form scrolls,
  * "Outline" jumps to a field or row, and the chevrons expand or collapse every list.
  */

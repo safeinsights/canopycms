@@ -14,5 +14,6 @@ export const EDITOR_ACTIONS = {
   newBranch: 'New branch',
   remove: 'Remove',
   clear: 'Clear',
+  undoClear: 'Undo clear',
   openEntry: 'Open entry',
 } as const

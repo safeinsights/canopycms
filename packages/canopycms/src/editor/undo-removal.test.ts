@@ -261,7 +261,6 @@ describe('restoreRemoval of a cleared object', () => {
     path,
     value,
     label: 'x',
-    action: 'clear',
   })
 
   it('puts the object back while its field is still unset', () => {
