@@ -386,12 +386,10 @@ describe('Switch branch… (branch menu)', () => {
       await loaded()
 
       await activateByKeyboard(branchTrigger(), byTestId('manage-branches-menu-item'))
-      await screen.findByText('Manage access, status, and lifecycle')
+      await screen.findByRole('heading', { name: 'Branches' })
       await close()
 
-      await waitFor(() =>
-        expect(screen.queryByText('Manage access, status, and lifecycle')).toBeNull(),
-      )
+      await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
       await waitFor(() => expect(document.activeElement).toBe(branchTrigger()))
     },
   )
@@ -406,12 +404,10 @@ describe('Switch branch… (branch menu)', () => {
 
     focusEl(opener)
     await userEvent.keyboard('{Enter}')
-    await screen.findByText('Manage access, status, and lifecycle')
+    await screen.findByRole('heading', { name: 'Branches' })
     await userEvent.keyboard('{Escape}')
 
-    await waitFor(() =>
-      expect(screen.queryByText('Manage access, status, and lifecycle')).toBeNull(),
-    )
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(opener))
   })
 
@@ -445,20 +441,16 @@ describe('Switch branch… (branch menu)', () => {
 
     focusEl(bannerOpener)
     await userEvent.keyboard('{Enter}')
-    await screen.findByText('Manage access, status, and lifecycle')
+    await screen.findByRole('heading', { name: 'Branches' })
     await userEvent.keyboard('{Escape}')
-    await waitFor(() =>
-      expect(screen.queryByText('Manage access, status, and lifecycle')).toBeNull(),
-    )
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
 
     await userEvent.click(screen.getByTestId('comments-button'))
-    await userEvent.click(await screen.findByRole('button', { name: 'Open branch discussion' }))
-    await screen.findByText('Manage access, status, and lifecycle')
+    await userEvent.click(await screen.findByRole('button', { name: /^Open branch discussion/ }))
+    await screen.findByRole('heading', { name: 'Branches' })
     await userEvent.keyboard('{Escape}')
 
-    await waitFor(() =>
-      expect(screen.queryByText('Manage access, status, and lifecycle')).toBeNull(),
-    )
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(branchTrigger()))
   })
 })
@@ -499,7 +491,7 @@ describe('Focus once a menu has closed', () => {
     await loaded()
 
     await activateByKeyboard(branchTrigger(), byTestId('manage-branches-menu-item'))
-    await screen.findByText('Manage access, status, and lifecycle')
+    await screen.findByRole('heading', { name: 'Branches' })
     await waitFor(() => expect(screen.queryByTestId('branch-menu')).toBeNull())
     await settled()
 

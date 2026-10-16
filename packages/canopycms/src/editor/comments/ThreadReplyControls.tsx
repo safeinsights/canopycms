@@ -115,7 +115,13 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
         setReplyText('')
       }
       await onResolve()
-      if (focusAfterResolve) moveFocusIfUnmoved(origin, focusAfterResolve())
+      // After the commit that settles the write, so focus never lands on a control that still
+      // reads as busy.
+      if (focusAfterResolve) {
+        requestAnimationFrame(() =>
+          setTimeout(() => moveFocusIfUnmoved(origin, focusAfterResolve()), 0),
+        )
+      }
     } catch (err) {
       setError(toCommentWriteFailure(err))
     } finally {

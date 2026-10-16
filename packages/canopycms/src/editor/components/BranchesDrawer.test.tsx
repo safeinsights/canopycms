@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { BranchesDrawer } from './BranchesDrawer'
@@ -97,6 +97,16 @@ const dialogWith = (text: string): HTMLElement => {
   if (!dialog) throw new Error(`no dialog contains "${text}"`)
   return dialog
 }
+
+describe('BranchesDrawer header', () => {
+  it('is labelled by its title alone, with a Close button', async () => {
+    renderHarness(vi.fn())
+
+    const dialog = await screen.findByRole('dialog', { name: 'Branches' })
+    expect(dialog.querySelector('.mantine-Drawer-header')?.textContent).toBe('Branches')
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy()
+  })
+})
 
 describe('BranchesDrawer with a confirm opened from inside it', () => {
   it('gives Escape and focus to the confirm, leaving the drawer open', async () => {

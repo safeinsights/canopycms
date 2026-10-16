@@ -1,16 +1,16 @@
 'use client'
 
 import React, { useCallback, useEffect, useReducer, useRef } from 'react'
-import { Badge, Button, Drawer, Fieldset, Group, Text, Title } from '@mantine/core'
+import { Badge, Button, Fieldset, Group, Text } from '@mantine/core'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps, rememberOpener, returnTarget } from '../utils/focus-return'
+import { OverlayDrawer } from '../shell/OverlayHeader'
 
 export interface StagedChangesDrawerProps {
   opened: boolean
   /** Closes the drawer. Called directly when clean, only after a confirmed discard when dirty, and never while saving. */
   onClose: () => void
   title: string
-  description: string
   size: number
   isDirty: boolean
   isSaving: boolean
@@ -62,7 +62,6 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
   opened,
   onClose,
   title,
-  description,
   size,
   isDirty,
   isSaving,
@@ -132,7 +131,7 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
   const { onExitTransitionEnd: returnFocus, ...focusReturn } = focusReturnProps(returnFocusTo)
 
   return (
-    <Drawer
+    <OverlayDrawer
       opened={opened}
       onClose={requestClose}
       closeOnEscape={!childModalOpen}
@@ -142,26 +141,17 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
         onExited?.()
       }}
       position="right"
-      title={
-        <div>
-          <Group gap="xs">
-            <Title order={4} ref={titleRef} tabIndex={-1}>
-              {title}
-            </Title>
-            {isDirty && (
-              <Badge color="orange" variant="light">
-                Unsaved changes
-              </Badge>
-            )}
-          </Group>
-          <Text size="xs" c="dimmed">
-            {description}
-          </Text>
-        </div>
+      title={title}
+      titleRef={titleRef}
+      titleTabIndex={-1}
+      adornment={
+        isDirty && (
+          <Badge color="orange" variant="light">
+            Unsaved changes
+          </Badge>
+        )
       }
-      padding="md"
       size={size}
-      overlayProps={{ blur: 2 }}
     >
       {/* Inert while saving: the reload after a save replaces the panel's state, so an edit
           made meanwhile would vanish with the panel marked clean. */}
@@ -203,6 +193,6 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
           </Group>
         </Group>
       )}
-    </Drawer>
+    </OverlayDrawer>
   )
 }
