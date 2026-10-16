@@ -27,17 +27,13 @@ const meta: Meta<typeof EditorHeader> = {
     branchName: 'feature/landing',
     operatingMode: 'prod',
     busy: false,
-    breadcrumbSegments: [
-      { label: 'All content' },
-      { label: 'Posts', collectionPath: 'content/posts' },
-    ],
+    breadcrumbSegments: [{ label: 'Posts', collectionPath: 'content/posts' }],
     editedFiles: [
       { path: unsafeAsLogicalPath('content/posts/hello'), label: 'Hello' },
       { path: unsafeAsLogicalPath('content/pages/about'), label: 'About us' },
       { path: unsafeAsLogicalPath('content/pages/team'), label: 'Our team' },
     ],
     modifiedCount: 3,
-    onNavigatorOpen: noop,
     onCollectionOpen: noop,
     onFileReload: noop,
     onFileDiscardDraft: noop,
@@ -136,7 +132,7 @@ export const UnsavedNotKept: Story = {
 export const NoEntryOpen: Story = {
   args: {
     currentEntry: undefined,
-    breadcrumbSegments: [{ label: 'All content' }],
+    breadcrumbSegments: [],
     hasUnsavedChanges: false,
   },
 }
@@ -156,13 +152,13 @@ const openMenu =
   }
 const openEntryMenu = openMenu('file-dropdown-button')
 
-/** The entry menu: refresh, discard, then Rename… and the destructive Delete entry. */
+/** The entry menu: refresh, discard, then Change URL… and the destructive Delete entry. */
 export const EntryMenu: Story = {
   args: { hasUnsavedChanges: false },
   play: openEntryMenu,
 }
 
-/** On a branch in review, Rename… and Delete entry stay in the menu, blocked, with the reason. */
+/** On a branch in review, Change URL… and Delete entry stay in the menu, blocked, with the reason. */
 export const EntryMenuBlocked: Story = {
   args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
   play: openEntryMenu,

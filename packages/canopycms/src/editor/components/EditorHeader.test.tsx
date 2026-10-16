@@ -17,6 +17,7 @@ const currentEntry: EditorEntry = {
   contentId: unsafeAsContentId('abc123def456'),
   label: 'Hello',
   schema: [],
+  previewSrc: '/posts/hello',
 }
 
 const defaultProps: EditorHeaderProps = {
@@ -24,13 +25,9 @@ const defaultProps: EditorHeaderProps = {
   branchName: 'feature/x',
   operatingMode: 'prod',
   busy: false,
-  breadcrumbSegments: [
-    { label: 'All content' },
-    { label: 'Posts', collectionPath: 'content/posts' },
-  ],
+  breadcrumbSegments: [{ label: 'Posts', collectionPath: 'content/posts' }],
   editedFiles: [],
   modifiedCount: 0,
-  onNavigatorOpen: vi.fn(),
   onCollectionOpen: vi.fn(),
   onFileReload: vi.fn(),
   onFileDiscardDraft: vi.fn(),
@@ -304,17 +301,27 @@ describe('EditorHeader - breadcrumb', () => {
     cleanup()
   })
 
-  it('opens the content panel from "All content" and a collection from its crumb', async () => {
-    const onNavigatorOpen = vi.fn()
+  it('starts with the collection crumb, which opens its collection', async () => {
     const onCollectionOpen = vi.fn()
-    renderHeader({ onNavigatorOpen, onCollectionOpen })
+    renderHeader({ onCollectionOpen })
 
     const nav = screen.getByRole('navigation', { name: 'Breadcrumb' })
-    await userEvent.click(within(nav).getByRole('button', { name: 'All content' }))
-    expect(onNavigatorOpen).toHaveBeenCalledTimes(1)
+    const crumbs = within(nav).getAllByRole('listitem')
+    expect(crumbs).toHaveLength(2)
+    expect(crumbs[0].textContent).toBe('Posts')
+    expect(crumbs[1].textContent).toContain('Hello')
     await userEvent.click(within(nav).getByRole('button', { name: 'Posts' }))
     expect(onCollectionOpen).toHaveBeenCalledWith('content/posts')
-    expect(onNavigatorOpen).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a root entry as its crumb alone, with no separator before it', () => {
+    renderHeader({ breadcrumbSegments: [] })
+    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' })
+    expect(within(nav).getAllByRole('listitem')).toHaveLength(1)
+    const separators = within(nav)
+      .getByRole('listitem')
+      .querySelectorAll('svg.tabler-icon-chevron-right')
+    expect(separators.length).toBe(0)
   })
 
   it('marks the entry crumb current, with its unsaved state in its name', () => {
@@ -328,13 +335,13 @@ describe('EditorHeader - breadcrumb', () => {
 
   it('shows a slug folder as text that navigates nowhere', () => {
     renderHeader({
-      breadcrumbSegments: [{ label: 'All content' }, { label: '2024', folder: true }],
+      breadcrumbSegments: [{ label: '2024', folder: true }],
     })
     const nav = screen.getByRole('navigation', { name: 'Breadcrumb' })
     expect(within(nav).getByText('2024').closest('button')).toBeNull()
   })
 
-  it('offers "Refresh from server", "Discard changes", "Rename…" and "Delete entry" in the entry menu', async () => {
+  it('offers "Refresh from server", "Discard changes", "Change URL…" and "Delete entry" in the entry menu', async () => {
     const onFileReload = vi.fn()
     renderHeader({ onFileReload })
     await userEvent.click(screen.getByTestId('file-dropdown-button'))
@@ -342,15 +349,21 @@ describe('EditorHeader - breadcrumb', () => {
     expect(items.map((item) => item.textContent)).toEqual([
       'Refresh from server',
       'Discard changes',
-      'Rename…',
+      'Change URL…',
       'Delete entry',
     ])
     await userEvent.click(screen.getByRole('menuitem', { name: 'Refresh from server' }))
     expect(onFileReload).toHaveBeenCalled()
   })
 
+  it('offers "Change slug…" for an entry with no page', async () => {
+    renderHeader({ currentEntry: { ...currentEntry, previewSrc: undefined } })
+    await userEvent.click(screen.getByTestId('file-dropdown-button'))
+    expect((await screen.findByTestId('entry-menu-rename')).textContent).toBe('Change slug…')
+  })
+
   it.each([
-    ['Rename…', 'onEntryRename'],
+    ['Change URL…', 'onEntryRename'],
     ['Delete entry', 'onEntryDelete'],
   ] as const)('runs "%s" from the entry menu', async (name, handler) => {
     const run = vi.fn()
@@ -360,7 +373,7 @@ describe('EditorHeader - breadcrumb', () => {
     expect(run).toHaveBeenCalledTimes(1)
   })
 
-  it('hides Rename… and Delete entry for an entry a path rule refuses, as the tree does', async () => {
+  it('hides Change URL… and Delete entry for an entry a path rule refuses, as the tree does', async () => {
     renderHeader({ entryReadOnly: true, hasUnsavedChanges: false })
     await userEvent.click(screen.getByTestId('file-dropdown-button'))
     await screen.findByTestId('refresh-entry-menu-item')
@@ -379,7 +392,7 @@ describe('EditorHeader - breadcrumb', () => {
       { entryUnavailable: true },
       "This entry's content type isn't known to this editor version yet.",
     ],
-  ])('blocks Rename… and Delete entry for %s, saying why', async (_what, props, reason) => {
+  ])('blocks Change URL… and Delete entry for %s, saying why', async (_what, props, reason) => {
     const onEntryRename = vi.fn()
     const onEntryDelete = vi.fn()
     renderHeader({ ...props, hasUnsavedChanges: false, onEntryRename, onEntryDelete })
@@ -508,16 +521,14 @@ describe('EditorHeader - modified-file menus only select', () => {
 
   const editedFiles = [{ path: unsafeAsLogicalPath('posts/draft'), label: 'Draft post' }]
 
-  it('opens the entry from the branch menu without opening the navigator', async () => {
+  it('opens the entry from the branch menu', async () => {
     const onEntrySelect = vi.fn()
-    const onNavigatorOpen = vi.fn()
-    renderHeader({ editedFiles, modifiedCount: 1, onEntrySelect, onNavigatorOpen })
+    renderHeader({ editedFiles, modifiedCount: 1, onEntrySelect })
 
     await userEvent.click(screen.getByTestId('branch-dropdown-button'))
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Draft post' }))
 
     expect(onEntrySelect).toHaveBeenCalledWith('posts/draft')
-    expect(onNavigatorOpen).not.toHaveBeenCalled()
   })
 })
 

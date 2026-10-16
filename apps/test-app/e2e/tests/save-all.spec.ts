@@ -33,7 +33,7 @@ test.describe('Save all', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await editorPage.fillTextField('title', homeTitle)
       await editorPage.createPost(postSlug, postSavedTitle)
@@ -84,9 +84,9 @@ test.describe('Save all', () => {
       await editorPage.waitForReady()
       await editorPage.verifyFieldValue('title', postDraftTitle)
       await expect(editorPage.saveButton).toBeDisabled({ timeout: STANDARD_TIMEOUT })
-      // Its label is its title, so the saved title names it in the tree.
+      // A single-entry type is named by its type, so the saved title shows only in its form.
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry(homeTitle)
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await editorPage.verifyFieldValue('title', homeTitle)
       await expect(editorPage.saveButton).toBeDisabled({ timeout: STANDARD_TIMEOUT })

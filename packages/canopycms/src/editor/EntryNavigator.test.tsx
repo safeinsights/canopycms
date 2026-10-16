@@ -3,7 +3,7 @@ import React from 'react'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
+import { EntryNavigator, type EntryNavCollection, type EntryNavItem } from './EntryNavigator'
 import { CanopyCMSProvider } from './theme'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 
@@ -57,6 +57,49 @@ const renderEntryNavigator = (props: Partial<React.ComponentProps<typeof EntryNa
     props: defaultProps,
   }
 }
+
+/**
+ * One entry in each shape the navigator takes it: a flat item, an entry of a collection (as the
+ * editor passes it), and a collection node of type "entry".
+ */
+const ENTRY_SHAPES: Array<
+  [string, (entry: EntryNavItem) => Partial<React.ComponentProps<typeof EntryNavigator>>]
+> = [
+  [
+    'a flat item',
+    (entry) => ({
+      items: [entry, { path: unsafeAsLogicalPath('content/pages/about'), label: 'About' }],
+    }),
+  ],
+  [
+    'an entry of a collection',
+    (entry) => ({
+      collections: [
+        {
+          path: unsafeAsLogicalPath('content/pages'),
+          label: 'Pages',
+          type: 'collection',
+          entries: [entry, { path: unsafeAsLogicalPath('content/pages/about'), label: 'About' }],
+        },
+      ],
+      expandedStateRef: { current: { 'collection:content/pages': true } },
+    }),
+  ],
+  [
+    'an entry node',
+    (entry) => ({
+      collections: [
+        { path: entry.path, label: 'Node', type: 'entry', entries: [entry] },
+        {
+          path: unsafeAsLogicalPath('content/about'),
+          label: 'About',
+          type: 'entry',
+          entries: [{ path: unsafeAsLogicalPath('content/about'), label: 'About' }],
+        },
+      ],
+    }),
+  ],
+]
 
 describe('EntryNavigator', () => {
   describe('basic rendering', () => {
@@ -505,19 +548,55 @@ describe('EntryNavigator', () => {
     })
   })
 
-  describe('entry status badge', () => {
-    it('shows status badge on entries with status', () => {
+  describe('entry type line', () => {
+    const typeLine = (row: HTMLElement) => within(row).queryByTestId('entry-nav-type')
+
+    it('shows the type dimmed on a second line under the title, with no badge', () => {
       renderEntryNavigator({
-        items: [
-          {
-            path: unsafeAsLogicalPath('posts/hello'),
-            label: 'Hello World',
-            status: 'draft',
-          },
-        ],
+        items: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World', status: 'Post' }],
       })
 
-      expect(screen.getByText('draft')).toBeTruthy()
+      const row = screen.getByTestId('entry-nav-item-hello-world')
+      const type = typeLine(row)!
+      expect(type.textContent).toBe('Post')
+      expect(type.querySelector('p')?.getAttribute('style')).toContain('--mantine-color-dimmed')
+      expect(
+        within(row).getByText('Hello World').compareDocumentPosition(type) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+      expect(row.querySelector('.mantine-Badge-root')).toBeNull()
+    })
+
+    it.each(ENTRY_SHAPES)('shows Missing in error text in place of the type, as %s', (_, shape) => {
+      renderEntryNavigator(
+        shape({
+          path: unsafeAsLogicalPath('content/pages/gone'),
+          label: 'Gone',
+          status: 'Missing',
+          missing: true,
+        }),
+      )
+
+      const type = typeLine(screen.getByTestId('entry-nav-item-gone'))!
+      expect(type.textContent).toBe('Missing')
+      expect(type.querySelector('p')?.getAttribute('style')).toContain('--canopy-danger-text')
+    })
+
+    it('keeps an entry without a type, and a collection, on one line', () => {
+      renderEntryNavigator({
+        collections: [
+          {
+            path: unsafeAsLogicalPath('posts'),
+            label: 'Posts',
+            type: 'collection',
+            entries: [{ path: unsafeAsLogicalPath('posts/settings'), label: 'Site settings' }],
+          },
+        ],
+        expandedStateRef: { current: { 'collection:posts': true } },
+      })
+
+      expect(typeLine(screen.getByTestId('entry-nav-item-posts'))).toBeNull()
+      expect(typeLine(screen.getByTestId('entry-nav-item-site-settings'))).toBeNull()
     })
   })
 
@@ -859,6 +938,22 @@ describe('EntryNavigator', () => {
 
       expect(isShown('entry-nav-item-launch-day')).toBe(true)
       expect(isShown('entry-nav-item-getting-started')).toBe(false)
+    })
+
+    it.each(ENTRY_SHAPES)('matches a type-named entry by its title, as %s', async (_, shape) => {
+      const user = userEvent.setup()
+      renderEntryNavigator(
+        shape({
+          path: unsafeAsLogicalPath('content/pages/site'),
+          label: 'Site settings',
+          title: 'Example site',
+        }),
+      )
+
+      await user.type(filterInput(), 'example')
+
+      expect(isShown('entry-nav-item-site-settings')).toBe(true)
+      expect(isShown('entry-nav-item-about')).toBe(false)
     })
 
     it('matches an entry by slug when the title does not contain the text', async () => {
@@ -1360,7 +1455,7 @@ describe('EntryNavigator', () => {
       expect(dividers()).toHaveLength(0)
     })
 
-    it('orders the entry menu as rename, move, then a divider and a red delete', async () => {
+    it('orders the entry menu as Change URL, move, then a divider and a red delete', async () => {
       const user = userEvent.setup()
       renderEntryNavigator({
         collections: [
@@ -1386,7 +1481,7 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('entry-menu-first'))
       await screen.findByRole('menu')
 
-      const rename = screen.getByText('Rename…')
+      const rename = screen.getByText('Change URL…')
       const up = screen.getByText('Move up')
       const down = screen.getByText('Move down')
       const del = screen.getByText('Delete entry')
@@ -1397,6 +1492,22 @@ describe('EntryNavigator', () => {
       expect(precedes(down, dividers()[0])).toBe(true)
       expect(precedes(dividers()[0], del)).toBe(true)
     })
+
+    it.each(ENTRY_SHAPES)(
+      'offers "Change slug…" for an entry with no page, as %s',
+      async (_, shape) => {
+        const user = userEvent.setup()
+        renderEntryNavigator({
+          ...shape({ path: lp('content/pages/settings'), label: 'Settings', noPage: true }),
+          onRenameEntry: vi.fn(),
+        })
+
+        await user.click(screen.getByTestId('entry-menu-settings'))
+        expect((await screen.findByTestId('rename-entry-menu-item')).textContent).toBe(
+          'Change slug…',
+        )
+      },
+    )
 
     it('has no divider in an entry menu that only deletes', async () => {
       const user = userEvent.setup()

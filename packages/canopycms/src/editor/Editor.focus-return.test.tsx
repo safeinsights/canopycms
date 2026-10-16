@@ -299,7 +299,7 @@ describe('Refresh from server (file menu)', () => {
   })
 })
 
-describe('Rename… and Delete entry (file menu)', () => {
+describe('Change URL… and Delete entry (file menu)', () => {
   it('opens the rename dialog for the open entry, and returns focus to the file menu button', async () => {
     stubApi()
     renderEditor()
@@ -333,7 +333,7 @@ describe('Rename… and Delete entry (file menu)', () => {
     await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
   })
 
-  it('deletes the open entry once confirmed, leaving none open, and focuses "All content"', async () => {
+  it("deletes the open entry once confirmed, leaving none open, and focuses the rail's Content button", async () => {
     stubApi()
     renderEditor()
     await loaded()
@@ -346,8 +346,8 @@ describe('Rename… and Delete entry (file menu)', () => {
     await waitFor(() => expect(fileTrigger().textContent).toBe('No entry open'))
     // Its last render, the entry already gone from the list, still names it.
     expect(modal.textContent).toContain('Delete "Hello"?')
-    const allContent = screen.getAllByTestId('breadcrumb-segment')[0]
-    await waitFor(() => expect(document.activeElement).toBe(allContent))
+    const contentButton = screen.getByTestId('content-panel-toggle')
+    await waitFor(() => expect(document.activeElement).toBe(contentButton))
   })
 
   it('blocks both on a locked branch, saying why, and opens neither', async () => {

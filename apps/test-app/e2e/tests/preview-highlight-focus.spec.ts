@@ -85,7 +85,7 @@ test.describe('Preview highlights and click-to-focus', () => {
       await editorPage.waitForReady()
       await editorPage.createPost('focus-target', 'Focus Target Post')
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await expect(title).toContainText('Home Page', { timeout: 15000 })
     })

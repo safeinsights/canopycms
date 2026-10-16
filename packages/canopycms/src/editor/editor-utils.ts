@@ -1,12 +1,20 @@
 import type { CollectionItem, ListEntriesResponse } from '../api/entries'
-import type { ContentFormat, EntrySchema, EntryTypeUnavailable, FlatSchemaItem } from '../config'
+import type {
+  ContentFormat,
+  EntrySchema,
+  EntryTypeUnavailable,
+  FieldConfig,
+  FlatSchemaItem,
+  InlineGroupFieldConfig,
+} from '../config'
 import type { FormValue } from './FormRenderer'
-import type { EditorEntry, EditorCollection } from './Editor'
+import type { EditorEntry, EditorCollection, EditorEntryType } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
 // Import directly from normalize to avoid pulling in server-only branch.ts
 import { normalizeFilesystemPath } from '../paths/normalize'
-import { humanizeName } from './schema-label'
+import { humanizeName, schemaLabel } from './schema-label'
 import { computeEntryUrl, isIndexSlug } from '../utils/entry-url'
+import { titleFieldPath } from '../utils/title-field'
 import { isDataOnlyFormat } from '../utils/format'
 import {
   isAbsoluteUrl,
@@ -109,6 +117,25 @@ export const buildPreviewRoute = (
   return `${encoded ? `${trimmed}/${encoded}` : basePathPart || '/'}${suffix}`
 }
 
+/** Whether a `buildPreviewRoute` route is the site's root page: `/`, with any query or fragment. */
+const isHomeRoute = (route: string | undefined): boolean =>
+  route !== undefined &&
+  !isAbsoluteUrl(route) &&
+  stripTrailingSlashes(splitPathSuffix(route)[0]) === ''
+
+/**
+ * The entry the editor opens when none is asked for: the one whose route is `/`, else the first
+ * with a preview, else the first. `routeFor` gives the route before any prefix or base path
+ * (`buildPreviewRoute`), so `previewPrefix` and `basePath` never hide the root page.
+ */
+export const resolveHomeEntry = <T extends { previewSrc?: string }>(
+  entries: readonly T[],
+  routeFor?: (entry: T) => string | undefined,
+): T | undefined =>
+  (routeFor && entries.find((entry) => isHomeRoute(routeFor(entry)))) ||
+  entries.find((entry) => entry.previewSrc) ||
+  entries[0]
+
 /**
  * Builds the preview iframe `src` for an entry: its route under `previewPrefix`, under the
  * deployment `basePath` (`CanopyClientConfig.basePath`, e.g. `/preview-123`), in the host's
@@ -185,6 +212,14 @@ interface BuildEntriesFromListParams {
   flatSchema: FlatSchemaItem[]
 }
 
+/**
+ * The label an entry of this type goes by when the type allows only one entry (`maxItems: 1`):
+ * the type's own, as "Site settings" names the site's one settings entry. Undefined for any other
+ * type, and for an unlabelled one, whose entry keeps its title.
+ */
+const singletonLabel = (type: { label?: string; maxItems?: number }): string | undefined =>
+  type.maxItems === 1 && type.label ? type.label : undefined
+
 export const buildEntriesFromListResponse = ({
   response,
   resolvePreviewSrc,
@@ -194,6 +229,7 @@ export const buildEntriesFromListResponse = ({
     // Resolve schema from flatSchema using parentPath + name
     let schema: EntrySchema = []
     let unavailable: EntryTypeUnavailable | undefined
+    let typeName: string | undefined
     if (entry.collectionPath && entry.entryType) {
       const entryTypeItem = flatSchema.find(
         (item) =>
@@ -204,13 +240,15 @@ export const buildEntriesFromListResponse = ({
       if (entryTypeItem && entryTypeItem.type === 'entry-type') {
         schema = entryTypeItem.schema
         unavailable = entryTypeItem.unavailable
+        typeName = singletonLabel(entryTypeItem)
       }
     }
 
     return {
       path: entry.logicalPath,
       contentId: entry.contentId,
-      label: entry.title || entry.slug || entry.collectionName || entry.collectionPath,
+      label: typeName || entry.title || entry.slug || entry.collectionName || entry.collectionPath,
+      ...(entry.title && { title: entry.title }),
       status: entry.exists === false ? 'missing' : (entry.entryType ?? 'entry'),
       schema: schema,
       previewSrc: resolvePreviewSrc(entry),
@@ -242,15 +280,10 @@ export const buildCollectionLabels = (collections?: EditorCollection[]): Map<str
   return map
 }
 
-/**
- * An entry's type as its collection labels it, else its name read as words; undefined when
- * untyped.
- */
-export const entryTypeLabel = (
+const findEntryType = (
   collections: EditorCollection[] | undefined,
   entry: Pick<EditorEntry, 'collectionPath' | 'entryType'>,
-): string | undefined => {
-  if (!entry.entryType) return undefined
+): EditorEntryType | undefined => {
   const find = (nodes: EditorCollection[]): EditorCollection | undefined => {
     for (const c of nodes) {
       if (c.path === entry.collectionPath) return c
@@ -260,37 +293,153 @@ export const entryTypeLabel = (
     return undefined
   }
   const collection = collections ? find(collections) : undefined
-  const type = collection?.entryTypes?.find((t) => t.name === entry.entryType)
-  return type?.label ?? humanizeName(entry.entryType)
+  return collection?.entryTypes?.find((t) => t.name === entry.entryType)
 }
 
-/** An entry's navigator badge: "Missing" when its file is gone, else its type's label or name. */
+/**
+ * An entry's type as its collection labels it, else its name read as words; undefined when
+ * untyped.
+ */
+export const entryTypeLabel = (
+  collections: EditorCollection[] | undefined,
+  entry: Pick<EditorEntry, 'collectionPath' | 'entryType'>,
+): string | undefined => {
+  if (!entry.entryType) return undefined
+  return findEntryType(collections, entry)?.label ?? humanizeName(entry.entryType)
+}
+
+/**
+ * The type shown under an entry's label, in the content tree and quick open: `entryTypeLabel`,
+ * except for a singleton, whose label already is its type's (`singletonLabel`).
+ */
+export const entryTypeLine = (
+  collections: EditorCollection[] | undefined,
+  entry: Pick<EditorEntry, 'collectionPath' | 'entryType'>,
+): string | undefined => {
+  const type = findEntryType(collections, entry)
+  return type && singletonLabel(type) ? undefined : entryTypeLabel(collections, entry)
+}
+
+/**
+ * An entry's second line in the content tree: "Missing" when its file is gone, else its
+ * `entryTypeLine`, else its status read as words.
+ */
 export const entryStatusLabel = (
   collections: EditorCollection[] | undefined,
   entry: Pick<EditorEntry, 'status' | 'collectionPath' | 'entryType'>,
 ): string | undefined => {
   if (entry.status === 'missing') return 'Missing'
-  return entryTypeLabel(collections, entry) ?? (entry.status && humanizeName(entry.status))
-}
-
-/** One crumb before the entry's own: "All content", a collection, or a folder of a nested slug. */
-export interface BreadcrumbSegment {
-  label: string
-  /** The collection the crumb opens in the content panel; absent on "All content" and slug folders. */
-  collectionPath?: string
-  /** A slug folder, which is not a node of the content tree, so it navigates nowhere. */
-  folder?: true
+  if (entry.entryType) return entryTypeLine(collections, entry)
+  return entry.status && humanizeName(entry.status)
 }
 
 /**
- * Builds breadcrumb segments for an entry based on its collection hierarchy, starting with
- * "All content". The first path part is skipped as the content root, which the tree does not show.
+ * Where an entry's name comes from, which "Change URL" explains. The title chain is the server's
+ * (`resolveEntryTitle`): a non-empty title-field value, else a non-empty string `title` or `name`
+ * value whatever its field's type, else the type's label, else the slug. A labelled singleton is
+ * named by its type whatever its title. `fieldLabel` is absent when no field of that name is in the
+ * schema.
+ */
+export type EntryNameSource =
+  | { from: 'type' }
+  | { from: 'title'; fieldLabel?: string }
+  | { from: 'slug' }
+
+/**
+ * `data` is the entry's value where it is at hand; without it, a schema with a title field, or a
+ * `title` or `name` field, is taken to name the entry from it.
+ */
+export const entryNameSource = (
+  collections: EditorCollection[] | undefined,
+  entry: Pick<EditorEntry, 'collectionPath' | 'entryType' | 'schema'>,
+  data?: Record<string, unknown>,
+): EntryNameSource => {
+  const type = findEntryType(collections, entry)
+  if (type && singletonLabel(type)) return { from: 'type' }
+  const titlePath = titleFieldPath(entry.schema)
+  if (data) {
+    const plain = data.title ?? data.name
+    const plainName = isNonEmptyString(plain) ? (data.title != null ? 'title' : 'name') : undefined
+    if (titlePath && isNonEmptyString(valueAt(data, titlePath))) {
+      return { from: 'title', fieldLabel: pathLabel(entry.schema, titlePath) }
+    }
+    if (plainName) return { from: 'title', fieldLabel: pathLabel(entry.schema, [plainName]) }
+  } else {
+    if (titlePath) return { from: 'title', fieldLabel: pathLabel(entry.schema, titlePath) }
+    const named = ['title', 'name'].find((name) => findField(entry.schema, name))
+    if (named) return { from: 'title', fieldLabel: pathLabel(entry.schema, [named]) }
+  }
+  if (type?.label) return { from: 'type' }
+  return { from: 'slug' }
+}
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value !== ''
+
+/** The value at a data `path`, through nested objects. */
+const valueAt = (data: Record<string, unknown>, path: readonly string[]): unknown =>
+  path.reduce<unknown>(
+    (value, key) =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>)[key]
+        : undefined,
+    data,
+  )
+
+/**
+ * The label of the field at a data `path`, with its enclosing objects' labels before it
+ * ("Hero › Heading"); undefined when the schema has no such field.
+ */
+const pathLabel = (schema: EntrySchema, path: readonly string[]): string | undefined => {
+  const labels: string[] = []
+  let fields: readonly FieldConfig[] | undefined = schema
+  for (const name of path) {
+    const field: FieldConfig | undefined = fields && findField(fields, name)
+    if (!field) return undefined
+    labels.push(schemaLabel(field))
+    fields = field.type === 'object' && 'fields' in field && !field.list ? field.fields : undefined
+  }
+  return labels.join(' › ')
+}
+
+const isInlineGroup = (field: FieldConfig): field is InlineGroupFieldConfig =>
+  field.type === 'group'
+
+/** The field named `name` among `fields`, looking through inline groups, which hold no data. */
+const findField = (fields: readonly FieldConfig[], name: string): FieldConfig | undefined => {
+  for (const field of fields) {
+    if (isInlineGroup(field)) {
+      const inner = findField(field.fields, name)
+      if (inner) return inner
+    } else if (field.name === name) return field
+  }
+  return undefined
+}
+
+/** One crumb before the entry's own: a collection, or a folder of a nested slug. */
+export type BreadcrumbSegment =
+  | {
+      label: string
+      /** The collection the crumb reveals in the content panel. */
+      collectionPath: string
+      folder?: undefined
+    }
+  | {
+      label: string
+      /** A slug folder, which is not a node of the content tree, so it navigates nowhere. */
+      folder: true
+      collectionPath?: undefined
+    }
+
+/**
+ * Builds breadcrumb segments for an entry based on its collection hierarchy. The first path part
+ * is skipped as the content root, which the tree does not show, so a root entry has none.
  */
 export const buildBreadcrumbSegments = (
   currentEntry: EditorEntry | undefined,
   collectionLabels: Map<string, string>,
 ): BreadcrumbSegment[] => {
-  const segments: BreadcrumbSegment[] = [{ label: 'All content' }]
+  const segments: BreadcrumbSegment[] = []
   if (!currentEntry) return segments
 
   if (currentEntry.collectionPath) {

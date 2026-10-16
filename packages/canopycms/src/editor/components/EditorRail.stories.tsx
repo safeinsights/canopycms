@@ -19,8 +19,6 @@ const meta: Meta<typeof EditorRail> = {
     ),
   ],
   args: {
-    siteTitle: 'Example Site',
-    onHomeOpen: noop,
     contentPanelOpen: false,
     contentPanelId: 'content-panel',
     onContentToggle: noop,

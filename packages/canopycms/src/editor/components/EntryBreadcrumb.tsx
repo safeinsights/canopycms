@@ -19,21 +19,20 @@ export interface EntryBreadcrumbProps {
   entryDirty: boolean
   /** Why the open entry or its branch is read-only; set, the "Read-only" chip shows. */
   readOnlyReason?: string
-  onAllContent: () => void
   onCollection: (collectionPath: string) => void
   onRefresh: () => void
   onDiscard: () => void
-  /** With `onDelete`, offers "Rename…" and "Delete entry"; absent where a path rule refuses them. */
+  /** With `onDelete`, offers "Change URL…" and "Delete entry"; absent where a path rule refuses them. */
   onRename?: () => void
+  /** The entry has no page on the site, so "Change URL…" reads "Change slug…". */
+  entryNoPage?: boolean
   onDelete?: () => void
   refreshBlockedReason?: string
   discardBlockedReason?: string
-  /** Why the entry can't be renamed or deleted now. */
+  /** Why the entry's URL can't be changed, or the entry deleted, now. */
   changeBlockedReason?: string
   /** The entry menu's trigger, which stands in for a menu item that opened something. */
   entryMenuRef?: Ref<HTMLButtonElement>
-  /** The "All content" crumb, where focus goes once the open entry is gone. */
-  allContentRef?: Ref<HTMLButtonElement>
 }
 
 /** Whether the element's text is cut short, kept current as it resizes. */
@@ -79,20 +78,11 @@ function CrumbTooltip({
   )
 }
 
-function CollectionCrumb({
-  label,
-  onClick,
-  buttonRef,
-}: {
-  label: string
-  onClick: () => void
-  buttonRef?: Ref<HTMLButtonElement>
-}) {
+function CollectionCrumb({ label, onClick }: { label: string; onClick: () => void }) {
   const [ref, truncated] = useTruncated(label)
   return (
     <CrumbTooltip label={label} truncated={truncated}>
       <Button
-        ref={buttonRef}
         variant="subtle"
         color="gray"
         size="compact-sm"
@@ -118,26 +108,25 @@ const separator = (
 )
 
 /**
- * Where the open entry sits: "All content" opens the content panel, a collection crumb reveals
- * that collection in it, and the entry's own crumb is current and opens the entry menu. Crumbs
- * shrink and truncate before the entry's own does.
+ * Where the open entry sits: a collection crumb reveals that collection in the content panel, and
+ * the entry's own crumb is current and opens the entry menu. Crumbs shrink and truncate before the
+ * entry's own does.
  */
 export function EntryBreadcrumb({
   segments,
   entryLabel,
   entryDirty,
   readOnlyReason,
-  onAllContent,
   onCollection,
   onRefresh,
   onDiscard,
   onRename,
+  entryNoPage = false,
   onDelete,
   refreshBlockedReason,
   discardBlockedReason,
   changeBlockedReason,
   entryMenuRef,
-  allContentRef,
 }: EntryBreadcrumbProps) {
   const trigger = useRef<HTMLButtonElement>(null)
   const triggerRef = useMergedRef(trigger, entryMenuRef)
@@ -178,16 +167,13 @@ export function EntryBreadcrumb({
               ) : (
                 <CollectionCrumb
                   label={segment.label}
-                  buttonRef={index === 0 ? allContentRef : undefined}
-                  onClick={() =>
-                    segment.collectionPath ? onCollection(segment.collectionPath) : onAllContent()
-                  }
+                  onClick={() => onCollection(segment.collectionPath)}
                 />
               )}
             </Group>
           ))}
           <Group component="li" gap={2} wrap="nowrap" miw={64} style={{ flex: '0 1 auto' }}>
-            {separator}
+            {segments.length > 0 && separator}
             {entryLabel === undefined ? (
               <Text size="sm" c="dimmed" px={4} data-testid="file-dropdown-button">
                 No entry open
@@ -253,7 +239,7 @@ export function EntryBreadcrumb({
                         blockedReason={changeBlockedReason}
                         data-testid="entry-menu-rename"
                       >
-                        Rename…
+                        {entryNoPage ? EDITOR_ACTIONS.changeSlug : EDITOR_ACTIONS.changeUrl}…
                       </ReasonedMenuItem>
                       <DestructiveMenuItem
                         onClick={onDelete}

@@ -52,7 +52,7 @@ test.describe('A createPreviewPage view paints its images from the signed-in rou
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       const body = await mediaPage.uploadViaImageFieldDropzone('heroImage', 'test-image.png')
       expect(body.ok).toBe(true)
       hash32 = body.data!.asset.hash32

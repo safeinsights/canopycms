@@ -111,6 +111,12 @@ const okJson = (data: unknown, status = 200) =>
  * baseVersions }` envelope, so the assertion is about which entries have
  * drafts -- not about the serialization format.
  */
+/** Opens the content panel from the rail, unless it is open already. */
+const openContentPanel = () => {
+  const toggle = screen.getByTestId('content-panel-toggle')
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
+}
+
 const readPersistedDrafts = (branch: string): Record<string, unknown> => {
   const raw = window.localStorage.getItem(`canopycms:drafts:${branch}`)
   if (!raw) return {}
@@ -1126,9 +1132,8 @@ describe('Editor integration', () => {
     // Entry A's load starts (parked, not yet resolved).
     await waitFor(() => expect(resolvers[entryAApiPath]).toBeDefined())
 
-    // Navigate to entry B via the File menu -> All content -> entry click,
-    // while A is still in flight.
-    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
+    // Navigate to entry B via the content panel while A is still in flight.
+    openContentPanel()
     await waitFor(() => expect(screen.getByTestId('entry-nav-item-world')).toBeDefined())
     fireEvent.click(screen.getByTestId('entry-nav-item-world'))
 
@@ -1672,13 +1677,13 @@ describe('Editor integration', () => {
       expect(saveButton.getAttribute('aria-disabled')).toBe('true')
     })
 
-    // Open the entry navigator (File dropdown -> All content) and confirm the
+    // Open the entry navigator from the rail and confirm the
     // read-only branch hides every mutation affordance: the per-collection
     // context menu (EntryNavigator's readOnly gating) and the drawer header's
     // "Content actions" button (Add entry/Add collection for the root), which
     // reads navCollections[0].onAdd directly and would otherwise bypass
     // EntryNavigator's gating entirely.
-    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
+    openContentPanel()
 
     await waitFor(() => {
       expect(screen.getByTestId('entry-nav-item-posts')).toBeDefined()
@@ -1965,7 +1970,7 @@ describe('Editor integration', () => {
     }
 
     const openNavigatorAndFindSubA = async () => {
-      fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
+      openContentPanel()
       // hiddenRootPath collapses the single "content/posts" root (contentRoot
       // is pinned to it below), so its children render directly at the top
       // level with no expand click needed.

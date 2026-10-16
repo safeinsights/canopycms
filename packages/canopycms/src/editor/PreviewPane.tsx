@@ -21,6 +21,7 @@ import { PreviewFrame, type PreviewMarks } from './PreviewFrame'
 import type { InexactMark } from './preview-marks'
 import { HighlightToggle, MaximizeToggle, UnmappedMarksChip } from './PreviewToolbarTools'
 import type { PaneArrangement } from './shell/PaneLayout'
+import { PANE_HEADER_HEIGHT } from './pane-header'
 import { displayPreviewPath, type PreviewMount } from './preview-path'
 import {
   computePreviewViewport,
@@ -202,8 +203,9 @@ export const PreviewPane = ({
         gap={6}
         px={6}
         style={{
-          // Wraps to a second row, rather than clipping, in a pane too narrow for one.
-          minHeight: 32,
+          // Wraps to a second row, rather than clipping, in a pane too narrow for one. The pane's
+          // own top border makes up the last pixel, so this bar ends level with the form header.
+          minHeight: PANE_HEADER_HEIGHT - 1,
           rowGap: 2,
           paddingBlock: 2,
           flex: '0 0 auto',

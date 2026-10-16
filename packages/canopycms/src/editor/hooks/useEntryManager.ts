@@ -6,7 +6,7 @@ import type { ApiErrorCode } from '../../api/types'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
-import { buildWritePayload, normalizeContentPayload } from '../editor-utils'
+import { buildWritePayload, normalizeContentPayload, resolveHomeEntry } from '../editor-utils'
 import { isDataOnlyFormat } from '../../utils/format'
 import { withTitleAtPath } from '../../utils/title-field'
 import { getErrorMessage } from '../../utils/error'
@@ -61,6 +61,8 @@ export interface UseEntryManagerOptions {
   branchName: string
   collections?: EditorCollection[]
   resolvePreviewSrc: (entry: Partial<EditorEntry>) => string | undefined
+  /** An entry's route on the site (`buildPreviewRoute`), which picks the home page to open first. */
+  resolvePreviewRoute?: (entry: EditorEntry) => string | undefined
   setBusy: (busy: boolean) => void
 }
 
@@ -165,7 +167,7 @@ const EMPTY_SCHEMAS: string[] = []
 
 /**
  * The URL's `entry`: a path; `''` for no entry and the navigator open (the crash screen's escape
- * from an entry that crashes the editor); null opens the first entry.
+ * from an entry that crashes the editor); null opens the home page (`resolveHomeEntry`).
  */
 const readUrlEntry = (): string | null =>
   typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('entry')
@@ -281,6 +283,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // the user switches mid-flight, which is exactly when the check matters).
   const currentBranchRef = useRef(options.branchName)
   currentBranchRef.current = options.branchName
+  // Read by the selection check, which runs only when the entries or the selection change.
+  const resolvePreviewRouteRef = useRef(options.resolvePreviewRoute)
+  resolvePreviewRouteRef.current = options.resolvePreviewRoute
   const recordCommittedRefreshSeq = (branch: string, seq: number): void => {
     refreshSeqRef.current.committed.set(branch, seq)
     // A commit also implies any future claim must outrank this tag, so a
@@ -302,13 +307,13 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     initialUrlEntry.current = readUrlEntry()
   }
   // Set by the URL's empty `entry` or by `closeEntry`; honoured until an entry is selected or the
-  // branch changes, after which a lost selection opens the first again.
+  // branch changes, after which a lost selection opens the home page again.
   const noEntryRequested = useRef(initialUrlEntry.current === '')
   const selectEntryPath = useCallback((path: string) => {
     selectionsByCallerRef.current += 1
     setSelectedPath(path)
   }, [])
-  // No entry open, as the URL's empty `entry` asks, where a lost selection opens the first.
+  // No entry open, as the URL's empty `entry` asks, where a lost selection opens the home page.
   const closeEntry = useCallback(() => {
     noEntryRequested.current = true
     selectEntryPath('')
@@ -667,7 +672,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const stillOnIt = selectedPathRef.current === path
     const selections = selectionsByCallerRef.current
     // The rename landed whatever the refresh does. The new path is selected only once the list
-    // holds it: before that, the selection check would find it missing and open the first entry.
+    // holds it: before that, the selection check would find it missing and open the home page.
     const landed = async (newPath: string | undefined) => {
       const listed = await refreshEntries().catch((err: unknown) => {
         console.error(err)
@@ -712,7 +717,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       }
       void refreshEntries().catch(console.error)
       throw new MayHaveLandedError(
-        `Renaming "${label}" may have gone through even though the server didn't answer. Check the "Content" panel before trying again.`,
+        `Changing the URL of "${label}" may have gone through even though the server didn't answer. Check the "Content" panel before trying again.`,
       )
     } finally {
       options.setBusy(false)
@@ -879,8 +884,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
     if (selectedPath === '' && noEntryRequested.current) return
 
-    // Fall back to first entry
-    setSelectedPath(entriesState[0]?.path ?? '')
+    setSelectedPath(resolveHomeEntry(entriesState, resolvePreviewRouteRef.current)?.path ?? '')
   }, [entriesState, selectedPath])
 
   // Update URL when selection changes (skip until URL sync has happened)

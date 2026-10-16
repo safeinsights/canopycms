@@ -133,7 +133,8 @@ export class EditorPage {
   }
 
   /**
-   * Open the content navigator from the header's breadcrumb, which shows once an entry is selected.
+   * Open the content navigator from the header's first collection crumb, which shows once an entry
+   * in a collection is open.
    */
   async openContentNavigatorFromBreadcrumb(): Promise<void> {
     await this.page.getByTestId('breadcrumb-segment').first().click()
