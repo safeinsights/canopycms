@@ -1,17 +1,15 @@
 'use client'
 
-import React, { useId, useRef, useState } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import {
   Badge,
   Button,
-  Drawer,
   Group,
   Paper,
   ScrollArea,
   Stack,
   Text,
   Textarea,
-  Title,
   Switch,
   Tooltip,
   VisuallyHidden,
@@ -20,6 +18,7 @@ import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { UserBadge } from './components/UserBadge'
 import { userIdLabel } from './user-display'
+import { OverlayDrawer } from './shell/OverlayHeader'
 import { RelativeTime } from './components/RelativeTime'
 import { ThreadReplyControls } from './comments/ThreadReplyControls'
 import { useTrackedWrites } from './comments/use-tracked-writes'
@@ -98,6 +97,25 @@ const JumpButton: React.FC<{
 
 const THREAD_KIND_LABELS = { field: 'Field', entry: 'Entry', branch: 'Branch' } as const
 
+// A card's click jumps, except from these, which act or select on their own.
+const CARD_CONTROLS =
+  'a, button, input, textarea, select, label, summary, [role="button"], [contenteditable]'
+
+/** The thread card a click landed on, unless it landed on a control or ended a text selection. */
+function plainCardClick(event: MouseEvent): HTMLElement | null {
+  if (event.defaultPrevented || !(event.target instanceof Element)) return null
+  const card = event.target.closest<HTMLElement>('[data-thread-id]')
+  if (!card) return null
+  const control = event.target.closest(CARD_CONTROLS)
+  if (control && card.contains(control)) return null
+  return window.getSelection()?.toString() ? null : card
+}
+
+interface JumpTarget {
+  label: string
+  go: () => void
+}
+
 export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   opened,
   branchName,
@@ -166,23 +184,56 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     return `${kind} · ${field ? `${entry} › ${field}` : entry}`
   }
 
+  const jumpTarget = (thread: CommentThread): JumpTarget | null => {
+    const { entryPath, canopyPath } = thread
+    if (
+      thread.type === 'field' &&
+      entryPath &&
+      canopyPath &&
+      !thread.onRemovedItem &&
+      onJumpToField
+    ) {
+      return { label: 'Jump to field', go: () => onJumpToField(entryPath, canopyPath, thread.id) }
+    }
+    // A removed item's thread lives on its entry.
+    if ((thread.type === 'entry' || thread.onRemovedItem) && entryPath && onJumpToEntry) {
+      return { label: 'Jump to entry', go: () => onJumpToEntry(entryPath, thread.id) }
+    }
+    if (thread.type === 'branch' && onJumpToBranch) {
+      return { label: 'Open branch discussion', go: () => onJumpToBranch(thread.id) }
+    }
+    return null
+  }
+
+  // A click on a card's body is the same jump as its button. It is a listener on the list, not a
+  // handler on each article: the button is the keyboard and assistive-tech route, so the article
+  // stays a plain landmark and the click only adds a larger target for the pointer.
+  const [list, setList] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    if (!list) return
+    const onClick = (event: MouseEvent) => {
+      const card = plainCardClick(event)
+      const thread = comments.find((t) => t.id === card?.dataset.threadId)
+      const target = thread && jumpTarget(thread)
+      if (target && inFlight === 0) jump(target.go)
+    }
+    list.addEventListener('click', onClick)
+    return () => list.removeEventListener('click', onClick)
+  })
+
   return (
-    <Drawer
+    <OverlayDrawer
       opened={opened}
       onClose={close}
       returnFocus={!jumping}
       position="right"
       size={420}
-      title={
-        <div>
-          <Title order={4}>Comments</Title>
-          <Text size="xs" c="dimmed">
-            {branchName}
-          </Text>
-        </div>
-      }
+      title="Comments"
     >
       <Stack gap="md" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
+        <Text size="xs" c="dimmed">
+          Jump opens the comment next to its field.
+        </Text>
         <CloseRefusedNotice refused={closeRefused} />
         <Paper withBorder p="md">
           <Stack gap="sm">
@@ -231,154 +282,136 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
               {showResolved ? 'No comments yet' : 'No unresolved comments'}
             </Text>
           ) : (
-            <Stack gap="md">
-              {filteredThreads.map((thread) => (
-                <Paper
-                  key={thread.id}
-                  withBorder
-                  p="md"
-                  component="article"
-                  aria-labelledby={headingId(thread.id)}
-                  bg={thread.resolved ? 'var(--mantine-color-default-hover)' : undefined}
-                  data-testid="comment-thread"
-                >
-                  <Stack gap="xs">
-                    <Group gap="xs">
-                      <Text
-                        id={headingId(thread.id)}
-                        ref={(node: HTMLParagraphElement | null) => {
-                          if (node) headingRefs.current.set(thread.id, node)
-                          else headingRefs.current.delete(thread.id)
-                        }}
-                        size="xs"
-                        fw={600}
-                        tabIndex={-1}
-                        data-testid="comment-thread-heading"
-                      >
-                        {threadHeading(thread)}
-                        {/* The badge beside it is outside the heading, which names the article. */}
-                        {thread.onRemovedItem && (
-                          <VisuallyHidden>, {ON_REMOVED_ITEM.toLowerCase()}</VisuallyHidden>
-                        )}
-                      </Text>
-                      {thread.resolved && (
-                        <Badge size="xs" color="green" variant="light">
-                          Resolved
-                        </Badge>
-                      )}
-                      {thread.onRemovedItem && (
-                        <Badge size="xs" color="gray" variant="light" c="var(--mantine-color-text)">
-                          {ON_REMOVED_ITEM}
-                        </Badge>
-                      )}
-                    </Group>
-
-                    <Group gap="xs">
-                      {thread.type === 'field' &&
-                        thread.entryPath &&
-                        thread.canopyPath &&
-                        !thread.onRemovedItem &&
-                        onJumpToField && (
-                          <JumpButton
-                            blocked={inFlight > 0}
-                            onClick={() =>
-                              jump(() =>
-                                onJumpToField(thread.entryPath!, thread.canopyPath!, thread.id),
-                              )
-                            }
-                          >
-                            Jump to field
-                          </JumpButton>
-                        )}
-                      {/* A removed item's thread lives on its entry. */}
-                      {(thread.type === 'entry' || thread.onRemovedItem) &&
-                        thread.entryPath &&
-                        onJumpToEntry && (
-                          <JumpButton
-                            blocked={inFlight > 0}
-                            onClick={() => jump(() => onJumpToEntry(thread.entryPath!, thread.id))}
-                          >
-                            Jump to entry
-                          </JumpButton>
-                        )}
-                      {thread.type === 'branch' && onJumpToBranch && (
-                        <JumpButton
-                          blocked={inFlight > 0}
-                          onClick={() => jump(() => onJumpToBranch(thread.id))}
+            <Stack gap="md" ref={setList}>
+              {filteredThreads.map((thread) => {
+                const target = jumpTarget(thread)
+                return (
+                  <Paper
+                    key={thread.id}
+                    withBorder
+                    p="md"
+                    component="article"
+                    aria-labelledby={headingId(thread.id)}
+                    bg={thread.resolved ? 'var(--mantine-color-default-hover)' : undefined}
+                    data-testid="comment-thread"
+                    data-thread-id={thread.id}
+                    style={target ? { cursor: 'pointer' } : undefined}
+                  >
+                    <Stack gap="xs">
+                      <Group gap="xs">
+                        <Text
+                          id={headingId(thread.id)}
+                          ref={(node: HTMLParagraphElement | null) => {
+                            if (node) headingRefs.current.set(thread.id, node)
+                            else headingRefs.current.delete(thread.id)
+                          }}
+                          size="xs"
+                          fw={600}
+                          tabIndex={-1}
+                          data-testid="comment-thread-heading"
                         >
-                          Open branch discussion
-                        </JumpButton>
-                      )}
-                    </Group>
-
-                    {thread.comments.map((comment, idx) => (
-                      <div key={comment.id}>
-                        {idx > 0 && (
-                          <div
-                            style={{
-                              borderTop: '1px solid var(--mantine-color-default-border)',
-                              margin: '8px 0',
-                            }}
-                          />
+                          {threadHeading(thread)}
+                          {/* The badge beside it is outside the heading, which names the article. */}
+                          {thread.onRemovedItem && (
+                            <VisuallyHidden>, {ON_REMOVED_ITEM.toLowerCase()}</VisuallyHidden>
+                          )}
+                        </Text>
+                        {thread.resolved && (
+                          <Badge size="xs" color="green" variant="light">
+                            Resolved
+                          </Badge>
                         )}
-                        <Stack gap={4}>
-                          <Group gap="xs">
-                            {onGetUserMetadata ? (
-                              <UserBadge
-                                userId={comment.userId}
-                                getUserMetadata={onGetUserMetadata}
-                                variant="avatar-name"
-                                size="xs"
-                                showEmailTooltip={true}
-                                showBadge={true}
-                                badgeVariant="light"
-                                color="gray"
-                              />
-                            ) : (
-                              <Text size="xs" fw={500}>
-                                {userIdLabel(comment.userId)}
-                              </Text>
-                            )}
-                            <RelativeTime iso={comment.timestamp} size="xs" c="dimmed" />
-                          </Group>
-                          <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                            {comment.text}
-                          </Text>
-                        </Stack>
-                      </div>
-                    ))}
+                        {thread.onRemovedItem && (
+                          <Badge
+                            size="xs"
+                            color="gray"
+                            variant="light"
+                            c="var(--mantine-color-text)"
+                          >
+                            {ON_REMOVED_ITEM}
+                          </Badge>
+                        )}
+                      </Group>
 
-                    {!thread.resolved && (
-                      <ThreadReplyControls
-                        thread={thread}
-                        onAddReply={(text) =>
-                          addComment(
-                            text,
-                            thread.type,
-                            thread.entryPath,
-                            thread.canopyPath,
-                            thread.id,
-                          )
-                        }
-                        onResolve={() => resolveThread(thread.id)}
-                        focusAfterResolve={() =>
-                          showResolved ? headingRefs.current.get(thread.id) : threadCountRef.current
-                        }
-                        currentUserId={currentUserId}
-                        canResolve={canResolve}
-                        replyText={replyDrafts[thread.id] ?? ''}
-                        onReplyTextChange={(text) =>
-                          setReplyDrafts((prev) => ({ ...prev, [thread.id]: text }))
-                        }
-                      />
-                    )}
-                  </Stack>
-                </Paper>
-              ))}
+                      {target && (
+                        <Group gap="xs">
+                          <JumpButton blocked={inFlight > 0} onClick={() => jump(target.go)}>
+                            {target.label}
+                          </JumpButton>
+                        </Group>
+                      )}
+
+                      {thread.comments.map((comment, idx) => (
+                        <div key={comment.id}>
+                          {idx > 0 && (
+                            <div
+                              style={{
+                                borderTop: '1px solid var(--mantine-color-default-border)',
+                                margin: '8px 0',
+                              }}
+                            />
+                          )}
+                          <Stack gap={4}>
+                            <Group gap="xs">
+                              {onGetUserMetadata ? (
+                                <UserBadge
+                                  userId={comment.userId}
+                                  getUserMetadata={onGetUserMetadata}
+                                  variant="avatar-name"
+                                  size="xs"
+                                  showEmailTooltip={true}
+                                  showBadge={true}
+                                  badgeVariant="light"
+                                  color="gray"
+                                />
+                              ) : (
+                                <Text size="xs" fw={500}>
+                                  {userIdLabel(comment.userId)}
+                                </Text>
+                              )}
+                              <RelativeTime iso={comment.timestamp} size="xs" c="dimmed" />
+                            </Group>
+                            <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                              {comment.text}
+                            </Text>
+                          </Stack>
+                        </div>
+                      ))}
+
+                      {!thread.resolved && (
+                        <ThreadReplyControls
+                          thread={thread}
+                          onAddReply={(text) =>
+                            addComment(
+                              text,
+                              thread.type,
+                              thread.entryPath,
+                              thread.canopyPath,
+                              thread.id,
+                            )
+                          }
+                          onResolve={() => resolveThread(thread.id)}
+                          focusAfterResolve={() =>
+                            showResolved
+                              ? headingRefs.current.get(thread.id)
+                              : threadCountRef.current
+                          }
+                          currentUserId={currentUserId}
+                          canResolve={canResolve}
+                          replyText={replyDrafts[thread.id] ?? ''}
+                          onReplyTextChange={(text) =>
+                            setReplyDrafts((prev) => ({ ...prev, [thread.id]: text }))
+                          }
+                        />
+                      )}
+                    </Stack>
+                  </Paper>
+                )
+              })}
             </Stack>
           )}
         </ScrollArea>
       </Stack>
-    </Drawer>
+    </OverlayDrawer>
   )
 }

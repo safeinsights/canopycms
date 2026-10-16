@@ -30,7 +30,6 @@ function renderDrawer(overrides: Partial<StagedChangesDrawerProps> = {}) {
     opened: true,
     onClose: vi.fn(),
     title: 'Groups',
-    description: 'Manage groups',
     size: 600,
     isDirty: false,
     isSaving: false,
@@ -86,6 +85,25 @@ describe('StagedChangesDrawer', () => {
     it('registers no beforeunload prompt', () => {
       renderDrawer()
       expect(beforeUnloadPrompts()).toBe(false)
+    })
+  })
+
+  describe('header', () => {
+    it('holds the title and Close button only, even when given a description', () => {
+      renderDrawer({ description: 'Manage groups' })
+      const dialog = screen.getByRole('dialog', { name: 'Groups' })
+      expect(dialog.querySelector('.mantine-Drawer-header')?.textContent).toBe('Groups')
+      expect(screen.queryByText('Manage groups')).toBeNull()
+      expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+    })
+
+    it('keeps the unsaved badge beside the title, inside the dialog name', () => {
+      renderDrawer({ isDirty: true })
+      const header = screen
+        .getByRole('dialog', { name: /Unsaved changes/ })
+        .querySelector('.mantine-Drawer-header')
+      expect(header?.textContent).toContain('Groups')
+      expect(header?.textContent).toContain('Unsaved changes')
     })
   })
 

@@ -225,6 +225,96 @@ describe('CommentsPanel', () => {
     })
   })
 
+  describe('jumping from a thread card', () => {
+    it('jumps as its Jump button does when the card body is clicked', async () => {
+      const onJumpToField = vi.fn()
+      const onClose = vi.fn()
+      const user = userEvent.setup()
+      renderPanel({ comments: [fieldThread('a')], onJumpToField, onClose })
+
+      await user.click(screen.getByText('Comment in a'))
+      expect(onJumpToField).toHaveBeenCalledWith('posts/hello', 'blocks[0].title', 'a')
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('jumps an entry thread to its entry and a branch thread to the branch', async () => {
+      const onJumpToEntry = vi.fn()
+      const onJumpToBranch = vi.fn()
+      const user = userEvent.setup()
+      renderPanel({
+        comments: [fieldThread('e', { type: 'entry', canopyPath: undefined }), branchThread],
+        onJumpToEntry,
+        onJumpToBranch,
+      })
+
+      await user.click(screen.getByText('Comment in e'))
+      expect(onJumpToEntry).toHaveBeenCalledWith('posts/hello', 'e')
+      await user.click(screen.getByText('A branch-level comment'))
+      expect(onJumpToBranch).toHaveBeenCalledWith('thread-branch-1')
+    })
+
+    it('does not jump from the reply and resolve controls or a text selection', async () => {
+      const onJumpToField = vi.fn()
+      const user = userEvent.setup()
+      renderPanel({ comments: [fieldThread('a')], onJumpToField })
+
+      await user.click(within(card('a')).getByTestId('reply-thread-button'))
+      await user.click(screen.getByLabelText('Reply to this thread'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'Draft')
+      await user.click(within(card('a')).getByTestId('resolve-thread-button'))
+      expect(onJumpToField).not.toHaveBeenCalled()
+
+      const selection = vi.spyOn(window, 'getSelection').mockReturnValue({
+        toString: () => 'Comment',
+      } as unknown as Selection)
+      await user.click(screen.getByText('Comment in a'))
+      selection.mockRestore()
+      expect(onJumpToField).not.toHaveBeenCalled()
+    })
+
+    it('ignores a card click while a write is in flight', async () => {
+      const onAddComment = vi.fn(() => new Promise<void>(() => {}))
+      const onJumpToField = vi.fn()
+      const user = userEvent.setup()
+      renderPanel({ comments: [fieldThread('a')], onAddComment, onJumpToField })
+
+      await user.click(within(card('a')).getByTestId('reply-thread-button'))
+      await user.type(screen.getByLabelText('Reply to this thread'), 'Wait')
+      await user.click(screen.getByTestId('submit-reply-button'))
+      await user.click(screen.getByText('Comment in a'))
+      expect(onJumpToField).not.toHaveBeenCalled()
+    })
+
+    it('leaves a card with no jump target alone', async () => {
+      const onClose = vi.fn()
+      const user = userEvent.setup()
+      renderPanel({ comments: [fieldThread('a')], onClose })
+
+      await user.click(screen.getByText('Comment in a'))
+      expect(onClose).not.toHaveBeenCalled()
+    })
+
+    it('keeps the Jump button the only extra tab stop on a card', () => {
+      renderPanel({ comments: [fieldThread('a')], onJumpToField: vi.fn() })
+
+      expect(card('a').getAttribute('tabindex')).toBeNull()
+      expect(card('a').getAttribute('role')).toBe(null)
+      expect(within(card('a')).getByRole('button', { name: 'Jump to field' })).toBeTruthy()
+    })
+  })
+
+  it('explains what Jump does in a dimmed line at the top, and keeps the title short', () => {
+    renderPanel()
+
+    const intro = screen.getByText('Jump opens the comment next to its field.')
+    expect(intro.style.color).toBe('var(--mantine-color-dimmed)')
+    const dialog = screen.getByRole('dialog', { name: 'Comments' })
+    expect(dialog.querySelector('.mantine-Drawer-header')?.textContent).toBe('Comments')
+    expect(dialog.querySelector('.mantine-Drawer-body')?.firstElementChild?.firstElementChild).toBe(
+      intro,
+    )
+  })
+
   describe('top composer', () => {
     it('only starts branch comments, with no reply mode', async () => {
       const onAddComment = vi.fn().mockResolvedValue(undefined)

@@ -1467,6 +1467,23 @@ describe('MediaLibraryBody', () => {
     })
   })
 
+  it('heads the manage drawer with its title and a Close button, and no subtitle', async () => {
+    mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
+    const Wrapper = wrapper
+    render(
+      <CanopyCMSProvider>
+        <Wrapper>
+          <MediaLibrary opened mode="manage" onClose={vi.fn()} />
+        </Wrapper>
+      </CanopyCMSProvider>,
+    )
+    await screen.findByText('cat.png')
+
+    const dialog = screen.getByRole('dialog', { name: 'Media library' })
+    expect(dialog.querySelector('.mantine-Drawer-header')?.textContent).toBe('Media library')
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy()
+  })
+
   describe('uploading', () => {
     const uploadFile = async (name: string, type = 'image/png') => {
       const input = screen
