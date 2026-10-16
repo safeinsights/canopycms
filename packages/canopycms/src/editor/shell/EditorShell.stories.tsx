@@ -116,12 +116,13 @@ const EditorChrome = ({
           onLogoutClick={noop}
         />
       }
-      panel={mode === 'docked' ? panel : undefined}
+      panel={mode === 'docked' && layout === 'side' ? panel : undefined}
       main={
         <PaneLayout
           arrangement={layout}
           preview={<Placeholder name="Preview" />}
           form={<Placeholder name="Form" />}
+          formAside={mode === 'docked' && layout === 'stacked' ? panel : undefined}
           formOverlay={mode === 'overlay' ? panel : undefined}
         />
       }
@@ -162,7 +163,12 @@ export const ContentPanelDocked: Story = {
   render: () => <EditorChrome panelMode="docked" />,
 }
 
-/** Stacked, the content panel lays over the form only, so the preview stays in view. */
+/** Stacked, the docked content panel pushes the form row aside; the preview keeps its full width. */
+export const ContentPanelDockedStacked: Story = {
+  render: () => <EditorChrome arrangement="stacked" panelMode="docked" />,
+}
+
+/** In a narrow window the content panel slides in over the form only, so the preview stays in view. */
 export const ContentPanelOverlay: Story = {
   render: () => <EditorChrome arrangement="stacked" panelMode="overlay" />,
 }

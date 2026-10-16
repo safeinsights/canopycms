@@ -1,7 +1,6 @@
 'use client'
 
-import React, { useMemo, useState } from 'react'
-import { Box, Button } from '@mantine/core'
+import React, { useMemo } from 'react'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { ThreadCarousel } from './ThreadCarousel'
@@ -23,8 +22,6 @@ export interface BranchCommentsProps {
   ) => Promise<void>
   /** Handler to resolve a thread */
   onResolveThread: (threadId: string) => Promise<void>
-  /** Auto-focus and expand */
-  autoFocus?: boolean
   /** Thread ID to highlight and scroll to */
   highlightThreadId?: string
   /** Optional function to fetch user metadata for displaying user badges */
@@ -32,8 +29,8 @@ export interface BranchCommentsProps {
 }
 
 /**
- * Branch-level comments section displayed at the top of BranchManager.
- * Uses ThreadCarousel for navigation.
+ * The branch's existing discussion threads, at the top of BranchManager, in a ThreadCarousel.
+ * It renders nothing without one: a new branch comment starts in the Comments drawer.
  */
 export const BranchComments: React.FC<BranchCommentsProps> = ({
   comments,
@@ -41,34 +38,16 @@ export const BranchComments: React.FC<BranchCommentsProps> = ({
   canResolve,
   onAddComment,
   onResolveThread,
-  autoFocus,
   highlightThreadId,
   onGetUserMetadata,
 }) => {
-  const [showCarousel, setShowCarousel] = useState(false)
-
   const branchThreads = useMemo(() => comments.filter((t) => t.type === 'branch'), [comments])
 
-  const shouldShowCarousel = branchThreads.length > 0 || showCarousel || autoFocus
-
-  const handleAddComment = async (text: string, threadId?: string) => {
+  const handleAddComment = async (text: string, threadId: string) => {
     await onAddComment(text, 'branch', undefined, undefined, threadId)
   }
 
-  if (!shouldShowCarousel) {
-    return (
-      <Box>
-        <Button
-          variant="subtle"
-          color="gray"
-          onClick={() => setShowCarousel(true)}
-          style={{ fontSize: '0.75rem', height: '1.5rem' }}
-        >
-          New branch comment
-        </Button>
-      </Box>
-    )
-  }
+  if (branchThreads.length === 0) return null
 
   return (
     <ThreadCarousel
@@ -79,8 +58,6 @@ export const BranchComments: React.FC<BranchCommentsProps> = ({
       canResolve={canResolve}
       onAddComment={handleAddComment}
       onResolveThread={onResolveThread}
-      autoFocus={autoFocus}
-      autoOpenNewThread={showCarousel && branchThreads.length === 0}
       highlightThreadId={highlightThreadId}
       onGetUserMetadata={onGetUserMetadata}
     />

@@ -120,6 +120,7 @@ import { MediaLibrary } from './media/MediaLibrary'
 import {
   removalAnchors,
   restoreRemoval,
+  movedThreadsNote,
   openThreadsWithin,
   restoredFieldPath,
   type FieldRemoval,
@@ -377,8 +378,9 @@ const EditorContent: React.FC<EditorProps> = ({
     storageKey: editorLayoutStorageKey(basePath),
     defaultLayout: wideWindow ? 'side' : 'stacked',
   })
-  // In the stacked layout the content panel lays over the form only, so the preview stays in view.
-  const contentPanelDocked = layout === 'side' && wideWindow
+  // A wide window docks the content panel: beside the panes side by side, and beside the form row
+  // only when stacked, so the preview keeps its full width. A narrow one lays it over the form.
+  const contentPanelDocked = wideWindow
 
   // Comments state (shared between useCommentSystem and useBranchManager)
   const [commentsForBranchSummaries, setCommentsForBranchSummaries] = useState<CommentThread[]>([])
@@ -488,8 +490,8 @@ const EditorContent: React.FC<EditorProps> = ({
   }
 
   // An open overlay docks open, as the URL's ask for no entry does at load; `navigatorOpen` is only
-  // the overlay's, so a docked panel never resurfaces as one. Waits for the stored layout, whose
-  // arrival could otherwise dock an overlay the stacked layout keeps.
+  // the overlay's, so a docked panel never resurfaces as one. Waits for the stored preferences, so
+  // the open state it sets lands on them, not on the defaults they replace.
   useEffect(() => {
     if (layoutLoaded && contentPanelDocked && navigatorOpen) {
       setContentPanelOpen(true)
@@ -669,7 +671,8 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // Undo for a form Remove: a toast whose Undo puts the item back into the entry's draft as it
   // is then, through a functional update, so edits made since are kept. It acts only on the
-  // branch and entry it was raised for, and its toast closes when either changes.
+  // branch and entry it was raised for, and its toast closes when either changes. An object's
+  // Clear offers its Undo in the form instead (FormRenderer), which a save ends via `savedValue`.
   const loadedValuesRef = useRef(loadedValues)
   loadedValuesRef.current = loadedValues
   const draftsRef = useRef(drafts)
@@ -694,7 +697,6 @@ const EditorContent: React.FC<EditorProps> = ({
       ...removal,
       anchors: displayValue ? removalAnchors(fields, displayValue, removal) : undefined,
     }
-    const doing = removal.action === 'clear' ? 'clearing' : 'removing'
     // Open threads keyed inside what was removed leave their fields for the entry's thread list.
     const movedThreads = currentEntry
       ? openThreadsWithin(
@@ -715,7 +717,7 @@ const EditorContent: React.FC<EditorProps> = ({
       undoToastsRef.current.delete(id)
       if (!open) {
         notifications.show({
-          message: `Too late to undo ${doing} ${removal.label}.`,
+          message: `Too late to undo removing ${removal.label}.`,
           color: 'yellow',
         })
         return
@@ -730,7 +732,7 @@ const EditorContent: React.FC<EditorProps> = ({
       const now = draftsRef.current[contentId] ?? loadedValuesRef.current[contentId]
       if (!now || !restoreRemoval(fields, now, anchored)) {
         notifications.show({
-          message: `Couldn't undo ${doing} ${removal.label}: that part of the entry has changed. ${removal.action === 'clear' ? 'Fill it in again' : 'Add it again'} if you still need it.`,
+          message: `Couldn't undo removing ${removal.label}: that part of the entry has changed. Add it again if you still need it.`,
           color: 'yellow',
         })
         return
@@ -754,12 +756,7 @@ const EditorContent: React.FC<EditorProps> = ({
       message: (
         <UndoToastMessage
           label={removal.label}
-          action={removal.action}
-          note={
-            movedThreads > 0
-              ? `Its ${movedThreads === 1 ? 'comment thread' : `${movedThreads} comment threads`} moved to "Comment on this entry".`
-              : undefined
-          }
+          note={movedThreadsNote(movedThreads)}
           onUndo={undo}
           onHold={() => notifications.update({ ...toast, autoClose: false })}
           onRelease={() => notifications.update(toast)}
@@ -1472,7 +1469,8 @@ const EditorContent: React.FC<EditorProps> = ({
   const [contentPanelFocusRequest, setContentPanelFocusRequest] = useState(0)
   const openNavigator = () => {
     navigatorOpenerRef.current = rememberOpener()
-    // In the same commit as the overlay mounts, so its focus request meets no inert form panel.
+    // In the commit that opens the overlay, so the form panel is no longer inert when the overlay
+    // mounts, then or a frame later as its slide starts, and serves its focus request.
     if (!contentPanelDocked) setPreviewMaximized(false)
     setContentPanelShown(true)
     setContentPanelFocusRequest((request) => request + 1)
@@ -2021,10 +2019,11 @@ const EditorContent: React.FC<EditorProps> = ({
               onLogoutClick={onLogoutClick}
             />
           }
-          panel={contentPanelDocked ? contentPanel : undefined}
+          panel={contentPanelDocked && layout === 'side' ? contentPanel : undefined}
           main={
             <Box h="100%">
               <PaneLayout
+                formAside={contentPanelDocked && layout === 'stacked' ? contentPanel : undefined}
                 formOverlay={contentPanelDocked ? undefined : contentPanel}
                 formInert={contentOverlayShown}
                 previewMaximized={previewShownMaximized}
@@ -2086,6 +2085,7 @@ const EditorContent: React.FC<EditorProps> = ({
                           value={displayValue}
                           readOnly={contentReadOnly}
                           onRemoved={handleFieldRemoved}
+                          savedValue={loadedValue}
                           commentBlockedReason={commentBlockedReason}
                           removedItemFieldLabel={commentFieldLabel}
                           onGetUserMetadata={getCommentUserMetadata}

@@ -14,6 +14,7 @@ import path from 'node:path'
 
 import {
   CopyObjectCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -276,6 +277,68 @@ describe('S3AssetStore.listPublicObjectKeys', () => {
       Prefix: 'assets/t/w=320/',
       ContinuationToken: 'next',
     })
+  })
+})
+
+describe('S3AssetStore hidden markers', () => {
+  let s3Mock: ReturnType<typeof mockClient>
+  const HASH32 = 'a'.repeat(32)
+  const HIDDEN_KEY = `asset-hidden/${HASH32}.json`
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  it('unhideAsset sends no DELETE when there is no marker, so a versioned bucket gains no delete marker', async () => {
+    s3Mock.on(ListObjectsV2Command).resolves({ Contents: [] })
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    expect(await store.unhideAsset(HASH32)).toBe(false)
+    expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(0)
+    expect(s3Mock.commandCalls(ListObjectsV2Command)[0].args[0].input).toMatchObject({
+      Prefix: HIDDEN_KEY,
+      MaxKeys: 1,
+    })
+  })
+
+  it('unhideAsset deletes exactly the marker it found', async () => {
+    s3Mock.on(ListObjectsV2Command).resolves({ Contents: [{ Key: HIDDEN_KEY }] })
+    s3Mock.on(DeleteObjectCommand).resolves({})
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    expect(await store.unhideAsset(HASH32)).toBe(true)
+    expect(s3Mock.commandCalls(DeleteObjectCommand)[0].args[0].input).toEqual({
+      Bucket: BUCKET,
+      Key: HIDDEN_KEY,
+    })
+  })
+
+  it('hideAsset writes the marker create-only', async () => {
+    s3Mock.on(PutObjectCommand).resolves({})
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    await store.hideAsset(HASH32, { hiddenAt: '2026-01-01T00:00:00.000Z', hiddenBy: 'u1' })
+    expect(s3Mock.commandCalls(PutObjectCommand)[0].args[0].input).toMatchObject({
+      Key: HIDDEN_KEY,
+      IfNoneMatch: '*',
+    })
+  })
+
+  it("listMeta never fetches a hidden file's meta unless asked to include it", async () => {
+    s3Mock.on(ListObjectsV2Command, { Prefix: 'asset-meta/' }).resolves({
+      Contents: [{ Key: `asset-meta/${HASH32}.json` }],
+    })
+    s3Mock.on(ListObjectsV2Command, { Prefix: 'asset-hidden/' }).resolves({
+      Contents: [{ Key: HIDDEN_KEY }],
+    })
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    expect((await store.listMeta()).items).toEqual([])
+    expect(s3Mock.commandCalls(GetObjectCommand)).toHaveLength(0)
   })
 })
 

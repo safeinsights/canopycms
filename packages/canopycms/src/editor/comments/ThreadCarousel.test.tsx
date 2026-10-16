@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
-import { cleanup, render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { ThreadCarousel } from './ThreadCarousel'
@@ -246,7 +246,9 @@ describe('ThreadCarousel', () => {
       { wrapper: Wrapper },
     )
 
-    expect(container.textContent).toContain('No comments yet')
+    expect(container.textContent).toContain('Comments')
+    expect(container.textContent).not.toContain('No comments yet')
+    expect(screen.queryAllByTestId('inline-comment-thread')).toHaveLength(0)
   })
 
   it('renders thread count in header', () => {
@@ -329,11 +331,11 @@ describe('ThreadCarousel', () => {
     expect(navButtons.length).toBeGreaterThan(0)
   })
 
-  it('shows New button', () => {
+  it('offers no way to start a thread: new ones start in the Comments drawer', () => {
     render(
       <ThreadCarousel
         threads={mockThreads}
-        contextType="field"
+        contextType="branch"
         currentUserId="alice"
         canResolve={true}
         onAddComment={vi.fn()}
@@ -342,75 +344,8 @@ describe('ThreadCarousel', () => {
       { wrapper: Wrapper },
     )
 
-    // Use getAllByText since there might be multiple New buttons
-    const newButtons = screen.getAllByText('+ New')
-    expect(newButtons.length).toBeGreaterThan(0)
-  })
-
-  // Skip - similar issue to InlineCommentThread async tests (button clicks not triggering state changes)
-  it.skip('opens new thread box when New button clicked', async () => {
-    render(
-      <ThreadCarousel
-        threads={[]}
-        contextType="field"
-        currentUserId="alice"
-        canResolve={true}
-        onAddComment={vi.fn()}
-        onResolveThread={vi.fn()}
-      />,
-      { wrapper: Wrapper },
-    )
-
-    const newButtons = screen.getAllByText('+ New')
-    await act(async () => {
-      fireEvent.click(newButtons[0])
-    })
-
-    expect(screen.getByPlaceholderText('Start a new thread...')).toBeTruthy()
-  })
-
-  // Skip this test for now - clicking New button doesn't toggle properly in test env
-  it.skip('displays error when comment creation fails', async () => {
-    const onAddComment = vi.fn().mockRejectedValue(new Error('Network error'))
-
-    render(
-      <ThreadCarousel
-        threads={[]}
-        contextType="field"
-        currentUserId="alice"
-        canResolve={true}
-        onAddComment={onAddComment}
-        onResolveThread={vi.fn()}
-      />,
-      { wrapper: Wrapper },
-    )
-
-    // Open new thread box
-    const newButtons = screen.getAllByText('+ New')
-    await act(async () => {
-      fireEvent.click(newButtons[0])
-    })
-
-    // Type comment
-    const textarea = screen.getByPlaceholderText('Start a new thread...')
-    await act(async () => {
-      fireEvent.change(textarea, { target: { value: 'Test comment' } })
-    })
-
-    // Click create
-    const createButton = screen.getByText('Create Thread')
-    await act(async () => {
-      fireEvent.click(createButton)
-    })
-
-    // Wait for error to appear
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    })
-
-    // Error should be displayed
-    const alerts = document.querySelectorAll('[role="alert"]')
-    expect(alerts.length).toBeGreaterThan(0)
+    expect(screen.queryByText('+ New')).toBeNull()
+    expect(screen.queryByPlaceholderText('Start a new thread...')).toBeNull()
   })
 
   it('shows thread counter with current position', () => {
@@ -447,24 +382,6 @@ describe('ThreadCarousel', () => {
     expect(container.textContent).toContain('First comment')
     expect(container.textContent).toContain('Second comment')
     expect(container.textContent).toContain('Third comment')
-  })
-
-  it('auto-opens new thread box when autoOpenNewThread is true', () => {
-    render(
-      <ThreadCarousel
-        threads={[]}
-        contextType="field"
-        currentUserId="alice"
-        canResolve={true}
-        onAddComment={vi.fn()}
-        onResolveThread={vi.fn()}
-        autoOpenNewThread={true}
-      />,
-      { wrapper: Wrapper },
-    )
-
-    // Should automatically show the new thread textarea
-    expect(screen.getByPlaceholderText('Start a new thread...')).toBeTruthy()
   })
 
   it('highlights thread when highlightThreadId is provided', async () => {
@@ -512,64 +429,6 @@ describe('ThreadCarousel', () => {
     // locale date such as "1/1/2024", which would false-match that regex.)
     expect(container.querySelector('.tabler-icon-chevron-left')).toBeNull()
     expect(container.querySelector('.tabler-icon-chevron-right')).toBeNull()
-  })
-
-  it('calls onCancelNewThread when Cancel is clicked with zero threads', async () => {
-    const user = userEvent.setup()
-    const onCancelNewThread = vi.fn()
-
-    render(
-      <ThreadCarousel
-        threads={[]}
-        contextType="field"
-        currentUserId="alice"
-        canResolve={true}
-        onAddComment={vi.fn()}
-        onResolveThread={vi.fn()}
-        autoOpenNewThread={true}
-        onCancelNewThread={onCancelNewThread}
-      />,
-      { wrapper: Wrapper },
-    )
-
-    const cancelButton = screen.getByRole('button', { name: 'Cancel' })
-    await user.click(cancelButton)
-
-    expect(onCancelNewThread).toHaveBeenCalledTimes(1)
-    // The new-thread box itself should also close
-    expect(screen.queryByPlaceholderText('Start a new thread...')).toBeNull()
-  })
-
-  it('does not call onCancelNewThread when a new thread is created successfully', async () => {
-    const user = userEvent.setup()
-    const onCancelNewThread = vi.fn()
-    const onAddComment = vi.fn().mockResolvedValue(undefined)
-
-    render(
-      <ThreadCarousel
-        threads={[]}
-        contextType="field"
-        currentUserId="alice"
-        canResolve={true}
-        onAddComment={onAddComment}
-        onResolveThread={vi.fn()}
-        autoOpenNewThread={true}
-        onCancelNewThread={onCancelNewThread}
-      />,
-      { wrapper: Wrapper },
-    )
-
-    const textarea = screen.getByPlaceholderText('Start a new thread...')
-    await user.type(textarea, 'Hello world')
-
-    const createButton = screen.getByTestId('create-thread-button')
-    await user.click(createButton)
-
-    await waitFor(() => {
-      expect(onAddComment).toHaveBeenCalledWith('Hello world')
-    })
-
-    expect(onCancelNewThread).not.toHaveBeenCalled()
   })
 
   it('uses custom label when provided', () => {

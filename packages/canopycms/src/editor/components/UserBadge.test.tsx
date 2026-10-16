@@ -273,7 +273,9 @@ describe('UserBadge', () => {
         { wrapper: Wrapper },
       )
       await userEvent.hover(screen.getByText('Alice Johnson'))
-      expect((await screen.findByRole('tooltip')).textContent).toBe('alice@example.com')
+      expect((await screen.findByRole('tooltip')).textContent).toBe(
+        'Alice Johnson, alice@example.com',
+      )
 
       await userEvent.hover(screen.getByRole('button', { name: 'Remove Alice Johnson' }))
       await waitFor(() =>
@@ -752,6 +754,99 @@ describe('UserBadge', () => {
         { wrapper: Wrapper },
       )
       expect(screen.getByRole('button', { name: `Remove Name unavailable · ${ID}` })).toBeTruthy()
+    })
+  })
+
+  describe('a long name beside a photo avatar', () => {
+    const longName = 'Alexandria Montgomery-Featherstonehaugh de la Cruz Fitzgerald'
+    const photoUser: UserSearchResult = {
+      id: 'photo-user',
+      name: longName,
+      email: 'long.name@example.com',
+      avatarUrl: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=',
+    }
+
+    // jsdom has no layout, so these pin the rules that keep the avatar and name on one line.
+    const renderChip = async (props: Partial<React.ComponentProps<typeof UserBadge>> = {}) => {
+      const view = render(
+        <UserBadge
+          userId="photo-user"
+          getUserMetadata={vi.fn()}
+          cachedUser={photoUser}
+          variant="avatar-name"
+          size="xs"
+          showBadge
+          badgeVariant="light"
+          color="gray"
+          {...props}
+        />,
+        { wrapper: Wrapper },
+      )
+      const name = await screen.findByText(longName)
+      return { ...view, name }
+    }
+
+    it('keeps the label on one line and cuts it with an ellipsis', async () => {
+      const { container, name } = await renderChip()
+      expect(name.getAttribute('data-truncate')).toBe('end')
+      const row = name.parentElement as HTMLElement
+      expect(row.style.getPropertyValue('--group-wrap')).toBe('nowrap')
+      expect(row.querySelector('.mantine-Avatar-root')).toBeTruthy()
+      const label = container.querySelector('.mantine-Badge-label') as HTMLElement
+      expect(label.style.minWidth).toBe('0')
+    })
+
+    it('gives the full name and email in the tooltip', async () => {
+      const { name } = await renderChip()
+      await userEvent.hover(name)
+      expect((await screen.findByRole('tooltip')).textContent).toBe(
+        `${longName}, long.name@example.com`,
+      )
+    })
+
+    it('never carries a title beside its tooltip, with or without an email', async () => {
+      const { name, unmount } = await renderChip()
+      expect(name.getAttribute('title')).toBeNull()
+      unmount()
+
+      const noEmail = render(
+        <UserBadge
+          userId="photo-user"
+          getUserMetadata={vi.fn()}
+          cachedUser={{ ...photoUser, email: '' }}
+          showBadge
+        />,
+        { wrapper: Wrapper },
+      )
+      const nameNoEmail = await screen.findByText(longName)
+      expect(nameNoEmail.getAttribute('title')).toBeNull()
+      await userEvent.hover(nameNoEmail)
+      expect((await screen.findByRole('tooltip')).textContent).toBe(longName)
+      noEmail.unmount()
+    })
+
+    it('gives the full name as a title when no tooltip opens', async () => {
+      const { name } = await renderChip({ showEmailTooltip: false })
+      expect(name.getAttribute('title')).toBe(longName)
+    })
+
+    it('keeps the unavailable fallback on one line beside the avatar', async () => {
+      const { unmount } = await renderChip()
+      unmount()
+      render(
+        <UserBadge
+          userId="gone"
+          getUserMetadata={vi.fn()}
+          cachedUser={{ id: 'gone', name: '', email: '', avatarUrl: photoUser.avatarUrl }}
+          showBadge
+        />,
+        { wrapper: Wrapper },
+      )
+      const fallback = screen.getByText('Name unavailable')
+      expect(fallback.getAttribute('data-truncate')).toBe('end')
+      expect((fallback.parentElement as HTMLElement).style.getPropertyValue('--group-wrap')).toBe(
+        'nowrap',
+      )
     })
   })
 })

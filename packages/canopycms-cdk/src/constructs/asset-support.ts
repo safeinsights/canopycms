@@ -44,7 +44,7 @@ const transformAssetDir = path.join(__dirname, '..', '..', 'lambda', 'asset-tran
 const DEPLOYABLE_MARKER = '.deployable'
 
 /**
- * The four S3 key prefixes the asset system uses. Source of truth is
+ * The S3 key prefixes the asset system uses. Source of truth is
  * `packages/canopycms/src/assets/asset-prefixes.ts`; these are copied as
  * literals rather than imported so this construct synths in a consumer CDK app
  * that has no `canopycms` resolvable. (The transform Lambda does import them -
@@ -54,6 +54,7 @@ const PREFIXES = {
   originals: 'asset-originals',
   staging: 'asset-staging',
   meta: 'asset-meta',
+  hidden: 'asset-hidden',
   public: 'assets',
   transform: 'assets/t',
 } as const
@@ -1427,8 +1428,14 @@ export class AssetSupport extends Construct {
    *
    * - put on `asset-staging/` (presigned POST + proxied `writeStaging`)
    * - get on `asset-staging/` + `asset-originals/` + `asset-meta/` + `assets/`
-   * - put on `asset-originals/` + `asset-meta/` + `assets/`
-   * - delete on `asset-staging/` + `asset-meta/`
+   * - put on `asset-originals/` + `asset-meta/` + `asset-hidden/` + `assets/`
+   * - delete on `asset-staging/` + `asset-hidden/` (restoring a file removed from the library)
+   *
+   * Hidden markers are only listed, written and deleted, never read; the bucket-wide
+   * `s3:ListBucket` the read grants carry covers their listing.
+   *
+   * No delete on `asset-meta/`: meta is never deleted, since every transform not yet stored is
+   * computed from it.
    */
   public grantUploadAccess(grantee: iam.IGrantable): void {
     this.bucket.grantPut(grantee, `${PREFIXES.staging}/*`)
@@ -1440,9 +1447,10 @@ export class AssetSupport extends Construct {
 
     this.bucket.grantPut(grantee, `${PREFIXES.originals}/*`)
     this.bucket.grantPut(grantee, `${PREFIXES.meta}/*`)
+    this.bucket.grantPut(grantee, `${PREFIXES.hidden}/*`)
     this.bucket.grantPut(grantee, `${PREFIXES.public}/*`)
 
     this.bucket.grantDelete(grantee, `${PREFIXES.staging}/*`)
-    this.bucket.grantDelete(grantee, `${PREFIXES.meta}/*`)
+    this.bucket.grantDelete(grantee, `${PREFIXES.hidden}/*`)
   }
 }

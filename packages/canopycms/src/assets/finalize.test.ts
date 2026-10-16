@@ -6,6 +6,7 @@ import sharp from 'sharp'
 import { describe, expect, it, vi } from 'vitest'
 
 import { finalizeAsset, finalizeStagedUpload } from './finalize'
+import { resetCanopyLogger, setCanopyLogger } from '../utils/logger'
 import { LocalAssetStore } from './store-local'
 import type { AssetMeta, AssetStore } from './types'
 
@@ -45,7 +46,8 @@ function makeStore(overrides: Partial<AssetStore> = {}): AssetStore {
     putMetaIfAbsent: vi.fn().mockResolvedValue('created'),
     getMeta: vi.fn().mockResolvedValue(null),
     listMeta: vi.fn(),
-    deleteMeta: vi.fn(),
+    hideAsset: vi.fn().mockResolvedValue('created'),
+    unhideAsset: vi.fn().mockResolvedValue(false),
     ...overrides,
   }
 }
@@ -72,6 +74,51 @@ describe('finalizeAsset', () => {
     expect(store.putOriginal).not.toHaveBeenCalled()
     expect(store.putPublicObject).not.toHaveBeenCalled()
     expect(store.putMetaIfAbsent).not.toHaveBeenCalled()
+  })
+
+  it('still returns the existing file when putting it back in the library fails', async () => {
+    const existing: AssetMeta = {
+      hash32: 'y'.repeat(32),
+      filename: 'first.png',
+      slug: 'first',
+      ext: 'png',
+      mime: 'image/png',
+      size: 5,
+      kind: 'raster',
+      uploadedAt: '2026-01-01T00:00:00.000Z',
+    }
+    const store = makeStore({
+      getMeta: vi.fn().mockResolvedValue(existing),
+      unhideAsset: vi.fn().mockRejectedValue(new Error('AccessDenied')),
+    })
+    const warn = vi.fn()
+    setCanopyLogger({ log: vi.fn(), warn, error: vi.fn() })
+    try {
+      const result = await finalizeAsset(store, { data: await pngBytes(), filename: 'again.png' })
+
+      expect(result).toEqual({ ok: true, meta: existing })
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('AccessDenied'))
+    } finally {
+      resetCanopyLogger()
+    }
+  })
+
+  it('puts a file removed from the library back when its bytes are uploaded again', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-finalize-unhide-'))
+    try {
+      const store = new LocalAssetStore({ root })
+      const first = await finalizeAsset(store, { data: await pngBytes(), filename: 'a.png' })
+      if (!first.ok) throw new Error(first.error)
+      await store.hideAsset(first.meta.hash32, { hiddenAt: '2026-01-02T00:00:00.000Z' })
+      expect((await store.listMeta()).items).toEqual([])
+
+      const again = await finalizeAsset(store, { data: await pngBytes(), filename: 'b.png' })
+
+      expect(again.ok && again.meta.filename).toBe('a.png')
+      expect((await store.listMeta()).items.map((meta) => meta.hash32)).toEqual([first.meta.hash32])
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
   })
 
   it('happy path: writes original then meta last (meta is the commit point)', async () => {
@@ -156,7 +203,7 @@ describe('finalizeAsset after a crash before the meta commit', () => {
       const first = await finalizeAsset(store, { data: svg, filename: 'a.svg' })
       if (!first.ok) throw new Error(first.error)
       // The state a crash between the puts and `putMetaIfAbsent` leaves behind.
-      await store.deleteMeta(first.meta.hash32)
+      await fs.rm(path.join(root, 'asset-meta', `${first.meta.hash32}.json`))
 
       const putOriginal = vi.spyOn(store, 'putOriginal')
       const putPublicObject = vi.spyOn(store, 'putPublicObject')

@@ -99,12 +99,15 @@ test.describe('Navigator search', () => {
 
     test('the panel lays over the form only, leaving the preview in view', async () => {
       await editorPage.openContentNavigator()
-      const panel = await editorPage.contentNavigator.boundingBox()
-      const preview = await editorPage.previewPane.boundingBox()
-      const form = await editorPage.formPane.boundingBox()
-      if (!panel || !preview || !form) throw new Error('a region is not visible')
-      expect(panel.x).toBeGreaterThanOrEqual(form.x - 1)
-      expect(panel.x + panel.width).toBeLessThanOrEqual(form.x + form.width + 1)
+      // How far the panel reaches past either side of the form, read afresh on each poll: it
+      // slides in from the form's inline start.
+      const overhang = async () => {
+        const panel = await editorPage.contentNavigator.boundingBox()
+        const form = await editorPage.formPane.boundingBox()
+        if (!panel || !form) throw new Error('a region is not visible')
+        return Math.max(form.x - panel.x, panel.x + panel.width - (form.x + form.width))
+      }
+      await expect.poll(overhang, { timeout: SHORT_TIMEOUT }).toBeLessThanOrEqual(1)
     })
 
     test('closing the palette opened from a breadcrumb-opened panel returns focus to that breadcrumb and keeps it there', async ({
