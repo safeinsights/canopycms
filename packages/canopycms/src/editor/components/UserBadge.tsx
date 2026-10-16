@@ -103,6 +103,8 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
         color={color}
         pr={onRemove ? 3 : 8}
         pl={4}
+        // A long name shrinks the badge to its container instead of wrapping inside its fixed height.
+        maw="100%"
         rightSection={
           onRemove ? (
             <Tooltip label={`Remove ${personLabel}`} position="bottom">
@@ -128,6 +130,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
             display: 'flex',
             alignItems: 'center',
             gap: '4px',
+            minWidth: 0,
           },
         }}
       >
@@ -158,13 +161,13 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     // A filled badge keeps its white text; dimmed would not contrast with its fill.
     const fallbackColor = inBadge && badgeVariant === 'filled' ? undefined : 'dimmed'
     const unavailableText = (
-      <Text size={textSize} c={fallbackColor} fs="italic">
+      <Text size={textSize} c={fallbackColor} fs="italic" truncate>
         {unavailable}
       </Text>
     )
     const hiddenDetail = `${revealIdOnFallback ? ` · ${userId}` : ''}${emailDetail ? `, ${emailDetail}` : ''}`
     return wrap(
-      <Group gap={4}>
+      <Group gap={4} wrap="nowrap" miw={0}>
         <Avatar src={record?.avatarUrl} alt="" size={avatarSize} color="gray" aria-hidden />
         {variant === 'avatar-only' ? (
           <VisuallyHidden component="span">{describedWithEmail}</VisuallyHidden>
@@ -251,6 +254,12 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
 
   const personLabel = userId === 'anonymous' ? 'Anonymous (Public)' : displayName
 
+  // Alone, the avatar shows no name, so its tooltip gives it before the email. A name beside the
+  // avatar is cut with an ellipsis when long, so its tooltip gives the full name too; with no
+  // tooltip, the name carries it as a title.
+  const tooltip = variant === 'full' ? '' : [personLabel, detail].filter(Boolean).join(', ')
+  const nameTitle = showEmailTooltip && detail ? undefined : personLabel
+
   const renderContent = () => {
     const avatar = renderAvatar()
 
@@ -266,13 +275,13 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
 
       case 'full':
         return (
-          <Group gap={4}>
+          <Group gap={4} wrap="nowrap" miw={0}>
             {avatar}
-            <div>
-              <Text size={textSize} fw={500}>
+            <div style={{ minWidth: 0 }}>
+              <Text size={textSize} fw={500} truncate title={displayName}>
                 {displayName}
               </Text>
-              <Text size="xs" c="dimmed">
+              <Text size="xs" c="dimmed" truncate title={record.email}>
                 {record.email}
               </Text>
             </div>
@@ -282,9 +291,9 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
       case 'avatar-name':
       default:
         return (
-          <Group gap={4}>
+          <Group gap={4} wrap="nowrap" miw={0}>
             {avatar}
-            <Text size={textSize} fw={500} c={nameColor}>
+            <Text size={textSize} fw={500} c={nameColor} truncate title={nameTitle}>
               {personLabel}
             </Text>
             {detailText}
@@ -293,12 +302,5 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     }
   }
 
-  // Alone, the avatar shows no name, so its tooltip gives it before the email.
-  const tooltip =
-    variant === 'full'
-      ? ''
-      : variant === 'avatar-only'
-        ? [personLabel, detail].filter(Boolean).join(', ')
-        : record.email
   return wrap(renderContent(), tooltip, personLabel)
 }
