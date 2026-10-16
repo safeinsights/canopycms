@@ -10,22 +10,25 @@
  * their children's text**: deleting a `<Callout>...</Callout>` wholesale
  * would silently drop every word inside it from the search index.
  *
+ * The input is an entry body, with its front matter already split off, as
+ * the content store returns it. There is no front-matter step: a body may
+ * open with a `---` thematic break, which a front-matter parser would read as
+ * the start of a block and swallow the prose after it.
+ *
  * Pipeline (each step operates on the previous step's output):
- * 1. Strip YAML frontmatter (via `gray-matter`, the same parser
- *    `content-store.ts` uses for `.md`/`.mdx` bodies).
- * 2. Strip `import`/`export` statements (via `stripMdxImports`), which also
+ * 1. Strip `import`/`export` statements (via `stripMdxImports`), which also
  *    protects fenced code blocks from every later step.
- * 3. Mask fenced code blocks and inline code spans, capturing their content.
+ * 2. Mask fenced code blocks and inline code spans, capturing their content.
+ * 3. Strip HTML/MDX comments (see `stripHtmlComments` below).
  * 4. Strip JSX/HTML tags via a single global replace (see `TAG_RE` below).
  * 5. Strip JSX expressions (`{...}`, including nested braces) — these are
  *    code, not prose.
  * 6. Strip common Markdown syntax (see `stripMarkdownSyntax` below).
- * 7. Restore the masked code from step 3 as plain text.
+ * 7. Restore the masked code from step 2 as plain text.
  * 8. Collapse whitespace: trim each line, collapse runs of blank lines,
  *    trim the result. Paragraph breaks (single blank lines) are preserved.
  */
 
-import matter from 'gray-matter'
 import { stripMdxImports } from './strip-mdx'
 
 /**
@@ -278,7 +281,12 @@ function collapseWhitespace(text: string): string {
 }
 
 /**
- * Convert MDX/Markdown body content to plain prose text.
+ * Convert an MDX/Markdown entry body to plain prose text.
+ *
+ * Pass the body only: the value of the entry's body field, such as
+ * `entry.data.body` when the schema names that field `body`. Front matter
+ * in the input is treated as prose, so a caller holding a whole file splits
+ * it first, for example with `matter(file, {}).content`.
  *
  * See the module doc above for the full pipeline and why this exists as a
  * distinct transform from `stripMdxImports`.
@@ -290,15 +298,10 @@ function collapseWhitespace(text: string): string {
  * Output preserves paragraph breaks (blank lines) but is not further
  * chunked, weighted, or field-selected — composing that into a search
  * document is left to the caller, since that logic is where adopter search
- * indexes genuinely diverge (see docs/adopter-migration.md).
+ * indexes genuinely diverge (see CHANGELOG.md).
  */
-export function toPlainText(markdown: string): string {
-  // Destructures `content` only: never touches `.data` (so the shared-instance
-  // hazard cannot apply) and never needs `.matter` (so the cache-hit hazard
-  // cannot apply either).
-  // eslint-disable-next-line no-restricted-syntax
-  const { content } = matter(markdown)
-  const withoutImports = stripMdxImports(content)
+export function toPlainText(body: string): string {
+  const withoutImports = stripMdxImports(body)
   const { masked, restore } = maskCode(withoutImports)
 
   let result = masked

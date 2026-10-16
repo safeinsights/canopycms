@@ -24,7 +24,12 @@ import {
 } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
-import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
+import {
+  AssetSupport,
+  ASSETS_PATH_PATTERN,
+  ASSETS_TRANSFORM_PATH_PATTERN,
+  type AssetSupportProps,
+} from './asset-support'
 // Test-only imports across the package boundary, deliberately: the constructs
 // in this directory do not import `canopycms` (see isValidDeploymentName's doc
 // comment in cms-service.ts for the real reason, and for why the older "the
@@ -37,6 +42,11 @@ import {
   VALID_DEPLOYMENT_NAMES,
   INVALID_DEPLOYMENT_NAMES,
 } from '../../../canopycms/src/operating-mode/deployment-name-fixtures'
+import {
+  shippedInstanceFile,
+  shippedInstanceFiles,
+  shippedWorkerUnits,
+} from '../../test-support/instance-files'
 import { newTestApp } from '../../test-support/test-synth'
 import { readFileSync } from 'node:fs'
 
@@ -226,20 +236,17 @@ describe('CanopyCmsService reserved concurrency', () => {
     Annotations.fromStack(stack).hasNoWarning('*', LOW_CONCURRENCY_WARNING)
   })
 
-  it('neither the scaffold template nor the example pins a cap below the minimum', () => {
-    const repoRoot = path.join(__dirname, '..', '..', '..', '..')
+  it('the scaffold template pins no cap below the minimum', () => {
     const PINNED = /reservedConcurrency:\s*(\d+)/g
     // Positive control: an absence of low values proves nothing if the pattern
     // cannot see a pinned one at all.
     expect([...'reservedConcurrency: 10,'.matchAll(PINNED)].map((m) => Number(m[1]))).toEqual([10])
-    for (const relative of [
-      'packages/canopycms/src/cli/template-files/cms-stack.ts.template',
-      'examples/aws-deployment/infrastructure/lib/cms-stack.ts',
-    ]) {
-      const source = readFileSync(path.join(repoRoot, relative), 'utf-8')
-      for (const match of source.matchAll(PINNED)) {
-        expect(Number(match[1]), relative).toBeGreaterThanOrEqual(MIN_CMS_RESERVED_CONCURRENCY)
-      }
+    const source = readFileSync(
+      path.join(__dirname, '../../../canopycms/src/cli/template-files/cms-stack.ts.template'),
+      'utf-8',
+    )
+    for (const match of source.matchAll(PINNED)) {
+      expect(Number(match[1])).toBeGreaterThanOrEqual(MIN_CMS_RESERVED_CONCURRENCY)
     }
   })
 })
@@ -494,7 +501,7 @@ describe('CanopyCmsDistribution: additionalBehaviors', () => {
 
 describe('CanopyCmsDistribution: assetSupport prop', () => {
   /** Builds a stack with a CanopyCmsService and an AssetSupport, ready to pass to CanopyCmsDistribution. */
-  function buildServiceAndAssets(stackId: string) {
+  function buildServiceAndAssets(stackId: string, assetProps: Partial<AssetSupportProps> = {}) {
     const app = newTestApp()
     const stack = new Stack(app, stackId, {
       env: { account: '123456789012', region: 'us-east-1' },
@@ -511,6 +518,7 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
       // See asset-support.test.ts's BASE_PROPS doc comment - this suite
       // synths against the cheap --skip-native fixture bundle.
       requireDeployableBundle: false,
+      ...assetProps,
     })
     return { stack, service, assetSupport }
   }
@@ -532,31 +540,40 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     }
   }
 
-  it('attaches both AssetSupport behaviors in the right order, alongside the construct’s own /_next/static/*', () => {
-    const { stack, service, assetSupport } = buildServiceAndAssets('AssetPropStack')
-    new CanopyCmsDistribution(stack, 'Dist', {
-      ...distributionCommonProps(stack, service.functionUrl),
-      assetSupport,
-    })
+  it.each([
+    ['materialized', {}],
+    ['lazy', { lazyPublicTransforms: true }],
+  ])(
+    'attaches both AssetSupport behaviors in the right order, alongside the construct’s own /_next/static/* (%s)',
+    (mode, assetProps) => {
+      const { stack, service, assetSupport } = buildServiceAndAssets(
+        `AssetPropStack-${mode}`,
+        assetProps,
+      )
+      new CanopyCmsDistribution(stack, 'Dist', {
+        ...distributionCommonProps(stack, service.functionUrl),
+        assetSupport,
+      })
 
-    const dist = Object.values(
-      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
-    )[0]
-    const patterns = (
-      dist.Properties.DistributionConfig.CacheBehaviors as { PathPattern: string }[]
-    ).map((b) => b.PathPattern)
+      const dist = Object.values(
+        Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+      )[0]
+      const patterns = (
+        dist.Properties.DistributionConfig.CacheBehaviors as { PathPattern: string }[]
+      ).map((b) => b.PathPattern)
 
-    expect(patterns).toContain(ASSETS_TRANSFORM_PATH_PATTERN)
-    expect(patterns).toContain(ASSETS_PATH_PATTERN)
-    expect(patterns).toContain('/_next/static/*')
-    // The whole point: the more specific transform pattern must precede the
-    // broader static one, or CloudFront's first-match-wins ordering serves
-    // every transform request off the S3-only behavior and never fails over
-    // to the transform Lambda.
-    expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
-      patterns.indexOf(ASSETS_PATH_PATTERN),
-    )
-  })
+      expect(patterns).toContain(ASSETS_TRANSFORM_PATH_PATTERN)
+      expect(patterns).toContain(ASSETS_PATH_PATTERN)
+      expect(patterns).toContain('/_next/static/*')
+      // The more specific transform pattern must precede the broader one: in
+      // lazy mode, CloudFront's first-match-wins ordering would otherwise serve
+      // every transform request off `/assets/*`, never failing over to the
+      // transform Lambda. Materialized mode keeps the same order.
+      expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
+        patterns.indexOf(ASSETS_PATH_PATTERN),
+      )
+    },
+  )
 
   it('throws at construction when a hand-written additionalBehaviors lists /assets/* before /assets/t/*', () => {
     const { stack, service } = buildServiceAndAssets('WrongOrderStack')
@@ -764,7 +781,9 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     // behavior must still target an origin GROUP after overrides are merged,
     // since that group is the 403/404 failover to the transform Lambda. It
     // goes red if buildBehaviors ever stops using one.
-    const { stack, service, assetSupport } = buildServiceAndAssets('AttachOriginGuardStack')
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachOriginGuardStack', {
+      lazyPublicTransforms: true,
+    })
     const dist = new CanopyCmsDistribution(stack, 'Dist', {
       ...distributionCommonProps(stack, service.functionUrl),
     })
@@ -783,6 +802,41 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     expect(groupIds).toContain(transform?.TargetOriginId)
   })
 
+  it('keeps both materialized behaviors on the one replica origin group when overrides are passed', () => {
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachReplicaGroupStack')
+    // Rebuilt with a replica: buildServiceAndAssets' instance has none.
+    const withReplica = new AssetSupport(stack, 'ReplicatedAssets', {
+      editorOrigins: ['http://localhost:3000'],
+      requireDeployableBundle: false,
+      replicaBucket: s3.Bucket.fromBucketAttributes(stack, 'Replica', {
+        bucketName: 'replica-bucket',
+        region: 'us-west-2',
+      }),
+    })
+    expect(assetSupport.transformFunction).toBeUndefined()
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    withReplica.attachTo(dist.distribution, { compress: false })
+
+    const config = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0].Properties.DistributionConfig
+    const groups = (config.OriginGroups?.Items ?? []) as Array<{
+      Id: string
+      FailoverCriteria: { StatusCodes: { Items: number[] } }
+    }>
+    expect(groups).toHaveLength(1)
+    expect([...groups[0].FailoverCriteria.StatusCodes.Items].sort()).toEqual([500, 502, 503, 504])
+    const behaviors = config.CacheBehaviors as Array<{
+      PathPattern: string
+      TargetOriginId: string
+    }>
+    for (const pattern of [ASSETS_TRANSFORM_PATH_PATTERN, ASSETS_PATH_PATTERN]) {
+      expect(behaviors.find((b) => b.PathPattern === pattern)?.TargetOriginId).toBe(groups[0].Id)
+    }
+  })
+
   it('ignores explicitly-undefined override keys rather than falling back to CDK defaults', () => {
     // A spread copies keys whose value is undefined, so `{ cachePolicy: undefined }`
     // used to DELETE the construct's choice and let CDK substitute its own --
@@ -792,13 +846,14 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     // viewerProtocolPolicy went from redirect-to-https to allow-all on BOTH
     // behaviors, serving assets over plain HTTP. Not contrived: it is what
     // forwarding an unset optional prop produces.
-    const bare = buildServiceAndAssets('OverrideUndefBareStack')
+    // Lazy mode: its custom transform cache policy is the choice a dropped key would lose.
+    const bare = buildServiceAndAssets('OverrideUndefBareStack', { lazyPublicTransforms: true })
     const bareDist = new CanopyCmsDistribution(bare.stack, 'Dist', {
       ...distributionCommonProps(bare.stack, bare.service.functionUrl),
     })
     bare.assetSupport.attachTo(bareDist.distribution)
 
-    const undef = buildServiceAndAssets('OverrideUndefStack')
+    const undef = buildServiceAndAssets('OverrideUndefStack', { lazyPublicTransforms: true })
     const undefDist = new CanopyCmsDistribution(undef.stack, 'Dist', {
       ...distributionCommonProps(undef.stack, undef.service.functionUrl),
     })
@@ -823,6 +878,9 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
 
     const baseline = transformOf(bare.stack)
     const withUndef = transformOf(undef.stack)
+    expect(baseline.CachePolicyId).toEqual({
+      Ref: expect.stringMatching(/AssetsTransformCachePolicy/),
+    })
     expect(withUndef.CachePolicyId).toEqual(baseline.CachePolicyId)
     expect(withUndef.ViewerProtocolPolicy).toBe(baseline.ViewerProtocolPolicy)
     expect(withUndef.ViewerProtocolPolicy).toBe('redirect-to-https')
@@ -1369,9 +1427,11 @@ describe('CanopyCmsService B1: Lambda and worker see the workspace at the same p
     const fsId = fileSystemId(template)
     const lines = workerUserDataScript(template).split('\n')
 
-    expect(lines).toContain(`mount -t efs -o tls,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`)
     expect(lines).toContain(
-      `echo '<${fsId}>:/ /mnt/efs efs _netdev,tls,accesspoint=<${ap}> 0 0' >> /etc/fstab`,
+      `retry 'EFS mount' mount -t efs -o tls,iam,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`,
+    )
+    expect(lines).toContain(
+      `echo '<${fsId}>:/ /mnt/efs efs _netdev,tls,iam,accesspoint=<${ap}> 0 0' >> /etc/fstab`,
     )
   })
 
@@ -1464,15 +1524,15 @@ describe('CanopyCmsService: EFS mount survives instance reboots', () => {
     const template = synth()
     const all = workerUserDataBlobs(template)
     expect(all).toContain('>> /etc/fstab')
-    expect(all).toContain('RequiresMountsFor=/mnt/efs')
+    for (const [, unit] of shippedWorkerUnits())
+      expect(unit).toContain('RequiresMountsFor=/mnt/efs')
   })
 })
 
 describe('CanopyCmsService worker UserData: ESM bundle bootstrapping', () => {
-  it('installs unzip and writes a type:module package.json next to the ESM worker bundle', () => {
+  it('writes a type:module package.json next to the ESM worker bundle', () => {
     const template = synth()
     const all = workerUserDataBlobs(template)
-    expect(all).toContain('dnf install -y git unzip')
     expect(all).toContain('{\\"type\\":\\"module\\"}')
   })
 })
@@ -1488,12 +1548,16 @@ describe('CanopyCmsService: worker boot cannot fail silently', () => {
   })
 
   it('runs the worker from the version-pinned node binary, not the alternatives symlink', () => {
-    const all = workerUserDataBlobs(synth())
     // AL2023 installs /usr/bin/node-22 and points /usr/bin/node at some
     // installed version via `alternatives`, whose selection AWS documents as
     // able to change at any time.
-    expect(all).toContain('ExecStart=/usr/bin/node-22 index.js')
-    expect(all).not.toContain('ExecStart=/usr/bin/node index.js')
+    for (const [, unit] of shippedWorkerUnits()) {
+      expect(unit).toContain('ExecStart=/usr/bin/node-22 index.js')
+      expect(unit).not.toContain('ExecStart=/usr/bin/node index.js')
+    }
+    expect(shippedInstanceFile('canopy-github.service')).toContain(
+      'ExecStart=/usr/bin/node-22 index.js gateway',
+    )
   })
 
   it('shuts the instance down when user-data fails, so the ASG replaces it', () => {
@@ -1536,11 +1600,13 @@ describe('CanopyCmsService: worker boot cannot fail silently', () => {
     const all = workerUserDataBlobs(synth())
     expect(all).toContain('retry()')
     for (const step of [
-      'retry dnf install -y git unzip',
-      'retry dnf install -y nodejs22',
-      'retry dnf install -y amazon-efs-utils',
-      'retry aws s3 cp',
-      'retry dnf install -y amazon-cloudwatch-agent',
+      "retry 'dnf upgrade' dnf upgrade --releasever=latest",
+      "retry 'dnf install git' dnf install -y git",
+      "retry 'dnf install nodejs22' dnf install -y nodejs22",
+      "retry 'dnf install amazon-efs-utils' dnf install -y amazon-efs-utils",
+      "retry 'EFS mount' mount -t efs",
+      "retry 'worker bundle download' aws s3 cp",
+      "retry 'dnf install amazon-cloudwatch-agent logrotate' dnf install -y amazon-cloudwatch-agent",
     ]) {
       expect(all).toContain(step)
     }
@@ -1614,7 +1680,7 @@ describe('CanopyCmsService: secret ARN props feed the IAM policy', () => {
     // aws-cdk-lib 2.265 hides that regression twice over, so the setup matters:
     // - `PolicyStatement` collapses a repeated `resources` entry itself, so this
     //   does NOT pin the construct's own `new Set`
-    //   (.claude/future-tasks/iam-dedupe-tests-pass-vacuously.md).
+    //   (safeinsights/canopycms#710).
     // - `PolicyDocument` also drops a statement that renders byte-identical to
     //   another. With `secretsArns: [APP_KEY_ARN]` alone, a stray single-ARN grant
     //   rendered exactly like the union and was collapsed away, so this test
@@ -2086,7 +2152,7 @@ describe('CanopyCmsService: githubApp* props -> worker .env', () => {
 
   describe('which credential is decided before whether each is well formed', () => {
     it('an App alongside a leftover token JSON field names the real problem', () => {
-      // The exact state docs/adopter-migration.md step 2 leads to when an
+      // The exact state CHANGELOG.md step 2 leads to when an
       // adopter removes githubTokenSecretArn and overlooks its JSON field.
       // Reversed, assertSecretPropPair answers first with "Set
       // githubTokenSecretArn, or drop githubTokenSecretJsonField" -- pointing
@@ -2157,26 +2223,19 @@ describe('CanopyCmsService: githubApp* props -> worker .env', () => {
 })
 
 /**
- * The scaffold templates and the checked-in example teach the same wiring, and
- * scaffold-synth.test.ts exercises only the templates -- it runs the real CLI,
- * which never reads `examples/`. So the example is exactly the copy that can
- * rot unnoticed, and it has: the media block in `asset-support.test.ts` grew
- * these same tests because a fix landed in the template while
- * `examples/aws-deployment/` went on teaching a dead API.
- *
- * Textual, and deliberately so -- these are template and example FILES, not
- * modules this suite can import and execute. It catches a copy that was never
- * updated, which is the observed failure; it cannot catch one updated wrongly.
- * The behavioural half lives in scaffold-synth.test.ts, which synthesizes the
- * generated project and asserts the value reaches the worker's .env.
+ * Textual, and deliberately so -- these are template FILES, not modules this
+ * suite can import and execute. It catches wiring that was never added; it
+ * cannot catch wiring added wrongly. The behavioural half lives in
+ * scaffold-synth.test.ts, which synthesizes the generated project and asserts
+ * the value reaches the worker's .env. `examples/aws-deployment/` is rendered
+ * from these templates, and `aws-deploy-example.test.ts` compares it whole.
  */
-describe('secret JSON-field wiring: the scaffold template and the example stay in step', () => {
+describe('secret JSON-field wiring: the scaffold templates carry it', () => {
   const repoRoot = path.join(__dirname, '..', '..', '..', '..')
   const read = (relative: string): string => readFileSync(path.join(repoRoot, relative), 'utf-8')
 
-  const PAIRS: Array<[string, string, string[]]> = [
+  const TEMPLATES: Array<[string, string[]]> = [
     [
-      'infrastructure/lib/cms-stack.ts',
       'packages/canopycms/src/cli/template-files/cms-stack.ts.template',
       [
         'githubTokenSecretJsonField?: string',
@@ -2198,7 +2257,6 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
       ],
     ],
     [
-      'infrastructure/bin/app.ts',
       'packages/canopycms/src/cli/template-files/cdk-app.ts.template',
       [
         'githubTokenSecretJsonField: process.env.GITHUB_TOKEN_SECRET_JSON_FIELD || undefined,',
@@ -2222,7 +2280,6 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
       ],
     ],
     [
-      'deploy-cms.yml',
       'packages/canopycms/src/cli/template-files/deploy-cms.yml.template',
       [
         'GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD }}',
@@ -2239,23 +2296,14 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
     ],
   ]
 
-  const examplePathFor = (relative: string): string => `examples/aws-deployment/${relative}`
-
-  for (const [exampleRelative, templatePath, required] of PAIRS) {
-    const examplePath = examplePathFor(exampleRelative)
-
+  for (const [templatePath, required] of TEMPLATES) {
     it(`${templatePath} carries the pinned wiring`, () => {
       const source = read(templatePath)
       for (const line of required) expect(source).toContain(line)
     })
-
-    it(`${examplePath} carries the same wiring as its template`, () => {
-      const source = read(examplePath)
-      for (const line of required) expect(source).toContain(line)
-    })
   }
 
-  it('neither copy reaches for the ECS :KEY:: ARN suffix the construct refuses', () => {
+  it('no template reaches for the ECS :KEY:: ARN suffix the construct refuses', () => {
     // [A-Za-z0-9_]+, with the digits: a JSON key may contain one, and
     // `GITHUB_TOKEN2` slipped past the first version of this class.
     const ECS_SUFFIX = /:secret:[^:'"`\s]*:[A-Za-z0-9_]+::/
@@ -2272,16 +2320,13 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
     }
 
     // The suffix form is the obvious-looking thing to write, and a scaffold
-    // that taught it would hand every adopter a synth error. Both copies, not
-    // just the templates: the example is the one this describe exists for.
-    for (const [exampleRelative, templatePath] of PAIRS) {
-      for (const file of [templatePath, examplePathFor(exampleRelative)]) {
-        expect(read(file), file).not.toMatch(ECS_SUFFIX)
-      }
+    // that taught it would hand every adopter a synth error.
+    for (const [templatePath] of TEMPLATES) {
+      expect(read(templatePath), templatePath).not.toMatch(ECS_SUFFIX)
     }
   })
 
-  it('neither copy reads a repository secret or variable named GITHUB_*', () => {
+  it('the workflow template reads no repository secret or variable named GITHUB_*', () => {
     // GitHub refuses to CREATE an Actions secret OR variable whose name starts
     // with GITHUB_, so a workflow referencing one reads an empty string forever
     // and the deploy fails at synth -- or, for an optional value, succeeds with
@@ -2307,26 +2352,9 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
     // everything it was meant to admit alone.
     expect('token: ${{ secrets.GITHUB_TOKEN }}').not.toMatch(USER_CREATED_GITHUB_REF)
 
-    for (const [exampleRelative, templatePath] of PAIRS) {
-      if (!exampleRelative.endsWith('.yml')) continue
-      for (const file of [templatePath, examplePathFor(exampleRelative)]) {
-        expect(read(file), file).not.toMatch(USER_CREATED_GITHUB_REF)
-      }
-    }
-  })
-
-  it("both copies build the image with NEXT_PUBLIC_CANOPY_MODE: 'prod'", () => {
-    // Not JSON-field wiring, but the same drift class and found by the same
-    // review round: the example had lost this line while the template kept it,
-    // so an adopter who copied the example shipped an editor bundle built in
-    // DEV browser mode -- dev auth rather than Clerk -- while the server half
-    // came up prod and the deploy looked clean. scaffold-synth.test.ts pins the
-    // generated path; nothing could see the example.
-    for (const [exampleRelative, templatePath] of PAIRS) {
-      if (!exampleRelative.endsWith('cms-stack.ts')) continue
-      for (const file of [templatePath, examplePathFor(exampleRelative)]) {
-        expect(read(file), file).toContain("NEXT_PUBLIC_CANOPY_MODE: 'prod'")
-      }
+    for (const [templatePath] of TEMPLATES) {
+      if (!templatePath.endsWith('.yml.template')) continue
+      expect(read(templatePath), templatePath).not.toMatch(USER_CREATED_GITHUB_REF)
     }
   })
 })
@@ -2432,9 +2460,10 @@ describe('CanopyCmsService: deploymentName validation', () => {
  * here refused `cdk synth` for an adopter whose default branch is
  * `release/v2`. The first entry below is the regression test for that.
  *
- * These live here rather than in a cross-package fixture because there is no
- * runtime counterpart to drift from: nothing in `canopycms` validates a branch
- * name, the worker uses the string as given.
+ * These are git's rules, which have no runtime counterpart in the worker. The
+ * GitHub gateway's narrower name rules (`branchNameProblem`, which a settings
+ * branch and every `protectedBranches` entry also take) have their own tests
+ * below.
  */
 const VALID_BRANCH_NAMES = [
   'release/v2',
@@ -2505,6 +2534,79 @@ describe('CanopyCmsService: baseBranch validation', () => {
     const all = workerUserDataBlobs(synth(false, { baseBranch: 'release.2026' }))
     expect(all).toContain('CANOPYCMS_BASE_BRANCH=release.2026')
     expect(all).not.toContain('CANOPYCMS_BASE_BRANCH=main')
+  })
+
+  it('stamps no CANOPYCMS_BASE_BRANCH when the prop is unset, so the worker detects it', () => {
+    const all = workerUserDataBlobs(synth(false))
+    expect(all).toContain('CANOPYCMS_GITHUB_REPO=')
+    expect(all).not.toContain('CANOPYCMS_BASE_BRANCH')
+  })
+})
+
+describe('CanopyCmsService: names the GitHub gateway refuses', () => {
+  it.each([
+    ['a leading heads/', 'heads/settings'],
+    ['non-ASCII', 'r\u00e9glages'],
+    ['a percent sign', 'settings%x'],
+  ])('refuses a settingsBranch with %s, which the gateway would never push', (_label, value) => {
+    expect(() => synth(false, { settingsBranch: value })).toThrow(/invalid settingsBranch/)
+  })
+
+  it('refuses a baseBranch longer than 255 characters, which the gateway refuses as a PR base', () => {
+    expect(() => synth(false, { baseBranch: 'b'.repeat(256) })).toThrow(/invalid baseBranch/)
+    expect(() => synth(false, { baseBranch: 'b'.repeat(255) })).not.toThrow()
+  })
+})
+
+describe('CanopyCmsService: protectedBranches', () => {
+  it('stamps the entries, comma-separated, into the worker .env', () => {
+    const all = workerUserDataBlobs(
+      synth(false, { protectedBranches: ['release/*', 'production', '*-stable'] }),
+    )
+    expect(all).toContain('CANOPYCMS_PROTECTED_BRANCHES=release/*,production,*-stable')
+  })
+
+  it('stamps nothing when the prop is unset or empty', () => {
+    expect(workerUserDataBlobs(synth(false))).not.toContain('CANOPYCMS_PROTECTED_BRANCHES')
+    expect(workerUserDataBlobs(synth(false, { protectedBranches: [] }))).not.toContain(
+      'CANOPYCMS_PROTECTED_BRANCHES',
+    )
+  })
+
+  it.each([
+    ['a comma', 'a,b', /comma/],
+    ['a glob character other than *', 'release-[0-9]', /\[/],
+    ['a question mark', 'release-?', /\?/],
+    ['a leading refs/', 'refs/heads/main', /refs\//],
+    ['a leading heads/', 'heads/main', /heads\//],
+    ['a glob only settings branches could match', 'canopycms-settings-*', /match nothing/],
+    ['an exact settings branch', 'canopycms-settings-prod', /settings reaching GitHub/],
+    ['a leading tags/', 'tags/*', /tags\//],
+    ['a leading remotes/ in another case', 'Remotes/x', /remotes\//],
+    ['a percent sign', 'a%2fb', /%/],
+    ['non-ASCII', 'caf\u00e9', /printable ASCII/],
+    ['an empty entry', '', /empty/],
+    ['dot-dot', 'release/*..x', /\.\./],
+  ])('refuses an entry with %s at synth', (_label, entry, why) => {
+    expect(() => synth(false, { protectedBranches: [entry] })).toThrow(
+      /invalid protectedBranches entry/,
+    )
+    expect(() => synth(false, { protectedBranches: [entry] })).toThrow(why)
+  })
+
+  it('takes 1024 entries and refuses 1025', () => {
+    // Short names: 1024 longer ones would outgrow the worker's user data first.
+    const entries = (count: number) => Array.from({ length: count }, (_, i) => `r${i}`)
+    expect(() => synth(false, { protectedBranches: entries(1024) })).not.toThrow()
+    expect(() => synth(false, { protectedBranches: entries(1025) })).toThrow(
+      /protectedBranches has 1025 entries; the most it takes is 1024/,
+    )
+  })
+
+  it('names a refused glob as written, not with its wildcards replaced', () => {
+    expect(() => synth(false, { protectedBranches: ['release/*.lock'] })).toThrow(
+      '"release/*.lock"',
+    )
   })
 })
 
@@ -2611,9 +2713,15 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
     const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
     const all = blobs + ltBlobs
-    expect(all).toContain('StandardOutput=append:/var/log/canopy-worker/worker.log')
-    expect(all).toContain('LogsDirectory=canopy-worker')
-    expect(all).not.toContain('StandardOutput=journal')
+    for (const [, unit] of shippedWorkerUnits()) {
+      expect(unit).toContain('StandardOutput=append:/var/log/canopy-worker/worker.log')
+    }
+    expect(shippedInstanceFile('canopy-github.service')).toContain(
+      'StandardOutput=append:/var/log/canopy-github/gateway.log',
+    )
+    expect([...shippedInstanceFiles().values()].flat().join('\n')).not.toContain(
+      'StandardOutput=journal',
+    )
     expect(all).toContain('/etc/logrotate.d/canopy-worker')
   })
 
@@ -2642,7 +2750,21 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     }
   })
 
-  it('pre-creates /var/log/canopy-worker BEFORE starting the worker (systemd#27591 crash-loop guard)', () => {
+  it('keeps the worker log root-owned: no LogsDirectory=, no chown of it to the worker user', () => {
+    // See LOG_RULE in worker-units.ts.
+    const all = workerUserDataBlobs(synth())
+    for (const unit of shippedInstanceFiles().values()) {
+      expect(unit.filter((line) => line.startsWith('LogsDirectory'))).toEqual([])
+    }
+    // User-data has no legitimate chown or chmod of the log path at all.
+    expect(all).not.toMatch(/\\n\s*ch(own|mod)[^\\]*\/var\/log\/canopy-worker/)
+    expect(all).toContain('install -d -o root -g root -m 0755 /var/log/canopy-worker')
+    expect(all).toContain(
+      'install -o root -g root -m 0644 /dev/null /var/log/canopy-worker/worker.log',
+    )
+  })
+
+  it('pre-creates /var/log/canopy-worker and worker.log BEFORE starting the worker (crash-loop guard)', () => {
     const template = synth()
     const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
     const launchTemplates = template.findResources('AWS::EC2::LaunchTemplate')
@@ -2652,16 +2774,14 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     ]
     expect(blobs.length).toBeGreaterThan(0)
     for (const blob of blobs) {
-      // systemd opens StandardOutput=append: targets before it creates
-      // LogsDirectory= dirs (systemd#27591): if this mkdir ever moves after
-      // the first `systemctl start canopy-worker`, every fresh instance
-      // fails exec with 209/STDOUT and Restart=always crash-loops forever —
-      // the worker would be silently down while the ASG sees a healthy box.
-      const mkdirIdx = blob.indexOf('mkdir -p /var/log/canopy-worker')
+      // See LOG_RULE in worker-units.ts: without the directory every start
+      // fails with 209/STDOUT.
+      const dirIdx = blob.indexOf('install -d -o root -g root -m 0755 /var/log/canopy-worker')
+      const fileIdx = blob.indexOf('/dev/null /var/log/canopy-worker/worker.log')
       const startIdx = blob.indexOf('systemctl start canopy-worker')
-      expect(mkdirIdx).toBeGreaterThanOrEqual(0)
-      expect(startIdx).toBeGreaterThanOrEqual(0)
-      expect(mkdirIdx).toBeLessThan(startIdx)
+      expect(dirIdx).toBeGreaterThanOrEqual(0)
+      expect(fileIdx).toBeGreaterThan(dirIdx)
+      expect(startIdx).toBeGreaterThan(fileIdx)
     }
   })
 })

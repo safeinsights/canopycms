@@ -4,17 +4,18 @@ import React from 'react'
 import { Button, Group, Paper, ScrollArea, Stack, Text } from '@mantine/core'
 import { IconPlus, IconUsers } from '@tabler/icons-react'
 import type { InternalGroup, UserSearchResult, CanopyGroupId, CanopyUserId } from './types'
-import { GroupCard } from './GroupCard'
+import { GroupCard, memberCountLabel } from './GroupCard'
 
 export interface InternalGroupsTabProps {
   groups: InternalGroup[]
+  unsavedGroupIds: ReadonlySet<CanopyGroupId>
   canEdit: boolean
   onCreateGroup: () => void
   onEditGroup: (group: InternalGroup) => void
   onDeleteGroup: (groupId: CanopyGroupId) => void
   onAddMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
   onRemoveMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
-  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  onGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
   // User search state (shared across all groups)
   activeSearchGroupId: string | null
   searchQuery: string
@@ -29,6 +30,7 @@ export interface InternalGroupsTabProps {
 
 export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
   groups,
+  unsavedGroupIds,
   canEdit,
   onCreateGroup,
   onEditGroup,
@@ -78,7 +80,7 @@ export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
                     )}
                   </div>
                   <Text size="sm" variant="light">
-                    {group.members?.length || 0} members
+                    {memberCountLabel(group.members?.length ?? 0)}
                   </Text>
                 </Group>
               </Paper>
@@ -96,13 +98,8 @@ export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
           <Text size="sm" fw={500} c="dimmed">
             Manage your internal groups
           </Text>
-          <Button
-            size="xs"
-            variant="light"
-            leftSection={<IconPlus size={14} />}
-            onClick={onCreateGroup}
-          >
-            Create Group
+          <Button variant="light" leftSection={<IconPlus size={14} />} onClick={onCreateGroup}>
+            Create group
           </Button>
         </Group>
 
@@ -118,6 +115,7 @@ export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
             <GroupCard
               key={group.id}
               group={group}
+              isUnsaved={unsavedGroupIds.has(group.id)}
               onEdit={onEditGroup}
               onDelete={onDeleteGroup}
               onAddMember={onAddMember}

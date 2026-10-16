@@ -59,17 +59,22 @@ describe('worker under a compromised provisioning lock', () => {
   let contentBranchesPath: string
   let remoteGit: SimpleGit
 
+  const bareRemotePath = () => path.join(tmpDir, 'remote.git')
+
   beforeEach(async () => {
     lockState.compromised = true
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-provisioning-compromise-'))
     contentBranchesPath = path.join(tmpDir, 'content-branches')
-    const remotePath = path.join(tmpDir, 'remote.git')
-    await fs.mkdir(remotePath)
-    remoteGit = await initTestRepo(remotePath)
+    // remote.git is bare, as in production; commits are made in `upstream` and pushed.
+    const upstreamPath = path.join(tmpDir, 'upstream')
+    await fs.mkdir(upstreamPath)
+    remoteGit = await initTestRepo(upstreamPath)
     await remoteGit.raw(['branch', '-M', 'main'])
-    await fs.writeFile(path.join(remotePath, 'a.txt'), 'a')
+    await simpleGit().raw(['init', '--bare', '--initial-branch', 'main', bareRemotePath()])
+    await fs.writeFile(path.join(upstreamPath, 'a.txt'), 'a')
     await remoteGit.add(['.'])
     await remoteGit.commit('initial commit')
+    await remoteGit.raw(['push', '-q', '--force', bareRemotePath(), 'main:main'])
     await fs.mkdir(contentBranchesPath)
   })
 
@@ -82,11 +87,10 @@ describe('worker under a compromised provisioning lock', () => {
   /** A provisioned clone of the remote at content-branches/<dirName>, checked out as `branch`. */
   async function provisionedClone(dirName: string, branch: string): Promise<SimpleGit> {
     const clonePath = path.join(contentBranchesPath, dirName)
-    await simpleGit().clone(path.join(tmpDir, 'remote.git'), clonePath)
+    await simpleGit().clone(bareRemotePath(), clonePath)
     const git = simpleGit({ baseDir: clonePath, unsafe: { allowUnsafeEditor: true } })
     await git.addConfig('user.name', 'Test Bot')
     await git.addConfig('user.email', 'test@canopycms.test')
-    await git.addConfig('core.editor', 'true')
     if (branch !== 'main') await git.checkoutBranch(branch, 'origin/main')
     await getBranchMetadataFileManager(clonePath, contentBranchesPath).save({
       branch: { name: branch },
@@ -95,9 +99,10 @@ describe('worker under a compromised provisioning lock', () => {
   }
 
   async function advanceRemote(): Promise<void> {
-    await fs.writeFile(path.join(tmpDir, 'remote.git', 'b.txt'), 'b')
+    await fs.writeFile(path.join(tmpDir, 'upstream', 'b.txt'), 'b')
     await remoteGit.add(['.'])
     await remoteGit.commit('advance main')
+    await remoteGit.raw(['push', '-q', '--force', bareRemotePath(), 'main:main'])
   }
 
   it('does not rebase a branch once the lock is lost', async () => {

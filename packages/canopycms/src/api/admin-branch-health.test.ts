@@ -3,11 +3,13 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { ADMIN_ROUTES } from './admin'
+import { DUPLICATE_ID_SCAN_BUDGET_MS } from './admin-branch-health'
+import { ContentIdIndex } from '../content-id-index'
 import type { ApiContext, ApiRequest } from './types'
 import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockUser, initTestRepo } from '../test-utils'
 import { BranchRegistry } from '../branch-registry'
-import { getBranchMetadataFileManager } from '../branch-metadata'
+import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { acquireProvisioningLock } from '../utils/provisioning-lock'
 import { mockConsole } from '../test-utils/console-spy'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
@@ -100,7 +102,7 @@ describe('admin branch-health api', () => {
       await createCorruptBranch('broken')
       await createOrphanBranch('orphan-dir')
 
-      const result = await branchHealthHandler(ctx, req)
+      const result = await branchHealthHandler(ctx, req, {})
 
       expect(result.ok).toBe(true)
       expect(result.data?.entries).toHaveLength(3)
@@ -120,7 +122,7 @@ describe('admin branch-health api', () => {
       const eisdirMetaDir = path.join(branchesRoot, 'weird-branch', '.canopy-meta')
       await fs.mkdir(path.join(eisdirMetaDir, 'branch.json'), { recursive: true })
 
-      const result = await branchHealthHandler(ctx, req)
+      const result = await branchHealthHandler(ctx, req, {})
 
       expect(result.data?.entries).toHaveLength(3)
       const broken = result.data?.entries.find((e) => e.dirName === 'broken')
@@ -128,6 +130,45 @@ describe('admin branch-health api', () => {
       expect(broken?.parseError).toBeTruthy()
       expect(weird?.parseError).toBeTruthy()
       expect(JSON.stringify(result)).not.toContain(tmpDir)
+    })
+
+    it('scans for duplicate IDs only when asked, and reports the budget and truncation', async () => {
+      await createHealthyBranch('main')
+
+      const plain = await branchHealthHandler(ctx, req, {})
+      expect(plain.data?.duplicateIdScan).toBeUndefined()
+      expect(plain.data?.entries[0].duplicateIdScan).toBeUndefined()
+
+      const scanned = await branchHealthHandler(ctx, req, { duplicates: '1' })
+      expect(scanned.data?.duplicateIdScan).toEqual({
+        budgetMs: DUPLICATE_ID_SCAN_BUDGET_MS,
+        truncated: false,
+      })
+      expect(scanned.data?.entries[0].duplicateIdScan).toEqual({ state: 'none' })
+    })
+
+    it('marks the scan truncated when a branch scan outlives the budget', async () => {
+      await createHealthyBranch('main')
+      vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames').mockImplementation(
+        () => new Promise<void>(() => {}),
+      )
+      // Only the timer pair is faked: the handler's real fs I/O must still run.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const pending = branchHealthHandler(ctx, req, { duplicates: '1' })
+        while (vi.getTimerCount() === 0) await new Promise((r) => setImmediate(r))
+        vi.advanceTimersByTime(DUPLICATE_ID_SCAN_BUDGET_MS)
+        const result = await pending
+
+        expect(result.data?.duplicateIdScan?.truncated).toBe(true)
+        expect(result.data?.entries[0].duplicateIdScan).toEqual({
+          state: 'unknown',
+          reason: 'out-of-time',
+        })
+      } finally {
+        vi.useRealTimers()
+        vi.restoreAllMocks()
+      }
     })
   })
 
@@ -145,7 +186,7 @@ describe('admin branch-health api', () => {
       expect(invalidateSpy).toHaveBeenCalled()
 
       // Scan no longer lists the purged dir under its old name.
-      const scan = await branchHealthHandler(ctx, req)
+      const scan = await branchHealthHandler(ctx, req, {})
       expect(scan.data?.entries.find((e) => e.dirName === 'broken')).toBeUndefined()
     })
 
@@ -272,6 +313,31 @@ describe('admin branch-health api', () => {
         'utf-8',
       )
       expect(() => JSON.parse(newContent)).not.toThrow()
+    })
+
+    it('repairs a branch.json that parses but fails the schema, end to end', async () => {
+      const shapeBroken = JSON.stringify({ schemaVersion: 1, version: 4, branch: { name: 'x' } })
+      const metaDir = path.join(branchesRoot, 'shape-broken', '.canopy-meta')
+      await fs.mkdir(metaDir, { recursive: true })
+      await fs.writeFile(path.join(metaDir, 'branch.json'), shapeBroken, 'utf-8')
+
+      const scanned = await branchHealthHandler(ctx, req, {})
+      const entry = scanned.data?.entries.find((e) => e.dirName === 'shape-broken')
+      expect(entry?.kind).toBe('corrupt-metadata')
+      expect(entry?.parseError).toBe('Not branch metadata. Missing: branch.status, branch.access')
+
+      const result = await repairHandler(ctx, req, { dirName: 'shape-broken' })
+
+      expect(result.ok).toBe(true)
+      expect(result.data?.branch.status).toBe('editing')
+      expect(await fs.readFile(path.join(metaDir, result.data!.archivedAs), 'utf-8')).toBe(
+        shapeBroken,
+      )
+      const repaired = await BranchMetadataFileManager.loadOnly(
+        path.join(branchesRoot, 'shape-broken'),
+      )
+      expect(repaired?.branch).toMatchObject({ name: 'shape-broken', status: 'editing' })
+      expect((await registry.list()).map((b) => b.branch.name)).toContain('shape-broken')
     })
 
     it('reports the reset status/access/createdBy so the admin knows they were not recovered (August 2026 baseline review)', async () => {
@@ -416,6 +482,11 @@ describe('admin branch-health api', () => {
       }
 
       expect(result.ok).toBe(true)
+      // The archived files leave the branch at its next submit, so the admin is credited.
+      expect(ctx.services.recordBranchEditor).toHaveBeenCalledWith(
+        { branchRoot: path.join(branchesRoot, 'dup-branch'), baseRoot: branchesRoot },
+        req.user,
+      )
       expect(result.data?.resolved).toHaveLength(1)
       const [resolved] = result.data!.resolved
       expect(resolved.id).toBe(dupId)
@@ -448,12 +519,12 @@ describe('admin branch-health api', () => {
       const rescanSpy = mockConsole()
       let scan: Awaited<ReturnType<typeof branchHealthHandler>>
       try {
-        scan = await branchHealthHandler(ctx, req)
+        scan = await branchHealthHandler(ctx, req, { duplicates: '1' })
       } finally {
         rescanSpy.restore()
       }
       const entry = scan.data?.entries.find((e) => e.dirName === 'dup-branch')
-      expect(entry?.duplicateContentIds).toBeUndefined()
+      expect(entry?.duplicateIdScan).toEqual({ state: 'none' })
     })
 
     it('returns 409 when there are no duplicate content IDs to repair', async () => {
@@ -461,6 +532,7 @@ describe('admin branch-health api', () => {
       const result = await repairContentDuplicatesHandler(ctx, req, { dirName: 'clean-branch' })
       expect(result.ok).toBe(false)
       expect(result.status).toBe(409)
+      expect(ctx.services.recordBranchEditor).not.toHaveBeenCalled()
     })
 
     it('returns 404 for a nonexistent directory', async () => {
@@ -499,6 +571,36 @@ describe('admin branch-health api', () => {
       }
       expect(result.ok).toBe(true)
       expect(result.data?.resolved[0].id).toBe(dupId)
+    })
+
+    it('credits the admin for a partial repair, whose archived files still leave the branch', async () => {
+      const { postsDir } = await createDuplicateContentIds('partial-branch')
+      const secondId = generateId()
+      await fs.writeFile(path.join(postsDir, `page.a.${secondId}.json`), '{}', 'utf-8')
+      await fs.writeFile(path.join(postsDir, `page.b.${secondId}.json`), '{}', 'utf-8')
+      const realRename = fs.rename.bind(fs)
+      let renames = 0
+      const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+        renames += 1
+        if (renames === 2) throw new Error('disk full')
+        return realRename(from, to)
+      })
+
+      const consoleSpy = mockConsole()
+      let result: Awaited<ReturnType<typeof repairContentDuplicatesHandler>>
+      try {
+        result = await repairContentDuplicatesHandler(ctx, req, { dirName: 'partial-branch' })
+      } finally {
+        consoleSpy.restore()
+        rename.mockRestore()
+      }
+
+      expect(result.status).toBe(500)
+      expect(result.error).toContain('partially repaired first')
+      expect(ctx.services.recordBranchEditor).toHaveBeenCalledWith(
+        { branchRoot: path.join(branchesRoot, 'partial-branch'), baseRoot: branchesRoot },
+        req.user,
+      )
     })
 
     it('returns 409 on content-write-lock contention against a real held lock', async () => {

@@ -9,6 +9,8 @@ import {
   buildWritePayload,
   normalizeContentPayload,
   buildCollectionLabels,
+  entryStatusLabel,
+  entryTypeLabel,
   buildBreadcrumbSegments,
   calculatePathToEntry,
 } from './editor-utils'
@@ -846,6 +848,59 @@ describe('buildEntriesFromListResponse', () => {
   })
 })
 
+describe('buildEntriesFromListResponse: unavailable entry types', () => {
+  const unavailable = {
+    reason: 'unknown-schema' as const,
+    schemaRef: 'widgetSchema',
+    metaFile: 'content/widgets/.collection.json',
+  }
+  const flatSchema: FlatSchemaItem[] = [
+    {
+      type: 'entry-type',
+      logicalPath: unsafeAsLogicalPath('widgets/widget'),
+      name: 'widget',
+      parentPath: unsafeAsLogicalPath('widgets'),
+      format: 'json',
+      schema: [],
+      unavailable,
+    },
+    {
+      type: 'entry-type',
+      logicalPath: unsafeAsLogicalPath('widgets/note'),
+      name: 'note',
+      parentPath: unsafeAsLogicalPath('widgets'),
+      format: 'md',
+      schema: [{ name: 'title', type: 'string' }],
+    },
+  ]
+  const entry = (slug: string, entryType: string): ListEntriesResponse['entries'][number] => ({
+    logicalPath: unsafeAsLogicalPath(`widgets/${slug}`),
+    contentId: unsafeAsContentId(`${slug}`.padEnd(12, 'x')),
+    slug: unsafeAsSlug(slug),
+    collectionPath: unsafeAsLogicalPath('widgets'),
+    collectionName: 'Widgets',
+    format: 'json',
+    entryType,
+    physicalPath: unsafeAsPhysicalPath(`content/widgets/${slug}.json`),
+    exists: true,
+  })
+
+  it('exposes unavailable on an entry of an unavailable type, and only on that one', () => {
+    const result = buildEntriesFromListResponse({
+      response: {
+        entries: [entry('first', 'widget'), entry('second', 'note')],
+        pagination: { hasMore: false, limit: 50 },
+      },
+      resolvePreviewSrc: () => undefined,
+      flatSchema,
+    })
+
+    expect(result[0].unavailable).toEqual(unavailable)
+    expect(result[0].schema).toEqual([])
+    expect(result[1]).not.toHaveProperty('unavailable')
+  })
+})
+
 describe('buildCollectionLabels', () => {
   it('returns empty map when no collections provided', () => {
     expect(buildCollectionLabels(undefined)).toEqual(new Map())
@@ -913,12 +968,30 @@ describe('buildCollectionLabels', () => {
 })
 
 describe('buildBreadcrumbSegments', () => {
-  it('returns only "All Files" when no entry is provided', () => {
-    const labels = new Map<string, string>()
-    expect(buildBreadcrumbSegments(undefined, labels)).toEqual(['All Files'])
+  const labelsOf = (segments: Array<{ label: string }>) => segments.map((s) => s.label)
+
+  it('gives collection crumbs their path, and slug folders none', () => {
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('content/posts/2024/new-year'),
+      label: 'New Year Post',
+      schema: [],
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      slug: '2024/new-year',
+      contentId: unsafeAsContentId('test123456789'),
+    }
+    expect(buildBreadcrumbSegments(entry, new Map([['content/posts', 'Blog posts']]))).toEqual([
+      { label: 'All content' },
+      { label: 'Blog posts', collectionPath: 'content/posts' },
+      { label: '2024', folder: true },
+    ])
   })
 
-  it('returns only "All Files" for entry without collectionPath', () => {
+  it('returns only "All content" when no entry is provided', () => {
+    const labels = new Map<string, string>()
+    expect(labelsOf(buildBreadcrumbSegments(undefined, labels))).toEqual(['All content'])
+  })
+
+  it('returns only "All content" for entry without collectionPath', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('test'),
       label: 'Test',
@@ -926,10 +999,10 @@ describe('buildBreadcrumbSegments', () => {
       contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map<string, string>()
-    expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All Files'])
+    expect(labelsOf(buildBreadcrumbSegments(entry, labels))).toEqual(['All content'])
   })
 
-  it('returns "All Files" for single-level collection (root level)', () => {
+  it('returns "All content" for single-level collection (root level)', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('posts/hello'),
       label: 'Hello',
@@ -940,7 +1013,7 @@ describe('buildBreadcrumbSegments', () => {
     }
     const labels = new Map([['posts', 'Posts']])
     // Single-level collection: parts = ['posts'], loop starts at i=1 which is >= length, so no segments added
-    expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All Files'])
+    expect(labelsOf(buildBreadcrumbSegments(entry, labels))).toEqual(['All content'])
   })
 
   it('shows hierarchy for nested collections', () => {
@@ -958,10 +1031,10 @@ describe('buildBreadcrumbSegments', () => {
       ['content/docs/guides', 'Guides'],
     ])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
-    // Should include: All Files, Documentation, Guides (skips 'Content' which is the root)
-    expect(result).toEqual(['All Files', 'Documentation', 'Guides'])
+    // Should include: All content, Documentation, Guides (skips 'Content' which is the root)
+    expect(result).toEqual(['All content', 'Documentation', 'Guides'])
   })
 
   it('shows hierarchy for deeply nested collections', () => {
@@ -980,9 +1053,9 @@ describe('buildBreadcrumbSegments', () => {
       ['content/docs/api/v2', 'Version 2'],
     ])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
-    expect(result).toEqual(['All Files', 'Documentation', 'API Reference', 'Version 2'])
+    expect(result).toEqual(['All content', 'Documentation', 'API Reference', 'Version 2'])
   })
 
   it('skips missing labels in hierarchy', () => {
@@ -1000,10 +1073,10 @@ describe('buildBreadcrumbSegments', () => {
       ['content/docs/guides', 'Guides'],
     ])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     // Should skip the missing 'Documentation' segment
-    expect(result).toEqual(['All Files', 'Guides'])
+    expect(result).toEqual(['All content', 'Guides'])
   })
 
   it('includes slug path segments for nested slugs', () => {
@@ -1017,10 +1090,10 @@ describe('buildBreadcrumbSegments', () => {
     }
     const labels = new Map([['posts', 'Posts']])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     // Should include slug path segments (minus the last one which is the file name)
-    expect(result).toEqual(['All Files', '2024', '01'])
+    expect(result).toEqual(['All content', '2024', '01'])
   })
 
   it('combines collection hierarchy and slug segments', () => {
@@ -1037,10 +1110,10 @@ describe('buildBreadcrumbSegments', () => {
       ['content/posts', 'Blog Posts'],
     ])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
     // Collection hierarchy + slug segments
-    expect(result).toEqual(['All Files', 'Blog Posts', '2024', '01'])
+    expect(result).toEqual(['All content', 'Blog Posts', '2024', '01'])
   })
 
   it('works for root entry types with maxItems: 1', () => {
@@ -1057,9 +1130,9 @@ describe('buildBreadcrumbSegments', () => {
       ['content/settings', 'Settings'],
     ])
 
-    const result = buildBreadcrumbSegments(entry, labels)
+    const result = labelsOf(buildBreadcrumbSegments(entry, labels))
 
-    expect(result).toEqual(['All Files', 'Settings'])
+    expect(result).toEqual(['All content', 'Settings'])
   })
 })
 
@@ -1267,5 +1340,119 @@ describe('calculatePathToEntry', () => {
       'collection:blog/featured': true,
       'collection:blog/featured/archive': true,
     })
+  })
+})
+
+describe('entryTypeLabel', () => {
+  const collections: EditorCollection[] = [
+    {
+      path: unsafeAsLogicalPath('content'),
+      name: 'content',
+      type: 'collection',
+      format: 'mdx',
+      entryTypes: [{ name: 'page', label: 'Landing page', format: 'mdx' }],
+      children: [
+        {
+          path: unsafeAsLogicalPath('content/docs'),
+          name: 'docs',
+          type: 'collection',
+          format: 'mdx',
+          entryTypes: [
+            { name: 'page', label: 'Doc page', format: 'mdx' },
+            { name: 'faq', format: 'json' },
+          ],
+          children: [
+            {
+              path: unsafeAsLogicalPath('content/docs/guides'),
+              name: 'guides',
+              type: 'collection',
+              format: 'mdx',
+              entryTypes: [{ name: 'guide', label: 'Guide', format: 'mdx' }],
+            },
+          ],
+        },
+        {
+          path: unsafeAsLogicalPath('content/blog'),
+          name: 'blog',
+          type: 'collection',
+          format: 'mdx',
+        },
+      ],
+    },
+  ]
+
+  const entry = (collectionPath: string, entryType?: string) => ({
+    collectionPath: unsafeAsLogicalPath(collectionPath),
+    entryType,
+  })
+
+  it('is the label the entry type has in its own collection', () => {
+    expect(entryTypeLabel(collections, entry('content', 'page'))).toBe('Landing page')
+  })
+
+  it('finds the entry type in a nested collection, not in a same-named type of another', () => {
+    expect(entryTypeLabel(collections, entry('content/docs', 'page'))).toBe('Doc page')
+    expect(entryTypeLabel(collections, entry('content/docs/guides', 'guide'))).toBe('Guide')
+  })
+
+  it('reads the type name as words when the type has no label', () => {
+    expect(entryTypeLabel(collections, entry('content/docs', 'faq'))).toBe('Faq')
+  })
+
+  it("labels a navigator badge with the entry's type, or Missing", () => {
+    const badge = (status: string, entryType?: string) =>
+      entryStatusLabel(collections, { ...entry('content', entryType), status })
+    expect(badge('page', 'page')).toBe('Landing page')
+    expect(badge('missing', 'page')).toBe('Missing')
+    expect(badge('blogPost', 'blogPost')).toBe('Blog post')
+    expect(badge('entry')).toBe('Entry')
+  })
+
+  it('reads the type name as words when the collection does not list that type', () => {
+    expect(entryTypeLabel(collections, entry('content/docs', 'retired'))).toBe('Retired')
+    expect(entryTypeLabel(collections, entry('content/blog', 'post'))).toBe('Post')
+  })
+
+  it('reads the type name as words when the collection is unknown, or no collections are given', () => {
+    expect(entryTypeLabel(collections, entry('elsewhere', 'page'))).toBe('Page')
+    expect(entryTypeLabel(undefined, entry('content', 'page'))).toBe('Page')
+    expect(entryTypeLabel([], entry('content', 'page'))).toBe('Page')
+  })
+
+  describe('humanizes an unlabelled type name into sentence case', () => {
+    it.each([
+      ['blogPost', 'Blog post'],
+      ['blog-post', 'Blog post'],
+      ['blog_post', 'Blog post'],
+      ['BlogPost', 'Blog post'],
+      ['landing page', 'Landing page'],
+      ['faq', 'Faq'],
+      ['teamMemberProfile', 'Team member profile'],
+      ['release-notes_v2', 'Release notes v2'],
+      ['a--b', 'A b'],
+      ['HTMLPage', 'HTML page'],
+      ['seoFAQ', 'Seo FAQ'],
+    ])('%s is %s', (name, expected) => {
+      expect(entryTypeLabel(collections, entry('content/blog', name))).toBe(expected)
+    })
+  })
+
+  it('does not humanize a label the collection gives', () => {
+    const labelled: EditorCollection[] = [
+      {
+        path: unsafeAsLogicalPath('posts'),
+        name: 'posts',
+        type: 'collection',
+        format: 'mdx',
+        entryTypes: [{ name: 'blogPost', label: 'blogPost (legacy)', format: 'mdx' }],
+      },
+    ]
+    expect(entryTypeLabel(labelled, entry('posts', 'blogPost'))).toBe('blogPost (legacy)')
+  })
+
+  it('is undefined for an entry with no entry type', () => {
+    expect(entryTypeLabel(collections, entry('content'))).toBeUndefined()
+    expect(entryTypeLabel(collections, entry('content', ''))).toBeUndefined()
+    expect(entryTypeLabel(undefined, entry('content'))).toBeUndefined()
   })
 })

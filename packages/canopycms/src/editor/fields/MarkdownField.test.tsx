@@ -1,14 +1,15 @@
 import React from 'react'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/test-utils'
 import { CanopyCMSProvider } from '../theme'
 import { MarkdownField } from './MarkdownField'
+import { resetRichTextFailures } from './rich-text-failures'
 
-// Preload the chunks MarkdownField's React.lazy() imports.
+// Preload the chunk MarkdownField's React.lazy() imports.
 //
 // The mount assertion below is about WHETHER the real editor mounts, not how
 // fast: without this it also silently measures how long vitest takes to
@@ -23,7 +24,6 @@ import { MarkdownField } from './MarkdownField'
 // the product. Same specifier as MarkdownField.tsx uses, deliberately -- a
 // different one would warm nothing.
 import '@mdxeditor/editor'
-import './mdx-jsx-support'
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual('../../api')
@@ -65,6 +65,7 @@ describe('MarkdownField', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
+    resetRichTextFailures()
   })
 
   it('shows the fallback textarea while the MDXEditor chunk loads', () => {
@@ -109,6 +110,34 @@ describe('MarkdownField', () => {
     expect(screen.getByTestId('insert-entry-link-button')).toBeTruthy()
   })
 
+  it('gives the toolbar the class its wrapping style targets, and ships that style', async () => {
+    const Wrapper = wrapper
+    render(
+      <CanopyCMSProvider>
+        <Wrapper>
+          <MarkdownField value="hello" onChange={() => {}} />
+        </Wrapper>
+      </CanopyCMSProvider>,
+    )
+    const toolbar = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('[role="toolbar"]')
+      if (!el) throw new Error('toolbar not mounted')
+      return el
+    })
+    expect(toolbar.classList.contains('canopy-mdx-toolbar')).toBe(true)
+    // The rule must reach the toolbar from inside the editor root, which sets the toolbar's
+    // own overflow and wrapping.
+    expect(toolbar.closest('.mdxeditor')).not.toBeNull()
+    const styles = [...document.querySelectorAll('style')].map((el) => el.textContent ?? '')
+    expect(
+      styles.some((css) =>
+        /\.mdxeditor \.canopy-mdx-toolbar\s*\{[^}]*flex-wrap:\s*wrap[^}]*overflow-x:\s*visible/.test(
+          css,
+        ),
+      ),
+    ).toBe(true)
+  })
+
   function renderField(value: string, onChange: (value: string) => void = () => {}) {
     const Wrapper = wrapper
     return render(
@@ -140,6 +169,71 @@ describe('MarkdownField', () => {
     if (typeof value !== 'string') throw new Error('onChange was never called with a string')
     return value
   }
+
+  describe('body images', () => {
+    const OLD_SRC = `/assets/t/orig/${'a'.repeat(32)}/photo.png`
+    const NEW_SRC = `/assets/t/orig/${'b'.repeat(32)}/other.png`
+    const RAW_ROUTE = '/api/canopycms/assets/raw'
+
+    // jsdom never loads an image, and MDXEditor renders an image node only once its preload
+    // `Image` fires onload/onerror. This stub fires onload on the first `src` set.
+    const realImage = globalThis.Image
+    beforeAll(() => {
+      class LoadedImage {
+        onload: null | (() => void) = null
+        onerror: null | (() => void) = null
+        set src(_value: string) {
+          setTimeout(() => this.onload?.(), 0)
+        }
+      }
+      globalThis.Image = LoadedImage as unknown as typeof Image
+    })
+    afterAll(() => {
+      globalThis.Image = realImage
+    })
+
+    const urlInput = () => screen.getByTestId<HTMLInputElement>('mdx-image-dialog-url')
+
+    /** Opens the edit dialog for the body's one image and waits for its URL field. */
+    async function openEditDialog(): Promise<HTMLInputElement> {
+      fireEvent.click(await screen.findByTitle('Edit image'))
+      await screen.findByTestId('mdx-image-dialog-url')
+      await waitFor(() => expect(urlInput().value).not.toBe(''))
+      return urlInput()
+    }
+
+    it('are displayed through the authenticated asset route', async () => {
+      renderField(`![alt](${OLD_SRC})`)
+      await richEditor()
+
+      const img = await screen.findByAltText('alt')
+      expect(img.getAttribute('src')).toBe(`${RAW_ROUTE}${OLD_SRC}`)
+    })
+
+    it('keep a changed src through a second edit, stored root-relative', async () => {
+      const onChange = vi.fn()
+      renderField(`![alt](${OLD_SRC})`, onChange)
+      await richEditor()
+      await screen.findByAltText('alt')
+
+      expect((await openEditDialog()).value).toBe(OLD_SRC)
+      fireEvent.change(urlInput(), { target: { value: NEW_SRC } })
+      fireEvent.click(screen.getByTestId('mdx-image-dialog-url-submit'))
+      await waitFor(() => expect(lastValue(onChange)).toContain(NEW_SRC))
+
+      // The second dialog must show the src the node now has, not the one it was rendered with.
+      expect((await openEditDialog()).value).toBe(NEW_SRC)
+      const calls = onChange.mock.calls.length
+      fireEvent.change(screen.getByTestId('mdx-image-dialog-alt'), { target: { value: 'fixed' } })
+      fireEvent.click(screen.getByTestId('mdx-image-dialog-url-submit'))
+      await waitFor(() => expect(onChange.mock.calls.length).toBeGreaterThan(calls))
+
+      await waitFor(() => expect(lastValue(onChange)).toBe(`![fixed](${NEW_SRC})`))
+      for (const [value] of onChange.mock.calls) {
+        expect(value).not.toContain(RAW_ROUTE)
+      }
+    })
+  })
 
   const JSX_BODY = [
     'Intro paragraph.',
@@ -192,6 +286,31 @@ describe('MarkdownField', () => {
       await waitFor(() =>
         expect(lastValue(onChange)).toMatch(/<Callout[^>]*>[^<]*inside[^<]*<\/Callout>/),
       )
+    })
+
+    it("keeps a list item's and a quote's paragraphs through an edit inside the element", async () => {
+      const onChange = vi.fn()
+      renderField(
+        'Top.\n\n<Callout>\n\nLead.\n\n- a\n\n  b\n\n> c\n>\n> d\n\n</Callout>\n',
+        onChange,
+      )
+      const root = await richEditor()
+      const user = userEvent.setup()
+      const nested = await waitFor(() => {
+        const el = document.querySelector<HTMLElement>(
+          'div.canopy-mdx-jsx [contenteditable="true"]',
+        )
+        if (!el) throw new Error('nested editor not mounted')
+        return el
+      })
+
+      await user.click(nested.querySelector('p') ?? nested)
+      await user.keyboard('inside')
+      await user.click(root.querySelector('p') ?? root)
+
+      await waitFor(() => expect(lastValue(onChange)).toContain('inside'))
+      expect(lastValue(onChange)).toContain('  - a\n\n    b\n')
+      expect(lastValue(onChange)).toContain('  > c\n  >\n  > d\n')
     })
 
     it('shows each element tag and attributes, with its children editable', async () => {

@@ -2,14 +2,15 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from './config-test'
-import { flattenSchema } from './config'
+import { flattenSchema, type EntrySchema } from './config'
 import { ContentIdIndex } from './content-id-index'
 import {
   bumpContentIndexGeneration,
   invalidateContentIndexesDurable,
+  readContentIndexGeneration,
 } from './content-index-generation'
 import { invalidateContentIndexesForRoot } from './content-index-registry'
 import {
@@ -19,13 +20,17 @@ import {
   ContentConflictError,
   createReferenceResolveCache,
   DuplicateContentIdError,
+  EntryGoneError,
   UrlPathConflictError,
 } from './content-store'
-import { tryAcquireContentWriteLock } from './utils/content-write-lock'
+import { tryAcquireContentWriteLock, withContentWriteLock } from './utils/content-write-lock'
+import type { PhysicalPath } from './paths/types'
 import { getErrorMessage } from './utils/error'
 import { generateId } from './id'
 import { unsafeAsContentId, unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
 import { mockConsole } from './test-utils/console-spy'
+import { buildMissingReference } from './entry-schema'
+import { resetDanglingReferenceWarnings } from './dangling-reference-log'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
 
@@ -2051,16 +2056,16 @@ describe('ContentStore OCC', () => {
     expect(read.version).toBe(written.version)
   })
 
-  it('write rethrows non-ENOENT stat errors, does not silently bypass OCC', async () => {
+  it('write rethrows non-ENOENT open errors, does not silently bypass OCC', async () => {
     const store = await makeStore()
     const written = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('g'), {
       format: 'json',
       data: { v: 1 },
     })
 
-    // Simulate a filesystem error (e.g. EACCES) on the OCC stat call
+    // A filesystem error (e.g. EACCES) opening the target for its OCC version
     const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
-    const statSpy = vi.spyOn(fs, 'stat').mockRejectedValueOnce(eacces)
+    const openSpy = vi.spyOn(fs, 'open').mockRejectedValueOnce(eacces)
 
     try {
       await expect(
@@ -2070,8 +2075,9 @@ describe('ContentStore OCC', () => {
           expectedVersion: written.version,
         }),
       ).rejects.toThrow('EACCES')
+      expect(openSpy).toHaveBeenCalledTimes(1)
     } finally {
-      statSpy.mockRestore()
+      openSpy.mockRestore()
     }
   })
 })
@@ -2152,6 +2158,313 @@ describe('ContentStore create-intent guard (expectedVersion: null)', () => {
 
     const read = await store.read(collectionPath, slug)
     expect(read.data).toEqual({ title: 'New' })
+  })
+})
+
+describe('ContentStore update of an entry that is gone (numeric expectedVersion, no file)', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+      },
+    ],
+  } as const
+  const posts = unsafeAsLogicalPath('content/posts')
+
+  const makeRoot = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-gone-'))
+  // A separate instance per call: its own index, as another process sharing the tree has.
+  const storeAt = (root: string) => {
+    const config = defineCanopyTestConfig({ schema })
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot))
+  }
+  const postFiles = async (root: string) => fs.readdir(path.join(root, 'content', 'posts'))
+
+  /** Park the next call of `fs[name]` until `release()`, still inside its caller's lock. */
+  const gateFsCall = (name: 'link' | 'unlink') => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const real = (fs[name] as (...args: unknown[]) => Promise<void>).bind(fs)
+    let parked = false
+    const spy = vi.spyOn(fs, name).mockImplementationOnce(async (...args: unknown[]) => {
+      parked = true
+      await gate
+      return real(...args)
+    })
+    return { release, spy, isParked: () => parked }
+  }
+  const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  it('refuses a save of an entry another process deleted, and does not re-create it', async () => {
+    const root = await makeRoot()
+    const editor = storeAt(root)
+    const read = await editor.write(posts, unsafeAsSlug('doomed'), {
+      format: 'json',
+      data: { title: 'v1' },
+    })
+
+    await storeAt(root).delete(posts, unsafeAsSlug('doomed'))
+
+    await expect(
+      editor.write(posts, unsafeAsSlug('doomed'), {
+        format: 'json',
+        data: { title: 'v2' },
+        expectedVersion: read.version,
+      }),
+    ).rejects.toBeInstanceOf(EntryGoneError)
+    expect(await postFiles(root)).toEqual([])
+  })
+
+  it('refuses a save to the old slug of an entry another process renamed, leaving one file', async () => {
+    const root = await makeRoot()
+    const editor = storeAt(root)
+    const read = await editor.write(posts, unsafeAsSlug('before'), {
+      format: 'json',
+      data: { title: 'v1' },
+    })
+    const id = await editor.getIdForEntry(posts, unsafeAsSlug('before'))
+
+    await storeAt(root).renameEntry(posts, unsafeAsSlug('before'), unsafeAsSlug('after'))
+
+    const err = await editor
+      .write(posts, unsafeAsSlug('before'), {
+        format: 'json',
+        data: { title: 'v2' },
+        expectedVersion: read.version,
+      })
+      .catch((e: unknown) => e)
+    // Still a ContentConflictError, so every existing 409 mapping covers it.
+    expect(err).toBeInstanceOf(EntryGoneError)
+    expect(err).toBeInstanceOf(ContentConflictError)
+    const files = await postFiles(root)
+    expect(files).toHaveLength(1)
+    expect(files[0]).toContain(`.after.${id}.`)
+    expect((await editor.read(posts, unsafeAsSlug('after'))).data).toEqual({ title: 'v1' })
+  })
+
+  it('refuses a save queued behind an in-process delete of the same entry', async () => {
+    const root = await makeRoot()
+    const store = storeAt(root)
+    const read = await store.write(posts, unsafeAsSlug('raced'), {
+      format: 'json',
+      data: { title: 'v1' },
+    })
+
+    // The delete parks inside its critical section, holding the branch's content-write lock; the
+    // save's pre-pass still sees the file, so it waits for that lock and then resolves the path
+    // again in-lock, where the file is gone.
+    const { release, spy, isParked } = gateFsCall('unlink')
+    const deleting = store.delete(posts, unsafeAsSlug('raced'))
+    await tick()
+    let settled = false
+    const saving = store
+      .write(posts, unsafeAsSlug('raced'), {
+        format: 'json',
+        data: { title: 'v2' },
+        expectedVersion: read.version,
+      })
+      .catch((e: unknown) => e)
+      .finally(() => {
+        settled = true
+      })
+    await tick()
+    // The delete is parked at its unlink and the save is waiting behind it.
+    expect(isParked()).toBe(true)
+    expect(settled).toBe(false)
+    release()
+    await deleting
+    const result = await saving
+    spy.mockRestore()
+
+    expect(result).toBeInstanceOf(EntryGoneError)
+    expect(await postFiles(root)).toEqual([])
+  })
+
+  it('refuses a save queued behind an in-process rename of the same entry', async () => {
+    const root = await makeRoot()
+    const store = storeAt(root)
+    const read = await store.write(posts, unsafeAsSlug('foo'), {
+      format: 'json',
+      data: { title: 'v1' },
+    })
+    const id = await store.getIdForEntry(posts, unsafeAsSlug('foo'))
+
+    const { release, spy, isParked } = gateFsCall('link')
+    const renaming = store.renameEntry(posts, unsafeAsSlug('foo'), unsafeAsSlug('bar'))
+    await tick()
+    let settled = false
+    const saving = store
+      .write(posts, unsafeAsSlug('foo'), {
+        format: 'json',
+        data: { title: 'v2' },
+        expectedVersion: read.version,
+      })
+      .catch((e: unknown) => e)
+      .finally(() => {
+        settled = true
+      })
+    await tick()
+    // The rename is parked at its link and the save is waiting behind it.
+    expect(isParked()).toBe(true)
+    expect(settled).toBe(false)
+    release()
+    await renaming
+    const result = await saving
+    spy.mockRestore()
+
+    expect(result).toBeInstanceOf(EntryGoneError)
+    const files = await postFiles(root)
+    expect(files).toHaveLength(1)
+    expect(files[0]).toContain(`.bar.${id}.`)
+  })
+
+  // Another host's delete or replace can be invisible to a path `stat` and a directory listing
+  // for the NFS cache window; opening the file revalidates against the server. Simulated by
+  // answering both for the target from what this host saw when the editor read it.
+  const answerFromCache = async (absolutePath: string, mtimeMs: number) => {
+    const dir = path.dirname(absolutePath)
+    const listing = await fs.readdir(dir, { withFileTypes: true })
+    const realStat = fs.stat.bind(fs)
+    const realReaddir = fs.readdir.bind(fs) as (...args: unknown[]) => Promise<unknown>
+    const statSpy = vi.spyOn(fs, 'stat').mockImplementation(async (p, ...rest) => {
+      if (String(p) === absolutePath) return { mtimeMs } as Awaited<ReturnType<typeof fs.stat>>
+      return realStat(p, ...(rest as []))
+    })
+    const readdirSpy = vi
+      .spyOn(fs, 'readdir')
+      .mockImplementation((async (p: unknown, ...rest: unknown[]) =>
+        String(p) === dir ? listing : realReaddir(p, ...rest)) as unknown as typeof fs.readdir)
+    return () => {
+      statSpy.mockRestore()
+      readdirSpy.mockRestore()
+    }
+  }
+
+  it('refuses a save of an entry deleted on another host while its stat is still cached', async () => {
+    const root = await makeRoot()
+    const editor = storeAt(root)
+    const read = await editor.write(posts, unsafeAsSlug('cached'), {
+      format: 'json',
+      data: { title: 'v1' },
+    })
+    const restore = await answerFromCache(read.absolutePath, read.version!)
+    await fs.rm(read.absolutePath)
+    try {
+      await expect(
+        editor.write(posts, unsafeAsSlug('cached'), {
+          format: 'json',
+          data: { title: 'v2' },
+          expectedVersion: read.version,
+        }),
+      ).rejects.toBeInstanceOf(EntryGoneError)
+    } finally {
+      restore()
+    }
+    expect(await postFiles(root)).toEqual([])
+  })
+
+  it('refuses a save over an entry replaced on another host while its stat is still cached', async () => {
+    const root = await makeRoot()
+    const editor = storeAt(root)
+    const read = await editor.write(posts, unsafeAsSlug('replaced'), {
+      format: 'json',
+      data: { title: 'v1' },
+    })
+    await fs.writeFile(read.absolutePath, '{"title":"theirs"}\n')
+    await fs.utimes(read.absolutePath, new Date(), new Date(read.version! + 5_000))
+
+    const restore = await answerFromCache(read.absolutePath, read.version!)
+    try {
+      await expect(
+        editor.write(posts, unsafeAsSlug('replaced'), {
+          format: 'json',
+          data: { title: 'mine' },
+          expectedVersion: read.version,
+        }),
+      ).rejects.toBeInstanceOf(ContentConflictError)
+    } finally {
+      restore()
+    }
+    expect(await fs.readFile(read.absolutePath, 'utf8')).toBe('{"title":"theirs"}\n')
+  })
+
+  it('does not re-create a collection directory removed under the entry', async () => {
+    const root = await makeRoot()
+    const store = storeAt(root)
+    const read = await store.write(posts, unsafeAsSlug('orphan'), {
+      format: 'json',
+      data: { title: 'v1' },
+    })
+    await fs.rm(path.join(root, 'content', 'posts'), { recursive: true })
+    store.invalidateIndex()
+
+    await expect(
+      store.write(posts, unsafeAsSlug('orphan'), {
+        format: 'json',
+        data: { title: 'v2' },
+        expectedVersion: read.version,
+      }),
+    ).rejects.toBeInstanceOf(EntryGoneError)
+    await expect(fs.stat(path.join(root, 'content', 'posts'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('reports a gone entry as gone, not as a create the slug rules refuse', async () => {
+    // `my_post` is not URL-routable: as a create the [SLUG] guard would refuse it as VALIDATION.
+    const root = await makeRoot()
+    const store = storeAt(root)
+    await expect(
+      store.write(posts, unsafeAsSlug('my_post'), {
+        format: 'json',
+        data: { title: 'v2' },
+        expectedVersion: 1_700_000_000_000,
+      }),
+    ).rejects.toBeInstanceOf(EntryGoneError)
+  })
+
+  it('still creates with expectedVersion null, and a retried create cannot make a second file', async () => {
+    const root = await makeRoot()
+    const store = storeAt(root)
+    const create = () =>
+      store.write(posts, unsafeAsSlug('fresh'), {
+        format: 'json',
+        data: { title: 'new' },
+        expectedVersion: null,
+      })
+
+    const created = await create()
+    expect(typeof created.version).toBe('number')
+    // The retry of a create whose answer was lost: the first one landed.
+    await expect(create()).rejects.toThrow('An entry with this slug already exists')
+    await expect(
+      storeAt(root).write(posts, unsafeAsSlug('fresh'), {
+        format: 'json',
+        data: { title: 'other process' },
+        expectedVersion: null,
+      }),
+    ).rejects.toThrow('An entry with this slug already exists')
+    expect(await postFiles(root)).toHaveLength(1)
+  })
+
+  it('lets exactly one of two concurrent creates of one slug through', async () => {
+    const root = await makeRoot()
+    const store = storeAt(root)
+    const results = await Promise.allSettled(
+      ['first', 'second'].map((title) =>
+        store.write(posts, unsafeAsSlug('twice'), {
+          format: 'json',
+          data: { title },
+          expectedVersion: null,
+        }),
+      ),
+    )
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1)
+    expect(await postFiles(root)).toHaveLength(1)
   })
 })
 
@@ -2636,7 +2949,7 @@ describe('ContentStore cross-process index consistency', () => {
       if (!authorId) throw new Error('expected an id for the author')
 
       const postFields = refSchema.collections[1].entries[0].schema
-      return { store, authorId, postFields }
+      return { store, root, authorId, postFields }
     }
 
     it('reads a repeated reference once across separate calls sharing one cache', async () => {
@@ -2676,6 +2989,7 @@ describe('ContentStore cross-process index consistency', () => {
       const { store, postFields } = await makeRefStore()
       const cache = createReferenceResolveCache()
       const danglingId = generateId()
+      const consoleSpy = mockConsole()
 
       // Warm the index so the spy below counts only lookup work, not the initial build.
       await store.idIndex()
@@ -2683,19 +2997,110 @@ describe('ContentStore cross-process index consistency', () => {
       const findSpy = vi.spyOn(ContentIdIndex.prototype, 'findById')
       try {
         const first = await store.resolveReferences({ author: danglingId }, postFields, cache)
-        expect(first.author).toBeNull()
+        expect(first.author).toEqual(buildMissingReference(danglingId))
         const afterFirst = findSpy.mock.calls.length
         expect(afterFirst).toBeGreaterThan(0)
 
         const second = await store.resolveReferences({ author: danglingId }, postFields, cache)
-        expect(second.author).toBeNull()
-        // No further index work: the null is memoized alongside hits, so a shared block
-        // cannot resolve to data on one entry and null on another within one batch.
+        expect(second.author).toEqual(buildMissingReference(danglingId))
+        // No further index work: the miss is memoized alongside hits, so a shared block
+        // cannot resolve to data on one entry and a miss on another within one batch.
         expect(findSpy.mock.calls.length).toBe(afterFirst)
         expect(cache.size).toBe(1)
       } finally {
         findSpy.mockRestore()
+        consoleSpy.restore()
       }
+    })
+
+    describe('a reference naming no entry', () => {
+      beforeEach(() => resetDanglingReferenceWarnings())
+
+      it('resolves to a MissingReference keeping the id, and warns once naming entry, field and id', async () => {
+        const { store } = await makeRefStore()
+        const postsPath = unsafeAsLogicalPath('content/posts')
+        const danglingId = generateId()
+        await store.write(postsPath, unsafeAsSlug('hello'), {
+          format: 'md',
+          data: { title: 'Hello', author: danglingId },
+          body: '',
+        })
+        const consoleSpy = mockConsole()
+        try {
+          const first = await store.read(postsPath, unsafeAsSlug('hello'))
+          await store.read(postsPath, unsafeAsSlug('hello'))
+
+          expect(first.data.author).toEqual({
+            id: danglingId,
+            unavailable: true,
+            reason: 'missing',
+          })
+          const warnings = consoleSpy.all().warn
+          expect(warnings).toHaveLength(1)
+          expect(warnings[0]).toContain('content/posts/hello')
+          expect(warnings[0]).toContain('"author"')
+          expect(warnings[0]).toContain(danglingId)
+        } finally {
+          consoleSpy.restore()
+        }
+      })
+
+      it('treats an id naming a collection as missing', async () => {
+        const { store, root, postFields } = await makeRefStore()
+        const collectionId = generateId()
+        await fs.mkdir(path.join(root, 'content', `archive.${collectionId}`))
+        const consoleSpy = mockConsole()
+        try {
+          const resolved = await store.resolveReferences({ author: collectionId }, postFields)
+          expect((await store.idIndex()).findById(collectionId)?.type).toBe('collection')
+          expect(resolved.author).toEqual(buildMissingReference(collectionId))
+        } finally {
+          consoleSpy.restore()
+        }
+      })
+
+      it('names nested object-list, block and list positions in the warning', async () => {
+        const { store } = await makeRefStore()
+        const danglingId = generateId()
+        const fields = [
+          {
+            name: 'items',
+            type: 'object',
+            list: true,
+            fields: [{ name: 'who', type: 'reference' }],
+          },
+          {
+            name: 'blocks',
+            type: 'block',
+            templates: [{ name: 'card', fields: [{ name: 'who', type: 'reference' }] }],
+          },
+          { name: 'reviewers', type: 'reference', list: true },
+        ] as const satisfies EntrySchema
+        const consoleSpy = mockConsole()
+        try {
+          const resolved = await store.resolveReferences(
+            {
+              items: [{ who: danglingId }],
+              blocks: [
+                { template: 'card', value: {} },
+                { template: 'card', value: { who: danglingId } },
+              ],
+              reviewers: ['', danglingId],
+            },
+            fields,
+            undefined,
+            undefined,
+            'content/posts/nested',
+          )
+          expect(resolved.reviewers).toEqual([null, buildMissingReference(danglingId)])
+          const warnings = consoleSpy.all().warn.join('\n')
+          expect(warnings).toContain('content/posts/nested field "items[0].who"')
+          expect(warnings).toContain('content/posts/nested field "blocks[1].who"')
+          expect(warnings).toContain('content/posts/nested field "reviewers[1]"')
+        } finally {
+          consoleSpy.restore()
+        }
+      })
     })
 
     it('keys the cache by includeBody, so two fields sharing a target get their own shapes', async () => {
@@ -2989,6 +3394,7 @@ describe('ContentStore content-write lock', () => {
         // keeps working without a new branch at each call site.
         expect(err).toBeInstanceOf(ContentConflictError)
         expect((err as Error).message).toMatch(/syncing/i)
+        expect((err as BranchSyncingError).outcome).toBe('not-run')
       }
       // Nothing was half-applied.
       const doc = await store.read(posts, unsafeAsSlug('hello'))
@@ -3188,10 +3594,8 @@ describe('ContentStore duplicate content ID resilience (August 2026 baseline rev
         expect(message).toContain(dupId)
         expect(message).toContain('kept-slug')
         expect(message).toContain('zzz-dropped-slug')
-        // Names the state and who resolves it, NOT an action name: nothing in
-        // the editor triggers repair-content-duplicates, so naming it sent
-        // the editor to an admin who could not run it.
-        expect(message).toContain('administrator')
+        // Names who fixes it and where, NOT the endpoint the editor cannot run.
+        expect(message).toContain('administrator can fix this in System health')
         expect(message).not.toContain('repair-content-duplicates')
 
         // THE invariant: the write addressed the losing file, so the kept
@@ -3409,6 +3813,98 @@ cards:
     // ...and the edit actually landed.
     expect(saved).toContain('blurb: Real copy now.')
     expect(saved).not.toContain('Placeholder copy.')
+  })
+
+  it('keeps the formatting of untouched lines in a JSON entry across an editor save', async () => {
+    const root = await tmpDir()
+    const schema = {
+      collections: [
+        {
+          name: 'settings',
+          path: 'config',
+          entries: [
+            {
+              name: 'setting',
+              format: 'json' as const,
+              schema: [
+                { name: 'siteName', type: 'string' as const },
+                { name: 'tags', type: 'string' as const, list: true },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    const settings = unsafeAsLogicalPath('content/config')
+
+    const created = await store.write(settings, unsafeAsSlug('site'), {
+      format: 'json',
+      data: { siteName: 'CanopyCMS' },
+    })
+    const prettier = '{\n  "siteName": "CanopyCMS",\n  "tags": ["a", "b"]\n}\n'
+    await fs.writeFile(created.absolutePath, prettier, 'utf8')
+
+    await store.write(settings, unsafeAsSlug('site'), {
+      format: 'json',
+      data: { siteName: 'Canopy', tags: ['a', 'b'] },
+    })
+
+    expect(await fs.readFile(created.absolutePath, 'utf8')).toBe(
+      '{\n  "siteName": "Canopy",\n  "tags": ["a", "b"]\n}\n',
+    )
+  })
+
+  it('keeps a frontmatter date as written when an editor saves the entry it read', async () => {
+    const root = await tmpDir()
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [
+                { name: 'title', type: 'string' as const },
+                { name: 'date', type: 'datetime' as const },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    const posts = unsafeAsLogicalPath('content/posts')
+
+    const created = await store.write(posts, unsafeAsSlug('launch'), {
+      format: 'md',
+      data: { title: 'Launch' },
+      body: 'Body.\n',
+    })
+    const dated = '---\ntitle: Launch\ndate: 2024-01-15\n---\n\nBody.\n'
+    await fs.writeFile(created.absolutePath, dated, 'utf8')
+
+    // As the API carries it: the date read as a `Date` arrives as a timestamp string.
+    const doc = await store.read(posts, unsafeAsSlug('launch'))
+    if (doc.format !== 'md' && doc.format !== 'mdx') throw new Error('expected markdown')
+    const data = JSON.parse(JSON.stringify(doc.data)) as Record<string, unknown>
+    expect(data.date).toBe('2024-01-15T00:00:00.000Z')
+
+    await store.write(posts, unsafeAsSlug('launch'), { format: 'md', data, body: doc.body })
+    expect(await fs.readFile(created.absolutePath, 'utf8')).toBe(dated)
+
+    await store.write(posts, unsafeAsSlug('launch'), {
+      format: 'md',
+      data: { ...data, date: '2024-02-20T00:00:00.000Z' },
+      body: doc.body,
+    })
+    expect(await fs.readFile(created.absolutePath, 'utf8')).toBe(
+      dated.replace('2024-01-15', '2024-02-20T00:00:00.000Z'),
+    )
   })
 
   it('removes a key the save dropped, comment and all', async () => {
@@ -3745,5 +4241,209 @@ describe('contested-URL guard', () => {
         data: { title: 'Home' },
       }),
     ).resolves.toBeDefined()
+  })
+})
+
+describe('ContentStore read of a block or object value that is null or an array', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          {
+            name: 'post',
+            format: 'md' as const,
+            schema: [
+              { name: 'title', type: 'string' as const },
+              {
+                name: 'blocks',
+                type: 'block' as const,
+                templates: [
+                  {
+                    name: 'hero',
+                    fields: [
+                      { name: 'headline', type: 'string' as const },
+                      { name: 'who', type: 'reference' as const },
+                    ],
+                  },
+                ],
+              },
+              {
+                name: 'meta',
+                type: 'object' as const,
+                fields: [{ name: 'who', type: 'reference' as const }],
+              },
+              {
+                name: 'items',
+                type: 'object' as const,
+                list: true,
+                fields: [{ name: 'who', type: 'reference' as const }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const frontmatter = [
+    '---',
+    'title: Hello',
+    'blocks:',
+    '  - template: hero',
+    '    value: null',
+    '  - template: hero',
+    '    value:',
+    '      - item1',
+    '      - item2',
+    'meta:',
+    '  - a',
+    'items:',
+    '  - - x',
+    '---',
+    '',
+  ].join('\n')
+
+  /** A store holding one post whose file is then hand-edited to `frontmatter`. */
+  const makeStore = async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    const postsPath = unsafeAsLogicalPath('content/posts')
+    const slug = unsafeAsSlug('hello')
+    const written = await store.write(postsPath, slug, {
+      format: 'md',
+      data: { title: 'Hello' },
+      body: '',
+    })
+    await fs.writeFile(written.absolutePath, frontmatter)
+    return { store, postsPath, slug }
+  }
+
+  it('opens the entry, passing a null or array value through unreshaped', async () => {
+    const { store, postsPath, slug } = await makeStore()
+
+    const doc = await store.read(postsPath, slug)
+
+    // A read keys each block, beside `template`; the odd `value` is passed through as it is.
+    expect(doc.data.blocks).toEqual([
+      { _key: expect.any(String), template: 'hero', value: null },
+      { _key: expect.any(String), template: 'hero', value: ['item1', 'item2'] },
+    ])
+    expect(doc.data.meta).toEqual(['a'])
+    expect(doc.data.items).toEqual([['x']])
+  })
+
+  it('saves what it read without writing an index-keyed value', async () => {
+    const { store, postsPath, slug } = await makeStore()
+    const doc = await store.read(postsPath, slug)
+
+    await store.write(postsPath, slug, { format: 'md', data: doc.data, body: '' })
+
+    const saved = await store.read(postsPath, slug, { resolveReferences: false })
+    // The keys the first read named the blocks by are the keys the file now holds.
+    expect(saved.data.blocks).toEqual([
+      { _key: (doc.data.blocks as Array<{ _key: string }>)[0]._key, template: 'hero', value: null },
+      {
+        _key: (doc.data.blocks as Array<{ _key: string }>)[1]._key,
+        template: 'hero',
+        value: ['item1', 'item2'],
+      },
+    ])
+    expect(saved.data.meta).toEqual(['a'])
+    expect(saved.data.items).toEqual([['x']])
+  })
+})
+
+describe('ContentStore.fillEmptyFieldWhileHoldingWriteLock', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+      },
+    ],
+  }
+  const value = '2026-10-13T12:00:00.000Z'
+
+  async function setUp(text: string, ext = 'json') {
+    const root = await tmpDir()
+    const file = `content/posts/post.one.${generateId()}.${ext}` as PhysicalPath
+    await fs.mkdir(path.join(root, 'content/posts'), { recursive: true })
+    await fs.writeFile(path.join(root, file), text, 'utf8')
+    const store = new ContentStore(root, flattenSchema(schema, 'content'), {
+      contentRootName: 'content',
+    })
+    const fill = (target: PhysicalPath = file, format: 'json' | 'yaml' | 'md' = 'json') =>
+      withContentWriteLock(root, () =>
+        store.fillEmptyFieldWhileHoldingWriteLock(target, format, 'publishedAt', value),
+      )
+    const onDisk = () => fs.readFile(path.join(root, file), 'utf8')
+    return { root, file, store, fill, onDisk }
+  }
+
+  it('writes inside a lock its caller holds, reporting the versions a read gives before and after', async () => {
+    const { root, store, fill, onDisk } = await setUp('{ "publishedAt": "" }\n')
+    const read = () => store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('one'))
+    const before = await read()
+    const generation = await readContentIndexGeneration(root)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    const versions = await fill()
+
+    expect(await onDisk()).toBe(`{ "publishedAt": "${value}" }\n`)
+    expect(versions).toEqual({ previousVersion: before.version, version: (await read()).version })
+    expect(versions?.version).not.toBe(versions?.previousVersion)
+    expect(await readContentIndexGeneration(root)).not.toBe(generation)
+  })
+
+  it('refuses a call outside the content-write lock, writing nothing', async () => {
+    const text = '{ "publishedAt": "" }\n'
+    const { file, store, onDisk } = await setUp(text)
+
+    await expect(
+      store.fillEmptyFieldWhileHoldingWriteLock(file, 'json', 'publishedAt', value),
+    ).rejects.toThrow('content-write lock')
+    expect(await onDisk()).toBe(text)
+  })
+
+  it('leaves a non-empty value, and the file, alone', async () => {
+    const text = '{ "publishedAt": "2020-01-01" }\n'
+    const { fill, onDisk } = await setUp(text)
+
+    expect(await fill()).toBeUndefined()
+    expect(await onDisk()).toBe(text)
+  })
+
+  it.each(['[1, 2, 3]\n', 'null\n', '"text"\n'])(
+    'refuses a JSON file whose top level is not an object (%j), leaving it alone',
+    async (text) => {
+      const { fill, onDisk } = await setUp(text)
+
+      await expect(fill()).rejects.toThrow('does not hold an object')
+      expect(await onDisk()).toBe(text)
+    },
+  )
+
+  it('refuses a YAML list or a frontmatter list, and fills an empty YAML file', async () => {
+    const list = await setUp('- a\n- b\n', 'yaml')
+    await expect(list.fill(list.file, 'yaml')).rejects.toThrow('does not hold an object')
+    expect(await list.onDisk()).toBe('- a\n- b\n')
+
+    const md = await setUp('---\n- a\n---\nBody\n', 'md')
+    await expect(md.fill(md.file, 'md')).rejects.toThrow('does not hold an object')
+    expect(await md.onDisk()).toBe('---\n- a\n---\nBody\n')
+
+    const empty = await setUp('', 'yaml')
+    await empty.fill(empty.file, 'yaml')
+    expect(await empty.onDisk()).toBe(`publishedAt: ${value}\n`)
+  })
+
+  it('refuses a path outside its root', async () => {
+    const { fill } = await setUp('{}\n')
+
+    await expect(fill('../outside.json' as PhysicalPath)).rejects.toThrow(ContentStoreError)
   })
 })

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { CONTENT_ROUTES } from './content'
+import { ENTRY_CHANGED_MESSAGE, ENTRY_GONE_MESSAGE } from './entries-constants'
 import type { ApiContext } from './types'
 import { unsafeAsBranchName, unsafeAsLogicalPath, unsafeAsSlug } from '../paths/test-utils'
 import { createMockApiContext } from '../test-utils'
+import { SchemaUnavailableError } from '../schema/schema-unavailable-error'
 
 // Extract handlers for testing
 const readContent = CONTENT_ROUTES.read.handler
@@ -53,19 +55,26 @@ vi.mock('../content-store', () => {
     }),
     ContentStoreError: class ContentStoreError extends Error {},
     ContentConflictError: MockContentConflictError,
-    BranchSyncingError: class BranchSyncingError extends MockContentConflictError {},
+    BranchSyncingError: class BranchSyncingError extends MockContentConflictError {
+      constructor(
+        message: string,
+        readonly outcome: 'not-run' | 'unknown' = 'not-run',
+      ) {
+        super(message)
+      }
+    },
     // [F1] Same reasoning as BranchSyncingError above: a real
     // ContentConflictError subclass, so the handler's `instanceof` chain
     // behaves here the way it does in production. The constructor mirrors the
-    // real one's shape (id + paths -> a message naming the state that needs
-    // an administrator) so the handler test can assert on a realistic
+    // real one's shape (id + paths -> a message naming the administrator
+    // who fixes it) so the handler test can assert on a realistic
     // message; the exact wording is asserted against the real class in
     // content-store.test.ts.
     DuplicateContentIdError: class DuplicateContentIdError extends MockContentConflictError {
       constructor(contentId: string, paths: readonly string[]) {
         super(
           `Content ID ${contentId} is on more than one file (${paths.join(', ')}); ` +
-            `an administrator needs to resolve the duplicate on the server.`,
+            `an administrator can fix this in System health.`,
         )
       }
     },
@@ -78,6 +87,8 @@ vi.mock('../content-store', () => {
         this.conflictingPath = conflictingPath
       }
     },
+    // A real ContentConflictError subclass too, listed before the generic conflict mapping.
+    EntryGoneError: class EntryGoneError extends MockContentConflictError {},
     getDefaultEntryType: (entries: Array<{ default?: boolean }> | undefined) =>
       entries && entries.length > 0 ? entries.find((e) => e.default) || entries[0] : undefined,
   }
@@ -402,6 +413,41 @@ describe('content api', () => {
       expect(res.ok).toBe(true)
     })
 
+    it.each([
+      ['not-run', 'BRANCH_SYNCING'],
+      ['unknown', 'WRITE_OUTCOME_UNKNOWN'],
+    ] as const)(
+      "[SYNC-C1] passes a syncing refusal's message through, coded by whether the write may have landed (%s)",
+      async (outcome, code) => {
+        const ctx = allowedCtx()
+        const { ContentStore, BranchSyncingError } = await import('../content-store')
+        const mockStore = {
+          resolvePath: vi.fn().mockReturnValue({
+            schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+            slug: 'hello',
+          }),
+          resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+          write: vi.fn().mockRejectedValue(new BranchSyncingError('branch syncing', outcome)),
+          idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+          documentExists: vi.fn().mockResolvedValue(true),
+          getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+          countEntriesOfType: vi.fn().mockResolvedValue(0),
+        }
+        vi.mocked(ContentStore).mockImplementationOnce(function () {
+          return mockStore as any
+        })
+
+        const res = await writeContent(
+          ctx,
+          { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+          { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+          { format: 'json', data: {}, expectedVersion: 123 },
+        )
+        expect(res).toMatchObject({ ok: false, status: 409, error: 'branch syncing' })
+        expect(res.code).toBe(code)
+      },
+    )
+
     it('returns a slug-collision message (not the generic conflict message) when store.write races into a create-intent conflict', async () => {
       const ctx = allowedCtx()
       const { ContentStore, ContentConflictError } = await import('../content-store')
@@ -617,6 +663,192 @@ describe('content api', () => {
     })
   })
 
+  // An update (numeric expectedVersion) of an entry that is no longer on disk is refused, never
+  // re-created: only a create (`expectedVersion: null`) brings an entry back.
+  describe('update of an entry that is gone (ENTRY_GONE)', () => {
+    const gone = { ok: false, status: 409, error: ENTRY_GONE_MESSAGE, code: 'ENTRY_GONE' }
+
+    const mockStoreOnce = async (opts: {
+      exists: boolean
+      slug?: string
+      schema?: unknown[]
+      maxItems?: number
+      /** Marks the collection's only entry type unavailable, as a degraded schema resolve does. */
+      unavailable?: boolean
+      write?: ReturnType<typeof vi.fn>
+    }) => {
+      const { ContentStore } = await import('../content-store')
+      const writeSpy =
+        opts.write ?? vi.fn().mockResolvedValue({ collection: 'posts', format: 'json', data: {} })
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return {
+          resolvePath: vi.fn().mockReturnValue({
+            schemaItem: {
+              logicalPath: 'content/posts',
+              type: 'collection',
+              entries: [
+                {
+                  name: 'post',
+                  format: 'json',
+                  schema: opts.schema ?? [],
+                  maxItems: opts.maxItems,
+                  ...(opts.unavailable
+                    ? {
+                        unavailable: {
+                          reason: 'unknown-schema',
+                          schemaRef: 'postSchema',
+                          metaFile: 'posts/.collection.json',
+                        },
+                      }
+                    : {}),
+                },
+              ],
+            },
+            slug: opts.slug ?? 'hello',
+          }),
+          resolveDocumentPath: vi
+            .fn()
+            .mockReturnValue({ relativePath: `content/posts/${opts.slug ?? 'hello'}` }),
+          write: writeSpy,
+          idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+          documentExists: vi.fn().mockResolvedValue(opts.exists),
+          getExistingEntryType: vi.fn().mockResolvedValue(opts.exists ? 'post' : undefined),
+          countEntriesOfType: vi.fn().mockResolvedValue(opts.maxItems ?? 0),
+        } as never
+      })
+      return writeSpy
+    }
+    const write = (
+      body: {
+        format: 'json'
+        data: Record<string, unknown>
+        expectedVersion: number | null
+      },
+      entryType?: string,
+    ) =>
+      writeContent(
+        allowedCtx(),
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        {
+          branch: unsafeAsBranchName('feature/x'),
+          path: unsafeAsLogicalPath('posts/hello'),
+          ...(entryType ? { entryType } : {}),
+        },
+        body,
+      )
+
+    it('refuses an update whose file was deleted since the read, without calling store.write', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 })
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('reports a gone entry with a non-routable slug as gone, not as a 400 create refusal', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false, slug: 'my_post' })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 })
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('reports a gone entry as gone before maxItems and field validation judge it as a create', async () => {
+      const writeSpy = await mockStoreOnce({
+        exists: false,
+        maxItems: 1,
+        schema: [{ name: 'title', type: 'text', required: true }],
+      })
+
+      const res = await write({ format: 'json', data: {}, expectedVersion: 42 })
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('reports a gone entry as gone when its entryType names a type the collection lacks, not as a 400', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false })
+
+      const res = await write(
+        { format: 'json', data: { title: 'edit' }, expectedVersion: 42 },
+        'no-such-type',
+      )
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('reports a gone entry as gone when its entry type is unavailable, not as a schema error', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false, unavailable: true })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 })
+
+      expect(res).toEqual(gone)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('still refuses a create naming a type the collection lacks with a 400', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false })
+
+      const res = await write({ format: 'json', data: {}, expectedVersion: null }, 'no-such-type')
+
+      expect(res).toEqual({ ok: false, status: 400, error: "Entry type 'no-such-type' not found" })
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('still refuses a write to an unavailable entry type for an entry that exists', async () => {
+      const writeSpy = await mockStoreOnce({ exists: true, unavailable: true })
+
+      await expect(
+        write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 }),
+      ).rejects.toBeInstanceOf(SchemaUnavailableError)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('maps store.write throwing EntryGoneError (file gone after the exists check) to the same 409', async () => {
+      const { EntryGoneError } = await import('../content-store')
+      const writeSpy = await mockStoreOnce({
+        exists: true,
+        write: vi.fn().mockRejectedValue(new EntryGoneError()),
+      })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 })
+
+      expect(writeSpy).toHaveBeenCalledTimes(1)
+      expect(res).toEqual(gone)
+    })
+
+    it('keeps a stale version on an existing file as the ordinary changed-since-opened conflict', async () => {
+      const { ContentConflictError } = await import('../content-store')
+      const writeSpy = await mockStoreOnce({
+        exists: true,
+        write: vi.fn().mockRejectedValue(new ContentConflictError()),
+      })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 41 })
+
+      expect(writeSpy).toHaveBeenCalledTimes(1)
+      expect(res).toEqual({ ok: false, status: 409, error: ENTRY_CHANGED_MESSAGE })
+      expect(res.code).toBeUndefined()
+    })
+
+    it('keeps a create of an existing slug as the create conflict, not as gone', async () => {
+      const writeSpy = await mockStoreOnce({ exists: true })
+
+      const res = await write({ format: 'json', data: {}, expectedVersion: null })
+
+      expect(res).toEqual({
+        ok: false,
+        status: 409,
+        error: 'An entry with slug "hello" already exists',
+      })
+      expect(res.code).toBeUndefined()
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+  })
+
   describe('validateEntry hook', () => {
     const writeReq = { user: { type: 'authenticated' as const, userId: 'u1', groups: [] } }
     const writeParams = {
@@ -675,7 +907,7 @@ describe('content api', () => {
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'mdx',
         data: {},
-        body: '# {broken',
+        body: '# Hello',
       })
       expect(res.ok).toBe(false)
       expect(res.status).toBe(422)
@@ -712,6 +944,220 @@ describe('content api', () => {
       expect(res.ok).toBe(false)
       expect(res.status).toBe(500)
       expect(res.error).toContain('validateEntry hook failed: boom')
+    })
+  })
+
+  describe('markdown safety at the write boundary', () => {
+    const writeReq = { user: { type: 'authenticated' as const, userId: 'u1', groups: [] } }
+    const writeParams = {
+      branch: unsafeAsBranchName('feature/x'),
+      path: unsafeAsLogicalPath('posts/hello'),
+    }
+
+    const mockStoreOnce = async (
+      existingEntryType: 'article' | 'trusted',
+      storedBody = '',
+      readError?: Error,
+    ) => {
+      const { ContentStore } = await import('../content-store')
+      const writeSpy = vi
+        .fn()
+        .mockResolvedValue({ collection: 'content/posts', format: 'mdx', data: {} })
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return {
+          resolvePath: vi.fn().mockReturnValue({
+            schemaItem: {
+              logicalPath: 'content/posts',
+              type: 'collection',
+              entries: [
+                {
+                  name: 'article',
+                  format: 'mdx',
+                  default: true,
+                  schema: [{ name: 'content', type: 'mdx', isBody: true }],
+                },
+                {
+                  name: 'trusted',
+                  format: 'mdx',
+                  schema: [{ name: 'content', type: 'mdx', isBody: true, executable: true }],
+                },
+              ],
+            },
+            slug: 'hello',
+          }),
+          resolveDocumentPath: vi.fn().mockResolvedValue({ relativePath: 'content/posts/hello' }),
+          documentExists: vi.fn().mockResolvedValue(true),
+          getExistingEntryType: vi.fn().mockResolvedValue(existingEntryType),
+          countEntriesOfType: vi.fn().mockResolvedValue(0),
+          idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+          read: readError
+            ? vi.fn().mockRejectedValue(readError)
+            : vi.fn().mockResolvedValue({
+                format: 'mdx',
+                data: {},
+                body: storedBody,
+                bodyFieldName: 'content',
+              }),
+          write: writeSpy,
+        } as any
+      })
+      return { writeSpy }
+    }
+
+    const codeBody = '# Post\n\n{fetch("/api/canopycms/x", { method: "POST" })}\n'
+
+    it('refuses a body that runs code, before the validateEntry hook or the write', async () => {
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([])
+      ctx.services.config.validateEntry = hook
+      const { writeSpy } = await mockStoreOnce('article')
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: {},
+        body: codeBody,
+      })
+
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        {
+          fieldPath: 'content',
+          message: expect.stringMatching(/expressions are not allowed.*line 3/),
+        },
+      ])
+      expect(hook).not.toHaveBeenCalled()
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('keeps code in a body saved as the entry already held it, with a warning', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce('article', codeBody)
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: {},
+        body: codeBody,
+      })
+
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalledTimes(1)
+      expect(res.data?.validationWarnings).toEqual([
+        {
+          level: 'warning',
+          fieldPath: 'content',
+          message: expect.stringMatching(/kept because the saved entry already had it/),
+        },
+      ])
+    })
+
+    it('refuses any change to a body holding code the entry already held', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce('article', codeBody)
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: {},
+        body: `${codeBody}\n{more()}\n`,
+      })
+
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        { fieldPath: 'content', message: expect.stringMatching(/line 3.*and 1 more/) },
+      ])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('never stores a frontmatter key named like the body field, which nothing would check', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce('article')
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: { content: '{globalThis.probe}' },
+        body: 'Safe text',
+      })
+
+      expect(res.ok).toBe(true)
+      expect(writeSpy.mock.calls[0][2]).toMatchObject({ body: 'Safe text' })
+      expect(writeSpy.mock.calls[0][2].data).not.toHaveProperty('content')
+    })
+
+    it('refuses new code with a 422 when the stored entry cannot be read', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce('article', '', new Error('bad frontmatter'))
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: {},
+        body: codeBody,
+      })
+
+      expect(res.status).toBe(422)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('saves the same body when its field is executable', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce('trusted')
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: {},
+        body: codeBody,
+      })
+
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalledTimes(1)
+    })
+
+    describe('with a site mdxAllow', () => {
+      const legacyBody = '# Post\n\n<Legacy />\n'
+
+      it('refuses a component the site does not allow, naming the allowed ones', async () => {
+        const ctx = allowedCtx()
+        ctx.services.config.mdxAllow = { components: { Callout: {} } }
+        const { writeSpy } = await mockStoreOnce('article')
+
+        const res = await writeContent(ctx, writeReq, writeParams, {
+          format: 'mdx',
+          expectedVersion: EXISTING_VERSION,
+          data: {},
+          body: legacyBody,
+        })
+
+        expect(res.status).toBe(422)
+        expect(res.fieldErrors).toEqual([
+          {
+            fieldPath: 'content',
+            message: 'Component <Legacy> is not allowed here; allowed: Callout (line 3)',
+          },
+        ])
+        expect(writeSpy).not.toHaveBeenCalled()
+      })
+
+      it('keeps such a component in a body saved as the entry already held it', async () => {
+        const ctx = allowedCtx()
+        ctx.services.config.mdxAllow = { components: { Callout: {} } }
+        const { writeSpy } = await mockStoreOnce('article', legacyBody)
+
+        const res = await writeContent(ctx, writeReq, writeParams, {
+          format: 'mdx',
+          expectedVersion: EXISTING_VERSION,
+          data: {},
+          body: legacyBody,
+        })
+
+        expect(res.ok).toBe(true)
+        expect(writeSpy).toHaveBeenCalledTimes(1)
+        expect(res.data?.validationWarnings).toHaveLength(1)
+      })
     })
   })
 
@@ -1006,6 +1452,10 @@ describe('content api', () => {
       maxItems?: number
       /** On-disk entry type of the existing entry (only meaningful when exists !== false). Defaults to 'post'. */
       existingEntryType?: string
+      /** The existing entry's raw on-disk data, as a `resolveReferences: false` read returns it. */
+      storedData?: Record<string, unknown>
+      /** Marks the 'settings' type unavailable, as a degraded schema resolve does. */
+      settingsUnavailable?: boolean
     }) => {
       const { ContentStore } = await import('../content-store')
       const writeSpy = vi
@@ -1037,7 +1487,20 @@ describe('content api', () => {
                   default: true,
                   ...(opts.maxItems !== undefined ? { maxItems: opts.maxItems } : {}),
                 },
-                { name: 'settings', format: 'json', schema: settingsSchema },
+                {
+                  name: 'settings',
+                  format: 'json',
+                  schema: settingsSchema,
+                  ...(opts.settingsUnavailable
+                    ? {
+                        unavailable: {
+                          reason: 'unknown-schema',
+                          schemaRef: 'settingsSchema',
+                          metaFile: 'posts/.collection.json',
+                        },
+                      }
+                    : {}),
+                },
               ],
             },
             slug: 'hello',
@@ -1047,6 +1510,7 @@ describe('content api', () => {
           getExistingEntryType: vi.fn().mockResolvedValue(existingEntryType),
           countEntriesOfType: vi.fn().mockResolvedValue(opts.count ?? 0),
           idIndex: vi.fn().mockResolvedValue({ findById }),
+          read: vi.fn().mockResolvedValue({ data: opts.storedData ?? {} }),
           write: writeSpy,
         } as any
       })
@@ -1190,9 +1654,12 @@ describe('content api', () => {
       expect(writeSpy).not.toHaveBeenCalled()
     })
 
-    it('rejects a save with a dangling (nonexistent) reference', async () => {
+    it('rejects a save that introduces a dangling (nonexistent) reference', async () => {
       const ctx = allowedCtx()
-      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const { writeSpy } = await mockStoreOnce({
+        knownIds: [AUTHOR_ID],
+        storedData: { title: 'Hello', author: AUTHOR_ID },
+      })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
         expectedVersion: EXISTING_VERSION,
@@ -1204,6 +1671,128 @@ describe('content api', () => {
         { fieldPath: 'author', message: 'Referenced entry does not exist' },
       ])
       expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('keeps a dangling id the stored entry already holds, saving with a warning', async () => {
+      // The editor's GET resolved the deleted target to a MissingReference; posting it back must
+      // write the id, not refuse an unrelated edit and not erase the reference.
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({
+        knownIds: [AUTHOR_ID],
+        storedData: { title: 'Old title', author: DANGLING_ID },
+      })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: {
+          title: 'New title',
+          author: { id: DANGLING_ID, unavailable: true, reason: 'missing' },
+        },
+      })
+      expect(res.ok).toBe(true)
+      expect(writeSpy.mock.calls[0][2].data).toEqual({ title: 'New title', author: DANGLING_ID })
+      expect(res.data?.validationWarnings).toEqual([
+        {
+          level: 'warning',
+          fieldPath: 'author',
+          message: `references a missing entry (${DANGLING_ID}). It is kept as it was; repoint or clear it.`,
+        },
+      ])
+    })
+
+    it('keeps a block-nested dangling id already on disk, still refusing a new one beside it', async () => {
+      const ctx = allowedCtx()
+      const NEW_DANGLING_ID = 'NewDang1ing3' // valid format, never in the index
+      const stored = {
+        title: 'Hello',
+        author: AUTHOR_ID,
+        blocks: [{ template: 'quote', value: { text: 'quoted', source: DANGLING_ID } }],
+      }
+      const kept = await mockStoreOnce({ knownIds: [AUTHOR_ID], storedData: stored })
+      const ok = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: stored,
+      })
+      expect(ok.ok).toBe(true)
+      expect(kept.writeSpy).toHaveBeenCalled()
+
+      const refused = await mockStoreOnce({ knownIds: [AUTHOR_ID], storedData: stored })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: {
+          ...stored,
+          blocks: [
+            ...stored.blocks,
+            { template: 'quote', value: { text: 'more', source: NEW_DANGLING_ID } },
+          ],
+        },
+      })
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        { fieldPath: 'blocks[1].source', message: 'Referenced entry does not exist' },
+      ])
+      expect(refused.writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('refuses a stored dangling id moved into another field', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({
+        knownIds: [AUTHOR_ID],
+        storedData: { title: 'Hello', author: DANGLING_ID },
+      })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: {
+          title: 'Hello',
+          author: AUTHOR_ID,
+          blocks: [{ template: 'quote', value: { text: 'quoted', source: DANGLING_ID } }],
+        },
+      })
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        { fieldPath: 'blocks[0].source', message: 'Referenced entry does not exist' },
+      ])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('keeps a stored dangling id when its block moves to another position', async () => {
+      const ctx = allowedCtx()
+      const quote = { template: 'quote', value: { text: 'quoted', source: DANGLING_ID } }
+      const other = { template: 'quote', value: { text: 'other' } }
+      const { writeSpy } = await mockStoreOnce({
+        knownIds: [AUTHOR_ID],
+        storedData: { title: 'Hello', author: AUTHOR_ID, blocks: [quote, other] },
+      })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: { title: 'Hello', author: AUTHOR_ID, blocks: [other, quote] },
+      })
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
+      expect(res.data?.validationWarnings?.[0].fieldPath).toBe('blocks[1].source')
+    })
+
+    it('keeps a malformed id the stored entry already holds, saving with a warning', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({
+        knownIds: [AUTHOR_ID],
+        storedData: { title: 'Hello', author: 'not-an-id' },
+      })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: {
+          title: 'Edited',
+          author: { id: 'not-an-id', unavailable: true, reason: 'missing' },
+        },
+      })
+      expect(res.ok).toBe(true)
+      expect(writeSpy.mock.calls[0][2].data).toEqual({ title: 'Edited', author: 'not-an-id' })
+      expect(res.data?.validationWarnings?.map((w) => w.fieldPath)).toEqual(['author'])
     })
 
     it('saves a valid entry', async () => {
@@ -1283,17 +1872,46 @@ describe('content api', () => {
       expect(writeSpy).toHaveBeenCalled()
     })
 
-    it('validates a create that carries data (no scaffold bypass)', async () => {
+    it('type-checks a create that carries data (no scaffold bypass)', async () => {
       const ctx = allowedCtx()
       const { writeSpy } = await mockStoreOnce({ exists: false })
       const res = await writeContent(
         ctx,
         writeReq,
         { ...writeParams, entryType: 'post' },
-        { format: 'json', data: { title: '' } },
+        { format: 'json', data: { title: 42 } },
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(422)
+      expect(res.fieldErrors?.map((e) => e.fieldPath)).toEqual(['title'])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('allows a create carrying only a title although other fields are required', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ exists: false })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        { format: 'json', data: { title: 'Hello' } },
+      )
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
+    })
+
+    it('still requires every required field when saving an existing entry', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ exists: true })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        { format: 'json', data: { title: 'Hello' }, expectedVersion: EXISTING_VERSION },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors?.map((e) => e.fieldPath)).toContain('author')
       expect(writeSpy).not.toHaveBeenCalled()
     })
 
@@ -1399,6 +2017,56 @@ describe('content api', () => {
       })
       expect(res.ok).toBe(true)
       expect(writeSpy).toHaveBeenCalled()
+    })
+
+    it('shows the validateEntry hook the existing entry type when the request omits it', async () => {
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([{ level: 'error', message: 'settings rule' }])
+      ctx.services.config.validateEntry = hook
+      const { writeSpy } = await mockStoreOnce({ existingEntryType: 'settings' })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: { siteName: 'My Site' },
+      })
+      expect(hook).toHaveBeenCalledWith(expect.objectContaining({ entryType: 'settings' }))
+      expect(res.status).toBe(422)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('shows the validateEntry hook the default entry type on a create that omits it', async () => {
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([])
+      ctx.services.config.validateEntry = hook
+      const { writeSpy } = await mockStoreOnce({ exists: false, knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: null,
+        data: { title: 'Hello', author: AUTHOR_ID },
+      })
+      expect(res.ok).toBe(true)
+      expect(hook).toHaveBeenCalledWith(expect.objectContaining({ entryType: 'post' }))
+      // The store writes as the same type the hook was shown.
+      expect(writeSpy.mock.calls[0][3]).toBe('post')
+    })
+
+    it('refuses a write to an unavailable entry type before the validateEntry hook runs', async () => {
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([])
+      ctx.services.config.validateEntry = hook
+      const { writeSpy } = await mockStoreOnce({
+        existingEntryType: 'settings',
+        settingsUnavailable: true,
+      })
+      await expect(
+        writeContent(ctx, writeReq, writeParams, {
+          format: 'json',
+          expectedVersion: EXISTING_VERSION,
+          data: { siteName: 'My Site' },
+        }),
+      ).rejects.toBeInstanceOf(SchemaUnavailableError)
+      expect(hook).not.toHaveBeenCalled()
+      expect(writeSpy).not.toHaveBeenCalled()
     })
 
     it('rejects a conflicting entryType param against an existing entry with 409', async () => {

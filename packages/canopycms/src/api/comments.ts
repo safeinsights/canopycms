@@ -4,8 +4,17 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContext } from '../types'
 import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
+import type { UserProfile } from '../auth/types'
+import { lookupUserProfiles } from '../auth/user-metadata-lookup'
+import { getErrorMessage } from '../utils/error'
 import { isReviewer } from '../authorization'
+import type { ContentAccessChecker } from '../authorization'
+import { parseLogicalPath } from '../paths/validation'
+import type { LogicalPath } from '../paths/types'
+import { normalizeFilesystemPath } from '../paths/normalize'
 import { defineEndpoint } from './route-builder'
+import { isItemKey } from '../item-keys'
+import { parseCanopyPath } from '../editor/canopy-path'
 import { branchParamSchema, branchNameSchema, logicalPathSchema } from './validators'
 
 export interface AddCommentBody {
@@ -14,10 +23,14 @@ export interface AddCommentBody {
   type: CommentType
   entryPath?: string
   canopyPath?: string
+  /** For a new field thread: the key of each list item on `canopyPath` (`CommentThread.itemKeys`). */
+  itemKeys?: string[]
 }
 
 interface ListCommentsResponse {
   threads: CommentThread[]
+  /** Profiles of the people who wrote or resolved `threads`, in no order; unknown ids are absent. */
+  users: UserProfile[]
 }
 
 /** Response type for listing comments */
@@ -47,25 +60,105 @@ const addCommentBodySchema = z.object({
   type: z.enum(['field', 'entry', 'branch']),
   entryPath: logicalPathSchema.optional(),
   canopyPath: z.string().optional(), // Canopy field path, not a file path
+  itemKeys: z.array(z.string().refine(isItemKey, 'not an item key')).max(32).optional(),
 })
+
+/**
+ * Whether `entryPath` is spelled the way path rules expect an entry's logical path: rooted at
+ * the content root, with no empty or `.` segment. Rules are globs over that spelling, so
+ * `secret/plan` (which the content API reads as `content/secret/plan`) and
+ * `content/./secret/plan` both miss a rule written for `content/secret/**`.
+ */
+const isCanonicalEntryPath = (entryPath: LogicalPath, contentRoot: string): boolean =>
+  entryPath.startsWith(`${normalizeFilesystemPath(contentRoot)}/`) &&
+  entryPath.split('/').every((segment) => segment !== '' && segment !== '.')
+
+/**
+ * Whether the user may see a thread: its entry's path rules at `read`, the level a content
+ * read needs, so a thread discloses nothing about an entry its reader could not open. A
+ * field thread is governed by its entry. A thread with no entry path (a branch thread) is
+ * governed by branch access alone, which the `branchAccess` guard has already passed. An
+ * entry path that is not a canonical logical path is denied: comments.json is read without
+ * schema validation.
+ */
+const canReadThreadEntry = (
+  checkAccess: ContentAccessChecker,
+  contentRoot: string,
+  entryPath: string | undefined,
+): boolean => {
+  if (entryPath === undefined) return true
+  const parsed = parseLogicalPath(entryPath)
+  return (
+    parsed.ok &&
+    isCanonicalEntryPath(parsed.path, contentRoot) &&
+    checkAccess(parsed.path, 'read').allowed
+  )
+}
+
+/** One checker per request, bound to the content root its paths are canonical against. */
+const createThreadReadCheck = async (
+  ctx: ApiContext,
+  req: ApiRequest,
+  branchContext: BranchContext,
+): Promise<(entryPath: string | undefined) => boolean> => {
+  const checkAccess = await ctx.services.createContentAccessChecker(
+    branchContext,
+    branchContext.branchRoot,
+    req.user,
+  )
+  const contentRoot = ctx.services.config.contentRoot || 'content'
+  return (entryPath) => canReadThreadEntry(checkAccess, contentRoot, entryPath)
+}
+
+/**
+ * The profile of everyone who wrote or resolved one of `threads`, looked up only for threads
+ * already filtered to what the requester may read, so the list names no one the requester could
+ * not see in a thread. A failed lookup costs the names, never the threads.
+ */
+const lookupThreadUsers = async (
+  ctx: ApiContext,
+  threads: readonly CommentThread[],
+): Promise<UserProfile[]> => {
+  const authPlugin = ctx.authPlugin
+  if (!authPlugin) return []
+  try {
+    const ids: unknown[] = []
+    for (const thread of threads) {
+      ids.push(thread.authorId, thread.resolvedBy)
+      // comments.json is parsed without validation, so a thread may lack its comment list.
+      if (Array.isArray(thread.comments)) {
+        for (const comment of thread.comments) ids.push(comment?.userId)
+      }
+    }
+    return await lookupUserProfiles(authPlugin, ids)
+  } catch (error) {
+    console.error('CanopyCMS: Failed to look up comment authors:', getErrorMessage(error))
+    return []
+  }
+}
 
 const listCommentsHandler = async (
   gc: { branchContext: BranchContext },
-  _ctx: ApiContext,
-  _req: ApiRequest,
+  ctx: ApiContext,
+  req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
 ): Promise<CommentsResponse> => {
   const { branchContext } = gc
 
   const commentStore = new CommentStore(branchContext.branchRoot)
-  const threads = await commentStore.listThreads({ includeResolved: true })
+  const [allThreads, canRead] = await Promise.all([
+    commentStore.listThreads({ includeResolved: true }),
+    createThreadReadCheck(ctx, req, branchContext),
+  ])
+  const threads = allThreads.filter((thread) => canRead(thread.entryPath))
+  const users = await lookupThreadUsers(ctx, threads)
 
-  return { ok: true, status: 200, data: { threads } }
+  return { ok: true, status: 200, data: { threads, users } }
 }
 
 const addCommentHandler = async (
   gc: { branchContext: BranchContext },
-  _ctx: ApiContext,
+  ctx: ApiContext,
   req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
   body: z.infer<typeof addCommentBodySchema>,
@@ -81,6 +174,20 @@ const addCommentHandler = async (
     }
   }
 
+  // A new field thread inside list items names each item on its path by key, one per list index,
+  // so it follows the item rather than the index. A reply lands on its thread and needs none.
+  const listIndexes =
+    body.type === 'field' && body.canopyPath && !body.threadId
+      ? parseCanopyPath(body.canopyPath).filter((s) => typeof s === 'number').length
+      : 0
+  if ((body.itemKeys?.length ?? 0) !== listIndexes) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'itemKeys must name one item per list index in a new field comment’s canopyPath',
+    }
+  }
+
   if ((body.type === 'field' || body.type === 'entry') && !body.entryPath) {
     return {
       ok: false,
@@ -89,15 +196,41 @@ const addCommentHandler = async (
     }
   }
 
+  // Commenting needs read access to the entry the comment lands on. A reply lands on the
+  // stored thread, so it is checked against that thread's entry path, which never changes
+  // once the thread exists; a reply to a thread the user cannot read answers as missing, as
+  // resolve does.
   const commentStore = new CommentStore(branchContext.branchRoot)
+  const [existing, canRead] = await Promise.all([
+    body.threadId ? commentStore.getThread(body.threadId) : Promise.resolve(null),
+    createThreadReadCheck(ctx, req, branchContext),
+  ])
+  if (body.threadId) {
+    if (!existing || !canRead(existing.entryPath)) {
+      return { ok: false, status: 404, error: 'Thread not found' }
+    }
+    const reply = await commentStore.addReply({
+      userId: req.user.userId,
+      text: body.text,
+      threadId: body.threadId,
+    })
+    if (!reply) {
+      return { ok: false, status: 404, error: 'Thread not found' }
+    }
+    return { ok: true, status: 201, data: reply }
+  }
+
+  if (!canRead(body.entryPath)) {
+    return { ok: false, status: 403, error: 'Forbidden' }
+  }
 
   const result = await commentStore.addComment({
     userId: req.user.userId,
     text: body.text,
-    threadId: body.threadId,
     type: body.type,
     entryPath: body.entryPath,
     canopyPath: body.canopyPath,
+    itemKeys: body.itemKeys,
   })
 
   return { ok: true, status: 201, data: result }
@@ -105,16 +238,19 @@ const addCommentHandler = async (
 
 const resolveCommentHandler = async (
   gc: { branchContext: BranchContext },
-  _ctx: ApiContext,
+  ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof threadParamSchema>,
 ): Promise<ResolveCommentResponse> => {
   const { branchContext } = gc
 
   const commentStore = new CommentStore(branchContext.branchRoot)
-
-  const thread = await commentStore.getThread(params.threadId)
-  if (!thread) {
+  const [thread, canRead] = await Promise.all([
+    commentStore.getThread(params.threadId),
+    createThreadReadCheck(ctx, req, branchContext),
+  ])
+  // A thread the user cannot read answers as missing, so its id does not confirm it exists.
+  if (!thread || !canRead(thread.entryPath)) {
     return { ok: false, status: 404, error: 'Thread not found' }
   }
 
@@ -150,7 +286,7 @@ const listComments = defineEndpoint({
   params: branchParamSchema,
   responseType: 'CommentsResponse',
   response: {} as CommentsResponse,
-  defaultMockData: { threads: [] },
+  defaultMockData: { threads: [], users: [] },
   guards: ['branchAccess'] as const,
   handler: listCommentsHandler,
 })

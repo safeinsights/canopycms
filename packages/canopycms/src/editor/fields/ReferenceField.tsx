@@ -8,12 +8,25 @@ import { IconAlertCircle } from '@tabler/icons-react'
 import { createApiClient } from '../../api/client'
 import { useOptionalApiClient } from '../context'
 import { getErrorMessage } from '../../utils/error'
+import { useFieldCommentControl } from '../comments/field-comment-context'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { FieldLabel } from './FieldLabel'
 
 /** @internal Exported for tests. */
 export interface ReferenceOption {
   value: string
   label: string
+}
+
+/** Label for a set value the options omit (a restricted, missing or unlisted target). */
+function unlistedReferenceLabel(value: unknown, id: string): string {
+  if (value && typeof value === 'object' && 'unavailable' in value && value.unavailable === true) {
+    if ('reason' in value && value.reason === 'restricted' && 'title' in value) {
+      return `Restricted entry: ${String(value.title)}`
+    }
+    return `Missing entry (${id})`
+  }
+  return `Unavailable entry (${id})`
 }
 
 export interface ReferenceFieldProps {
@@ -29,6 +42,8 @@ export interface ReferenceFieldProps {
   onChange: (value: string | string[]) => void
   multiple?: boolean
   dataCanopyField?: string
+  /** Shows the value without accepting edits. */
+  readOnly?: boolean
 }
 
 export const ReferenceField: React.FC<ReferenceFieldProps> = ({
@@ -44,6 +59,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   onChange,
   multiple,
   dataCanopyField,
+  readOnly = false,
 }) => {
   // Configured with the deployment's basePath when rendered inside an
   // ApiClientProvider (always true in the real Editor tree); `null` outside one
@@ -69,8 +85,20 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
       ? value.map(extractId)
       : []
     : extractId(value)
+
+  // Otherwise Select shows a set value as empty, inviting an editor to repoint it.
+  const listed = new Set(options.map((option) => option.value))
+  const unlisted = new Map<string, ReferenceOption>()
+  for (const raw of multiple ? (Array.isArray(value) ? value : []) : [value]) {
+    const valueId = extractId(raw)
+    if (valueId && !listed.has(valueId) && !unlisted.has(valueId)) {
+      unlisted.set(valueId, { value: valueId, label: unlistedReferenceLabel(raw, valueId) })
+    }
+  }
+  const data = unlisted.size > 0 ? [...options, ...unlisted.values()] : options
   const generatedId = useId()
   const inputId = id ?? generatedId
+  const commentControl = useFieldCommentControl(dataCanopyField)
 
   // Track deps to detect changes and reset loading during render
   const [prevFetchKey, setPrevFetchKey] = useState('')
@@ -138,86 +166,78 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
     setRetryCount((count) => count + 1)
   }
 
-  if (loading) {
-    return (
-      <Stack
-        gap={4}
-        data-canopy-field={dataCanopyField}
-        data-testid={`reference-field-${dataCanopyField}`}
-        {...groupDescriptionProps(inputId, description)}
-      >
-        <Text size="sm" fw={500}>
-          {label}
-        </Text>
-        <FieldDescription baseId={inputId} description={description} />
-        <Loader size="sm" data-testid={`reference-loading-${dataCanopyField}`} />
-      </Stack>
-    )
-  }
+  const settled = !loading && !error
 
-  if (error) {
-    return (
-      <Stack
-        gap={4}
-        data-canopy-field={dataCanopyField}
-        data-testid={`reference-field-${dataCanopyField}`}
-        {...groupDescriptionProps(inputId, description)}
-      >
-        <Text size="sm" fw={500}>
-          {label}
-        </Text>
-        <FieldDescription baseId={inputId} description={description} />
-        <Alert
-          icon={<IconAlertCircle size={16} />}
-          color="red"
-          title="Error"
-          data-testid={`reference-error-${dataCanopyField}`}
-        >
-          <Stack gap={4}>
-            <Text size="sm">{error}</Text>
-            <Button
-              size="xs"
-              variant="light"
-              onClick={handleRetry}
-              data-testid={`reference-retry-${dataCanopyField}`}
-            >
-              Retry
-            </Button>
-          </Stack>
-        </Alert>
-      </Stack>
-    )
-  }
-
+  // One label row for every state, so the comment popover in it survives loading and Retry.
   return (
     <Stack
       gap={4}
       data-canopy-field={dataCanopyField}
       data-testid={`reference-field-${dataCanopyField}`}
+      {...(settled ? {} : groupDescriptionProps(inputId, description))}
     >
-      {multiple ? (
+      <FieldLabel
+        label={label}
+        htmlFor={settled ? inputId : undefined}
+        commentControl={commentControl}
+      />
+      {loading ? (
+        <>
+          <FieldDescription baseId={inputId} description={description} />
+          <Loader size="sm" data-testid={`reference-loading-${dataCanopyField}`} />
+        </>
+      ) : error ? (
+        <>
+          <FieldDescription baseId={inputId} description={description} />
+          <Alert
+            icon={<IconAlertCircle size={16} />}
+            color="red"
+            title="Error"
+            data-testid={`reference-error-${dataCanopyField}`}
+          >
+            <Stack gap={4}>
+              <Text size="sm">{error}</Text>
+              <Button
+                variant="light"
+                onClick={handleRetry}
+                data-testid={`reference-retry-${dataCanopyField}`}
+              >
+                Retry
+              </Button>
+            </Stack>
+          </Alert>
+        </>
+      ) : multiple ? (
         <MultiSelect
           id={inputId}
-          label={label}
+          aria-label={label}
           description={description}
-          data={options}
+          data={data}
           value={normalizedValue as string[]}
-          onChange={(next) => onChange(next)}
+          readOnly={readOnly}
+          rightSection={readOnly ? <span /> : undefined}
+          onChange={(next) => {
+            if (!readOnly) onChange(next)
+          }}
           searchable
-          placeholder="Select reference…"
+          placeholder={readOnly ? undefined : 'Select reference…'}
           size="sm"
         />
       ) : (
         <Select
           id={inputId}
-          label={label}
+          aria-label={label}
           description={description}
-          data={options}
+          data={data}
           value={normalizedValue as string}
-          onChange={(next) => onChange(next ?? '')}
+          readOnly={readOnly}
+          rightSection={readOnly ? <span /> : undefined}
+          onChange={(next) => {
+            if (!readOnly) onChange(next ?? '')
+          }}
           searchable
           clearable
-          placeholder="Select reference…"
+          placeholder={readOnly ? undefined : 'Select reference…'}
           size="sm"
         />
       )}

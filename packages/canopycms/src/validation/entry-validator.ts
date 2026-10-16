@@ -24,9 +24,10 @@ import type {
   SelectFieldConfig,
 } from '../config'
 import { fieldTypes } from '../config'
-import { isValidCropRect } from '../assets/transform-directives'
+import { isValidCropRect, roundCropRect } from '../assets/transform-directives'
 import { BLOCK_STRUCTURAL_KEYS } from './block-structural-keys'
-import { resolveBlockItem, traverseFields } from './field-traversal'
+import { ITEM_KEY } from '../item-keys'
+import { referenceValueId, resolveBlockItem, traverseFields } from './field-traversal'
 import { findBodyFieldName } from '../utils/body-field'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { isDataOnlyFormat } from '../utils/format'
@@ -54,7 +55,10 @@ function isPositiveInt(value: unknown): boolean {
   return typeof value === 'number' && Number.isInteger(value) && value > 0
 }
 
-/** True when `value` is a well-formed `{ x, y, w, h }` normalized crop rect. */
+/**
+ * True when `value` is a well-formed `{ x, y, w, h }` normalized crop rect that is still valid
+ * after `roundCropRect`, the rounding its transform URL applies.
+ */
 function isValidImageCropValue(value: unknown): boolean {
   if (!isPlainRecord(value)) return false
   const { x, y, w, h } = value
@@ -66,7 +70,9 @@ function isValidImageCropValue(value: unknown): boolean {
   ) {
     return false
   }
-  return isValidCropRect(x, y, w, h)
+  if (!isValidCropRect(x, y, w, h)) return false
+  const rounded = roundCropRect({ x, y, w, h })
+  return isValidCropRect(rounded.x, rounded.y, rounded.w, rounded.h)
 }
 
 /**
@@ -111,19 +117,6 @@ function validateImageValue(
   }
 
   return errors
-}
-
-/**
- * Extract the id from a reference value. The editor holds references either
- * as an id string or as a resolved object `{ id, slug, collection, ... }`
- * (content reads resolve references by default). Returns undefined for any
- * other shape.
- * @internal Exported for tests.
- */
-export function referenceValueId(value: unknown): string | undefined {
-  if (typeof value === 'string') return value
-  if (isPlainRecord(value) && typeof value.id === 'string') return value.id
-  return undefined
 }
 
 const selectOptionValues = (field: SelectFieldConfig): string[] =>
@@ -200,6 +193,11 @@ function isEmptyForRequired(field: FieldConfig, value: unknown): boolean {
   return false
 }
 
+export interface ValidateEntryOptions {
+  /** False skips the required-field checks and keeps every type and format check. Default true. */
+  required?: boolean
+}
+
 /**
  * Validate entry data against an entry schema. Pure — safe to run in the
  * browser. Returns one error per offending field path; an empty array means
@@ -209,20 +207,23 @@ export function validateEntryData(
   fields: EntrySchema,
   data: Record<string, unknown>,
   pathPrefix = '',
+  options: ValidateEntryOptions = {},
 ): EntryFieldError[] {
   const errors: EntryFieldError[] = []
 
   for (const field of fields) {
     // Inline groups are transparent (walkFields, ./field-traversal) — children live at this level.
     if (field.type === 'group') {
-      errors.push(...validateEntryData((field as InlineGroupFieldConfig).fields, data, pathPrefix))
+      errors.push(
+        ...validateEntryData((field as InlineGroupFieldConfig).fields, data, pathPrefix, options),
+      )
       continue
     }
 
     const path = pathPrefix ? `${pathPrefix}.${field.name}` : field.name
     const value = data[field.name]
 
-    const isRequired = 'required' in field && field.required === true
+    const isRequired = options.required !== false && 'required' in field && field.required === true
     if (isRequired && isEmptyForRequired(field, value)) {
       const message = Array.isArray(value)
         ? 'At least one item is required'
@@ -254,7 +255,7 @@ export function validateEntryData(
           })
           return
         }
-        errors.push(...validateEntryData(resolved.fields, resolved.data, itemPath))
+        errors.push(...validateEntryData(resolved.fields, resolved.data, itemPath, options))
       })
       continue
     }
@@ -273,13 +274,13 @@ export function validateEntryData(
             return
           }
           if (objectField.fields) {
-            errors.push(...validateEntryData(objectField.fields, item, itemPath))
+            errors.push(...validateEntryData(objectField.fields, item, itemPath, options))
           }
         })
       } else if (!isPlainRecord(value)) {
         errors.push({ fieldPath: path, message: 'Expected an object' })
       } else if (objectField.fields) {
-        errors.push(...validateEntryData(objectField.fields, value, path))
+        errors.push(...validateEntryData(objectField.fields, value, path, options))
       }
       continue
     }
@@ -338,7 +339,7 @@ export function validateEntryFormValue(
  * a save, and the write path now preserves it and its comments), so this feeds the
  * non-blocking `validationWarnings` channel, not the 422 path.
  *
- * Deliberately not reported: a container with no fields at all (`api/content.ts`
+ * Deliberately not reported: a list item's `ITEM_KEY`, a container with no fields at all (`api/content.ts`
  * falls back to `[]` for a collection with no configured entry type — "no schema"
  * isn't "every key is unknown"), and anything inside a `reference` value (a resolved
  * reference's value is `{ ...target data, id, slug, collection, urlPath }`; the
@@ -354,7 +355,7 @@ export function findUnknownKeys(fields: EntrySchema, data: Record<string, unknow
       if (containerFields.length === 0) return []
       const known = new Set(flattenGroupFields(containerFields).map((field) => field.name))
       return Object.keys(record)
-        .filter((key) => !known.has(key) && !BLOCK_STRUCTURAL_KEYS.has(key))
+        .filter((key) => !known.has(key) && !BLOCK_STRUCTURAL_KEYS.has(key) && key !== ITEM_KEY)
         .map((key) => (path ? `${path}.${key}` : key))
     },
   )

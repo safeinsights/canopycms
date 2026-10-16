@@ -1,3 +1,8 @@
+---
+adopters: NEITHER
+summary: >-
+  RESOLVED (2026-08-20, branch `fix/canopycms-test-utils-export`) — `publishConfig.exports` advertised `"./test-utils"` while `tsconfig.build.json` excluded `src/test-utils/**`, so `dist/test-utils/` never existed and any external import got `ERR_MODULE_NOT_FOUND`. History settled it: `461ef995` added the exclusion when the subpath was not an export, then `eaa09e42` added the subpath for an explicitly workspace-internal reason and carried `publishConfig` along by rote. Building it was tried and rejected — the emitted `dist/` imports `vitest` at module scope, runs `expect.extend()` as an import side effect, and ships a global `declare module 'vitest'` augmentation. Decision (JP): unpublish, keep workspace-internal — removed from `publishConfig.exports` only, dev `exports` untouched so the one cross-package consumer is unaffected. `scripts/check-esm-imports.mjs` gained an enforced `devOnly` subpath mode whose `checkCoverage()` fails on drift between the two maps in either direction
+---
 # `canopycms/test-utils` is a published export that is never built
 
 **RESOLVED 2026-08-20** (branch `fix/canopycms-test-utils-export`, off

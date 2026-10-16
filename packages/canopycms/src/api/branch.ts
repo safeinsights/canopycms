@@ -3,10 +3,17 @@ import path from 'node:path'
 import { z } from 'zod'
 
 import type { BranchAccessControl, BranchContext, BranchMetadata } from '../types'
-import { BranchWorkspaceManager } from '../branch-workspace'
+import { BranchWorkspaceManager, type ProvisionOutcome } from '../branch-workspace'
+import {
+  BranchDirOccupiedError,
+  BranchProvisioningBusyError,
+  deletingDirName,
+  removeLeftoverDir,
+} from '../branch-provisioning'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withOccFileLock } from '../utils/occ-json-write'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import { isCreatorsRecentBranch } from './branch-create-window'
 import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
@@ -20,12 +27,13 @@ import {
   isSettingsBranchName,
 } from '../paths'
 import { GitManager } from '../git-manager'
+import { syncDeleteRemoteBranch } from './github-sync'
 import { branchNameSchema, branchParamSchema } from './validators'
+import { baseBranchOf } from '../utils/base-branch'
+import type { UserProfile } from '../auth/types'
+import { lookupUserProfiles } from '../auth/user-metadata-lookup'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
-
-/** Response type for single branch operations (create, update, status) */
-export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
 
 /**
  * A listed branch plus server-computed protected-base-branch flags (see
@@ -65,6 +73,11 @@ export interface BranchListItem extends BranchMetadata {
    * archived non-base branch.
    */
   submitBlocked?: boolean
+  /**
+   * How many ACL entries {@link toBranchListItem} left out of `access` for a caller without the
+   * privileged user lookup. Absent for a privileged caller, who gets the whole list.
+   */
+  withheldAccess?: { users: number; groups: number }
 }
 
 /**
@@ -83,6 +96,8 @@ export type BranchListResponse = ApiResponse<{
    * Optional on the wire so older servers remain compatible.
    */
   defaultBranch?: string
+  /** Profiles of the listed branches' creators, in no order; unknown ids are absent. */
+  users: UserProfile[]
 }>
 
 /** Response type for branch deletion */
@@ -116,6 +131,7 @@ const updateBranchAccessBodySchema = z.object({
 import {
   isPrivileged,
   isAdmin,
+  isLockedOutOfBranch,
   loadPathPermissions,
   getBranchProtection,
   getBranchWriteProtection,
@@ -204,16 +220,45 @@ const resolveReadOnlyMirrorPath = (
 }
 
 /**
- * Attach server-computed protected-base-branch flags to a branch. Reads config
- * per call so dev-mode refreshActiveBranch() updates are reflected.
+ * The ACL as `viewer` may see it. Without the privileged user lookup, a caller gets only the
+ * entries naming them or their groups, which is all the editor's membership checks read, and a
+ * count of the rest: the other ids name people that lookup keeps from them.
+ */
+const accessForViewer = (
+  access: BranchAccessControl,
+  viewer: CanopyUser,
+): Pick<BranchListItem, 'access' | 'withheldAccess'> => {
+  if (isPrivileged(viewer.groups)) return { access }
+  const viewerGroups: readonly string[] = viewer.groups ?? []
+  const allowedUsers = access.allowedUsers?.filter((id) => id === viewer.userId)
+  const allowedGroups = access.allowedGroups?.filter((id) => viewerGroups.includes(id))
+  return {
+    access: {
+      ...access,
+      ...(allowedUsers && { allowedUsers }),
+      ...(allowedGroups && { allowedGroups }),
+    },
+    withheldAccess: {
+      users: (access.allowedUsers?.length ?? 0) - (allowedUsers?.length ?? 0),
+      groups: (access.allowedGroups?.length ?? 0) - (allowedGroups?.length ?? 0),
+    },
+  }
+}
+
+/**
+ * A branch as `viewer` may see it, with server-computed protected-base-branch flags. Every
+ * branch response outside the admin-only repairs goes through here. Reads config per call so
+ * dev-mode refreshActiveBranch() updates are reflected.
  */
 export const toBranchListItem = (
   config: ApiContext['services']['config'],
   branch: BranchMetadata,
+  viewer: CanopyUser,
 ): BranchListItem => {
   const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
   return {
     ...branch,
+    ...accessForViewer(branch.access ?? {}, viewer),
     isProtected: protection.isProtected,
     readOnly: protection.readOnly,
     writeBlocked: protection.writeBlocked,
@@ -297,13 +342,9 @@ export const createBranchHandler = async (
       }
     }
 
-    // Reject the base branch name outright. openOrCreateBranch's save() (see
-    // branch-metadata.ts) field-merges the caller-supplied `access` over an
-    // EXISTING branch's metadata rather than replacing it, so a request
-    // naming the base branch would let the caller inject themselves into the
-    // protected base branch's ACL (gaining e.g. withdraw rights via the
-    // allowed_by_acl path). No recorded fork point exists yet for a
-    // not-yet-created branch, so this checks config protection only.
+    // Reject the base branch name outright, even before the base branch is
+    // provisioned. No recorded fork point exists yet for a not-yet-created
+    // branch, so this checks config protection only.
     const { isProtected } = getBranchProtection(ctx.services.config, branchName)
     if (isProtected) {
       return {
@@ -313,14 +354,10 @@ export const createBranchHandler = async (
       }
     }
 
-    // Reject a name collision with ANY existing branch for the same
-    // field-merge reason: creating over an existing branch name would let
-    // the caller's `access` ACL overwrite that branch's real ACL instead of
-    // creating a new, separate branch. Comparison uses the sanitized name
-    // since that's what's persisted in branch.json (see
-    // BranchWorkspaceManager.openOrCreateBranch). System branches
-    // auto-provisioned via http/handler.ts's getBranchContext don't go
-    // through this handler, so rejecting collisions here doesn't affect them.
+    // A name collision with ANY existing branch answers before a clone is paid
+    // for. Provisioning never merges into an existing branch either: it reports
+    // `exists`, mapped the same way below. Compared sanitized, the form
+    // branch.json records.
     if (!ctx.services.registry) {
       return {
         ok: false,
@@ -330,11 +367,7 @@ export const createBranchHandler = async (
     }
     const existingBranch = await ctx.services.registry.get(sanitizeBranchName(branchName))
     if (existingBranch) {
-      return {
-        ok: false,
-        status: 409,
-        error: 'A branch with this name already exists',
-      }
+      return existingBranchResponse(ctx, req, existingBranch)
     }
 
     // L2: create-time collision check against this deployment's local
@@ -344,7 +377,7 @@ export const createBranchHandler = async (
     // is BOTH this deployment's local git origin AND a mirror of GitHub's
     // view of the repo: worker/git-sync.ts's syncGit() fetches GitHub into it
     // (see GITHUB_TRACKING_REF_PREFIX's doc comment in git-manager.ts) and
-    // then reconciles refs/heads/* non-destructively, so it carries both
+    // then reconciles refs/heads/* without touching editor work, so it carries both
     // this deployment's local heads and GitHub's view -- readable offline by
     // this same Lambda, since it resolves to the same EFS inode the worker
     // uses. Reading it here catches a sanitized-name collision with a branch
@@ -412,14 +445,14 @@ export const createBranchHandler = async (
         // deleteBranchHandler's cleanup (below) handles the common case, but
         // cannot cover every ordering: when the branch still existed on
         // GitHub at editor-delete time, the sync loop's reconcile re-creates
-        // the local head from the tracking ref within a cycle, and once the
-        // GitHub side is later deleted (pruning the tracking ref) that
-        // re-created head is orphaned with no registry entry left for the
-        // delete path to ever run against. Healing at REUSE time covers
-        // every ordering, however the head got orphaned: the registry check
-        // above already proved no live branch owns this name, and the
-        // tracking check just proved GitHub doesn't either, so a remaining
-        // local head is stale by definition. Best-effort (old-value-guarded
+        // the local head from GitHub's branch within a cycle, and once the
+        // GitHub side is later deleted that re-created head stays until the
+        // sync loop's next prune, with no registry entry left for the delete
+        // path to run against. Healing at REUSE time covers every ordering,
+        // however the head got orphaned: the registry check above already
+        // proved no live branch owns this name, and the tracking check just
+        // proved GitHub doesn't either, so a remaining local head is stale by
+        // definition. Best-effort (old-value-guarded
         // against a concurrent push): on failure, creation still proceeds --
         // that is today's status quo, and the publish-time 409 message names
         // this cause.
@@ -448,7 +481,7 @@ export const createBranchHandler = async (
     // Load path permissions from the base branch's JSON file (the resolved
     // fork point — baked into config at service creation; dev-mode git HEAD
     // when not explicitly configured)
-    const baseBranch = ctx.services.config.defaultBaseBranch ?? 'main'
+    const baseBranch = baseBranchOf(ctx.services.config)
     const baseBranchContext = await ctx.getBranchContext(baseBranch)
 
     let pathPermissions: PathPermission[] = []
@@ -468,23 +501,50 @@ export const createBranchHandler = async (
     }
 
     const manager = new BranchWorkspaceManager(ctx.services.config)
-    const operatingMode = ctx.services.config.mode
-    const context = await manager.openOrCreateBranch({
-      branchName,
-      mode: operatingMode,
-      createdBy: req.user.userId,
-      title: body.title,
-      description: body.description,
-      access: body.access,
-    })
+    let outcome: ProvisionOutcome
+    try {
+      outcome = await manager.provisionBranch({
+        branchName,
+        mode: ctx.services.config.mode,
+        createdBy: req.user.userId,
+        title: body.title,
+        description: body.description,
+        access: body.access,
+      })
+    } catch (err: unknown) {
+      if (err instanceof BranchProvisioningBusyError) {
+        return { ok: false, status: 503, error: err.message }
+      }
+      if (err instanceof BranchDirOccupiedError) {
+        return { ok: false, status: 409, error: err.message }
+      }
+      throw err
+    }
+    if (outcome.kind === 'exists') return existingBranchResponse(ctx, req, outcome.context)
 
-    log.debug('api', 'Branch created', { branchName: context.branch.name })
+    log.debug('api', 'Branch created', { branchName: outcome.context.branch.name })
     return {
       ok: true,
       status: 200,
-      data: { branch: toBranchListItem(ctx.services.config, context.branch) },
+      data: { branch: toBranchListItem(ctx.services.config, outcome.context.branch, req.user) },
     }
   })
+}
+
+/** A create that names an existing branch: 409, unless it is that creator's recent retry. */
+const existingBranchResponse = (
+  ctx: ApiContext,
+  req: ApiRequest,
+  existing: BranchContext,
+): BranchListItemResponse => {
+  if (isCreatorsRecentBranch(existing.branch, req.user.userId)) {
+    return {
+      ok: true,
+      status: 200,
+      data: { branch: toBranchListItem(ctx.services.config, existing.branch, req.user) },
+    }
+  }
+  return { ok: false, status: 409, error: 'A branch with this name already exists' }
 }
 
 /** @internal Exported for tests. */
@@ -516,26 +576,21 @@ export const listBranchesHandler = async (
   // editor matches defaultBranch against registry names, so return the form
   // that can actually be found there.
   const defaultBranch = sanitizeBranchName(
-    ctx.services.config.defaultActiveBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
+    ctx.services.config.defaultActiveBranch ?? baseBranchOf(ctx.services.config),
   )
 
   // Admins and Reviewers see all branches
   if (isPrivileged(req.user.groups)) {
-    return {
-      ok: true,
-      status: 200,
-      data: {
-        branches: allBranches.map((context) =>
-          toBranchListItem(ctx.services.config, context.branch),
-        ),
-        defaultBranch,
-      },
-    }
+    return branchListResponse(ctx, req, allBranches, defaultBranch)
   }
 
-  // Regular users only see branches they created or have explicit access to
+  // Regular users see the base branch and the branches they created or were given access to
   const visibleBranches = allBranches.filter((context) => {
     const branch = context.branch
+    // Ahead of every grant below, as in checkBranchAccessWithDefault.
+    if (isLockedOutOfBranch(branch.access, req.user.groups)) {
+      return false
+    }
     // The protected base branch is where every user lands by default; always
     // show it (read-only) so the editor can render its protected state.
     if (getBranchProtection(ctx.services.config, branch.name, branch.baseBranch).isProtected) {
@@ -560,14 +615,40 @@ export const listBranchesHandler = async (
     return false
   })
 
+  return branchListResponse(ctx, req, visibleBranches, defaultBranch)
+}
+
+/**
+ * The listing, with the profile of each listed branch's creator. Looked up only for branches the
+ * requester may see, so it names no one they could not; the branch ACL's users stay behind the
+ * privileged user lookup. A failed lookup costs the names, never the listing.
+ */
+const branchListResponse = async (
+  ctx: ApiContext,
+  req: ApiRequest,
+  branches: readonly BranchContext[],
+  defaultBranch: string,
+): Promise<BranchListResponse> => {
+  let users: UserProfile[] = []
+  if (ctx.authPlugin) {
+    try {
+      users = await lookupUserProfiles(
+        ctx.authPlugin,
+        branches.map((context) => context.branch.createdBy),
+      )
+    } catch (error) {
+      console.error('CanopyCMS: Failed to look up branch owners:', getErrorMessage(error))
+    }
+  }
   return {
     ok: true,
     status: 200,
     data: {
-      branches: visibleBranches.map((context) =>
-        toBranchListItem(ctx.services.config, context.branch),
+      branches: branches.map((context) =>
+        toBranchListItem(ctx.services.config, context.branch, req.user),
       ),
       defaultBranch,
+      users,
     },
   }
 }
@@ -643,7 +724,7 @@ export const deleteBranchHandler = async (
   // writableBranch/submittableBranch guards elsewhere use 403 for the same
   // "protected" category (tracked as a deferred, deliberately out-of-scope
   // cleanup in
-  // .claude/future-tasks/protected-branch-followup-cleanups.md); extending
+  // safeinsights/canopycms#781); extending
   // this check to 'approved' keeps it consistent with its own immediate
   // neighbour rather than introducing a fresh 400/403 split between two
   // arms of the same guard.
@@ -655,53 +736,42 @@ export const deleteBranchHandler = async (
     }
   }
 
-  // Delete branch metadata file so it disappears from registry scans.
-  // Hold the same server-enforced lockfile branch-metadata saves hold
-  // (see utils/occ-json-write.ts): an unguarded unlink racing a concurrent
-  // save() would let the save's create path resurrect a phantom branch.json
-  // inside a deleted branch, which the registry's next scan would list as a
-  // live branch with no clone. The directory removal happens inside the
-  // same hold so a racing save cannot slip between unlink and rm either.
+  // The branch directory leaves its name by one rename, under the same
+  // server-enforced lockfile branch-metadata saves hold (see
+  // utils/occ-json-write.ts), so a save() that reaches that lock after the
+  // rename fails rather than recreating the tree, and a process killed during
+  // the `rm` leaves
+  // only a `.deleting-*` directory the worker sweeps, never residue under a
+  // name that may be created again.
   const metadataFile = path.join(branchContext.branchRoot, '.canopy-meta', 'branch.json')
   let cleanupWarning: string | undefined
+  let deletingPath: string | undefined
   try {
     await withOccFileLock(metadataFile, async () => {
-      try {
-        await fs.unlink(metadataFile)
-      } catch (err: unknown) {
-        if (!isNotFoundError(err)) {
-          console.error(
-            `CanopyCMS: Failed to delete branch metadata for ${branchName}:`,
-            getErrorMessage(err),
-          )
-        }
+      if (branchContext.branchRoot === branchContext.baseRoot) {
+        await fs.unlink(metadataFile).catch((err: unknown) => {
+          if (!isNotFoundError(err)) throw err
+        })
+        return
       }
-
-      // In multi-branch modes, also delete the entire branch directory.
-      // Retry transient EFS/NFS errors (ENOTEMPTY from a concurrent writer,
-      // EBUSY) a few times before giving up -- rm's failure must never be
-      // swallowed: metadata is gone either way (the branch is logically
-      // deleted and will no longer appear in listings), but silently
-      // succeeding here would leave a full orphan clone on disk with
-      // nothing in the API surfacing its existence.
-      if (branchContext.branchRoot !== branchContext.baseRoot) {
-        try {
-          await fs.rm(branchContext.branchRoot, {
-            recursive: true,
-            force: true,
-            maxRetries: 3,
-            retryDelay: 100,
-          })
-        } catch (err: unknown) {
-          // sanitizeErrorMessage: this string goes back to the browser in the
-          // delete response (API-H2 — no absolute EFS paths to clients);
-          // the console line below keeps the raw detail for server logs.
-          cleanupWarning = `Failed to fully remove branch directory: ${sanitizeErrorMessage(getErrorMessage(err))}`
-          console.error(
-            `CanopyCMS: Failed to delete branch directory for ${branchName}:`,
-            getErrorMessage(err),
-          )
-        }
+      const target = path.join(
+        branchContext.baseRoot,
+        deletingDirName(path.basename(branchContext.branchRoot)),
+      )
+      try {
+        await fs.rename(branchContext.branchRoot, target)
+        deletingPath = target
+      } catch (err: unknown) {
+        if (isNotFoundError(err)) return
+        // Still deleted logically: without branch.json the branch is unlisted,
+        // and the worker quarantines what is left.
+        await fs.unlink(metadataFile).catch(() => {})
+        // [REDACT] Returned to the browser; the console line keeps the path.
+        cleanupWarning = `Failed to remove branch directory: ${sanitizeErrorMessage(getErrorMessage(err))}`
+        console.error(
+          `CanopyCMS: Failed to move branch directory for ${branchName} aside:`,
+          getErrorMessage(err),
+        )
       }
     })
   } catch (err: unknown) {
@@ -713,12 +783,13 @@ export const deleteBranchHandler = async (
       error: `Branch is busy, try again: ${getErrorMessage(err)}`,
     }
   }
+  if (deletingPath) await removeLeftoverDir(deletingPath)
 
   // Also delete the branch's local head from the remote.git mirror (the
-  // deployment's local origin). The sync loop deliberately never deletes a
-  // local head (see reconcileTrackedBranches), so THIS is the one explicit
-  // path that removes it -- without this, the head outlives the branch
-  // forever, and reusing the name after the GitHub side is gone (e.g. a
+  // deployment's local origin). The sync loop's reconcileTrackedBranches
+  // removes a head only once GitHub no longer has its branch, so while GitHub
+  // does, THIS is the path that removes it -- without this, the head outlives
+  // the branch, and reusing the name after the GitHub side is gone (e.g. a
   // squash-merged PR with auto-delete) has the reused branch's first publish
   // rejected non-fast-forward against the stale old tip: a permanent,
   // misleading 409 -- and a retried submit would then ship the STALE head to
@@ -736,7 +807,7 @@ export const deleteBranchHandler = async (
   // Defense-in-depth only -- isProtected above already rejects the base
   // branch, and settings branches never resolve through getBranchContext.
   const sanitizedBase = sanitizeBranchName(
-    branchContext.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
+    branchContext.branch.baseBranch ?? baseBranchOf(ctx.services.config),
   )
   const deletableHead =
     sanitizedDeleted !== sanitizedBase &&
@@ -758,6 +829,12 @@ export const deleteBranchHandler = async (
         `CanopyCMS: failed to remove deleted branch's mirror head (branch ${sanitizedDeleted}, mirror ${mirrorPath}): ${getErrorMessage(err)}`,
       )
     }
+  }
+
+  // `branchContext` was read before the delete, so it still carries the PR number this gates on.
+  if (deletableHead) {
+    const warning = await syncDeleteRemoteBranch(ctx, branchContext)
+    if (warning) cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${warning}` : warning
   }
 
   // Invalidate registry cache so next list() will regenerate without this branch
@@ -804,7 +881,7 @@ export const updateBranchAccessHandler = async (
   req: ApiRequest,
   params: z.infer<typeof branchParamSchema>,
   body: z.infer<typeof updateBranchAccessBodySchema>,
-): Promise<BranchResponse> => {
+): Promise<BranchListItemResponse> => {
   const branchName = params.branch
 
   const branchContext = await ctx.getBranchContext(branchName)
@@ -863,7 +940,11 @@ export const updateBranchAccessHandler = async (
     branch: { access: newAccess },
   })
 
-  return { ok: true, status: 200, data: { branch: updated.branch } }
+  return {
+    ok: true,
+    status: 200,
+    data: { branch: toBranchListItem(ctx.services.config, updated.branch, req.user) },
+  }
 }
 
 /**
@@ -876,13 +957,14 @@ const listBranches = defineEndpoint({
   path: '/branches',
   responseType: 'BranchListResponse',
   response: {} as BranchListResponse,
-  defaultMockData: { branches: [] },
+  defaultMockData: { branches: [], users: [] },
   handler: listBranchesHandler,
 })
 
 const createBranch = defineEndpoint({
   namespace: 'branches',
   name: 'create',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/branches',
   body: createBranchBodySchema,
@@ -930,8 +1012,8 @@ const updateBranchAccess = defineEndpoint({
   params: branchParamSchema,
   body: updateBranchAccessBodySchema,
   bodyType: 'UpdateBranchAccessBody',
-  responseType: 'BranchResponse',
-  response: {} as BranchResponse,
+  responseType: 'BranchListItemResponse',
+  response: {} as BranchListItemResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',

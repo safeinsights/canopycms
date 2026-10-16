@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-14, branch `feat/block-registry-types-and-recipes`, `integration-202608-b` epic) — adopter request #15, pure documentation gap closed. README's new "Reusable Field Fragments" section covers both mechanisms (spreading a `const`-inferred field array, nesting `defineInlineFieldGroup` inside a block template) plus a per-use-override worked example. A small `defineFieldFragment()` identity helper was added beside `defineBlockTemplate` for discoverability
+---
 # Document reusable field fragments (works today, undocumented)
 
 ## RESOLVED (2026-08-14, branch `feat/block-registry-types-and-recipes`, `integration-202608-b` epic)

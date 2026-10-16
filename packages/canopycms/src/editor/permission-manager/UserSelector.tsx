@@ -12,7 +12,7 @@ export interface UserSelectorProps {
   isSearching: boolean
   searchError: string | null
   onSelectUser: (userId: string) => void
-  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  onGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
 }
 
 export const UserSelector: React.FC<UserSelectorProps> = ({
@@ -36,14 +36,14 @@ export const UserSelector: React.FC<UserSelectorProps> = ({
           style={{
             width: '100%',
             padding: '6px 8px',
-            border: '1px solid var(--mantine-color-gray-4)',
+            border: '1px solid var(--canopy-input-border)',
             borderRadius: 'var(--mantine-radius-sm)',
             fontSize: '14px',
           }}
         />
         {isSearching && <Loader size="xs" />}
         {searchError && (
-          <Text size="xs" c="red">
+          <Text size="xs" c="var(--canopy-danger-text)">
             {searchError}
           </Text>
         )}
@@ -57,25 +57,14 @@ export const UserSelector: React.FC<UserSelectorProps> = ({
                 style={{ cursor: 'pointer' }}
                 onClick={() => onSelectUser(user.id)}
               >
-                {onGetUserMetadata ? (
-                  <UserBadge
-                    userId={user.id}
-                    getUserMetadata={onGetUserMetadata}
-                    variant="full"
-                    size="sm"
-                    cachedUser={user}
-                    showEmailTooltip={false}
-                  />
-                ) : (
-                  <>
-                    <Text size="sm" fw={500}>
-                      {user.name}
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      {user.email}
-                    </Text>
-                  </>
-                )}
+                <UserBadge
+                  userId={user.id}
+                  getUserMetadata={onGetUserMetadata}
+                  variant="full"
+                  size="sm"
+                  cachedUser={user}
+                  showEmailTooltip={false}
+                />
               </Paper>
             ))}
           </Stack>

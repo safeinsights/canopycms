@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — authoritative write-boundary validation + client pre-save errors via shared entry-validator (PR #93)
+---
 # Content Store Schema Validation
 
 Enforce schema validation at the API boundary for content write/create operations.

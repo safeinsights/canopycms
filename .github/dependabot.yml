@@ -21,7 +21,10 @@ updates:
           - '*'
 
   - package-ecosystem: github-actions
-    directory: /
+    # `/` reads .github/workflows; a composite action elsewhere needs its own entry.
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
     open-pull-requests-limit: 0

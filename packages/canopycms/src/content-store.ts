@@ -19,14 +19,25 @@ import matter from 'gray-matter'
 import { parse as yamlParse } from 'yaml'
 import { atomicWriteFile } from './utils/atomic-write'
 import { serializeFrontmatter, serializeYaml } from './utils/content-serialize'
+import { serializeJson } from './utils/json-source-splice'
 import { withLock } from './utils/async-mutex'
 import {
+  assertContentWriteLockHeld,
   ContentWriteLockBusyError,
   DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
   withContentWriteLock,
 } from './utils/content-write-lock'
 import { findBodyFieldName } from './utils/body-field'
-import { buildResolvedReference, buildRestrictedReference } from './entry-schema'
+import { withItemKeys } from './item-keys'
+import {
+  buildMissingReference,
+  buildResolvedReference,
+  buildRestrictedReference,
+  type MissingReference,
+} from './entry-schema'
+import { warnDanglingReference } from './dangling-reference-log'
+import { canopyLogError } from './utils/logger'
+import { SchemaUnavailableError } from './schema/schema-unavailable-error'
 import { resolveEntryTitle } from './utils/title-field'
 import { computeEntryUrl } from './utils/entry-url'
 import { findUrlPathClaimant } from './url-collision'
@@ -48,10 +59,11 @@ import {
   resolveCollectionPath,
 } from './content-id-index'
 import { registerContentIndexForInvalidation } from './content-index-registry'
+import { isPlainRecord } from './validation/field-traversal'
 import { bumpContentIndexGeneration, readContentIndexGeneration } from './content-index-generation'
 import { generateId } from './id'
 import { isNodeError } from './utils/error'
-import { filePathExists, readFileIfExists } from './utils/fs'
+import { filePathExists, readFileWithMtimeIfExists } from './utils/fs'
 import { asRecord, getFormatExtension } from './utils/format'
 import {
   entryLogicalPath,
@@ -61,6 +73,7 @@ import {
   type PhysicalPath,
   type Slug,
   type ContentId,
+  validateAndNormalizePath,
 } from './paths'
 
 /**
@@ -140,6 +153,23 @@ export class ContentConflictError extends Error {
 }
 
 /**
+ * Thrown when a write carrying a numeric `expectedVersion` finds no file: the entry was deleted
+ * or moved since that version was read. A missing file is a change since the read, so the write
+ * is refused rather than re-creating the entry; re-creating it is a create (`expectedVersion:
+ * null`) the caller makes deliberately.
+ *
+ * A `ContentConflictError` subclass so every 409 mapping keeps working; the distinct type lets
+ * the API tell the editor the entry is gone, where "reload to see the latest version" has
+ * nothing to reload.
+ */
+export class EntryGoneError extends ContentConflictError {
+  constructor() {
+    super('This entry was deleted or moved since it was read')
+    this.name = 'EntryGoneError'
+  }
+}
+
+/**
  * [SYNC-C1] Thrown when a mutation could not take the branch's cross-host
  * content-write lock within its bounded wait (utils/content-write-lock.ts) --
  * usually the worker mid-rebase on this branch's working tree, though
@@ -150,7 +180,11 @@ export class ContentConflictError extends Error {
  * instead of the misleading generic "modified by another editor".
  */
 export class BranchSyncingError extends ContentConflictError {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** As on `ContentWriteLockBusyError`: `'unknown'` means the write ran and may have landed. */
+    readonly outcome: 'not-run' | 'unknown' = 'not-run',
+  ) {
     super(message)
     this.name = 'BranchSyncingError'
   }
@@ -178,15 +212,13 @@ export class DuplicateContentIdError extends ContentConflictError {
   constructor(contentId: string, paths: readonly string[]) {
     const sorted = Array.from(new Set(paths)).sort()
     super(
-      // Names the STATE, not an action: the repair-content-duplicates endpoint
-      // exists but nothing in the editor renders it, and the admin panel's
-      // duplicate list (SystemHealthPanel) is the diagnosis half only. The repair
-      // UI is tracked in .claude/future-tasks/duplicate-content-id-repair-ui.md.
+      // Names where an administrator fixes it, not the endpoint: the editor
+      // reading this cannot run an admin action.
       `Content ID ${contentId} is on more than one file (${sorted
         .map((p) => `"${p}"`)
         .join(' and ')}), so this save was refused rather than risk overwriting or ` +
-        `deleting the wrong one. An administrator needs to resolve the duplicate on the ` +
-        `server before this entry can be saved.`,
+        `deleting the wrong one. An administrator can fix this in System health, on the ` +
+        `Branches tab; until then this entry cannot be saved.`,
     )
     this.name = 'DuplicateContentIdError'
     this.contentId = contentId
@@ -250,6 +282,57 @@ function validateSlug(slug: string): void {
   }
 }
 
+const isEmptyFieldValue = (value: unknown): boolean =>
+  value === undefined || value === null || value === ''
+
+/**
+ * A parsed entry document's top-level record. Anything but a plain object throws, so a fill never
+ * replaces an array or scalar root; YAML reads an empty document as null.
+ */
+function entryRecord(parsed: unknown, emptyIsRecord: boolean): Record<string, unknown> {
+  if (isPlainRecord(parsed)) return parsed
+  if (emptyIsRecord && (parsed === null || parsed === undefined)) return {}
+  throw new Error('the file does not hold an object at its top level')
+}
+
+/**
+ * `raw` with top-level `field` set to the string `value`, through the same source-preserving
+ * serialisers `write()` uses, or undefined when `raw` already holds a non-empty value there.
+ * Throws when the result would not read back as that string.
+ */
+function fillEmptyTopLevelField(
+  raw: string,
+  format: ContentFormat,
+  field: string,
+  value: string,
+): string | undefined {
+  if (format === 'json' || format === 'yaml') {
+    const parse = (text: string) =>
+      format === 'json' ? entryRecord(JSON.parse(text), false) : entryRecord(yamlParse(text), true)
+    const data = parse(raw)
+    if (!isEmptyFieldValue(data[field])) return undefined
+    const next = { ...data, [field]: value }
+    const content = format === 'json' ? serializeJson(next, raw) : serializeYaml(next, raw)
+    if (parse(content)[field] !== value) throw new Error(`"${field}" does not read back as written`)
+    return content
+  }
+  const frontmatter = (text: string) => entryRecord(matter(text, {}).data, true)
+  const fill = (from: string, fieldValue: string): string => {
+    const parsed = matter(from, {})
+    const data = { ...entryRecord(parsed.data, true), [field]: fieldValue }
+    return serializeFrontmatter(parsed.content, data, from, format)
+  }
+  const readsBack = (content: string): boolean => frontmatter(content)[field] === value
+  if (!isEmptyFieldValue(frontmatter(raw)[field])) return undefined
+  const content = fill(raw, value)
+  if (readsBack(content)) return content
+  // A key the serialiser inserts is written plain, and gray-matter reads a plain timestamp as a
+  // Date. Inserted as '' it is written quoted, and replacing it keeps that quoting.
+  const quoted = fill(fill(raw, ''), value)
+  if (readsBack(quoted)) return quoted
+  throw new Error(`"${field}" does not read back as written`)
+}
+
 export interface ContentStoreOptions {
   /**
    * Minimum ms between on-disk generation-marker probes when the in-memory
@@ -292,6 +375,10 @@ const FORCED_REFRESH_MIN_INTERVAL_MS = 5000
 /** Internal sentinel: a lookup result that suggests this store's index is stale. */
 const STALE_LOOKUP = Symbol('stale-index-lookup')
 
+/** A resolver's own `MissingReference`; a full target never carries `unavailable`. */
+const isMissingReference = (value: Record<string, unknown>): value is MissingReference =>
+  value.unavailable === true && value.reason === 'missing'
+
 /**
  * Per-batch memo for reference resolution, keyed by content ID (plus `includeBody`).
  *
@@ -311,10 +398,11 @@ const STALE_LOOKUP = Symbol('stale-index-lookup')
  * cache must never be shared by two readers.
  *
  * Misses are memoized alongside hits so one batch stays internally coherent: a shared block
- * resolving to data on page 1 and `null` on page 40 of one sitemap is worse than either
- * consistent answer. Each DISTINCT id still gets its full self-healing retry, inside the memo.
+ * resolving to data on page 1 and a `MissingReference` on page 40 of one sitemap is worse than
+ * either consistent answer. Each DISTINCT id still gets its full self-healing retry, inside the
+ * memo.
  */
-export type ReferenceResolveCache = Map<string, Promise<Record<string, unknown> | null>>
+export type ReferenceResolveCache = Map<string, Promise<Record<string, unknown>>>
 
 /** Create a cache for one batch of reference resolution. See {@link ReferenceResolveCache}. */
 export const createReferenceResolveCache = (): ReferenceResolveCache => new Map()
@@ -334,6 +422,13 @@ export interface ReadOptions {
   resolveReferences?: boolean
   /** See {@link ReferenceTargetAccess}. */
   referenceAccess?: ReferenceTargetAccess
+  /**
+   * Read an entry of an `unavailable` entry type as raw data instead of throwing
+   * {@link SchemaUnavailableError}: for reads of it as another entry's reference target
+   * (resolution embeds that raw data; the picker takes a label from it), never for one an
+   * author edits.
+   */
+  allowUnavailableEntryType?: boolean
 }
 
 export class ContentStore {
@@ -392,7 +487,8 @@ export class ContentStore {
     } catch (err: unknown) {
       // Translate at the boundary, after the bounded wait -- never inside the
       // acquire loop, which would disable its ELOCKED retry predicate.
-      if (err instanceof ContentWriteLockBusyError) throw new BranchSyncingError(err.message)
+      if (err instanceof ContentWriteLockBusyError)
+        throw new BranchSyncingError(err.message, err.outcome)
       throw err
     }
   }
@@ -709,6 +805,10 @@ export class ContentStore {
     relativePath: PhysicalPath
     /** The entry's logical path, the form path-permission rules match (`entryLogicalPath`). */
     logicalPath: LogicalPath
+    /** The collection the entry file lives in: the parent, when an entry-type item delegated. */
+    collectionPath: LogicalPath
+    /** The entry's slug within that collection, lowercased as listings report it. */
+    slug: Slug
     id?: string
     /**
      * Always populated for a valid schema item: the collection branch below resolves a name
@@ -847,6 +947,8 @@ export class ContentStore {
         absolutePath: resolved,
         relativePath: path.relative(this.root, resolved) as PhysicalPath,
         logicalPath: entryLogicalPath(schemaItem.logicalPath, safeSlug),
+        collectionPath: schemaItem.logicalPath,
+        slug: safeSlug as Slug,
         id,
         entryTypeName: finalEntryTypeName,
         existed,
@@ -901,8 +1003,13 @@ export class ContentStore {
     const {
       absolutePath,
       relativePath,
+      existed,
       entryTypeName: resolvedEntryTypeName,
     } = await this.buildPaths(schemaItem, slug)
+    // A missing entry stays a not-found below, whatever its collection's default type.
+    if (existed && !options.allowUnavailableEntryType) {
+      this.assertEntryTypeAvailable(schemaItem, resolvedEntryTypeName)
+    }
     // stat BEFORE readFile: a conservative version token can only produce false-positive
     // conflicts. A write landing between stat and readFile gives the client newer content with
     // an older token, so their next save 409s (safe); stat-after or a parallel stat+read risks
@@ -972,12 +1079,20 @@ export class ContentStore {
       }
     }
 
+    // Keys an item saved without one by its content, before references resolve into it, as the
+    // listing and the write path do (`item-keys.ts`).
+    doc.data = withItemKeys(fields, doc.data, 'content')
+
     if (options.resolveReferences !== false) {
       doc.data = await this.resolveReferencesInData(
         doc.data,
         fields,
         undefined,
         options.referenceAccess,
+        {
+          entry: slug ? entryLogicalPath(schemaItem.logicalPath, slug) : schemaItem.logicalPath,
+          prefix: '',
+        },
       )
     }
 
@@ -1032,6 +1147,8 @@ export class ContentStore {
     // concurrent renameEntry() completes, so it must be re-resolved as ground truth once the
     // lock is held (see entryLockKey()). The format check above still runs unlocked.
     const prePass = await this.buildPaths(schemaItem, slug, { entryTypeName, existingId })
+    // The type the entry is written as: its on-disk one when it exists, else the requested/default.
+    this.assertEntryTypeAvailable(schemaItem, prePass.entryTypeName)
     let lockKey = this.entryLockKey(schemaItem, slug, prePass)
 
     // Reclassification loop: the world can change between the pre-pass and lock acquisition (a
@@ -1103,6 +1220,33 @@ export class ContentStore {
             }
           }
 
+          // The target as it is now, from one open: its mtime is the OCC version checked below,
+          // and its bytes are what the comment-preserving serialisation further down re-applies
+          // the payload onto, so the bytes kept are the bytes OCC validated. One open rather
+          // than a path `stat` plus a later read because opening revalidates against the NFS
+          // server, where a `stat` can answer from this host's cache for a file another host has
+          // since replaced or deleted (utils/fs.ts, docs/concurrency.md). Inside withLock(lockKey) and
+          // withContentWriteExclusion ([SYNC-C1]), so no writer or rebase moves it after this.
+          const current = await readFileWithMtimeIfExists(absolutePath)
+
+          // OCC: undefined means no opinion (skip entirely, a blind write). A number means
+          // "must match this mtime", and a missing file fails it too: the entry was deleted or
+          // moved since the read, and writing would re-create it (`EntryGoneError`). `null`
+          // means "must NOT exist yet" — the create-intent guard, without which a create
+          // request against a slug that already has content falls through to an ordinary
+          // blind overwrite. This is the authoritative check, so it holds even if a caller's
+          // own pre-write existence check (e.g. the API layer's `documentExists`) went stale
+          // under concurrency. It runs before the create-only guards below and before `mkdir`,
+          // so a refused update neither re-creates a deleted collection directory nor reports
+          // a create-only failure for a write that was never a create.
+          if (input.expectedVersion === null && current) {
+            throw new ContentConflictError('An entry with this slug already exists')
+          }
+          if (typeof input.expectedVersion === 'number') {
+            if (!current) throw new EntryGoneError()
+            if (current.mtimeMs !== input.expectedVersion) throw new ContentConflictError()
+          }
+
           // [URL] Contested-URL guard, create only: an ordinary save cannot contest a URL it
           // already holds, and blocking it would trap the author in an entry they can no
           // longer edit.
@@ -1120,7 +1264,7 @@ export class ContentStore {
           // Serialization comes from `withContentWriteExclusion` (the branch-wide, cross-host
           // lock wrapping this whole loop), NOT the per-entry lock: the two halves of a
           // contested pair live in DIFFERENT collections and take different entry-lock keys.
-          if (!(await filePathExists(absolutePath))) {
+          if (!current) {
             const chosenSlug = extractSlugFromFilename(path.basename(absolutePath))
 
             // [SLUG] Routability guard, create only. `validateSlug` (in buildPaths) is the
@@ -1153,34 +1297,6 @@ export class ContentStore {
 
           await fs.mkdir(path.dirname(absolutePath), { recursive: true })
 
-          // OCC: undefined means no opinion (skip entirely, a blind write). A number means
-          // "must match this mtime" (stale-write rejection). `null` means "must NOT exist
-          // yet" — the create-intent guard, without which a create request against a slug
-          // that already has content falls through to an ordinary blind overwrite. This is
-          // the authoritative check: it runs inside the per-entry lock against a fresh stat,
-          // so it holds even if a caller's own pre-write existence check (e.g. the API
-          // layer's `documentExists`) went stale under concurrency.
-          if (input.expectedVersion !== undefined) {
-            try {
-              const existing = await fs.stat(absolutePath)
-              if (input.expectedVersion === null) {
-                throw new ContentConflictError('An entry with this slug already exists')
-              }
-              if (existing.mtimeMs !== input.expectedVersion) {
-                throw new ContentConflictError()
-              }
-            } catch (err) {
-              if (err instanceof ContentConflictError) throw err
-              if (isNodeError(err) && err.code === 'ENOENT') {
-                // No file yet: for a numeric expectedVersion this is the "first write,
-                // skip the version check" back-compat behavior; for null it is create-only
-                // correctly seeing no collision. Either way, proceed with the write.
-              } else {
-                throw err
-              }
-            }
-          }
-
           // Existence guard (cross-process): the caller asserts this entry exists
           // (existingId), so a missing file at the path about to be written means this store's
           // index may be stale -- another process may have renamed the entry. Recreating a
@@ -1189,8 +1305,9 @@ export class ContentStore {
           // this host: if the ID's actual on-disk location differs from what the index
           // believes, fail with a conflict so the caller reloads fresh state. (An intentional
           // slug-change save passes: index and directory agree on the entry's current,
-          // old-slug path. External deletes also pass: the ID is nowhere on disk, so
-          // recreating is last-writer-wins.)
+          // old-slug path. An external delete passes here, since the ID is nowhere on disk; a
+          // write carrying a version has already been refused by the OCC check above, so only
+          // a blind write re-creates it.)
           //
           // indexedRelPath reads the LIVE index synchronously — NOT idIndex(), which would
           // run a full rescan while holding the entry lock if invalidateIndex() fired since
@@ -1220,32 +1337,30 @@ export class ContentStore {
 
           // Comment preservation: re-serialise onto the file's OWN parsed document rather
           // than a fresh one, so nodes the payload did not change -- and their attached
-          // comments -- survive the write. JSON has no comment syntax and skips the read. See
-          // utils/content-serialize.ts.
+          // comments -- survive the write. JSON has no comments; it reads the file to keep
+          // untouched lines' formatting. See utils/content-serialize.ts and
+          // utils/json-source-splice.ts.
           //
-          // This makes the write a genuine read-modify-write of the content file, so WHERE
-          // the read happens matters: inside withLock(lockKey), inside
-          // withContentWriteExclusion ([SYNC-C1]), and after the expectedVersion stat -- so
-          // the bytes read here are the bytes that OCC check validated, and no rebase can be
-          // running against this branch. Do not hoist it out of the critical section.
+          // This makes the write a genuine read-modify-write of the content file. The bytes are
+          // `current`'s, read in the same open the OCC check took its version from, inside
+          // both locks; do not replace them with a read outside the critical section.
           //
-          // INVARIANT, and the one case that does NOT preserve comments: this reads the path
+          // INVARIANT, and the one case that does NOT preserve comments: `current` is the path
           // being WRITTEN. A relocating write -- the ID resolves to a different relativePath,
           // so the block below unlinks `staleOldAbsPath` -- finds nothing at the new path and
           // falls back to a plain stringify, losing the old file's comments. Unreachable
           // today: the editor renames through renameEntry(), which link()s the bytes across
           // intact, and no caller passes `existingId`. If a relocating write becomes
-          // reachable, read the ID's current path here instead of `absolutePath`.
-          const existingRaw =
-            input.format === 'json' ? undefined : await readFileIfExists(absolutePath)
+          // reachable, read the ID's current path instead of `absolutePath`.
+          const existingRaw = current?.content
 
           let content: string
           if (input.format === 'json') {
-            content = `${JSON.stringify(input.data ?? {}, null, 2)}\n`
+            content = serializeJson(input.data ?? {}, existingRaw)
           } else if (input.format === 'yaml') {
             content = serializeYaml(input.data ?? {}, existingRaw)
           } else {
-            content = serializeFrontmatter(input.body, input.data ?? {}, existingRaw)
+            content = serializeFrontmatter(input.body, input.data ?? {}, existingRaw, input.format)
           }
 
           await atomicWriteFile(absolutePath, content)
@@ -1313,6 +1428,38 @@ export class ContentStore {
       // reload and retry.
       throw new ContentConflictError()
     })
+  }
+
+  /**
+   * Set top-level `field` of the entry file at `physicalPath` to the string `value` when the
+   * file holds it empty (absent, null or ''), keeping every other byte. Resolves to the file's
+   * version (the mtime `read()` reports) before and after the write, or undefined when it left
+   * the file alone.
+   *
+   * PRECONDITION: the caller already holds this branch's content-write lock, which makes the
+   * read and the write one critical section; a call outside it throws. This takes no lock
+   * itself, since a nested acquisition fails busy and is why nothing holding that lock may call
+   * `write()` (docs/concurrency.md, "Lock acquisition order").
+   */
+  async fillEmptyFieldWhileHoldingWriteLock(
+    physicalPath: PhysicalPath,
+    format: ContentFormat,
+    field: string,
+    value: string,
+  ): Promise<{ previousVersion: number; version: number } | undefined> {
+    assertContentWriteLockHeld(this.root)
+    const checked = validateAndNormalizePath(this.root, path.join(this.root, physicalPath))
+    if (!checked.valid || !checked.normalizedPath) {
+      throw new ContentStoreError(checked.error ?? 'Path traversal detected', 'VALIDATION')
+    }
+    const absolutePath = path.join(this.root, checked.normalizedPath)
+    const current = await readFileWithMtimeIfExists(absolutePath)
+    if (!current) throw new EntryGoneError()
+    const content = fillEmptyTopLevelField(current.content, format, field, value)
+    if (content === undefined) return undefined
+    await atomicWriteFile(absolutePath, content)
+    await this.recordOwnMutation(this._idIndex)
+    return { previousVersion: current.mtimeMs, version: (await fs.stat(absolutePath)).mtimeMs }
   }
 
   /**
@@ -1428,6 +1575,7 @@ export class ContentStore {
     // Pre-pass: classify existing-vs-already-gone by directory scan (local ground truth), not
     // this._idIndex, which can be stale in exactly the way this locking scheme guards against.
     const prePass = await this.buildPaths(collection, slug)
+    if (prePass.existed) this.assertEntryTypeAvailable(collection, prePass.entryTypeName)
 
     if (!prePass.existed) {
       // Nothing on disk for this slug -- no shared resource to lock on, and fs.unlink on the
@@ -1526,6 +1674,7 @@ export class ContentStore {
     if (!prePass.existed) {
       throw new ContentStoreError(`Entry not found: ${currentSlug}`, 'NOT_FOUND')
     }
+    this.assertEntryTypeAvailable(collection, prePass.entryTypeName)
     let sourceLockKey = this.entryLockKey(collection, currentSlug, prePass)
     let sourceId = prePass.id
 
@@ -1747,36 +1896,53 @@ export class ContentStore {
    * unmemoized behavior.
    *
    * `access` applies to every target exactly as in `read()`; see {@link ReferenceTargetAccess}.
+   * `origin`, the referring entry's logical path, names it in the dangling-reference warning.
    */
   public async resolveReferences(
     data: Record<string, unknown>,
     fields: EntrySchema,
     cache?: ReferenceResolveCache,
     access?: ReferenceTargetAccess,
+    origin?: string,
   ): Promise<Record<string, unknown>> {
-    return this.resolveReferencesInData(data, fields, cache, access)
+    return this.resolveReferencesInData(data, fields, cache, access, { entry: origin, prefix: '' })
   }
 
   /**
-   * Resolve one reference id the way a reference field resolves it, for the editor's
-   * live-preview endpoint (api/resolve-references.ts), which has ids but no field to walk. Null
-   * when the id names no entry. No body is embedded, since there is no field to ask for one.
+   * Resolve one reference id the way a reference field resolves it, for callers with ids but no
+   * field to walk: the editor's live-preview endpoint (api/resolve-references.ts) and the AI
+   * export (ai/references.ts). An id
+   * naming no readable entry resolves to a `MissingReference`, as in `read()`. No body is
+   * embedded, since there is no field to ask for one.
    */
   public async resolveReferenceTarget(
     id: string,
     access?: ReferenceTargetAccess,
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown>> {
     return this.resolveSingleReference(id, await this.idIndex(), false, undefined, access)
   }
 
+  /**
+   * `trail` names where `data` sits, for the dangling-reference warning: the referring entry and
+   * the field path so far, in `traverseFields`' format (`blocks[2].author`, `reviewers[1]`).
+   */
   private async resolveReferencesInData(
     data: Record<string, unknown>,
     fields: EntrySchema,
-    cache?: ReferenceResolveCache,
-    access?: ReferenceTargetAccess,
+    cache: ReferenceResolveCache | undefined,
+    access: ReferenceTargetAccess | undefined,
+    trail: { entry?: string; prefix: string },
   ): Promise<Record<string, unknown>> {
     const resolved = { ...data }
     const idIndex = await this.idIndex()
+    const at = (name: string) => (trail.prefix ? `${trail.prefix}.${name}` : name)
+    const resolveAt = async (id: string, includeBody: boolean, fieldPath: string) => {
+      const value = await this.resolveSingleReference(id, idIndex, includeBody, cache, access)
+      if (isMissingReference(value)) {
+        warnDanglingReference({ root: this.root, entry: trail.entry, path: fieldPath, id })
+      }
+      return value
+    }
 
     for (const field of fields) {
       // Inline groups are transparent — recurse into their children at the same data level
@@ -1786,12 +1952,14 @@ export class ContentStore {
           (field as InlineGroupFieldConfig).fields,
           cache,
           access,
+          trail,
         )
         Object.assign(resolved, groupResolved)
         continue
       }
 
       const value = data[field.name]
+      const fieldPath = at(field.name)
 
       if (field.type === 'reference') {
         // Whether this reference EMBEDS its target (wants the target's body) or merely LINKS
@@ -1799,18 +1967,12 @@ export class ContentStore {
         // which routinely contains both kinds at once. See ReferenceFieldConfig.includeBody.
         const includeBody = (field as ReferenceFieldConfig).includeBody === true
         if (typeof value === 'string' && value) {
-          resolved[field.name] = await this.resolveSingleReference(
-            value,
-            idIndex,
-            includeBody,
-            cache,
-            access,
-          )
+          resolved[field.name] = await resolveAt(value, includeBody, fieldPath)
         } else if (field.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
-            value.map((id) =>
-              typeof id === 'string'
-                ? this.resolveSingleReference(id, idIndex, includeBody, cache, access)
+            value.map((id, index) =>
+              typeof id === 'string' && id
+                ? resolveAt(id, includeBody, `${fieldPath}[${index}]`)
                 : null,
             ),
           )
@@ -1820,41 +1982,42 @@ export class ContentStore {
         if (!objectField.fields) continue
         if (objectField.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
-            value.map((item) =>
-              typeof item === 'object' && item !== null
-                ? this.resolveReferencesInData(
-                    item as Record<string, unknown>,
-                    objectField.fields,
-                    cache,
-                    access,
-                  )
+            value.map((item, index) =>
+              isPlainRecord(item)
+                ? this.resolveReferencesInData(item, objectField.fields, cache, access, {
+                    entry: trail.entry,
+                    prefix: `${fieldPath}[${index}]`,
+                  })
                 : item,
             ),
           )
-        } else if (typeof value === 'object') {
+        } else if (isPlainRecord(value)) {
           resolved[field.name] = await this.resolveReferencesInData(
-            value as Record<string, unknown>,
+            value,
             objectField.fields,
             cache,
             access,
+            { entry: trail.entry, prefix: fieldPath },
           )
         }
       } else if (field.type === 'block' && Array.isArray(value)) {
         const blockField = field as BlockFieldConfig
         resolved[field.name] = await Promise.all(
-          (value as unknown[]).map(async (block) => {
-            const b = block as Record<string, unknown>
-            if (!b || typeof b.value !== 'object') return block
-            const template = blockField.templates.find((t) => t.name === b.template)
+          (value as unknown[]).map(async (block, index) => {
+            // An item or value that is not a record (null, an array, a scalar) passes through
+            // untouched: it has no named fields, and reshaping it here would be saved to the file.
+            if (!isPlainRecord(block) || !isPlainRecord(block.value)) return block
+            const template = blockField.templates.find((t) => t.name === block.template)
             if (!template) return block
 
             return {
-              ...b,
+              ...block,
               value: await this.resolveReferencesInData(
-                b.value as Record<string, unknown>,
+                block.value,
                 template.fields,
                 cache,
                 access,
+                { entry: trail.entry, prefix: `${fieldPath}[${index}]` },
               ),
             }
           }),
@@ -1879,7 +2042,7 @@ export class ContentStore {
    * `data` from a process-global content-keyed cache, so `resolveSingleReferenceOnce`'s
    * top-level spread severs exactly one level and NESTED frontmatter objects alias across
    * occurrences, calls and requests. Pre-existing `read()` behavior, deliberately out of scope
-   * here; see `.claude/future-tasks/graymatter-cache-shared-frontmatter.md`.
+   * here; see safeinsights/canopycms#708.
    *
    * Measured (2000 occurrences of one target, local disk, the friendliest case for NOT
    * caching): cloning a snippet-sized target is ~63x cheaper than re-reading and parsing it, a
@@ -1895,7 +2058,7 @@ export class ContentStore {
     includeBody: boolean,
     cache?: ReferenceResolveCache,
     access?: ReferenceTargetAccess,
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown>> {
     if (!cache) return this.resolveSingleReferenceUncached(id, idIndex, includeBody, access)
     // The key carries `includeBody`, not just the id: two fields can reference the SAME target
     // with different settings, and sharing one entry between them would make the shape depend
@@ -1912,11 +2075,12 @@ export class ContentStore {
     // The cached promise always has this handler attached, so it is never an unhandled
     // rejection; entry data is plain parsed JSON/YAML/frontmatter and so always cloneable (a
     // `!!binary` Buffer is the sole shape not preserved exactly: it clones to a Uint8Array).
-    return pending.then((resolved) => (resolved === null ? null : structuredClone(resolved)))
+    return pending.then((resolved) => structuredClone(resolved))
   }
 
   /**
-   * Returns null if the reference is invalid or missing. Includes id, slug and collection.
+   * The target's data with its reference metadata, a `RestrictedReference` for a denied target,
+   * or a `MissingReference` when the id names no readable entry.
    *
    * A suspicious result (ID missing from the index, or an index hit whose file is gone)
    * triggers one forced index refresh and a retry — self-healing for mutations by other
@@ -1933,7 +2097,7 @@ export class ContentStore {
     idIndex: ContentIdIndex,
     includeBody: boolean,
     access?: ReferenceTargetAccess,
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown>> {
     const first = await this.resolveSingleReferenceOnce(id, idIndex, includeBody, access)
     if (first !== STALE_LOOKUP) return first
     // Force a rebuild (throttled). Even when this caller loses the throttle, retry against the
@@ -1946,7 +2110,34 @@ export class ContentStore {
       includeBody,
       access,
     )
-    return second === STALE_LOOKUP ? null : second
+    return second === STALE_LOOKUP ? buildMissingReference(id) : second
+  }
+
+  /**
+   * Throw {@link SchemaUnavailableError} when an entry exists at `slug` and is of an
+   * `unavailable` entry type, for a handler to refuse before any other check answers first.
+   */
+  async assertEntryAvailable(collectionPath: LogicalPath, slug: Slug | '' = ''): Promise<void> {
+    const schemaItem = this.assertSchemaItem(collectionPath)
+    const { existed, entryTypeName } = await this.buildPaths(schemaItem, slug)
+    if (existed) this.assertEntryTypeAvailable(schemaItem, entryTypeName)
+  }
+
+  /**
+   * Throw {@link SchemaUnavailableError} when the entry type an entry is read or written as --
+   * `entryTypeName`, else the collection's default -- is `unavailable`. A name the collection
+   * does not declare is never charged to the default type, which it was not written as.
+   */
+  private assertEntryTypeAvailable(schemaItem: FlatSchemaItem, entryTypeName?: string): void {
+    const entryType =
+      schemaItem.type === 'entry-type'
+        ? schemaItem
+        : entryTypeName
+          ? schemaItem.entries?.find((e) => e.name === entryTypeName)
+          : getDefaultEntryType(schemaItem.entries)
+    if (entryType?.unavailable) {
+      throw new SchemaUnavailableError(entryType.name, entryType.unavailable)
+    }
   }
 
   /**
@@ -1969,18 +2160,19 @@ export class ContentStore {
     idIndex: ContentIdIndex,
     includeBody: boolean,
     access?: ReferenceTargetAccess,
-  ): Promise<Record<string, unknown> | null | typeof STALE_LOOKUP> {
+  ): Promise<Record<string, unknown> | typeof STALE_LOOKUP> {
     try {
       const location = idIndex.findById(id)
 
       if (!location) return STALE_LOOKUP
       if (location.type !== 'entry' || !location.collection || !location.slug) {
-        return null
+        return buildMissingReference(id)
       }
 
       // Read the referenced entry WITHOUT resolving its references (prevent infinite loops)
       const doc = await this.read(location.collection, location.slug, {
         resolveReferences: false,
+        allowUnavailableEntryType: true,
       })
       // `urlPath` is what makes a resolved reference linkable without a second listing pass to
       // build a contentId -> url table. Deliberately `computeEntryUrl` (utils/entry-url.ts), the
@@ -2023,8 +2215,9 @@ export class ContentStore {
       // Index hit but the file is gone — the typical symptom of an external
       // rename/delete this store hasn't observed yet.
       if (isNodeError(error) && error.code === 'ENOENT') return STALE_LOOKUP
-      console.error(`Failed to resolve reference ${id}:`, error)
-      return null
+      // Still the id, so a save of the referring entry keeps it.
+      canopyLogError(`Failed to resolve reference ${id}:`, error)
+      return buildMissingReference(id)
     }
   }
 }

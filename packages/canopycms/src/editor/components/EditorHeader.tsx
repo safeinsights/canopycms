@@ -1,599 +1,388 @@
-import { forwardRef } from 'react'
-import {
-  Alert,
-  Badge,
-  Box,
-  Button,
-  Group,
-  Menu,
-  Paper,
-  Stack,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core'
-import { IconFolderOpen, IconChevronDown, IconGitBranch, IconLock } from '@tabler/icons-react'
+import React, { type Ref } from 'react'
+import { Button, Tooltip } from '@mantine/core'
 import type { OperatingMode } from '../../operating-mode'
 import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
+import type { BreadcrumbSegment } from '../editor-utils'
+import type { SaveAllProgress } from '../hooks/save-all'
 import { clientOperatingStrategy } from '../../operating-mode/client'
-import { isAdmin, isReviewer } from '../../authorization/helpers'
+import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
+import { branchStatusPresentation } from '../branch-status'
+import { EDITOR_ACTIONS } from '../copy'
+import { SYSTEM_USER_ID } from '../../system-users'
+import { TopBar } from '../shell/TopBar'
+import { branchLockState } from './BranchLockBanner'
+import { BranchPill } from './BranchPill'
+import { EntryBreadcrumb } from './EntryBreadcrumb'
+import { SaveSplitButton } from './SaveSplitButton'
 
 export interface EditorHeaderProps {
-  /**
-   * Site title displayed in the top-left.
-   */
-  siteTitle: string
-
-  /**
-   * Optional site subtitle displayed below the title.
-   */
-  siteSubtitle?: string
-
-  /**
-   * Main header title displayed in the center.
-   */
-  headerTitle: string
-
-  /**
-   * Currently selected entry.
-   */
   currentEntry: EditorEntry | undefined
-
-  /**
-   * Current branch name.
-   */
   branchName: string
-
-  /**
-   * Operating mode.
-   */
   operatingMode: OperatingMode
-
-  /**
-   * Whether operations are currently in progress.
-   */
+  /** Whether operations are currently in progress. */
   busy: boolean
-
-  /**
-   * Breadcrumb segments to display.
-   */
-  breadcrumbSegments: string[]
-
-  /**
-   * List of edited files.
-   */
+  /** The crumbs before the open entry's own. */
+  breadcrumbSegments: BreadcrumbSegment[]
+  /** The listed entries with unsaved changes on the branch. */
   editedFiles: Array<{ path: LogicalPath; label: string }>
-
-  /**
-   * Number of modified files.
-   */
+  /** Entries with unsaved changes on the branch. */
   modifiedCount: number
-
-  /**
-   * Number of unresolved comments.
-   */
-  unresolvedCommentCount: number
-
-  /**
-   * Unresolved comments (for filtering).
-   */
-  comments: Array<{ resolved: boolean }>
-
-  /**
-   * Callback to open the entry navigator.
-   */
+  /** Opens the content panel. */
   onNavigatorOpen: () => void
-
-  /**
-   * Callback to reload the current file.
-   */
+  /** Opens the content panel on a collection. */
+  onCollectionOpen: (collectionPath: string) => void
+  /** The entry menu's trigger. */
+  navigatorToggleRef?: Ref<HTMLButtonElement>
+  /** The branch pill. */
+  branchToggleRef?: Ref<HTMLButtonElement>
+  /** Replaces the open entry with the server's copy. */
   onFileReload: () => void
-
-  /**
-   * Callback to discard the current file draft.
-   */
   onFileDiscardDraft: () => void
-
-  /**
-   * Callback when an entry is selected.
-   */
-  onEntrySelect: (id: string) => void
-
-  /**
-   * Callback to reload all branch data.
-   */
+  /** Opens the open entry's rename dialog. */
+  onEntryRename: () => void
+  /** Asks to delete the open entry. */
+  onEntryDelete: () => void
+  /** The "All content" crumb. */
+  allContentRef?: Ref<HTMLButtonElement>
+  onEntrySelect: (path: LogicalPath) => void
+  /** Re-reads the branch and its entry list, keeping drafts. */
   onBranchReloadData: () => void
-
-  /**
-   * Callback to discard all drafts.
-   */
   onBranchDiscardDrafts: () => void
-
-  /**
-   * Callback to open the branch manager.
-   */
   onBranchManagerOpen: () => void
-
-  /**
-   * Callback to open the comments panel.
-   */
-  onCommentsPanelOpen: () => void
-
-  /**
-   * Callback to save the current file.
-   */
   onSave: () => void
-
-  /**
-   * Callback to submit/publish the branch.
-   */
+  onSaveAll: () => void
+  saveAllProgress: SaveAllProgress | null
+  /** A Save of the open entry is in flight. */
+  saving?: boolean
+  /** Rises each time a single Save lands, whichever entry it saved. */
+  savedSignal?: number
+  /** The last Save that landed saved the open entry. */
+  savedHere?: boolean
+  /** The branch's entry list failed to load and none is held. */
+  entryListFailed?: boolean
   onSubmit: () => void
-
-  /**
-   * Whether the current entry has unsaved changes.
-   */
-  hasUnsavedChanges: boolean
-
-  /**
-   * Current branch status (undefined if unknown).
-   */
-  branchStatus: BranchStatus | undefined
-
-  /**
-   * Callback to withdraw the branch.
-   */
   onWithdraw: () => void
-
-  /**
-   * Current user context for permission checks.
-   */
+  /** The open entry has unsaved changes it could save. */
+  hasUnsavedChanges: boolean
+  /** The open entry has a draft, savable or not (a read-only branch's still discards). */
+  entryHasDraft?: boolean
+  /** Writing drafts to localStorage failed, so they live only in this tab. */
+  draftStorageFailed?: boolean
+  /** The open entry can't be edited by this user (a path rule). */
+  entryReadOnly?: boolean
+  /** The open entry's type has no schema in the running code. */
+  entryUnavailable?: boolean
+  /** Current branch status (undefined if unknown). */
+  branchStatus: BranchStatus | undefined
+  /** Current user context for permission checks. */
   userContext?: { userId: string; groups?: string[] }
-
-  /**
-   * Branch creator user ID.
-   */
   branchCreatedBy?: string
-
-  /**
-   * Branch access control lists.
-   */
-  branchAccess?: { allowedUsers?: string[]; allowedGroups?: string[] }
-
+  branchAccess?: {
+    allowedUsers?: string[]
+    allowedGroups?: string[]
+    managerOrAdminAllowed?: boolean
+  }
   /**
    * Whether the current branch is the protected base branch (see
    * authorization/protected-branch.ts). Hides the Submit button (Withdraw
    * stays, as the recovery path). Default false.
    */
   branchIsProtected?: boolean
-
-  /**
-   * Whether the current branch is read-only (protected base branch in prod).
-   * Disables Save and shows the "create a branch" banner below. Default false.
-   */
+  /** Whether the current branch is read-only (protected base branch in prod); disables Save. */
   branchReadOnly?: boolean
-
-  /**
-   * Server-computed: content writes are rejected on this branch, for either
-   * reason (base-branch read-only, or a status past 'editing'). Combined with
-   * `branchReadOnly` to pick which of the two banners to show. Default false.
-   */
+  /** Server-computed: content writes are rejected on this branch; see `branchLockState`. */
   branchWriteBlocked?: boolean
+  /**
+   * No branch details yet (loading, or the list failed and the banner says so): the fail-closed
+   * lock defaults are guesses, so neither the chip nor the status names them.
+   */
+  branchLoading?: boolean
 }
 
 /**
- * Status color map matching BranchManager.tsx pattern.
- * Returns the Mantine color string for a given branch status.
+ * The top bar's contents: the breadcrumb with the entry menu and "Read-only" chip, then the branch
+ * pill, Submit or Withdraw, and Save with Save all.
  */
-const getStatusColor = (status: BranchStatus): string => {
-  const statusColorMap: Record<BranchStatus, string> = {
-    editing: 'brand',
-    submitted: 'green',
-    approved: 'teal',
-    archived: 'gray',
-  }
-  return statusColorMap[status] ?? 'gray'
-}
-
-/**
- * Header component for the Editor.
- * Contains site info, file navigation, breadcrumbs, branch selector, comments button, and action buttons.
- */
-export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(function EditorHeader(
-  {
-    siteTitle,
-    siteSubtitle,
-    headerTitle,
-    currentEntry,
-    branchName,
-    operatingMode,
-    busy,
-    breadcrumbSegments,
-    editedFiles,
-    modifiedCount,
-    unresolvedCommentCount: _,
-    comments,
-    onNavigatorOpen,
-    onFileReload,
-    onFileDiscardDraft,
-    onEntrySelect,
-    onBranchReloadData,
-    onBranchDiscardDrafts,
-    onBranchManagerOpen,
-    onCommentsPanelOpen,
-    onSave,
-    onSubmit,
-    hasUnsavedChanges,
+export function EditorHeader({
+  currentEntry,
+  branchName,
+  operatingMode,
+  busy,
+  breadcrumbSegments,
+  editedFiles,
+  modifiedCount,
+  onNavigatorOpen,
+  onCollectionOpen,
+  navigatorToggleRef,
+  branchToggleRef,
+  onFileReload,
+  onFileDiscardDraft,
+  onEntryRename,
+  onEntryDelete,
+  allContentRef,
+  onEntrySelect,
+  onBranchReloadData,
+  onBranchDiscardDrafts,
+  onBranchManagerOpen,
+  onSave,
+  onSaveAll,
+  saveAllProgress,
+  saving = false,
+  savedSignal,
+  savedHere = false,
+  entryListFailed = false,
+  onSubmit,
+  onWithdraw,
+  hasUnsavedChanges,
+  entryHasDraft = hasUnsavedChanges,
+  draftStorageFailed = false,
+  entryReadOnly = false,
+  entryUnavailable = false,
+  branchStatus,
+  userContext,
+  branchCreatedBy,
+  branchAccess,
+  branchIsProtected = false,
+  branchReadOnly = false,
+  branchWriteBlocked = false,
+  branchLoading = false,
+}: EditorHeaderProps) {
+  const { statusLocked, branchDataUnavailable } = branchLockState({
     branchStatus,
-    onWithdraw,
-    userContext,
-    branchCreatedBy,
-    branchAccess,
-    branchIsProtected = false,
-    branchReadOnly = false,
-    branchWriteBlocked = false,
-  }: EditorHeaderProps,
-  ref,
-) {
-  // `branchWriteBlocked` is the server's own answer (getBranchProtection), so
-  // Save is never enabled for a write the API would reject; a client-side
-  // derivation could drift from it. `branchReadOnly` only picks which banner
-  // to show -- base-branch read-only takes precedence over a workflow status
-  // lock.
-  const statusLocked = branchWriteBlocked && !branchReadOnly
+    branchReadOnly,
+    branchWriteBlocked,
+  })
 
-  // Covers two cases where `branchStatus` can't be trusted to describe the lock
-  // honestly: branch data still loading (`branchStatus` is undefined, so the
-  // banner would otherwise interpolate "Branch is undefined...") and version
-  // skew (an old server omits `branchWriteBlocked` while still reporting
-  // status: 'editing', which would otherwise assert a lock the status
-  // contradicts). In both cases the banner says data is unavailable instead.
-  const branchDataUnavailable =
-    statusLocked && (branchStatus === undefined || branchStatus === 'editing')
+  // Why the branch takes no writes, with the way forward; shared by Save, Save all and the chip.
+  const branchLockReason = branchReadOnly
+    ? 'The base branch is read-only. Create a branch to make changes.'
+    : branchDataUnavailable
+      ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
+      : statusLocked
+        ? branchStatus === 'submitted'
+          ? 'This branch is in review. Withdraw it to make changes.'
+          : branchStatus === 'approved'
+            ? 'This branch is approved. Withdraw it to make changes.'
+            : `This branch is ${branchStatus}. Its content is read-only.`
+        : undefined
+  const entryLockReason = entryReadOnly
+    ? "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it."
+    : undefined
+  // The Tooltip hides it while the editor is busy.
+  const saveBlockedReason =
+    branchLockReason ??
+    (!branchName
+      ? 'Open a branch first.'
+      : !currentEntry
+        ? 'Open an entry to save it.'
+        : (entryLockReason ?? (!hasUnsavedChanges ? 'No changes to save.' : '')))
+
+  const presentation = branchStatusPresentation(branchStatus, branchIsProtected)
+  const status =
+    !branchLoading &&
+    clientOperatingStrategy(operatingMode ?? 'prod').supportsStatusBadge() &&
+    presentation
+      ? {
+          label: presentation.label,
+          value: branchIsProtected ? 'protected' : String(branchStatus),
+          testId: `header-status-badge-${branchIsProtected ? 'protected' : branchStatus}`,
+        }
+      : undefined
 
   return (
-    <Paper
-      ref={ref}
-      shadow="md"
-      withBorder
-      radius={0}
-      px={0}
-      py={0}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 70,
-      }}
-    >
-      <Box px="md" py="sm">
-        <Group justify="space-between" align="center" wrap="nowrap">
-          <Stack gap={2} style={{ minWidth: 0 }}>
-            <Title order={5} style={{ lineHeight: 1.1 }}>
-              {siteTitle}
-            </Title>
-            {siteSubtitle && (
-              <Text size="xs" c="dimmed">
-                {siteSubtitle}
-              </Text>
-            )}
-          </Stack>
-          <Stack gap={6} style={{ minWidth: 0, flex: 1, alignItems: 'center' }}>
-            <Title order={4} style={{ lineHeight: 1.1 }}>
-              {headerTitle}
-            </Title>
-            <Group
-              gap="sm"
-              wrap="wrap"
-              align="center"
-              style={{ minWidth: 0, justifyContent: 'center' }}
-            >
-              <Menu withinPortal shadow="sm">
-                <Menu.Target>
-                  <Button
-                    data-testid="file-dropdown-button"
-                    variant="outline"
-                    color="gray"
-                    size="xs"
-                    leftSection={<IconFolderOpen size={16} />}
-                    rightSection={<IconChevronDown size={14} />}
-                  >
-                    {currentEntry?.label ?? 'No file selected'}
-                  </Button>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  <Menu.Item onClick={onFileReload} disabled={!branchName || !currentEntry}>
-                    Reload File
-                  </Menu.Item>
-                  <Menu.Item
-                    data-testid="discard-file-draft-menu-item"
-                    onClick={onFileDiscardDraft}
-                    disabled={!currentEntry}
-                  >
-                    Discard File Draft
-                  </Menu.Item>
-                  <Menu.Divider />
-                  <Menu.Item data-testid="all-files-menu-item" onClick={onNavigatorOpen}>
-                    All Files
-                  </Menu.Item>
-                  <Menu.Divider />
-                  <Menu.Label>Recently modified</Menu.Label>
-                  {editedFiles.slice(0, 3).length === 0 ? (
-                    <Menu.Item disabled>&lt;none&gt;</Menu.Item>
-                  ) : (
-                    editedFiles.slice(0, 3).map((file) => (
-                      <Menu.Item
-                        key={file.path}
-                        onClick={() => {
-                          onEntrySelect(file.path)
-                          onNavigatorOpen()
-                        }}
-                      >
-                        {file.label}
-                      </Menu.Item>
-                    ))
-                  )}
-                </Menu.Dropdown>
-              </Menu>
-
-              <Group gap={4} wrap="wrap" align="center" style={{ minWidth: 0 }}>
-                {breadcrumbSegments.map((segment, idx) => (
-                  <Group key={`${segment}-${idx}`} gap={4} align="center" wrap="nowrap">
-                    {idx > 0 && (
-                      <Text size="xs" c="dimmed">
-                        /
-                      </Text>
-                    )}
-                    <Button variant="subtle" size="xs" px="xs" onClick={onNavigatorOpen}>
-                      {segment}
-                    </Button>
-                  </Group>
-                ))}
-              </Group>
-
-              <Menu withinPortal shadow="sm">
-                <Menu.Target>
-                  <Button
-                    variant="outline"
-                    color="gray"
-                    size="xs"
-                    leftSection={<IconGitBranch size={16} />}
-                    rightSection={<IconChevronDown size={14} />}
-                    loading={!branchName && busy}
-                    data-testid="branch-dropdown-button"
-                  >
-                    {branchName || (busy ? 'Loading branches…' : 'No branch selected')}
-                  </Button>
-                </Menu.Target>
-                <Menu.Dropdown data-testid="branch-menu">
-                  <Menu.Item onClick={onBranchReloadData} disabled={!branchName}>
-                    Reload All Files
-                  </Menu.Item>
-                  <Menu.Item onClick={onBranchDiscardDrafts} disabled={!branchName}>
-                    Discard All File Drafts
-                  </Menu.Item>
-                  <Menu.Divider />
-                  <Menu.Item onClick={onBranchManagerOpen} data-testid="manage-branches-menu-item">
-                    Change / Manage Branches
-                  </Menu.Item>
-                  <Menu.Divider />
-                  <Menu.Label>{`${modifiedCount} file${modifiedCount === 1 ? '' : 's'} modified`}</Menu.Label>
-                  {editedFiles.length === 0 ? (
-                    <Menu.Item disabled>No edited files yet</Menu.Item>
-                  ) : (
-                    editedFiles.map((file) => (
-                      <Menu.Item
-                        key={`branch-mod-${file.path}`}
-                        onClick={() => {
-                          onEntrySelect(file.path)
-                          onNavigatorOpen()
-                        }}
-                      >
-                        {file.label}
-                      </Menu.Item>
-                    ))
-                  )}
-                </Menu.Dropdown>
-              </Menu>
-
-              {clientOperatingStrategy(operatingMode ?? 'prod').supportsStatusBadge() &&
-                branchName &&
-                branchStatus && (
-                  <Badge
-                    color={getStatusColor(branchStatus)}
-                    variant="light"
-                    size="sm"
-                    data-testid={`header-status-badge-${branchStatus}`}
-                  >
-                    {branchStatus}
-                  </Badge>
-                )}
-
-              {clientOperatingStrategy(operatingMode ?? 'prod').supportsComments() &&
-                branchName && (
-                  <Button
-                    variant="outline"
-                    color="gray"
-                    size="xs"
-                    onClick={onCommentsPanelOpen}
-                    style={{ position: 'relative' }}
-                    data-testid="comments-button"
-                  >
-                    Comments
-                    {comments.filter((t) => !t.resolved).length > 0 && (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          top: -6,
-                          right: -6,
-                          background: 'var(--mantine-color-grape-6)',
-                          color: 'white',
-                          borderRadius: '50%',
-                          width: 18,
-                          height: 18,
-                          fontSize: 10,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {comments.filter((t) => !t.resolved).length}
-                      </span>
-                    )}
-                  </Button>
-                )}
-            </Group>
-          </Stack>
-          <Group gap="xs" wrap="nowrap">
-            <Tooltip
-              label={
-                branchReadOnly
-                  ? 'The base branch is read-only'
-                  : branchDataUnavailable
-                    ? 'Branch details are still loading — saving is disabled until they arrive'
-                    : statusLocked
-                      ? branchStatus === 'submitted'
-                        ? 'This branch is submitted for review — withdraw it to make changes'
-                        : `This branch is ${branchStatus} — content is read-only`
-                      : !hasUnsavedChanges && currentEntry
-                        ? 'No changes to save'
-                        : ''
-              }
-              disabled={!branchReadOnly && !statusLocked && (hasUnsavedChanges || !currentEntry)}
-            >
-              <Button
-                data-testid="save-button"
-                variant="light"
-                size="sm"
-                onClick={onSave}
-                disabled={
-                  !branchName ||
-                  !currentEntry ||
-                  busy ||
-                  !hasUnsavedChanges ||
-                  branchReadOnly ||
-                  statusLocked
-                }
-              >
-                Save File
-              </Button>
-            </Tooltip>
-            {(() => {
-              const isSubmitted = branchStatus === 'submitted'
-              const isEditing = branchStatus === 'editing'
-              // 'approved' withdraws too -- it is that status's only
-              // non-destructive exit now that the submit status gate refuses a
-              // non-editing branch (api/branch-status.ts, api/branch-withdraw.ts).
-              // This button is a two-state toggle, so every withdrawable status
-              // has to drive the withdraw side of it, not just 'submitted'.
-              const isWithdrawable = isSubmitted || branchStatus === 'approved'
-
-              // The protected base branch can never be submitted for review (both
-              // modes); hide the button entirely rather than showing it disabled.
-              // Withdraw stays available as the recovery path for a base branch
-              // wrongly stuck in 'submitted'.
-              if (branchIsProtected && !isWithdrawable) return null
-
-              // Who may submit/withdraw: creator, ACL access, the system branch, or an
-              // admin/reviewer -- Admins/Reviewers must be able to withdraw a protected
-              // base branch stuck in 'submitted' even without ACL access. Mirrors the
-              // server's canPerformWorkflowAction (BranchManager.tsx), which is the
-              // actual enforcer; this only decides whether to show the control disabled.
-              const userIsCreator = userContext?.userId === branchCreatedBy
-              const isSystemBranch = branchCreatedBy === 'canopycms-system' && !branchIsProtected
-              const userInACL =
-                userContext &&
-                branchAccess &&
-                (branchAccess.allowedUsers?.includes(userContext.userId) ||
-                  userContext.groups?.some((g) => branchAccess.allowedGroups?.includes(g)))
-              const userIsPrivileged =
-                !!userContext &&
-                (isAdmin(userContext.groups ?? []) || isReviewer(userContext.groups ?? []))
-
-              const userHasPermission =
-                userIsCreator || userInACL || isSystemBranch || userIsPrivileged
-              // A status with no available transition (today: 'archived') is a
-              // separate condition from lacking permission, and conflating them
-              // sent people to an admin to fix a non-permissions problem.
-              const statusHasAction = isEditing || isWithdrawable
-              const canPerformAction = userHasPermission && statusHasAction
-
-              return (
-                <Tooltip
-                  label={
-                    // No branch data (`branchStatus === undefined`) must not be
-                    // interpolated raw into this label. Guarded explicitly here rather
-                    // than left to the early return above, which hides this button
-                    // today only as a side effect of `branchIsProtected`'s `?? true`
-                    // default -- not a guarantee this arm stays unreachable.
-                    branchStatus === undefined
-                      ? 'Branch data could not be loaded, so no submit or withdraw action is available'
-                      : !statusHasAction
-                        ? `This branch is ${branchStatus} and has no submit or withdraw action available`
-                        : !userHasPermission
-                          ? 'You do not have permission to submit or withdraw this branch'
-                          : ''
-                  }
-                  disabled={canPerformAction}
-                >
-                  <Button
-                    size="sm"
-                    color={isWithdrawable ? 'orange' : 'brand'}
-                    onClick={isWithdrawable ? onWithdraw : onSubmit}
-                    disabled={!branchName || busy || !canPerformAction}
-                    data-testid={isWithdrawable ? 'withdraw-button' : 'submit-button'}
-                  >
-                    {isWithdrawable ? 'Withdraw Branch...' : 'Submit Branch...'}
-                  </Button>
-                </Tooltip>
-              )
-            })()}
-          </Group>
-        </Group>
-        {branchReadOnly && (
-          <Alert
-            icon={<IconLock size={16} />}
-            color="yellow"
-            variant="light"
-            mt="sm"
-            data-testid="protected-branch-banner"
-          >
-            <Group justify="space-between" align="center" gap="sm" wrap="wrap">
-              <Text size="sm">
-                {`You are viewing the protected base branch "${branchName}". Content is read-only — create a branch to make changes.`}
-              </Text>
-              <Button size="xs" variant="light" color="yellow" onClick={onBranchManagerOpen}>
-                Create a branch
-              </Button>
-            </Group>
-          </Alert>
-        )}
-        {statusLocked && (
-          <Alert
-            icon={<IconLock size={16} />}
-            color="yellow"
-            variant="light"
-            mt="sm"
-            data-testid="status-locked-banner"
-          >
-            <Group justify="space-between" align="center" gap="sm" wrap="wrap">
-              <Text size="sm">
-                {branchDataUnavailable
-                  ? `Branch details for "${branchName}" could not be loaded, so content is locked until they arrive. Use Manage Branches to retry.`
-                  : branchStatus === 'submitted'
-                    ? `Branch "${branchName}" is submitted for review and locked for edits. Use Withdraw Branch above to resume editing.`
-                    : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
-              </Text>
-              <Button size="xs" variant="light" color="yellow" onClick={onBranchManagerOpen}>
-                Manage Branches
-              </Button>
-            </Group>
-          </Alert>
-        )}
-      </Box>
-    </Paper>
+    <TopBar
+      leading={
+        <EntryBreadcrumb
+          segments={breadcrumbSegments}
+          entryLabel={currentEntry ? (currentEntry.label ?? currentEntry.slug) : undefined}
+          entryDirty={hasUnsavedChanges}
+          readOnlyReason={
+            branchLoading
+              ? undefined
+              : currentEntry || branchName
+                ? (branchLockReason ?? entryLockReason)
+                : undefined
+          }
+          onAllContent={onNavigatorOpen}
+          onCollection={onCollectionOpen}
+          onRefresh={onFileReload}
+          onDiscard={onFileDiscardDraft}
+          // A path rule's refusal hides them, as the content tree hides that entry's "…" menu.
+          onRename={entryReadOnly ? undefined : onEntryRename}
+          onDelete={entryReadOnly ? undefined : onEntryDelete}
+          refreshBlockedReason={branchName ? undefined : 'Open a branch first.'}
+          discardBlockedReason={entryHasDraft ? undefined : 'This entry has no unsaved changes.'}
+          changeBlockedReason={
+            branchLockReason ??
+            (entryUnavailable
+              ? "This entry's content type isn't known to this editor version yet. Reload in a few minutes."
+              : undefined)
+          }
+          entryMenuRef={navigatorToggleRef}
+          allContentRef={allContentRef}
+        />
+      }
+      trailing={
+        <>
+          <BranchPill
+            branchName={branchName}
+            loading={busy}
+            status={status}
+            unsavedCount={modifiedCount}
+            unsavedEntries={editedFiles}
+            onSwitchBranch={onBranchManagerOpen}
+            onRefreshBranch={onBranchReloadData}
+            onDiscardAll={onBranchDiscardDrafts}
+            onEntrySelect={onEntrySelect}
+            pillRef={branchToggleRef}
+          />
+          <WorkflowButton
+            branchName={branchName}
+            busy={busy}
+            branchStatus={branchStatus}
+            userContext={userContext}
+            branchCreatedBy={branchCreatedBy}
+            branchAccess={branchAccess}
+            branchIsProtected={branchIsProtected}
+            onSubmit={onSubmit}
+            onWithdraw={onWithdraw}
+            savingAll={!!saveAllProgress}
+          />
+          <SaveSplitButton
+            onSave={onSave}
+            saveBlockedReason={saveBlockedReason}
+            busy={busy}
+            onSaveAll={onSaveAll}
+            unsavedCount={modifiedCount}
+            saveAllBlockedReason={
+              branchLockReason ??
+              (!branchName
+                ? 'Open a branch first.'
+                : entryListFailed && modifiedCount > 0
+                  ? 'The list of entries couldn\'t be loaded, so these changes can\'t be saved yet. Choose "Refresh branch" in the branch menu to try again.'
+                  : undefined)
+            }
+            saveAllProgress={saveAllProgress}
+            saving={saving}
+            savedSignal={savedSignal}
+            savedHere={savedHere}
+            entryDirty={hasUnsavedChanges}
+            draftStorageFailed={draftStorageFailed}
+          />
+        </>
+      }
+    />
   )
-})
+}
+
+type WorkflowButtonProps = Pick<
+  EditorHeaderProps,
+  | 'branchName'
+  | 'busy'
+  | 'branchStatus'
+  | 'userContext'
+  | 'branchCreatedBy'
+  | 'branchAccess'
+  | 'onSubmit'
+  | 'onWithdraw'
+> & { branchIsProtected: boolean; savingAll: boolean }
+
+/** Submit for review, or Withdraw from review once submitted or approved. */
+function WorkflowButton({
+  branchName,
+  busy,
+  branchStatus,
+  userContext,
+  branchCreatedBy,
+  branchAccess,
+  branchIsProtected,
+  onSubmit,
+  onWithdraw,
+  savingAll,
+}: WorkflowButtonProps) {
+  const isSubmitted = branchStatus === 'submitted'
+  const isEditing = branchStatus === 'editing'
+  // 'approved' withdraws too -- it is that status's only
+  // non-destructive exit now that the submit status gate refuses a
+  // non-editing branch (api/branch-status.ts, api/branch-withdraw.ts).
+  // This button is a two-state toggle, so every withdrawable status
+  // has to drive the withdraw side of it, not just 'submitted'.
+  const isWithdrawable = isSubmitted || branchStatus === 'approved'
+
+  // The protected base branch can never be submitted for review (both
+  // modes); hide the button entirely rather than showing it disabled.
+  // Withdraw stays available as the recovery path for a base branch
+  // wrongly stuck in 'submitted'.
+  if (branchIsProtected && !isWithdrawable) return null
+
+  // Who may submit/withdraw: creator, ACL access, the system branch, or an
+  // admin/reviewer (alone on a locked-down branch, and even without ACL access
+  // on a protected base branch stuck in 'submitted'). Mirrors the server's
+  // canPerformWorkflowAction (BranchManager.tsx), which is the actual
+  // enforcer; this only decides whether to show the control disabled.
+  const userIsCreator = userContext?.userId === branchCreatedBy
+  const isSystemBranch = branchCreatedBy === SYSTEM_USER_ID && !branchIsProtected
+  const userInACL =
+    userContext &&
+    branchAccess &&
+    (branchAccess.allowedUsers?.includes(userContext.userId) ||
+      userContext.groups?.some((g) => branchAccess.allowedGroups?.includes(g)))
+  const userIsPrivileged =
+    !!userContext && (isAdmin(userContext.groups ?? []) || isReviewer(userContext.groups ?? []))
+
+  const userHasPermission =
+    !isLockedOutOfBranch(branchAccess, userContext?.groups) &&
+    (userIsCreator || userInACL || isSystemBranch || userIsPrivileged)
+  // A status with no available transition (today: 'archived') is a
+  // separate condition from lacking permission, and conflating them
+  // sent people to an admin to fix a non-permissions problem.
+  const statusHasAction = isEditing || isWithdrawable
+  const canPerformAction = userHasPermission && statusHasAction
+  // Blocked, it stays focusable (`aria-disabled`), so its reason opens on focus.
+  // `busy` alone can't hold it: an entry load clears that shared flag mid-run.
+  const actionBlocked = !branchName || busy || savingAll || !canPerformAction
+  const waitReason = savingAll ? 'Wait for Save all to finish.' : undefined
+
+  return (
+    <Tooltip
+      label={
+        // No branch data (`branchStatus === undefined`) must not be
+        // interpolated raw into this label. Guarded explicitly here rather
+        // than left to the early return above, which hides this button
+        // today only as a side effect of `branchIsProtected`'s `?? true`
+        // default -- not a guarantee this arm stays unreachable.
+        waitReason ??
+        (branchStatus === undefined
+          ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
+          : !statusHasAction
+            ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
+            : !userHasPermission
+              ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
+              : '')
+      }
+      disabled={canPerformAction && !waitReason}
+      multiline
+      maw={320}
+    >
+      <Button
+        size="sm"
+        // Save is the top bar's one filled primary; the rest take their colour's light variant.
+        variant="light"
+        color={isWithdrawable ? 'orange' : undefined}
+        style={{ flexShrink: 0 }}
+        onClick={() => {
+          if (actionBlocked) return
+          if (isWithdrawable) onWithdraw()
+          else onSubmit()
+        }}
+        data-disabled={actionBlocked ? true : undefined}
+        aria-disabled={actionBlocked ? true : undefined}
+        data-testid={isWithdrawable ? 'withdraw-button' : 'submit-button'}
+      >
+        {isWithdrawable ? EDITOR_ACTIONS.withdrawFromReview : EDITOR_ACTIONS.submitForReview}
+      </Button>
+    </Tooltip>
+  )
+}

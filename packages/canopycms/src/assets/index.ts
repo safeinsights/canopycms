@@ -56,6 +56,7 @@ export {
   type ParsedTransformPath,
   type ParseTransformPathResult,
   type TransformDirectives,
+  type TransformWidthPolicy,
 } from './transform-directives'
 
 export { applyTransform, type ApplyTransformInput, type TransformResult } from './transform'

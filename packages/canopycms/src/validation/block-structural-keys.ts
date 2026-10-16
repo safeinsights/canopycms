@@ -16,7 +16,7 @@
  * Two other readers still spell the keys out themselves — they read the value
  * positionally and disagree on precedence (`resolveBlockItem` prefers `template`,
  * `ai/json-to-markdown.ts` prefers `_type`) — see
- * `.claude/future-tasks/block-discriminator-precedence-disagreement.md`.
+ * safeinsights/canopycms#584.
  *
  * Dependency-free on purpose: both importers reach contexts that must not pull in
  * schema types or node built-ins.

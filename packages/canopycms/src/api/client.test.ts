@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { CanopyApiClient, createApiClient, isNonApiResponse } from './client'
 import { computeContentSha256Hex } from './request-body-hash'
+import {
+  ApiTimeoutError,
+  REQUEST_TIMED_OUT_MESSAGE,
+  REQUEST_TIMEOUT_MS,
+  WRITE_TIMED_OUT_MESSAGE,
+} from './request-deadline'
 
 describe('CanopyApiClient', () => {
   describe('Response handling', () => {
@@ -63,6 +69,26 @@ describe('CanopyApiClient', () => {
         })
         await client.branches.list()
       }
+      expect(onUnauthorized).not.toHaveBeenCalled()
+    })
+
+    it('is called on a 419 whose handler body says 401, as unauthenticatedStatus sends', async () => {
+      const onUnauthorized = vi.fn()
+      const body = { ok: false, status: 401, error: 'Unauthorized' }
+      const client = new CanopyApiClient({ fetch: respond(419, async () => body), onUnauthorized })
+
+      expect(await client.branches.list()).toEqual(body)
+      expect(onUnauthorized).toHaveBeenCalledTimes(1)
+    })
+
+    it('is not called on a 403 whose body is not an ApiResponse, even one naming 401', async () => {
+      const onUnauthorized = vi.fn()
+      const client = new CanopyApiClient({
+        fetch: respond(403, async () => ({ status: 401, error: 'from a proxy' })),
+        onUnauthorized,
+      })
+
+      expect(await client.branches.list()).toMatchObject({ ok: false, status: 403 })
       expect(onUnauthorized).not.toHaveBeenCalled()
     })
 
@@ -361,6 +387,211 @@ describe('CanopyApiClient', () => {
         await pending
         expect(mockFetch, `HTTP ${status}`).toHaveBeenCalledTimes(1)
       }
+    })
+  })
+
+  describe('Deadlines', () => {
+    /** A fetch that never answers on its own, recording the signal each call was given. */
+    const stalledFetch = () => {
+      const signals: AbortSignal[] = []
+      const fetch = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.signal) signals.push(init.signal)
+        return new Promise<Response>(() => {})
+      })
+      return { fetch, signals }
+    }
+    const answered = () =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({ ok: true, status: 200, data: { branches: [] } }),
+      } as Response)
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+      vi.restoreAllMocks()
+    })
+
+    it('rejects a read that never answers with a typed timeout at the standard deadline, aborting the fetch', async () => {
+      const { fetch, signals } = stalledFetch()
+      const pending = new CanopyApiClient({ fetch }).branches.list()
+      let settled = false
+      const outcome = pending.then(
+        () => (settled = true),
+        (err: unknown) => {
+          settled = true
+          return err
+        },
+      )
+
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard - 1)
+      expect(settled).toBe(false)
+      expect(signals[0]?.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+
+      const err = await outcome
+      expect(err).toBeInstanceOf(ApiTimeoutError)
+      expect(err).toMatchObject({
+        name: 'ApiTimeoutError',
+        method: 'GET',
+        path: '/branches',
+        timeoutMs: REQUEST_TIMEOUT_MS.standard,
+        message: REQUEST_TIMED_OUT_MESSAGE,
+      })
+      expect(signals[0]?.aborted).toBe(true)
+    })
+
+    it('says a timed-out write may have gone through, rather than inviting a retry', async () => {
+      const { fetch } = stalledFetch()
+      const pending = new CanopyApiClient({ fetch }).comments.add(
+        { branch: 'main' },
+        { text: 'hi', type: 'entry', entryPath: 'posts/hello' },
+      )
+      const rejection = expect(pending).rejects.toMatchObject({
+        method: 'POST',
+        timeoutMs: REQUEST_TIMEOUT_MS.standard,
+        message: WRITE_TIMED_OUT_MESSAGE,
+      })
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard)
+      await rejection
+    })
+
+    it('says a timed-out read sent as a POST is safe to retry', async () => {
+      const { fetch } = stalledFetch()
+      const pending = new CanopyApiClient({ fetch }).permissions.batchGetUserMetadata({
+        userIds: ['u1'],
+      })
+      const rejection = expect(pending).rejects.toMatchObject({
+        method: 'POST',
+        message: REQUEST_TIMED_OUT_MESSAGE,
+      })
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard)
+      await rejection
+    })
+
+    it('does not cut a long operation off at the standard deadline', async () => {
+      const { fetch } = stalledFetch()
+      const pending = new CanopyApiClient({ fetch }).workflow.submit({ branch: 'feature' })
+      let settled = false
+      pending.catch(() => {}).finally(() => (settled = true))
+
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard + 1)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.long - REQUEST_TIMEOUT_MS.standard - 1)
+      await expect(pending).rejects.toMatchObject({ timeoutMs: REQUEST_TIMEOUT_MS.long })
+    })
+
+    it('takes a per-call timeout, and with null waits as long as the request does', async () => {
+      let answer: (response: Response) => void = () => {}
+      const fetch = vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = resolve
+          }),
+      )
+      const client = new CanopyApiClient({ fetch })
+
+      const short = client.branches.list({ timeoutMs: 5 })
+      const shortRejection = expect(short).rejects.toMatchObject({ timeoutMs: 5 })
+      await vi.advanceTimersByTimeAsync(5)
+      await shortRejection
+
+      const unbounded = client.branches.list({ timeoutMs: null })
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.long * 10)
+      answer(await answered())
+      await expect(unbounded).resolves.toMatchObject({ ok: true })
+    })
+
+    it("rejects with the caller's own reason when the caller aborts, not a timeout", async () => {
+      const { fetch, signals } = stalledFetch()
+      const caller = new AbortController()
+      const pending = new CanopyApiClient({ fetch }).branches.list({ signal: caller.signal })
+      const reason = new Error('navigated away')
+      const rejection = expect(pending).rejects.toBe(reason)
+
+      await vi.advanceTimersByTimeAsync(10)
+      caller.abort(reason)
+      await rejection
+      expect(signals[0]?.aborted).toBe(true)
+      // Its deadline timer went with it.
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('does not send at all for a signal that is already aborted', async () => {
+      const { fetch } = stalledFetch()
+      const caller = new AbortController()
+      caller.abort(new Error('gone'))
+      await expect(
+        new CanopyApiClient({ fetch }).branches.list({ signal: caller.signal }),
+      ).rejects.toThrow('gone')
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('settles at the deadline even when a custom fetch ignores its signal', async () => {
+      // stalledFetch never looks at the signal; the deadline must still settle the call.
+      const { fetch } = stalledFetch()
+      const pending = new CanopyApiClient({ fetch }).entries.list({ branch: 'main' })
+      const rejection = expect(pending).rejects.toBeInstanceOf(ApiTimeoutError)
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard)
+      await rejection
+    })
+
+    it('counts throttle resends inside the one deadline, and sends nothing after it', async () => {
+      const throttled = {
+        ok: false,
+        status: 429,
+        headers: new Headers({ 'retry-after': '5' }),
+        json: async () => ({ Message: 'Rate Exceeded.' }),
+      } as unknown as Response
+      const fetch = vi.fn(() => Promise.resolve(throttled))
+      const pending = new CanopyApiClient({ fetch }).branches.list({ timeoutMs: 6_000 })
+      const rejection = expect(pending).rejects.toBeInstanceOf(ApiTimeoutError)
+
+      // The first resend waits Retry-After's 5 s; the second would wait 5 s more, past the deadline.
+      await vi.advanceTimersByTimeAsync(6_000)
+      await rejection
+      expect(fetch).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(fetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('sends nothing when the deadline passes while the body is still being hashed', async () => {
+      let hashed: (digest: ArrayBuffer) => void = () => {}
+      vi.spyOn(globalThis.crypto.subtle, 'digest').mockReturnValue(
+        new Promise<ArrayBuffer>((resolve) => {
+          hashed = resolve
+        }),
+      )
+      const { fetch } = stalledFetch()
+      const pending = new CanopyApiClient({ fetch }).comments.add(
+        { branch: 'main' },
+        { text: 'hi', type: 'entry', entryPath: 'posts/hello' },
+      )
+      const rejection = expect(pending).rejects.toBeInstanceOf(ApiTimeoutError)
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS.standard)
+      await rejection
+
+      hashed(new ArrayBuffer(32))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('clears its deadline once the response arrives', async () => {
+      const fetch = vi.fn(answered)
+      await new CanopyApiClient({ fetch }).branches.list()
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('reports a network failure as itself, not as a timeout', async () => {
+      const fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+      const err = await new CanopyApiClient({ fetch }).branches.list().catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(TypeError)
+      expect(err).not.toBeInstanceOf(ApiTimeoutError)
     })
   })
 
@@ -678,6 +909,7 @@ describe('CanopyApiClient', () => {
       expect(mockFetch).toHaveBeenCalledWith('/api/canopycms/branches', {
         method: 'GET',
         headers: {},
+        signal: expect.any(AbortSignal),
       })
     })
 

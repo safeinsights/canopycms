@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — epic PRs #111–#116: shared generation-marker + OCC/lockfile primitives applied to branch-registry, schema-cache, comment-store, branch-metadata, content-store lock keys; concurrency model documented in docs/concurrency.md
+---
 # EFS Cross-Process Concurrency (Epic)
 
 ## Status: RESOLVED (2026-07-21, epic PRs #111–#116 on integration branch `epic/efs-cross-process-concurrency`)

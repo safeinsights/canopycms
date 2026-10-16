@@ -9,6 +9,7 @@ import { getErrorMessage } from './utils/error'
 // is plain console. See utils/logger.ts.
 import { canopyLogWarn } from './utils/logger'
 import { mergePrSection } from './submission-attribution'
+import { baseBranchOf } from './utils/base-branch'
 
 const ThrottledOctokit = Octokit.plugin(throttling)
 
@@ -47,7 +48,7 @@ export const shouldRetrySecondaryRateLimit = (retryAfter: number, retryCount: nu
  *
  * A deployment using an App constructs the strategy and passes it through here
  * — see `packages/canopycms-cdk/worker/github-app-auth.ts` and
- * `docs/adopter-migration.md` for a hand-written entrypoint.
+ * `CHANGELOG.md` for a hand-written entrypoint.
  */
 export interface OctokitAuthStrategyOptions {
   /**
@@ -73,28 +74,68 @@ export type CanopyOctokitAuthOptions = { auth: string } | OctokitAuthStrategyOpt
  * for the safety net this doesn't cover: exhausted plugin retries and
  * errors the plugin never sees, like non-403 network failures).
  */
-export function createCanopyOctokit(options: CanopyOctokitAuthOptions): Octokit {
+export function createCanopyOctokit(
+  options: CanopyOctokitAuthOptions,
+  /**
+   * Where Octokit's own log and the throttle's warnings go: the GitHub gateway passes its own,
+   * which scrubs and escapes. Without one, Octokit logs to the console as it does by default.
+   */
+  logger?: { warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
+  /**
+   * Told of every request's `authorization` header just before it is sent, which is the only
+   * place the FINAL header is visible: a token an auth strategy minted or rotated shows up here
+   * before anything has logged or thrown it. The GitHub gateway registers it for scrubbing.
+   */
+  observe?: { onAuthorization: (authorization: string) => void },
+): Octokit {
+  const warn = logger?.warn ?? canopyLogWarn
   // Pick the two auth fields out EXPLICITLY, never spread: `baseUrl`,
   // `request`, `log` and `userAgent` are all live `OctokitOptions`, and a
   // non-literal argument slips past TypeScript's excess-property check. The
   // contract is "our Octokit, authenticated the way you say", not "configured
-  // however you like".
+  // however you like". The one `request` we set is `observe`'s fetch: an auth
+  // strategy's hook is the innermost `request` wrap, so a hook added after
+  // construction runs before it sets the header. `@octokit/auth-app`'s hook
+  // mints through the `request` it wraps (`request.defaults`), so the JWT of a
+  // mint an Octokit request triggers passes the fetch too; a mint outside one
+  // (`mintInstallationToken`) uses auth-app's own `request`, and does not.
   const auth =
     'authStrategy' in options
       ? { authStrategy: options.authStrategy, auth: options.auth }
       : { auth: options.auth }
   return new ThrottledOctokit({
     ...auth,
+    ...(observe === undefined
+      ? {}
+      : {
+          request: {
+            fetch: (url: string | URL | Request, init?: RequestInit) => {
+              const authorization = authorizationOf(init?.headers)
+              if (authorization !== undefined) observe.onAuthorization(authorization)
+              return globalThis.fetch(url, init)
+            },
+          },
+        }),
+    ...(logger === undefined
+      ? {}
+      : {
+          log: {
+            debug: () => undefined,
+            info: () => undefined,
+            warn: logger.warn,
+            error: logger.error,
+          },
+        }),
     throttle: {
       onRateLimit: (retryAfter, requestOptions, _octokit, retryCount) => {
-        canopyLogWarn(
+        warn(
           `CanopyCMS: GitHub primary rate limit hit for ${requestOptions.method} ${requestOptions.url} ` +
             `(retryAfter=${retryAfter}s, retryCount=${retryCount})`,
         )
         return shouldRetryRateLimit(retryAfter, retryCount)
       },
       onSecondaryRateLimit: (retryAfter, requestOptions, _octokit, retryCount) => {
-        canopyLogWarn(
+        warn(
           `CanopyCMS: GitHub secondary rate limit hit for ${requestOptions.method} ${requestOptions.url} ` +
             `(retryAfter=${retryAfter}s, retryCount=${retryCount})`,
         )
@@ -144,6 +185,8 @@ export interface CreateOrUpdatePullRequestParams {
   mergeSectionIntoBody?: boolean
   /** Forwarded to all GitHub requests (worker task-timeout abort). */
   signal?: AbortSignal
+  /** Where its warnings go (default `canopyLogWarn`): the GitHub gateway passes its own. */
+  warn?: (...args: unknown[]) => void
 }
 
 /**
@@ -161,6 +204,7 @@ export async function createOrUpdatePullRequest(
   params: CreateOrUpdatePullRequestParams,
 ): Promise<{ number: number; url: string; created: boolean }> {
   const { octokit, owner, repo, head, base, title, body, markReadyIfDraft, signal } = params
+  const warn = params.warn ?? canopyLogWarn
   const mergeSection = params.mergeSectionIntoBody === true
   // CONDITIONAL spread: with no signal, the request objects below carry no
   // `request` key at all (github-service.test.ts asserts on their exact shape).
@@ -184,7 +228,7 @@ export async function createOrUpdatePullRequest(
       existing = [...existingPRs.data].sort(
         (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
       )[0]
-      canopyLogWarn(
+      warn(
         `CanopyCMS: Found ${existingPRs.data.length} open PRs for ${head} -> ${base}; updating the most recently updated (#${existing.number})`,
       )
     }
@@ -228,7 +272,7 @@ export async function createOrUpdatePullRequest(
           },
         )
       } catch (err) {
-        canopyLogWarn(
+        warn(
           `CanopyCMS: Failed to convert PR #${existing.number} to ready for review (the PR update itself succeeded; continuing):`,
           getErrorMessage(err),
         )
@@ -249,6 +293,61 @@ export async function createOrUpdatePullRequest(
   })
 
   return { number: pr.data.number, url: pr.data.html_url, created: true }
+}
+
+/**
+ * Whether a `git.deleteRef` failure means the branch is already gone from GitHub, so the delete
+ * has nothing left to do. A missing ref is a 422 "Reference does not exist"; the message check
+ * matters because a 422 also refuses deleting the default branch. A 404 counts too, though it
+ * can also mean the repo is not visible to the credential.
+ */
+export function isRefAlreadyGoneError(err: unknown): boolean {
+  if (!(err instanceof Error) || !('status' in err)) return false
+  const { status } = err as { status: unknown }
+  if (status === 404) return true
+  return status === 422 && /reference does not exist/i.test(err.message)
+}
+
+const NO_COMMITS_BETWEEN = /^No commits between /
+
+/**
+ * Whether a PR create failed because the head branch has no commits its base lacks. GitHub
+ * answers 422 "Validation Failed" with the reason in `response.data.errors[].message`, which
+ * Octokit also folds into `err.message`. Other 422s (a duplicate PR, an unknown base) never match.
+ */
+export function isNoCommitsBetweenError(err: unknown): boolean {
+  if (!(err instanceof Error) || !('status' in err) || err.status !== 422) return false
+  const data = 'response' in err ? (err.response as { data?: unknown } | undefined)?.data : null
+  const errors =
+    typeof data === 'object' && data !== null && 'errors' in data ? data.errors : undefined
+  if (Array.isArray(errors)) {
+    return errors.some(
+      (e: unknown) =>
+        typeof e === 'object' &&
+        e !== null &&
+        'message' in e &&
+        typeof e.message === 'string' &&
+        NO_COMMITS_BETWEEN.test(e.message),
+    )
+  }
+  return /"message":"No commits between /.test(err.message)
+}
+
+/**
+ * The `authorization` header of a request's headers: a plain object (lower-case keys, as Octokit
+ * sends them), a `Headers`, or a list of pairs.
+ * @internal Exported for tests.
+ */
+export function authorizationOf(headers: HeadersInit | undefined): string | undefined {
+  if (headers === undefined) return undefined
+  if (headers instanceof Headers) return headers.get('authorization') ?? undefined
+  if (Array.isArray(headers)) {
+    return headers.find(([name]) => name.toLowerCase() === 'authorization')?.[1]
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() === 'authorization' && typeof value === 'string') return value
+  }
+  return undefined
 }
 
 export class GitHubService {
@@ -466,7 +565,7 @@ export const createGitHubService = (
       token,
       owner,
       repo,
-      baseBranch: config.defaultBaseBranch ?? 'main',
+      baseBranch: baseBranchOf(config),
     })
   } catch (err) {
     canopyLogWarn('CanopyCMS: Failed to parse GitHub remote URL:', err)

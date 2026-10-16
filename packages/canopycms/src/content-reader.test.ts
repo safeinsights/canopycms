@@ -105,6 +105,7 @@ describe('createContentReader', () => {
       user: ANONYMOUS_USER,
     })
     expect(home.path).toBe('/pages/home?branch=main')
+    expect(home.meta).toMatchObject({ slug: 'home', urlPath: '/pages/home' })
     expect(home.data.hero.title).toBe('Hi')
 
     // An index entry's `path` is its COLLECTION's path. Without the collapse this handed back
@@ -117,6 +118,7 @@ describe('createContentReader', () => {
       user: ANONYMOUS_USER,
     })
     expect(index.path).toBe('/pages?branch=main')
+    expect(index.meta).toMatchObject({ slug: 'index', urlPath: '/pages' })
 
     await expect(
       reader.read({
@@ -125,6 +127,77 @@ describe('createContentReader', () => {
         user: ANONYMOUS_USER,
       }),
     ).rejects.toBeInstanceOf(ContentStoreError)
+  })
+
+  it('reads an entry of an unavailable type as not found', async () => {
+    const root = await tmpDir()
+    const peopleDir = path.join(root, 'content/people')
+    await fs.mkdir(peopleDir, { recursive: true })
+    await fs.writeFile(
+      path.join(peopleDir, 'staff.grace.grAcEgrAcE12.json'),
+      '{"name":"Grace"}',
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(peopleDir, 'contributor.ada.aDaaDaaDaa12.json'),
+      '{"name":"Ada"}',
+      'utf8',
+    )
+    const schema = {
+      collections: [
+        {
+          name: 'people',
+          path: 'people',
+          entries: [
+            {
+              name: 'staff',
+              format: 'json' as const,
+              schema: [{ name: 'name', type: 'string' as const }],
+            },
+            {
+              name: 'contributor',
+              format: 'json' as const,
+              schema: [],
+              unavailable: {
+                reason: 'unknown-schema' as const,
+                schemaRef: 'contributorSchema',
+                metaFile: 'people/.collection.json',
+              },
+            },
+          ],
+        },
+      ],
+    }
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      defaultPathAccess: 'allow',
+      schema,
+    })
+    const reader = createContentReader({
+      services: await createTestServices(
+        { ...config, schema },
+        { getSettingsBranchRoot: () => Promise.resolve(root) },
+      ),
+      allowCreateBranch: false,
+      getBranchContext: async (branch) => (branch === 'main' ? buildBranchContext(root) : null),
+    })
+    const people = unsafeAsLogicalPath('content/people')
+
+    const grace = await reader.read<{ name: string }>({
+      entryPath: people,
+      slug: unsafeAsSlug('grace'),
+      branch: 'main',
+      user: ANONYMOUS_USER,
+    })
+    expect(grace.data.name).toBe('Grace')
+    const ada = reader.read({
+      entryPath: people,
+      slug: unsafeAsSlug('ada'),
+      branch: 'main',
+      user: ANONYMOUS_USER,
+    })
+    await expect(ada).rejects.toBeInstanceOf(ContentStoreError)
+    await expect(ada).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
 
   it('readDataOrThrow returns data and throws on missing content', async () => {
@@ -767,6 +840,26 @@ describe('createContentReader', () => {
       })
       expect(result.data.title).toBe('Home')
       expect(result.meta.entryType).toBe('home')
+      // Delegated to the parent collection, the slug defaults to the entry type's name.
+      expect(result.meta).toMatchObject({ slug: 'home', urlPath: '/home' })
+    })
+
+    it("reports an entry-type read's URL in the parent collection", async () => {
+      const root = await tmpDir()
+      await fs.mkdir(path.join(root, 'content/posts'), { recursive: true })
+      await fs.writeFile(
+        path.join(root, 'content/posts/post.hello.abc123def456.md'),
+        '---\ntitle: Hello\n---\nBody',
+        'utf8',
+      )
+      const reader = await readerFor(root, singletonSchema)
+
+      const result = await reader.read({
+        entryPath: unsafeAsLogicalPath('content/posts/post'),
+        slug: unsafeAsSlug('hello'),
+        user: ANONYMOUS_USER,
+      })
+      expect(result.meta).toMatchObject({ slug: 'hello', urlPath: '/posts/hello' })
     })
 
     it('rejects a file whose on-disk type token the collection does not declare', async () => {

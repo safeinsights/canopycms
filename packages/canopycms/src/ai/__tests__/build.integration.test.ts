@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { defineCanopyTestConfig } from '../../config-test'
 import { flattenSchema, type RootCollectionConfig } from '../../config'
 import { ContentStore } from '../../content-store'
+import { mockConsole } from '../../test-utils/console-spy'
 import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { GENERATED_RECORD_FILENAME, generateAIContentFiles } from '../../build/generate-ai-content'
 import type { AIManifest } from '../types'
@@ -27,6 +28,22 @@ const scaffoldSchema: RootCollectionConfig = {
     },
   ],
 }
+
+/** When set, resolveBranchRoot answers this branch workspace instead of resolving one. */
+const workspaceRoot = vi.hoisted(() => ({ value: null as string | null }))
+vi.mock('../resolve-branch', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../resolve-branch')>()
+  return {
+    ...actual,
+    resolveBranchRoot: (...args: Parameters<typeof actual.resolveBranchRoot>) =>
+      workspaceRoot.value
+        ? Promise.resolve(workspaceRoot.value)
+        : actual.resolveBranchRoot(...args),
+  }
+})
+afterEach(() => {
+  workspaceRoot.value = null
+})
 
 const tmpDir = () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-ai-build-'))
 
@@ -120,6 +137,36 @@ describe('generateAIContentFiles', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('fails, rather than writing partial content, when a branch workspace schema has issues', async () => {
+    // A branch workspace, not the checkout: the schema resolves degraded there.
+    workspaceRoot.value = contentRoot
+    await fs.mkdir(path.join(contentRoot, 'content', 'posts'), { recursive: true })
+    await fs.writeFile(
+      path.join(contentRoot, 'content', 'posts', '.collection.json'),
+      JSON.stringify({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'md', schema: 'postSchema' }],
+      }),
+    )
+
+    const output = mockConsole()
+    try {
+      await expect(
+        generateAIContentFiles({
+          config: { ...defineCanopyTestConfig({ schema: testSchema }), mode: 'dev' },
+          entrySchemaRegistry: {},
+          outputDir,
+        }),
+      ).rejects.toThrow(
+        /does not match this code's entry schema registry:\n {2}- Schema reference "postSchema"/,
+      )
+      expect(output.all().warn.join('\n')).toContain('"postSchema"')
+    } finally {
+      output.restore()
+    }
+    expect(await fs.readdir(outputDir)).toEqual([])
   })
 
   it('writes all expected files to disk', async () => {

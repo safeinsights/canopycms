@@ -1,19 +1,29 @@
-import React from 'react'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import React, { memo } from 'react'
+import { hydrateRoot } from 'react-dom/client'
+import { renderToString } from 'react-dom/server'
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, expectTypeOf, it, onTestFinished, vi } from 'vitest'
 
 import {
   CANOPY_PREVIEW_ERROR,
   CANOPY_PREVIEW_FOCUS,
   CANOPY_PREVIEW_HIGHLIGHT,
+  CANOPY_PREVIEW_MARKS,
   CANOPY_PREVIEW_MESSAGE,
   CANOPY_PREVIEW_READY,
   isTrustedEditorMessage,
-  PreviewFrame,
+  MARK_REPORT_LIMITS,
   resolveMessageOrigin,
   useCanopyPreview,
+  usePreviewAssetBaseGate,
+  type PreviewLoadingState,
+  type PreviewMarksMessage,
 } from './preview-bridge'
+import type { TypeFromEntrySchema } from '../entry-schema'
+import { PreviewFrame } from './PreviewFrame'
 import { buildPreviewSrc } from './editor-utils'
+import { assetUrl } from '../assets/asset-url'
+import { getPreviewAssetBase, setServerPreviewAssetBaseGetter } from './preview-asset-base'
 
 /**
  * Simulate running inside an editor iframe: window.parent becomes a real
@@ -372,6 +382,167 @@ describe('useCanopyPreview', () => {
     await waitFor(() => expect(getByTestId('value').dataset.highlight).toBe('true'))
   })
 
+  describe('the mark count', () => {
+    const setUp = () => {
+      const parentWin = simulateFramed()
+      window.history.pushState({}, '', '/posts/marks')
+      render(<PreviewValue initialData={{ value: 'initial' }} />)
+      const counts = () =>
+        vi
+          .mocked(parentWin.postMessage)
+          .mock.calls.filter(([msg]) => (msg as { type?: string }).type === CANOPY_PREVIEW_MARKS)
+      const highlight = (enabled: boolean, origin?: string) =>
+        act(() => {
+          window.dispatchEvent(
+            trustedEvent({ type: CANOPY_PREVIEW_HIGHLIGHT, enabled }, parentWin, origin),
+          )
+        })
+      const addMark = (path: string) =>
+        act(() => {
+          const el = document.createElement('span')
+          el.setAttribute('data-canopy-path', path)
+          document.body.appendChild(el)
+          onTestFinished(() => el.remove())
+        })
+      return { counts, highlight, addMark }
+    }
+
+    it('is reported to the editor origin once trusted highlighting turns on', async () => {
+      const { counts, highlight } = setUp()
+
+      highlight(false)
+      highlight(true, 'https://evil.example')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(counts()).toEqual([])
+
+      highlight(true)
+      await waitFor(() =>
+        expect(counts()).toEqual([
+          [{ type: CANOPY_PREVIEW_MARKS, count: 1, paths: ['value'] }, window.location.origin],
+        ]),
+      )
+    })
+
+    it('is reported again when the marks change while highlighting is on, and not after', async () => {
+      const { counts, highlight, addMark } = setUp()
+      highlight(true)
+      await waitFor(() => expect(counts()).toHaveLength(1))
+
+      addMark('extra')
+      await waitFor(() =>
+        expect(counts().map(([msg]) => msg)).toEqual([
+          { type: CANOPY_PREVIEW_MARKS, count: 1, paths: ['value'] },
+          { type: CANOPY_PREVIEW_MARKS, count: 2, paths: ['value', 'extra'] },
+        ]),
+      )
+
+      highlight(false)
+      addMark('later')
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(counts()).toHaveLength(2)
+    })
+
+    it('is reported within the throttle while the page keeps changing', async () => {
+      const { counts, highlight, addMark } = setUp()
+      highlight(true)
+      await waitFor(() => expect(counts()).toHaveLength(1))
+
+      addMark('extra')
+      const churn = setInterval(() => document.body.append(document.createElement('i')), 20)
+      onTestFinished(() => {
+        clearInterval(churn)
+        document.querySelectorAll('body > i').forEach((el) => el.remove())
+      })
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      expect(counts().map(([msg]) => msg)).toContainEqual({
+        type: CANOPY_PREVIEW_MARKS,
+        count: 2,
+        paths: ['value', 'extra'],
+      })
+    })
+  })
+
+  describe('the mark paths', () => {
+    const setUp = () => {
+      const parentWin = simulateFramed()
+      window.history.pushState({}, '', '/posts/marks')
+      render(<PreviewValue initialData={{ value: 'initial' }} />)
+      const reports = () =>
+        vi
+          .mocked(parentWin.postMessage)
+          .mock.calls.map(([msg]) => msg as PreviewMarksMessage)
+          .filter((msg) => msg.type === CANOPY_PREVIEW_MARKS)
+      act(() => {
+        window.dispatchEvent(
+          trustedEvent({ type: CANOPY_PREVIEW_HIGHLIGHT, enabled: true }, parentWin),
+        )
+      })
+      const mark = (path: string) => {
+        const el = document.createElement('span')
+        el.setAttribute('data-canopy-path', path)
+        onTestFinished(() => el.remove())
+        return el
+      }
+      return { reports, mark, parentWin }
+    }
+
+    it('lists each path once, however many elements mark it', async () => {
+      const { reports, mark } = setUp()
+      await waitFor(() => expect(reports()).toHaveLength(1))
+      act(() => document.body.append(mark('tags[0]'), mark('tags[0]')))
+      await waitFor(() =>
+        expect(reports().at(-1)).toEqual({
+          type: CANOPY_PREVIEW_MARKS,
+          count: 3,
+          paths: ['value', 'tags[0]'],
+        }),
+      )
+    })
+
+    it('is reported again when a path changes at the same count', async () => {
+      const { reports, mark } = setUp()
+      const el = mark('posts[0].tag')
+      act(() => document.body.append(el))
+      await waitFor(() => expect(reports().at(-1)?.paths).toEqual(['value', 'posts[0].tag']))
+      act(() => el.setAttribute('data-canopy-path', 'posts[0].category'))
+      await waitFor(() =>
+        expect(reports().at(-1)).toEqual({
+          type: CANOPY_PREVIEW_MARKS,
+          count: 2,
+          paths: ['value', 'posts[0].category'],
+        }),
+      )
+    })
+
+    it('is reported again after each draft, even when the marks are unchanged', async () => {
+      const { reports, parentWin } = setUp()
+      await waitFor(() => expect(reports()).toHaveLength(1))
+      act(() => {
+        window.dispatchEvent(
+          trustedEvent(
+            { type: CANOPY_PREVIEW_MESSAGE, path: '/posts/marks', data: { value: 'draft' } },
+            parentWin,
+          ),
+        )
+      })
+      await waitFor(() => expect(reports()).toHaveLength(2))
+      expect(reports()[1]).toEqual(reports()[0])
+    })
+
+    it('carries at most the limit of paths, and none longer than the limit', async () => {
+      const { reports, mark } = setUp()
+      act(() => {
+        document.body.append(mark('x'.repeat(MARK_REPORT_LIMITS.pathLength + 1)))
+        for (let n = 0; n < MARK_REPORT_LIMITS.paths + 10; n++)
+          document.body.append(mark(`list[${n}]`))
+      })
+      await waitFor(() => expect(reports().at(-1)?.count).toBe(MARK_REPORT_LIMITS.paths + 12))
+      const { paths = [] } = reports().at(-1) ?? {}
+      expect(paths).toHaveLength(MARK_REPORT_LIMITS.paths)
+      expect(paths.every((path) => path.length <= MARK_REPORT_LIMITS.pathLength)).toBe(true)
+    })
+  })
+
   it('posts the ready handshake to the editor origin, never *', () => {
     const parentWin = simulateFramed()
     window.history.pushState({}, '', '/posts/ready')
@@ -469,6 +640,444 @@ describe('PreviewFrame', () => {
   })
 })
 
+describe('PreviewFrame - sync status', () => {
+  const src = '/preview/x?branch=main'
+  const renderFrame = (frameSrc = src) => {
+    vi.useFakeTimers()
+    onTestFinished(() => {
+      vi.useRealTimers()
+    })
+    const utils = render(<PreviewFrame src={frameSrc} path="/x" data={{ value: 'draft' }} />)
+    const iframe = () => utils.container.querySelector('iframe') as HTMLIFrameElement
+    const bar = () => utils.queryByRole('progressbar')
+    const chip = () => utils.queryByText('Live updates off')
+    const readyEvent = (
+      origin = window.location.origin,
+      source: Window | null = iframe().contentWindow,
+    ) =>
+      new MessageEvent('message', {
+        data: { type: CANOPY_PREVIEW_READY, path: '/x' },
+        origin,
+        source,
+      })
+    const sendReady = (origin?: string) =>
+      act(() => {
+        window.dispatchEvent(readyEvent(origin))
+      })
+    const advance = (ms: number) =>
+      act(() => {
+        vi.advanceTimersByTime(ms)
+      })
+    return { ...utils, iframe, bar, chip, readyEvent, sendReady, advance }
+  }
+
+  it('shows the progress bar until the ready message clears it', () => {
+    const { iframe, bar, chip, sendReady, advance } = renderFrame()
+    expect(bar()).not.toBeNull()
+    fireEvent.load(iframe())
+    sendReady()
+    expect(bar()).toBeNull()
+    advance(10_000)
+    expect(chip()).toBeNull()
+  })
+
+  it('keeps the bar for a ready from another origin', () => {
+    const { iframe, bar, sendReady } = renderFrame()
+    fireEvent.load(iframe())
+    sendReady('https://evil.example')
+    expect(bar()).not.toBeNull()
+  })
+
+  it('stays synced when ready arrives before the load event', () => {
+    const { iframe, bar, chip, sendReady, advance } = renderFrame()
+    sendReady()
+    fireEvent.load(iframe())
+    advance(10_000)
+    expect(bar()).toBeNull()
+    expect(chip()).toBeNull()
+  })
+
+  it('replaces the bar with the chip 5s after load without a ready', () => {
+    const { iframe, bar, chip, advance } = renderFrame()
+    fireEvent.load(iframe())
+    advance(4_999)
+    expect(bar()).not.toBeNull()
+    expect(chip()).toBeNull()
+    advance(1)
+    expect(bar()).toBeNull()
+    expect(chip()).not.toBeNull()
+  })
+
+  it('starts the timeout only once the iframe loads', () => {
+    const { bar, chip, advance } = renderFrame()
+    advance(60_000)
+    expect(bar()).not.toBeNull()
+    expect(chip()).toBeNull()
+  })
+
+  it('clears the chip when a late ready arrives', () => {
+    const { iframe, chip, sendReady, advance } = renderFrame()
+    fireEvent.load(iframe())
+    advance(5_000)
+    expect(chip()).not.toBeNull()
+    sendReady()
+    expect(chip()).toBeNull()
+  })
+
+  it('Retry reloads the iframe and waits for a fresh handshake', () => {
+    const { iframe, bar, chip, getByRole, sendReady, advance } = renderFrame()
+    const first = iframe()
+    fireEvent.load(first)
+    advance(5_000)
+    fireEvent.click(getByRole('button', { name: 'Retry' }))
+    const second = iframe()
+    expect(second).not.toBe(first)
+    expect(second.getAttribute('src')).toBe(src)
+    expect(chip()).toBeNull()
+    expect(bar()).not.toBeNull()
+
+    const postSpy = vi
+      .spyOn(second.contentWindow as Window, 'postMessage')
+      .mockImplementation(() => {})
+    fireEvent.load(second)
+    expect(postSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: CANOPY_PREVIEW_MESSAGE, path: '/x' }),
+      window.location.origin,
+    )
+    advance(4_999)
+    expect(chip()).toBeNull()
+    sendReady()
+    expect(bar()).toBeNull()
+    advance(10_000)
+    expect(chip()).toBeNull()
+  })
+
+  it('resets to the bar when src changes, from either outcome', () => {
+    const { iframe, bar, chip, rerender, sendReady, advance } = renderFrame()
+    fireEvent.load(iframe())
+    advance(5_000)
+    expect(chip()).not.toBeNull()
+
+    rerender(<PreviewFrame src="/preview/y?branch=main" path="/x" data={{ value: 'draft' }} />)
+    expect(chip()).toBeNull()
+    expect(bar()).not.toBeNull()
+    advance(10_000)
+    expect(chip()).toBeNull()
+
+    fireEvent.load(iframe())
+    sendReady()
+    expect(bar()).toBeNull()
+    rerender(<PreviewFrame src="/preview/z?branch=main" path="/x" data={{ value: 'draft' }} />)
+    expect(bar()).not.toBeNull()
+  })
+
+  it('ignores a late ready or load from the page a new src replaced', () => {
+    const { iframe, bar, chip, rerender, readyEvent, advance } = renderFrame()
+    const replaced = iframe()
+    const replacedWindow = replaced.contentWindow
+    rerender(<PreviewFrame src="/preview/y?branch=main" path="/x" data={{ value: 'draft' }} />)
+    expect(iframe()).not.toBe(replaced)
+
+    act(() => {
+      window.dispatchEvent(readyEvent(window.location.origin, replacedWindow))
+    })
+    fireEvent.load(replaced)
+    advance(10_000)
+    expect(bar()).not.toBeNull()
+    expect(chip()).toBeNull()
+  })
+
+  it('lets a ready win when it lands in the same batch as the timeout', () => {
+    const { iframe, bar, chip, readyEvent, advance } = renderFrame()
+    fireEvent.load(iframe())
+    advance(4_999)
+    act(() => {
+      window.dispatchEvent(readyEvent())
+      vi.advanceTimersByTime(1)
+    })
+    expect(bar()).toBeNull()
+    expect(chip()).toBeNull()
+  })
+
+  it('mounts the status region before the chip, so its insertion is announced', () => {
+    const { iframe, getByRole, advance } = renderFrame()
+    const region = getByRole('status')
+    expect(region.textContent).toBe('')
+    fireEvent.load(iframe())
+    advance(5_000)
+    expect(getByRole('status')).toBe(region)
+    expect(region.textContent).toContain('Live updates off')
+  })
+
+  it('titles the iframe', () => {
+    const { iframe } = renderFrame()
+    expect(iframe().getAttribute('title')).toBe('Live preview')
+  })
+})
+
+describe('PreviewFrame - assetBase', () => {
+  const postedDraft = (src: string, assetBase?: string): unknown => {
+    const { container } = render(
+      <PreviewFrame src={src} path="/x" data={{ value: 'draft' }} assetBase={assetBase} />,
+    )
+    const iframe = container.querySelector('iframe') as HTMLIFrameElement
+    const postSpy = vi
+      .spyOn(iframe.contentWindow as Window, 'postMessage')
+      .mockImplementation(() => {})
+    fireEvent.load(iframe)
+    return postSpy.mock.calls.find(
+      ([msg]) => (msg as { type?: string }).type === CANOPY_PREVIEW_MESSAGE,
+    )?.[0]
+  }
+
+  it('sends the asset base with the draft to a same-origin preview', () => {
+    expect(postedDraft('/preview/x', '/p/api/canopycms/assets/raw')).toMatchObject({
+      assetBase: '/p/api/canopycms/assets/raw',
+    })
+  })
+
+  it('withholds it from a preview on another origin', () => {
+    const draft = postedDraft('https://site.example/preview/x', '/p/api/canopycms/assets/raw')
+    expect(draft).toMatchObject({ type: CANOPY_PREVIEW_MESSAGE })
+    expect(draft).not.toHaveProperty('assetBase')
+  })
+})
+
+describe('useCanopyPreview - the asset base from a draft drives assetUrl', () => {
+  const HASH = 'a'.repeat(32)
+  const transformSrc = `/assets/t/orig/${HASH}/photo.png`
+  const staticSrc = `/assets/${HASH}/logo.svg`
+
+  const Images = ({ baseUrl }: { baseUrl?: string }) => {
+    const { data } = useCanopyPreview<{ crop: string }>({
+      initialData: { crop: 'none' },
+      path: '/posts/img',
+    })
+    const crop = data.crop === 'set' ? { x: 0.1, y: 0.2, w: 0.5, h: 0.25 } : undefined
+    return (
+      <>
+        <img
+          data-testid="transform"
+          alt=""
+          src={assetUrl({ src: transformSrc, crop }, { baseUrl })}
+        />
+        <img data-testid="static" alt="" src={assetUrl({ src: staticSrc }, { baseUrl })} />
+      </>
+    )
+  }
+
+  const sendDraft = (parentWin: Window, extra: Record<string, unknown>) =>
+    window.dispatchEvent(
+      trustedEvent(
+        { type: CANOPY_PREVIEW_MESSAGE, path: '/posts/img', data: { crop: 'set' }, ...extra },
+        parentWin,
+      ),
+    )
+
+  it('puts transform srcs behind it, over an off-origin baseUrl, and leaves static srcs alone', async () => {
+    const parentWin = simulateFramed()
+    const { getByTestId } = render(<Images baseUrl="https://cdn.example.com" />)
+    expect(getByTestId('transform').getAttribute('src')).toBe(
+      `https://cdn.example.com${transformSrc}`,
+    )
+
+    sendDraft(parentWin, { assetBase: '/p/api/canopycms/assets/raw' })
+
+    await waitFor(() =>
+      expect(getByTestId('transform').getAttribute('src')).toBe(
+        `/p/api/canopycms/assets/raw/assets/t/c=0.1000:0.2000:0.5000:0.2500/${HASH}/photo.png`,
+      ),
+    )
+    expect(getByTestId('static').getAttribute('src')).toBe(`https://cdn.example.com${staticSrc}`)
+  })
+
+  it.each([
+    ['an off-origin URL', 'https://evil.example/raw'],
+    ['a protocol-relative path', '//evil.example/raw'],
+    ['a backslash spelling of one', '/\\evil.example/raw'],
+    ['a relative path', 'api/canopycms/assets/raw'],
+    ['a non-string', 42],
+  ])('ignores %s', async (_label, assetBase) => {
+    const parentWin = simulateFramed()
+    const { getByTestId } = render(<Images />)
+
+    sendDraft(parentWin, { assetBase })
+
+    await waitFor(() =>
+      expect(getByTestId('transform').getAttribute('src')).toBe(
+        `/assets/t/c=0.1000:0.2000:0.5000:0.2500/${HASH}/photo.png`,
+      ),
+    )
+  })
+
+  it('drops an earlier asset base when a later draft carries none', async () => {
+    const parentWin = simulateFramed()
+    const { getByTestId } = render(<Images />)
+    sendDraft(parentWin, { assetBase: '/api/canopycms/assets/raw' })
+    await waitFor(() =>
+      expect(getByTestId('transform').getAttribute('src')).toMatch(
+        /^\/api\/canopycms\/assets\/raw\//,
+      ),
+    )
+
+    sendDraft(parentWin, { data: { crop: 'none' } })
+
+    await waitFor(() => expect(getByTestId('transform').getAttribute('src')).toBe(transformSrc))
+  })
+
+  it('is not set by an untrusted message', async () => {
+    simulateFramed()
+    render(<Images />)
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: CANOPY_PREVIEW_MESSAGE,
+          path: '/posts/img',
+          data: { crop: 'set' },
+          assetBase: '/api/canopycms/assets/raw',
+        },
+        origin: 'https://evil.example',
+        source: window.parent,
+      }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(getPreviewAssetBase()).toBeUndefined()
+  })
+})
+
+describe('usePreviewAssetBaseGate - a createPreviewPage view', () => {
+  const HASH = 'b'.repeat(32)
+  const crop = { src: `/assets/t/orig/${HASH}/photo.png` }
+  const RAW = '/api/canopycms/assets/raw'
+  const atWidth = (width: number) => `/assets/t/w=${width}/${HASH}/photo.png`
+
+  // Every src ever rendered, so a public first render cannot hide behind a later fix.
+  let rendered: string[] = []
+  const Img = ({ width }: { width: number }) => {
+    const src = assetUrl(crop, { width })
+    rendered.push(src)
+    return <img data-testid={`w${width}`} alt="" src={src} />
+  }
+  // Memoized with props that never change, so it renders exactly once.
+  const MemoSibling = memo(function MemoSibling() {
+    return <Img width={640} />
+  })
+
+  const GatedView = ({ assetBase }: { assetBase?: unknown }) => {
+    const { data } = useCanopyPreview<{ title: string }>({
+      initialData: { title: 'Saved' },
+      path: '/posts/gated',
+    })
+    const open = usePreviewAssetBaseGate(assetBase)
+    return open ? (
+      <main>
+        <h1>{data.title}</h1>
+        <Img width={320} />
+        <MemoSibling />
+      </main>
+    ) : (
+      <></>
+    )
+  }
+
+  afterEach(() => {
+    rendered = []
+  })
+
+  it('renders nothing on the server, then hydrates cleanly with every image behind the route', async () => {
+    const consoleError = vi.spyOn(console, 'error')
+    vi.stubGlobal('window', undefined)
+    let html: string
+    try {
+      html = renderToString(<GatedView assetBase={RAW} />)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('/assets/t/')
+    expect(rendered).toEqual([])
+
+    const container = document.createElement('div')
+    container.innerHTML = html
+    document.body.appendChild(container)
+    const onRecoverableError = vi.fn()
+    const root = await act(async () =>
+      hydrateRoot(container, <GatedView assetBase={RAW} />, { onRecoverableError }),
+    )
+    onTestFinished(() => {
+      act(() => root.unmount())
+      container.remove()
+    })
+
+    expect(onRecoverableError).not.toHaveBeenCalled()
+    expect(consoleError).not.toHaveBeenCalled()
+    expect(rendered).toEqual([`${RAW}${atWidth(320)}`, `${RAW}${atWidth(640)}`])
+    expect(container.querySelector('[data-testid="w640"]')?.getAttribute('src')).toBe(
+      `${RAW}${atWidth(640)}`,
+    )
+  })
+
+  it('renders on the server at once with no asset base, as on a public page', () => {
+    vi.stubGlobal('window', undefined)
+    let html: string
+    try {
+      html = renderToString(<GatedView />)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    expect(html).toContain(`src="${atWidth(320)}"`)
+    expect(html).toContain(`src="${atWidth(640)}"`)
+  })
+
+  it.each([
+    ['an off-origin URL', 'https://evil.example/raw'],
+    ['a protocol-relative path', '//evil.example/raw'],
+    ['a backslash spelling of one', '/\\evil.example/raw'],
+    ['a relative path', 'api/canopycms/assets/raw'],
+    ['a non-string', 42],
+  ])('ignores %s, rendering public URLs', async (_label, assetBase) => {
+    const { findByTestId } = render(<GatedView assetBase={assetBase} />)
+
+    expect((await findByTestId('w320')).getAttribute('src')).toBe(atWidth(320))
+    expect(getPreviewAssetBase()).toBeUndefined()
+  })
+
+  it('is never steered by a server-side getter in a browser', () => {
+    setServerPreviewAssetBaseGetter(() => '/server/raw')
+    onTestFinished(() => setServerPreviewAssetBaseGetter(undefined))
+
+    expect(assetUrl(crop, { width: 320 })).toBe(atWidth(320))
+  })
+
+  it("gives way to a later draft's asset base", async () => {
+    const parentWin = simulateFramed()
+    const { findByTestId, getByTestId, rerender } = render(<GatedView assetBase={RAW} />)
+    expect((await findByTestId('w320')).getAttribute('src')).toBe(`${RAW}${atWidth(320)}`)
+
+    window.dispatchEvent(
+      trustedEvent(
+        {
+          type: CANOPY_PREVIEW_MESSAGE,
+          path: '/posts/gated',
+          data: { title: 'Draft' },
+          assetBase: '/other/raw',
+        },
+        parentWin,
+      ),
+    )
+
+    await waitFor(() =>
+      expect(getByTestId('w320').getAttribute('src')).toBe(`/other/raw${atWidth(320)}`),
+    )
+    // And keeps it through a re-render the draft did not cause.
+    rerender(<GatedView assetBase={RAW} />)
+    expect(getByTestId('w320').getAttribute('src')).toBe(`/other/raw${atWidth(320)}`)
+  })
+})
+
 describe('preview error channel', () => {
   const ErrorReporter = ({ error }: { error: string | null }) => {
     const { reportError } = useCanopyPreview<{ value: string }>({
@@ -547,6 +1156,60 @@ describe('preview error channel', () => {
     await waitFor(() => expect(onPreviewError).toHaveBeenLastCalledWith(null))
   })
 
+  it('PreviewFrame reports the marks a trusted preview sends, and nothing else', async () => {
+    const onMarks = vi.fn()
+    const { container } = render(
+      <PreviewFrame src="/preview/x" path="/x" data={{ v: 1 }} onMarks={onMarks} />,
+    )
+    const iframe = container.querySelector('iframe') as HTMLIFrameElement
+    const send = (data: unknown, origin = window.location.origin) =>
+      window.dispatchEvent(
+        new MessageEvent('message', { data, origin, source: iframe.contentWindow }),
+      )
+
+    send({ type: CANOPY_PREVIEW_MARKS, count: 3 }, 'https://evil.example')
+    send({ type: CANOPY_PREVIEW_MARKS, count: '3' })
+    send({ type: CANOPY_PREVIEW_MARKS, count: -1 })
+    send({ type: CANOPY_PREVIEW_MARKS, count: 1.5 })
+    send({ type: CANOPY_PREVIEW_MARKS })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(onMarks).not.toHaveBeenCalled()
+
+    send({ type: CANOPY_PREVIEW_MARKS, count: 0 })
+    await waitFor(() => expect(onMarks).toHaveBeenCalledWith({ count: 0 }))
+    expect(onMarks).toHaveBeenCalledTimes(1)
+  })
+
+  it('PreviewFrame passes on mark paths only when they are strings within the limits', async () => {
+    const onMarks = vi.fn()
+    const { container } = render(
+      <PreviewFrame src="/preview/x" path="/x" data={{ v: 1 }} onMarks={onMarks} />,
+    )
+    const iframe = container.querySelector('iframe') as HTMLIFrameElement
+    const send = (paths: unknown) =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: CANOPY_PREVIEW_MARKS, count: 2, paths },
+          origin: window.location.origin,
+          source: iframe.contentWindow,
+        }),
+      )
+
+    send(['title', 'tags[0]'])
+    send(['title', 3])
+    send('title')
+    send(['x'.repeat(MARK_REPORT_LIMITS.pathLength + 1)])
+    send(Array.from({ length: MARK_REPORT_LIMITS.paths + 1 }, (_, n) => `p${n}`))
+    await waitFor(() => expect(onMarks).toHaveBeenCalledTimes(5))
+    expect(onMarks.mock.calls.map(([marks]) => marks)).toEqual([
+      { count: 2, paths: ['title', 'tags[0]'] },
+      { count: 2 },
+      { count: 2 },
+      { count: 2 },
+      { count: 2 },
+    ])
+  })
+
   it('ignores error reports whose message is not a string', async () => {
     const onPreviewError = vi.fn()
     const { container } = render(
@@ -601,5 +1264,43 @@ describe('opaque-origin (sandboxed embed) handling', () => {
     ;(parentWin.postMessage as ReturnType<typeof vi.fn>).mockClear() // ignore READY handshake attempts
     fireEvent.click(getByTestId('report'))
     expect(parentWin.postMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe('PreviewLoadingState', () => {
+  it('puts a boolean at each reference position, at the data’s own path', () => {
+    type PersonFields = readonly [{ name: 'name'; type: 'string'; required: true }]
+    type Post = TypeFromEntrySchema<
+      readonly [
+        { name: 'title'; type: 'string' },
+        { name: 'author'; type: 'reference'; resolvedSchema: PersonFields },
+        { name: 'editors'; type: 'reference'; list: true; resolvedSchema: PersonFields },
+        {
+          name: 'byline'
+          type: 'object'
+          fields: readonly [{ name: 'person'; type: 'reference'; resolvedSchema: PersonFields }]
+        },
+        {
+          name: 'blocks'
+          type: 'block'
+          templates: readonly [
+            {
+              name: 'quote'
+              fields: readonly [
+                { name: 'speaker'; type: 'reference'; resolvedSchema: PersonFields },
+              ]
+            },
+          ]
+        },
+      ]
+    >
+    type Loading = PreviewLoadingState<Post>
+
+    expectTypeOf<Loading['author']>().toEqualTypeOf<boolean | undefined>()
+    expectTypeOf<Loading['editors']>().toEqualTypeOf<boolean[] | undefined>()
+    expectTypeOf<NonNullable<Loading['byline']>['person']>().toEqualTypeOf<boolean | undefined>()
+    expectTypeOf<
+      NonNullable<NonNullable<NonNullable<Loading['blocks']>[number]['value']>['speaker']>
+    >().toEqualTypeOf<boolean>()
   })
 })

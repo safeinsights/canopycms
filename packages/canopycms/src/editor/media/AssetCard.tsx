@@ -1,45 +1,45 @@
 'use client'
 
-import React, { useState } from 'react'
+import React from 'react'
 
 import { ActionIcon, Card, Text, Tooltip } from '@mantine/core'
 import { IconFileTypePdf, IconPhotoOff, IconTrash } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
-import { assetUrl } from '../../assets/asset-url'
+import { formatRelativeTime } from '../relative-time'
+import { editorImageSrc } from './editor-image-src'
+import { CARD_THUMBNAIL_HEIGHT } from './media-library-view'
+import { useThumbnailFailure } from './useThumbnailFailure'
 
 export interface AssetCardProps {
   asset: AssetRecord
-  /** `media.publicBaseUrl` - see AssetContext. */
+  /** `useAssetContext().baseUrl`, the authenticated raw route - see AssetContext. */
   baseUrl?: string
   /** Present in picker mode - clicking the card selects the asset. */
   onSelect?: (asset: AssetRecord) => void
-  /** Present only for admins in manage mode - renders the trash button. */
+  /** Present only where the viewer may remove the asset (manage mode) - renders the trash button. */
   onDelete?: (asset: AssetRecord) => void
+  /** `compact` shrinks the thumbnail and drops the date line. */
+  density?: 'grid' | 'compact'
 }
 
 const THUMBNAIL_WIDTH = 160
 
 /**
- * One thumbnail card in the MediaLibrary grid. Raster and svg assets both go
- * through `assetUrl()` unmodified - for svg (a static, non-transform src)
- * `assetUrl` ignores the `width` option and just applies `baseUrl`, which is
- * exactly the behavior wanted here. PDFs have no image to preview, so they
- * render a file-type icon instead.
+ * One thumbnail card in the MediaLibrary grid. PDFs have no image to preview, so they render a
+ * file-type icon instead.
  */
-export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, onDelete }) => {
-  const uploadedDate = new Date(asset.uploadedAt).toLocaleDateString()
-  const thumbnailSrc = assetUrl(asset, { width: THUMBNAIL_WIDTH, baseUrl })
-  const [thumbnailFailed, setThumbnailFailed] = useState(false)
-  // Reset the error state if the underlying asset/src changes, so a
-  // thumbnail that failed earlier gets another chance to load. Adjusting state
-  // during render (rather than in a useEffect) avoids an extra render pass -
-  // see https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
-  const [prevThumbnailSrc, setPrevThumbnailSrc] = useState(thumbnailSrc)
-  if (thumbnailSrc !== prevThumbnailSrc) {
-    setPrevThumbnailSrc(thumbnailSrc)
-    setThumbnailFailed(false)
-  }
+export const AssetCard: React.FC<AssetCardProps> = ({
+  asset,
+  baseUrl,
+  onSelect,
+  onDelete,
+  density = 'grid',
+}) => {
+  const compact = density === 'compact'
+  const thumbnailHeight = CARD_THUMBNAIL_HEIGHT[density]
+  const thumbnailSrc = editorImageSrc(asset.src, baseUrl ?? '', { width: THUMBNAIL_WIDTH })
+  const [thumbnailFailed, markThumbnailFailed] = useThumbnailFailure(thumbnailSrc)
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!onSelect) return
@@ -64,52 +64,62 @@ export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, 
       role={onSelect ? 'button' : undefined}
       tabIndex={onSelect ? 0 : undefined}
       onKeyDown={onSelect ? handleKeyDown : undefined}
+      // Mantine draws its focus ring only on its own controls or this class; a bare Card gets none.
+      className={onSelect ? 'mantine-focus-auto' : undefined}
+      // The name a picker card announces; the thumbnail, filename and date would repeat the name.
+      aria-label={onSelect ? `Select ${asset.filename}` : undefined}
     >
       {onDelete && (
-        <ActionIcon
-          variant="filled"
-          color="red"
-          size="sm"
-          radius="xl"
-          style={{ position: 'absolute', top: 4, right: 4, zIndex: 1 }}
-          aria-label={`Delete ${asset.filename}`}
-          data-testid={`asset-card-delete-${asset.hash32}`}
-          onClick={(event) => {
-            event.stopPropagation()
-            onDelete(asset)
-          }}
-        >
-          <IconTrash size={14} />
-        </ActionIcon>
+        <Tooltip label="Remove from library">
+          {/* Over the thumbnail, so opaque: the default fill with the danger colour. */}
+          <ActionIcon
+            variant="default"
+            c="var(--canopy-danger-text)"
+            radius="xl"
+            style={{ position: 'absolute', top: 4, right: 4, zIndex: 1 }}
+            aria-label={`Remove ${asset.filename} from library`}
+            data-testid={`asset-card-delete-${asset.hash32}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onDelete(asset)
+            }}
+          >
+            <IconTrash size={14} />
+          </ActionIcon>
+        </Tooltip>
       )}
       <Card.Section>
         {asset.kind === 'pdf' ? (
           <div
             style={{
-              height: 100,
+              height: thumbnailHeight,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'var(--mantine-color-gray-1)',
+              background: 'var(--canopy-surface-muted)',
             }}
           >
-            <IconFileTypePdf size={40} stroke={1.5} />
+            <IconFileTypePdf size={compact ? 28 : 40} stroke={1.5} />
           </div>
         ) : thumbnailFailed ? (
           <div
             data-testid={`asset-card-thumbnail-fallback-${asset.hash32}`}
             style={{
-              height: 100,
+              height: thumbnailHeight,
               width: '100%',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
               gap: 4,
-              background: 'var(--mantine-color-gray-1)',
+              background: 'var(--canopy-surface-muted)',
             }}
           >
-            <IconPhotoOff size={28} stroke={1.5} color="var(--mantine-color-gray-5)" />
+            <IconPhotoOff
+              size={compact ? 20 : 28}
+              stroke={1.5}
+              color="var(--mantine-color-dimmed)"
+            />
             <Text size="xs" c="dimmed">
               Preview unavailable
             </Text>
@@ -118,19 +128,33 @@ export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, 
           <img
             src={thumbnailSrc}
             alt={asset.filename}
-            style={{ width: '100%', height: 100, objectFit: 'cover', display: 'block' }}
-            onError={() => setThumbnailFailed(true)}
+            style={{ width: '100%', height: thumbnailHeight, objectFit: 'cover', display: 'block' }}
+            onError={markThumbnailFailed}
           />
         )}
       </Card.Section>
-      <Tooltip label={asset.filename} openDelay={400}>
+      <Tooltip
+        multiline
+        w={260}
+        openDelay={400}
+        label={
+          <>
+            <div style={{ overflowWrap: 'anywhere' }}>{asset.filename}</div>
+            <div style={{ overflowWrap: 'anywhere' }}>Slug: {asset.slug}</div>
+          </>
+        }
+      >
         <Text size="xs" fw={500} truncate mt={4}>
-          {asset.slug}
+          {asset.filename}
         </Text>
       </Tooltip>
-      <Text size="xs" c="dimmed">
-        {uploadedDate}
-      </Text>
+      {!compact && (
+        <Tooltip label={new Date(asset.uploadedAt).toLocaleString()}>
+          <Text size="xs" c="dimmed" w="fit-content">
+            {formatRelativeTime(asset.uploadedAt)}
+          </Text>
+        </Tooltip>
+      )}
     </Card>
   )
 }

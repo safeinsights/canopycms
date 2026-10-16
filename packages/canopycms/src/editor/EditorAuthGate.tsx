@@ -15,18 +15,28 @@
  *   different user the editor and its cache remount, because the SWRProvider is keyed by user id.
  * - A re-check that fails for a non-auth reason keeps the sign-in UI up with the error and Retry,
  *   so a provider that has already reported sign-in is never left waiting on nothing.
+ * - A response refusing the editor's mode (`EDITOR_MODE_MISMATCH`, see
+ *   operating-mode/editor-mode-check.ts) blocks for good, with no Retry: only a rebuild fixes it.
+ *   The server answers it before auth, so `whoami` meets it before any sign-in UI.
  */
 
 import React, { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
-import { Alert, Button, Center, Loader, Modal, Paper, Stack, Text, Title } from '@mantine/core'
+import { Alert, Box, Button, Center, Loader, Modal, Paper, Stack, Text, Title } from '@mantine/core'
 import { useSWRConfig } from 'swr'
 
 import type { EditorSignInProps } from '../config'
 import { getErrorMessage } from '../utils/error'
+import { editorModeMismatchMessage } from '../operating-mode/editor-mode-check'
+import type { OperatingMode } from '../operating-mode/types'
 import type { UserContext } from './BranchManager'
-import { useApiClient, useOnUnauthorized } from './context/ApiClientContext'
+import {
+  useApiClient,
+  useOnEditorModeMismatch,
+  useOnUnauthorized,
+} from './context/ApiClientContext'
 import { EditorIdentityContext, type EditorIdentity } from './context/EditorIdentityContext'
 import { SWRProvider } from './context/SWRProvider'
+import { EditorShell } from './shell/EditorShell'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
 
 type GatePhase = 'checking' | 'signed-in' | 'signed-out' | 'error'
@@ -40,6 +50,8 @@ interface GateState {
   error: string | undefined
   /** Increments each time the server re-accepts a session after a 401. */
   reauthCount: number
+  /** Set once the server refuses the editor's mode; never cleared. */
+  modeMismatch: boolean
 }
 
 type GateAction =
@@ -47,6 +59,7 @@ type GateAction =
   | { type: 'unauthorized'; afterSignIn: boolean }
   | { type: 'failed'; error: string }
   | { type: 'retry' }
+  | { type: 'modeMismatch' }
 
 const initialGateState: GateState = {
   phase: 'checking',
@@ -54,12 +67,16 @@ const initialGateState: GateState = {
   sessionRejected: false,
   error: undefined,
   reauthCount: 0,
+  modeMismatch: false,
 }
 
 function gateReducer(state: GateState, action: GateAction): GateState {
   switch (action.type) {
+    case 'modeMismatch':
+      return state.modeMismatch ? state : { ...state, modeMismatch: true }
     case 'accepted':
       return {
+        ...state,
         phase: 'signed-in',
         user: action.user,
         sessionRejected: false,
@@ -97,9 +114,16 @@ export interface EditorAuthGateProps {
   SignInComponent?: React.ComponentType<EditorSignInProps>
   /** The editor's theme, so the gate's own screens match it. */
   themeOptions?: CanopyThemeOptions
+  /** The mode this bundle was built for, named by the mode-mismatch screen. */
+  editorMode?: OperatingMode
 }
 
-export function EditorAuthGate({ children, SignInComponent, themeOptions }: EditorAuthGateProps) {
+export function EditorAuthGate({
+  children,
+  SignInComponent,
+  themeOptions,
+  editorMode,
+}: EditorAuthGateProps) {
   const apiClient = useApiClient()
   const [state, dispatch] = useReducer(gateReducer, initialGateState)
 
@@ -108,11 +132,18 @@ export function EditorAuthGate({ children, SignInComponent, themeOptions }: Edit
   }, [])
   useOnUnauthorized(handleUnauthorized)
 
+  const handleModeMismatch = useCallback(() => {
+    dispatch({ type: 'modeMismatch' })
+  }, [])
+  useOnEditorModeMismatch(handleModeMismatch)
+
   const check = useCallback(
     async (afterSignIn: boolean) => {
       try {
         const result = await apiClient.user.whoami()
-        if (result.ok && result.data) {
+        if (result.code === 'EDITOR_MODE_MISMATCH') {
+          dispatch({ type: 'modeMismatch' })
+        } else if (result.ok && result.data) {
           dispatch({
             type: 'accepted',
             user: { userId: result.data.userId, groups: result.data.groups },
@@ -165,10 +196,19 @@ export function EditorAuthGate({ children, SignInComponent, themeOptions }: Edit
     </>
   )
 
+  const modeMismatchNotice = state.modeMismatch && <ModeMismatchNotice editorMode={editorMode} />
+
   if (!state.user || !identity) {
+    if (modeMismatchNotice) {
+      return (
+        <CanopyCMSProvider {...themeOptions} withNotifications={false}>
+          <GateScreen>{modeMismatchNotice}</GateScreen>
+        </CanopyCMSProvider>
+      )
+    }
     return (
       <CanopyCMSProvider {...themeOptions} withNotifications={false}>
-        <Center mih="100vh" p="md">
+        <GateScreen>
           {state.phase === 'signed-out' ? (
             <Stack align="center" gap="md" data-testid="canopy-sign-in-screen">
               {signIn}
@@ -187,7 +227,7 @@ export function EditorAuthGate({ children, SignInComponent, themeOptions }: Edit
               </Text>
             </Stack>
           )}
-        </Center>
+        </GateScreen>
       </CanopyCMSProvider>
     )
   }
@@ -198,7 +238,22 @@ export function EditorAuthGate({ children, SignInComponent, themeOptions }: Edit
         <RevalidateOnReauth reauthCount={state.reauthCount} />
         {children}
       </SWRProvider>
-      {state.phase === 'signed-out' && (
+      {modeMismatchNotice && (
+        <CanopyCMSProvider {...themeOptions} withNotifications={false}>
+          <Modal
+            opened
+            onClose={keepOpen}
+            withCloseButton={false}
+            closeOnClickOutside={false}
+            closeOnEscape={false}
+            centered
+            size="lg"
+          >
+            {modeMismatchNotice}
+          </Modal>
+        </CanopyCMSProvider>
+      )}
+      {!modeMismatchNotice && state.phase === 'signed-out' && (
         // The editor's own MantineProvider is inside <Editor>, so the overlay brings its own.
         // Notifications stay with the editor's provider; a second container would duplicate them.
         <CanopyCMSProvider {...themeOptions} withNotifications={false}>
@@ -225,8 +280,48 @@ export function EditorAuthGate({ children, SignInComponent, themeOptions }: Edit
   )
 }
 
-/** The overlay closes only when the server accepts a session again. */
+/** A screen shown in the editor's place, scrolling when it is taller than the window. */
+function GateScreen({ children }: { children: React.ReactNode }) {
+  return (
+    <EditorShell
+      main={
+        <Box h="100%" style={{ overflowY: 'auto' }}>
+          {/* Safe, so a screen wider or taller than the window keeps its start edge reachable. */}
+          <Center
+            mih="100%"
+            p="md"
+            style={{ justifyContent: 'safe center', alignItems: 'safe center' }}
+          >
+            {children}
+          </Center>
+        </Box>
+      }
+    />
+  )
+}
+
+/** The sign-in overlay closes only when the server accepts a session again; the mode one never. */
 function keepOpen(): void {}
+
+/** Blocking, with no Retry: the editor bundle itself is wrong, so only a rebuild helps. */
+function ModeMismatchNotice({ editorMode }: { editorMode: OperatingMode | undefined }) {
+  return (
+    <Alert
+      color="red"
+      title="This editor doesn't match its CMS server"
+      maw={560}
+      data-testid="canopy-mode-mismatch"
+    >
+      <Text size="sm">
+        {editorMode
+          ? editorModeMismatchMessage(editorMode)
+          : 'This editor was built for a different mode than the CMS server runs, so signing in ' +
+            'cannot work. Whoever deploys this site needs to rebuild the editor with ' +
+            'NEXT_PUBLIC_CANOPY_MODE set to the server mode at build time.'}
+      </Text>
+    </Alert>
+  )
+}
 
 /**
  * Revalidates every SWR key when the same identity is re-accepted. `revalidateOnFocus` is off
@@ -250,7 +345,7 @@ function RetryNotice(props: { title: string; error: string; onRetry: () => void 
     <Alert color="red" title={props.title} maw={480} data-testid="canopy-auth-error">
       <Stack gap="xs" align="flex-start">
         <Text size="sm">{props.error}</Text>
-        <Button size="xs" variant="light" onClick={props.onRetry}>
+        <Button variant="light" onClick={props.onRetry}>
           Retry
         </Button>
       </Stack>
@@ -261,7 +356,7 @@ function RetryNotice(props: { title: string; error: string; onRetry: () => void 
 /** Re-checks rather than reloading: in the overlay, a reload would discard the unsaved edits. */
 function DefaultSignedOutNotice({ onSignedIn, sessionRejected }: EditorSignInProps) {
   return (
-    <Paper withBorder p="xl" radius="md" maw={420}>
+    <Paper withBorder p="xl" maw={420}>
       <Stack gap="sm">
         <Title order={3}>Sign in required</Title>
         <Text size="sm">
@@ -269,11 +364,13 @@ function DefaultSignedOutNotice({ onSignedIn, sessionRejected }: EditorSignInPro
           continue.
         </Text>
         {sessionRejected && (
-          <Text size="sm" c="red">
+          <Text size="sm" c="var(--canopy-danger-text)">
             Still not signed in.
           </Text>
         )}
-        <Button onClick={onSignedIn}>Continue</Button>
+        <Button size="sm" onClick={onSignedIn}>
+          Continue
+        </Button>
       </Stack>
     </Paper>
   )

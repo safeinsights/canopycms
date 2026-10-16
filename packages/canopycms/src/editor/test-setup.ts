@@ -7,6 +7,8 @@
 import { afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
 
+import { setPreviewAssetBase } from './preview-asset-base'
+
 // React Testing Library only self-registers its automatic cleanup when a
 // GLOBAL `afterEach` exists -- see the `typeof afterEach === 'function'` check
 // at the top of @testing-library/react's entry point. This project runs vitest
@@ -25,6 +27,8 @@ import { cleanup } from '@testing-library/react'
 // Importing `afterEach` explicitly is what makes the registration real here.
 afterEach(() => {
   cleanup()
+  // Module state: a preview test's override would otherwise rewrite every later test's URLs.
+  setPreviewAssetBase(undefined)
 })
 
 if (typeof window !== 'undefined') {
@@ -63,9 +67,21 @@ if (typeof window !== 'undefined') {
     Element.prototype.scrollIntoView = () => {}
   }
 
-  // Nor does Range measure anything. Lexical measures the caret after each
-  // keystroke to scroll it into view, so typing into MDXEditor needs this.
+  // Nor does Range measure anything: Lexical measures the caret after each keystroke to
+  // scroll it into view, and CodeMirror measures the text of a code block it renders.
   if (!Range.prototype.getBoundingClientRect) {
     Range.prototype.getBoundingClientRect = () => document.body.getBoundingClientRect()
+  }
+  if (!Range.prototype.getClientRects) {
+    Range.prototype.getClientRects = () => Object.assign([], { item: () => null })
+  }
+
+  // Every jsdom rect is empty at (0, 0), where pointer events land too, so react-resizable-panels
+  // would take every click as a grab of the pane separator. Move separators out of reach.
+  const getRect = Element.prototype.getBoundingClientRect
+  Element.prototype.getBoundingClientRect = function (this: Element) {
+    return this.hasAttribute('data-separator')
+      ? new DOMRect(-10_000, -10_000, 0, 0)
+      : getRect.call(this)
   }
 }

@@ -271,15 +271,12 @@ export class SchemaOps {
    * why `updateOrderInner` calls `updateCollectionInner` directly instead of
    * the public `updateCollection`.
    *
-   * Phantom-resurrection guard: `branchRoot` can be removed by a concurrent
-   * `deleteBranch` between the caller resolving its BranchContext and this
-   * call's own lock acquisition, which would otherwise let
-   * `withOccFileLock`'s `mkdir({recursive:true})` silently recreate
-   * `.canopy-meta/` in an otherwise-deleted tree. Checking BEFORE the lock
-   * fails fast instead. Residual (accepted, same shape as
-   * branch-metadata.ts's): a call that passes this check can still race a
-   * `deleteBranch` `rm` starting moments later — not closed here either,
-   * since `deleteBranch` never takes this lock (see the module doc comment).
+   * `branchRoot` can be removed by a concurrent `deleteBranch` between the
+   * caller resolving its BranchContext and this call's lock acquisition. The
+   * stat below fails fast before any lock; past it, neither lock recreates a
+   * missing root (each creates only its own directory), so a later removal
+   * fails the acquisition, and any failure on a vanished root is reported as
+   * `SchemaStoreBusyError` below.
    *
    * Translation happens ONLY at this boundary: inner code always sees the
    * raw {@link OccWriteConflictError} bubble up here untranslated, and a
@@ -331,6 +328,13 @@ export class SchemaOps {
           err.outcome,
         )
       }
+      // A delete that removes the branch root mid-operation fails it wherever it is (a lock's
+      // mkdir ENOENT, a vanished collection meta); the deletion is the cause, whatever the symptom.
+      const rootGone = await fs.stat(this.branchRoot).then(
+        () => false,
+        (statErr: unknown) => isNotFoundError(statErr),
+      )
+      if (rootGone) throw new SchemaStoreBusyError('Branch no longer exists')
       throw err
     }
   }
@@ -419,7 +423,7 @@ export class SchemaOps {
    * root can re-normalise to the ROOT collection on a second call, mutating
    * the wrong one instead of reporting not-found. Every entry point calls
    * this exactly once today, so the ambiguity is unreachable; see
-   * .claude/future-tasks/collection-path-content-root-ambiguity.md. A future
+   * safeinsights/canopycms#623. A future
    * method that accepts a logical collection path must do the same.
    */
   private normalizeCollectionPath(collectionPath: LogicalPath): LogicalPath {
@@ -742,7 +746,7 @@ export class SchemaOps {
         // already rules out a `{slug}.{id}` directory at the destination — but that check is
         // case-SENSITIVE and lets an ID-less `docs/`-style directory through, so a case or
         // ID-less collision can still slip past it for entries deeper than the index; see
-        // .claude/future-tasks/collection-sibling-name-uniqueness.md.
+        // safeinsights/canopycms#624.
         if (await findIndexEntryIn(physicalPath)) {
           // Renaming TO "index" collapses this collection onto its OWN new path, not the
           // parent's — see url-collision.ts's findUrlPathClaimant for the equivalent create-time

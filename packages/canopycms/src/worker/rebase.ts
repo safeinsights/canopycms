@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { simpleGit, type SimpleGit } from 'simple-git'
+import type { SimpleGit } from 'simple-git'
 import {
   BranchMetadataFileManager,
   buildMergedBranchUpdate,
@@ -12,7 +12,7 @@ import { invalidateBranchContentCaches } from '../content-index-generation'
 import { isSettingsBranchName } from '../paths/branch-name'
 import { normalizeFilesystemPath } from '../paths/normalize'
 import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
-import type { PullRequestState } from '../types'
+import type { ConflictStatus, PullRequestState } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import {
   holdProvisionedWorkspace,
@@ -35,6 +35,13 @@ import {
   reconcilePendingRewrite,
 } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
+import {
+  SHARED_REPO_STATUS_ARGS,
+  assertNoIncomingSubmodules,
+  assertSharedRepoConfig,
+  fetchFromRemoteGit,
+  sharedRepoGit,
+} from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -59,8 +66,6 @@ import type { WorkerContext } from './worker-context'
  */
 export type RebaseContext = Pick<
   WorkerContext,
-  | 'githubOwner'
-  | 'githubRepo'
   | 'baseBranch'
   | 'sanitizedBaseBranch'
   | 'contentBranchesPath'
@@ -68,10 +73,11 @@ export type RebaseContext = Pick<
   | 'remoteGitPath'
   | 'taskDir'
   | 'taskTimeoutMs'
-  | 'octokit'
+  | 'github'
   | 'afterConflictDetectedForTesting'
   | 'afterRebaseCompletedForTesting'
   | 'ensureSettingsBranch'
+  | 'isDraining'
 >
 
 /**
@@ -128,12 +134,7 @@ export async function pollMergeState(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ctx.taskTimeoutMs)
   try {
-    const { data } = await ctx.octokit().pulls.get({
-      owner: ctx.githubOwner,
-      repo: ctx.githubRepo,
-      pull_number: prNumber,
-      request: { signal: controller.signal },
-    })
+    const data = await ctx.github().getPullRequest(prNumber, controller.signal)
 
     if (data.merged) {
       const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
@@ -309,7 +310,7 @@ async function runRebaseRounds(
       completed = true
     } catch (rebaseErr) {
       nextAction = 'continue'
-      const st = await branchGit.status()
+      const st = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
 
       if (st.conflicted.length > 0) {
         await ctx.afterConflictDetectedForTesting()
@@ -333,18 +334,21 @@ async function runRebaseRounds(
         //
         // A per-file resolution that STILL fails routes into the `!completed`
         // path below, which aborts and records, rather than escaping.
+        //
+        // `--sparse` on add/rm: a conflicted path outside a sparse clone's cone
+        // is materialised for the conflict, but git refuses to stage it without.
         const conflictKind = new Map(st.files.map((f) => [f.path, `${f.index}${f.working_dir}`]))
         let resolutionFailure: string | undefined
         for (const file of st.conflicted) {
           const kind = conflictKind.get(file)
           try {
             if (kind === 'UD') {
-              await branchGit.raw(['rm', '-f', '--', file])
+              await branchGit.raw(['rm', '-f', '--sparse', '--', file])
             } else if (kind === 'DU') {
-              await branchGit.add(file)
+              await branchGit.raw(['add', '--sparse', '--', file])
             } else {
-              await branchGit.raw(['checkout', '--theirs', file])
-              await branchGit.add(file)
+              await branchGit.raw(['checkout', '--theirs', '--', file])
+              await branchGit.raw(['add', '--sparse', '--', file])
             }
           } catch (resolveErr: unknown) {
             resolutionFailure =
@@ -373,9 +377,7 @@ async function runRebaseRounds(
         } else {
           // Unexpected error — abort and leave the branch behind.
           // conflictStatus/conflictFiles are deliberately not updated: the
-          // rebase did not complete, so the true conflict state is unknown, and
-          // the existing (possibly stale) metadata is preserved until the next
-          // successful rebase cycle corrects it.
+          // rebase did not complete, so it replaced nothing to record.
           workerLogWarn(`  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`)
           failureReason = msg || 'Unknown error'
           await branchGit.rebase(['--abort']).catch(() => {})
@@ -437,6 +439,25 @@ function conflictFilesToContentIds(
     })
     .filter((id): id is ContentId => id !== null)
   return [...new Set(conflictIds)]
+}
+
+/**
+ * The conflict record after a rebase: the IDs already recorded plus this
+ * rebase's. A conflict means this branch's version replaced base's change to
+ * that entry, which a later clean rebase does not undo, so the record only
+ * grows until the branch merges (buildMergedBranchUpdate clears it).
+ *
+ * Pure.
+ */
+function recordConflicts(
+  recorded: readonly ContentId[] | undefined,
+  found: readonly ContentId[],
+): { conflictStatus: ConflictStatus; conflictFiles: ContentId[] } {
+  const conflictFiles = [...new Set([...(recorded ?? []), ...found])]
+  return {
+    conflictStatus: conflictFiles.length > 0 ? 'conflicts-detected' : 'clean',
+    conflictFiles,
+  }
 }
 
 /**
@@ -561,6 +582,12 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
   }
 
   for (const branchDir of branchDirs) {
+    // A draining worker finishes the branch it is rebasing and starts no other:
+    // a rebase killed mid-branch is recovered lossily on the next boot.
+    if (ctx.isDraining()) {
+      workerLog('  Rebase cycle stopped: the worker is draining')
+      break
+    }
     // Known structural entries under content-branches/, not branch workspaces:
     // branches.json (registry snapshot) and dot-prefixed entries
     // (.canopy-meta/, transient lock dirs). Skipped SILENTLY so the no-.git
@@ -619,7 +646,7 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
 /**
  * {@link rebaseOneBranch} under the branch's provisioning lock, so no git step races a clone of
  * this directory. A branch whose lock is held elsewhere is `skippedLocked` and retried next cycle;
- * one with no `branch.json` yet is skipped as not provisioned. Lock order: provisioning, then the
+ * one with no `branch.json` is skipped. Lock order: provisioning, then the
  * content-write lock inside it; see `provisioned-workspace.ts` for why that order cannot deadlock.
  * Never throws, like rebaseOneBranch.
  */
@@ -641,10 +668,9 @@ async function holdAndRebaseOneBranch(
     workerLog(`  Skipping ${branchDir}: provisioning lock held elsewhere (retrying next cycle)`)
     return { kind: 'skippedLocked' }
   }
-  if (hold.kind === 'not-provisioned') {
-    workerLog(`  Skipping ${branchDir}: not yet provisioned (no branch.json)`)
-    return { kind: 'none' }
-  }
+  // Silent: a directory without branch.json is a staging-era leftover, which
+  // repairBranchDirResidue (git-sync.ts) quarantines and logs at the cycle's start.
+  if (hold.kind === 'not-provisioned') return { kind: 'none' }
   try {
     return await rebaseOneBranch(ctx, branchDir, branchPath, hold.isCompromised)
   } finally {
@@ -693,15 +719,11 @@ async function rebaseOneBranch(
       return { kind: 'none' }
     }
 
-    const branchGit = simpleGit({
-      baseDir: branchPath,
-      // Keep git non-interactive during rebase/merge so it never blocks on an
-      // editor. simple-git >=3.32 requires opting in to set core.editor; the
-      // value is a hardcoded literal ("true", the shell no-op), not user input,
-      // so allowUnsafeEditor carries no injection risk here.
-      config: ['core.editor=true'],
-      unsafe: { allowUnsafeEditor: true },
-    })
+    // Throws into the catch below, which records the refusal on the branch: a planted key here
+    // would run in this worker's rebase, merge and checkout.
+    await assertSharedRepoConfig(branchPath, 'worktree')
+    // The pins also keep git non-interactive (core.editor=true): a rebase never waits on an editor.
+    const branchGit = sharedRepoGit(branchPath, 'worktree')
 
     // [SYNC-C1] Take the branch's cross-host content-write lock BEFORE the
     // dirty check, and hold it for the whole rebase. The dirty check alone is
@@ -771,7 +793,7 @@ async function rebaseOneBranch(
       // happen SILENTLY, so anything modified beyond the rebase's own conflict
       // state is logged by path first. That log is the operator's only record.
       if (await isRebaseInProgress(branchPath)) {
-        const preAbort = await branchGit.status().catch(() => null)
+        const preAbort = await branchGit.status([...SHARED_REPO_STATUS_ARGS]).catch(() => null)
         // Keyed on the WORKING-TREE column ONLY. The two porcelain columns mean
         // different things here, and conflating them reports false data loss on
         // essentially every conflict-wedged recovery (verified against real
@@ -824,10 +846,10 @@ async function rebaseOneBranch(
       // Skip dirty branches — the editor has changes that cannot be rebased.
       // Inside the lock, so no write can land between this check and the rebase
       // below. canopycms's own untracked state is not dirt.
-      let dirtyCheck = await branchGit.status()
+      let dirtyCheck = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
       if (await restoreRetiredSchemaCache(branchGit, dirtyCheck)) {
         workerLog(`  ${branchDir}: restored the retired in-tree schema cache`)
-        dirtyCheck = await branchGit.status()
+        dirtyCheck = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
       }
       const editorDirt = dirtyCheck.files.filter((f) => !isCanopyInternalPath(f.path))
       if (editorDirt.length > 0) {
@@ -842,7 +864,7 @@ async function rebaseOneBranch(
       // the bytes stay untouched, and the wedge is recorded for an operator.
       const trackedState = trackedCanopyStateChanges(dirtyCheck)
       if (trackedState.length > 0) {
-        await branchGit.fetch(ctx.remoteGitPath, ctx.baseBranch)
+        await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)
         const baseTip = (await branchGit.revparse(['FETCH_HEAD'])).trim()
         const { stillTracked } = await splitByUpstreamTracking(branchGit, trackedState, baseTip)
         const reason =
@@ -880,7 +902,7 @@ async function rebaseOneBranch(
         })
       }
 
-      await branchGit.fetch(ctx.remoteGitPath, ctx.baseBranch)
+      await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)
 
       // rev-list, not status.behind, which needs an upstream tracking branch
       // that checkoutBranch's fallback paths do not always configure. Against
@@ -904,27 +926,17 @@ async function rebaseOneBranch(
         // `metaFile` snapshot from before the fetch/rev-list above, so a
         // concurrent editor-driven metadata change in that window is not
         // clobbered by a stale skip decision.
+        //
+        // Catching up leaves the conflict record alone: it names entries whose
+        // base change this branch's version replaced, which stays true until
+        // the branch merges (see recordConflicts). A lingering rebaseFailure
+        // is cleared, or it sticks as a stale warning forever: nothing else
+        // touches a caught-up branch, so no other save site clears it.
         const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
-        const conflictStatus = currentMeta?.branch.conflictStatus
-        const conflictFiles = currentMeta?.branch.conflictFiles
-        const conflictAlreadyClean =
-          (conflictStatus === undefined || conflictStatus === 'clean') &&
-          (conflictFiles === undefined || conflictFiles.length === 0)
-        // A lingering rebaseFailure must also be cleared once the branch
-        // catches up clean, or it sticks as a stale warning forever: nothing
-        // else touches a caught-up branch, so no other save site clears it.
-        const alreadyClean = conflictAlreadyClean && currentMeta?.branch.rebaseFailure === undefined
-        if (alreadyClean) {
+        if (currentMeta?.branch.rebaseFailure === undefined) {
           return { kind: 'none' }
         }
-        await meta.save({
-          branch: {
-            name: branchDir,
-            conflictStatus: 'clean',
-            conflictFiles: [],
-            rebaseFailure: undefined,
-          },
-        })
+        await meta.save({ branch: { name: branchDir, rebaseFailure: undefined } })
         return { kind: 'none' }
       }
 
@@ -936,6 +948,7 @@ async function rebaseOneBranch(
       // the rebase makes unreadable.
       const preRebaseHead = (await branchGit.revparse(['HEAD'])).trim()
       const publishedSha = canPublish ? await readPublishedSha(ctx, branchRef) : null
+      await assertNoIncomingSubmodules(branchGit, branchPath, preRebaseHead, fetchedBaseTip)
 
       const { completed, conflictedFiles, failureReason } = await runRebaseRounds(
         ctx,
@@ -1022,16 +1035,15 @@ async function rebaseOneBranch(
           ? `  Rebased ${branchDir} (kept branch version for ${conflictIdsDeduped.length} conflicting file(s))`
           : `  Rebased ${branchDir} successfully`,
       )
-      await meta.save({
+      await meta.update((existing) => ({
         branch: {
           name: branchDir,
-          conflictStatus: hadConflicts ? 'conflicts-detected' : 'clean',
-          conflictFiles: conflictIdsDeduped,
+          ...recordConflicts(existing?.branch.conflictFiles, conflictIdsDeduped),
           // The cycle completed, so clear any prior failure record regardless
           // of the conflict outcome.
           rebaseFailure: undefined,
         },
-      })
+      }))
       didRebase = true
 
       await carryForwardRewrittenHistory(ctx, {

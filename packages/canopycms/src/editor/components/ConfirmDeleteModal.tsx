@@ -1,6 +1,8 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { Modal, Button, Text, Group, Stack } from '@mantine/core'
+import { focusReturnProps } from '../utils/focus-return'
 
 export interface ConfirmDeleteModalProps {
   isOpen: boolean
@@ -10,6 +12,10 @@ export interface ConfirmDeleteModalProps {
   onConfirm: () => void
   onClose: () => void
   loading?: boolean
+  /** Rendered between the message and the buttons. */
+  children?: ReactNode
+  /** Where focus goes once it closes; Mantine's default, the element focused at open, without it. */
+  returnFocusTo?: () => HTMLElement | null
 }
 
 /**
@@ -24,17 +30,31 @@ export function ConfirmDeleteModal({
   onConfirm,
   onClose,
   loading = false,
+  children,
+  returnFocusTo,
 }: ConfirmDeleteModalProps) {
   return (
-    <Modal opened={isOpen} onClose={onClose} title={title} centered size="md">
+    <Modal
+      opened={isOpen}
+      onClose={onClose}
+      title={title}
+      centered
+      size="md"
+      closeButtonProps={{ disabled: loading }}
+      closeOnEscape={!loading}
+      closeOnClickOutside={!loading}
+      {...focusReturnProps(returnFocusTo)}
+    >
       <Stack gap="md" data-testid="confirm-delete-modal">
         <Text size="sm">{message}</Text>
+        {children}
 
         <Group justify="flex-end" gap="sm">
-          <Button variant="default" onClick={onClose} disabled={loading}>
+          <Button size="sm" variant="default" onClick={onClose} disabled={loading}>
             Cancel
           </Button>
           <Button
+            size="sm"
             color="red"
             onClick={onConfirm}
             loading={loading}

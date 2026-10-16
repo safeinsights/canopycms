@@ -357,6 +357,27 @@ describe('binary responses (M2 plumbing)', () => {
     })
   })
 
+  it('passes a redirect CanopyBinaryResponse through with its status and Location', async () => {
+    const { createCanopyRequestHandler } = await import('canopycms/http')
+    vi.mocked(createCanopyRequestHandler).mockReturnValueOnce(async () => ({
+      kind: 'binary',
+      status: 302,
+      body: new Uint8Array(),
+      headers: { location: 'https://bucket.example/x?sig=1', cacheControl: 'no-store' },
+    }))
+
+    const handler = createCanopyCatchAllHandler({ services: {} as any, authPlugin: mockAuthPlugin })
+    const response: any = await handler(mockGetRequest(['assets', 'raw', 'assets', 'x.png']), {
+      params: { canopycms: ['assets', 'raw', 'assets', 'x.png'] },
+    })
+
+    expect(response.status).toBe(302)
+    expect(response.headers).toEqual({
+      'Cache-Control': 'no-store',
+      Location: 'https://bucket.example/x?sig=1',
+    })
+  })
+
   it('streams a ReadableStream CanopyBinaryResponse through end-to-end', async () => {
     const { createCanopyRequestHandler } = await import('canopycms/http')
     const chunk = new Uint8Array([9, 8, 7])

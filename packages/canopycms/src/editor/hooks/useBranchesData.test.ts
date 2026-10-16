@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
+import type { ScopedMutator } from 'swr'
 import { CanopyApiClient } from '../../api/client'
 import { fetchBranches, hasInFlightBranch, IN_FLIGHT_POLL_MS } from './useBranchesData'
 import type { BranchesData } from './useBranchesData'
@@ -53,14 +54,48 @@ describe('fetchBranches', () => {
       status: 404,
       error: 'Not found',
     }))
-    expect(await fetchBranches(client)).toEqual({ branches: [], receivedAt: expect.any(Number) })
+    expect(await fetchBranches(client, { cache: new Map(), mutate: vi.fn() })).toEqual({
+      branches: [],
+      receivedAt: expect.any(Number),
+    })
   })
 
   // A proxy's 404 page means the API was never reached: a wrong base path, say.
   it('throws when a 404 came from in front of the API', async () => {
     const client = clientAnswering(404, () => Promise.reject(new SyntaxError('<html>')))
-    await expect(fetchBranches(client)).rejects.toThrow(
+    await expect(fetchBranches(client, { cache: new Map(), mutate: vi.fn() })).rejects.toThrow(
       'Unexpected response from server (HTTP 404)',
     )
+  })
+
+  it('caches the owners the listing names before returning it, never with an email', async () => {
+    const owner = { id: 'owner1', name: 'Owner One', avatarUrl: 'https://avatars.example.test/1' }
+    const client = new CanopyApiClient({
+      fetch: vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          status: 200,
+          data: { branches: [{ name: 'b0' }], users: [owner] },
+        }),
+      }),
+    })
+    const mutate = vi.fn().mockResolvedValue(undefined)
+
+    const data = await fetchBranches(client, {
+      cache: new Map(),
+      mutate: mutate as unknown as ScopedMutator,
+    })
+
+    expect(data.branches.map((b) => b.name)).toEqual(['b0'])
+    expect(mutate).toHaveBeenNthCalledWith(
+      1,
+      'canopy:user:owner1',
+      { ...owner, email: '' },
+      { revalidate: false },
+    )
+    // Detached, once the writes have settled.
+    expect(mutate).toHaveBeenNthCalledWith(2, 'canopy:user:owner1')
   })
 })

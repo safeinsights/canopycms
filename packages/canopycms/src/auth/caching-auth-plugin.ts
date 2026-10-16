@@ -2,6 +2,7 @@ import type { AuthPlugin } from './plugin'
 import type { UserSearchResult, GroupMetadata, AuthenticationResult } from './types'
 import type { CanopyUserId, CanopyGroupId } from '../types'
 import { createDebugLogger } from '../utils/debug'
+import { personName } from './person-name'
 
 const log = createDebugLogger({ prefix: 'CachingAuthPlugin' })
 
@@ -70,7 +71,7 @@ export class CachingAuthPlugin implements AuthPlugin {
         success: true,
         user: {
           userId: identity.userId,
-          name: user?.name ?? identity.userId,
+          name: personName(identity.userId, user?.name),
           email: user?.email,
           avatarUrl: user?.avatarUrl,
           externalGroups,
@@ -86,7 +87,6 @@ export class CachingAuthPlugin implements AuthPlugin {
         success: true,
         user: {
           userId: identity.userId,
-          name: identity.userId,
           externalGroups: [],
         },
       }
@@ -113,6 +113,16 @@ export class CachingAuthPlugin implements AuthPlugin {
       return await this.cache.getUser(userId)
     } catch {
       return null
+    }
+  }
+
+  /** One cache read for the whole set, where `getUserMetadata` per id re-stats the files each time. */
+  async getUsersMetadata(userIds: CanopyUserId[]): Promise<UserSearchResult[]> {
+    try {
+      const wanted = new Set(userIds)
+      return (await this.cache.getAllUsers()).filter((u) => wanted.has(u.id))
+    } catch {
+      return []
     }
   }
 

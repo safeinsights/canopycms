@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — assets/media system shipped as epic PR #126 (S3 content-addressed storage, presigned upload, on-demand transform Lambda, image field + MediaLibrary) + CDK/deploy hardening in PRs #128–#140. File kept as the design record. Remainders: asset-review-followups, docs-site-assets-wiring, adopter-image-field-migration; finalize-transform-decoder-mismatch resolved 2026-07-30.
+---
 # Assets / Media System — Design Record + Epic Plan
 
 Status: **RESOLVED 2026-07-22** — implemented and merged as epic PR #126 (epic phases

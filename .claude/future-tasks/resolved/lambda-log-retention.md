@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-30, PR #176) — explicit `logs.LogGroup` for the CMS and transform Lambdas (90-day default, `RemovalPolicy.DESTROY`, overridable). Uses CUSTOM names, not `/aws/lambda/<fn>`: Lambda already auto-created those outside CloudFormation on any deployed stack, so claiming that name fails `CreateLogGroup` "already exists" and blocks every future deploy (regression test asserts this). The explicit `grantWrite` is required, not defensive — `AWSLambdaBasicExecutionRole` scopes PutLogEvents to `/aws/lambda/*` only and the `logGroup` prop grants nothing, so without it logs vanish silently.
+---
 # Lambda CloudWatch log groups: no explicit retention
 
 Found while implementing worker CloudWatch log shipping

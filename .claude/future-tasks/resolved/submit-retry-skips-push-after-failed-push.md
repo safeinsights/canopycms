@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-13, PR #214, commit `68f09e8c`) — `submitBranch` retried after a commit-succeeded/push-failed attempt used to skip the push (clean tree) and the worker then shipped `remote.git`'s stale head, so PR content silently missed the last edit. It now gates the push on `committed || await git.hasUnpushedCommits(...)` (`services.ts:326-343`) rather than on a dirty tree, backed by a new `GitManager.hasUnpushedCommits()` (`git-manager.ts:1278`) that fetches the branch and compares FETCH_HEAD. **Found by the 2026-08-13 audit still sitting open** — `baseline-2026-08-broken-features.md` had instructed "resolve the duplicate when this is fixed" and that step was never carried out; two independent auditors reached the same verdict
+---
 # Submit retry after commit-succeeded/push-failed silently skips the push
 
 ## Priority: P2

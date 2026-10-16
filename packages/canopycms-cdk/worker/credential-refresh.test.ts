@@ -4,7 +4,7 @@
  * **Every assertion here counts calls or reads returned values — none of them
  * matches a log line.** A rate limiter tested by asserting that it logged
  * "skipping" passes with the limiter deleted, which is the exact shape
- * `.claude/future-tasks/iam-dedupe-tests-pass-vacuously.md` records: 480 tests
+ * safeinsights/canopycms#710 records: 480 tests
  * stayed green with the code under test removed. The clock is injected so the
  * interval is observed directly rather than waited out.
  *
@@ -146,9 +146,9 @@ describe('guard: too soon', () => {
     // `lastReadAt` is stamped BEFORE the await for this case; stamped after,
     // all three callers see an unstamped clock and all three read.
     //
-    // The GitHub token's two triggers -- a failed task and a failed git sync --
-    // run on separate loops and can overlap, so this is what keeps the floor
-    // shared between them.
+    // Reads of the GitHub token can overlap -- core's gateway stops waiting
+    // for one after its timeout and the next failure starts another -- so this
+    // is what keeps the floor shared between them.
     await Promise.all([secret.refresh(), secret.refresh(), secret.refresh()])
 
     expect(sendMock).toHaveBeenCalledTimes(1)

@@ -1,19 +1,6 @@
 import { createClerkClient } from '@clerk/backend'
-import { writeAuthCacheSnapshot } from 'canopycms/auth/cache'
-
-/**
- * Response types that handle both camelCase and snake_case Clerk SDK variants.
- */
-interface ClerkUserData {
-  id: string
-  username?: string
-  fullName?: string | null
-  full_name?: string | null
-  imageUrl?: string | null
-  image_url?: string | null
-  primaryEmailAddress?: { emailAddress: string } | null
-  email_addresses?: Array<{ email_address: string }> | null
-}
+import { writeAuthSnapshot, type AuthCacheSnapshot } from 'canopycms/auth/cache'
+import { toUserSearchResult, type ClerkUserData } from './clerk-user'
 
 interface ClerkOrganization {
   id: string
@@ -36,11 +23,9 @@ function unwrapClerkResponse<T>(response: ClerkResponse<T>): T[] {
   return Array.isArray(response) ? response : response.data
 }
 
-export interface RefreshClerkCacheOptions {
+export interface FetchClerkSnapshotOptions {
   /** Clerk Secret Key (CLERK_SECRET_KEY) */
   secretKey: string
-  /** Directory to write cache files to (e.g., /mnt/efs/.cache) */
-  cachePath: string
   /** Whether to treat Clerk organizations as groups (default: true) */
   useOrganizationsAsGroups?: boolean
   /**
@@ -59,28 +44,23 @@ export interface RefreshClerkCacheOptions {
   warn?: (...args: unknown[]) => void
 }
 
+export interface RefreshClerkCacheOptions extends FetchClerkSnapshotOptions {
+  /** Directory to write cache files to (e.g., /mnt/efs/.cache) */
+  cachePath: string
+}
+
 export interface RefreshClerkCacheResult {
   userCount: number
   groupCount: number
   membershipCount: number
 }
 
-/**
- * Fetches all user/org metadata from Clerk API and writes it to JSON cache
- * files for the EC2 worker; FileBasedAuthCache reads them back. Writes
- * atomically via writeAuthCacheSnapshot (see canopycms/auth/cache).
- *
- * Output files:
- * - {cachePath}/users.json    — { users: UserSearchResult[] }
- * - {cachePath}/orgs.json     — { groups: GroupMetadata[] }
- * - {cachePath}/memberships.json — { memberships: { [userId]: groupId[] } }
- */
-export async function refreshClerkCache(
-  options: RefreshClerkCacheOptions,
-): Promise<RefreshClerkCacheResult> {
+/** Fetches all user/org metadata from the Clerk API as one snapshot, writing nothing. */
+export async function fetchClerkSnapshot(
+  options: FetchClerkSnapshotOptions,
+): Promise<AuthCacheSnapshot> {
   const {
     secretKey,
-    cachePath,
     useOrganizationsAsGroups = true,
     warn = (...args: unknown[]) => console.warn(...args),
   } = options
@@ -102,12 +82,7 @@ export async function refreshClerkCache(
     offset += pageSize
   }
 
-  const users = clerkUsers.map((u) => ({
-    id: u.id,
-    name: u.fullName ?? u.full_name ?? u.username ?? u.id,
-    email: u.primaryEmailAddress?.emailAddress ?? u.email_addresses?.[0]?.email_address ?? '',
-    avatarUrl: u.imageUrl ?? u.image_url ?? undefined,
-  }))
+  const users = clerkUsers.map(toUserSearchResult)
 
   let groups: Array<{ id: string; name: string; memberCount?: number }> = []
   const memberships: Record<string, string[]> = {}
@@ -151,15 +126,28 @@ export async function refreshClerkCache(
     }
   }
 
-  await writeAuthCacheSnapshot(cachePath, {
-    'users.json': { users },
-    'orgs.json': { groups },
-    'memberships.json': { memberships },
-  })
+  return { users, groups, memberships }
+}
+
+/**
+ * Fetches the snapshot ({@link fetchClerkSnapshot}) and writes it atomically
+ * via writeAuthSnapshot (canopycms/auth/cache); FileBasedAuthCache reads it back.
+ *
+ * Output files:
+ * - {cachePath}/users.json    — { users: UserSearchResult[] }
+ * - {cachePath}/orgs.json     — { groups: GroupMetadata[] }
+ * - {cachePath}/memberships.json — { memberships: { [userId]: groupId[] } }
+ */
+export async function refreshClerkCache(
+  options: RefreshClerkCacheOptions,
+): Promise<RefreshClerkCacheResult> {
+  const { cachePath, ...fetchOptions } = options
+  const snapshot = await fetchClerkSnapshot(fetchOptions)
+  await writeAuthSnapshot(cachePath, snapshot)
 
   return {
-    userCount: users.length,
-    groupCount: groups.length,
-    membershipCount: Object.keys(memberships).length,
+    userCount: snapshot.users.length,
+    groupCount: snapshot.groups.length,
+    membershipCount: Object.keys(snapshot.memberships).length,
   }
 }

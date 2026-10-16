@@ -4,8 +4,14 @@
 
 import { z } from 'zod'
 
-import { primitiveFieldTypes, fieldTypes } from '../types'
-import type { FieldType } from '../types'
+import { fieldTypes, markdownFieldTypes, primitiveFieldTypes } from '../types'
+import type { FieldType, MdxAllowlist } from '../types'
+import {
+  SAFE_HTML_TAGS,
+  isComponentName,
+  isRefusedComponentProp,
+  markdownFieldOptionsError,
+} from '../../validation/mdx-allowlist'
 
 const fieldBaseSchema = z.object({
   name: z.string().min(1),
@@ -34,7 +40,63 @@ export const referenceOptionSchema = z.union([
 ])
 
 const primitiveFieldSchema = fieldBaseSchema.extend({
-  type: z.enum(primitiveFieldTypes),
+  type: z.enum(primitiveFieldTypes).exclude([...markdownFieldTypes]),
+  // Listed so a parse keeps it (zod strips unknown keys); which fields may carry it is
+  // `ensureStampOnPublishPlacement`'s call (config/validation.ts).
+  stampOnPublish: z.boolean().optional(),
+})
+
+const mdxPropAllowSchema = z.union([
+  z.literal(true),
+  z.literal('string'),
+  z.object({ type: z.literal('string'), maxLength: z.number().int().min(1).optional() }).strict(),
+  z.array(z.union([z.string(), z.number(), z.boolean()])).min(1),
+])
+
+/** Strict, so a misspelt key is an error rather than a silently wider policy. */
+export const mdxAllowlistSchema: z.ZodType<MdxAllowlist> = z
+  .object({
+    components: z
+      .record(
+        z.string().refine(isComponentName, {
+          message:
+            'must be a component name: capitalised, with no dot, and not MDXContent or MDXLayout',
+        }),
+        z
+          .object({
+            props: z
+              .record(
+                z
+                  .string()
+                  .min(1)
+                  .refine((name) => !isRefusedComponentProp(name), {
+                    message:
+                      'event handlers, srcdoc and dangerouslySetInnerHTML are always refused',
+                  }),
+                mdxPropAllowSchema,
+              )
+              .optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+    htmlTags: z
+      .array(
+        z.string().refine((tag) => SAFE_HTML_TAGS.has(tag), {
+          message: 'must be one of the HTML tags the base MDX policy accepts',
+        }),
+      )
+      .optional(),
+    expressions: z.boolean().optional(),
+    fragments: z.boolean().optional(),
+  })
+  .strict()
+
+const markdownFieldSchema = fieldBaseSchema.extend({
+  type: z.enum(markdownFieldTypes),
+  executable: z.boolean().optional(),
+  renderAs: z.literal('mdx').optional(),
+  mdxAllow: mdxAllowlistSchema.optional(),
 })
 
 // "W:H" aspect ratio, e.g. "16:9" or "1:1" — positive integers on both sides,
@@ -97,6 +159,7 @@ const objectFieldSchema = fieldBaseSchema.extend({
   type: z.literal('object'),
   fields: z.array(z.lazy(() => fieldHolder[0])).min(1),
   itemTitleField: z.string().min(1).optional(),
+  itemLabel: z.string().trim().min(1).optional(),
 })
 
 // Inline group field: visual grouping only, no data nesting
@@ -121,15 +184,22 @@ const customFieldSchema = z.lazy(() =>
     .passthrough(),
 )
 
-const knownFieldSchema: z.ZodTypeAny = z.discriminatedUnion('type', [
-  primitiveFieldSchema,
-  selectFieldSchema,
-  referenceFieldSchema,
-  imageFieldSchema,
-  objectFieldSchema,
-  blockFieldSchema,
-  inlineGroupFieldSchema,
-])
+const knownFieldSchema: z.ZodTypeAny = z
+  .discriminatedUnion('type', [
+    primitiveFieldSchema,
+    markdownFieldSchema,
+    selectFieldSchema,
+    referenceFieldSchema,
+    imageFieldSchema,
+    objectFieldSchema,
+    blockFieldSchema,
+    inlineGroupFieldSchema,
+  ])
+  .superRefine((field, ctx) => {
+    if (field.type !== 'markdown' && field.type !== 'mdx') return
+    const message = markdownFieldOptionsError(field)
+    if (message !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message })
+  })
 
 const fieldSchema: z.ZodTypeAny = z.lazy(() => z.union([knownFieldSchema, customFieldSchema]))
 fieldHolder[0] = fieldSchema

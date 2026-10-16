@@ -1,33 +1,56 @@
-import * as path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { Construct } from 'constructs'
 import {
   Annotations,
+  ArnFormat,
+  CfnParameter,
   Duration,
+  Names,
   RemovalPolicy,
   Stack,
   Token,
+  Tokenization,
+  aws_cloudwatch as cloudwatch,
+  aws_cloudwatch_actions as cloudwatchActions,
   aws_ec2 as ec2,
   aws_efs as efs,
   aws_cloudfront as cloudfront,
   aws_iam as iam,
   aws_lambda as lambda,
   aws_autoscaling as autoscaling,
-  aws_s3_assets as s3assets,
+  aws_s3 as s3,
   aws_logs as logs,
 } from 'aws-cdk-lib'
 import type { IBucket } from 'aws-cdk-lib/aws-s3'
+import type * as sns from 'aws-cdk-lib/aws-sns'
 import { attachLambdaExecutionPolicies } from './lambda-execution-role'
+import {
+  INSTANCE_FILES_DOWNLOAD_PATH,
+  WORKER_BUNDLE_DOWNLOAD_PATH,
+  workerBundleSource,
+} from './worker-bundle'
+import type { WorkerCode } from './worker-bundle'
 import { attachEditorBehaviors } from './editor-routing'
 import type { CanopyCmsAttachOptions } from './editor-routing'
-
-// This package (`canopycms-cdk`) is `"type": "module"`, so its compiled output
-// is real ESM and `__dirname` is not a global there - the worker asset path
-// below throws `__dirname is not defined` under a real ESM runtime (e.g. `tsx`)
-// without this. Vitest's SSR/CJS-interop transform shims `__dirname`
-// automatically, so this file's own tests would not catch its absence. Same fix
-// as ../../lambda/asset-transform/build.mjs and ./asset-support.ts.
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+import {
+  GATEWAY_SPLIT_CONTRACT,
+  WORKER_CAPACITY_ENV,
+  WORKER_CONTRACT_BANNER_PREFIX,
+  WORKER_DRAIN_HOOK_NAME,
+  WORKER_SYNC_LOG_PHRASE,
+} from './worker-lifecycle'
+import {
+  CANOPY_INSPECT,
+  EFS_MOUNT_PATH,
+  GATEWAY_LOG,
+  GATEWAY_LOG_DIR,
+  GATEWAY_USER,
+  INSPECT_CHECKS,
+  INSPECT_RC,
+  INSTANCE_FILES_DIR,
+  WORKER_INSTALL_DIR,
+  WORKER_LOG,
+  WORKER_LOG_DIR,
+} from './worker-units'
 
 /**
  * Synth-time mirror of `resolveDeploymentName`'s rule in the `canopycms`
@@ -36,7 +59,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  * Duplicated rather than imported so a CONSTRUCT-only consumer does not pay for
  * the core package's module graph. Whether that still justifies duplicating is
  * an open question, tracked alongside the same question about the S3 prefix
- * constants in .claude/future-tasks/cdk-prefixes-duplication.md.
+ * constants in safeinsights/canopycms#608.
  *
  * Drift between the two copies is caught by a test, not by this comment:
  * cms-deploy.test.ts drives both this construct and the runtime predicate over
@@ -56,23 +79,23 @@ const isValidDeploymentName = (name: string): boolean =>
   !name.endsWith('.lock')
 
 /**
- * Where the Lambda AND the worker mount the `WorkspaceAP` access point (rooted
- * at EFS:/workspace), and so the workspace root of both.
- *
- * One path string, not merely one directory: git records absolute paths on
- * EFS (a workspace clone's `origin` is `<root>/remote.git`), and a path written
- * by one process must resolve for the other.
+ * The text of the worker.log line user data writes when the boot's package
+ * upgrade failed and the worker runs on the AMI's packages. The unpatched
+ * alarm's metric filter counts it.
  */
-const EFS_MOUNT_PATH = '/mnt/efs'
+const WORKER_UNPATCHED_LOG_PHRASE = 'running unpatched on the AMI packages until the next boot'
 
 /**
- * The heredoc delimiter user-data uses to write the worker's `.env` (see the
- * `cat > … << 'ENVEOF'` block below).
+ * The heredoc delimiter user-data uses to write the worker's `.env` and the
+ * gateway's `gateway.env` (see the `cat > … << 'ENVEOF'` blocks below).
  */
 const ENV_HEREDOC_DELIMITER = 'ENVEOF'
 
+/** Which of the split's processes reads an environment variable (the single process reads all). */
+type EnvReader = 'worker' | 'gateway' | 'both'
+
 /**
- * Guard every value interpolated into the worker's `.env` file.
+ * Guard every value interpolated into an env file (`.env` or `gateway.env`).
  *
  * This is robustness, not a security boundary: the heredoc delimiter is
  * quoted, so the shell performs no expansion on the body, and these values
@@ -91,7 +114,7 @@ function assertEnvSafe(name: string, value: string): string {
   if (/[\r\n]/.test(value)) {
     throw new Error(
       `CanopyCmsService: ${name} must not contain a newline (got ${JSON.stringify(value)}). ` +
-        `It is written into the worker's .env file, where a newline injects an arbitrary ` +
+        `It is written into an env file (.env or gateway.env), where a newline injects an arbitrary ` +
         `extra environment line.`,
     )
   }
@@ -104,16 +127,16 @@ function assertEnvSafe(name: string, value: string): string {
   if (value.startsWith('"') || value.startsWith("'")) {
     throw new Error(
       `CanopyCmsService: ${name} must not start with a quote character ` +
-        `(got ${JSON.stringify(value)}). It is written into the worker's .env file, which ` +
+        `(got ${JSON.stringify(value)}). It is written into an env file (.env or gateway.env), which ` +
         `systemd reads as EnvironmentFile -- a leading quote opens a quoted value that ` +
         `consumes every following line until a matching quote, silently emptying the rest ` +
-        `of the worker's environment.`,
+        `of the environment.`,
     )
   }
   if (value.includes(ENV_HEREDOC_DELIMITER)) {
     throw new Error(
       `CanopyCmsService: ${name} must not contain ${JSON.stringify(ENV_HEREDOC_DELIMITER)} ` +
-        `(got ${JSON.stringify(value)}). It is written into the worker's .env file with a ` +
+        `(got ${JSON.stringify(value)}). It is written into an env file (.env or gateway.env) with a ` +
         `<< '${ENV_HEREDOC_DELIMITER}' heredoc, which that value would terminate early.`,
     )
   }
@@ -126,7 +149,7 @@ function assertEnvSafe(name: string, value: string): string {
   if (value.includes('\\')) {
     throw new Error(
       `CanopyCmsService: ${name} must not contain a backslash (got ${JSON.stringify(value)}). ` +
-        `It is written into the worker's .env file, which systemd reads as EnvironmentFile -- ` +
+        `It is written into an env file (.env or gateway.env), which systemd reads as EnvironmentFile -- ` +
         `there a backslash escapes the next character, and a trailing one continues the value ` +
         `onto the following line, consuming the next variable entirely.`,
     )
@@ -138,11 +161,94 @@ function assertEnvSafe(name: string, value: string): string {
   if (value !== value.trim()) {
     throw new Error(
       `CanopyCmsService: ${name} must not start or end with whitespace ` +
-        `(got ${JSON.stringify(value)}). systemd strips it when reading the worker's .env, so ` +
-        `the value the worker sees would differ from the one configured here.`,
+        `(got ${JSON.stringify(value)}). systemd strips it when reading the env file, so ` +
+        `the value the service sees would differ from the one configured here.`,
     )
   }
   return value
+}
+
+/**
+ * `lines` without their shell comment lines, outside heredoc bodies, so the comments stay in this
+ * file and out of the 16 KiB EC2 allows user data. A `#!` line is kept, and every line of a
+ * heredoc is kept as written. Only the quoted form, a line ending `<< 'DELIM'`, may open one: any
+ * other `<<` is refused, since its body would be read as commands and comments here.
+ * @internal Exported for tests.
+ */
+export function withoutShellComments(...lines: string[]): string[] {
+  let heredocEnd: string | undefined
+  return lines.filter((line) => {
+    if (heredocEnd !== undefined) {
+      if (line === heredocEnd) heredocEnd = undefined
+      return true
+    }
+    if (/^\s*#(?!!)/.test(line)) return false
+    if (line.includes('<<')) {
+      heredocEnd = /<< '(\w+)'$/.exec(line)?.[1]
+      if (heredocEnd === undefined) throw new Error(`user data: unquoted heredoc in ${line}`)
+    }
+    return true
+  })
+}
+
+/** EC2's limit on user data, in bytes, before base64. */
+const USER_DATA_MAX_BYTES = 16_384
+
+/**
+ * The most bytes a deploy-time value the construct itself puts in user data resolves to: a bucket
+ * name is at most 63, an asset key or a sha256 under 80, a file system or access point id under 25.
+ */
+const USER_DATA_TOKEN_MAX_BYTES = 128
+
+/**
+ * The most bytes a deploy-time env value from a prop resolves to: a Secrets Manager ARN with a
+ * 512-character name is about 600. A longer token (an SSM parameter's value) is the adopter's to
+ * keep short.
+ */
+const ENV_TOKEN_MAX_BYTES = 640
+
+/** The most bytes a CloudWatch log group's name can be. */
+const LOG_GROUP_NAME_MAX_BYTES = 512
+
+/** How long a deploy-time value in user data can be, by the token string it renders as. */
+interface TokenBound {
+  token: string
+  bytes: number
+}
+
+/**
+ * Add `lines` to `userData`, refusing at synth a configuration whose user data could exceed what
+ * EC2 accepts (EC2 would refuse the launch template, or every launch, and the group would never
+ * get a worker). Each token counts as its `bounds` entry's bytes, or
+ * {@link USER_DATA_TOKEN_MAX_BYTES}; an env value from a token longer than
+ * {@link ENV_TOKEN_MAX_BYTES} is not caught.
+ */
+function addUserData(
+  userData: ec2.UserData,
+  bounds: TokenBound[],
+  protectedBranchCount: number,
+  ...lines: string[]
+): void {
+  userData.addCommands(...lines)
+  const bytesOf = new Map(
+    bounds.flatMap(({ token, bytes }) =>
+      Tokenization.reverseString(token).tokens.map((resolvable) => [resolvable, bytes] as const),
+    ),
+  )
+  const longest: unknown = Tokenization.reverseString(userData.render())
+    .mapTokens({
+      mapToken: (token) => 'x'.repeat(bytesOf.get(token) ?? USER_DATA_TOKEN_MAX_BYTES),
+    })
+    .join({ join: (left: unknown, right: unknown) => `${String(left)}${String(right)}` })
+  const bytes = Buffer.byteLength(String(longest))
+  if (bytes > USER_DATA_MAX_BYTES) {
+    throw new Error(
+      `CanopyCmsService: the worker's user data could reach ${bytes} bytes, over the ` +
+        `${USER_DATA_MAX_BYTES} EC2 accepts; protectedBranches has ${protectedBranchCount} ` +
+        `entries. Protect branches with fewer, wider * patterns, or shorten the other names ` +
+        `passed in (secret ARNs and fields, branches, the repository, the worker log group).`,
+    )
+  }
 }
 
 /**
@@ -163,9 +269,10 @@ function assertEnvSafe(name: string, value: string): string {
  * would refuse `cdk synth` for an adopter whose default branch is `release/v2`,
  * and the worker handles such names fine - it keeps the raw name for git refs
  * and runs it through `sanitizeBranchName` only for workspace DIRECTORY names.
- * This implements git's `check-ref-format` rules for a branch name instead.
- * Nothing in `canopycms` validates a branch name, so there is no runtime
- * counterpart to drift from and no shared fixture list like `deploymentName`'s.
+ * This implements git's `check-ref-format` rules for a branch name instead,
+ * plus the GitHub gateway's 255-character cap: the gateway refuses a longer
+ * pull request base. A settings branch is pushed through the gateway, so it
+ * takes the gateway's narrower name rules too (`assertGatewayBranchName`).
  */
 function assertValidGitBranchName(propName: string, value: string): string {
   const reject = (why: string): never => {
@@ -180,6 +287,7 @@ function assertValidGitBranchName(propName: string, value: string): string {
   }
 
   if (value.length === 0) reject('it is empty')
+  if (value.length > 255) reject('it is longer than 255 characters')
   if (value === '@') reject("a lone '@' is reserved by git")
   // `git check-ref-format --branch` rejects HEAD: it names the symbolic ref,
   // not a branch. Accepting it produces the exact crash loop this guard
@@ -209,6 +317,72 @@ function assertValidGitBranchName(propName: string, value: string): string {
   }
 
   return value
+}
+
+/**
+ * Refuse a name the GitHub gateway would refuse to push (`branchNameProblem`,
+ * packages/canopycms/src/worker/branch-policy.ts), on top of git's rules: printable ASCII, no
+ * `"`, `%`, `{` or `}`, no leading `refs/`, `heads/`, `tags/` or `remotes/`.
+ */
+function assertGatewayBranchName(propName: string, value: string): string {
+  const reject = (why: string): never => {
+    throw new Error(`CanopyCmsService: invalid ${propName} ${JSON.stringify(value)} -- ${why}.`)
+  }
+  if (!/^[\x20-\x7e]*$/.test(value)) reject('it is not printable ASCII')
+  if (/["%{}]/.test(value)) reject('it contains ", %, { or }')
+  if (/^(?:refs|heads|tags|remotes)\//i.test(value)) {
+    reject("it starts with 'refs/', 'heads/', 'tags/' or 'remotes/'")
+  }
+  return value
+}
+
+/**
+ * The most `protectedBranches` entries the gateway takes
+ * (`MAX_PROTECTED_BRANCHES`, packages/canopycms/src/worker/branch-policy.ts). A local constant:
+ * this module imports nothing from core.
+ */
+const MAX_PROTECTED_BRANCHES = 1024
+
+/**
+ * Refuse `protectedBranches` the GitHub gateway would refuse at boot, which would crash-loop it
+ * (`protectedPatternProblem`, packages/canopycms/src/worker/branch-policy.ts): more than
+ * {@link MAX_PROTECTED_BRANCHES} entries, and any entry that is not a branch name in which `*` is
+ * a wildcard, held to git's rules and the gateway's (`assertGatewayBranchName`). No entry may
+ * start with the reserved settings prefix: a glob there matches nothing, and a name there would
+ * stop the deployment's settings reaching GitHub, since a settings branch is pushed plainly every
+ * sync. A comma separates entries in the env file, so none may hold one.
+ */
+function assertValidProtectedBranches(entries: readonly string[]): string[] {
+  if (entries.length > MAX_PROTECTED_BRANCHES) {
+    throw new Error(
+      `CanopyCmsService: protectedBranches has ${entries.length} entries; the most it takes is ${MAX_PROTECTED_BRANCHES}.`,
+    )
+  }
+  return entries.map((entry) => {
+    const reject = (why: string): never => {
+      throw new Error(
+        `CanopyCmsService: invalid protectedBranches entry ${JSON.stringify(entry)} -- ${why}.`,
+      )
+    }
+    if (entry.includes(',')) reject('it contains a comma, which separates entries')
+    assertGatewayBranchName('protectedBranches entry', entry)
+    if (entry.startsWith('canopycms-settings-')) {
+      reject(
+        entry.includes('*')
+          ? 'the worker never lets a glob match a settings branch, so this one would match nothing'
+          : "a settings branch is pushed plainly every sync, so protecting it would stop this deployment's settings reaching GitHub",
+      )
+    }
+    const asName = entry.replace(/\*/g, 'x')
+    try {
+      assertValidGitBranchName('protectedBranches entry', asName)
+    } catch (err) {
+      // Name the entry as written, not with its wildcards replaced.
+      const message = err instanceof Error ? err.message : String(err)
+      throw new Error(message.replace(JSON.stringify(asName), JSON.stringify(entry)))
+    }
+    return entry
+  })
 }
 
 /**
@@ -370,7 +544,7 @@ const GITHUB_TOKEN_PROP_NAMES = ['githubTokenSecretArn', 'githubTokenSecretJsonF
  * Rejects a PEM private key passed where a prop expects an identifier or an ARN.
  *
  * There is no plaintext private-key prop, and there cannot be one: the value
- * would be written into the worker's `.env`, which systemd reads as
+ * would be written into `gateway.env`, which systemd reads as
  * `EnvironmentFile=` where a newline begins a new variable. So the realistic
  * mistake is to paste the key into `githubAppPrivateKeySecretArn` -- the prop
  * whose name contains "PrivateKey" -- instead of the ARN of a secret holding it.
@@ -401,7 +575,7 @@ function assertNotInlinePrivateKey(propName: string, value: string | undefined):
       propName === 'githubAppPrivateKeySecretArn' ? 'a secret ARN' : 'an identifier'
     }. ` +
       `The GitHub App private key can ONLY be supplied as a Secrets Manager ARN -- it is ` +
-      `multi-line, and every value this construct configures goes into the worker's .env file, ` +
+      `multi-line, and every value this construct configures goes into an env file (.env or gateway.env), ` +
       `which systemd reads as EnvironmentFile where a newline starts a new variable. Store the ` +
       `PEM in Secrets Manager and pass that secret's full ARN as githubAppPrivateKeySecretArn ` +
       `(optionally with githubAppPrivateKeySecretJsonField if it lives inside a JSON document).`,
@@ -493,7 +667,7 @@ function assertGitHubAuthProps(props: CanopyCmsServiceProps): void {
   }
 
   // The JSON field counts as "a token is configured", not just the ARN. An
-  // adopter following docs/adopter-migration.md removes `githubTokenSecretArn`
+  // adopter following CHANGELOG.md removes `githubTokenSecretArn`
   // and overlooks `githubTokenSecretJsonField`; left out of this check, that
   // lands on `assertSecretPropPair` instead, which answers "Set
   // githubTokenSecretArn, or drop githubTokenSecretJsonField" -- pointing them
@@ -571,14 +745,14 @@ export interface CanopyCmsServiceProps {
    * A reservation costs nothing while idle; it is a ceiling, and a share of
    * the account's concurrency set aside so other functions cannot use it.
    * Lambda keeps 100 of the account's limit unreserved, so this plus every
-   * other reservation (AssetSupport's transform Lambda reserves 10) must fit
+   * other reservation (AssetSupport's lazy transform Lambda reserves 10) must fit
    * within the account limit minus 100.
    */
   reservedConcurrency?: number
 
   /**
    * Lambda architecture (default: `Architecture.ARM_64`, matching the EC2
-   * worker and AssetSupport's transform Lambda).
+   * worker and AssetSupport's lazy transform Lambda).
    *
    * This also decides the image's architecture for
    * `DockerImageCode.fromImageAsset`: the construct always passes a resolved
@@ -592,15 +766,53 @@ export interface CanopyCmsServiceProps {
    */
   architecture?: lambda.Architecture
 
-  /** EC2 spot max price (default: on-demand rate for t4g.nano) */
-  spotMaxPrice?: string
+  /**
+   * What the single worker instance runs on. Default: one on-demand t4g.nano.
+   *
+   * `{ type: 'spot' }` costs less but can leave the deployment with NO worker:
+   * when no spot capacity is available in either zone the group keeps
+   * retrying, `/edit` answers 500 on a first deploy (nothing has created
+   * `remote.git`) and later publishes wait, while `cdk deploy` reports success. An Auto Scaling group
+   * has no automatic fallback from spot to on-demand. Spot uses a
+   * mixed-instances policy over several Graviton sizes, price-capacity-optimized,
+   * which makes a shortage less likely but cannot rule it out.
+   */
+  workerCapacity?: WorkerCapacity
 
   /**
-   * ADDITIONAL Secrets Manager ARNs the worker may read.
+   * How long a terminating worker instance may wait for its worker to drain
+   * before termination continues anyway (default 5 minutes, at least
+   * {@link MIN_WORKER_TERMINATION_HEARTBEAT}, at most 2 hours). The worker
+   * completes the hook as soon as it has drained, normally within seconds, so
+   * this bounds only a worker that hangs.
+   */
+  workerTerminationHeartbeat?: Duration
+
+  /**
+   * How long a worker instance may run before Auto Scaling replaces it
+   * (default 7 days; between 1 and 365 days; `null` never replaces it on
+   * age). Each replacement boots on the latest Amazon Linux packages, the
+   * kernel excepted, which is how a worker no deploy has touched still gets
+   * patched.
+   *
+   * A replacement pauses only the worker's half: saves keep working, while
+   * publishing, pull requests and sync wait for the new instance to boot.
+   */
+  workerMaxInstanceLifetime?: Duration | null
+
+  /**
+   * Where the worker's bundle comes from (default `{ source: 'asset' }`).
+   * `{ source: 'parameter' }` lets a parameter-only change set roll the
+   * worker; see "Rolling the worker from CI" in docs/deploying-to-aws.md.
+   */
+  workerCode?: WorkerCode
+
+  /**
+   * ADDITIONAL Secrets Manager ARNs the worker instance's role may read.
    *
    * You do NOT need to repeat `githubTokenSecretArn` or
-   * `clerkSecretKeySecretArn` here — those are unioned into the worker's IAM
-   * policy automatically. Use this only for secrets the construct does not
+   * `clerkSecretKeySecretArn` here — those are unioned into the instance
+   * role's policy automatically. Use this only for secrets the construct does not
    * know about.
    */
   secretsArns?: string[]
@@ -619,6 +831,26 @@ export interface CanopyCmsServiceProps {
 
   /** EFS removal policy (default: RETAIN) */
   efsRemovalPolicy?: RemovalPolicy
+
+  /**
+   * Daily AWS Backup of the EFS file system, kept 35 days (default true).
+   * Branches nobody has submitted yet exist only on EFS. Backup storage is
+   * billed per GB-month on top of EFS itself, and recovery points outlive the
+   * stack: their vault refuses deletes until its access policy is changed.
+   */
+  efsBackup?: boolean
+
+  /**
+   * Give the file system a policy that refuses clients without TLS or without
+   * IAM authorization (default true). The worker and the Lambda mount with
+   * both, through the access point their roles are granted.
+   *
+   * A stack deployed before the worker mounted with IAM upgrades in two
+   * deploys, `false` first: CloudFormation updates the file system before it
+   * replaces the worker, so in one deploy the policy lands while the outgoing
+   * worker still holds an anonymous mount. See CHANGELOG.md.
+   */
+  efsEnforceIamAndTls?: boolean
 
   /** GitHub owner for worker git operations (e.g., 'safeinsights') */
   githubOwner: string
@@ -739,24 +971,26 @@ export interface CanopyCmsServiceProps {
   clerkSecretKeySecretJsonField?: string
 
   /**
-   * The GitHub repository's default branch name (default: 'main').
+   * The branch editing branches fork from (default: unset, so the worker
+   * detects it: the branch remote.git's HEAD names, or before remote.git exists
+   * GitHub's default branch).
    *
    * Interpolated straight into a git ref (`refs/heads/{baseBranch}`) and into
    * the worker's `.env` heredoc, so an invalid value is rejected at synth (see
    * `assertValidGitBranchName` above). A branch that git accepts but the repo
    * does not have fails permanently at boot instead: `verifyBaseBranchExists`
    * (packages/canopycms/src/worker/cms-worker.ts) throws, `worker/index.ts`
-   * exits 1, systemd's `Restart=always` repeats that forever, and
-   * `rebaseActiveBranches` rebases against the wrong lineage in the meantime.
+   * exits 1, and systemd's `Restart=always` repeats that forever.
    *
    * MUST match the shared repo's `canopycms.config.ts`'s `defaultBaseBranch`
-   * (both default to 'main' when unset) — the two are resolved by different
-   * processes (this stamps the worker's `.env`; the Lambda reads
-   * `config.defaultBaseBranch` at request time) with no automatic reconciliation
-   * between them. `infrastructure/lib/cms-stack.ts`, as scaffolded by
+   * whenever that is set. Leaving `defaultBaseBranch` unset is safe whether or
+   * not this is set: the worker points remote.git's HEAD at the branch it uses,
+   * and the Lambda reads that HEAD. Setting `defaultBaseBranch` alone is not:
+   * the two are resolved by different processes, and a Lambda configured with
+   * one name against a worker that detected another forks and rebases against
+   * different lineages. `infrastructure/lib/cms-stack.ts`, as scaffolded by
    * `canopycms init-deploy aws`, derives this prop FROM that config file so the
-   * two cannot drift; a hand-rolled stack must set it explicitly whenever
-   * `defaultBaseBranch` is anything other than 'main'.
+   * two cannot drift.
    */
   baseBranch?: string
 
@@ -784,6 +1018,19 @@ export interface CanopyCmsServiceProps {
    * drift.
    */
   settingsBranch?: string
+
+  /**
+   * Branches the worker never pushes, deletes or opens a pull request from, beside `baseBranch`
+   * and GitHub's default branch, which it always protects (default: none). Each entry is a branch
+   * name or a glob in which `*` matches any run of characters, `/` included (`release/*`),
+   * matched case-sensitively, as GitHub names refs. No entry may start with `canopycms-settings-`:
+   * a glob never matches a settings branch, and protecting one by name would stop the deployment's
+   * settings reaching GitHub. At most 1024 entries, and fewer when long: synth refuses any set
+   * that could take the worker's user data past EC2's 16 KiB. Stamped, comma-separated, into the
+   * GitHub gateway's `CANOPYCMS_PROTECTED_BRANCHES` (the worker's, for a bundle older than the
+   * split), and validated at synth.
+   */
+  protectedBranches?: string[]
 
   /**
    * Deployment name (default: 'prod'). Namespaces the settings branch
@@ -835,6 +1082,22 @@ export interface CanopyCmsServiceProps {
   workerLogGroupName?: string
 
   /**
+   * SNS topic notified when the worker has stopped syncing git (and again when
+   * it recovers). Creating the topic and subscribing to it (email, Slack,
+   * PagerDuty) is the adopter's job. Default: none, and then no metric filter,
+   * alarm or alarm action is created.
+   *
+   * The alarm fires when the worker's log shows no git-sync cycle for 30
+   * minutes, which covers a crash loop, a boot loop, a worker that never
+   * started and a worker whose loops have stopped. A deploy or a spot
+   * replacement does not trip it. See `workerDownAlarm`.
+   *
+   * The topic is also notified when a worker boot could not upgrade its
+   * packages and started on the AMI's. See `workerUnpatchedAlarm`.
+   */
+  alarmTopic?: sns.ITopic
+
+  /**
    * Execution role for the CMS Lambda (default: CDK creates one).
    *
    * Set this when the role's ARN has to be computable WITHOUT a reference to
@@ -878,6 +1141,65 @@ export interface CanopyCmsServiceProps {
 }
 
 /**
+ * The worker instance's capacity: one on-demand instance, or spot through a
+ * mixed-instances policy. Every instance type must be Graviton (arm64), since
+ * the launch template's AMI is.
+ */
+export type WorkerCapacity =
+  | {
+      type: 'on-demand'
+      /** Default t4g.nano. */
+      instanceType?: ec2.InstanceType
+    }
+  | {
+      type: 'spot'
+      /** The pools to choose from, most preferred first. Default t4g.nano, t4g.micro, t4g.small. */
+      instanceTypes?: readonly ec2.InstanceType[]
+      /** USD per hour. Default: each type's on-demand price. */
+      maxPrice?: string
+      /**
+       * Auto Scaling Capacity Rebalancing: replace a spot instance EC2 marks at
+       * elevated risk of interruption (default true). A replacement that starts
+       * before the old instance stops cannot run a worker until the old one
+       * releases the worker lock.
+       */
+      capacityRebalance?: boolean
+    }
+
+const DEFAULT_SPOT_INSTANCE_TYPES = ['t4g.nano', 't4g.micro', 't4g.small']
+
+/** The worker's internal drain deadline (core's DEFAULT_DRAIN_DEADLINE_MS) plus two minutes. */
+export const MIN_WORKER_TERMINATION_HEARTBEAT = Duration.seconds(210)
+const MAX_WORKER_TERMINATION_HEARTBEAT = Duration.hours(2)
+
+/** Graviton families: `a1`, or a generation digit followed by `g` (t4g, c7gn, m8gd). */
+function assertGravitonInstanceType(instanceType: ec2.InstanceType): void {
+  const name = instanceType.toString()
+  if (Token.isUnresolved(name)) return
+  if (!/^(a1|[a-z]+\d+g[a-z]*)\./.test(name)) {
+    throw new Error(
+      `workerCapacity: instance type "${name}" is not Graviton (arm64). The worker's AMI is ` +
+        'Amazon Linux 2023 for arm64, so an x86 instance cannot boot it.',
+    )
+  }
+}
+
+function assertWorkerTerminationHeartbeat(heartbeat: Duration): void {
+  if (Token.isUnresolved(heartbeat.toSeconds({ integral: false }))) return
+  const seconds = heartbeat.toSeconds()
+  if (
+    seconds < MIN_WORKER_TERMINATION_HEARTBEAT.toSeconds() ||
+    seconds > MAX_WORKER_TERMINATION_HEARTBEAT.toSeconds()
+  ) {
+    throw new Error(
+      `workerTerminationHeartbeat must be between ${MIN_WORKER_TERMINATION_HEARTBEAT.toSeconds()} ` +
+        `and ${MAX_WORKER_TERMINATION_HEARTBEAT.toSeconds()} seconds (got ${seconds}): shorter ` +
+        "cuts off the worker's 90-second drain, and Auto Scaling allows at most two hours.",
+    )
+  }
+}
+
+/**
  * Core CDK construct for CanopyCMS deployment.
  *
  * Creates:
@@ -885,7 +1207,8 @@ export interface CanopyCmsServiceProps {
  * - EFS filesystem with access point at /workspace
  * - Lambda function (Docker image, EFS mount, private subnet, no internet)
  * - Lambda Function URL (for CloudFront origin)
- * - EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount, systemd) -
+ * - EC2 Worker (on-demand t4g.nano by default, in an ASG, public subnet, EFS
+ *   mount, systemd, a terminating lifecycle hook it completes once drained) -
  *   rolled via the ASG's UpdatePolicy by every deploy that changes its launch
  *   template, so a changed worker bundle reaches the instance instead of
  *   sitting unused in a launch template until the next spot interruption (see
@@ -935,6 +1258,24 @@ export class CanopyCmsService extends Construct {
   /** The EC2 worker's CloudWatch log group (worker stdout/stderr) */
   public readonly workerLogGroup: logs.LogGroup
 
+  /** Alarms when the worker logs no git-sync cycle for 30 minutes. Set only with `alarmTopic`. */
+  public readonly workerDownAlarm?: cloudwatch.Alarm
+
+  /** Alarms when a worker boot started without its package upgrade. Set only with `alarmTopic`. */
+  public readonly workerUnpatchedAlarm?: cloudwatch.Alarm
+
+  /**
+   * With `workerCode: { source: 'parameter' }`: the bucket worker bundles are
+   * uploaded to, as `canopy-worker/<sha256>.js`.
+   */
+  public readonly workerBundleBucket?: s3.Bucket
+
+  /**
+   * With `workerCode: { source: 'parameter' }`: the template parameter naming
+   * the bundle to run by its sha256; its logical id is also a stack output.
+   */
+  public readonly workerBundleSha256Parameter?: CfnParameter
+
   constructor(scope: Construct, id: string, props: CanopyCmsServiceProps) {
     super(scope, id)
 
@@ -968,21 +1309,51 @@ export class CanopyCmsService extends Construct {
 
     // Both are interpolated into a git ref and the worker's `.env` heredoc, so
     // both are guarded at synth - see their doc comments for the failure each
-    // prevents. `settingsBranch` stays `undefined` (not stamped at all) unless
-    // the adopter explicitly set it: an absent env var and an empty one are NOT
-    // the same to the worker, which falls through to a computed name only when
+    // prevents. Each stays `undefined` (not stamped at all) unless the adopter
+    // explicitly set it, so the worker detects the base branch and computes the
+    // settings branch name. For the settings branch an absent env var and an
+    // empty one are NOT the same: the worker computes the name only when
     // `CANOPYCMS_SETTINGS_BRANCH` is unset entirely.
-    const baseBranch = assertValidGitBranchName('baseBranch', props.baseBranch ?? 'main')
+    const baseBranch =
+      props.baseBranch !== undefined
+        ? assertValidGitBranchName('baseBranch', props.baseBranch)
+        : undefined
     const settingsBranch =
       props.settingsBranch !== undefined
         ? assertValidGitBranchName('settingsBranch', props.settingsBranch)
         : undefined
 
+    const protectedBranches = assertValidProtectedBranches(props.protectedBranches ?? [])
+
+    const workerCapacity: WorkerCapacity = props.workerCapacity ?? { type: 'on-demand' }
+    const workerInstanceTypes =
+      workerCapacity.type === 'spot'
+        ? (workerCapacity.instanceTypes ??
+          DEFAULT_SPOT_INSTANCE_TYPES.map((name) => new ec2.InstanceType(name)))
+        : [
+            workerCapacity.instanceType ??
+              ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.NANO),
+          ]
+    if (workerInstanceTypes.length === 0) {
+      throw new Error('workerCapacity.instanceTypes must name at least one instance type')
+    }
+    workerInstanceTypes.forEach(assertGravitonInstanceType)
+    if (workerCapacity.type === 'spot' && workerCapacity.maxPrice !== undefined) {
+      const price = Number(workerCapacity.maxPrice)
+      if (!Number.isFinite(price) || price <= 0) {
+        throw new Error(
+          `workerCapacity.maxPrice must be a positive USD-per-hour amount (got "${workerCapacity.maxPrice}")`,
+        )
+      }
+    }
+    const workerTerminationHeartbeat = props.workerTerminationHeartbeat ?? Duration.minutes(5)
+    assertWorkerTerminationHeartbeat(workerTerminationHeartbeat)
+
     // Checked at the top so a misconfigured pair fails `cdk synth` rather than
     // `cdk deploy`-then-restart-loop.
     //
     // WHICH CREDENTIAL first, then whether each is well formed: the order is
-    // load-bearing. Reversed, an adopter following docs/adopter-migration.md who
+    // load-bearing. Reversed, an adopter following CHANGELOG.md who
     // removes `githubTokenSecretArn` and overlooks `githubTokenSecretJsonField`
     // is told "Set githubTokenSecretArn, or drop githubTokenSecretJsonField" --
     // pointing them back at the credential they were just told to delete, and at
@@ -1090,6 +1461,19 @@ export class CanopyCmsService extends Construct {
       allowAllOutbound: false,
     })
 
+    // With any policy in effect, EFS evaluates a client that mounts without
+    // `iam` against the Principal "*" statements alone, so a policy granting
+    // "*" nothing is what requires IAM: the worker and the Lambda get their
+    // access from their roles' grants (below, and CDK's for the Lambda's access
+    // point). Lambda uses TLS for every file-system connection
+    // (docs.aws.amazon.com/lambda/latest/dg/security-dataprotection.html). `allowAnonymousAccess: true` keeps CDK from adding its own
+    // "*" ClientWrite/ClientRootAccess statement, which it does under the
+    // `@aws-cdk/aws-efs:denyAnonymousAccess` flag or after a `grant*` call.
+    const efsClientActions = [
+      'elasticfilesystem:ClientMount',
+      'elasticfilesystem:ClientWrite',
+      'elasticfilesystem:ClientRootAccess',
+    ]
     this.fileSystem = new efs.FileSystem(this, 'FileSystem', {
       vpc: this.vpc,
       encrypted: true,
@@ -1097,6 +1481,21 @@ export class CanopyCmsService extends Construct {
       removalPolicy: props.efsRemovalPolicy ?? RemovalPolicy.RETAIN,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroup: efsSg,
+      enableAutomaticBackups: props.efsBackup ?? true,
+      allowAnonymousAccess: true,
+      fileSystemPolicy:
+        (props.efsEnforceIamAndTls ?? true)
+          ? new iam.PolicyDocument({
+              statements: [
+                new iam.PolicyStatement({
+                  effect: iam.Effect.DENY,
+                  principals: [new iam.AnyPrincipal()],
+                  actions: efsClientActions,
+                  conditions: { Bool: { 'aws:SecureTransport': 'false' } },
+                }),
+              ],
+            })
+          : undefined,
     })
 
     const accessPoint = this.fileSystem.addAccessPoint('WorkspaceAP', {
@@ -1325,9 +1724,31 @@ export class CanopyCmsService extends Construct {
       )
     }
 
-    // Worker needs EFS access (handled via security group, but mount needs ec2:DescribeAvailabilityZones)
-    workerRole.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonElasticFileSystemClientReadWriteAccess'),
+    // The worker's `iam` mount, through the shared access point only. The
+    // describe calls serve amazon-efs-utils' fallback to a mount target's IP
+    // address when the file system's DNS name does not resolve (it needs
+    // botocore too).
+    workerRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
+        resources: [this.fileSystem.fileSystemArn],
+        conditions: {
+          StringEquals: { 'elasticfilesystem:AccessPointArn': accessPoint.accessPointArn },
+        },
+      }),
+    )
+    workerRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['elasticfilesystem:DescribeMountTargets'],
+        resources: [this.fileSystem.fileSystemArn],
+      }),
+    )
+    workerRole.addToPolicy(
+      new iam.PolicyStatement({
+        // Supports no resource-level permissions.
+        actions: ['ec2:DescribeAvailabilityZones'],
+        resources: ['*'],
+      }),
     )
 
     // Observation channel for a NAT-less deploy (SSM Session Manager / send-command);
@@ -1348,42 +1769,120 @@ export class CanopyCmsService extends Construct {
     // the group is pre-created by CFN so the agent never needs CreateLogGroup).
     this.workerLogGroup.grantWrite(workerRole)
 
-    // The worker is bundled with esbuild into a single JS file (pnpm run build:worker)
-    const workerAsset = new s3assets.Asset(this, 'WorkerCode', {
-      path: path.join(__dirname, '../../worker/dist'),
-    })
-    workerAsset.grantRead(workerRole)
+    if (props.alarmTopic) {
+      // Metrics are keyed by namespace and name alone, so the name carries this
+      // construct's unique id: two services in one account and region must not
+      // share one count. Capped at CloudWatch's 255 characters.
+      const metricPrefix = 'WorkerGitSyncCycles-'
+      const syncCycles = new logs.MetricFilter(this, 'WorkerSyncCycles', {
+        logGroup: this.workerLogGroup,
+        filterPattern: logs.FilterPattern.literal(`"${WORKER_SYNC_LOG_PHRASE}"`),
+        metricNamespace: 'CanopyCMS',
+        metricName: `${metricPrefix}${Names.uniqueResourceName(this, { maxLength: 255 - metricPrefix.length })}`,
+        metricValue: '1',
+      })
+
+      // Fires when 3 consecutive 10-minute periods hold no git-sync cycle line.
+      // The worker logs one every cycle (default 5 minutes), even while the
+      // schema gate holds the base branch. 30 minutes leaves room for a normal
+      // replacement: the terminating hook's drain
+      // (`workerTerminationHeartbeat`, 5 minutes by default), a boot of a few
+      // minutes plus its package upgrade, and the first sync. So a deploy or a
+      // spot replacement does not page, while a crash loop, a boot loop, a worker that never started and a
+      // worker whose loops have stopped all go silent and do. Missing data
+      // counts as a breach because a boot loop dies before the CloudWatch agent
+      // is installed and so writes no events at all. The construct does not
+      // expose CANOPYCMS_GIT_SYNC_INTERVAL; an adopter who sets it above about
+      // 10 minutes on the instance needs a wider window.
+      this.workerDownAlarm = new cloudwatch.Alarm(this, 'WorkerDownAlarm', {
+        metric: syncCycles.metric({ statistic: 'Sum', period: Duration.minutes(10) }),
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+        evaluationPeriods: 3,
+        datapointsToAlarm: 3,
+        treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+        alarmDescription:
+          `The CMS worker has not run a git sync for 30 minutes, so publishing and branch syncing ` +
+          `are stalled. Check System health in the editor's admin panel and the worker log group ` +
+          `${this.workerLogGroup.logGroupName}.`,
+      })
+      const topicAction = new cloudwatchActions.SnsAction(props.alarmTopic)
+      this.workerDownAlarm.addAlarmAction(topicAction)
+      this.workerDownAlarm.addOkAction(topicAction)
+
+      const unpatchedPrefix = 'WorkerUnpatchedBoots-'
+      const unpatchedBoots = new logs.MetricFilter(this, 'WorkerUnpatchedBoots', {
+        logGroup: this.workerLogGroup,
+        filterPattern: logs.FilterPattern.literal(`"${WORKER_UNPATCHED_LOG_PHRASE}"`),
+        metricNamespace: 'CanopyCMS',
+        metricName: `${unpatchedPrefix}${Names.uniqueResourceName(this, { maxLength: 255 - unpatchedPrefix.length })}`,
+        metricValue: '1',
+      })
+      // One line per unpatched boot, so the alarm returns to OK one period
+      // later on its own; an OK notification would only repeat the alarm.
+      this.workerUnpatchedAlarm = new cloudwatch.Alarm(this, 'WorkerUnpatchedAlarm', {
+        metric: unpatchedBoots.metric({ statistic: 'Sum', period: Duration.minutes(10) }),
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription:
+          `A CMS worker boot could not upgrade its packages and started on the AMI's. It is ` +
+          `working, and the next boot retries the upgrade. The boot's console output ` +
+          `(aws ec2 get-console-output) and the worker log group ` +
+          `${this.workerLogGroup.logGroupName} name the failure.`,
+      })
+      this.workerUnpatchedAlarm.addAlarmAction(topicAction)
+    }
+
+    const workerBundle = workerBundleSource(
+      this,
+      props.workerCode ?? { source: 'asset' },
+      workerRole,
+    )
+    this.workerBundleBucket = workerBundle.bundleBucket
+    this.workerBundleSha256Parameter = workerBundle.sha256Parameter
 
     // Name/value PAIRS rather than pre-formatted lines: every value then flows
     // through `assertEnvSafe` in the single `map` below, so a value added here
     // later is guarded whether or not whoever adds it remembers to.
-    const envEntries: Array<[string, string]> = [
-      ['CANOPYCMS_WORKSPACE_ROOT', EFS_MOUNT_PATH],
-      ['CANOPYCMS_GITHUB_OWNER', props.githubOwner],
-      ['CANOPYCMS_GITHUB_REPO', props.githubRepo],
-      ['CANOPYCMS_BASE_BRANCH', baseBranch],
+    //
+    // Each also names the process that reads it under the split. The worker
+    // gets only what it needs to find the repository and the workspace; every
+    // secret, every name of one (ARNs, JSON fields, the App's ids), what
+    // reaches AWS, and what only the gateway enforces go to gateway.env, which
+    // the worker cannot read. The single-process unit reads both files.
+    const envEntries: Array<[string, string, EnvReader]> = [
+      ['CANOPYCMS_WORKSPACE_ROOT', EFS_MOUNT_PATH, 'worker'],
+      ['CANOPYCMS_GITHUB_OWNER', props.githubOwner, 'both'],
+      ['CANOPYCMS_GITHUB_REPO', props.githubRepo, 'both'],
       // The SAME string the Lambda's environment gets above, including an
       // `environment.CANOPYCMS_DEPLOYMENT_NAME` override - the two halves
       // resolve one settings branch (`canopycms-settings-<name>`) between them,
       // and disagreeing here is what the runtime warning detects.
-      ['CANOPYCMS_DEPLOYMENT_NAME', deploymentName],
+      ['CANOPYCMS_DEPLOYMENT_NAME', deploymentName, 'worker'],
       // The AWS SDK JS v3 cannot resolve a region from IMDS on its own - without
-      // this the worker's bare `SecretsManagerClient({})` crash-loops with
-      // "Region is missing".
-      ['AWS_REGION', Stack.of(this).region],
+      // this a bare `SecretsManagerClient({})` crash-loops with "Region is
+      // missing".
+      ['AWS_REGION', Stack.of(this).region, 'gateway'],
     ]
+    if (baseBranch !== undefined) {
+      // The worker syncs it; the gateway never pushes it.
+      envEntries.push(['CANOPYCMS_BASE_BRANCH', baseBranch, 'both'])
+    }
     if (props.githubTokenSecretArn) {
-      envEntries.push(['CANOPYCMS_GITHUB_TOKEN_SECRET_ARN', props.githubTokenSecretArn])
+      envEntries.push(['CANOPYCMS_GITHUB_TOKEN_SECRET_ARN', props.githubTokenSecretArn, 'gateway'])
     }
     // The JSON-field vars need NO IAM change, and that is not an oversight: a
     // field is a key inside a secret's value, not a separately grantable
     // resource. `secretsmanager:GetSecretValue` on the secret -- already granted
-    // above from the same ARN prop -- returns the whole document, and the worker
+    // above from the same ARN prop -- returns the whole document, and the gateway
     // picks the field out of it in `getSecret` (worker/secrets.ts).
     if (props.githubTokenSecretJsonField) {
       envEntries.push([
         'CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD',
         props.githubTokenSecretJsonField,
+        'gateway',
       ])
     }
     // GitHub App credentials, stamped individually even though
@@ -1391,252 +1890,407 @@ export class CanopyCmsService extends Construct {
     // future prop added to the App set then cannot be silently dropped by a
     // condition that names only its siblings.
     if (props.githubAppId) {
-      envEntries.push(['CANOPYCMS_GITHUB_APP_ID', props.githubAppId])
+      envEntries.push(['CANOPYCMS_GITHUB_APP_ID', props.githubAppId, 'gateway'])
     }
     if (props.githubAppInstallationId) {
-      envEntries.push(['CANOPYCMS_GITHUB_APP_INSTALLATION_ID', props.githubAppInstallationId])
+      envEntries.push([
+        'CANOPYCMS_GITHUB_APP_INSTALLATION_ID',
+        props.githubAppInstallationId,
+        'gateway',
+      ])
     }
     if (props.githubAppPrivateKeySecretArn) {
       envEntries.push([
         'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN',
         props.githubAppPrivateKeySecretArn,
+        'gateway',
       ])
     }
     if (props.githubAppPrivateKeySecretJsonField) {
       envEntries.push([
         'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD',
         props.githubAppPrivateKeySecretJsonField,
+        'gateway',
       ])
     }
     if (props.clerkSecretKeySecretArn) {
-      envEntries.push(['CLERK_SECRET_KEY_SECRET_ARN', props.clerkSecretKeySecretArn])
+      envEntries.push(['CLERK_SECRET_KEY_SECRET_ARN', props.clerkSecretKeySecretArn, 'gateway'])
     }
     if (props.clerkSecretKeySecretJsonField) {
-      envEntries.push(['CLERK_SECRET_KEY_SECRET_JSON_FIELD', props.clerkSecretKeySecretJsonField])
+      envEntries.push([
+        'CLERK_SECRET_KEY_SECRET_JSON_FIELD',
+        props.clerkSecretKeySecretJsonField,
+        'gateway',
+      ])
+    }
+    if (workerCapacity.type === 'spot') {
+      // The termination watch is the gateway's.
+      envEntries.push([WORKER_CAPACITY_ENV, 'spot', 'gateway'])
     }
     if (settingsBranch !== undefined) {
       // Only when explicitly set - an absent prop must keep today's behavior
       // (the worker falls through to the computed `canopycms-settings-<name>`),
       // so this must never stamp an empty string either way.
-      envEntries.push(['CANOPYCMS_SETTINGS_BRANCH', settingsBranch])
+      envEntries.push(['CANOPYCMS_SETTINGS_BRANCH', settingsBranch, 'worker'])
     }
-    const envFileContent = envEntries
-      .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
-      .join('\n')
+    if (protectedBranches.length > 0) {
+      // Only the gateway enforces it, and a split worker refuses it.
+      envEntries.push(['CANOPYCMS_PROTECTED_BRANCHES', protectedBranches.join(','), 'gateway'])
+    }
+    const envFile = (readers: readonly EnvReader[]) =>
+      envEntries
+        .filter(([, , reader]) => readers.includes(reader))
+        .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
+        .join('\n')
+    const workerEnv = envFile(['worker', 'both'])
+    const gatewayEnv = envFile(['gateway', 'both'])
+    // After assertEnvSafe, whose leading-quote refusal is the more specific.
+    if (settingsBranch !== undefined) assertGatewayBranchName('settingsBranch', settingsBranch)
 
-    const efsMountOptions = `tls,accesspoint=${accessPoint.accessPointId}`
+    const efsMountOptions = `tls,iam,accesspoint=${accessPoint.accessPointId}`
     const userData = ec2.UserData.forLinux()
-    userData.addCommands(
-      '#!/bin/bash',
-      'set -euo pipefail',
-      '',
-      '# FAIL-FAST. Every step below is required for the worker to exist at',
-      '# all, and until this trap existed a failure in any of them aborted',
-      '# user-data BEFORE the systemd unit was written -- leaving an instance',
-      "# that runs, passes the ASG's EC2-only health check indefinitely, and",
-      '# does nothing. cfn-signal is deliberately not used here (it would',
-      '# prove nothing about READINESS, which is the argument recorded below),',
-      '# but that argument never covered a boot-SCRIPT failure: `cdk deploy`',
-      '# reported success while publishes queued on EFS, the auth cache went',
-      '# stale and PRs stopped being created, until a human noticed the admin',
-      '# panel showing the worker absent.',
-      '#',
-      '# Shutting down makes the instance fail its EC2 health check, so the ASG',
-      '# replaces it -- which is the only automatic recovery available in this',
-      '# topology. The echo lands in the console log, readable via',
-      '# `aws ec2 get-console-output`, because the CloudWatch agent is itself',
-      '# configured further down and cannot be relied on to exist yet.',
-      'trap \'echo "canopy-worker user-data FAILED at line $LINENO (exit $?)" >&2; shutdown -h now\' ERR',
-      '',
-      '# Bounded retry for the network-dependent steps. Package mirrors and S3',
-      '# have transient failures; a single flake should cost seconds, not an',
-      '# instance replacement.',
-      'retry() {',
-      '  local n=0',
-      '  until "$@"; do',
-      '    n=$((n + 1))',
-      '    if [ "$n" -ge 5 ]; then',
-      '      echo "canopy-worker: command failed after $n attempts: $*" >&2',
-      '      return 1',
-      '    fi',
-      '    sleep $((n * 5))',
-      '  done',
-      '}',
-      '',
-      '# Install dependencies (unzip is not guaranteed in the AL2023 AMI)',
-      'retry dnf install -y git unzip',
-      "# Node comes from AL2023's own repos, NOT a piped third-party installer.",
-      '# The previous boot curled the NodeSource RPM setup script straight into',
-      '# bash, so every instance replacement -- which the ASG performs on every',
-      '# `cdk deploy`, plus every spot interruption -- depended on a third party',
-      '# being reachable. cms-deploy.test.ts asserts that URL never comes back,',
-      '# which is why it is not spelled out here.',
-      '#',
-      '# nodejs22, not 20: Node 20 reached upstream EOL on 2026-04-30, and this',
-      '# repo declares `engines.node: ">=22"` with .nvmrc `v22`, so the worker',
-      '# was running an EOL runtime BELOW the floor its own code is tested at.',
-      "# 22 (EOL 2027-04-30) matches .nvmrc, CI, and the transform Lambda's",
-      '# NODEJS_22_X, so one runtime is tested everywhere.',
-      '#',
-      '# ExecStart uses the NAMESPACED /usr/bin/node-22 (see the systemd unit',
-      '# below), not the bare `node`: AL2023 installs versioned binaries and',
-      '# points `/usr/bin/node` at one of them through `alternatives`, whose',
-      '# selection AWS documents as able to change at any time.',
-      'retry dnf install -y nodejs22',
-      '',
-      '# Mount EFS through the same access point, at the same path, as the',
-      '# Lambda (see EFS_MOUNT_PATH). amazon-efs-utils refuses an access-point',
-      '# mount without tls (efs_utils_common/mount_options.py).',
-      'retry dnf install -y amazon-efs-utils',
-      `mkdir -p ${EFS_MOUNT_PATH}`,
-      `mount -t efs -o ${efsMountOptions} ${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH}`,
-      '# Persist the mount across instance reboots: user-data runs once per',
-      '# instance, so without an fstab entry a plain reboot leaves /mnt/efs an',
-      '# empty local dir and the worker would clone a divergent remote.git',
-      '# onto the instance disk, invisible to the Lambda.',
-      `echo '${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH} efs _netdev,${efsMountOptions} 0 0' >> /etc/fstab`,
-      '',
-      '# Download worker from CDK S3 Asset',
-      `retry aws s3 cp s3://${workerAsset.s3BucketName}/${workerAsset.s3ObjectKey} /tmp/canopy-worker.zip`,
-      'mkdir -p /opt/canopy-worker',
-      'cd /opt/canopy-worker',
-      'unzip -o /tmp/canopy-worker.zip',
-      '# The worker bundle is ESM (esbuild --format=esm). Without this marker a',
-      '# .js file is CommonJS by default and the import statement fails.',
-      '# Node >=22.7 auto-detects module syntax and would mask its absence, and',
-      '# this instance now runs node-22 -- so the marker is kept BECAUSE that',
-      '# auto-detection is a fallback we should not depend on, not because the',
-      '# runtime here still needs it.',
-      `echo '{"type":"module"}' > /opt/canopy-worker/package.json`,
-      '',
-      '# Write environment file for systemd service',
-      `cat > /opt/canopy-worker/.env << 'ENVEOF'`,
-      envFileContent,
-      'ENVEOF',
-      '',
-      '# Create systemd service',
-      `cat > /etc/systemd/system/canopy-worker.service << 'SVCEOF'`,
-      '[Unit]',
-      'Description=CanopyCMS Worker Daemon',
-      'After=network.target',
-      '# Never run against an unmounted /mnt/efs (see the fstab note above).',
-      `RequiresMountsFor=${EFS_MOUNT_PATH}`,
-      '',
-      '[Service]',
-      'Type=simple',
-      'User=ec2-user',
-      'WorkingDirectory=/opt/canopy-worker',
-      '# Namespaced binary, not bare `node`: AL2023 points /usr/bin/node at',
-      '# an installed version through `alternatives`, and AWS documents that',
-      '# selection as able to change at any time. node-22 always means 22.',
-      'ExecStart=/usr/bin/node-22 index.js',
-      'Restart=always',
-      'RestartSec=5',
-      'TimeoutStartSec=300',
-      '# File output, not journal: the CloudWatch agent cannot read journald,',
-      '# so it tails this file instead (see the agent config below).',
-      '# CAUTION: /var/log/canopy-worker must exist BEFORE first start. systemd',
-      '# opens append: targets before it creates LogsDirectory= dirs',
-      '# (systemd#27591), so without the pre-created dir the exec fails with',
-      '# 209/STDOUT and Restart=always crash-loops forever. User-data runs',
-      '# mkdir before systemctl start; LogsDirectory= is kept for ownership.',
-      'LogsDirectory=canopy-worker',
-      'StandardOutput=append:/var/log/canopy-worker/worker.log',
-      'StandardError=append:/var/log/canopy-worker/worker.log',
-      'EnvironmentFile=/opt/canopy-worker/.env',
-      '',
-      '[Install]',
-      'WantedBy=multi-user.target',
-      'SVCEOF',
-      '',
-      '# Set ownership for ec2-user',
-      'chown -R ec2-user:ec2-user /opt/canopy-worker',
-      '',
-      '# Pre-create the worker log dir (crash-loop guard, MUST precede the',
-      '# first systemctl start): systemd opens StandardOutput=append: files',
-      '# BEFORE it creates LogsDirectory= dirs (systemd#27591), so on a fresh',
-      '# instance the unit would fail exec with 209/STDOUT and crash-loop',
-      '# forever without this. The unit keeps LogsDirectory= for ownership',
-      '# management on subsequent starts.',
-      'mkdir -p /var/log/canopy-worker',
-      'chown ec2-user:ec2-user /var/log/canopy-worker',
-      '',
-      '# Start worker',
-      'systemctl daemon-reload',
-      'systemctl enable canopy-worker',
-      'systemctl start canopy-worker',
-      '',
-      '# ---- CloudWatch log shipping ----',
-      '# Placed AFTER worker start: with set -euo pipefail, a package/agent',
-      '# failure here must not prevent the worker from running (shipping is',
-      '# best-effort).',
-      '#',
-      '# DISARM THE FAIL-FAST TRAP AND errexit FIRST. Everything above this line',
-      '# is required for the worker to exist at all, so a failure there should',
-      '# replace the instance. Nothing below it is: the worker is already',
-      '# running and healthy by this point. Leaving the trap armed would let a',
-      '# package-mirror outage during the agent install shut down a perfectly',
-      '# good worker -- and the ASG would relaunch straight into the same',
-      '# outage, turning degraded log shipping into a replacement loop with the',
-      '# worker down for its duration. That is strictly worse than the',
-      '# best-effort behaviour this section has always documented.',
-      'trap - ERR',
-      'set +e',
-      'retry dnf install -y amazon-cloudwatch-agent logrotate',
-      '',
-      '# Bound on-disk growth; copytruncate keeps the fd the CW agent tails valid',
-      '# (tiny copy->truncate loss window is acceptable for diagnostic logs).',
-      `cat > /etc/logrotate.d/canopy-worker << 'ROTEOF'`,
-      '/var/log/canopy-worker/worker.log {',
-      '    size 10M',
-      '    rotate 5',
-      '    compress',
-      '    copytruncate',
-      '    missingok',
-      '    notifempty',
-      '}',
-      'ROTEOF',
-      '# The config above only fires when logrotate actually runs; AL2023',
-      '# presets may leave logrotate.timer disabled, and without it the size',
-      '# cap never triggers and worker.log grows until the nano disk fills.',
-      '# --now is idempotent if the timer is already enabled/running.',
-      'systemctl enable --now logrotate.timer',
-      '',
-      '# No retention_in_days here: CDK owns retention on the pre-created group.',
-      `cat > /opt/aws/amazon-cloudwatch-agent/etc/canopy-worker-logs.json << 'CWEOF'`,
-      '{',
-      '  "logs": {',
-      '    "logs_collected": {',
-      '      "files": {',
-      '        "collect_list": [',
-      '          {',
-      '            "file_path": "/var/log/canopy-worker/worker.log",',
-      `            "log_group_name": "${this.workerLogGroup.logGroupName}",`,
-      '            "log_stream_name": "{instance_id}",',
-      // The worker prefixes every line with an ISO-8601 timestamp
-      // (packages/canopycms/src/worker/log.ts). Parsing it here is what makes
-      // CloudWatch show the time the WORKER emitted a line rather than the
-      // time the agent shipped it - those diverge exactly when it matters
-      // (agent hiccup, buffered burst, post-restart backlog).
-      '            "timestamp_format": "%Y-%m-%dT%H:%M:%S.%f",',
-      // The prefix ends in `Z`, so the parsed time is UTC. Without this the
-      // agent would interpret it in the instance's local zone.
-      '            "timezone": "UTC",',
-      // "{timestamp_format}" reuses the pattern above as the multi-line start
-      // marker: a line WITHOUT the timestamp prefix continues the previous
-      // event instead of becoming its own. That is what keeps a stack trace as
-      // one CloudWatch event, and why every writer to this file must go
-      // through the worker log helpers.
-      '            "multi_line_start_pattern": "{timestamp_format}"',
-      '          }',
-      '        ]',
-      '      }',
-      '    }',
-      '  }',
-      '}',
-      'CWEOF',
-      '# fetch-config -s starts AND systemctl-enables the agent (reboot-persistent).',
-      '/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/canopy-worker-logs.json',
+    const logGroupName = props.workerLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/worker`
+    addUserData(
+      userData,
+      [
+        {
+          token: this.workerLogGroup.logGroupName,
+          bytes: Token.isUnresolved(logGroupName)
+            ? LOG_GROUP_NAME_MAX_BYTES
+            : Buffer.byteLength(logGroupName),
+        },
+        ...envEntries
+          .filter(([, value]) => Token.isUnresolved(value))
+          .map(([, value]) => ({ token: value, bytes: ENV_TOKEN_MAX_BYTES })),
+      ],
+      protectedBranches.length,
+      ...withoutShellComments(
+        '#!/bin/bash',
+        'set -euo pipefail',
+        '',
+        '# FAIL-FAST. Every step below is required for the worker to exist at',
+        '# all, except the swap and the package upgrade, which are written as',
+        '# conditions so that they cannot trip it. Until this trap existed, a',
+        '# failure in any required step aborted user-data BEFORE the systemd unit was written -- leaving an instance',
+        "# that runs, passes the ASG's EC2-only health check indefinitely, and",
+        '# does nothing. cfn-signal is deliberately not used here (it would',
+        '# prove nothing about READINESS, which is the argument recorded below),',
+        '# but that argument never covered a boot-SCRIPT failure: `cdk deploy`',
+        '# reported success while publishes queued on EFS, the auth cache went',
+        '# stale and PRs stopped being created, until a human noticed the admin',
+        '# panel showing the worker absent.',
+        '#',
+        '# Shutting down makes the instance fail its EC2 health check, so the ASG',
+        '# replaces it -- which is the only automatic recovery available in this',
+        '# topology. The echo lands in the console log, readable via',
+        '# `aws ec2 get-console-output`, because the CloudWatch agent is itself',
+        '# configured further down and cannot be relied on to exist yet.',
+        'trap \'echo "canopy-worker user-data FAILED at line $LINENO (exit $?)" >&2; shutdown -h now\' ERR',
+        '',
+        '# Bounded retry for the network-dependent steps. Package mirrors and S3',
+        '# have transient failures; a single flake should cost seconds, not an',
+        '# instance replacement. The first argument names the step in the message',
+        '# an exhausted step leaves on the console.',
+        'retry() {',
+        '  local step=$1 n=0',
+        '  shift',
+        '  until "$@"; do',
+        '    n=$((n + 1))',
+        '    if [ "$n" -ge 5 ]; then',
+        `      echo "canopy-worker boot: '$step' failed after $n attempts" >&2`,
+        '      return 1',
+        '    fi',
+        '    sleep $((n * 5))',
+        '  done',
+        '}',
+        '',
+        '# Swap, before the first dnf: loading the repository metadata takes more',
+        '# memory than a t4g.nano has free after boot, and the kernel OOM-kills',
+        '# dnf. It stays on afterwards at low swappiness, as headroom for git and',
+        '# the CloudWatch agent rather than working memory. It is on the encrypted',
+        '# root volume, so memory paged out of the worker is encrypted at rest.',
+        '# fallocate is safe here: XFS, the root file system, supports',
+        '# preallocated swap files. A failure only warns, because dnf may still fit',
+        '# and a boot that stopped here would put the group into a replacement',
+        '# loop. Each command carries `|| return 1` because errexit does not apply',
+        '# inside a function called as a condition.',
+        'setup_swap() {',
+        '  swapon --show=NAME --noheadings | grep -qx /swapfile && return 0',
+        '  if [ "$(stat -c %s /swapfile 2>/dev/null)" != 1073741824 ]; then',
+        '    # The file, plus 2 GiB for packages, logs and the GitHub mirror.',
+        '    local avail_mib',
+        `    avail_mib=$(df --output=avail -m / | tail -n 1 | tr -d ' ')`,
+        '    case "$avail_mib" in ""|*[!0-9]*) return 1 ;; esac',
+        '    if [ "$avail_mib" -lt 3072 ]; then',
+        '      echo "canopy-worker boot: under 3 GiB free on /, so no swap file" >&2',
+        '      return 1',
+        '    fi',
+        '    rm -f /swapfile || return 1',
+        '    fallocate -l 1G /swapfile || return 1',
+        '  fi',
+        '  chmod 600 /swapfile || return 1',
+        '  mkswap /swapfile || return 1',
+        '  # swapon last, so that swap is never on when this returns 1.',
+        "  grep -qs '^/swapfile ' /etc/fstab || echo '/swapfile none swap defaults 0 0' >> /etc/fstab || return 1",
+        '  mkdir -p /etc/sysctl.d || return 1',
+        "  echo 'vm.swappiness = 10' > /etc/sysctl.d/90-canopy-worker-swap.conf || return 1",
+        '  sysctl -q -w vm.swappiness=10 || return 1',
+        '  swapon /swapfile',
+        '}',
+        'if ! setup_swap; then',
+        `  echo "canopy-worker boot: 'swap' setup failed; continuing without swap" >&2`,
+        'fi',
+        '',
+        '# Patch first. AL2023 locks dnf to the repository release its AMI was',
+        '# built from, so a relaunch from the AMI resolved at the last deploy',
+        '# would otherwise install nothing newer than that AMI. Moving to the',
+        '# latest release also makes it the one every install below resolves',
+        '# from. The kernel is left out: a new one applies only at a reboot,',
+        '# which nothing here performs, so it would cost boot time and change',
+        '# nothing. Kernel fixes arrive with the AMI a deploy resolves.',
+        '#',
+        "# A failed upgrade does not stop the boot: the worker starts on the AMI's",
+        '# packages and the next boot (by default the weekly recycle at the',
+        '# latest) tries again. Failing here would put the group into a',
+        '# replacement loop with no worker at all. The installs below then',
+        '# resolve from the AMI release: 2023.7.20250428 carries all of them,',
+        '# 2023.7.20250331 lacks nodejs22. The failure is written to worker.log',
+        '# below, for the unpatched alarm.',
+        'WORKER_UNPATCHED=0',
+        "if ! retry 'dnf upgrade' dnf upgrade --releasever=latest --exclude='kernel*' -y; then",
+        '  WORKER_UNPATCHED=1',
+        `  echo "canopy-worker boot: ${WORKER_UNPATCHED_LOG_PHRASE}" >&2`,
+        'fi',
+        '',
+        "retry 'dnf install git' dnf install -y git",
+        "# Node comes from AL2023's own repos, NOT a piped third-party installer.",
+        '# The previous boot curled the NodeSource RPM setup script straight into',
+        '# bash, so every instance replacement -- which the ASG performs on every',
+        '# `cdk deploy`, plus every spot interruption -- depended on a third party',
+        '# being reachable. cms-deploy.test.ts asserts that URL never comes back,',
+        '# which is why it is not spelled out here.',
+        '#',
+        '# nodejs22, not 20: Node 20 reached upstream EOL on 2026-04-30, and this',
+        '# repo declares `engines.node: ">=22"` with .nvmrc `v22`, so the worker',
+        '# was running an EOL runtime BELOW the floor its own code is tested at.',
+        "# 22 (EOL 2027-04-30) matches .nvmrc, CI, and the transform Lambda's",
+        '# NODEJS_22_X, so one runtime is tested everywhere.',
+        '#',
+        '# ExecStart uses the NAMESPACED /usr/bin/node-22 (see workerUnit in',
+        '# worker-units.ts), not the bare `node`: AL2023 installs versioned binaries and',
+        '# points `/usr/bin/node` at one of them through `alternatives`, whose',
+        '# selection AWS documents as able to change at any time.',
+        "retry 'dnf install nodejs22' dnf install -y nodejs22",
+        '',
+        '# Mount EFS through the same access point, at the same path, as the',
+        '# Lambda (see EFS_MOUNT_PATH). amazon-efs-utils refuses an access-point',
+        '# mount without tls (efs_utils_common/mount_options.py).',
+        "retry 'dnf install amazon-efs-utils' dnf install -y amazon-efs-utils",
+        `mkdir -p ${EFS_MOUNT_PATH}`,
+        '# Retried: an `iam` mount also fetches instance-role credentials.',
+        `retry 'EFS mount' mount -t efs -o ${efsMountOptions} ${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH}`,
+        '# Persist the mount across instance reboots: user-data runs once per',
+        '# instance, so without an fstab entry a plain reboot leaves /mnt/efs an',
+        '# empty local dir and the worker would clone a divergent remote.git',
+        '# onto the instance disk, invisible to the Lambda.',
+        `echo '${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH} efs _netdev,${efsMountOptions} 0 0' >> /etc/fstab`,
+        '',
+        '# The bundle runs only if its sha256 is the one given here (synthesized,',
+        '# or the workerCode parameter); a mismatch fails the boot under the trap',
+        '# above.',
+        `retry 'worker bundle download' aws s3 cp s3://${workerBundle.bucketName}/${workerBundle.objectKey} ${WORKER_BUNDLE_DOWNLOAD_PATH}`,
+        `echo '${workerBundle.sha256}  ${WORKER_BUNDLE_DOWNLOAD_PATH}' | sha256sum -c -`,
+        '# Root-owned, and read-only to the services (ProtectSystem=strict in worker-units.ts).',
+        `install -D -m 0644 ${WORKER_BUNDLE_DOWNLOAD_PATH} /opt/canopy-worker/index.js`,
+        '# The worker bundle is ESM (esbuild --format=esm). Without this marker a',
+        '# .js file is CommonJS by default and the import statement fails.',
+        '# Node >=22.7 auto-detects module syntax and would mask its absence, and',
+        '# this instance now runs node-22 -- so the marker is kept BECAUSE that',
+        '# auto-detection is a fallback we should not depend on, not because the',
+        '# runtime here still needs it.',
+        `echo '{"type":"module"}' > /opt/canopy-worker/package.json`,
+        '',
+        '# The units and scripts below install from, checked as the bundle is and',
+        '# unpacked where only root can read or write.',
+        `retry 'worker instance files download' aws s3 cp s3://${workerBundle.instanceFiles.bucketName}/${workerBundle.instanceFiles.objectKey} ${INSTANCE_FILES_DOWNLOAD_PATH}`,
+        `echo '${workerBundle.instanceFiles.sha256}  ${INSTANCE_FILES_DOWNLOAD_PATH}' | sha256sum -c -`,
+        `install -d -o root -g root -m 0700 ${INSTANCE_FILES_DIR}`,
+        `(cd ${INSTANCE_FILES_DIR} && bash ${INSTANCE_FILES_DOWNLOAD_PATH})`,
+        '',
+        "# The worker's environment: nothing secret.",
+        `cat > ${WORKER_INSTALL_DIR}/.env << '${ENV_HEREDOC_DELIMITER}'`,
+        workerEnv,
+        ENV_HEREDOC_DELIMITER,
+        "# The secrets' names, root's alone until the split gives the gateway's",
+        '# group read below: created with its mode before anything is written to',
+        '# it, so it is never world-readable. The single unit reads both files.',
+        `install -m 0600 -o root -g root /dev/null ${WORKER_INSTALL_DIR}/gateway.env`,
+        `cat > ${WORKER_INSTALL_DIR}/gateway.env << '${ENV_HEREDOC_DELIMITER}'`,
+        gatewayEnv,
+        ENV_HEREDOC_DELIMITER,
+        '',
+        '# The units, chosen by the contract the bundle states in its first',
+        `# lines (\`${WORKER_CONTRACT_BANNER_PREFIX}<n>\`), read after the sha256 check above,`,
+        '# so it is as trusted as the bundle. A bundle at the split contract or',
+        '# later gets the split: a worker with no network and no secret, and the',
+        '# GitHub gateway holding them. An older one gets the single unit it was',
+        '# built for: the split would cut it off from GitHub. Every bundle roll',
+        '# replaces the instance, so each boot matches its own bundle.',
+        'WORKER_BUNDLE_CONTRACT=$(head -n 5 /opt/canopy-worker/index.js |',
+        `  sed -n 's|^${WORKER_CONTRACT_BANNER_PREFIX}\\([0-9]\\{1,4\\}\\)$|\\1|p' | head -n 1 || true)`,
+        `if [ "\${WORKER_BUNDLE_CONTRACT:-0}" -ge ${GATEWAY_SPLIT_CONTRACT} ]; then`,
+        '  WORKER_SPLIT=1',
+        '',
+        '  # No core dumps on this instance. A piped core_pattern hands a crashing',
+        "  # process's memory and environment to a root helper, which journals",
+        "  # the environment where the worker's groups can read it; the gateway",
+        '  # refuses to start unless this holds. systemd-sysctl has already run',
+        '  # by now, so the file is applied here as well as at every boot.',
+        '  # fb_tunnels_only_for_init_net keeps fallback tunnel devices out of',
+        "  # the worker's network namespace, which must hold only lo. -e skips a",
+        '  # key this kernel lacks: the gateway refuses to start under a piped',
+        '  # core_pattern, and the worker with any interface but lo.',
+        '  mkdir -p /etc/sysctl.d',
+        "  cat > /etc/sysctl.d/99-canopy.conf << 'SYSCTLEOF'",
+        'kernel.core_pattern = core',
+        'fs.suid_dumpable = 0',
+        'net.core.fb_tunnels_only_for_init_net = 1',
+        'SYSCTLEOF',
+        '  sysctl -q -e -p /etc/sysctl.d/99-canopy.conf',
+        '  # PID 1 otherwise gives every service an unlimited core limit',
+        '  # (DefaultLimitCORE=, systemd-system.conf(5)), so',
+        '  # core_pattern=core would leave core files from any crashing daemon.',
+        '  mkdir -p /etc/systemd/system.conf.d',
+        "  printf '[Manager]\\nDefaultLimitCORE=0\\n' > /etc/systemd/system.conf.d/canopy.conf",
+        '',
+        "  # The gateway's user: a system account, so its uid is stable and",
+        "  # gateway.env can be its group's before the service first runs.",
+        `  getent passwd ${GATEWAY_USER} >/dev/null ||`,
+        `    useradd --system --no-create-home --shell /sbin/nologin ${GATEWAY_USER}`,
+        `  chown root:${GATEWAY_USER} ${WORKER_INSTALL_DIR}/gateway.env`,
+        `  chmod 0640 ${WORKER_INSTALL_DIR}/gateway.env`,
+        '',
+        ...['canopy-worker.service', 'canopy-github.service', 'canopy-github.socket'].map(
+          (unit) => `  install -m 0644 ${INSTANCE_FILES_DIR}/${unit} /etc/systemd/system/${unit}`,
+        ),
+        '',
+        '  # The gateway log, root-owned (LOG_RULE, worker-units.ts), and readable',
+        '  # by root alone.',
+        `  install -d -o root -g root -m 0755 ${GATEWAY_LOG_DIR}`,
+        `  install -o root -g root -m 0640 /dev/null ${GATEWAY_LOG}`,
+        '',
+        '  # canopy-inspect, for an operator on EFS: see canopyInspectScript',
+        '  # (worker-units.ts).',
+        `  install -m 0755 ${INSTANCE_FILES_DIR}/canopy-inspect ${CANOPY_INSPECT}`,
+        `  install -m 0755 ${INSTANCE_FILES_DIR}/inspect-checks ${INSPECT_CHECKS}`,
+        `  install -m 0644 ${INSTANCE_FILES_DIR}/inspect.rc ${INSPECT_RC}`,
+        'else',
+        '  WORKER_SPLIT=0',
+        `  install -m 0644 ${INSTANCE_FILES_DIR}/canopy-worker-single-process.service /etc/systemd/system/canopy-worker.service`,
+        'fi',
+        '',
+        '# The worker log, root-owned and created before the first start (LOG_RULE,',
+        '# worker-units.ts). 0644, so it stays',
+        '# readable without sudo.',
+        `install -d -o root -g root -m 0755 ${WORKER_LOG_DIR}`,
+        `install -o root -g root -m 0644 /dev/null ${WORKER_LOG}`,
+        '',
+        '# In the worker log format (canopycms worker/log.ts), so the CloudWatch',
+        '# agent ships it as its own event: the agent reads a file it has no saved',
+        '# position for from the start (its `from_beginning` defaults to true).',
+        'if [ "$WORKER_UNPATCHED" = 1 ]; then',
+        `  echo "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ) ERROR canopy-worker boot: 'dnf upgrade' failed; ${WORKER_UNPATCHED_LOG_PHRASE}" >> ${WORKER_LOG}`,
+        'fi',
+        '',
+        '# Start the units; daemon-reload also reads the core-limit drop-in. The',
+        '# gateway first, so its secret reads and first GitHub fetch start before',
+        "# the worker's first call.",
+        'systemctl daemon-reload',
+        'if [ "$WORKER_SPLIT" = 1 ]; then',
+        '  systemctl enable --now canopy-github.socket canopy-github.service',
+        'fi',
+        'systemctl enable canopy-worker',
+        'systemctl start canopy-worker',
+        '',
+        '# ---- CloudWatch log shipping ----',
+        '# Placed AFTER worker start: with set -euo pipefail, a package/agent',
+        '# failure here must not prevent the worker from running (shipping is',
+        '# best-effort).',
+        '#',
+        '# DISARM THE FAIL-FAST TRAP AND errexit FIRST. Everything above this line',
+        '# is required for the worker to exist at all, so a failure there should',
+        '# replace the instance. Nothing below it is: the worker is already',
+        '# running and healthy by this point. Leaving the trap armed would let a',
+        '# package-mirror outage during the agent install shut down a perfectly',
+        '# good worker -- and the ASG would relaunch straight into the same',
+        '# outage, turning degraded log shipping into a replacement loop with the',
+        '# worker down for its duration. That is strictly worse than the',
+        '# best-effort behaviour this section has always documented.',
+        'trap - ERR',
+        'set +e',
+        "retry 'dnf install amazon-cloudwatch-agent logrotate' dnf install -y amazon-cloudwatch-agent logrotate",
+        '',
+        '# Bound on-disk growth; copytruncate keeps the fd the CW agent tails valid',
+        '# (tiny copy->truncate loss window is acceptable for diagnostic logs).',
+        `cat > /etc/logrotate.d/canopy-worker << 'ROTEOF'`,
+        `${WORKER_LOG} ${GATEWAY_LOG} {`,
+        '    size 10M',
+        '    rotate 5',
+        '    compress',
+        '    copytruncate',
+        '    missingok',
+        '    notifempty',
+        '}',
+        'ROTEOF',
+        '# The config above only fires when logrotate actually runs; AL2023',
+        '# presets may leave logrotate.timer disabled, and without it the size',
+        '# cap never triggers and worker.log grows until the nano disk fills.',
+        '# --now is idempotent if the timer is already enabled/running.',
+        'systemctl enable --now logrotate.timer',
+        '',
+        '# No retention_in_days here: CDK owns retention on the pre-created group.',
+        `cat > /opt/aws/amazon-cloudwatch-agent/etc/canopy-worker-logs.json << 'CWEOF'`,
+        '{',
+        '  "logs": {',
+        '    "logs_collected": {',
+        '      "files": {',
+        '        "collect_list": [',
+        ...[
+          { file: WORKER_LOG, stream: '{instance_id}' },
+          // The gateway's own record of what reached GitHub, which the worker
+          // cannot write.
+          { file: GATEWAY_LOG, stream: '{instance_id}-gateway' },
+        ].flatMap(({ file, stream }, i, all) => [
+          '          {',
+          `            "file_path": "${file}",`,
+          `            "log_group_name": "${this.workerLogGroup.logGroupName}",`,
+          `            "log_stream_name": "${stream}",`,
+          // Both prefix every line with an ISO-8601 timestamp
+          // (packages/canopycms/src/worker/log.ts). Parsing it here is what makes
+          // CloudWatch show the time the process emitted a line rather than the
+          // time the agent shipped it - those diverge exactly when it matters
+          // (agent hiccup, buffered burst, post-restart backlog).
+          '            "timestamp_format": "%Y-%m-%dT%H:%M:%S.%f",',
+          // The prefix ends in `Z`, so the parsed time is UTC. Without this the
+          // agent would interpret it in the instance's local zone.
+          '            "timezone": "UTC",',
+          // "{timestamp_format}" reuses the pattern above as the multi-line start
+          // marker: a line WITHOUT the timestamp prefix continues the previous
+          // event instead of becoming its own. That is what keeps a stack trace as
+          // one CloudWatch event, and why every writer to these files must go
+          // through the worker log helpers.
+          '            "multi_line_start_pattern": "{timestamp_format}"',
+          i < all.length - 1 ? '          },' : '          }',
+        ]),
+        '        ]',
+        '      }',
+        '    }',
+        '  }',
+        '}',
+        'CWEOF',
+        '# fetch-config -s starts AND systemctl-enables the agent (reboot-persistent).',
+        '/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/canopy-worker-logs.json',
+      ),
     )
 
     // Launch template (not the deprecated AutoScalingGroup instanceType/
@@ -1646,25 +2300,68 @@ export class CanopyCmsService extends Construct {
     // fresh adopter account. An explicit LaunchTemplate synthesizes
     // AWS::EC2::LaunchTemplate instead, which every account can use.
     const launchTemplate = new ec2.LaunchTemplate(this, 'WorkerLaunchTemplate', {
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.NANO),
+      instanceType: workerInstanceTypes[0],
       machineImage: ec2.MachineImage.latestAmazonLinux2023({
         cpuType: ec2.AmazonLinuxCpuType.ARM_64,
       }),
       role: workerRole,
       securityGroup: workerSg,
       userData,
-      spotOptions: {
-        requestType: ec2.SpotRequestType.ONE_TIME, // required for ASG-managed spot
-        maxPrice: parseFloat(props.spotMaxPrice ?? '0.0042'), // On-demand rate for t4g.nano
-      },
+      requireImdsv2: true,
+      // 1, not AL2023's 2: everything that reads metadata runs on the host,
+      // and a second hop only serves containers.
+      httpPutResponseHopLimit: 1,
+      blockDevices: [
+        {
+          // AL2023's root device. Its size is removed below.
+          deviceName: '/dev/xvda',
+          volume: ec2.BlockDeviceVolume.ebs(8, {
+            encrypted: true,
+            volumeType: ec2.EbsDeviceVolumeType.GP3,
+            deleteOnTermination: true,
+          }),
+        },
+      ],
     })
+
+    // Unset, the root volume takes the AMI snapshot's size, so an AMI that
+    // grows cannot fail every launch as "smaller than snapshot".
+    // `BlockDeviceVolume.ebs` requires a size.
+    ;(launchTemplate.node.defaultChild as ec2.CfnLaunchTemplate).addPropertyDeletionOverride(
+      'LaunchTemplateData.BlockDeviceMappings.0.Ebs.VolumeSize',
+    )
 
     this.workerAsg = new autoscaling.AutoScalingGroup(this, 'WorkerAsg', {
       vpc: this.vpc,
+      // Public, deliberately: it reaches GitHub and AWS APIs through the
+      // internet gateway instead of a NAT gateway that would cost more than
+      // the rest of the stack. Its security group admits no inbound traffic.
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
-      launchTemplate,
+      // Spot goes through a mixed-instances policy rather than spot options on
+      // the launch template, so the group can choose among several pools.
+      ...(workerCapacity.type === 'spot'
+        ? {
+            mixedInstancesPolicy: {
+              launchTemplate,
+              launchTemplateOverrides: workerInstanceTypes.map((instanceType) => ({
+                instanceType,
+              })),
+              instancesDistribution: {
+                onDemandBaseCapacity: 0,
+                onDemandPercentageAboveBaseCapacity: 0,
+                spotAllocationStrategy: autoscaling.SpotAllocationStrategy.PRICE_CAPACITY_OPTIMIZED,
+                spotMaxPrice: workerCapacity.maxPrice,
+              },
+            },
+            capacityRebalance: workerCapacity.capacityRebalance ?? true,
+          }
+        : { launchTemplate }),
       minCapacity: 1,
       maxCapacity: 1,
+      maxInstanceLifetime:
+        props.workerMaxInstanceLifetime === null
+          ? undefined
+          : (props.workerMaxInstanceLifetime ?? Duration.days(7)),
       // `healthChecks`, not the deprecated `healthCheck`/`HealthCheck.ec2({ grace })`:
       // both synthesize the same HealthCheckType/HealthCheckGracePeriod, but the
       // deprecated form prints a jsii warning on every synth -- in adopters'
@@ -1675,10 +2372,10 @@ export class CanopyCmsService extends Construct {
       // Without an updatePolicy, CloudFormation's default behavior for an ASG
       // behind a changed launch template is to update the template resource
       // and do NOTHING else - the running instance keeps its old user-data
-      // (and therefore the old worker code: the worker bundle is a CDK S3
-      // asset whose hash is interpolated into user-data's `aws s3 cp
-      // s3://...`) until a spot interruption or a manual terminate happens
-      // to replace it. `cdk deploy` would then silently deploy everything
+      // (and therefore the old worker code: the bundle's key and sha256,
+      // from the CDK asset or the workerCode parameter, are interpolated into
+      // user data) until an interruption or a manual terminate happens to
+      // replace it. `cdk deploy` would then silently deploy everything
       // EXCEPT the worker. `rollingUpdate` makes CloudFormation actually
       // terminate-and-relaunch the instance on every deploy that changes the
       // launch template, so a worker code change actually reaches it.
@@ -1691,10 +2388,14 @@ export class CanopyCmsService extends Construct {
       // That outage is acceptable: the task queue and branch workspaces live on
       // EFS, not on the instance, so the new instance picks up where the old one
       // left off, and the Lambda's Save/Publish paths only enqueue task files
-      // onto EFS and never talk to the worker directly. A task mid-flight at
-      // termination is handled by orphan recovery on every task-queue cycle, not
-      // only at worker boot (recoverOrphanedTasks in
-      // CmsWorker.processTaskQueue(), packages/canopycms/src/worker/cms-worker.ts).
+      // onto EFS and never talk to the worker directly. The old worker drains
+      // first, behind the terminating lifecycle hook below. Orphan recovery on
+      // every task-queue cycle (CmsWorker.processTaskQueue) covers a worker
+      // that died without draining.
+      //
+      // Single-writer does not rest on this ordering: the worker lock on EFS
+      // keeps a second worker from starting until the first has released it,
+      // which a draining worker does last.
       //
       // `waitOnResourceSignals` therefore defaults to false here - see the
       // no-cfn-signal note below.
@@ -1725,6 +2426,43 @@ export class CanopyCmsService extends Construct {
     // `mount -t efs` failure kills the whole bootstrap and the
     // EC2-health-checked ASG never notices.
     this.workerAsg.node.addDependency(this.fileSystem.mountTargetsAvailable)
+
+    // Holds a terminating instance in Terminating:Wait until its worker has
+    // drained and completed the action (worker/termination-watch.ts). CONTINUE
+    // on timeout, so a hung worker delays termination by at most the heartbeat.
+    //
+    // A separate resource that depends on the group, so an upgrade that adds it
+    // rolls the group first: the outgoing instance, whose worker predates the
+    // drain, is never held for a heartbeat it cannot complete.
+    this.workerAsg.addLifecycleHook('WorkerDrainHook', {
+      lifecycleHookName: WORKER_DRAIN_HOOK_NAME,
+      lifecycleTransition: autoscaling.LifecycleTransition.INSTANCE_TERMINATING,
+      heartbeatTimeout: workerTerminationHeartbeat,
+      defaultResult: autoscaling.DefaultResult.CONTINUE,
+    })
+    // A standalone policy rather than the role's default one: it names the
+    // group, and the group depends (through the launch template) on the role.
+    new iam.Policy(this, 'WorkerLifecyclePolicy', {
+      roles: [workerRole],
+      statements: [
+        new iam.PolicyStatement({
+          // Describe actions support no resource-level permissions.
+          actions: ['autoscaling:DescribeAutoScalingInstances'],
+          resources: ['*'],
+        }),
+        new iam.PolicyStatement({
+          actions: ['autoscaling:CompleteLifecycleAction'],
+          resources: [
+            Stack.of(this).formatArn({
+              service: 'autoscaling',
+              resource: 'autoScalingGroup',
+              resourceName: `*:autoScalingGroupName/${this.workerAsg.autoScalingGroupName}`,
+              arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+            }),
+          ],
+        }),
+      ],
+    })
   }
 
   /**

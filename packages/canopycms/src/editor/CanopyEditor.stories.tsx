@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react'
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 
 import { defineCanopyConfig } from '../config'
 import { CanopyEditor } from './CanopyEditor'
@@ -38,7 +38,6 @@ const configBundle = defineCanopyConfig({
   gitBotAuthorEmail: 'canopy@example.com',
   editor: {
     title: 'CanopyCMS Editor',
-    subtitle: 'Config-driven wrapper',
     theme: { colors: { brand: '#4f46e5' } },
   },
 })
@@ -60,60 +59,77 @@ const entries = [
   },
 ]
 
-const MockFetch: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  useEffect(() => {
-    const original = global.fetch
-    const handler = (input: RequestInfo | URL, init?: RequestInit) => {
-      const url =
-        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-      if (url.endsWith('/api/canopycms/branches')) {
-        return Promise.resolve(
-          new Response(JSON.stringify({}), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json' },
-          }),
-        )
-      }
-      if (url.includes('/entries')) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              collections: [],
-              entries: [],
-              pagination: { hasMore: false, limit: 50 },
-            }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          ),
-        )
-      }
-      if (url.includes('/content') && (!init || !init.method)) {
-        return Promise.resolve(
-          new Response(JSON.stringify({ data: { title: 'Loaded' } }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }),
-        )
-      }
-      if (url.includes('/content') && init?.method === 'PUT') {
-        return Promise.resolve(
-          new Response(init.body as BodyInit, {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }),
-        )
-      }
-      return Promise.resolve(
-        new Response(JSON.stringify({}), {
+const handler = (input: RequestInfo | URL, init?: RequestInit) => {
+  const url =
+    typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+  if (url.endsWith('/api/canopycms/whoami')) {
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({ ok: true, status: 200, data: { userId: 'story-user', groups: [] } }),
+        {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    )
+  }
+  if (url.endsWith('/api/canopycms/branches')) {
+    return Promise.resolve(
+      new Response(JSON.stringify({}), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+  }
+  if (url.includes('/entries')) {
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          collections: [],
+          entries: [],
+          pagination: { hasMore: false, limit: 50 },
         }),
-      )
-    }
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+  }
+  if (url.includes('/content') && (!init || !init.method)) {
+    return Promise.resolve(
+      new Response(JSON.stringify({ data: { title: 'Loaded' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+  }
+  if (url.includes('/content') && init?.method === 'PUT') {
+    return Promise.resolve(
+      new Response(init.body as BodyInit, {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+  }
+  return Promise.resolve(
+    new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+}
+
+/** Installed while rendering, before the editor's API client captures `fetch` (`api/client.ts:383`). */
+const MockFetch: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [original] = useState(() => {
+    const previous = global.fetch
     global.fetch = handler as typeof fetch
-    return () => {
-      global.fetch = original as typeof fetch
-    }
-  }, [])
+    return previous
+  })
+  useEffect(
+    () => () => {
+      global.fetch = original
+    },
+    [original],
+  )
   return <>{children}</>
 }
 

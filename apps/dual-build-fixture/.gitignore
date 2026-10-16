@@ -13,6 +13,7 @@
 /.next/
 /.next-static/
 /out/
+/.asset-urls.log
 
 # production
 /build

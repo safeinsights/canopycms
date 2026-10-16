@@ -6,31 +6,44 @@ import type { CanopyConfig } from '../config'
 import type { CanopyServices } from '../services'
 import { mockConsole } from '../test-utils/console-spy'
 import { BranchMetadataCorruptError } from '../branch-metadata'
+import { BRANCH_METADATA_CORRUPT_MESSAGE } from '../branch-metadata-error'
 import { RemoteNotReadyError } from '../git-manager'
+import { BranchProvisioningBusyError } from '../branch-provisioning'
 import { WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
+import { resolveCanopyUser } from '../resolve-canopy-user'
+import { ANONYMOUS_USER } from '../user'
 
 // Mock the BranchWorkspaceManager to avoid git operations
-vi.mock('../branch-workspace', () => ({
-  BranchWorkspaceManager: vi.fn().mockImplementation(function () {
-    return {
-      openOrCreateBranch: vi.fn().mockResolvedValue({
-        branch: {
-          name: 'new-branch',
-          status: 'editing',
-          createdBy: 'test-user',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          access: {},
-        },
-        branchRoot: '/tmp/test',
-        baseRoot: '/tmp/base',
-      }),
-    }
-  }),
-  loadBranchContext: vi.fn().mockResolvedValue(null),
-}))
+vi.mock('../branch-workspace', () => {
+  const context = {
+    branch: {
+      name: 'new-branch',
+      status: 'editing',
+      createdBy: 'test-user',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      access: {},
+    },
+    branchRoot: '/tmp/test',
+    baseRoot: '/tmp/base',
+  }
+  return {
+    BranchWorkspaceManager: vi.fn().mockImplementation(function () {
+      return {
+        openOrCreateBranch: vi.fn().mockResolvedValue(context),
+        provisionBranch: vi.fn().mockResolvedValue({ kind: 'created', context }),
+      }
+    }),
+    loadBranchContext: vi.fn().mockResolvedValue(null),
+  }
+})
 
 // Mock the permissions loader to avoid file system operations
+vi.mock('../resolve-canopy-user', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../resolve-canopy-user')>()
+  return { ...actual, resolveCanopyUser: vi.fn(actual.resolveCanopyUser) }
+})
+
 vi.mock('../authorization/permissions', () => ({
   loadPathPermissions: vi.fn().mockResolvedValue([]),
 }))
@@ -103,6 +116,7 @@ const createMockServices = () => ({
   },
   bootstrapAdminIds: new Set<string>(),
   refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
+  resolvePendingBaseBranch: vi.fn().mockResolvedValue(undefined),
   // Internal groups are resolved via resolveCanopyUser -> getSettingsBranchRoot
   // (see resolve-canopy-user.ts). The path doesn't need to exist: groups.json
   // just won't be found there, which loadInternalGroups treats as "no custom
@@ -270,6 +284,37 @@ describe('createCanopyRequestHandler', () => {
     }
   })
 
+  it('answers a handler that meets a corrupt branch.json with a plain-language 500', async () => {
+    const consoleSpy = mockConsole()
+    try {
+      const handler = createCanopyRequestHandler({
+        services: createMockServices() as unknown as CanopyServices,
+        authPlugin: createMockAuthPlugin(),
+        getBranchContext: async (branch) => {
+          if (branch !== 'feature-x') return null
+          throw new BranchMetadataCorruptError(
+            '/mnt/efs/workspace/content-branches/feature-x',
+            'Not branch metadata. Missing: branch.status',
+          )
+        },
+      })
+
+      const req = createMockRequest({
+        method: 'DELETE',
+        url: 'http://localhost:3000/api/canopycms/feature-x',
+      })
+      // Branch delete, which resolves the branch itself rather than through a guard.
+      const response = await handler(req, ['feature-x'])
+
+      expect(response.status).toBe(500)
+      expect((response.body as { error?: string }).error).toBe(BRANCH_METADATA_CORRUPT_MESSAGE)
+      // The path and the cause stay in the server log.
+      expect(consoleSpy).toHaveErrored(/content-branches\/feature-x.*Missing: branch\.status/)
+    } finally {
+      consoleSpy.restore()
+    }
+  })
+
   describe('settings-workspace failure', () => {
     const failingSettingsServices = (bootstrapAdminIds = new Set<string>()) => {
       const services: any = createMockServices()
@@ -398,7 +443,40 @@ describe('createCanopyRequestHandler', () => {
     const response = await handler(req, ['branches'])
 
     expect(response.status).toBe(401)
-    expect(response.body).toHaveProperty('error', 'No token')
+    expect(response.body).toEqual({ ok: false, status: 401, error: 'No token' })
+  })
+
+  it('answers unauthenticated requests with unauthenticatedStatus, keeping the body status 401', async () => {
+    const services: any = createMockServices()
+    services.config.unauthenticatedStatus = 419
+
+    const handler = createCanopyRequestHandler({
+      services,
+      authPlugin: createRejectingAuthPlugin('No token'),
+      getBranchContext: async () => null,
+    })
+
+    const response = await handler(createMockRequest(), ['branches'])
+
+    expect(response.status).toBe(419)
+    expect(response.body).toEqual({ ok: false, status: 401, error: 'No token' })
+  })
+
+  it('answers an authenticated caller who resolves anonymous with unauthenticatedStatus', async () => {
+    const services: any = createMockServices()
+    services.config.unauthenticatedStatus = 419
+    vi.mocked(resolveCanopyUser).mockResolvedValueOnce(ANONYMOUS_USER)
+
+    const handler = createCanopyRequestHandler({
+      services,
+      authPlugin: createMockAuthPlugin(),
+      getBranchContext: async () => null,
+    })
+
+    const response = await handler(createMockRequest(), ['branches'])
+
+    expect(response.status).toBe(419)
+    expect(response.body).toEqual({ ok: false, status: 401, error: 'Unauthorized' })
   })
 
   it('handles POST requests with empty body gracefully', async () => {
@@ -538,7 +616,7 @@ describe('createCanopyRequestHandler', () => {
       const lines = consoleSpy.all().log.filter((l) => l.includes('[CanopyCMS:timing]'))
       expect(lines).toHaveLength(1)
       expect(lines[0]).toMatch(
-        / GET :branch\/comments \d+ \d+ms \| context=\d+ refreshBranch=\d+ auth=\d+ branchContext=\d+ user=\d+ user>groups=\d+ route=\d+ route>branchContext=\d+ untimed=\d+/,
+        / GET :branch\/comments \d+ \d+ms \| context=\d+ refreshBranch=\d+ auth=\d+ baseBranch=\d+ branchContext=\d+ user=\d+ user>groups=\d+ route=\d+ route>branchContext=\d+ untimed=\d+/,
       )
       expect(lines[0]).not.toContain('feature-secret')
     } finally {
@@ -597,6 +675,31 @@ describe('createCanopyRequestHandler', () => {
         expectFriendly503(await handler(createMockRequest(), ['branches']))
         // The detailed message still reaches the server log.
         expect(consoleSpy).toHaveErrored(/CANOPYCMS_REMOTE_URL/)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('503s with Retry-After and the busy message when the base branch is still being set up', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const handler = createCanopyRequestHandler({
+          services: createMockServices() as any,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => {
+            throw new BranchProvisioningBusyError('main')
+          },
+        })
+
+        const response = await handler(createMockRequest(), ['branches'])
+
+        expect(response.status).toBe(503)
+        expect(response.body).toEqual({
+          ok: false,
+          status: 503,
+          error: "Branch 'main' is still being set up. Try again in a minute.",
+        })
+        expect(response.headers).toEqual({ 'Retry-After': '30' })
       } finally {
         consoleSpy.restore()
       }
@@ -725,6 +828,97 @@ describe('createCanopyRequestHandler', () => {
       expect(error).not.toContain('/mnt/efs')
       expect(error).toContain('***@github.com')
       expect(error).toContain('<path>')
+    })
+  })
+
+  describe('editor mode check', () => {
+    const withEditorMode = (value: string | null): CanopyRequest =>
+      createMockRequest({
+        header: (name) => (name.toLowerCase() === 'x-canopy-editor-mode' ? value : null),
+      })
+
+    /** The reported case: a dev editor bundle against a prod server. */
+    const prodHandler = (authPlugin: AuthPlugin) => {
+      const base = createMockServices()
+      const services = {
+        ...base,
+        config: { ...base.config, mode: 'prod' as const },
+      } as unknown as CanopyServices
+      return createCanopyRequestHandler({
+        services,
+        authPlugin: { ...authPlugin, verifiesCredentials: true },
+        getBranchContext: async () => null,
+      })
+    }
+
+    it('refuses an editor built for the other mode with 412, before authenticating', async () => {
+      const authPlugin = createMockAuthPlugin()
+      const authenticate = vi.spyOn(authPlugin, 'authenticate')
+      const handler = prodHandler(authPlugin)
+
+      const response = await handler(withEditorMode('dev'), ['branches'])
+
+      expect(response.status).toBe(412)
+      expect(response.body).toMatchObject({
+        ok: false,
+        status: 412,
+        code: 'EDITOR_MODE_MISMATCH',
+      })
+      const error = (response.body as { error?: string }).error ?? ''
+      expect(error).toContain('built for "dev" mode')
+      expect(error).toContain('NEXT_PUBLIC_CANOPY_MODE=prod')
+      expect(authenticate).not.toHaveBeenCalled()
+    })
+
+    it('answers before building context, so an unavailable workspace cannot mask it', async () => {
+      // Building services from this incomplete config throws: a context that cannot be built.
+      const handler = createCanopyRequestHandler({
+        config: { mode: 'prod', deployedAs: 'server' } as CanopyConfig,
+        authPlugin: { ...createMockAuthPlugin(), verifiesCredentials: true },
+      })
+
+      expect((await handler(withEditorMode('dev'), ['branches'])).status).toBe(412)
+      expect((await handler(withEditorMode('prod'), ['branches'])).status).toBe(500)
+    })
+
+    it('logs the mismatch once per handler, naming both modes', async () => {
+      const consoleSpy = mockConsole()
+      const handler = prodHandler(createMockAuthPlugin())
+
+      await handler(withEditorMode('dev'), ['branches'])
+      await handler(withEditorMode('dev'), ['branches'])
+
+      const logged = consoleSpy
+        .all()
+        .warn.filter((line) => line.includes('NEXT_PUBLIC_CANOPY_MODE'))
+      expect(logged).toHaveLength(1)
+      expect(logged[0]).toContain('NEXT_PUBLIC_CANOPY_MODE="dev"')
+      expect(logged[0]).toContain('runs in "prod" mode')
+    })
+
+    it('refuses a prod editor against a dev server too', async () => {
+      const handler = createCanopyRequestHandler({
+        services: createMockServices() as unknown as CanopyServices,
+        authPlugin: createMockAuthPlugin(),
+        getBranchContext: async () => null,
+      })
+
+      const response = await handler(withEditorMode('prod'), ['branches'])
+
+      expect(response.status).toBe(412)
+      expect((response.body as { error?: string }).error).toContain('NEXT_PUBLIC_CANOPY_MODE=dev')
+    })
+
+    // A rejecting plugin's 401 shows the request went on to authentication.
+    it('lets an editor built for the same mode through to authentication', async () => {
+      const handler = prodHandler(createRejectingAuthPlugin())
+      expect((await handler(withEditorMode('prod'), ['branches'])).status).toBe(401)
+    })
+
+    it('does not check a request without the header or with an unrecognized value', async () => {
+      const handler = prodHandler(createRejectingAuthPlugin())
+      expect((await handler(withEditorMode(null), ['branches'])).status).toBe(401)
+      expect((await handler(withEditorMode('production'), ['branches'])).status).toBe(401)
     })
   })
 

@@ -1,7 +1,14 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import type { BranchContext, BranchMetadata, BranchStatus } from './types'
+import type {
+  BranchContext,
+  BranchMetadata,
+  BranchPaths,
+  BranchStatus,
+  CanopyUserId,
+} from './types'
+import type { CanopyUser } from './user'
 import { BranchRegistry } from './branch-registry'
 import {
   BRANCH_META_DIR,
@@ -12,7 +19,8 @@ import {
 } from './branch-metadata-file'
 import { resolveBranchPath } from './paths'
 import { type OperatingMode } from './operating-mode'
-import { isNotFoundError } from './utils/error'
+import { getErrorMessage, isNotFoundError } from './utils/error'
+import { canopyLogWarn } from './utils/logger'
 import { withLock } from './utils/async-mutex'
 import {
   writeOccJsonFile,
@@ -82,18 +90,15 @@ export class BranchMetadataFileManager {
     return new BranchMetadataFileManager(branchRoot, baseRoot, options)
   }
 
+  /**
+   * The file the save cycle merges over. A corrupt one throws
+   * {@link BranchMetadataCorruptError} rather than reading as absent, so a save
+   * never lays defaults (status 'editing', no ACL) over a branch whose real
+   * state is unknown; repair-metadata archives the file before it saves.
+   */
   private async load(): Promise<{ meta: BranchMetadataFile | null; version: number | null }> {
-    try {
-      const raw = await fs.readFile(this.filePath, 'utf8')
-      const parsed = JSON.parse(raw) as BranchMetadataFile
-      const version = parsed.version ?? 0
-      return { meta: parsed, version }
-    } catch (err: unknown) {
-      if (isNotFoundError(err)) {
-        return { meta: null, version: null }
-      }
-      throw err
-    }
+    const meta = await readBranchMetadataFile(this.branchRoot)
+    return { meta, version: meta?.version ?? null }
   }
 
   /**
@@ -135,13 +140,38 @@ export class BranchMetadataFileManager {
    * entry with no clone behind it. It runs BEFORE the lock stack so a doomed
    * save fails fast instead of paying for a lock.
    *
-   * Accepted residual window: a save that passes the check can still race a
-   * `rm` that starts moments later and is mid-flight when the write lands.
-   * Closing that needs a tombstone OUTSIDE the tree being removed, and the
-   * lockfile taken next lives INSIDE `branchRoot`, so it can promise no more
-   * than "the directory existed a moment ago".
+   * A save that passes the check just before a delete still cannot write: the
+   * delete renames the tree away under the same lockfile, and that lockfile
+   * creates only its own directory (`withOccFileLock`), so the save fails there.
    */
   async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
+    const saved = await this.saveIf(incoming, () => true)
+    if (saved === null) throw new Error('unreachable: an unconditional save was skipped')
+    return saved
+  }
+
+  /**
+   * {@link save}, applied only when `onlyIf` accepts the metadata on disk; resolves null when it
+   * does not, having written nothing. `onlyIf` runs inside the lock stack against the version
+   * the write is checked against, so the decision and the write are one compare-and-set.
+   */
+  async saveIf(
+    incoming: BranchMetadataUpdate,
+    onlyIf: (existing: BranchMetadataFile | null) => boolean,
+  ): Promise<BranchMetadataFile | null> {
+    return this.update((existing) => (onlyIf(existing) ? incoming : null))
+  }
+
+  /**
+   * A save whose update `compute` derives from the metadata on disk, inside the lock stack, so
+   * an update built from the existing value (adding to a list) cannot lose a concurrent one.
+   * `compute` returning null writes nothing and resolves null. `keepUpdatedAt` leaves
+   * `updatedAt` as it was, for bookkeeping writes that are not a change to the branch.
+   */
+  async update(
+    compute: (existing: BranchMetadataFile | null) => BranchMetadataUpdate | null,
+    options: { keepUpdatedAt?: boolean } = {},
+  ): Promise<BranchMetadataFile | null> {
     try {
       await fs.stat(this.branchRoot)
     } catch (err: unknown) {
@@ -151,46 +181,17 @@ export class BranchMetadataFileManager {
       throw err
     }
 
-    let saved: BranchMetadataFile
+    let saved: BranchMetadataFile | null
     try {
       saved = await withLock(this.filePath, () =>
         withOccFileLock(this.filePath, () =>
           withOccRetry(async () => {
             const { meta: existing, version } = await this.load()
-            const now = new Date().toISOString()
-
-            const defaults: BranchMetadata = {
-              name: 'unknown',
-              status: 'editing' as BranchStatus,
-              access: {},
-              createdBy: 'unknown',
-              createdAt: now,
-              updatedAt: now,
-            }
-
-            const merged: BranchMetadataFile = {
-              schemaVersion: CURRENT_SCHEMA_VERSION,
-              version: version ?? 0,
-              branch: {
-                ...defaults,
-                ...existing?.branch,
-                ...incoming.branch,
-                access: {
-                  ...existing?.branch?.access,
-                  ...incoming.branch?.access,
-                },
-                // Immutable after creation
-                createdBy:
-                  existing?.branch.createdBy ?? incoming.branch?.createdBy ?? defaults.createdBy,
-                createdAt: existing?.branch.createdAt ?? defaults.createdAt,
-                // Fork point is recorded once at creation; later saves must not move it
-                baseBranch: existing?.branch.baseBranch ?? incoming.branch?.baseBranch,
-                // Always stamped fresh; the spreads above would otherwise let
-                // the creation-time value win forever, freezing the timestamp
-                // the editor's Branches panel sorts and displays by
-                updatedAt: now,
-              },
-            }
+            const incoming = compute(existing)
+            if (incoming === null) return null
+            const merged = mergeBranchMetadata(existing, version, incoming)
+            if (options.keepUpdatedAt && existing)
+              merged.branch.updatedAt = existing.branch.updatedAt
             const written = await this.write(merged, version)
             merged.version = written.version
             merged.writeId = written.writeId
@@ -209,8 +210,48 @@ export class BranchMetadataFileManager {
     // does, and the registry's eager regeneration is O(branch count) fs reads
     // on EFS — holding the lock through it would stretch every save's critical
     // section for no correctness gain.
-    await this.invalidateRegistry()
+    if (saved !== null) await this.invalidateRegistry()
     return saved
+  }
+
+  /**
+   * Adds `userId` to `editors` and `uncommittedEditors`. A lock-free read skips the write when
+   * both already hold it, so only a user's first save since the last submit commit pays for the lock.
+   * Never creates branch.json.
+   */
+  async recordEditor(userId: CanopyUserId): Promise<void> {
+    const current = await readBranchMetadataFile(this.branchRoot)
+    if (!current || isRecordedEditor(current.branch, userId)) return
+    await this.update(
+      (existing) =>
+        existing && !isRecordedEditor(existing.branch, userId)
+          ? {
+              branch: {
+                editors: withMember(existing.branch.editors, userId),
+                uncommittedEditors: withMember(existing.branch.uncommittedEditors, userId),
+              },
+            }
+          : null,
+      { keepUpdatedAt: true },
+    )
+  }
+
+  /**
+   * Removes `userIds` from `uncommittedEditors` once a submit commit's trailers name them. Ids
+   * recorded after the commit read them stay, so the next commit names them.
+   */
+  async markEditorsCommitted(userIds: readonly CanopyUserId[]): Promise<void> {
+    const committed = new Set(userIds)
+    if (committed.size === 0) return
+    await this.update(
+      (existing) => {
+        const pending = existing?.branch.uncommittedEditors ?? []
+        const remaining = pending.filter((id) => !committed.has(id))
+        if (remaining.length === pending.length) return null
+        return { branch: { uncommittedEditors: remaining.length > 0 ? remaining : undefined } }
+      },
+      { keepUpdatedAt: true },
+    )
   }
 
   /** Invalidate the registry cache so the next list() regenerates. */
@@ -218,6 +259,89 @@ export class BranchMetadataFileManager {
     const registry = new BranchRegistry(this.baseRoot)
     await registry.invalidate()
   }
+}
+
+function isRecordedEditor(branch: BranchMetadata, userId: CanopyUserId): boolean {
+  return (
+    (branch.editors?.includes(userId) ?? false) &&
+    (branch.uncommittedEditors?.includes(userId) ?? false)
+  )
+}
+
+function withMember(list: readonly CanopyUserId[] | undefined, id: CanopyUserId): CanopyUserId[] {
+  return list?.includes(id) ? [...list] : [...(list ?? []), id]
+}
+
+/**
+ * Records `user` as an editor of the branch, for the submit's trailers and PR body. Called once a
+ * change to the branch's working tree has succeeded, so a failure here is logged and never fails
+ * that change. Anonymous users are not recorded.
+ */
+export async function recordBranchEditor(context: BranchPaths, user: CanopyUser): Promise<void> {
+  if (user.type !== 'authenticated') return
+  try {
+    await getBranchMetadataFileManager(context.branchRoot, context.baseRoot).recordEditor(
+      user.userId,
+    )
+  } catch (err: unknown) {
+    canopyLogWarn(
+      `CanopyCMS: Could not record an editor of ${path.basename(context.branchRoot)}; the next submit will not credit them:`,
+      getErrorMessage(err),
+    )
+  }
+}
+
+/**
+ * The branch.json that {@link BranchMetadataFileManager.save} writes for `incoming` over
+ * `existing`. Pure, so a staged workspace's first branch.json (branch-provisioning.ts) is built by
+ * the same rules as a save and the two cannot drift.
+ */
+function mergeBranchMetadata(
+  existing: BranchMetadataFile | null,
+  version: number | null,
+  incoming: BranchMetadataUpdate,
+  now: string = new Date().toISOString(),
+): BranchMetadataFile {
+  const defaults: BranchMetadata = {
+    name: 'unknown',
+    status: 'editing' as BranchStatus,
+    access: {},
+    createdBy: 'unknown',
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  return {
+    // Envelope keys this code does not know survive, as unknown branch keys do below.
+    ...existing,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    version: version ?? 0,
+    branch: {
+      ...defaults,
+      ...existing?.branch,
+      ...incoming.branch,
+      access: {
+        ...existing?.branch?.access,
+        ...incoming.branch?.access,
+      },
+      // Immutable after creation
+      createdBy: existing?.branch.createdBy ?? incoming.branch?.createdBy ?? defaults.createdBy,
+      createdAt: existing?.branch.createdAt ?? defaults.createdAt,
+      // Fork point is recorded once at creation; later saves must not move it
+      baseBranch: existing?.branch.baseBranch ?? incoming.branch?.baseBranch,
+      // Always stamped fresh; the spreads above would otherwise let the creation-time value win
+      // forever, freezing the timestamp the editor's Branches panel sorts and displays by
+      updatedAt: now,
+    },
+  }
+}
+
+/** The branch.json a brand-new branch starts with: {@link mergeBranchMetadata} over nothing. */
+export function buildInitialBranchMetadata(
+  incoming: BranchMetadataUpdate,
+  now?: string,
+): BranchMetadataFile {
+  return mergeBranchMetadata(null, null, incoming, now)
 }
 
 /**
@@ -246,6 +370,9 @@ export function buildMergedBranchUpdate(
     status: 'archived',
     pullRequestState: 'merged',
     mergedAt: now.toISOString(),
+    // The merge settled every conflict the record named.
+    conflictStatus: 'clean',
+    conflictFiles: [],
   }
 }
 

@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-24, PR #149) — README's Error Handling Utilities example now branches on `ContentStoreError`'s `code` field (both the `isPermissionError` and `isNotFoundError` branches were dead — they check Node `EACCES`/`ENOENT`); section clarifies CMS reads never throw Node fs errors and points URL pages at null-safe `readByUrlPath()`. Optional first-class helpers (export `ContentStoreError`) not pursued.
+---
 # README's `isPermissionError` example never fires for a `canopy.read()` denial
 
 **Status**: RESOLVED (2026-07-24, epic/deployment-followups / PR #149). The Fable

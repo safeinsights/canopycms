@@ -2,7 +2,9 @@
  * Bundle-boundary guard for the browser-facing entry points.
  *
  * The editor ships to browsers through `canopycms/client` and
- * `canopycms-next/client`. Anything reachable from those entries — however many
+ * `canopycms-next/client`, host pages load the `/preview` entries of both, and
+ * the bare `canopycms` entry's `assetUrl` runs in
+ * adopters' client components. Anything reachable from those entries — however many
  * hops away — must stay free of node built-ins, or an adopter's production
  * `next build` fails with "Module not found: Can't resolve 'fs'". `next dev`
  * tolerates the violation, so nothing flags it while authoring; this config
@@ -18,7 +20,12 @@
  */
 
 /** The browser-facing entry points. Cruise these, and only rule on these. */
-const CLIENT_ENTRIES = '^packages/canopycms(-next)?/src/client\\.tsx?$'
+const CLIENT_ENTRIES =
+  '^packages/canopycms(-next)?/src/(client|preview)\\.tsx?$|^packages/canopycms/src/index\\.ts$'
+
+/** The entries a host's own pages import: the `/preview` entries and the bare `canopycms` entry. */
+const HOST_PAGE_ENTRIES =
+  '^packages/canopycms(-next)?/src/preview\\.tsx?$|^packages/canopycms/src/index\\.ts$'
 
 /** Our own first-party sources (i.e. not resolved npm packages). */
 const OWN_SRC = '^packages/[^/]+/src/'
@@ -48,10 +55,18 @@ export default {
       to: { path: NODE_BUILTIN, reachable: true },
     },
     {
+      name: 'host-page-entries-no-editor-styles',
+      severity: 'error',
+      comment:
+        "A module reachable from a host-page entry (a `/preview` entry or the bare `canopycms` entry) resolves a stylesheet or a @mantine/ module. Host pages import these entries, so whatever they reach loads in the adopter's own pages: Mantine's unlayered CSS overrides the adopter's styles in the editor's preview, and the editor ships to public pages. Host-side preview code belongs in editor/preview-bridge.tsx, which imports no editor UI; import editor code from canopycms/client only.",
+      from: { path: HOST_PAGE_ENTRIES },
+      to: { path: '\\.css$|(^|/)@mantine/', reachable: true },
+    },
+    {
       name: 'core-no-github-app-auth',
       severity: 'error',
       comment:
-        "`@octokit/auth-app` must not enter canopycms's own graph. github-service.ts is reachable from services.ts, so anything it imports lands in EVERY adopter's Next.js server bundle — including the majority who authenticate with a personal access token and will never register a GitHub App. The client-bundle rule above does not cover the server bundle, which is why this rule exists. A deployment that does use an App constructs the strategy in its own entrypoint and injects it through the structural `{ authStrategy, auth }` passthrough in github-service.ts; the dependency is declared by packages/canopycms-cdk/package.json. NOTE this rule is evaluated by `pnpm lint:cycles`, not `pnpm lint:bundle` -- lint:bundle cruises only the two client entries, which never reach github-service.ts.",
+        "`@octokit/auth-app` must not enter canopycms's own graph. github-service.ts is reachable from services.ts, so anything it imports lands in EVERY adopter's Next.js server bundle — including the majority who authenticate with a personal access token and will never register a GitHub App. The client-bundle rule above does not cover the server bundle, which is why this rule exists. A deployment that does use an App constructs the strategy in its own entrypoint and injects it through the structural `{ authStrategy, auth }` passthrough in github-service.ts; the dependency is declared by packages/canopycms-cdk/package.json. NOTE this rule is evaluated by `pnpm lint:cycles`, not `pnpm lint:bundle` -- lint:bundle cruises only the browser-facing entries, which never reach github-service.ts.",
       from: { path: OWN_SRC },
       to: { path: '@octokit[/+]auth-app' },
     },
@@ -78,12 +93,24 @@ export default {
       name: 'editor-imports-api-only-client-index-constants',
       severity: 'error',
       comment:
-        'editor/ value-imports from api/ only api/client.ts, api/index.ts and api/entries-constants.ts, the three modules that are client-safe by construction; every other api/ module reaches node built-ins. Type imports are erased and stay legal. Evaluated by `pnpm lint:cycles`.',
+        'editor/ value-imports from api/ only api/client.ts, api/index.ts, api/entries-constants.ts, api/users-constants.ts and api/branch-create-window.ts, the modules that are client-safe by construction; every other api/ module reaches node built-ins. Type imports are erased and stay legal. Evaluated by `pnpm lint:cycles`.',
       from: { path: '^packages/canopycms/src/editor/', pathNot: TEST_FILES },
       to: {
         path: '^packages/canopycms/src/api/',
-        pathNot: '^packages/canopycms/src/api/(client|index|entries-constants)\\.ts$',
+        pathNot:
+          '^packages/canopycms/src/api/(client|index|entries-constants|users-constants|branch-create-window)\\.ts$',
       },
+    },
+    {
+      name: 'mdxeditor-entered-only-by-markdown-field',
+      severity: 'error',
+      comment:
+        "Only editor/fields/MarkdownField.tsx imports @mdxeditor/editor's code; other modules are handed the module, so MDXEditor has one entry point (see editor/fields/mdx-jsx-support.tsx). ESLint's no-restricted-imports forbids a static value import of it in any file; this rule also catches a dynamic or require import outside MarkdownField. Type imports are erased and stay legal, as does the package's stylesheet. Evaluated by `pnpm lint:cycles`.",
+      from: {
+        path: OWN_SRC,
+        pathNot: `^packages/canopycms/src/editor/fields/MarkdownField\\.tsx$|${TEST_FILES}`,
+      },
+      to: { path: '(^|/)@mdxeditor/editor(/|$)', pathNot: '\\.css$' },
     },
     {
       name: 'no-circular',

@@ -1,28 +1,19 @@
 #!/usr/bin/env node
 
 /**
- * Sets the version across all publishable packages in lockstep, and in the generated
- * packages/canopycms/src/version.ts constant.
+ * Writes one explicit version into every manifest and the generated version
+ * constant: the five publishable packages' package.json, the root package.json,
+ * and packages/canopycms/src/version.ts. Callers compute the version; this
+ * script never derives one.
  *
- * Usage: node scripts/bump-version.mjs                 # patch-bump the current version
- *        node scripts/bump-version.mjs <version>       # apply an explicit version
- *        node scripts/bump-version.mjs --min <version> # patch-bump max(current, <version>)
+ * Usage: node scripts/bump-version.mjs <version>
  *
- * The explicit form is used by the prerelease publish path, which computes its
- * version from main rather than from the branch being published, and never
- * commits the result. Only the stable publish workflow commits version fields.
+ * <version> is a semver version: x.y.z with an optional -prerelease and +build.
+ * Internal dependency ranges move to ^<version>, except workspace: ranges.
+ * No argument, an empty argument, a flag, or an extra argument is an error, and
+ * the manifests are left untouched.
  *
- * `--min` exists because the committed version is NOT a reliable record of what
- * has been published. publish.yml commits the version bump only AFTER all five
- * packages publish, so any interruption in between -- a cancelled run, or a
- * non-fast-forward failure of that final push -- leaves npm holding a version
- * main does not know about. Bumping from the committed value then re-derives a
- * version that already exists on the registry, so `npm publish` fails on EVERY
- * subsequent run (npm refuses to publish over a version the registry already
- * has) and the release train stays wedged until a human intervenes. Passing
- * the registry's current version as `--min` makes that self-healing.
- *
- * Outputs the new version to stdout.
+ * Outputs the written version to stdout.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -44,17 +35,9 @@ const PACKAGES = [
   'packages/canopycms-cdk',
 ]
 
-// Read current version from the core package
-const corePkgPath = join(ROOT, 'packages/canopycms/package.json')
-const corePkg = JSON.parse(readFileSync(corePkgPath, 'utf8'))
-
 // Leading zeros are rejected deliberately: npm treats `01.2.3` as invalid
 // semver, so accepting it here would only move the failure to `npm publish`.
 const CORE_VERSION = String.raw`(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)`
-// Not user input: the interpolated pieces are String.raw constants declared
-// directly above, so there is no injection surface for the rule to protect.
-// eslint-disable-next-line security/detect-non-literal-regexp
-const STRICT_VERSION_RE = new RegExp(`^${CORE_VERSION}$`)
 // Semver's optional `-prerelease` and `+build`, following the spec's identifier
 // rules rather than a loose character class: dot-separated identifiers, none
 // empty, and a NUMERIC prerelease identifier may not carry a leading zero.
@@ -74,24 +57,9 @@ const EXPLICIT_VERSION_RE = new RegExp(
 )
 
 /**
- * Parse a plain `x.y.z` into a comparable triple. Throws on anything else,
- * INCLUDING a prerelease suffix -- this is used for the committed version and
- * for `--min`, where an `-int.N` value has no meaningful ordering against a
- * stable release and would silently mis-floor the bump.
- */
-function parseVersion(value, label) {
-  const match = STRICT_VERSION_RE.exec(String(value).trim())
-  if (!match) {
-    throw new Error(`${label} must be a plain x.y.z version, got ${JSON.stringify(value)}`)
-  }
-  return [Number(match[1]), Number(match[2]), Number(match[3])]
-}
-
-/**
  * Validate an explicit version and return the CANONICAL (trimmed) string to
- * write. Accepts a semver prerelease/build suffix, because that is the only
- * shape this mode is ever called with in production: publish-prerelease.yml
- * passes `prerelease-version.mjs`'s `X.Y.Z-int.N` output straight through.
+ * write. Accepts a semver prerelease/build suffix, because the prerelease
+ * channel passes `prerelease-version.mjs`'s `X.Y.Z-int.N` output straight through.
  *
  * Returns the trimmed value, not the caller's original, so the validated
  * string and the written string cannot differ.
@@ -106,54 +74,27 @@ function parseExplicitVersion(value, label) {
   return trimmed
 }
 
-/** > 0 when a is newer than b. */
-function compareVersions(a, b) {
-  for (let i = 0; i < 3; i++) {
-    if (a[i] !== b[i]) return a[i] - b[i]
-  }
-  return 0
-}
+const args = process.argv.slice(2)
 
-const [firstArg, secondArg] = process.argv.slice(2)
-
-// Reject anything that is not a recognised flag or a plain version, before
-// writing to six package.json files: an unrecognised token must not silently
-// fall through to the explicit-version branch and get written verbatim.
-// `''` is treated as "no argument", matching the shell reality that an unset
-// variable expands to nothing -- but say so, since the check below reads as
-// though every defined value is validated.
-if (firstArg === '') {
-  throw new Error('Empty version argument. Pass a version, `--min <version>`, or nothing at all.')
+// Validate before touching any manifest: an unrecognised token must not fall
+// through and get written verbatim as the version.
+const flag = args.find((arg) => arg.startsWith('-'))
+if (flag !== undefined) {
+  throw new Error(`Unknown option ${JSON.stringify(flag)}. Usage: bump-version.mjs <version>`)
 }
-if (firstArg !== undefined && firstArg !== '--min' && firstArg.startsWith('-')) {
+if (args.length === 0) {
+  throw new Error('Missing version argument. Usage: bump-version.mjs <version>')
+}
+if (args.length > 1) {
   throw new Error(
-    `Unknown option ${JSON.stringify(firstArg)}. Usage: [<version> | --min <version>]`,
+    `Unexpected extra argument ${JSON.stringify(args[1])}. Usage: bump-version.mjs <version>`,
   )
 }
-if (firstArg === '--min' && secondArg === undefined) {
-  throw new Error('--min requires a version argument')
-}
-if (firstArg !== undefined && firstArg !== '--min' && secondArg !== undefined) {
-  throw new Error(
-    `Unexpected extra argument ${JSON.stringify(secondArg)} after an explicit version. ` +
-      `Did you mean: --min ${firstArg}?`,
-  )
+if (args[0] === '') {
+  throw new Error('Empty version argument. Usage: bump-version.mjs <version>')
 }
 
-let newVersion
-if (firstArg === '--min') {
-  // Bump from whichever is newer: what the repo committed, or what the
-  // registry already has. See the `--min` note in the module comment.
-  const committed = parseVersion(corePkg.version, 'the committed version')
-  const floor = parseVersion(secondArg, '--min')
-  const [major, minor, patch] = compareVersions(floor, committed) > 0 ? floor : committed
-  newVersion = `${major}.${minor}.${patch + 1}`
-} else if (firstArg) {
-  newVersion = parseExplicitVersion(firstArg, 'the explicit version argument')
-} else {
-  const [major, minor, patch] = parseVersion(corePkg.version, 'the committed version')
-  newVersion = `${major}.${minor}.${patch + 1}`
-}
+const newVersion = parseExplicitVersion(args[0], 'the version argument')
 
 for (const pkg of PACKAGES) {
   const pkgPath = join(ROOT, pkg, 'package.json')

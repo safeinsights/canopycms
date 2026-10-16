@@ -49,19 +49,27 @@ vi.mock('../utils/occ-json-write', async (importOriginal) => {
   }
 })
 
+const mockEnqueueTask = vi.fn()
+vi.mock('../task-queue/cms-task-queue', () => ({
+  enqueueTask: (...args: unknown[]) => mockEnqueueTask(...args),
+}))
+
 vi.mock('../branch-workspace', () => ({
   BranchWorkspaceManager: vi.fn().mockImplementation(function () {
     return {
-      openOrCreateBranch: vi.fn().mockResolvedValue({
-        baseRoot: '/tmp/base',
-        branchRoot: '/tmp/base/feature-test',
-        branch: {
-          name: 'feature/test',
-          status: 'editing',
-          access: {},
-          createdBy: 'user-1',
-          createdAt: 'now',
-          updatedAt: 'now',
+      provisionBranch: vi.fn().mockResolvedValue({
+        kind: 'created',
+        context: {
+          baseRoot: '/tmp/base',
+          branchRoot: '/tmp/base/feature-test',
+          branch: {
+            name: 'feature/test',
+            status: 'editing',
+            access: {},
+            createdBy: 'user-1',
+            createdAt: 'now',
+            updatedAt: 'now',
+          },
         },
       }),
     }
@@ -85,6 +93,7 @@ import { unsafeAsBranchName } from '../paths/test-utils'
 import { RESERVED_ROUTE_BRANCH_NAMES } from '../paths'
 import type { BranchRegistry } from '../branch-registry'
 import type { CanopyConfig } from '../config'
+import type { GitHubService } from '../github-service'
 
 // Alias for convenience (tests reference permissionsLoader)
 const permissionsLoader = {
@@ -362,6 +371,53 @@ describe('branch api', () => {
     expect(res.error).toBe('A branch with this name already exists')
   })
 
+  describe('a create naming an existing branch that its own creator just made', () => {
+    const createAgainst = async (
+      existing: { createdBy: string; ageMs: number },
+      userId: string,
+    ) => {
+      const registry = createMockRegistry([])
+      registry.get.mockResolvedValue(
+        createMockBranchContext({
+          branchName: 'feature/test',
+          createdBy: existing.createdBy,
+          createdAt: new Date(Date.now() - existing.ageMs).toISOString(),
+        }),
+      )
+      const ctx = createMockApiContext({
+        branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+        services: { registry: registry as unknown as BranchRegistry },
+      })
+      return createBranch(
+        ctx,
+        { user: { type: 'authenticated', userId, groups: [] } },
+        { branch: unsafeAsBranchName('feature/test') },
+      )
+    }
+
+    it('answers the same creator within the window with the existing branch (200)', async () => {
+      const res = await createAgainst({ createdBy: 'u1', ageMs: 60_000 }, 'u1')
+      expect(res.ok).toBe(true)
+      expect(res.status).toBe(200)
+      expect(res.data?.branch.name).toBe('feature/test')
+      expect(res.data?.branch.createdBy).toBe('u1')
+    })
+
+    it('answers a different user with a 409, however recent the branch', async () => {
+      const res = await createAgainst({ createdBy: 'someone-else', ageMs: 60_000 }, 'u1')
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      expect(res.error).toBe('A branch with this name already exists')
+    })
+
+    it('answers the same creator with a 409 once the window has passed', async () => {
+      const res = await createAgainst({ createdBy: 'u1', ageMs: 6 * 60_000 }, 'u1')
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      expect(res.error).toBe('A branch with this name already exists')
+    })
+  })
+
   describe('branch-name collision guards (settings-branch + reserved namespace)', () => {
     // baseCtx's mock config defaults to mode: 'dev' (see createMockServices),
     // so DevStrategy.getSettingsBranchName(config) resolves to
@@ -537,6 +593,47 @@ describe('branch api', () => {
     })
     expect(res.ok).toBe(true)
     expect(res.data?.branches).toHaveLength(0)
+  })
+
+  it('hides a locked-down branch from everyone its ACL or creator grant would admit', async () => {
+    const ctx = createMockApiContext({
+      services: {
+        registry: createMockRegistry([
+          createMockBranchContext({
+            branchName: 'feature/locked',
+            createdBy: 'u1',
+            access: {
+              managerOrAdminAllowed: true,
+              allowedUsers: ['u2'],
+              allowedGroups: ['editors'],
+            },
+            baseRoot: '/test/base',
+          }),
+          createMockBranchContext({
+            branchName: 'feature/open',
+            createdBy: 'u3',
+            access: { managerOrAdminAllowed: false, allowedUsers: ['u2'] },
+            baseRoot: '/test/base',
+          }),
+        ]) as any,
+      },
+    })
+    const namesFor = async (userId: string, groups: string[] = []) =>
+      (
+        await listBranches(ctx, { user: { type: 'authenticated', userId, groups } })
+      ).data?.branches.map((b) => b.name)
+
+    expect(await namesFor('u1')).toEqual([])
+    expect(await namesFor('u2')).toEqual(['feature/open'])
+    expect(await namesFor('u4', ['editors'])).toEqual([])
+    expect(await namesFor('boss', [RESERVED_GROUPS.REVIEWERS])).toEqual([
+      'feature/locked',
+      'feature/open',
+    ])
+    expect(await namesFor('root', [RESERVED_GROUPS.ADMINS])).toEqual([
+      'feature/locked',
+      'feature/open',
+    ])
   })
 
   it('emits isProtected/readOnly flags on branches -- prod base is true/true, feature is false/false', async () => {
@@ -1006,12 +1103,17 @@ describe('deleteBranch api', () => {
     expect(res.data?.deleted).toBe(true)
   })
 
-  it('surfaces a cleanupWarning (but still reports deleted: true) when the directory rm fails (regression)', async () => {
+  it('surfaces a cleanupWarning (but still reports deleted: true) when the directory cannot be moved aside', async () => {
     const ctx = {
       ...deleteCtx,
       getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1')),
     }
-    const rmSpy = vi.spyOn(fs, 'rm').mockRejectedValueOnce(new Error('EACCES: permission denied'))
+    const renameSpy = vi
+      .spyOn(fs, 'rename')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }),
+      )
+    const unlinkSpy = vi.spyOn(fs, 'unlink').mockResolvedValueOnce(undefined)
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     const res = await deleteBranch(
@@ -1020,16 +1122,41 @@ describe('deleteBranch api', () => {
       { branch: unsafeAsBranchName('feature/x') },
     )
 
-    // Metadata is gone either way -- the branch is logically deleted and
-    // must not silently report failure, but the orphan clone's persistence
-    // must not be hidden from the caller either.
+    // Unlisted either way (branch.json is removed in place), so it must not
+    // report failure, but the directory left behind must not be hidden.
     expect(res.ok).toBe(true)
     expect(res.data?.deleted).toBe(true)
     expect(res.data?.cleanupWarning).toContain('EACCES')
+    expect(unlinkSpy).toHaveBeenCalledWith(expect.stringMatching(/branch\.json$/))
     expect(consoleErrorSpy).toHaveBeenCalled()
 
-    rmSpy.mockRestore()
+    renameSpy.mockRestore()
+    unlinkSpy.mockRestore()
     consoleErrorSpy.mockRestore()
+  })
+
+  it('moves the branch directory aside to a .deleting-* sibling before removing it', async () => {
+    const ctx = {
+      ...deleteCtx,
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1')),
+    }
+    const renameSpy = vi.spyOn(fs, 'rename').mockResolvedValueOnce(undefined)
+    const rmSpy = vi.spyOn(fs, 'rm').mockResolvedValueOnce(undefined)
+
+    const res = await deleteBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/x') },
+    )
+
+    expect(res.ok).toBe(true)
+    const [from, to] = renameSpy.mock.calls[0] ?? []
+    expect(from).toBe('/tmp/base/feature/x')
+    expect(to).toMatch(/^\/tmp\/base\/\.deleting-x-[0-9a-f]{10}-[0-9a-f]{6}-\d{8}T\d{6}Z$/)
+    expect(rmSpy).toHaveBeenCalledWith(to, expect.objectContaining({ recursive: true }))
+
+    renameSpy.mockRestore()
+    rmSpy.mockRestore()
   })
 
   it('omits cleanupWarning when the directory rm succeeds', async () => {
@@ -1044,6 +1171,147 @@ describe('deleteBranch api', () => {
     )
     expect(res.ok).toBe(true)
     expect(res.data?.cleanupWarning).toBeUndefined()
+  })
+
+  describe('the branch on GitHub', () => {
+    const user = { type: 'authenticated' as const, userId: 'u1', groups: [] }
+    const branch = { branch: unsafeAsBranchName('feature/x') }
+    const withPr = createMockBranchContext({
+      branchName: 'feature/x',
+      createdBy: 'u1',
+      status: 'editing',
+      pullRequestNumber: 42,
+    })
+    const ghError = (status: number, message: string) =>
+      Object.assign(new Error(message), { status })
+
+    beforeEach(() => {
+      mockEnqueueTask.mockReset()
+      mockEnqueueTask.mockResolvedValue('task-1')
+    })
+
+    const ctxWith = (
+      context: ReturnType<typeof createMockBranchContext>,
+      services: { githubService?: GitHubService; mode?: CanopyConfig['mode'] },
+    ) =>
+      createMockApiContext({
+        branchContext: context,
+        services: {
+          registry: mockRegistry as unknown as BranchRegistry,
+          githubService: services.githubService,
+          config: { mode: services.mode ?? 'dev' } as CanopyConfig,
+        },
+      })
+
+    it('is deleted directly when a githubService is available', async () => {
+      const deleteBranchMock = vi.fn().mockResolvedValue(undefined)
+      const ctx = ctxWith(withPr, {
+        githubService: { deleteBranch: deleteBranchMock } as unknown as GitHubService,
+      })
+
+      const res = await deleteBranch(ctx, { user }, branch)
+
+      expect(res.ok).toBe(true)
+      expect(deleteBranchMock).toHaveBeenCalledWith('feature/x')
+      expect(mockEnqueueTask).not.toHaveBeenCalled()
+      expect(res.data?.cleanupWarning).toBeUndefined()
+    })
+
+    it('is queued for the worker when there is no githubService and the mode has PRs', async () => {
+      const ctx = ctxWith(withPr, { mode: 'prod' })
+
+      const res = await deleteBranch(ctx, { user }, branch)
+
+      expect(res.ok).toBe(true)
+      expect(mockEnqueueTask).toHaveBeenCalledTimes(1)
+      expect(mockEnqueueTask).toHaveBeenCalledWith(expect.any(String), {
+        action: 'delete-remote-branch',
+        payload: { branch: 'feature/x', pullRequestNumber: 42 },
+      })
+      expect(res.data?.cleanupWarning).toBeUndefined()
+    })
+
+    it('is deleted when a submit pushed it but GitHub opened no PR', async () => {
+      const deleteBranchMock = vi.fn().mockResolvedValue(undefined)
+      const pushedNoPr = createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1' })
+      pushedNoPr.branch.pushedToGitHubAt = '2026-01-02T03:04:05.000Z'
+
+      const direct = await deleteBranch(
+        ctxWith(pushedNoPr, {
+          githubService: { deleteBranch: deleteBranchMock } as unknown as GitHubService,
+        }),
+        { user },
+        branch,
+      )
+      const queued = await deleteBranch(ctxWith(pushedNoPr, { mode: 'prod' }), { user }, branch)
+
+      expect(direct.ok).toBe(true)
+      expect(queued.ok).toBe(true)
+      expect(deleteBranchMock).toHaveBeenCalledWith('feature/x')
+      expect(mockEnqueueTask).toHaveBeenCalledWith(expect.any(String), {
+        action: 'delete-remote-branch',
+        payload: { branch: 'feature/x', pushedToGitHubAt: '2026-01-02T03:04:05.000Z' },
+      })
+    })
+
+    it('is never touched when the branch has neither a PR nor a GitHub push stamp, so the CMS never pushed it', async () => {
+      const deleteBranchMock = vi.fn().mockResolvedValue(undefined)
+      const noPr = createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1' })
+
+      const direct = await deleteBranch(
+        ctxWith(noPr, {
+          githubService: { deleteBranch: deleteBranchMock } as unknown as GitHubService,
+        }),
+        { user },
+        branch,
+      )
+      const queued = await deleteBranch(ctxWith(noPr, { mode: 'prod' }), { user }, branch)
+
+      expect(direct.ok).toBe(true)
+      expect(queued.ok).toBe(true)
+      expect(deleteBranchMock).not.toHaveBeenCalled()
+      expect(mockEnqueueTask).not.toHaveBeenCalled()
+    })
+
+    it('is a success when GitHub says the branch is already gone', async () => {
+      const deleteBranchMock = vi.fn().mockRejectedValue(ghError(422, 'Reference does not exist'))
+      const ctx = ctxWith(withPr, {
+        githubService: { deleteBranch: deleteBranchMock } as unknown as GitHubService,
+      })
+
+      const res = await deleteBranch(ctx, { user }, branch)
+
+      expect(res.ok).toBe(true)
+      expect(res.data?.cleanupWarning).toBeUndefined()
+    })
+
+    it('turns a GitHub failure into a cleanupWarning, never a failed delete', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const deleteBranchMock = vi.fn().mockRejectedValue(ghError(403, 'Resource not accessible'))
+      const ctx = ctxWith(withPr, {
+        githubService: { deleteBranch: deleteBranchMock } as unknown as GitHubService,
+      })
+
+      const res = await deleteBranch(ctx, { user }, branch)
+
+      expect(res.ok).toBe(true)
+      expect(res.data?.deleted).toBe(true)
+      expect(res.data?.cleanupWarning).toContain('could not be deleted on GitHub')
+      expect(consoleErrorSpy).toHaveBeenCalled()
+      consoleErrorSpy.mockRestore()
+    })
+
+    it('turns a failed enqueue into a cleanupWarning, never a failed delete', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockEnqueueTask.mockRejectedValue(new Error('disk full'))
+      const ctx = ctxWith(withPr, { mode: 'prod' })
+
+      const res = await deleteBranch(ctx, { user }, branch)
+
+      expect(res.ok).toBe(true)
+      expect(res.data?.cleanupWarning).toContain('could not be queued')
+      consoleErrorSpy.mockRestore()
+    })
   })
 })
 
@@ -1191,7 +1459,9 @@ describe('updateBranchAccess api', () => {
       { allowedUsers: ['u2', 'u3'] },
     )
     expect(res.ok).toBe(true)
-    expect(res.data?.branch.access.allowedUsers).toEqual(['u2', 'u3'])
+    // A creator without the privileged lookup gets back only a count of the ids it set.
+    expect(res.data?.branch.access.allowedUsers).toEqual([])
+    expect(res.data?.branch.withheldAccess).toEqual({ users: 2, groups: 0 })
   })
 
   it('updates branch access when user is admin', async () => {

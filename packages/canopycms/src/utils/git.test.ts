@@ -13,6 +13,7 @@ import {
   stageAllExceptCanopyState,
   workflowPushRefusalFile,
 } from './git'
+import { BaseBranchUnresolvedError } from './base-branch'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-utilsgit-'))
 
@@ -103,9 +104,46 @@ describe('resolveBaseBranch', () => {
     expect(await resolveBaseBranch({ mode: 'dev', detectFrom: root })).toBe('main')
   })
 
-  it('prod mode never detects and defaults to main', async () => {
+  it('prod mode reads the base branch from the remote HEAD, including a non-main name', async () => {
+    const source = await initRepo('production')
+    const remoteGitDir = path.join(await tmpDir(), 'remote.git')
+    await simpleGit().clone(source, remoteGitDir, ['--bare'])
+    expect(await resolveBaseBranch({ mode: 'prod', remoteGitDir })).toBe('production')
+    expect(
+      await resolveBaseBranch({ defaultBaseBranch: 'develop', mode: 'prod', remoteGitDir }),
+    ).toBe('develop')
+  })
+
+  it('prod mode never falls back to the checkout HEAD or to main', async () => {
     const root = await initRepo('feature-z')
-    expect(await resolveBaseBranch({ mode: 'prod', detectFrom: root })).toBe('main')
+    await expect(resolveBaseBranch({ mode: 'prod', detectFrom: root })).rejects.toThrow(
+      BaseBranchUnresolvedError,
+    )
+    await expect(resolveBaseBranch({ mode: 'prod', detectFrom: root })).rejects.toThrow(
+      /defaultBaseBranch/,
+    )
+  })
+
+  it('prod mode fails loudly when the remote HEAD names no branch with a commit', async () => {
+    const remoteGitDir = path.join(await tmpDir(), 'remote.git')
+    await simpleGit().raw(['init', '--bare', '--initial-branch=production', remoteGitDir])
+    await expect(resolveBaseBranch({ mode: 'prod', remoteGitDir })).rejects.toThrow(
+      /defaultBaseBranch is not set, and the base branch could not be read from/,
+    )
+  })
+
+  it('prod mode fails loudly on a detached remote HEAD or a missing remote', async () => {
+    const source = await initRepo()
+    const remoteGitDir = path.join(await tmpDir(), 'remote.git')
+    await simpleGit().clone(source, remoteGitDir, ['--bare'])
+    const sha = (await simpleGit().raw(['--git-dir', remoteGitDir, 'rev-parse', 'HEAD'])).trim()
+    await simpleGit().raw(['--git-dir', remoteGitDir, 'update-ref', '--no-deref', 'HEAD', sha])
+    await expect(resolveBaseBranch({ mode: 'prod', remoteGitDir })).rejects.toThrow(
+      BaseBranchUnresolvedError,
+    )
+    await expect(
+      resolveBaseBranch({ mode: 'prod', remoteGitDir: path.join(remoteGitDir, 'absent') }),
+    ).rejects.toThrow(BaseBranchUnresolvedError)
   })
 })
 
@@ -243,6 +281,55 @@ describe('workflowPushRefusalFile', () => {
   ])('returns null for %s', (_label, message) => {
     expect(workflowPushRefusalFile(message)).toBeNull()
   })
+
+  it('reads a line repeating the lead without the tail in linear time', () => {
+    // A quadratic match takes seconds on this; a linear one, microseconds.
+    const message = 'refusing to allow a '.repeat(50_000)
+    const started = performance.now()
+    expect(workflowPushRefusalFile(message)).toBeNull()
+    expect(workflowPushRefusalFile(`${message}\n${APP_TOKEN_REFUSAL}`)).toBe(
+      '.github/workflows/ci.yml',
+    )
+    expect(performance.now() - started).toBeLessThan(500)
+  })
+
+  it('matches exactly what the rule as a regex matches, on every shape of line', () => {
+    // The rule as a regex: exact, but quadratic on long lines, so only for short ones.
+    const RULE = /refusing to allow an? [^`\n]+? to create or update workflow `([^`\n]+)`/
+    // A refusal's parts in order, each slot's real part first, then its variants: missing,
+    // mangled, doubled, split. Half the time a slot takes its real part, so many lines match.
+    const slots = [
+      ['', 'x (', '`a` ', 'refusing to allow a ', 'line\n'],
+      ['refusing to allow a ', 'refusing to allow an ', 'refusing to allow a', '', 'refusing\n'],
+      ['GitHub App', 'n', ' ', '', 'a`b', 'App\n', 'refusing to allow a '],
+      [' to create or update workflow ', 'to create or update workflow ', '', ' to create'],
+      ['`', '``', '', '\n`'],
+      ['ci.yml', '', 'a\nb', ' to create or update workflow `x'],
+      ['`', '', '\n`', '``'],
+      ['', ' without', ' `x`', '\n'],
+    ]
+    // A fixed seed, so a failure reproduces.
+    let seed = 0x9e3779b9
+    const next = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+      // The high bits: an LCG's low bits cycle with short periods.
+      return seed >>> 16
+    }
+    const refusal = () =>
+      slots
+        .map((variants) => (next() % 2 === 0 ? variants[0] : variants[next() % variants.length]))
+        .join('')
+    let matched = 0
+    for (let n = 0; n < 20_000; n++) {
+      const message = next() % 3 === 0 ? `${refusal()}${refusal()}` : refusal()
+      const expected = RULE.exec(message)?.[1] ?? null
+      if (expected !== null) matched++
+      expect(workflowPushRefusalFile(message), JSON.stringify(message)).toBe(expected)
+    }
+    // Both outcomes are well represented, so the agreement says something.
+    expect(matched).toBeGreaterThan(1_000)
+    expect(matched).toBeLessThan(19_000)
+  })
 })
 
 describe('stageAllExceptCanopyState', () => {
@@ -320,5 +407,26 @@ describe('stageAllExceptCanopyState', () => {
     await stageAllExceptCanopyState(git)
 
     expect((await git.raw(['diff', '--cached', '--name-only'])).trim()).toBe('x.md')
+  })
+
+  it('in a sparse clone, stages what is on disk outside the cone and never what is not', async () => {
+    const root = await repoTrackingCanopyMeta()
+    const git = simpleGit({ baseDir: root })
+    await fs.mkdir(path.join(root, 'src'))
+    await fs.writeFile(path.join(root, 'src/app.ts'), 'tracked, outside the cone')
+    await git.add(['src/app.ts'])
+    await git.commit('add src')
+    await git.raw(['sparse-checkout', 'set', '--cone', 'content', '.canopy-meta'])
+    await expect(fs.stat(path.join(root, 'src/app.ts'))).rejects.toThrow()
+    await fs.writeFile(path.join(root, 'content/edited.md'), 'one, edited')
+    await fs.writeFile(path.join(root, 'root-new.md'), 'root')
+    await fs.mkdir(path.join(root, 'src'))
+    await fs.writeFile(path.join(root, 'src/stray.ts'), 'untracked, outside the cone')
+
+    await stageAllExceptCanopyState(git)
+
+    const staged = (await git.raw(['diff', '--cached', '--name-status'])).trim().split('\n').sort()
+    // src/app.ts is absent only because it is out of the cone, so it is not a deletion.
+    expect(staged).toEqual(['A\troot-new.md', 'A\tsrc/stray.ts', 'M\tcontent/edited.md'])
   })
 })

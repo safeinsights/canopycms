@@ -279,7 +279,7 @@ export type AuthorContent = EntryTypes['author']
 
 The string in `.collection.json`'s `entry.schema` is a lookup key into the registry. Keying by the **entry-type name** removes a level of indirection (`entry.name` and `entry.schema` are then the same string), makes errors clearer (`Available schemas: post, author, home`), and lets `EntryTypesFromRegistry` derive the typed entry-type map for you. Keying by schema-variable name instead (`{ postSchema, authorSchema }`) still works, but you then declare that map by hand as an interface of `TypeFromEntrySchema<typeof xSchema>` members and pass it to `buildContentTree<NavFields, MyEntries>`. That is the right choice when several entry types share one schema (`partner-v1` and `partner-v2` both pointing at `partnerSchema`), since name-keying would hold the same schema twice.
 
-To move an existing project onto the entry-type-name convention, see [the migration entry](docs/adopter-migration.md#the-registry-is-keyed-by-entry-type-name-0042). Nothing about content files, frontmatter or `.canopy-meta/` caches changes, and in dev mode editing a `.collection.json` invalidates the schema cache so the next read picks up the new strings.
+To move an existing project onto the entry-type-name convention, see [the migration entry](CHANGELOG.md#the-registry-is-keyed-by-entry-type-name-0042). Nothing about content files, frontmatter or `.canopy-meta/` caches changes, and in dev mode editing a `.collection.json` invalidates the schema cache so the next read picks up the new strings.
 
 ### Creating .collection.json Meta Files
 
@@ -377,20 +377,22 @@ content/
 
 ### Schema Validation
 
-Schema references are validated at startup: a missing schema, or an invalid meta file, produces a clear error naming the collection and listing what is available (`Schema reference "post" in collection "posts" not found in registry. Available schemas: author, home, doc`).
+A missing schema or an invalid meta file fails a build or static deploy; a missing schema's error lists what is available (`Schema reference "post" in entry type "post" (collection "posts") not found in registry. Available schemas: author, home, doc`). In the editor, a missing schema marks only that entry type unavailable until code registering it is deployed, and System health lists it. On AWS the worker first waits up to 30 minutes for that deploy (see [New schemas wait for the editor deploy](docs/deploying-to-aws.md#new-schemas-wait-for-the-editor-deploy)).
 
 ## Configuration Reference
 
 ### `defineCanopyConfig` Options
 
 - `gitBotAuthorName` / `gitBotAuthorEmail` (`string`, **required**) — identity used for git commits made by CanopyCMS.
-- `gitEditedByTrailers` (`boolean`, default `true`) — add an `Edited-by: Jane Doe (user_2abc)` trailer naming the submitting user (display name and auth user id; the id alone when there is no name) to each submit commit. The bot stays the author.
-- `gitCoAuthoredByTrailers` (`boolean`, default `false`) — also add `Co-authored-by: Jane Doe <jane@example.com>`. Off by default because it writes the user's email into commit history, which is public on a public repo. GitHub links a co-author to an account only when that email is associated with their GitHub account.
-  On submit, the pull request body also records the submitter (name and id, never the email), the branch description and the changed paths, inside a section between `<!-- canopycms:submission:start -->` and `<!-- canopycms:submission:end -->`. A re-submit replaces only that section, so text reviewers add outside it stays. Names are sanitized in both places, so a display name cannot add @mentions, issue references, HTML or extra trailer lines; a user id unsafe to record is left out.
+- `gitEditedByTrailers` (`boolean`, default `true`) — add an `Edited-by: Jane Doe (user_2abc)` trailer naming each user whose edits the commit carries (display name and auth user id; the id alone when there is no name) to submit and settings commits. The bot stays the author.
+- `gitCoAuthoredByTrailers` (`boolean`, default `false`) — also add `Co-authored-by: Jane Doe <jane@example.com>`. Off by default because it writes the user's email into commit history, which is public on a public repo. GitHub links a co-author only by an email on their GitHub account.
+  On submit, the pull request body also records who edited (names and ids, never emails), the branch description and the changed paths, inside a section between `<!-- canopycms:submission:start -->` and `<!-- canopycms:submission:end -->`. A re-submit replaces only that section, so text reviewers add outside it stays. Names are sanitized in both places, so a display name cannot add @mentions, issue references, HTML or extra trailer lines; a user id unsafe to record is left out.
 - `mode` (`'dev' | 'prod'`, **required**) — see [Operating Modes](#operating-modes). No default: a deploy that omits it fails config validation at startup rather than silently running insecure dev auth semantics in production.
 - `contentRoot` (`string`, default `'content'`) — root directory for content files, relative to the project root.
 - `basePath` (`string`, optional) — the deployment prefix your Next app is served under (`'/preview-123'`), matching `next.config`'s `basePath`. CanopyCMS cannot read `next.config`, so state it here or the editor's API requests and preview pane target the un-prefixed root. **Not** `contentStaticParams`'s `basePath`, and not necessarily right for `assetUrl`'s `baseUrl` — see [Deploying under a `basePath`](#deploying-under-a-basepath).
-- `defaultBaseBranch` (`string`, default `'main'`) — the fork point for CMS content branches. It can never be submitted for review, and in `prod` it is read-only in the editor; see [Submitting for Review](#submitting-for-review).
+- `danglingReferences` (`'error' | 'warn'`, default `'error'`) — see [No dangling references](#no-dangling-references).
+- `unauthenticatedStatus` (`401 | 419`, default `401`) — the HTTP status of an unauthenticated API response. Use `419` when your pages sit behind HTTP Basic auth on the editor's origin: on a 401, Chrome drops a root-cached Basic credential.
+- `defaultBaseBranch` (`string`) — the fork point for CMS content branches. Unset, dev uses the checked-out branch and prod the repository's default branch as the CMS worker first cloned it; set it before changing that default, which prod does not follow. It can never be submitted for review, and in `prod` it is read-only in the editor; see [Submitting for Review](#submitting-for-review).
 - `defaultActiveBranch` (`string`, optional) — which workspace the dev server serves content from and which branch the editor opens by default. Auto-detected from the current git branch in dev; falls back to `defaultBaseBranch` in prod.
 - `defaultBranchAccess` (`'allow' | 'deny'`, default `'deny'`) — fallback access policy for a branch with no ACL, and what `canopycms init` scaffolds. **Three grants are exempt from it**, which is what makes the fail-closed default workable rather than a lockout: the `admins` and `reviewers` groups; the creator of an un-ACL'd branch (otherwise they could create a branch and rewrite its ACL but not read a file on it); and the protected base branch, which takes no ACL by design and is where every user lands. Because the last two are scoped to branches with **no ACL**, writing an explicit ACL still restricts the branch — including against its own creator, which is how an admin locks down a branch someone else created.
 - `defaultPathAccess` (`'allow' | 'deny' | { read?, edit?, review? }`, default `'deny'`) — default policy for content paths when no permission rule matches. The object form scopes the default per level (`{ read: 'allow' }` for public read without opening edit/review); an unspecified level resolves to `'deny'`. See [Public read on server deployments](#public-read-on-server-deployments).
@@ -404,7 +406,7 @@ Schemas are not a config key: declare them with `defineEntrySchema`, register th
 
 ### Save-Time Validation (`validateEntry`)
 
-Schema validation keeps field shapes clean, but cannot know that a markdown body must compile as MDX for your production build to succeed. The optional `validateEntry` hook lets the site refuse, or flag, a save that would break it:
+Schema validation cannot know that a markdown body must compile as MDX for your build. The optional `validateEntry` hook lets the site refuse, or flag, such a save:
 
 ```typescript
 // canopycms.config.ts
@@ -429,11 +431,11 @@ export default defineCanopyConfig({
 })
 ```
 
-The hook receives `{ entryPath, branch, entryType?, format, data, body }` for every editor content save. `error` issues reject the save and show the message to the editor; `warning` issues let it through as a notification. **It gates content writes only** — renames and deletes do not invoke it. Pair it with the preview error channel (see [Live Preview](#live-preview)) so authors see compile failures while typing.
+The hook receives `{ entryPath, branch, entryType?, format, data, body }` for every content save that passes schema validation and the [MDX code check](#mdx-content-cannot-run-code); `entryType` is the type the entry is written as, even when the request omits it. `error` issues reject the save, showing the editor the message; `warning` issues save with a notification. **It gates content writes only**, not renames or deletes. Pair it with the preview error channel ([Live Preview](#live-preview)) so authors see compile failures while typing.
 
 ### Comments in Content Files Survive Editing
 
-Content files can carry YAML comments — including notes that code elsewhere refers to by name — and a CMS save keeps them: writes re-serialise onto the file's own parsed document, so a value the editor did not change keeps its comments, quoting and block style. This covers `.yaml` entries and `md`/`mdx` frontmatter; JSON has no comment syntax. The content itself is still fully determined by the save — a field the editor cleared is cleared in the file — and only comments carry across from what was on disk.
+Content files can carry YAML comments — including notes that code elsewhere refers to by name — and a CMS save keeps them: a save rewrites only lines whose values changed, so a value the editor did not change keeps its comments, quoting, folding and block style (anchors, aliases and rare layouts re-serialise the whole file). This covers `.yaml` entries and `md`/`mdx` frontmatter; JSON has no comment syntax. The content itself is fully determined by the save: a field the editor cleared is cleared in the file. Markdown bodies work the same way per block, and new or edited blocks use Prettier's markers.
 
 Four limits:
 
@@ -457,7 +459,7 @@ Neither rejects a save or fails a build, and neither strips anything: an unrecog
 
 ### Local Development Sync
 
-In `dev` mode your content lives in two places: your repo's working tree, and the branch workspaces under `.canopy-dev/content-branches/` that the editor reads. Editing the working tree directly (or pulling from GitHub) while the dev server serves a branch clone lets the two drift — the classic "builds fine, but the dev editor shows stale content" trap. The split runs the other way for `next build`, which reads only the working tree, so an editor's saved changes are not part of a build until `canopycms sync pull` copies them out.
+In `dev` mode your content lives in two places: your repo's working tree, and the branch workspaces under `.canopy-dev/content-branches/` that the editor reads. Editing the working tree (or pulling from GitHub) while the dev server serves a branch clone lets the two drift, so the dev editor shows stale content. The split runs the other way for `next build`, which reads only the working tree, so an editor's saved changes are not part of a build until `canopycms sync pull` copies them out.
 
 **Automatic divergence detection.** `dev.contentSync` controls reporting (dev mode only, ignored when `mode !== 'dev'`): `'warn'`, the default, logs a warning at startup and on `content/**` changes naming the files that diverge from the branch clone; `'off'` installs no watcher.
 
@@ -473,7 +475,7 @@ npx canopycms sync pull --branch update-homepage   # target one workspace
 
 **Push** copies your working-tree content into a branch workspace and commits it, targeting the workspace matching your current git branch by default and creating it if needed. **Pull** copies content back so you can review, commit and push it yourself. Both accept `--branch`, and prompt you to choose when several workspaces exist and none is named. **Both** merges the two sides with a 3-way git merge and pulls the result back; **abort** restores the workspace to its pre-merge state.
 
-> All project-bound CLI commands (`sync`, `migrate`, `generate-ai-content`, `worker run-once`) resolve the project root by walking up from the current directory to the nearest `canopycms.config.ts`, like git does — running them from a subdirectory works.
+> All project-bound CLI commands (`sync`, `migrate`, `generate-ai-content`, `materialize-assets`, `worker run-once`) resolve the project root by walking up from the current directory to the nearest `canopycms.config.ts`, like git does — running them from a subdirectory works.
 
 ### Migrating Existing Content
 
@@ -485,20 +487,20 @@ npx canopycms migrate --entry-type doc --format md --schema docSchema
 ```
 
 - `--dry-run` prints the full rename/create plan without touching anything; omitted flags are prompted for.
-- Only files of the chosen format are migrated; assets, other formats, and directories without matching content are left untouched.
+- Only files of the chosen format are migrated; everything else is left untouched.
 - Re-running is a no-op: already-conforming names are skipped.
-- Entry order is left unset (alphabetical). Source-specific ordering conventions (e.g. Nextra `_meta.json`) are out of scope — apply those with a follow-up script.
+- Entry order is left unset (alphabetical); apply source-specific ordering (e.g. Nextra `_meta.json`) with a follow-up script.
 
 Afterwards, make sure the schema key you chose exists in your entry schema registry.
 
 ### Field Types
 
 - `string` — single-line text; `number`, `boolean`, `datetime` — numeric value, toggle, date-and-time picker
-- `markdown` / `mdx` — JSX-aware rich-text editor; unparseable bodies open as source
+- `markdown` / `mdx` — JSX-aware rich-text editor; bodies it would alter on save (e.g. text after a nested list) or that crash it open as source. See [MDX content cannot run code](#mdx-content-cannot-run-code)
 - `image` — image upload/selection; `code` — code editor with syntax highlighting
 - `select` — dropdown; takes `options: string[] | {label, value}[]`
 - `reference` — a UUID-based link to another entry; takes `collections?`, `entryTypes?`, `displayField?`, `resolvedSchema?`
-- `object` — nested object; takes `fields: FieldConfig[]`. With `list: true`, set `itemTitleField` to a `string` or `number` child to title each card with its value
+- `object` — nested object; takes `fields: FieldConfig[]`. With `list: true`, set `itemTitleField` to a `string` or `number` child to title each card with its value, and `itemLabel` ("team member") to name its items
 - `block` — page blocks / "flexible content"; takes `templates: BlockTemplate[]`, each from `defineBlockTemplate` (see [Page Blocks](#page-blocks-flexible-content))
 
 Common options on any field:
@@ -511,7 +513,7 @@ Common options on any field:
   description: 'Hint',    // Optional: help text shown under the label in the editor
   required: true,         // Optional: validation requirement
   list: true,             // Optional: allow multiple values
-  isTitle: true,          // Optional: use as the display title in the editor sidebar
+  isTitle: true,          // Optional: the entry's title in the editor sidebar
 }
 ```
 
@@ -519,13 +521,60 @@ On a `string` field, `list: true` renders a tag input: type a value and press En
 
 A cleared string-valued field (`string`, `select`, `code` and the like) is saved as `''`, not removed, so a site-side `?? 'default'` stops applying once an editor has touched it; use `|| 'default'` when blank should mean the default.
 
+A non-markdown field that throws while rendering (`customRenderers` too) shows its value read-only, unchanged on save; the rest still works.
+
+#### Stamping a publication date
+
+```typescript
+{ name: 'publishedAt', type: 'datetime', stampOnPublish: true }
+```
+
+The first Canopy submit of an entry new to the base branch sets this field, while empty, to the submit's time, in the commit it pushes. That is the submit, not the merge: if review runs long, edit the date by hand. A set value is never overwritten, so a resubmit keeps the first date and a promotion between deploy branches carries it unchanged; a restored entry keeps its old value, so clear the field to re-date it. An entry the base branch has, or had when the branch last caught up with it, is never stamped, even after a rename or move, and neither is one merged without a Canopy submit. The flag is refused on anything but a top-level `datetime` without `list`, and with `required`, which could never be saved empty to be stamped.
+
 #### Rendering `markdown` / `mdx` content on your site
 
-CanopyCMS stores and edits markdown and deliberately does **not** ship a renderer: two sites render the same markdown differently on purpose — different component mappings, different sanitization needs — so the presentation layer is yours. One trap is worth knowing, because it fails confusingly:
+CanopyCMS stores and edits markdown and deliberately does **not** ship a renderer: sites render markdown differently on purpose, so the presentation layer is yours. One confusing trap:
 
 > **`react-markdown` does not work in a React Server Component.** Rendering its default export from a server component crashes a static prerender with `Element type is invalid … got: undefined`, while the same code resolves fine once it is in the client bundle. The fix is `'use client'` on your own wrapper component.
 
 That fix is not free: the wrapper and its markdown subtree ship to the browser and lose server-only rendering for that part of the page. For static prose, consider a build-time renderer (`remark`/`rehype` to HTML, or MDX compiled at build time). `apps/example1` shows the client-wrapper shape.
+
+#### MDX content cannot run code
+
+MDX compiles `{expressions}`, `import`/`export` and tags into JavaScript, which runs wherever a body renders: in the editor's preview as the viewer, in a server render, and on CI, which may build a content branch before anyone reviews it. So an `mdx` field or body, or a `markdown` one with `renderAs: 'mdx'`, refuses at save:
+
+- `{…}` expressions other than comments and plain values (`{/* note */}`, `{300}`), and `import`/`export`;
+- HTML tags outside a safe set (`<script>`, `<iframe>`, `<svg>`…), and on a tag any attribute outside a safe set, since a script your site loads can give one meaning (Alpine's `x-init`); event handlers (`onClick`), `srcdoc` and `dangerouslySetInnerHTML` on components too;
+- URL schemes other than http(s), mailto, tel, `entry:` and raster `data:` images; React 18 renders a `javascript:` href as given.
+
+Plainly named components (`<Callout type="tip">`) are your code and pass. Other markdown gets the URL check. A save adding such code is refused, naming the line. Code the entry already held is kept, with a warning, only in a field saved unchanged; removing it is always accepted, and a production build lists every entry holding some.
+
+```typescript
+{ name: 'body', type: 'mdx', isBody: true, executable: true } // editors of this field are code authors
+```
+
+`executable: true` turns the check off for one field, giving its editors the equivalent of repository write access. With no `isBody` field, the body is checked unless a field named `body` sets `executable`. The policy assumes `md` renders as markdown without raw HTML (`rehype-raw`), and `mdx` as MDX.
+
+`mdxAllow`, on a field or site-wide in the config, narrows what MDX passes, never widens it; a field's keys replace the site's:
+
+```typescript
+mdxAllow: {
+  components: {
+    Callout: {
+      props: {
+        type: ['info', 'warning'], // these values only; [true, false] for a boolean
+        title: 'string', // title="…" only, never bare or {…}; or { type: 'string', maxLength: 120 }
+        icon: true, // any value the base policy accepts, a bare `icon` included
+      }, // {}: none; no `props`: any
+    },
+  }, // {}: none
+  htmlTags: [], // from the safe set; omitted: all of it
+  expressions: false, // refuses comments and `{300}` too
+  fragments: false,
+}
+```
+
+The editor's toolbar writes no tag a field refuses.
 
 ### Field Groups
 
@@ -636,7 +685,7 @@ const pageSchema = defineEntrySchema([
 
 Reading resolves it automatically: `read()` and `readByUrlPath()` recurse into block templates and resolve any `reference` field there, the same as a top-level one, so `section.value.snippet` on a `sharedCta` section is the full resolved entry rather than an id.
 
-> **In a listing, ask for resolution explicitly.** [`listEntries()`](#listing-entries) and `buildContentTree()` read content files raw off disk and resolve nothing **unless you pass `{ resolveReferences: true }`** — so a surface built from a listing without it sees a shared block's reference as `null` or a bare id, and a search index built that way silently contains nothing for those blocks. See [Resolving References in a Listing](#resolving-references-in-a-listing). (The AI-content export is separate: it disables resolution on purpose, so shared-block content is not duplicated into every referencing page's export.)
+> **In a listing, ask for resolution explicitly.** [`listEntries()`](#listing-entries) and `buildContentTree()` read content files raw off disk and resolve nothing **unless you pass `{ resolveReferences: true }`** — so a surface built from a listing without it sees a shared block's reference as `null` or a bare id, and a search index built that way silently contains nothing for those blocks. See [Resolving References in a Listing](#resolving-references-in-a-listing). (The AI-content export links a reference instead of inlining it; see [AI-Ready Content](#ai-ready-content).)
 
 ## Content Identification & References
 
@@ -674,11 +723,11 @@ const schema = defineEntrySchema([
 ])
 ```
 
-Delete a referenced entry and you get validation errors on the entries pointing at it.
+Deleting a referenced entry asks first: the dialog lists the entries pointing at it, and **Delete anyway** leaves their references dangling, which fails a production build ([No dangling references](#no-dangling-references)).
 
 ### How References Work in the Editor
 
-The editor loads the available options from the configured scope and validates that a reference always points at a valid entry. Open the dropdown to see every matching entry, search by the display field's value, and select one — CanopyCMS stores the UUID while showing `displayField`.
+The editor loads options from the configured scope and validates that each reference points at a valid entry. Open the dropdown, search by the display field, and select one — CanopyCMS stores the entry's content id while showing `displayField`.
 
 ### Using References in Your Code
 
@@ -697,6 +746,8 @@ if (data.author?.unavailable) return <a href={data.author.urlPath}>{data.author.
 ```
 
 Path rules decide it at request time, exactly as for a direct `read()` of the target, and the editor's live preview receives the same value; a static build resolves every reference in full (see [Permission Model](#permission-model)). A reference the user may read never carries `unavailable`. Saving an entry keeps every reference's id, restricted or not.
+
+**A reference to a deleted entry resolves to its id only**, `{ id, unavailable: true, reason: 'missing' }`, so check `reason` before reading a title or URL. Saving keeps the id.
 
 Pass `resolveReferences: false` to get the bare ids instead. Declare `resolvedSchema` on the field to have the inferred type match the resolved shape (see [Typed References with `resolvedSchema`](#typed-references-with-resolvedschema)). A **listing** is the opposite default — it resolves nothing unless asked; see [Resolving References in a Listing](#resolving-references-in-a-listing).
 
@@ -818,10 +869,11 @@ type Post = TypeFromEntrySchema<typeof postSchema>
 // With resolvedSchema:    Post['author'] is
 //   | ({ name: string; bio: string } & ResolvedReferenceMeta & { unavailable?: undefined })
 //   | RestrictedReference
+//   | MissingReference
 //   | null
 ```
 
-`RestrictedReference` is the [title-and-URL value](#using-references-in-your-code) a reader who may not read the target receives. Narrow on `unavailable` before reading the target's own fields.
+`RestrictedReference` is the [title-and-URL value](#using-references-in-your-code) a reader who may not read the target receives, `MissingReference` the id-only value for a deleted target, and `UnavailableReference` either. Narrow with `isResolvedReference`, or on `unavailable` then `reason`.
 
 `resolvedSchema` is used only for type inference — it does not affect how content is read, written or validated at runtime, and is stripped from API responses. It accepts any schema created with `defineEntrySchema`, so the same schema objects can be shared between entry type definitions and reference fields.
 
@@ -886,7 +938,7 @@ So `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry
 
 Each entry gets exactly one `urlPath`, but nothing stops two _different_ entries computing the same one — and then only one can be served while the other silently has no route at all. A **production build** therefore fails, listing the contested URLs and their claimants. (`next dev` and the admin UI are unaffected: mid-edit trees may be temporarily broken.)
 
-The usual causes: an entry whose slug matches a sibling collection **that also has an `index` entry**, since the index collapses onto the collection's path, which is the entry's path too (a sibling collection with no index entry is fine — a landing page plus a folder of children is a normal shape); two slugs differing only by case, since URL paths are lowercased; and two entries with the same slug in one collection, which the write boundary refuses but which still arrives by merge, by PR, and by retrofit onto an existing repo.
+The usual causes: an entry whose slug matches a sibling collection **that also has an `index` entry**, which collapses onto the collection's path (a sibling with no index entry is fine); two slugs differing only by case, since URL paths are lowercased; and two same-slug entries in one collection, which the write boundary refuses but a merge, PR or retrofit still delivers.
 
 `findDuplicateUrlPaths` (from `canopycms/server`) is the same scan the build runs. Give it `listEntries()` rather than `collectRoutableEntries()`, which drops the `entryPath` that names the offenders:
 
@@ -895,11 +947,20 @@ const duplicates = findDuplicateUrlPaths(await (await getCanopyForBuild()).listE
 // [{ urlPath: '/docs/guides', entryPaths: ['content/docs/guides', 'content/docs/guides/index'] }]
 ```
 
+### No dangling references
+
+A reference naming no entry renders as nothing, such as a byline with no author, so a **production build** fails on one, listing the entry, the field path and the missing id. References at any depth are checked against the whole content tree; `danglingReferences: 'warn'` prints the list and passes instead. The editor refuses a new dangling id, so these come from deletes, merges, hand edits and `sync pull`. `findDanglingReferences` (from `canopycms/server`) is the same scan:
+
+```typescript
+const dangling = findDanglingReferences(await (await getCanopyForBuild()).listEntries())
+// [{ entryPath: 'content/articles/hello', fieldPath: 'blocks[2].author', id: 'a1b2c3d4e5f6' }]
+```
+
 ### Every slug must round-trip through a URL
 
-Content file names follow `{type}.{slug}.{id}.{ext}`, and the `slug` segment may contain dots, since the type and ID anchor the parse: `post.getting.started.guide.<id>.md` parses fine and lists with `slug: 'getting.started.guide'`. But `readByUrlPath()` accepts only slugs of lowercase letters, numbers and hyphens, starting with a letter or number, because that is the rule it runs every URL-resolution candidate through before attempting a read. A slug outside that shape builds, gets a `generateStaticParams` entry and a sitemap `<loc>`, and then 404s on every visit, silently breaking the round-trip guarantee above — so a **production build** fails loudly instead, listing every offending entry by path.
+Content file names follow `{type}.{slug}.{id}.{ext}`, and the slug may contain dots: `post.getting.started.guide.<id>.md` lists with `slug: 'getting.started.guide'`. But `readByUrlPath()` accepts only slugs of lowercase letters, numbers and hyphens, starting with a letter or number, so such an entry builds, gets a `generateStaticParams` entry and a sitemap `<loc>`, and then 404s on every visit. A **production build** fails instead, listing every offending entry.
 
-The write API refuses to create one: a `PUT` that would mint an entry with a non-conforming slug is rejected with `400`, as is a rename to one, so this applies to any client and not just the editor UI. That enforcement is **create-only by design** — an entry already carrying a non-conforming slug (hand-authored, script-imported, merged in over git) stays readable, saveable and renameable, because renaming it is the only way to clear the build failure.
+The write API refuses (`400`) to create one or rename to one, for any client. That is **create-only by design**: an entry already carrying such a slug stays readable, saveable and renameable, because renaming it is the only way to clear the build failure.
 
 ### Static Export with generateStaticParams
 
@@ -938,7 +999,7 @@ export const generateStaticParams = () =>
 
 ### Sitemap and SEO Metadata
 
-These ship together because of the `noindex` flag: it has to suppress a page in **both** surfaces — `robots: { index: false }` on the page and absence from the sitemap. Both read it through the same core predicate, so they cannot disagree about which pages are advertised.
+These ship together because of the `noindex` flag: it has to suppress a page in **both** surfaces — `robots: { index: false }` on the page and absence from the sitemap. Both read it through the same core predicate, as [AI content](#ai-ready-content) does, so they cannot disagree about which pages are advertised.
 
 #### The recommended SEO field group
 
@@ -1121,24 +1182,23 @@ For URL-driven pages, [`readByUrlPath()`](#load-content-by-url-path) is usually 
 
 ### Media Configuration
 
-CanopyCMS stores uploaded images and PDFs in a content-addressed asset store and serves images through an on-demand transform layer — see [ARCHITECTURE.md](ARCHITECTURE.md#asset--media-system) for how those work. Configure it with `media`:
+CanopyCMS stores uploaded images and PDFs in a content-addressed asset store and serves resized derivatives of the images — see [ARCHITECTURE.md](ARCHITECTURE.md#asset--media-system) for how those work. Configure it with `media`:
 
 ```typescript
 media: {
   adapter: 's3',
   bucket: 'my-site-assets',
   region: 'us-east-1',
-  publicBaseUrl: 'https://assets.example.com',   // optional
   uploadUrl: process.env.CANOPY_UPLOAD_URL,      // optional
   maxUploadBytes: 52_428_800,                    // optional, default 50 MiB
 }
 ```
 
-`publicBaseUrl` is the base URL of the origin serving `/assets` **for the editor's own image previews** — set it when the editor cannot reach assets at its own root (a dedicated asset host, or an editor on a different origin than the site). An absolute URL or a site-relative path; omit for same-origin. It is editor display only and is never stored in content; "Where `/assets` is mounted" below is the public site's side of the same question. `uploadUrl` is where the browser POSTs a presigned upload, defaulting to the S3 REST endpoint — see "Routing uploads through your own CDN" below.
+The editor needs no asset mount point: it loads asset-store images through the signed-in `/api/canopycms/assets/raw/…` route under your `basePath`, which transforms on demand and, on S3, redirects to a short-lived presigned read. `uploadUrl` is where the browser POSTs a presigned upload, defaulting to the S3 REST endpoint — see "Routing uploads through your own CDN" below.
 
-For local development, omit `media` entirely (uploads go to `.canopy-dev/assets/` via the built-in local adapter), point it at `{ adapter: 'local', directory: '.canopy-dev/assets' }`, or use your real bucket to test the S3 path.
+For local development, omit `media` (uploads go to `.canopy-dev/assets/` via the built-in local adapter), use `{ adapter: 'local', directory: '.canopy-dev/assets' }`, or use your real bucket.
 
-Editors add images through the Media Library (a right-hand drawer from the editor's Settings menu), an `image` field, or the MDX "Insert Image" dialog. Uploads go **straight from the browser to S3** via a presigned POST — the bytes never pass through your API route — and on completion the server sniffs the real file type, **strips EXIF metadata including GPS, sanitizes SVGs**, hashes the bytes and records the asset. Images are served from `/assets/t/{directives}/…` URLs that transform on first request and cache immutably at the CDN; SVGs and PDFs are served statically. Build responsive markup with the exported helpers:
+Editors add images through the Media Library (a right-hand drawer from the editor's rail), an `image` field, or the MDX "Insert Image" dialog. Uploads go **straight from the browser to S3** via a presigned POST, and the server then sniffs the real file type, **strips EXIF metadata including GPS, sanitizes SVGs**, hashes the bytes and records the asset. Images are served from `/assets/t/{directives}/…` URLs, stored before release by `materialize-assets` (below) and cached immutably at the CDN; SVGs and PDFs are served statically. Build responsive markup with the client-safe helpers:
 
 ```typescript
 import { assetUrl, assetSrcSet } from 'canopycms'
@@ -1153,19 +1213,19 @@ import { assetUrl, assetSrcSet } from 'canopycms'
 />
 ```
 
-**`image` fields** hold a structured value — `{ src, alt, width, height, crop? }` — so alt text is enforced, intrinsic dimensions prevent layout shift, and crops are stored as a directive rather than a derived file. Declare an `aspect` on the field (`'16:9'`, `'1:1'`) to enable the interactive crop step, and `altOptional: true` for decorative images.
+**`image` fields** hold `{ src, alt, width, height, crop? }`: alt text is enforced, and a crop is a directive, not a derived file. Passing the value to `assetUrl`/`assetSrcSet` applies its crop (`opts.crop` overrides). `width`/`height` are the uncropped original's; scale them by `crop.w`/`crop.h`. Declare an `aspect` (`'16:9'`, `'1:1'`) to enable the crop step, and `altOptional: true` for decorative images.
 
 **Permissions** — any authenticated editor can upload and list assets. Deleting one from the library requires being an admin **or** the uploader, and removes only the library record; existing content references keep resolving.
 
-> **The asset store is site-wide, not branch-scoped.** Because assets are content-addressed and shared (which is what lets a branch merge avoid moving files), branch and path ACLs do **not** apply to them: any authenticated editor can list and fetch every asset in the site, including images uploaded on branches they cannot otherwise access. Asset URLs are unguessable, but the library listing is open to every signed-in user, so treat "uploaded to CanopyCMS" as visible to your whole editorial team — confidential material does not belong in the asset store.
+> **The asset store is site-wide, not branch-scoped.** Assets are content-addressed and shared (which is what lets a branch merge avoid moving files), so branch and path ACLs do **not** apply to them: any authenticated editor can list and fetch every asset in the site, including images uploaded on branches they cannot otherwise access. Treat "uploaded to CanopyCMS" as visible to your whole editorial team — confidential material does not belong in the asset store.
 
-**Infrastructure** — `canopycms-cdk` ships an `AssetSupport` construct that provisions the bucket (or attaches to an existing one) and the transform Lambda. Pass it to `CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront read behaviors (`/assets/*` and `/assets/t/*`) in the only safe order, since CloudFront matches path patterns in the order given and a more specific pattern listed after a more general one is never reached. For a distribution built outside `CanopyCmsDistribution`, `assetBehaviors()` and `attachTo(distribution)` remain available, and a hand-wired `additionalBehaviors` that gets the order wrong fails `cdk synth` with an actionable error instead of deploying broken. `uploadBehavior()` is the opt-in write path and belongs on its own distribution, below. See [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
+**Infrastructure** — `canopycms-cdk` ships an `AssetSupport` construct that provisions the bucket (or attaches to one) and serves `/assets/*` from S3 alone, failing over to an optional `replicaBucket` on a 5xx; an unmaterialized URL is a 403. `lazyPublicTransforms: true` instead transforms misses in a Lambda, for releases without [the two steps below](#storing-a-builds-images-before-it-is-released). Pass it to `CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront read behaviors (`/assets/*` and `/assets/t/*`) in the only safe order. For another distribution, use `assetBehaviors()` or `attachTo(distribution)`; a hand-wired `additionalBehaviors` in the wrong order fails `cdk synth`. `uploadBehavior()` is the opt-in write path and belongs on its own distribution, below. See [the AWS guide](docs/deploying-to-aws.md#media-the-public-image-path) and [migration entry](CHANGELOG.md#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking).
 
 **Routing uploads through your own CDN**
 
-By default the browser POSTs a presigned upload straight at the S3 REST endpoint, which is cross-origin from your editor and so needs a **CORS rule on the bucket** — and a CORS rule must name an exact origin and applies bucket-wide, since S3 CORS has no prefix scoping, which is awkward for a bucket shared across environments.
+By default the browser POSTs a presigned upload straight at the S3 REST endpoint, which is cross-origin from your editor and so needs a **CORS rule on the bucket** — and a CORS rule must name an exact origin and applies bucket-wide, since S3 CORS has no prefix scoping.
 
-`media.uploadUrl` replaces the POST target, so the upload can go through a CloudFront distribution you control; same-origin with the editor (`uploadUrl: '/asset-upload/'`) needs no bucket CORS rule at all. The signature is unaffected — a presigned POST's string-to-sign is the base64 policy alone, so the host never enters it. Accepted values are an absolute `http(s)` URL or a site-relative path, the latter same-origin by construction, and the value is used **verbatim**, with nothing joined onto it and the trailing slash not normalized, because only you know whether your CDN behaviour is `/asset-upload/*` or a literal path. It is per-deployment: a site-relative value works only where that path actually routes to the bucket, so under `next dev` with `adapter: 's3'` it 404s — drive it from an environment variable.
+`media.uploadUrl` replaces the POST target, so the upload can go through a CloudFront distribution you control; same-origin with the editor (`uploadUrl: '/asset-upload/'`) needs no bucket CORS rule at all. The signature is unaffected — a presigned POST's string-to-sign is the base64 policy alone, so the host never enters it. It accepts an absolute `http(s)` URL or a site-relative path and is used **verbatim**: nothing is joined onto it and a trailing slash is kept, since only you know whether your CDN behaviour is `/asset-upload/*` or a literal path. It is per-deployment: a site-relative value works only where that path actually routes to the bucket, so under `next dev` with `adapter: 's3'` it 404s — drive it from an environment variable.
 
 **If you deploy with `canopycms-cdk`, it builds the behaviour for you.** Give the route its own distribution — one route, nothing else on it — from either `AssetSupport`'s `uploadBehavior` prop, or `assetUploadBehavior(this, { bucket: assetBucket })` when you have a bucket and no other use for an `AssetSupport` in that stack:
 
@@ -1178,28 +1238,49 @@ const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
 // media.uploadUrl = `https://${uploads.distributionDomainName}/`
 ```
 
-Both entry points build the route through one shared internal function, so they cannot drift; the difference is what else gets built, since `AssetSupport`'s constructor always creates the transform Lambda, its log group, Function URL and execution role. Either way, no custom domain or certificate is needed and no bucket CORS rule is written: the edge supplies `Access-Control-Allow-Origin` for this route alone and answers the CORS preflight itself. `allowedOrigins` narrows the wildcard default, matching origins exactly, so a `*.subdomain` pattern is refused at synth rather than passing the policy and failing the preflight. `editorOrigins` — which exists only to write that bucket rule — becomes optional, though standalone mode refuses to synth with neither.
+Either way, no custom domain or certificate is needed and no bucket CORS rule is written: the edge supplies `Access-Control-Allow-Origin` for this route alone and answers the CORS preflight itself. `allowedOrigins` narrows the wildcard default, matching origins exactly, so a `*.subdomain` pattern is refused at synth rather than passing the policy and failing the preflight. `editorOrigins` — which exists only to write that bucket rule — becomes optional, though standalone mode refuses to synth with neither.
 
 Wiring the route by hand instead, five things are easy to get wrong:
 
-- **Answer the CORS preflight yourself** — the one most likely to be missed, and it stops the upload dead. The editor's POST registers an `xhr.upload` progress listener, which disqualifies it from being a CORS simple request, so the browser sends `OPTIONS` first; neither CloudFront nor a CORS-less S3 bucket answers that, and a non-2xx preflight fails the check whatever headers are on it. Answer `OPTIONS` at the edge with a viewer-request function returning 204 plus the CORS headers, or keep a bucket CORS rule. A `curl` POST appears to work throughout, since only a browser preflights.
+- **Answer the CORS preflight yourself.** The editor's POST registers an `xhr.upload` progress listener, which disqualifies it from being a CORS simple request, so the browser sends `OPTIONS` first; neither CloudFront nor a CORS-less S3 bucket answers that, and a non-2xx preflight fails the check whatever headers are on it. Answer `OPTIONS` at the edge with a viewer-request function returning 204 plus the CORS headers, or keep a bucket CORS rule. A `curl` POST appears to work throughout, since only a browser preflights.
 - **Rewrite the URI to `/`** on viewer request. S3's POST Object is valid only at the bucket root, so without it you get `405 MethodNotAllowed` — and it is also what keeps "allow all methods" safe, since no request can then address a key.
 - **Allow all methods, and point at an origin with OAC signing OFF.** CloudFront signs origin requests but never hashes the body, so an OAC-signed origin rejects every multipart POST with `400 InvalidArgument` naming `x-amz-content-sha256`. OAC is a property of the origin rather than the behaviour, so the bucket needs its own origin entry.
 - **Forward no cookies.** A same-origin upload path receives your site's cookies, the editor session cookie included, which would otherwise reach S3 and its access logs. Behind HTTP basic auth, strip `Authorization` too — forwarded to S3 it produces `400 InvalidArgument — Unsupported Authorization Type`.
 - **Watch `CustomErrorResponses`.** They are distribution-wide, so a site mapping 403 to its own 404 page applies that to S3's upload errors too and the editor reports the substituted status. A distribution dedicated to the upload route avoids this along with the cookie and `Authorization` hazards — on a different host they are never sent.
 
-Despite being widely assumed, a bucket CORS rule is _not_ what permits the upload: measured, S3 **accepts** a cross-origin presigned POST with no CORS configuration and simply declines to advertise it. Acceptance and advertisement are independent, which is what lets the edge supply the header instead — and it means the failure mode here is a file that _is_ in staging while the browser reports a network error. Note too that CanopyCMS cannot verify the host you configure actually fronts your bucket: a wrong `uploadUrl` sends a valid presigned credential and the user's file to an unintended endpoint, quietly. The blast radius is bounded — the POST policy pins the bucket, key, content type, a size range and a 15-minute expiry — but treat it as deployment configuration rather than something derived at runtime.
+A bucket CORS rule is _not_ what permits the upload: S3 **accepts** a cross-origin presigned POST with no CORS configuration and only declines to advertise it. That is what lets the edge supply the header instead, and why the failure mode is a file that _is_ in staging while the browser reports a network error. Note too that CanopyCMS cannot verify the host you configure actually fronts your bucket: a wrong `uploadUrl` sends a valid presigned credential and the user's file to an unintended endpoint, quietly. The blast radius is bounded — the POST policy pins the bucket, key, content type, a size range and a 15-minute expiry — but treat it as deployment configuration rather than something derived at runtime.
 
 **Where `/assets` is mounted**
 
-Stored asset URLs are always root-relative (`/assets/…`), deliberately: the stored value is what moves between branches and environments, so it names the asset's position in the `/assets` URL space and nothing else. When your renderer sees that space somewhere other than the root, supply the mount point at render time with `baseUrl` — `assetUrl(image, { width: 960, baseUrl: ASSET_BASE })`, `assetSrcSet(image, [480, 960], { baseUrl: ASSET_BASE })`:
+Stored asset URLs are always root-relative (`/assets/…`), because the stored value moves between branches and environments. When your renderer sees that space somewhere other than the root, supply the mount point at render time with `baseUrl` — `assetUrl(image, { width: 960, baseUrl: ASSET_BASE })`, `assetSrcSet(image, [480, 960], { baseUrl: ASSET_BASE })`:
 
 - Site served at the root, the usual case — omit `baseUrl`
 - Site under a Next.js `basePath`, with Next serving `/assets` — your `basePath`, e.g. `'/preview-123'`
 - Assets on CloudFront via `canopycms-cdk`'s `AssetSupport` — omit it; a `basePath` does not move them
 - Assets on a separate host or CDN origin — that origin, e.g. `'https://assets.example.com'`
 
-`baseUrl` is the **one** prefix concept for asset URLs, and the two non-empty shapes are alternatives rather than things you compose: a cross-origin asset host serves at its own root and does not also live under your site's `basePath`. It is a per-render option rather than a config key precisely because the editor and the public site can legitimately have different answers — which is what `media.publicBaseUrl` is, the editor's answer. The prefix is applied at render time only and is **never** written into content.
+`baseUrl` is the **one** prefix concept for asset URLs, and the two non-empty shapes are alternatives rather than things you compose: a cross-origin asset host serves at its own root and does not also live under your site's `basePath`. The prefix is applied at render time only and is **never** written into content.
+
+In the editor's live preview, `assetUrl` puts `/assets/t/…` URLs behind the signed-in route instead of `baseUrl`, so drafts show crops and widths no build produced: from the first request in a `createPreviewPage` view, otherwise from the first draft. An off-origin preview shows only stored derivatives.
+
+### Storing a build's images before it is released
+
+Two CLI steps store every image a static build references before it is served:
+
+```bash
+npx canopycms collect-asset-refs out           # after `next build`, before any manifest step
+npx canopycms materialize-assets --refs out/canopy-asset-refs.json --report materialize.json
+```
+
+`collect-asset-refs` records the `/assets/…` keys in output text, failing on non-canonical or malformed URLs or unreadable RSC scripts. `materialize-assets` transforms the keys the store lacks, checks svg/pdf keys exist, naming each failure's pages. Exit codes: `0` success; `1` it did not finish; `2` content failures (`0` under `--allow-failures`); `3` any store failure. `--report` writes JSON with `schemaVersion: 1`, a `summary` and a `status` per key (`existed`, `created`, `copied`, `failed`).
+
+**The contract for site code:** every `/assets/t/` URL your site can request must appear as text in its build output. Compute widths at render time, never on client-side interaction. An image value passed to a client component puts its `orig` URL in the output, so that copy is stored too. Widths may be any integer up to 8192; `lazyPublicTransforms` accepts only 32, 48, 64, 96, 128 and multiples of 160 up to 4096.
+
+It reads `media` from `canopycms.config.ts`, refusing a non-S3 store unless `--allow-local`; `--bucket <name> --region <region>` names the S3 store without loading the config. The production role needs `s3:GetObject` (HEAD too) on `asset-originals/*`, `asset-meta/*` and `assets/*`; `s3:PutObject` on `assets/t/*` (every write sends `If-None-Match: *`); and `s3:ListBucket` on those prefixes, without which a missing key is a 403: a store failure, exit 3.
+
+A release job can instead bundle `materializeAssets` over `createAssetStore` from `canopycms/server`, with no site config: CommonJS, `sharp` and `@img/*` external, sharp installed for the runner's platform, as in `packages/canopycms-cdk/lambda/asset-transform/build.mjs`.
+
+Create-only holds as far as `s3:DeleteObject` allows; delete a bad derivative, then rematerialize. Hashes are public, so PR builds must never write where production reads: `--output-prefix <p>` (`outputPrefix`) writes every key under `<p>`, copying what production stores, transforming the rest; production's run never reads `<p>`. The preview role needs `s3:GetObject` on `assets/*`, `asset-meta/*` and `asset-originals/*`, so it reads every original, even unpublished ones; `s3:ListBucket` on those and `<p>`; `s3:PutObject` on `<p>` only, with `If-None-Match` (copies too); and KMS permissions on an SSE-KMS bucket. No production route may serve keys under `<p>`. Scope each preview's writes to its `<p>`, or one PR can write into another's.
 
 ### Deploying under a `basePath`
 
@@ -1218,7 +1299,6 @@ Markdown and MDX body content is a separate case: images inserted into a body ar
 ```typescript
 editor: {
   title: 'My CMS',
-  subtitle: 'Content Editor',
   theme: {
     colors: { brand: '#4f46e5', accent: '#0ea5e9', neutral: '#0f172a' },
   },
@@ -1226,6 +1306,8 @@ editor: {
 ```
 
 **Preview URLs.** The pane loads each entry's `urlPath` with `?branch=`. `previewBase` overrides it by a root entry's path (the whole route), else collection path or name (plus the slug); `false` means no page, and the pane says so. `previewPrefix` precedes every route. Both get `basePath` and `trailingSlash`. An absolute `previewBase` skips the prefix, `basePath` and `trailingSlash`; an absolute prefix skips `basePath`.
+
+**Your root layout.** The editor route renders inside your root layout but takes the whole window: it draws over your layout's header and footer, hides them, takes them out of the Tab order and stops the page scrolling. Their scripts still run, so keep analytics, consent banners and global fetches out of the editor route with a route group for the public site, or a pathname check. Only what your root layout's React tree has rendered at mount is hidden: chrome from another React root, a non-React widget or chrome streamed in later stays visible.
 
 ### Custom Field Renderers
 
@@ -1240,11 +1322,12 @@ import config from '../../canopycms.config'
 
 const customRenderers: CustomFieldRenderers = {
   // Every field declared `type: 'number'` now renders this instead.
-  number: ({ value, onChange, id, field }) => (
+  number: ({ value, onChange, id, field, readOnly }) => (
     <label htmlFor={id}>
       {field.label ?? field.name}
       <input
         id={id}
+        disabled={readOnly}
         type="range"
         value={typeof value === 'number' ? value : 0}
         onChange={(e) => onChange(Number(e.target.value))}
@@ -1263,10 +1346,11 @@ Each renderer receives `CustomFieldRenderProps`:
 - `onChange` — call with the new value to update the draft
 - `path` — canonical path to this field, e.g. `['blocks', 0, 'title']`
 - `id` — the id the default control would have used; attach it to your input
+- `readOnly` — true on a locked branch (protected, or in review); show the value only (`onChange` is ignored, native inputs disabled)
 
-Renderers apply **by field type, everywhere** — top-level fields, fields inside `object` and `block` templates, and each item of a `list: true` field. There is no per-field override; scope with `field.name` inside the renderer if you need one. `customRenderers` is also accepted directly by `<CanopyEditor>` and `<Editor>` if you compose the editor yourself instead of using the page factory.
+Renderers apply **by field type, everywhere**: top-level fields, fields inside `object` and `block` templates, and each item of a `list: true` field. There is no per-field override; scope with `field.name` inside the renderer. `customRenderers` is also accepted by `<CanopyEditor>` and `<Editor>` when you compose the editor yourself.
 
-**The value you pass to `onChange` must still satisfy the field's declared type.** CanopyCMS validates entries at the server write boundary with the same rules regardless of what rendered the input, so a renderer storing a string into a `type: 'number'` field produces a `422` on save rather than a bad file. Custom rendering changes the control, not the schema contract.
+**The value you pass to `onChange` must still satisfy the field's declared type.** The server validates entries on write by the same rules whatever rendered the input, so a renderer storing a string into a `type: 'number'` field gets a `422` on save, not a bad file.
 
 ## Content Tree Builder
 
@@ -1446,7 +1530,7 @@ const entries = await canopy.listEntries({ resolveReferences: true })
 
 **What it costs.** Resolution needs the content ID index, so an opted-in call adds one index scan plus one read per _distinct_ referenced entry, not per referencing entry: all resolution in one call shares a cache, so a block referenced from 40 pages is read once. With the option off, none of that machinery is built. The cache saves the read, not the copy — each referencing entry still gets its own copy of the resolved value.
 
-**Every resolved reference carries a `urlPath`** — the referenced entry's URL, by the same rule `listEntries` uses for `item.urlPath` (an `index` entry collapses to its parent path). Both come from one shared function, so a link built from a resolved reference reaches the entry the listing enumerates, with no second pass to build an id → URL table. Alongside it, **`id`, `slug` and `collection` are reserved**: if the target models one of those as a real content field, the resolution value wins and the content field is not visible here. `unavailable`, the restricted marker, is reserved outright: a schema declaring a top-level field (or inline-group field) with that name is rejected.
+**Every resolved reference carries a `urlPath`** — the referenced entry's URL, by the same rule `listEntries` uses for `item.urlPath` (an `index` entry collapses to its parent path). A link built from it reaches the entry the listing enumerates. Alongside it, **`id`, `slug` and `collection` are reserved**: if the target models one of those as a real content field, the resolution value wins and the content field is not visible here. `unavailable`, the restricted marker, is reserved outright: a schema declaring a top-level field (or inline-group field) with that name is rejected.
 
 **A target's body is opt-in, per field.** By default a resolved **md/mdx** target gives you its frontmatter, not its prose. Set `includeBody: true` on the reference field and the body arrives too, under that target entry type's own body field name — a no-op for json/yaml targets, whose whole document is already their data. The distinction is embed-vs-link, and it belongs on the field because it is a property of your content model rather than of any one call: a reference that **embeds** its target (a shared CTA rendered inline) wants the prose, while one that **links** to it (related posts, an author byline) wants `urlPath` and a title, not the target's whole body inlined into every page read. Turning it on makes the body part of every referencing entry's resolved value, so a long document embedded by many pages is copied once per page.
 
@@ -1479,7 +1563,7 @@ The base branch itself (the PR target, usually `main`) is protected: it can neve
 
 ### Comments System
 
-Comments enable asynchronous review at three levels: **field** comments on a specific form field, **entry** comments on a whole entry, and **branch** comments about the changeset. They are stored in `.canopy-meta/comments.json` per branch workspace and are **not** committed to git — they are review artifacts, excluded via git's `info/exclude`.
+Comments enable asynchronous review at three levels: **field**, **entry**, and **branch** (the changeset). They live in each branch workspace's `.canopy-meta/comments.json`, excluded from git. Only users who can read an entry see its field and entry comments or can add to or resolve them; branch comments follow branch access. Threads name their people; only admins and reviewers see emails.
 
 ### Permission Model
 
@@ -1516,17 +1600,47 @@ Weigh one thing before enabling it: **`{ read: 'allow' }` inverts deny-by-defaul
 
 Pages rendering content at request time should use the null-safe `readByUrlPath` rather than the strict `read()`: a `FORBIDDEN` denial comes back as `null`, so your existing `if (!result) return notFound()` produces an ordinary 404 without revealing that the content exists but is restricted (the reason still goes to the debug log under `CANOPYCMS_DEBUG=true`). Reserve `read()`, which throws on both missing and forbidden content, for contexts where the content is known to exist and be readable.
 
+#### Moving a live site to fail-closed access
+
+A site running `defaultBranchAccess: 'allow'` with an unscoped `defaultPathAccess: 'allow'` lets every signed-in user edit every path on every branch. Move it to the posture above in this order:
+
+1. **Upgrade first.** Flipping `defaultBranchAccess` to `'deny'` on a release that predates the creator and base-branch grants makes the base branch unreachable for every non-admin. The path-layer change is safe on older releases.
+2. As an admin, add an `edit` rule for your editors group in the editor's Permission Manager. `{ read: 'allow' }` leaves `edit` denied, so without that rule editors can create a branch but edit nothing. The rules live on the CMS's settings branch, not in your content files.
+3. Set `defaultPathAccess: { read: 'allow' }`, then `defaultBranchAccess: 'deny'`.
+4. **Verify as a non-admin user**: base-branch content loads, and creating a branch, editing on it and Submit all work. The admin bypass hides every path-layer mistake.
+
 ### System Health
 
 Admins get a "System health" panel for observing the CMS's operational state, riding the same Editor component and catch-all API route as everything else, so it needs no extra integration. See [System Health (Admins)](#system-health-admins) for what it shows.
 
 ### Live Preview
 
-The editor shows a live preview of your actual site pages in an iframe. Changes update immediately via postMessage, and clicking an element in the preview focuses the corresponding form field.
+The editor previews your actual site pages in an iframe, updated as you type. Clicking a preview element focuses its form field, and the highlight toggle outlines them, for elements the view marks with its `fieldProps`: `fieldProps('title')`, `fieldProps(['blocks', i, 'body'])`. A list item focuses its list, a block its own card.
 
-**Security model.** Preview pages accept messages only when they are actually framed, and only from their direct parent window with a matching origin — same-origin by default, so a standalone page, including one opened via `window.open` from a hostile site, never accepts draft data. For a cross-origin editor deployment, pass `editorOrigin: 'https://editor.example.com'` to `useCanopyPreview`. We also recommend serving your site with `Cross-Origin-Opener-Policy: same-origin` where your hosting allows, since it severs `window.opener` handles entirely; the bridge is safe without it, but defense in depth is cheap.
+Pages take `useCanopyPreview` from `canopycms/preview` and `withCanopyPreview` from `canopycms-next/preview`, which carry no editor code or CSS, so pages preview in their own styles.
 
-**Reporting draft errors.** If your page compiles the draft body (MDX, say) and keeps the last good render on failure, the author sees a stale-but-fine preview while the draft is broken. Use `reportError` to tell the editor, which surfaces an alert next to the preview:
+**Marking fields.** `fieldProps` is typed against the view's content: `fieldProps(['sections', i, 'heading'])` compiles only if that field exists, and the error lists those that do. **Build a path from variables as literal segments, never a template string**: a computed string or array compiles only on plain `FieldProps` from `canopycms`, the untyped escape hatch. A block's fields follow its index (`sections[0].heading`), and nothing is below a reference or image.
+
+A section component marks paths relative to its part, and its caller scopes it. `fieldAttrs` and `scopeFieldProps` come from `canopycms`, so server components can call them too:
+
+```tsx
+import { fieldAttrs, scopeFieldProps, type FieldProps } from 'canopycms'
+
+function Hero({ data, fieldProps }: { data: Page['hero']; fieldProps?: FieldProps<Page['hero']> }) {
+  return <h2 {...fieldAttrs(fieldProps, ['heading'])}>{data.heading}</h2>
+}
+
+// in the page view
+const hero = <Hero data={data.hero} fieldProps={scopeFieldProps(fieldProps, ['hero'])} />
+```
+
+**Default `fieldProps` to `undefined`, never a no-op function.** A public page rendering shared views as server components would pass it to client components, which Next refuses; both helpers take `undefined`. A block component types its prop for its template, `FieldProps<BlockValueOf<Section, 'hero'>>`; a block's scope fits any template's.
+
+With highlighting on, the toggle counts marks that name no schema field, and the browser console names each.
+
+**Security model.** Preview pages accept messages only when framed, and only from their direct parent window with a matching origin (same-origin by default), so a standalone page, even one a hostile site opened with `window.open`, never accepts draft data. For a cross-origin editor deployment, pass `editorOrigin: 'https://editor.example.com'` to `useCanopyPreview`. As defense in depth, serve your site with `Cross-Origin-Opener-Policy: same-origin` where your hosting allows: it severs `window.opener` handles.
+
+**Reporting draft errors.** If your page compiles the draft body (MDX, say; read [MDX content cannot run code](#mdx-content-cannot-run-code) before rendering it) and keeps the last good render on failure, the author sees a stale-but-fine preview while the draft is broken. Use `reportError` to tell the editor, which surfaces an alert next to the preview:
 
 ```typescript
 const { data, reportError } = useCanopyPreview<DocContent>({ initialData })
@@ -1549,13 +1663,15 @@ export const createPreviewPage: NextCanopyContextResult['createPreviewPage'] =
     (await canopyContextPromise).createPreviewPage(options)(props)
 
 // components/PostView.tsx ('use client'): `data` is the live draft
-export const PostPreview = withCanopyPreview(PostView) // from canopycms-next/client
+export const PostPreview = withCanopyPreview(PostView) // from canopycms-next/preview
 
 // app/preview/[[...path]]/page.server.tsx
 export default createPreviewPage({ views: { post: PostPreview, doc: DocPreview } })
 ```
 
 It reads from the editor's `?branch=` under the request's ACLs, never creating a branch. Anonymous requests, anything unreadable, an entry type with no view, and every request on a `deployedAs: 'static'` deployment are 404s. Public pages render the same `<PostPreview initialData={data} />`. Wrap views in a `'use client'` module, never in server code. Serve the route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY`, so the editor can frame it.
+
+Views on this route render after hydration, not on the server, so their images and those in `load`'s server components use the signed-in asset route from the first request. Server output rendered during a preview request carries that prefix; keep it out of cross-request caches (`unstable_cache`, module memos).
 
 A view that needs more than its entry pairs with a server `load` in that page file; `previewView` checks its result against the view's `extras` type:
 
@@ -1566,13 +1682,17 @@ post: previewView({
 }),
 ```
 
-`load` runs after the entry and view are found, with the same ACL-checked `canopy`. Its result is the view's `extras` prop: a request snapshot (only `data` is live) that must be RSC-serializable. Server-rendered elements are fine, so non-live sections can reuse server components. Have the public page pass the same `extras`, so previews show nothing the site lacks.
+`load` runs after the entry and view are found, with the same ACL-checked `canopy`. `entry.slug` and `entry.urlPath` follow the rule `listEntries` uses, so a loader can exclude the current entry from a listing. Its result is the view's `extras` prop: a request snapshot (only `data` is live) that must be RSC-serializable. Server-rendered elements are fine, so non-live sections can reuse server components. Have the public page pass the same `extras`, so previews show nothing the site lacks.
 
 ## AI-Ready Content
 
 CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools, documentation chatbots): schema-driven JSON/MD/MDX entries converted into well-structured markdown with a discovery manifest, needing no authentication, since the output is read-only.
 
-All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
+All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. An entry marked `noindex` is left out too, read through [the same predicate the sitemap uses](#sitemap-and-seo-metadata). Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
+
+A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one the export leaves out as `(unavailable entry <id>)`, with no title. An inline `entry:` link to a left-out entry renders as its plain text. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
+
+`referenceLink` decides where links to an exported entry point, for references and body `entry:` links alike. It receives the target and `{ body, defaultUrl }`; `body` is the target's stored MD/MDX body, and none of it reaches entries that link to it. Return a URL, `false` when the target has no page (its title renders as plain text, with no page or markdown-version link), or `undefined` for the default. It runs once per target per run, may be async, and never sees a missing or left-out target. A throw or any other return counts as `false`. A `fieldTransforms` entry that renders a reference field bypasses it.
 
 ### Option 1: Route Handler (Runtime)
 
@@ -1616,13 +1736,24 @@ await generateAIContentFiles({
 ```typescript
 import { defineAIContentConfig } from 'canopycms/ai'
 
+// Where the noindex flag lives, if not flat. Pass this one object to
+// createNextCanopyContext({ seo }) too, so the sitemap and AI content agree.
+const seo = { group: 'seo' }
+
 const aiConfig = defineAIContentConfig({
+  // Where these files are served, site-relative (default '/ai'); a reference links its
+  // target's markdown copy beneath it
+  mountPath: '/ai',
+
   // Opt-out exclusions
   exclude: {
     collections: ['drafts'],
     entryTypes: ['internal-note'],
     where: (entry) => entry.data.hidden === true,
+    noindex: false, // export noindex entries, left out by default
   },
+
+  seo,
 
   // Custom bundles: filtered subsets as single files
   bundles: [{ name: 'research-guides', filter: { collections: ['docs'], entryTypes: ['guide'] } }],
@@ -1640,7 +1771,8 @@ const aiConfig = defineAIContentConfig({
   bodyTransforms: { guideline: (body) => body.replace(/\s*\|\|[^\n]+/g, '') },
 
   // Per-entry-type transforms appending markdown after the entry's body/fields.
-  // Runs once per entry, may be async; return undefined to append nothing.
+  // Runs once per entry (again if a referenced entry fails to render), may be async;
+  // return undefined to append nothing.
   entryTransforms: {
     dataset: async (entry, { contentId, readSibling }) => {
       const raw = await readSibling(`${contentId}.profile.json`)
@@ -1648,8 +1780,28 @@ const aiConfig = defineAIContentConfig({
       return renderProfileSchema(entry.data, JSON.parse(raw)) // your own renderer
     },
   },
+
+  // A person has a page only when their bio (the body) has prose
+  referenceLink: (target, { body }) =>
+    target.collection === 'content/people' && !body?.trim() ? false : undefined,
 })
 ```
+
+**A link into a hidden section by plain URL.** A field holding a plain URL, such as a site settings entry's navigation list, names no entry, so the export can't tell that it points at a `noindex` section. Filter it with a field transform, which replaces the field's whole output:
+
+```typescript
+fieldTransforms: {
+  settings: {
+    navLinks: (links) =>
+      (links as { label: string; href: string }[])
+        .filter((link) => !link.href.startsWith('/stubs'))
+        .map((link) => `- ${link.label}: ${link.href}`)
+        .join('\n'),
+  },
+},
+```
+
+Return `''` from the transform to drop the field entirely, or use `exclude.where` to drop the whole entry.
 
 **Transform pipeline** for MD/MDX entries, in order: `stripMdxImports` removes import statements automatically; `componentTransforms` match JSX components by PascalCase name and replace them with the transform's output (keeping the JSX as-is when it returns `undefined`); then `bodyTransforms` passes the full body string through the entry-type-specific transform for final cleanup. `componentTransforms` are keyed by component name and apply across all entry types, since MDX components are project-wide; `bodyTransforms` are keyed by entry type, for stripping entry-type-specific syntax that does not belong in AI output.
 
@@ -1700,33 +1852,41 @@ How the CanopyCMS editor works from a content editor's perspective.
 
 Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a branch to work on.
 
-> In production the editor opens on the base branch by default. That branch is browsable but read-only — click "Create a branch" in the banner, or use the branch selector, to start editing. See [Submitting for Review](#submitting-for-review).
+> In production the editor opens on the base branch by default. That branch is browsable but read-only — click "Create a branch" in the banner to start editing. See [Submitting for Review](#submitting-for-review).
 
 ### Working with Branches
 
-**Creating a branch:** click the branch selector in the header, then "New Branch", and enter a descriptive name (`update-homepage-hero`).
+**Creating a branch:** click the branch pill, then "Switch branch…" and "New branch…", and enter a descriptive name (`update-homepage-hero`).
 
 > Branch names are sanitized for use as git branch names and filesystem paths: any character other than letters, numbers, `.`, `_` and `-` is replaced with `-`, so `feature/hero-update` is created as `feature-hero-update`, and the editor displays and uses that sanitized name everywhere.
 >
 > Seven names are reserved because they collide with a static top-level API route: `admin`, `assets`, `branches`, `groups`, `permissions`, `users`, `whoami`. Creating one is rejected with a 400 explaining the collision. Matching is exact and case-sensitive, so `Admin` and `admin-docs` are unaffected.
 
-**Switching branches:** click the branch selector and choose from the available branches. The base branch is marked with a "Protected" badge — it cannot be submitted for review, and in production it cannot be edited directly. The selector and Branches panel also show `syncing`, `sync-failed` and `conflict` badges alongside `Merged` and `PR closed`, so anyone can tell at a glance when a branch's git clone needs attention.
+**Switching branches:** click the branch pill, then "Switch branch…". The base branch is marked with a "Protected" badge — it cannot be submitted for review, and in production it cannot be edited directly. The Branches panel also shows `syncing`, `sync-failed` and `conflict` badges alongside `Merged` and `PR closed`.
+
+**Deleting a branch** also deletes its GitHub branch if the CMS pushed it there, which closes any open PR.
 
 ### Editing Content
 
-Browse collections in the sidebar and click an entry to open it; create new entries with the "+" button (disabled for an entry type with `maxItems: 1` when one already exists). Edit fields in the form on the left and watch the live preview on the right. "Save" persists changes to your branch — **not** committed yet — and clears your local unsaved draft for that file. "Discard" reverts unsaved changes to the last saved state, confirming first.
+Browse collections in the content panel and click an entry to open it; create new entries with the "+" button (disabled for an entry type with `maxItems: 1` when one already exists). Edit fields in the form on the left and watch the live preview on the right. "Save" persists changes to your branch — **not** committed yet — and clears your local unsaved draft for that file. "Discard" reverts unsaved changes to the last saved state, confirming first.
 
 ### Submitting for Review
 
-When your changes are ready, click "Submit for Review" in the header: that commits them and creates a GitHub PR, reviewable with standard GitHub workflows. Once it is merged, CanopyCMS detects it automatically within one worker sync cycle and marks the branch "Merged" in the Branches panel, and your changes deploy with the next site build. A PR closed without merging leaves the branch showing a "PR closed" badge, still submitted, until an admin follows up.
+When your changes are ready, click "Submit for review" in the top bar: that commits them and creates a GitHub PR, reviewable with standard GitHub workflows. Once it is merged, CanopyCMS detects it automatically within one worker sync cycle and marks the branch "Merged" in the Branches panel, and your changes deploy with the next site build. Submit refuses a branch whose saved content matches its base ("Nothing to submit yet").
 
-**A submitted branch is locked for content editing.** The editor disables Save and other write actions and shows a banner explaining why — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw" in the branch selector or Branches panel, which converts the PR back to a draft and returns the branch to `editing` status. Someone with review access clicking "Request changes" does the same thing, and signals that revisions are needed.
+**A submitted branch is locked for content editing.** The editor disables Save and other write actions and shows a banner explaining why — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw from review" in the top bar or Branches panel, which converts the PR back to a draft and returns the branch to `editing` status. A reviewer's "Request changes" returns it to `editing` too, after a confirmation, leaving the PR alone.
 
-The base branch (the PR target, usually `main`) can never be submitted — a branch cannot be reviewed against itself — so the "Submit for Review" button is hidden whenever you are viewing it, in both dev and production. In production it is also read-only in the editor: you can browse it, but changes require creating a branch first (the editor shows a banner with a "Create a branch" button). In dev mode it stays fully editable, since local development typically starts there, but you still need to move your work to a branch before it can be submitted.
+The base branch (the PR target, usually `main`) can never be submitted — a branch cannot be reviewed against itself — so the "Submit for review" button is hidden whenever you are viewing it, in both dev and production. In production it is also read-only in the editor: you can browse it, but changes require creating a branch first (the editor shows a banner with a "Create a branch" button). In dev mode it stays fully editable, since local development typically starts there, but you still need to move your work to a branch before it can be submitted.
+
+### Drafts and Unpublishing
+
+A draft is a branch: content goes live only when its branch merges, so unfinished content stays on its branch however long that takes. A branch with saved edits does not follow the base branch until it is submitted; if GitHub then reports a conflict on its PR, click "Withdraw", wait about five minutes for the CMS to update the branch, and submit again.
+
+**To unpublish** an entry, delete it on a branch and publish that branch. To bring it back, a developer runs `git revert` on a branch created after the deletion merged. Branches created with plain git do not appear in the editor.
 
 ### Using Comments
 
-Hover a field label and click the comment icon to add a field comment. Comments appear as badges on fields; click a badge to see the thread and add replies, and mark a comment resolved once it is addressed.
+Hover a field and click its comment icon to comment; a field with open threads shows their count. A comment inside a list item or block follows the item; one on a removed item stays on the entry.
 
 ### Managing Permissions (Admins)
 
@@ -1752,6 +1912,7 @@ CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` t
 - **Middleware** — `middleware.ts`: a passthrough for every auth mode; see [Protect editor routes](#5-protect-editor-routes)
 - **Server components** — `await getCanopy()` to read draft content with automatic auth. For pages rendering in both build and request phases, prefer the phase-selecting `readByUrlPath`/`read` from `lib/canopy.ts` (see [Phase-Selecting readByUrlPath / read](#phase-selecting-readbyurlpath--read)); `getCanopyForBuild()` remains an advanced escape hatch
 - **Static export** — the bound `contentStaticParams` helper drives `generateStaticParams`; see [Static Export with generateStaticParams](#static-export-with-generatestaticparams)
+- **Live preview** — views wrapped with `withCanopyPreview` from `canopycms-next/preview`; see [Live Preview](#live-preview)
 - **AI content route** — `{appDir}/ai/[...path]/route.ts` serves content as AI-readable markdown, generated by default during `init` (see [AI-Ready Content](#ai-ready-content))
 
 `CANOPY_AUTH_MODE` (`dev` or `clerk`) switches auth providers for `canopy.ts` and the edit page at runtime, with no regeneration. The generated `middleware.ts` is the same passthrough in both modes, so it needs no change either; a `clerkMiddleware` you swap in is the one piece to revisit when switching away from Clerk.
@@ -1780,7 +1941,7 @@ Install the CDK dependencies it needs — the CLI warns if any are missing, and 
 npm install --save-dev canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
 ```
 
-Like `init`, this never overwrites an existing file without asking (`--non-interactive` skips them, `--force` regenerates them). The full walkthrough — secrets and variables, filling in the stack, troubleshooting — is in [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
+Like `init`, this never overwrites an existing file without asking (`--non-interactive` skips them, `--force` regenerates them). The full walkthrough — secrets and variables, filling in the stack, troubleshooting — is in [docs/deploying-to-aws.md](docs/deploying-to-aws.md). Releases with `AssetSupport` also run the [two image steps](#storing-a-builds-images-before-it-is-released).
 
 ## Environment Variables
 
@@ -1810,9 +1971,9 @@ CLERK_JWT_KEY=...           # Public JWKS PEM. Optional locally; load-bearing on
 CLERK_AUTHORIZED_PARTIES=... # Optional: comma-separated domains
 ```
 
-`CLERK_SECRET_KEY` is resolved lazily, the first time the plugin calls Clerk's backend API — not at build or startup — so a zero-editor static build (`deployedAs: 'static'`, no auth plugin exercised) never needs it. It is needed only where that API is called: the worker daemon's auth-cache refresh, and in dev mode the dev server's lazy refresh. A deployed CMS server verifies tokens with `CLERK_JWT_KEY` alone, unless it also runs `clerkMiddleware`, which needs the secret wherever it runs (see [Security Model](docs/deploying-to-aws.md#security-model)).
+`CLERK_SECRET_KEY` is resolved lazily, the first time the plugin calls Clerk's backend API — not at build or startup — so a zero-editor static build (`deployedAs: 'static'`, no auth plugin exercised) never needs it. It is needed only where that API is called: the worker's or GitHub gateway's auth-cache refresh, and in dev mode the dev server's lazy refresh. A deployed CMS server verifies tokens with `CLERK_JWT_KEY` alone, unless it also runs `clerkMiddleware`, which needs the secret wherever it runs (see [Security Model](docs/deploying-to-aws.md#security-model)).
 
-For GitHub integration in production mode, the worker authenticates with either a personal access token (the default) or a GitHub App:
+For GitHub integration in production mode, the worker (on AWS, its GitHub gateway) authenticates with either a personal access token (the default) or a GitHub App:
 
 ```env
 GITHUB_BOT_TOKEN=ghp_...    # Bot token for PR creation
@@ -1830,5 +1991,5 @@ npx canopycms init-github-app create -- <a command that reads the key from stdin
 
 - [DEVELOPING.md](DEVELOPING.md) — contributor guidelines (the monorepo uses **pnpm** workspaces)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — internal architecture
-- [docs/adopter-migration.md](docs/adopter-migration.md) — what changed between versions
+- [CHANGELOG.md](CHANGELOG.md) — what changed between versions
 - [docs/deploying-to-aws.md](docs/deploying-to-aws.md) — deploying to AWS

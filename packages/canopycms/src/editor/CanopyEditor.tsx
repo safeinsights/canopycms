@@ -15,8 +15,8 @@ export interface CanopyEditorProps extends Omit<
   | 'collections'
   | 'previewBaseByCollection'
   | 'previewPrefix'
+  | 'mdxAllow'
   | 'title'
-  | 'subtitle'
   | 'themeOptions'
   | 'entries'
   | 'contentRoot'
@@ -42,18 +42,20 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
   const resolvedBranchName =
     branchName ?? config.defaultActiveBranch ?? config.defaultBaseBranch ?? ''
   const resolvedTitle = config.editor?.title ?? 'CanopyCMS Editor'
-  const resolvedSubtitle = config.editor?.subtitle
   const resolvedTheme = (config.editor?.theme as EditorProps['themeOptions']) ?? undefined
 
   // The gate owns the SWRProvider (keyed by user id), so it sits between the API client and the
   // editor: see EditorAuthGate for what a signed-out or lapsed session renders.
   return (
-    <ApiClientProvider basePath={config.basePath}>
-      <EditorAuthGate SignInComponent={config.editor?.SignInComponent} themeOptions={resolvedTheme}>
+    <ApiClientProvider basePath={config.basePath} editorMode={config.mode}>
+      <EditorAuthGate
+        SignInComponent={config.editor?.SignInComponent}
+        themeOptions={resolvedTheme}
+        editorMode={config.mode}
+      >
         <Editor
           entries={entries}
           title={resolvedTitle}
-          subtitle={resolvedSubtitle}
           branchName={resolvedBranchName}
           operatingMode={config.mode}
           initialSelectedId={initialSelectedId}
@@ -66,7 +68,7 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
           entryLinkUrl={config.entryLinkUrl}
           previewBaseByCollection={config.editor?.previewBase}
           previewPrefix={config.editor?.previewPrefix}
-          assetBaseUrl={config.assetBaseUrl}
+          mdxAllow={config.mdxAllow}
           basePath={config.basePath}
           themeOptions={resolvedTheme}
           AccountComponent={config.editor?.AccountComponent}

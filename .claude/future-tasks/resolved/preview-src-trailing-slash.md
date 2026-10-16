@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-05, branch `feat/preview-prefix`. Preview URLs follow the host's `trailingSlash` through the build-time flag, now `CANOPY_TRAILING_SLASH`, and drop a slash Next would redirect away when it is off. Both preview-bridge ends compare URLs reduced to path plus query, so a slash difference no longer drops drafts. Shipped with `editor.previewPrefix`, one prefix for every preview URL
+---
 # Editor preview iframe src skips `trailingSlash`
 
 **Status: RESOLVED 2026-10-05**, branch `feat/preview-prefix`, base `int-202610-a`, together with

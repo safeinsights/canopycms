@@ -1,6 +1,6 @@
 # `editor/` — React editor UI
 
-The largest subsystem in the package, by a wide margin.
+UX rules for everything here: [docs/ux-guidelines.md](../../../../docs/ux-guidelines.md).
 
 As everywhere else in this package, **the code comment at the point of a rule is
 authoritative**. This file is the map.
@@ -11,9 +11,10 @@ authoritative**. This file is the map.
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Editor.tsx`                              | The composition root. See below.                                                                                                                   |
 | `hooks/`                                  | 17 hooks — the real logic. Start here, not in the components. Has its own [README.md](hooks/README.md) covering the SWR data-loading architecture. |
-| `fields/`                                 | 17 field components, one per schema field type, plus `entry-link/`.                                                                                |
+| `fields/`                                 | Field components per schema type, plus `FieldLabel` and `entry-link/`.                                                                             |
+| `shell/`                                  | `EditorShell` (the window grid), `TopBar`, `ActivityRail`, `SidePanelHost`, `PaneLayout` (the split). Layout only.                                 |
 | `components/`                             | Presentational pieces used by `Editor.tsx` (header, sidebar, modals).                                                                              |
-| `EditorAuthGate.tsx`                      | Signed-out handling, decided from the API's 401s. See below.                                                                                       |
+| `EditorAuthGate.tsx`                      | Signed-out and mode-mismatch handling, decided from the API's answers. See below.                                                                  |
 | `context/`                                | `ApiClientContext`, `AssetContext`, `EditorStateContext`, `SWRProvider`, `EditorIdentityContext`.                                                  |
 | `schema-editor/`                          | The admin schema-editing UI (collections, entry types, ordering).                                                                                  |
 | `permission-manager/`, `group-manager/`   | Admin surfaces, each with its own `hooks/`.                                                                                                        |
@@ -26,7 +27,8 @@ test. Do not split it before reading `hooks/`; what you are looking for is proba
 
 ## Signed-out users
 
-`EditorAuthGate` trusts one signal, a 401 from the API; its header comment holds the rules.
+`EditorAuthGate` trusts the API's answers, a 401 or an `EDITOR_MODE_MISMATCH` 412; its header comment
+holds the rules.
 Two traps outside it:
 
 - A 401 after mount overlays the editor. Never remount it for the same identity; that loses unsaved edits.
@@ -42,7 +44,7 @@ This whole directory is browser-reachable via `canopycms/client`, so:
   `pnpm lint:bundle` (dependency-cruiser) fails the build on it, so this is a check
   rather than a convention.
 - Import path helpers from the dependency-free `paths/branch-name.ts`, never from the `paths` barrel or `paths/branch.ts`; both pull `node:fs` into the browser bundle.
-- `components/EntryCreateModal.tsx` carries the comment at that import.
+- `slug.ts` carries the comment at that import.
 
 ## Styling
 
@@ -53,11 +55,10 @@ or example-app styling, and do not leak editor CSS outward.
 ## Preview bridge
 
 `preview-bridge.tsx` is the `postMessage` contract between the editor and a host app's
-preview iframe: draft updates, click-to-focus, and highlight. It is exported from
-`canopycms/client` and is one of the few pieces here that an _adopter's public pages_
-import (via `useCanopyPreview`), so treat its message names and payload shapes as a
-public contract. `isTrustedEditorMessage`/`resolveMessageOrigin` are the origin checks —
-do not weaken them.
+preview iframe (draft updates, click-to-focus, highlight) plus the host-page hooks;
+`PreviewFrame.tsx` is the editor's side; `PreviewPane.tsx` and `PreviewToolbarTools.tsx` add its toolbar. _Adopters' public pages_ import the bridge via
+`canopycms/preview`, so its message names and payload shapes are a public contract. `isTrustedEditorMessage`/`resolveMessageOrigin` are the origin checks —
+do not weaken them. `preview-asset-base.ts` holds `assetUrl`'s preview prefix; see its header.
 
 ## Data loading: SWR for three resources, hand-rolled for the rest
 
@@ -69,6 +70,6 @@ adding a hook so you match the right half.
 
 ## Known state, recorded so it is not rediscovered
 
-- `PermissionManager.tsx` and `GroupManager.tsx` are re-export shims over `permission-manager/` and `group-manager/`; removing them is tracked in [editor-compat-shims.md](../../../../.claude/future-tasks/editor-compat-shims.md).
+- `PermissionManager.tsx` and `GroupManager.tsx` are re-export shims over `permission-manager/` and `group-manager/`; removing them is tracked in safeinsights/canopycms#670.
 - `permission-manager/` has 11 source files and **no tests in the directory**; it is
   covered only indirectly through `PermissionManager.test.tsx`.

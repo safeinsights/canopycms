@@ -37,7 +37,7 @@
 #      update-function-code pipeline needed -- `cdk deploy` mutates
 #      infrastructure.
 #   3. Install the CDK dependencies the app entry point needs:
-#      `npm install --save-dev canopycms-cdk aws-cdk-lib constructs tsx aws-cdk`
+#      `npm install --save-dev canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk`
 #      The "Type-check the CDK app" step also needs typescript and @types/node,
 #      which a Next.js TypeScript app normally has already:
 #      `npm install --save-dev typescript @types/node`
@@ -102,6 +102,14 @@ on:
       - 'src/**'
       - 'content/**'
       - 'canopycms.config.ts'
+      # The Next config is what `init-deploy aws` itself tells you to edit for
+      # the dual build, and `public/**` is copied into the runner image (and is
+      # load-bearing for editor/public preview parity). Omitting them meant an
+      # edit shipped days later, piggybacked on an unrelated content change --
+      # so any breakage was attributed to the wrong commit.
+      - 'next.config.*'
+      - 'middleware.ts'
+      - 'public/**'
       - 'Dockerfile.cms'
       - 'infrastructure/**'
       - 'cdk.json'
@@ -146,18 +154,27 @@ jobs:
         run: npm ci
 
       # cdk.json runs `node --import tsx infrastructure/bin/app.ts`, which
-      # imports canopycms-cdk, aws-cdk-lib and constructs. Missing any of them
-      # otherwise surfaces as an ERR_MODULE_NOT_FOUND buried in `cdk deploy`
-      # output, several minutes in.
+      # imports canopycms-cdk, aws-cdk-lib and constructs -- and canopycms-cdk
+      # itself peer-depends on canopycms (its worker re-export), so that one is
+      # checked too even though the app entry point never imports it directly.
+      # Missing any of them otherwise surfaces as an ERR_MODULE_NOT_FOUND
+      # buried in `cdk deploy` output, several minutes in.
+      #
+      # aws-cdk is checked too even though nothing imports it: it is the CLI
+      # the Deploy step invokes as `npx cdk`. Absent from node_modules, npx
+      # silently fetches whatever version is current that day instead of
+      # failing -- so the deploy still runs, just not reproducibly. Keep this
+      # list in step with CDK_DEPENDENCIES in cli/project-detect.ts, which is
+      # what `canopycms init-deploy` tells adopters to install.
       - name: Check CDK dependencies are installed
         run: |
           missing=""
-          for pkg in tsx aws-cdk-lib constructs canopycms-cdk; do
+          for pkg in tsx aws-cdk-lib constructs canopycms canopycms-cdk aws-cdk; do
             [ -e "node_modules/$pkg" ] || missing="$missing $pkg"
           done
           if [ -n "$missing" ]; then
             echo "::error::Missing CDK dependencies:$missing"
-            echo "::error::Install them with: npm install --save-dev canopycms-cdk aws-cdk-lib constructs tsx aws-cdk"
+            echo "::error::Install them with: npm install --save-dev canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk"
             exit 1
           fi
 

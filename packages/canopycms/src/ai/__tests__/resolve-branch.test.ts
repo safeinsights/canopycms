@@ -10,9 +10,14 @@ vi.mock('../../utils/git', () => ({
   detectHeadBranch: vi.fn(async () => 'feat-bar'),
 }))
 
+vi.mock('../../git-manager', () => ({
+  GitManager: { detectBaseBranch: vi.fn(async () => 'production') },
+}))
+
 import { resolveBranchRoot } from '../resolve-branch'
 import { loadOrCreateBranchContext } from '../../branch-workspace'
 import { detectHeadBranch } from '../../utils/git'
+import { GitManager } from '../../git-manager'
 import type { CanopyConfig } from '../../config'
 import type { OperatingMode } from '../../operating-mode'
 
@@ -60,6 +65,10 @@ describe('resolveBranchRoot', () => {
     )
     expect(result).toBe('/workspace/staging')
     expect(detectHeadBranch).not.toHaveBeenCalled()
+    // Provisioning still needs the base branch, read from the remote.
+    expect(vi.mocked(loadOrCreateBranchContext).mock.calls[0]?.[0].config.defaultBaseBranch).toBe(
+      'production',
+    )
   })
 
   it('auto-detects git HEAD in dev mode when no explicit branch', async () => {
@@ -78,16 +87,27 @@ describe('resolveBranchRoot', () => {
 
   it('falls back to defaultBaseBranch in prod mode', async () => {
     const result = await resolveBranchRoot(
-      makeConfig({ mode: 'prod', defaultBaseBranch: 'production' }),
+      makeConfig({ mode: 'prod', defaultBaseBranch: 'release' }),
     )
     expect(detectHeadBranch).not.toHaveBeenCalled()
+    expect(GitManager.detectBaseBranch).not.toHaveBeenCalled()
+    expect(result).toBe('/workspace/release')
+  })
+
+  it("reads the remote's base branch in prod mode when no branches are configured", async () => {
+    const result = await resolveBranchRoot(makeConfig({ mode: 'prod' }))
+    expect(detectHeadBranch).not.toHaveBeenCalled()
+    expect(GitManager.detectBaseBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'prod' }),
+      'throw',
+    )
     expect(result).toBe('/workspace/production')
   })
 
-  it('falls back to main in prod mode when no branches configured', async () => {
-    const result = await resolveBranchRoot(makeConfig({ mode: 'prod' }))
-    expect(detectHeadBranch).not.toHaveBeenCalled()
-    expect(result).toBe('/workspace/main')
+  it('propagates a prod detection failure instead of assuming main', async () => {
+    vi.mocked(GitManager.detectBaseBranch).mockRejectedValueOnce(new Error('no remote HEAD'))
+    await expect(resolveBranchRoot(makeConfig({ mode: 'prod' }))).rejects.toThrow('no remote HEAD')
+    expect(loadOrCreateBranchContext).not.toHaveBeenCalled()
   })
 })
 

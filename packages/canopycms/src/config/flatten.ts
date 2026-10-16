@@ -75,6 +75,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
           schemaRef: entryType.schemaRef,
           default: entryType.default,
           maxItems: entryType.maxItems,
+          ...(entryType.unavailable && { unavailable: entryType.unavailable }),
         })
       }
     }
@@ -117,6 +118,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
         schemaRef: entryType.schemaRef,
         default: entryType.default,
         maxItems: entryType.maxItems,
+        ...(entryType.unavailable && { unavailable: entryType.unavailable }),
       })
     }
   }

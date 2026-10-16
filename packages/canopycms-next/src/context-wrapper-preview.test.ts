@@ -15,12 +15,12 @@ vi.mock('canopycms/server', async (importOriginal) => {
       config,
       bootstrapAdminIds: new Set<string>(),
       refreshActiveBranch: vi.fn(),
+      resolvePendingBaseBranch: vi.fn(),
       getSettingsBranchRoot: vi.fn(async () => '/nonexistent/canopy-settings'),
     })),
     startDevContentWatcher: vi.fn(),
   }
 })
-vi.mock('canopycms/client', () => ({ CanopyEditorPage: vi.fn(), useCanopyPreview: vi.fn() }))
 vi.mock('next/navigation', () => ({
   notFound: () => {
     throw new Error('NEXT_NOT_FOUND')

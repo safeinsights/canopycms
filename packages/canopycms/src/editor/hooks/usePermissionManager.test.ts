@@ -1,5 +1,6 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { notifications } from '@mantine/notifications'
 import { usePermissionManager } from './usePermissionManager'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, setupMockConsole, createApiClientWrapper } from './__test__/test-utils'
@@ -39,6 +40,15 @@ describe('usePermissionManager', () => {
 
     expect(result.current.permissionsData).toEqual([])
     expect(result.current.permissionsLoading).toBe(false)
+  })
+
+  it('keeps handleListGroups stable across re-renders, so the group list does not reload', () => {
+    const { result, rerender } = renderHook(() => usePermissionManager({ isOpen: false }), {
+      wrapper,
+    })
+    const first = result.current.handleListGroups
+    rerender()
+    expect(result.current.handleListGroups).toBe(first)
   })
 
   it('loads permissions when isOpen becomes true', async () => {
@@ -175,6 +185,38 @@ describe('usePermissionManager', () => {
     const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
 
     await expect(result.current.handleSavePermissions([])).rejects.toThrow('Save failed')
+  })
+
+  it('shows a version conflict in yellow and a busy file in red', async () => {
+    mockClient.permissions.update
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: 'Permissions were modified by another user. Please reload and try again.',
+        code: 'SETTINGS_CHANGED',
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: 'Settings are busy, please try again.',
+      })
+    const show = vi.mocked(notifications.show)
+    show.mockClear()
+
+    const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
+
+    await expect(result.current.handleSavePermissions([])).rejects.toThrow(
+      'Permissions were modified by another user. Please reload and try again.',
+    )
+    expect(show).toHaveBeenLastCalledWith({
+      message: 'Permissions were modified by another user. Please reload and try again.',
+      color: 'yellow',
+    })
+    await expect(result.current.handleSavePermissions([])).rejects.toThrow('Settings are busy')
+    expect(show).toHaveBeenLastCalledWith({
+      message: 'Settings are busy, please try again.',
+      color: 'red',
+    })
   })
 
   it('surfaces a version-conflict (409) message from the server', async () => {

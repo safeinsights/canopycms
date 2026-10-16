@@ -2,20 +2,20 @@
 
 ## SWR-Backed Data Loading
 
-Each fetch-on-load resource (branches, entries+schema, comments) has a
-dedicated SWR-backed data hook that owns the automatic on-mount/on-branch-change
-fetch:
+Each fetch-on-load resource has a dedicated SWR-backed data hook that owns the
+automatic on-mount/on-branch-change fetch:
 
 - `useBranchesData` (`useBranchesData.ts`) -- GET /branches, key `canopy:branches`
 - `useEntriesData.ts` -- GET /:branch/schema + GET /:branch/entries (paginated),
-  key `canopy:entries:${branch}`. Fetch/key pieces only, no wrapper hook:
-  `useEntryManager` owns the sole `useSWR` call for these keys, because its
-  cache slots hold TAGGED values (`{ fetched, seq, branch }`) for its
-  out-of-order commit guard -- see the note at the bottom of that file
+  key `canopy:entries:${branch}`. No wrapper hook: `useEntryManager` owns the
+  sole `useSWR` call for these keys, because its cache slots hold TAGGED values
+  (`{ fetched, seq, branch }`) for its out-of-order commit guard (see that file)
 - `useCommentsData` (`useCommentsData.ts`) -- GET /:branch/comments, key
   `canopy:comments:${branch}`
+- `useUserMetadata` (`useUserMetadata.ts`) -- key `canopy:user:${userId}`, one per
+  badge, seeded from both lists' `users`; `user-metadata-batcher.ts` sends a render's ids as POST /users/batch, 100 per request
 
-The corresponding manager hook (`useBranchManager`, `useEntryManager`,
+Each manager hook (`useBranchManager`, `useEntryManager`,
 `useCommentSystem`) consumes its data hook's reactive `data`/`error`/
 `isValidating` and mirrors them onto its own state/busy flags via `useEffect`.
 No manager hook runs its own `useEffect([branchName])` fetch;

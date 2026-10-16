@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — epic PR #116: readdir-derived namespaced content-ID lock keys, buildPaths inside the lock, create-slug keys
+---
 # ContentStore: Use Content ID as Stable Lock Key
 
 ## Status: RESOLVED (2026-07-21, epic PR #116)

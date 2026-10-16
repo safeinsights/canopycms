@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-09-14. The 6-PR epic (plus follow-ups #332, #335, #336, #341, #342) that fixed the CMS editor image build: `next build` now reads the working tree for every build-time read in every mode; sharp loads lazily and `withCanopy` traces its libvips `.so` into standalone output; `CanopyCmsService` always passes a resolved architecture (arm64 by default) so CDK's image platform matches; a `standalone-image` CI job smoke-tests the built image; and adopter docs cover the runtime Clerk key and `NEXT_PUBLIC_CANOPY_MODE`. Integration PR #331 merged into `int-202609-a` (`c25035d2`); published in `0.0.67-int.90` (all five packages). The end-to-end check against the first adopter's editor image on that version passed, with the remaining 500s traced to adopter-side causes, not CanopyCMS's.
+---
 # CMS editor image: base branch, sharp tracing, image architecture
 
 **Status:** Resolved 2026-09-14. All PRs merged; integration PR
@@ -531,8 +535,8 @@ when they open their PR, when they hit a decision that needs a call, and when th
 
 ## Follow-up tasks filed during the epic
 
-- [examples-aws-deployment-drift.md](examples-aws-deployment-drift.md) (P3) — `examples/aws-deployment` drifted from the `init-deploy` templates. Filed twice more on `int-202609-a`, and merged into [example-aws-deployment-drift-from-template.md](../example-aws-deployment-drift-from-template.md) (P1) during the base merge (#341).
-- [admin-status-image-processing-availability.md](../admin-status-image-processing-availability.md) (P3) — surface sharp availability in admin status.
+- [examples-aws-deployment-drift.md](examples-aws-deployment-drift.md) (P3) — `examples/aws-deployment` drifted from the `init-deploy` templates. Filed twice more on `int-202609-a`, and merged into [example-aws-deployment-drift-from-template.md](example-aws-deployment-drift-from-template.md) (P1) during the base merge (#341).
+- [admin-status-image-processing-availability.md](admin-status-image-processing-availability.md) (P3) — surface sharp availability in admin status.
 - [upstream-next-sharp-tracing-recheck.md](../upstream-next-sharp-tracing-recheck.md) (P3) — re-check vercel/next.js#97973 on each Next upgrade; remove the include once upstream traces libvips.
 - [sharp-tracing-lockfile-root-edge-cases.md](../sharp-tracing-lockfile-root-edge-cases.md) (P3) — two low-severity tracing-root lookup edge cases.
 - [build-canopy-scripts-outside-next-build.md](../build-canopy-scripts-outside-next-build.md) (P2) — `createBuildCanopy` / `generate-ai-content` CLI still read a branch clone for server deployments unless `CANOPY_BUILD_MODE=true`; **awaiting a maintainer decision**.

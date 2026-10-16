@@ -1,14 +1,18 @@
 import type { CanopyBinaryResponse, CanopyRequest, CanopyResponse } from './types'
 import { jsonResponse, isCanopyBinaryResponse } from './types'
 import { workerNotReadyResponse } from './worker-not-ready'
+import { SchemaUnavailableError } from '../schema/schema-unavailable-error'
 import { createCanopyRouter } from './router'
 import type { ApiContext, ApiResponse } from '../api/types'
 import { assertAuthPluginAllowedForMode, type AuthPlugin } from '../auth/plugin'
 import { createCanopyServices, type CanopyServices } from '../services'
 import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
+import { recordConfiguredSparseCone } from '../branch-sparse'
+import { recordServedSchemaRegistry } from '../schema-registry-record'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { BranchMetadataCorruptError } from '../branch-metadata'
+import { BRANCH_METADATA_CORRUPT_MESSAGE } from '../branch-metadata-error'
 import { resolveCanopyUser } from '../resolve-canopy-user'
 import { authResultToCanopyUser } from '../user'
 import { isAdmin } from '../authorization'
@@ -18,12 +22,20 @@ import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../uti
 // canopyLogError, not console.error: this is shared code and not guaranteed to
 // stay out of the worker's runtime import closure, so new log lines here go
 // through the indirection (utils/logger.ts).
-import { canopyLogError } from '../utils/logger'
+import { canopyLogError, canopyLogWarn } from '../utils/logger'
+import {
+  EDITOR_MODE_HEADER,
+  EDITOR_MODE_MISMATCH_STATUS,
+  editorModeMismatchMessage,
+  parseEditorModeHeader,
+} from '../operating-mode/editor-mode-check'
 import {
   runWithRequestTiming,
   setRequestTimingRoute,
   timeRequestPhase,
 } from '../utils/request-timing'
+import { baseBranchOf } from '../utils/base-branch'
+import { SYSTEM_USER_ID } from '../system-users'
 
 /** Framework-agnostic: adapters convert to and from CanopyRequest/Response. */
 export interface CanopyHandlerOptions {
@@ -40,6 +52,8 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
   if (!services) {
     throw new Error('CanopyCMS: config or services is required')
   }
+  await recordConfiguredSparseCone(services.config)
+  await recordServedSchemaRegistry(services.config, services.entrySchemaRegistry)
   const operatingMode = services.config.mode
   // Derived from the strategy, which resolves deploymentName; a literal here
   // would miss a deployment-namespaced settings branch (say canopycms-settings-acme).
@@ -67,7 +81,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
 
       // Read from services.config per-request, not a captured variable, so a
       // refreshActiveBranch() update takes effect immediately.
-      const baseBranch = services.config.defaultBaseBranch ?? 'main'
+      const baseBranch = baseBranchOf(services.config)
       const activeBranch = services.config.defaultActiveBranch ?? baseBranch
       const shouldAutoCreate =
         clientOperatingStrategy(operatingMode).supportsBranching() &&
@@ -78,7 +92,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
         const context = await manager.openOrCreateBranch({
           branchName: branch,
           mode: operatingMode,
-          createdBy: 'canopycms-system',
+          createdBy: SYSTEM_USER_ID,
         })
 
         if (opts?.loadSchema && context) {
@@ -123,6 +137,19 @@ const parseQueryParams = (url: string): Record<string, string> => {
 }
 
 /**
+ * The answer to a request with no accepted session. The body's `status: 401` is what the client
+ * detects sign-out from, so it stays 401 whatever HTTP status `unauthenticatedStatus` picks.
+ */
+const unauthenticatedResponse = (
+  config: CanopyConfig,
+  error: string | undefined,
+): CanopyResponse<ApiResponse> =>
+  jsonResponse(
+    { ok: false, status: 401, error: error ?? 'Unauthorized' },
+    config.unauthenticatedStatus ?? 401,
+  )
+
+/**
  * Includes `CanopyBinaryResponse` so byte-streaming routes (asset serving) flow
  * through untouched alongside JSON ones — see `isCanopyBinaryResponse` below.
  */
@@ -143,6 +170,31 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
   assertAuthPluginAllowedForMode(options.authPlugin, mode)
 
   const router = createCanopyRouter()
+
+  // Before auth, because a dev bundle against a prod server cannot authenticate: see
+  // editor-mode-check.ts.
+  let modeMismatchLogged = false
+  const editorModeMismatchResponse = (req: CanopyRequest): CanopyResponse<ApiResponse> | null => {
+    const editorMode = parseEditorModeHeader(req.header(EDITOR_MODE_HEADER))
+    if (!mode || !editorMode || editorMode === mode) return null
+    if (!modeMismatchLogged) {
+      modeMismatchLogged = true
+      canopyLogWarn(
+        `CanopyCMS: an editor built with NEXT_PUBLIC_CANOPY_MODE="${editorMode}" called this server, ` +
+          `which runs in "${mode}" mode. Its requests are refused with ${EDITOR_MODE_MISMATCH_STATUS} ` +
+          `until the editor is rebuilt with NEXT_PUBLIC_CANOPY_MODE=${mode}. Logged once per request handler.`,
+      )
+    }
+    return jsonResponse(
+      {
+        ok: false,
+        status: EDITOR_MODE_MISMATCH_STATUS,
+        code: 'EDITOR_MODE_MISMATCH',
+        error: editorModeMismatchMessage(editorMode),
+      },
+      EDITOR_MODE_MISMATCH_STATUS,
+    )
+  }
 
   // Built once and reused across requests in the same warm container. On
   // rejection (transient cold start, EFS not yet mounted) the cache is cleared
@@ -173,6 +225,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     }
     setRequestTimingRoute(match.pattern.join('/') || '(malformed path)')
 
+    const modeMismatch = editorModeMismatchResponse(req)
+    if (modeMismatch) return modeMismatch
+
     const apiCtx = await timeRequestPhase('context', getContext)
 
     // In dev mode, re-check if the developer switched git branches
@@ -184,17 +239,32 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     // any workspace provisioning below, so they can neither trigger expensive
     // git operations nor read provisioning error details.
     if (!authResult.success || !authResult.user) {
-      return jsonResponse(
-        { ok: false, status: 401, error: authResult.error ?? 'Unauthorized' },
-        401,
-      )
+      return unauthenticatedResponse(apiCtx.services.config, authResult.error)
+    }
+
+    // Whether a worker's recorded failure may be named in a not-ready 503: admins only, as in
+    // System health. With no remote there are no internal groups, so this is the bootstrap
+    // admins, and /admin is behind the same 503, so this answer is where they read it.
+    const mayReadWorkerFailure = () =>
+      isAdmin(authResultToCanopyUser(authResult, apiCtx.services.bootstrapAdminIds).groups)
+
+    // A prod base branch still pending since creation resolves here, once the
+    // worker has created the remote; until then this answers the not-ready 503.
+    try {
+      await timeRequestPhase('baseBranch', () => apiCtx.services.resolvePendingBaseBranch())
+    } catch (err) {
+      const notReady = workerNotReadyResponse(err, {
+        workerFailureDetail: mayReadWorkerFailure(),
+      })
+      if (notReady) return notReady
+      throw err
     }
 
     // Provision the base/active branch workspace on first request, so the many
     // endpoints that assume it exists (registry reads and the like) don't return
     // confusing empty results on a cold start. A real provisioning error fails
     // loudly here rather than surprising a later handler.
-    const baseBranch = apiCtx.services.config.defaultBaseBranch ?? 'main'
+    const baseBranch = baseBranchOf(apiCtx.services.config)
     try {
       await apiCtx.getBranchContext(baseBranch)
     } catch (err) {
@@ -214,7 +284,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         console.error(
           `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${redactCredentials(message)}`,
         )
-        const notReady = workerNotReadyResponse(err)
+        const notReady = workerNotReadyResponse(err, {
+          workerFailureDetail: mayReadWorkerFailure(),
+        })
         if (notReady) return notReady
         return jsonResponse(
           {
@@ -252,7 +324,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       // No remote means no settings workspace, so /admin cannot load either:
       // the worker has not created the remote yet, so every caller gets the
       // not-ready 503, bootstrap admins included.
-      const notReady = workerNotReadyResponse(err)
+      const notReady = workerNotReadyResponse(err, {
+        workerFailureDetail: mayReadWorkerFailure(),
+      })
       if (notReady) return notReady
 
       // Same trade as the base-branch degradation above: /admin is the recovery
@@ -297,10 +371,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     }
 
     if (user.type === 'anonymous') {
-      return jsonResponse(
-        { ok: false, status: 401, error: authResult.error ?? 'Unauthorized' },
-        401,
-      )
+      return unauthenticatedResponse(apiCtx.services.config, authResult.error)
     }
 
     const queryParams = parseQueryParams(req.url)
@@ -366,9 +437,16 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     } catch (err) {
       // Last-resort boundary (API-C1): see handleRequest's doc comment above.
       const message = getErrorMessage(err)
-      console.error('CanopyCMS: Unhandled error in API request handler:', message)
+      // Not per refused request: branch-schema-cache.ts logs each missing schema once per process.
+      if (!(err instanceof SchemaUnavailableError)) {
+        console.error('CanopyCMS: Unhandled error in API request handler:', message)
+      }
       const notReady = workerNotReadyResponse(err)
       if (notReady) return notReady
+      // Its message is a path and a parse error, neither of which helps an editor.
+      if (err instanceof BranchMetadataCorruptError) {
+        return jsonResponse({ ok: false, status: 500, error: BRANCH_METADATA_CORRUPT_MESSAGE }, 500)
+      }
       return jsonResponse({ ok: false, status: 500, error: sanitizeErrorMessage(message) }, 500)
     }
   }

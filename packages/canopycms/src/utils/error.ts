@@ -32,11 +32,16 @@ export function getErrorMessage(err: unknown): string {
  */
 export function sanitizeErrorMessage(message: string): string {
   let result = redactCredentials(message)
+  // `file://` URLs (ESM and dev-bundle stack frames) carry an absolute path the POSIX rule below
+  // skips, since it leaves URL slashes alone.
+  result = result.replace(/\bfile:\/\/[^\s'")]*/g, '<path>')
   // Paths under the project root become relative (split/join avoids regex-escaping issues with
   // arbitrary cwd values). The bare-cwd replacement is anchored to a token boundary so a sibling
   // directory that merely shares the cwd prefix (`${cwd}-other/…`) stays absolute and is fully
-  // redacted below instead of leaking a mangled remainder.
-  const cwd = process.cwd()
+  // redacted below instead of leaking a mangled remainder. The editor calls this in a browser,
+  // where `process.cwd` may not exist.
+  const cwd =
+    typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '/'
   if (cwd !== '/') {
     result = result.split(`${cwd}/`).join('')
     const cwdPattern = cwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -76,6 +81,19 @@ export function redactCredentials(message: string): string {
   // literal `://` (leaving the scheme untouched) — a `\w+` scheme prefix backtracks
   // polynomially on long word-character runs (CodeQL js/polynomial-redos).
   result = result.replace(/(:\/\/)[^/\s@]+@/g, '$1***@')
+  // An `Authorization` header's credential: the worker's GitHub-bound git carries the token as
+  // `AUTHORIZATION: basic <base64>` (worker/github-mirror.ts).
+  result = result.replace(
+    /(\bauthorization\s*:\s*(?:basic|bearer|token)\s+)[A-Za-z0-9+/=._~-]+/gi,
+    '$1***',
+  )
+  // That header's base64 of `x-access-token:<token>` wherever it appears on its own, URL-encoded
+  // too. The 15-byte prefix encodes to the same 20 characters whatever the token, with no padding
+  // to shift it.
+  result = result.replace(
+    /eC1hY2Nlc3MtdG9rZW46(?:[A-Za-z0-9+/]|%2[BbFf])*(?:=|%3[Dd]){0,2}/g,
+    '***',
+  )
   // Bare token shapes, for messages embedding a token outside URL userinfo: GitHub token
   // prefixes and Bearer values.
   result = result.replace(/\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{8,}/g, '***')

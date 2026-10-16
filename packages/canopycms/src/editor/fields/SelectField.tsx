@@ -2,6 +2,9 @@ import React, { useId } from 'react'
 
 import { MultiSelect, Select, Stack, Text } from '@mantine/core'
 
+import { useFieldCommentControl } from '../comments/field-comment-context'
+import { FieldLabel } from './FieldLabel'
+
 interface SelectOption {
   label: string
   value: string
@@ -17,6 +20,8 @@ export interface SelectFieldProps {
   multiple?: boolean
   placeholder?: string
   dataCanopyField?: string
+  /** Shows the value without accepting edits. */
+  readOnly?: boolean
 }
 
 export const SelectField: React.FC<SelectFieldProps> = ({
@@ -29,6 +34,7 @@ export const SelectField: React.FC<SelectFieldProps> = ({
   multiple,
   placeholder = 'Select…',
   dataCanopyField,
+  readOnly = false,
 }) => {
   const normalizedValue = multiple
     ? Array.isArray(value)
@@ -39,36 +45,47 @@ export const SelectField: React.FC<SelectFieldProps> = ({
       : ''
   const generatedId = useId()
   const inputId = id ?? generatedId
+  const commentControl = useFieldCommentControl(dataCanopyField)
 
   return (
     <Stack gap={4} data-canopy-field={dataCanopyField}>
+      <FieldLabel label={label} htmlFor={inputId} commentControl={commentControl} />
       {multiple ? (
         <MultiSelect
           id={inputId}
-          label={label}
+          // Mantine names the options listbox from its own label prop, absent here.
+          aria-label={label}
           description={description}
           data={options}
           value={normalizedValue as string[]}
-          onChange={(next) => onChange(next)}
+          readOnly={readOnly}
+          rightSection={readOnly ? <span /> : undefined}
+          onChange={(next) => {
+            if (!readOnly) onChange(next)
+          }}
           searchable
-          placeholder={placeholder}
+          placeholder={readOnly ? undefined : placeholder}
           size="sm"
         />
       ) : (
         <Select
           id={inputId}
-          label={label}
+          aria-label={label}
           description={description}
           data={options}
           value={normalizedValue as string}
-          onChange={(next) => onChange(next ?? '')}
+          readOnly={readOnly}
+          rightSection={readOnly ? <span /> : undefined}
+          onChange={(next) => {
+            if (!readOnly) onChange(next ?? '')
+          }}
           searchable
           clearable
-          placeholder={placeholder}
+          placeholder={readOnly ? undefined : placeholder}
           size="sm"
         />
       )}
-      {multiple && (
+      {multiple && !readOnly && (
         <Text size="xs" c="dimmed">
           Searchable multi-select; start typing to filter.
         </Text>

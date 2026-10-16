@@ -1,7 +1,7 @@
-import type { Octokit } from '@octokit/rest'
 import type { SanitizedBranchName } from '../paths/types'
 import type { Task, TaskQueueLogger } from '../task-queue/cms-task-queue'
 import type { WorkerStatusReport } from '../types'
+import type { GitHubGateway } from './github-gateway'
 
 /**
  * The slice of {@link import('./cms-worker').CmsWorker} that its extracted
@@ -14,21 +14,18 @@ import type { WorkerStatusReport } from '../types'
  * back onto the live instance and never snapshotted, and `CmsWorker.ctx()`
  * builds a fresh context per call. That is load-bearing, not stylistic. The
  * `cms-worker*.test.ts` files drive the class by reaching through the instance:
- * they REPLACE `buildGitHubUrl` (aiming pushes at a local fixture repo rather
- * than github.com), `executeTask` and `pushBranchToGitHub`, ASSIGN a mock over
- * the `octokit` field, set `running` directly, and SUBCLASS to override the two
- * rebase test hooks. A context that captured any of those at construction would
- * hand the extracted code the pre-test value — which for `buildGitHubUrl` means
- * a test's push going to github.com for real. Functions (`ctx.octokit()`) make
- * the late binding visible at every call site, which a getter would hide.
+ * they INSTALL a GitHub gateway aimed at a local fixture repository (and an
+ * Octokit stub) with `useLocalGitHubGateway` (test-utils/worker-gateway.ts),
+ * REPLACE `executeTask` and `pushBranchToGitHub`, set `running` directly, and
+ * SUBCLASS to override the two rebase test hooks. A context that captured any
+ * of those at construction would hand the extracted code the pre-test value --
+ * which for the gateway means a test's push going to github.com for real.
+ * Functions (`ctx.github()`) make the late binding visible at every call site,
+ * which a getter would hide.
  */
 export interface WorkerContext {
   // --- Resolved once in the constructor and never mutated. Safe to copy. ---
 
-  /** GitHub owner, e.g. 'safeinsights'. */
-  readonly githubOwner: string
-  /** GitHub repo name. */
-  readonly githubRepo: string
   /**
    * The base branch's RAW git ref name. Git refs (fetch/rev-list/merge against
    * it) must use this; filesystem paths must use `sanitizedBaseBranch`.
@@ -52,6 +49,8 @@ export interface WorkerContext {
   readonly contentBranchesPath: string
   /** Content root directory name relative to repo root (default: 'content'). */
   readonly contentRoot: string
+  /** Longest the schema gate holds the base branch before advancing anyway (worker/schema-gate.ts). */
+  readonly schemaHoldMaxMs: number
   /** Per-task timeout in ms; also simple-git's inactivity block timeout. */
   readonly taskTimeoutMs: number
   /** Max tasks to process per `processTaskQueue` cycle. */
@@ -64,30 +63,11 @@ export interface WorkerContext {
   // --- Live dispatch back onto the instance. See the note above: these MUST
   // --- stay functions, and must never be cached by a caller.
 
-  /** The worker's Octokit client, read at call time (tests replace it). */
-  octokit(): Octokit
   /**
-   * The tokenized GitHub clone URL, resolved at call time (tests replace this
-   * method to point at a local fixture repo). Async because under GitHub App
-   * auth the credential is minted on demand and lasts about an hour (see
-   * worker/github-auth.ts); the token path resolves immediately.
-   *
-   * A caller that needs the URL more than once resolves it ONCE into a local --
-   * see pushBranchToGitHub, where a second resolution inside the stale-lease
-   * catch would replace the very error being classified. Anything derived from
-   * it can embed the bot token, so a message reaching worker-status.json,
-   * branch.json or a task file goes through `redactCredentials` first.
+   * The worker's GitHub gateway (worker/github-gateway.ts), read at call time:
+   * every use of the GitHub credential and of Octokit goes through it.
    */
-  buildGitHubUrl(): Promise<string>
-  /**
-   * Re-read the GitHub credential because an operation that used it just
-   * failed, read at call time. Best-effort and NEVER throws: a failed read, or
-   * one that does not settle within `taskTimeoutMs`, is logged and swallowed,
-   * because every caller is already reporting the failure that matters. The
-   * next `buildGitHubUrl()`/`octokit()` sees any rotated value. See
-   * `CmsWorker.refreshGitHubCredential`.
-   */
-  refreshGitHubCredential(): Promise<void>
+  github(): GitHubGateway
   /**
    * Workspace directory for a branch named by its GIT REF name — the form task
    * payloads carry. Sanitizes; `feature/x` lives in `feature-x`.
@@ -105,15 +85,34 @@ export interface WorkerContext {
    * Push a branch from remote.git to GitHub, read at call time. Routed through
    * the instance for the same reason as `executeTask`: cms-worker.test.ts
    * replaces it with a spy and asserts the spy was NOT called on the
-   * base-branch-refusal path.
+   * base-branch-refusal path. `signal` kills the push's git process when it
+   * aborts (simple-git's `abort` option).
    */
-  pushBranchToGitHub(branch: string): Promise<void>
-  /** Whether the worker is still running; both poll loops bail when false. */
+  pushBranchToGitHub(branch: string, signal?: AbortSignal): Promise<void>
+  /** Whether the worker is running; both poll loops bail when false. */
   isRunning(): boolean
+  /**
+   * Whether `stop()` has been called. Every loop checks it at its boundaries
+   * (before a claim, a sync stage, a branch rebase), never mid-step. Distinct
+   * from `!isRunning()`, which is also true of a worker never started, as the
+   * test entry points drive it.
+   */
+  isDraining(): boolean
+  /**
+   * Aborts when a draining `stop()` reaches its deadline: in-flight work that
+   * observes it is cut off so the worker can exit. See `CmsWorker.stop`.
+   */
+  shutdownSignal(): AbortSignal
   /** The worker's self-reported status object, lazily initialized. */
   ensureStatusReport(): WorkerStatusReport
   /** This deployment's own settings branch name. Throws on an invalid name. */
   ensureSettingsBranch(): string
+  /**
+   * What this worker's tracked-branch warnings have said, by key (git-sync.ts's `warnOnce`): a
+   * diverged branch's tips and reason, an unchecked orphan's error. Held per instance, so a
+   * restarted worker warns afresh.
+   */
+  warnedDivergences(): Map<string, string>
   /**
    * Test hook: fires when the rebase has reported conflicted files and is about
    * to `checkout --theirs` them. No-op in production.

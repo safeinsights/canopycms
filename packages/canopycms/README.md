@@ -4,29 +4,17 @@ CanopyCMS is a schema-driven, branch-aware CMS for websites that store their con
 
 ## Which documentation matches this build
 
-This package ships code, not documentation. The guides — `docs/adopter-migration.md`,
-`docs/deploying-to-aws.md` and the project README — live in the repository and change
-alongside the code, so read them at the ref **your installed version was built from**, not at
-`main`. The npm provenance attestation records that ref exactly:
+Read `CHANGELOG.md`, next to this README, first. It is assembled for this exact build: its **This
+build** section names the commit the build came from and lists what is new since the previous int
+on the same branch (a stable build links its release's entries instead), and every link out of it points at that commit. It is the one guide this package
+ships.
 
-```bash
-V=$(node -p "require('./node_modules/canopycms/package.json').version")
-curl -s "https://registry.npmjs.org/-/npm/v1/attestations/canopycms@$V" | node -e '
-let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
-  const a=JSON.parse(s).attestations.find(x=>x.predicateType==="https://slsa.dev/provenance/v1")
-  const b=JSON.parse(Buffer.from(a.bundle.dsseEnvelope.payload,"base64")).predicate.buildDefinition
-  console.log(b.externalParameters.workflow.ref, b.resolvedDependencies[0].digest.gitCommit)
-})'
-```
-
-Then browse `https://github.com/safeinsights/canopycms/tree/<commit>/docs`.
-
-Check this whenever a documented behaviour does not match what you observe. It matters most on
-the `int` channel: a version like `0.0.67-int.90` is published from an integration branch that
-has **not** merged to `main`, so `main`'s guides describe the last stable release and simply do
-not contain the sections covering your build. A missing section reads exactly like a behaviour
-you misunderstood, which is why it is worth resolving the ref rather than guessing. Stable
-`X.Y.Z` builds are on `main`, at tag `vX.Y.Z`.
+The other guides, `docs/deploying-to-aws.md` and the project README, live in the repository and
+change alongside the code. Read them at that commit, not at `main`: browse
+`https://github.com/safeinsights/canopycms/tree/v<your version>`, the tag every published version
+carries. This matters most on the `int` channel: a version like `0.0.68-int.112` comes from an
+integration branch that has **not** merged to `main`, so `main`'s guides describe the last
+stable release and lack the sections covering your build.
 
 ## What it does for you
 
@@ -47,7 +35,7 @@ you misunderstood, which is why it is worth resolving the ref rather than guessi
 
 - Workspaces resolve per mode: `prod` uses `$CANOPYCMS_WORKSPACE_ROOT/content-branches` (default: `/mnt/efs/content-branches`), `dev` uses `.canopy-dev/content-branches/<branch>`.
 - For `prod` mode, you must set `defaultRemoteUrl`. For `dev`, `defaultRemoteUrl` is **optional** - if omitted, a local remote is auto-created at `.canopy-dev/remote.git`.
-- Optionally configure `defaultRemoteName` (default: `origin`) and `defaultBaseBranch` (default: `main`).
+- Optionally configure `defaultRemoteName` (default: `origin`) and `defaultBaseBranch` (unset: the checked-out git branch in dev, the repository's default branch in prod).
 - Git author identity is required for `prod` mode: set `gitBotAuthorName` and `gitBotAuthorEmail` so bot commits can be created reliably.
 - Branch names are sanitized and traversal is blocked before creating directories.
 - Metadata lives at `<workspace>/.canopy-meta/branch.json`; the registry lives at `<branchesRoot>/branches.json` and records the workspaceRoot for each branch.
@@ -99,7 +87,6 @@ export default defineCanopyConfig({
   gitBotAuthorEmail: 'canopy@example.com',
   editor: {
     title: 'CanopyCMS Editor', // optional UI defaults
-    subtitle: 'Edit content',
     theme: {
       colors: { brand: '#4f46e5' },
     },
@@ -396,7 +383,7 @@ The editor loads entries on the client from `/api/canopycms/[branch]/entries`, s
 _TODO_ show an example
 
 7. **Split builds**
-   Keep your public build free of editor bundles by importing only from `canopycms` (server helpers + data loaders). Host the editor in a separate app or build target that imports from `canopycms/client` and mounts the API routes above.
+   Keep your public build free of editor bundles by importing only from `canopycms` (server helpers + data loaders) and `canopycms/preview` (the live-preview hook). Host the editor in a separate app or build target that imports from `canopycms/client` and mounts the API routes above.
 
 _TODO_ show real examples of what to do
 
@@ -415,7 +402,7 @@ The `useCanopyPreview` hook provides live updates to your preview components as 
 ```tsx
 'use client'
 
-import { useCanopyPreview } from 'canopycms/client'
+import { useCanopyPreview } from 'canopycms/preview'
 import type { PostContent } from './schemas'
 
 export function PostView({ data }: { data: PostContent }) {
@@ -442,16 +429,17 @@ export function PostView({ data }: { data: PostContent }) {
 - `data`: The current content data (initial data on first render, then live updates from editor)
 - `isLoading`: Object mirroring your data structure with boolean loading states for reference fields
 - `highlightEnabled`: Boolean indicating if field highlighting is active in the editor
-- `fieldProps`: Helper function to add `data-canopy-path` attributes for editor integration
+- `fieldProps`: marks the element rendering a field (`data-canopy-path`), with the path typed against your content; `fieldAttrs` and `scopeFieldProps` from `canopycms` thread it through section components (see the root README's Live Preview)
 
 **Reference fields and loading states:**
 
-When using reference fields (foreign key relationships to other content), the editor resolves these references asynchronously. Use the `isLoading` object to show loading states for reference fields:
+In the preview, a reference field holds what `read()` would give it: the referenced entry's data, or a reference marked `unavailable`: title and URL when this editor may not read it, the id alone when the entry no longer exists. The editor resolves each reference an edit adds, at every position `read()` resolves them: top-level fields, inline groups, objects, lists of objects and block templates, nested to any depth. A reference the editor has not resolved yet is `null`, never its id, with `isLoading` `true` at the same path. So a view can receive three things where a reference sits: the resolved entry, `null`, or an `unavailable` reference. Narrow with `isResolvedReference` from `canopycms`:
 
 ```tsx
 'use client'
 
-import { useCanopyPreview } from 'canopycms/client'
+import { isResolvedReference } from 'canopycms'
+import { useCanopyPreview } from 'canopycms/preview'
 
 export function PostView({ data }: { data: PostContent }) {
   const { data: liveData, isLoading } = useCanopyPreview<PostContent>({
@@ -461,42 +449,31 @@ export function PostView({ data }: { data: PostContent }) {
   return (
     <article>
       <h1>{liveData.title}</h1>
-      <AuthorCard author={liveData.author} isLoading={isLoading.author} />
+      <AuthorCard author={liveData.byline?.author} isLoading={isLoading.byline?.author} />
     </article>
   )
 }
 
-// Component receives clean types - no framework coupling
 interface AuthorCardProps {
-  author: AuthorContent | null
-  isLoading?: boolean // Optional - only needed if you want loading UI
+  author: NonNullable<PostContent['byline']>['author'] // typed by its `resolvedSchema`
+  isLoading?: boolean
 }
 
 function AuthorCard({ author, isLoading }: AuthorCardProps) {
-  if (isLoading) {
-    return <p>Loading author...</p>
-  }
-  if (!author) {
-    return null // Render nothing when no author
-  }
+  if (isLoading) return <p>Loading author...</p>
+  if (!isResolvedReference(author)) return null // empty, or an unavailable reference
   return <p>By {author.name}</p>
 }
 ```
 
 **Loading state structure:**
 
-The `isLoading` object mirrors your data structure:
+`isLoading` (typed `PreviewLoadingState<T>`) holds a boolean only at reference positions, at the same path as the reference:
 
 - Single reference field: `isLoading.author` is a `boolean`
-- Array of references: `isLoading.relatedPosts` is an array of `boolean[]` values
-- Non-reference fields: Always `false` (no loading state needed)
-
-**Benefits:**
-
-- ✅ Zero framework types in your components - just your content types + optional `isLoading: boolean`
-- ✅ Works for nested reference fields at any depth
-- ✅ Optional - only check loading state if you want to show loading UI
-- ✅ Familiar pattern - mirrors React Query's `{ data, isLoading }` API
+- Array of references: `isLoading.relatedPosts` is a `boolean[]`
+- Inside an object, an object list or a block: `isLoading.byline.author`, `isLoading.credits[0].people`, `isLoading.blocks[2].value.speaker`
+- Anything that is not a reference: absent
 
 ## Modes (pick per environment)
 
@@ -525,7 +502,7 @@ export default defineCanopyConfig({
 **How it works:**
 
 1. When you create your first branch, CanopyCMS automatically creates a bare git repository at `.canopy-dev/remote.git`
-2. Your current `baseBranch` (default: `main`) is pushed to this local remote
+2. Your current `baseBranch` (unset: the checked-out branch) is pushed to this local remote
 3. Branch workspaces are cloned from this local remote into `.canopy-dev/content-branches/<branch-name>/`
 4. All git operations (push, fetch, etc.) work against the local remote
 
@@ -597,9 +574,9 @@ export default defineCanopyConfig({
 
 ## Assets and media
 
-Uploaded images and PDFs go into a content-addressed asset store, and images are served
-through an on-demand transform layer. Both the **local** adapter (for development) and the
-**S3** adapter ship today.
+Uploaded images and PDFs go into a content-addressed asset store, and images are served as
+resized derivatives stored before each release. Both the **local** adapter (for development)
+and the **S3** adapter ship today.
 
 ```typescript
 // canopycms.config.ts — production
@@ -617,8 +594,10 @@ media: { adapter: 's3', bucket: 'my-site-assets', region: 'us-east-1' }
   immutable and deduplicated. A draft branch references its images immediately; publishing
   needs no separate asset step.
 - **Delivery** — images are served from `/assets/t/{directives}/…` URLs that resize, crop and
-  convert to WebP on first request, then cache immutably. Build responsive markup with the
-  exported helpers, which are client-safe:
+  convert, written before release by `canopycms collect-asset-refs <outDir>` then
+  `canopycms materialize-assets --refs <file>`, and cached immutably. Every `/assets/t/` URL a
+  page can request must appear as text in the build output. Build responsive markup with the
+  exported helpers, which are client-safe and take any width from 1 to 8192:
 
   ```typescript
   import { assetUrl, assetSrcSet } from 'canopycms'
@@ -633,7 +612,11 @@ media: { adapter: 's3', bucket: 'my-site-assets', region: 'us-east-1' }
   />
   ```
 
-  SVGs and PDFs are served statically, with no transform.
+  Passing an `image` field value applies its stored crop (`opts.crop` overrides it). Its `width`
+  and `height` are the uncropped original's, so scale them by `crop.w` and `crop.h` for a cropped
+  value. SVGs and PDFs are served statically, with no transform. The package declares
+  `sideEffects`, so this import adds under 7 KB minified to a client bundle and none of the
+  config schemas.
 
 - **Where `/assets` is mounted** — the URLs above are root-relative, because that is what gets
   stored in content and content moves between branches and environments. If your renderer sees
@@ -670,8 +653,9 @@ to enable the interactive crop step, or `altOptional: true` for decorative image
 > CanopyCMS" as visible to your whole editorial team.
 
 For deployment, the `canopycms-cdk` package ships an `AssetSupport` construct that provisions
-the bucket, the transform Lambda and the CloudFront behaviors. Fuller documentation — every
-config option, the transform directive syntax, and the AWS wiring — is in the project README's
-`#media-configuration` section and in `docs/deploying-to-aws.md`. Read both at the ref this
-build came from, not at `main` — see
+the bucket and serves `/assets/*` from S3 only: an unmaterialized URL is a 403, and
+`lazyPublicTransforms: true` transforms misses in a Lambda instead. Fuller documentation — every
+config option, the release steps and their IAM grants, and the AWS wiring — is in the project
+README's `#media-configuration` section, `docs/deploying-to-aws.md` and `CHANGELOG.md`. Read
+them at the ref this build came from, not at `main` — see
 [Which documentation matches this build](#which-documentation-matches-this-build).

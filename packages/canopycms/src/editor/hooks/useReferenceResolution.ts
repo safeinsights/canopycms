@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EntrySchema } from '../../config'
-import { resolveChangedReferences } from '../client-reference-resolver'
-import { flattenGroupFields } from '../../utils/flatten-group-fields'
+import {
+  applyReferenceCache,
+  expireReferences,
+  fetchReferences,
+  idsToFetch,
+  storeReferences,
+  type ReferenceCache,
+} from '../client-reference-resolver'
 import { useOptionalApiClient } from '../context'
 
 type FormValue = Record<string, unknown>
@@ -10,223 +16,70 @@ export interface UseReferenceResolutionOptions {
   value: FormValue
   fields: EntrySchema
   branch: string
-  onResolvedValueChange?: (resolved: FormValue) => void
-  onLoadingStateChange?: (loadingState: FormValue) => void
+  /** Identifies the open entry; when it changes every cached target is fetched again. */
+  entryKey?: string
 }
 
 export interface UseReferenceResolutionResult {
+  /** The draft with every reference replaced by its target, or `null` until it has one. */
   resolvedValue: FormValue
+  /** `true` at each reference position still resolving; see `applyReferenceCache`. */
   loadingState: FormValue
 }
 
+/**
+ * The draft as live preview shows it. Computed during render from the cache, so the first value
+ * for a new entry or edit already has no bare ids; a debounced effect then fetches the ids the
+ * cache lacks, in batched requests, and re-renders when they arrive.
+ */
 export function useReferenceResolution({
   value,
   fields,
   branch,
-  onResolvedValueChange,
-  onLoadingStateChange,
+  entryKey,
 }: UseReferenceResolutionOptions): UseReferenceResolutionResult {
-  // Context-provided client (configured with the deployment's basePath) when this hook is
-  // rendered inside an ApiClientProvider -- which it always is in the real Editor tree. `null`
-  // outside one (e.g. FormRenderer.stories.tsx, or this hook's own unwrapped unit tests);
-  // resolveChangedReferences falls back to a default-configured client in that case.
+  // The context client carries the deployment's basePath. `null` outside an ApiClientProvider
+  // (this hook's own unit tests); fetchReferences then falls back to a default client.
   const apiClient = useOptionalApiClient()
-  const resolvedCache = useRef<Map<string, unknown>>(new Map())
-  const prevValueRef = useRef<FormValue>({}) // Track previous value for change detection
-  const lastNotifiedValueRef = useRef<string>('') // Track last notified value to prevent infinite loops
-  const [resolutionTrigger, setResolutionTrigger] = useState(0) // Trigger to force useMemo re-computation
-  // Monotonic token identifying the current debounced-resolve attempt.
-  // Clearing the setTimeout in the effect cleanup only cancels a resolve
-  // that HASN'T fired yet; once the 300ms elapses and the async callback
-  // below starts awaiting `resolveChangedReferences`, clearTimeout can no
-  // longer stop it. The generation check after that await catches the case
-  // clearTimeout can't: a newer value/branch superseding this attempt, or
-  // the component unmounting, while the network call was in flight.
-  const resolveGenerationRef = useRef(0)
+  // One map per branch, so a request for a branch left behind stores into an orphaned map.
+  const cacheRef = useRef<ReferenceCache>(new Map())
+  // The cache is a ref, so a fetch that fills it bumps this to recompute the memo below.
+  const [cacheVersion, setCacheVersion] = useState(0)
 
-  const referenceFieldNames = useMemo(() => {
-    const names = new Set<string>()
-    for (const field of flattenGroupFields(fields)) {
-      if (field.type === 'reference') {
-        names.add(field.name)
-      }
-    }
-    return names
-  }, [fields])
+  const { resolvedValue, loadingState } = useMemo(
+    () => applyReferenceCache(fields, value, branch, cacheRef.current),
+    [fields, value, branch, cacheVersion],
+  )
 
-  /**
-   * PHASE 1: SYNCHRONOUS RESOLUTION
-   *
-   * Compute resolved value by applying cached reference data to form value.
-   * This runs synchronously during render (useMemo), so there are no async gaps.
-   *
-   * For each reference field:
-   * - If ID is in cache: substitute full object
-   * - If ID not in cache: keep the ID (loading state)
-   *
-   * Dependencies include resolutionTrigger, which is incremented when cache updates,
-   * forcing this to re-run and pick up newly-resolved data.
-   */
-  const resolvedValue = useMemo(() => {
-    const result = { ...value }
-
-    for (const fieldName of referenceFieldNames) {
-      const fieldValue = value[fieldName]
-      if (fieldValue) {
-        if (Array.isArray(fieldValue)) {
-          result[fieldName] = fieldValue.map((id) => {
-            if (typeof id === 'string') {
-              const cached = resolvedCache.current.get(`${branch}:${id}`)
-              return cached || null
-            }
-            return id
-          })
-        } else if (typeof fieldValue === 'string') {
-          const cached = resolvedCache.current.get(`${branch}:${fieldValue}`)
-          result[fieldName] = cached || null
-        }
-      }
-    }
-
-    return result
-  }, [value, branch, resolutionTrigger, referenceFieldNames])
-
-  /**
-   * Compute loading state that mirrors the data structure.
-   * For each reference field, track if it's currently loading (not in cache).
-   */
-  const loadingState = useMemo(() => {
-    const result: FormValue = {}
-
-    for (const fieldName of referenceFieldNames) {
-      const fieldValue = value[fieldName]
-      if (fieldValue) {
-        if (Array.isArray(fieldValue)) {
-          result[fieldName] = fieldValue.map((id) => {
-            if (typeof id === 'string') {
-              return !resolvedCache.current.has(`${branch}:${id}`)
-            }
-            return false
-          })
-        } else if (typeof fieldValue === 'string') {
-          result[fieldName] = !resolvedCache.current.has(`${branch}:${fieldValue}`)
-        } else {
-          result[fieldName] = false
-        }
-      } else {
-        result[fieldName] = false
-      }
-    }
-
-    return result
-  }, [value, branch, resolutionTrigger, referenceFieldNames])
-
-  /**
-   * PHASE 2: BACKGROUND ASYNC RESOLUTION
-   *
-   * Find reference IDs that aren't in cache yet and fetch them from the API.
-   */
+  // These two are declared before the fetch effect, so it sees their result in the same commit.
   useEffect(() => {
-    const uncachedIds = new Set<string>()
+    cacheRef.current = new Map()
+    setCacheVersion((prev) => prev + 1)
+  }, [branch])
 
-    for (const fieldName of referenceFieldNames) {
-      const fieldValue = value[fieldName]
-      if (fieldValue) {
-        const ids = Array.isArray(fieldValue) ? fieldValue : [fieldValue]
-        for (const id of ids) {
-          if (typeof id === 'string' && !resolvedCache.current.has(`${branch}:${id}`)) {
-            uncachedIds.add(id)
-          }
-        }
-      }
-    }
+  useEffect(() => {
+    expireReferences(cacheRef.current)
+  }, [entryKey])
 
-    if (uncachedIds.size === 0) {
-      prevValueRef.current = value
-      return
-    }
-
-    // Claim a generation for this attempt before scheduling the debounce, so
-    // the check below always compares against the token captured at the
-    // moment THIS attempt was scheduled -- not whatever the ref happens to
-    // hold when the callback resumes after its await.
-    const generation = ++resolveGenerationRef.current
+  // Asks for all the cache lacks, even ids still in flight; the next edit retries a failure.
+  useEffect(() => {
+    const cache = cacheRef.current
+    const ids = idsToFetch(fields, value, branch, cache, Date.now())
+    if (ids.length === 0) return
 
     const timeout = setTimeout(async () => {
       try {
-        const updates = await resolveChangedReferences(
-          prevValueRef.current,
-          value,
-          fields,
-          branch,
-          resolvedCache.current,
-          apiClient ?? undefined,
-        )
-
-        // A newer value/branch superseded this attempt, or the component
-        // unmounted, while the request above was in flight -- discard.
-        if (generation !== resolveGenerationRef.current) return
-
-        for (const [fieldName, resolvedFieldValue] of Object.entries(updates)) {
-          if (Array.isArray(resolvedFieldValue)) {
-            resolvedFieldValue.forEach((obj, idx) => {
-              const fieldValue = value[fieldName]
-              if (Array.isArray(fieldValue)) {
-                const id = fieldValue[idx]
-                if (typeof obj === 'object' && obj !== null && typeof id === 'string') {
-                  resolvedCache.current.set(`${branch}:${id}`, obj)
-                }
-              }
-            })
-          } else if (typeof resolvedFieldValue === 'object' && resolvedFieldValue !== null) {
-            const id = value[fieldName] as string
-            if (typeof id === 'string') {
-              resolvedCache.current.set(`${branch}:${id}`, resolvedFieldValue)
-            }
-          }
-        }
-
-        setResolutionTrigger((prev) => prev + 1)
-        prevValueRef.current = value
+        const found = await fetchReferences(ids, branch, apiClient ?? undefined)
+        // Keyed by branch and id, a result stays valid however the draft changed meanwhile.
+        storeReferences(cache, branch, found, Date.now())
+        setCacheVersion((prev) => prev + 1)
       } catch (error) {
         console.error('Reference resolution failed:', error)
       }
-    }, 300) // 300ms debounce
+    }, 300)
 
-    return () => {
-      clearTimeout(timeout)
-      // Invalidate this attempt's generation on cleanup too, not just when a
-      // newer effect run claims the next one: cleanup is what fires on
-      // unmount, where there IS no next run to bump the counter otherwise.
-      ++resolveGenerationRef.current
-    }
-  }, [value, fields, branch, referenceFieldNames, apiClient])
+    return () => clearTimeout(timeout)
+  }, [value, fields, branch, entryKey, apiClient])
 
-  useEffect(() => {
-    resolvedCache.current.clear()
-    setResolutionTrigger((prev) => prev + 1)
-  }, [branch])
-
-  // Notify parent of resolved value changes (with infinite loop prevention)
-  useEffect(() => {
-    const serialized = JSON.stringify(resolvedValue)
-    if (serialized !== lastNotifiedValueRef.current) {
-      lastNotifiedValueRef.current = serialized
-      onResolvedValueChange?.(resolvedValue)
-    }
-  }, [resolvedValue, onResolvedValueChange])
-
-  const lastNotifiedLoadingRef = useRef<string>('')
-  useEffect(() => {
-    const serialized = JSON.stringify(loadingState)
-    if (serialized !== lastNotifiedLoadingRef.current) {
-      lastNotifiedLoadingRef.current = serialized
-      onLoadingStateChange?.(loadingState)
-    }
-  }, [loadingState, onLoadingStateChange])
-
-  return {
-    resolvedValue,
-    loadingState,
-  }
+  return { resolvedValue, loadingState }
 }

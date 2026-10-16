@@ -2,7 +2,7 @@
 
 import React from 'react'
 
-import { type CanopyPreviewViewProps, withCanopyPreview } from 'canopycms-next/client'
+import { type CanopyPreviewViewProps, withCanopyPreview } from 'canopycms-next/preview'
 
 import type { DocContent } from '../schemas'
 import { MarkdownBody } from './MarkdownBody'

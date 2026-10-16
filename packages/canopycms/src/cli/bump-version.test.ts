@@ -1,17 +1,8 @@
 /**
- * `scripts/bump-version.mjs` had no test at all, while being the thing that
- * decides what version every release publishes.
- *
- * The `--min` mode is the release train's self-heal: publish.yml commits the
- * version bump only AFTER all five packages publish, so an interrupted run
- * leaves npm holding a version main does not know about. Bumping from the
- * committed value then re-derives an already-published version and every later
- * run dies on "cannot publish over previously published version" -- forever.
- * Flooring on `npm view canopycms version` is what breaks that loop.
- *
- * The argument validation matters for a blunter reason: this script rewrites
- * six package.json files in place, so a typo'd flag used to be written verbatim
- * as the version and exit 0, surfacing only later at `npm publish`.
+ * `scripts/bump-version.mjs` decides what version every release publishes, so
+ * it takes exactly one explicit version and rejects everything else: this
+ * script rewrites six package.json files in place, so a typo'd flag must fail
+ * rather than be written as the version and surface only at `npm publish`.
  *
  * Driven as a subprocess rather than by import, because the script does its
  * work at module scope against a directory tree.
@@ -90,30 +81,8 @@ describe('scripts/bump-version.mjs', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
-  describe('bump modes', () => {
-    it('patch-bumps the committed version with no arguments', async () => {
-      await seed('0.0.63')
-      const { stdout } = await run([])
-      expect(stdout.trim()).toBe('0.0.64')
-      expect(await readVersion('packages/canopycms')).toBe('0.0.64')
-    })
-
-    it('bumps from the REGISTRY when it is ahead of the repo', async () => {
-      // The wedge: an interrupted publish left npm at 0.0.70 while main still
-      // says 0.0.63. Without the floor this returns 0.0.64, which already
-      // exists, and every subsequent run fails identically forever.
-      await seed('0.0.63')
-      const { stdout } = await run(['--min', '0.0.70'])
-      expect(stdout.trim()).toBe('0.0.71')
-    })
-
-    it('bumps from the REPO when it is ahead of the registry', async () => {
-      await seed('0.0.63')
-      const { stdout } = await run(['--min', '0.0.60'])
-      expect(stdout.trim()).toBe('0.0.64')
-    })
-
-    it('applies an explicit version without bumping', async () => {
+  describe('writing the version', () => {
+    it('writes the explicit version as given', async () => {
       await seed('0.0.63')
       const { stdout } = await run(['1.2.3'])
       expect(stdout.trim()).toBe('1.2.3')
@@ -154,7 +123,7 @@ describe('scripts/bump-version.mjs', () => {
 
     it('writes the new version to every publishable package and the root', async () => {
       await seed('0.0.63')
-      await run(['--min', '0.0.70'])
+      await run(['0.0.71'])
       for (const pkg of PACKAGES) {
         expect(await readVersion(pkg), `${pkg} should be bumped`).toBe('0.0.71')
       }
@@ -164,7 +133,7 @@ describe('scripts/bump-version.mjs', () => {
 
     it('rewrites the generated version constant to the new version', async () => {
       await seed('0.0.63')
-      await run(['--min', '0.0.70'])
+      await run(['0.0.71'])
       const source = await fs.readFile(VERSION_FILE(tmpDir), 'utf-8')
       expect(source).toContain("export const CANOPYCMS_VERSION = '0.0.71'")
       expect(source).not.toContain('0.0.63')
@@ -188,40 +157,42 @@ describe('scripts/bump-version.mjs', () => {
   })
 
   describe('argument validation', () => {
-    /** Assert the script exits non-zero AND leaves every manifest untouched. */
-    async function expectRejected(args: string[]): Promise<void> {
+    /**
+     * Assert the script exits non-zero AND leaves every manifest untouched. The
+     * optional `message` pins WHICH check rejected it (execFile folds stderr into
+     * the error message).
+     */
+    async function expectRejected(args: string[], message?: RegExp): Promise<void> {
       await seed('0.0.63')
-      await expect(run(args)).rejects.toThrow()
+      await expect(run(args)).rejects.toThrow(message)
       for (const pkg of PACKAGES) {
         expect(await readVersion(pkg), `${pkg} must be untouched`).toBe('0.0.63')
       }
       expect(await fs.readFile(VERSION_FILE(tmpDir), 'utf-8')).toContain("'0.0.63'")
     }
 
+    it('rejects no argument rather than guessing a version', async () => {
+      await expectRejected([], /Missing version argument/)
+    })
+
+    it('rejects --min as an unknown option', async () => {
+      await expectRejected(['--min', '0.0.70'], /Unknown option "--min"/)
+    })
+
     it('rejects an unknown flag instead of writing it as the version', async () => {
-      // This is the real defect: `--mim 0.0.70` used to write
-      // `"version": "--mim"` into six manifests and exit 0, surfacing only
-      // later at `npm publish`.
-      await expectRejected(['--mim', '0.0.70'])
+      await expectRejected(['--mim'], /Unknown option/)
     })
 
-    it('rejects transposed arguments rather than silently not bumping', async () => {
-      await expectRejected(['0.0.64', '--min'])
+    it('rejects an extra argument after the version', async () => {
+      await expectRejected(['0.0.64', '0.0.65'], /Unexpected extra argument/)
     })
 
-    it('rejects --min with no version', async () => {
-      await expectRejected(['--min'])
+    it('rejects a flag after the version', async () => {
+      await expectRejected(['0.0.64', '--min'], /Unknown option/)
     })
 
     it('rejects a malformed explicit version', async () => {
       await expectRejected(['not-a-version'])
-    })
-
-    it('rejects a prerelease floor, which this channel cannot order', async () => {
-      // Strict for --min even though the EXPLICIT form accepts a suffix: an
-      // `-int.N` value has no meaningful ordering against a stable release, so
-      // flooring on one would silently mis-derive the next stable version.
-      await expectRejected(['--min', '0.0.64-int.3'])
     })
 
     it('rejects a leading-zero version, which npm treats as invalid semver', async () => {
@@ -232,8 +203,8 @@ describe('scripts/bump-version.mjs', () => {
       await expectRejected(['1.2.3.4'])
     })
 
-    it('rejects an empty argument rather than silently patch-bumping', async () => {
-      await expectRejected([''])
+    it('rejects an empty argument', async () => {
+      await expectRejected([''], /Empty version argument/)
     })
 
     // The prerelease/build suffix follows semver's identifier grammar, not a
@@ -260,5 +231,57 @@ describe('scripts/bump-version.mjs', () => {
         expect(stdout.trim()).toBe(version)
       },
     )
+  })
+})
+
+describe('prerelease-version.mjs', () => {
+  let dir: string
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'prerelease-version-'))
+  })
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
+  const prerelease = async (args: string[]): Promise<string> =>
+    (await execFileAsync(process.execPath, [PRERELEASE_SCRIPT, ...args])).stdout.trim()
+
+  const plan = async (releases: unknown[]): Promise<string> => {
+    const file = path.join(dir, 'plan.json')
+    await fs.writeFile(file, JSON.stringify({ changesets: [], releases }))
+    return file
+  }
+
+  it('patch-bumps main without a plan', async () => {
+    expect(await prerelease(['0.0.67', '115'])).toBe('0.0.68-int.115')
+  })
+
+  it("takes the plan's next canopycms version as the base, unbumped", async () => {
+    const file = await plan([
+      { name: 'canopycms-cdk', type: 'minor', newVersion: '0.1.0' },
+      { name: 'canopycms', type: 'minor', newVersion: '0.1.0' },
+    ])
+    expect(await prerelease(['0.0.67', '115', '--plan', file])).toBe('0.1.0-int.115')
+  })
+
+  it('falls back to main patch-bumped when the plan releases nothing', async () => {
+    // A `none` release keeps the old version, which would sort below the stable release.
+    const file = await plan([{ name: 'canopycms', type: 'none', newVersion: '0.0.67' }])
+    expect(await prerelease(['0.0.67', '115', '--plan', file])).toBe('0.0.68-int.115')
+  })
+
+  it('never goes below main patch-bumped', async () => {
+    // An older line's manifests: its plan would sort below the stable release.
+    const file = await plan([{ name: 'canopycms', type: 'patch', newVersion: '0.0.61' }])
+    expect(await prerelease(['0.0.67', '115', '--plan', file])).toBe('0.0.68-int.115')
+  })
+
+  it('refuses a plan version that is not a plain release', async () => {
+    const file = await plan([{ name: 'canopycms', type: 'minor', newVersion: '0.1.0-int.3' }])
+    await expect(prerelease(['0.0.67', '115', '--plan', file])).rejects.toThrow(/plain version/)
+  })
+
+  it('refuses --plan without a file', async () => {
+    await expect(prerelease(['0.0.67', '115', '--plan'])).rejects.toThrow(/Usage/)
   })
 })

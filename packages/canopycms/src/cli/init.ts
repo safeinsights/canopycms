@@ -301,6 +301,7 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
     commandsFor,
     missingCdkDependencies,
     CDK_DEPENDENCIES,
+    PLACEHOLDER_GITHUB_REPO,
   } = await import('./project-detect')
 
   p.intro('CanopyCMS init-deploy aws')
@@ -308,7 +309,7 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   const packageManager = await detectPackageManager(projectDir)
   const pm = commandsFor(packageManager)
   const defaultBranch = await detectDefaultBranch(projectDir)
-  const repo = await detectGitHubRepo(projectDir)
+  const repo = (await detectGitHubRepo(projectDir)) ?? PLACEHOLDER_GITHUB_REPO
 
   await writeFile(
     path.join(projectDir, 'Dockerfile.cms'),
@@ -349,10 +350,7 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
 
   await writeFile(
     path.join(projectDir, 'infrastructure/bin/app.ts'),
-    await cdkApp({
-      githubOwner: repo?.owner ?? 'your-org',
-      githubRepo: repo?.repo ?? 'your-docs-site',
-    }),
+    await cdkApp({ githubOwner: repo.owner, githubRepo: repo.repo }),
     writeOpts,
   )
   await writeFile(
@@ -467,7 +465,7 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
       `   ${pm.addDev} ${CDK_DEPENDENCIES.join(' ')}`,
       '',
       '2. Fill in infrastructure/lib/cms-stack.ts and infrastructure/bin/app.ts',
-      `   (worker repo currently set to ${repo ? `${repo.owner}/${repo.repo}` : 'your-org/your-docs-site'})`,
+      `   (worker repo currently set to ${repo.owner}/${repo.repo})`,
       '',
       '3. Bootstrap CDK in the target account/region: cdk bootstrap',
       '',

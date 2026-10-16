@@ -109,8 +109,8 @@ describe('resolveWorkerGitHubAuth', () => {
 
     it('treats an empty token as absent rather than as a credential', () => {
       // Otherwise `githubToken: process.env.X ?? ''` would build a worker that
-      // pushes to `https://x-access-token:@github.com/...` and gets an
-      // anonymous 403 with nothing in it about the credential.
+      // pushes with an empty credential and gets an anonymous 403 with nothing
+      // in it about the credential.
       expect(() => resolveWorkerGitHubAuth({ githubToken: '' })).toThrow(/is required/)
     })
   })
@@ -396,9 +396,8 @@ describe('resolveWorkerGitHubAuth', () => {
 
         await resolved.refreshCredential()
 
-        // An empty token builds `https://x-access-token:@github.com/...`, which
-        // git sends anonymously for a 403 that says nothing about the
-        // credential. Keeping the known-bad-but-real token fails legibly.
+        // An empty token sends an empty credential, which GitHub answers as
+        // anonymous with a 403 that says nothing about the credential. Keeping the known-bad-but-real token fails legibly.
         expect(await resolved.resolveGitToken()).toBe('ghp_original')
       })
 

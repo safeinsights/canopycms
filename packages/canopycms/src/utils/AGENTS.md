@@ -6,8 +6,12 @@ span files.
 
 ## Where each rule lives
 
-- `content-serialize.ts` (module header, `looksLikeSameItem`): the comment-preserving write
-  path `ContentStore.write` uses; its evidence search reads `validation/block-structural-keys.ts`.
+- `base-branch.ts` (`baseBranchOf`): each prod read of the base branch; it throws rather
+  than assume `'main'`. services.ts resolves it through `GitManager.detectBaseBranch`, from the
+  `remote.git` HEAD worker/cms-worker.ts records.
+- `content-serialize.ts` (module header, `looksLikeSameItem`): `ContentStore.write`'s
+  source-preserving write path, printed by `yaml-source-splice.ts`/`markdown-body-splice.ts`;
+  evidence search reads `validation/block-structural-keys.ts`.
 - `content-write-lock.ts` (module header): [SYNC-C1]; taken by `ContentStore.write`/`delete`/
   `renameEntry` (mapped to `BranchSyncingError`) and by `rebaseActiveBranches`; reads never take
   it. Layering: [docs/concurrency.md](../../../../docs/concurrency.md).

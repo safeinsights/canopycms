@@ -48,12 +48,20 @@ ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 # The browser needs the operating mode too: the editor page is a client
 # component that imports canopycms.config.ts, so its copy of `mode` is whatever
 # was inlined at build time -- a runtime Lambda variable can never reach it.
-# Left as dev by default (the default target of a plain `docker build`); the
-# generated CDK stack passes `prod` as a build arg. Distinct from CANOPY_MODE
-# above on purpose: this one is read only in the browser, so setting it here
-# does NOT put the build's own server-side content reads into prod mode.
-ARG NEXT_PUBLIC_CANOPY_MODE=dev
+# Defaults to prod because this image only ever runs as the deployed CMS, whose
+# server is prod; a dev editor bundle there selects dev auth against a server
+# that accepts only Clerk tokens. Anything but exactly prod or dev fails the
+# build: an empty value would fall back to the config's `dev` literal in the
+# browser, and a typo would only throw once an editor page loads. Distinct
+# from CANOPY_MODE above on purpose: this one is read only in the browser, so
+# setting it here does NOT put the build's own server-side content reads into
+# prod mode.
+ARG NEXT_PUBLIC_CANOPY_MODE=prod
 ENV NEXT_PUBLIC_CANOPY_MODE=$NEXT_PUBLIC_CANOPY_MODE
+RUN case "$NEXT_PUBLIC_CANOPY_MODE" in \
+      prod|dev) ;; \
+      *) echo "NEXT_PUBLIC_CANOPY_MODE must be exactly \"prod\" or \"dev\", got \"$NEXT_PUBLIC_CANOPY_MODE\"" >&2; exit 1 ;; \
+    esac
 RUN {{DOCKER_BUILD}}
 
 FROM public.ecr.aws/docker/library/node:22-slim AS runner

@@ -1,7 +1,13 @@
-import { createNextCanopyContext, type GenerateContentStaticParamsOptions } from 'canopycms-next'
+import {
+  createNextCanopyContext,
+  type GenerateContentStaticParamsOptions,
+  type NextCanopyContextResult,
+} from 'canopycms-next'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
 import { entrySchemaRegistry } from '../schemas'
+
+export { previewView } from 'canopycms-next'
 
 /**
  * Dev auth plugin for local development and E2E testing.
@@ -52,6 +58,11 @@ export const getCanopyForBuild = async () => {
   const context = await canopyContextPromise
   return context.getCanopyForBuild()
 }
+
+// The page for the `createPreviewPage` route (app/preview/[[...path]]).
+export const createPreviewPage: NextCanopyContextResult['createPreviewPage'] =
+  (options) => async (props) =>
+    (await canopyContextPromise).createPreviewPage(options)(props)
 
 // Export for API routes
 export const getHandler = async () => {

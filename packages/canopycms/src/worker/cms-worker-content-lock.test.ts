@@ -140,17 +140,21 @@ interface ConflictSetup {
 /**
  * A branch clone whose entry file conflicts with the base branch, so the
  * rebase must enter its conflict round. Mirrors cms-worker-rebase.test.ts's
- * `createBranchSetup` (fixture remote is a non-bare repo at
- * `<workspace>/remote.git`, the path the loop fetches from).
+ * `createBranchSetup` (fixture remote is a bare repo at
+ * `<workspace>/remote.git`, the path the loop fetches from, fed from an upstream
+ * working repository).
  */
 async function createConflictSetup(tmpDir: string, branchName: string): Promise<ConflictSetup> {
   const remotePath = path.join(tmpDir, 'remote.git')
+  const upstreamPath = path.join(tmpDir, 'upstream')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
   const branchPath = path.join(contentBranchesPath, branchName)
 
-  await fs.mkdir(remotePath)
-  const remoteGit = await initTestRepo(remotePath)
+  await fs.mkdir(upstreamPath)
+  const remoteGit = await initTestRepo(upstreamPath)
   await remoteGit.raw(['branch', '-M', 'main'])
+  await simpleGit().raw(['init', '--bare', '--initial-branch', 'main', remotePath])
+  const publishRemote = () => remoteGit.raw(['push', '-q', '--force', remotePath, 'main:main'])
 
   const writeInto = async (root: string, content: string) => {
     const full = path.join(root, ENTRY_FILE)
@@ -158,9 +162,10 @@ async function createConflictSetup(tmpDir: string, branchName: string): Promise<
     await fs.writeFile(full, content)
   }
 
-  await writeInto(remotePath, '{\n  "title": "base"\n}\n')
+  await writeInto(upstreamPath, '{\n  "title": "base"\n}\n')
   await remoteGit.add(['.'])
   await remoteGit.commit('initial commit')
+  await publishRemote()
 
   await fs.mkdir(contentBranchesPath, { recursive: true })
   await simpleGit().clone(remotePath, branchPath)
@@ -168,7 +173,6 @@ async function createConflictSetup(tmpDir: string, branchName: string): Promise<
   const branchGit = simpleGit({ baseDir: branchPath, unsafe: { allowUnsafeEditor: true } })
   await branchGit.addConfig('user.name', 'Test Bot')
   await branchGit.addConfig('user.email', 'test@canopycms.test')
-  await branchGit.addConfig('core.editor', 'true')
 
   const excludeFile = path.join(branchPath, '.git', 'info', 'exclude')
   await fs.mkdir(path.dirname(excludeFile), { recursive: true })
@@ -183,9 +187,10 @@ async function createConflictSetup(tmpDir: string, branchName: string): Promise<
   await branchGit.commit('branch: update entry')
 
   // ...and so does the base branch, on the same lines.
-  await writeInto(remotePath, '{\n  "title": "main version"\n}\n')
+  await writeInto(upstreamPath, '{\n  "title": "main version"\n}\n')
   await remoteGit.add(['.'])
   await remoteGit.commit('main: update same entry')
+  await publishRemote()
 
   const meta = BranchMetadataFileManager.get(branchPath, contentBranchesPath)
   await meta.save({

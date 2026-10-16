@@ -20,7 +20,7 @@
 >   keyboard handlers and no search input in `EntryNavigator.tsx`. These belong in
 >   `BACKLOG.md` item 9 (feature roadmap), not here.
 > - **Items 17 and 18a are triple-tracked** — also in `COVERAGE-MATRIX.md` (E14,
->   E9) and in `.claude/future-tasks/e2e-deferred-coverage.md`. Use those.
+>   E9) and in safeinsights/canopycms#663. Use those.
 > - **Item 14's premise was superseded** by the branch-switch redesign in
 >   #181/#196.
 > - There are **no items 6 or 7** (the numbering skips them), and item 18 is used
@@ -33,8 +33,8 @@
 > PR #220 have no e2e coverage and are not listed here.
 >
 > **Recommended home going forward:** `COVERAGE-MATRIX.md` (what is covered) plus
-> `.claude/future-tasks/e2e-deferred-coverage.md` (what is deliberately deferred,
-> and why) — both already indexed and guarded by `pnpm lint:tasks`. The one piece
+> safeinsights/canopycms#663 (what is deliberately deferred,
+> and why). The one piece
 > of unique value here is the "Key gotchas learned so far" block, which should
 > move to `DEVELOPING.md` before this file is retired.
 
@@ -116,7 +116,7 @@ Use existing fixtures:
 **Status:** Done — `field-types.spec.ts` › "textarea/MDX field: multi-line content" (unskipped)
 **Spec file:** `field-types.spec.ts`
 **Scenario:** Create a post entry via the UI, edit the `body` rich text field, save, reload and verify persistence.
-**Notes:** No API creation needed — UI creation (same pattern as entry-crud tests) works fine. The body field is a BlockNote-style rich text editor with ARIA role `textbox` and name `"editable markdown"` — interact via `page.getByRole('textbox', { name: 'editable markdown' })`. Key gotcha: after creating the entry, the navigator drawer is still open and its overlay blocks clicks on the form pane — press `Escape` to close the drawer before interacting with form fields.
+**Notes:** No API creation needed — UI creation (same pattern as entry-crud tests) works fine. The body field is a rich text editor with ARIA role `textbox`, named after its label — interact via `editorPage.richTextField('Body')`. Key gotcha: after creating the entry, the navigator drawer is still open and its overlay blocks clicks on the form pane — press `Escape` to close the drawer before interacting with form fields.
 
 ### 5. ✅ Toggle (boolean) field
 
@@ -135,8 +135,8 @@ Use existing fixtures:
 **Status:** Done — `draft-behavior.spec.ts` › "discard file draft reverts field to last-saved state", "unsaved draft survives a page reload"
 **Spec file:** `draft-behavior.spec.ts` (new file)
 **Scenario:** Make edits to an entry. Verify the save button is enabled and a "discard" or "revert" action is available. Click discard. Verify the field values revert to their last-saved state without a page reload.
-**data-testids added:** `data-testid="discard-file-draft-menu-item"` on the "Discard File Draft" `<Menu.Item>` in `EditorHeader.tsx`.
-**Notes:** No confirmation dialog — discard immediately clears the draft from state and localStorage, shows "Draft cleared for file" (blue Mantine notification). Save button is `disabled` when no unsaved changes (`!hasUnsavedChanges`), so can use `toBeDisabled()` to verify clean state before and after. "Discard File Draft" is inside the file dropdown menu (same menu as "All Files" / `file-dropdown-button`).
+**data-testids added:** `data-testid="discard-file-draft-menu-item"` on the "Discard changes" `<Menu.Item>` in `EditorHeader.tsx`.
+**Notes:** Discarding a dirty draft asks for confirmation; confirming clears the draft from state and localStorage and shows no toast: the form reverts and Save disables. Save is `aria-disabled` when there are no unsaved changes, and Playwright's `toBeDisabled()` reads that, so it verifies clean state before and after. "Discard changes" is inside the file dropdown menu (same menu as "All content" / `file-dropdown-button`).
 
 ---
 
@@ -166,7 +166,7 @@ Use existing fixtures:
 **Status:** Done — `comments.spec.ts` › "add a branch-level comment and verify persistence"
 **Spec file:** `comments.spec.ts` (new file)
 **Scenario:** Open the comments panel. Add a branch-level comment. Verify it appears in the thread list. Reload and verify persistence.
-**data-testids added:** `data-testid="comments-button"` on the Comments button in `EditorHeader.tsx`; `data-testid="comment-textarea"` on the Textarea, `data-testid="comment-submit"` on the Add Comment button, `data-testid="comment-thread"` on each thread Paper (all in `CommentsPanel.tsx`).
+**data-testids added:** `data-testid="comments-button"` on the Comments button in `EditorHeader.tsx`; `data-testid="comment-textarea"` on the Textarea, `data-testid="comment-submit"` on the Comment button, `data-testid="comment-thread"` on each thread Paper (all in `CommentsPanel.tsx`).
 **Notes:** Comments work on the `main` branch in `dev` mode (no feature branch needed). The Comments button only renders when `supportsComments()` is true AND a branch is selected. After submit the textarea clears. Close panel with Escape before reload.
 
 ### 12. ✅ Add and resolve a field-level comment thread
@@ -174,8 +174,8 @@ Use existing fixtures:
 **Status:** Done — `comments.spec.ts` › "add and resolve a field-level comment thread"
 **Spec file:** `comments.spec.ts`
 **Scenario:** Select an entry and field. Trigger a field-level comment (look for a comment icon near the field or in the preview). Add a comment. Verify an inline comment thread appears (`InlineCommentThread.tsx`). Resolve/close the thread. Verify it is marked resolved.
-**data-testids added:** `data-testid="field-new-comment-{canopyPath}"` on "New comment" button in `FieldWrapper.tsx`; `data-testid="new-thread-textarea"` and `data-testid="create-thread-button"` in `ThreadCarousel.tsx`; `data-testid="inline-comment-thread"` on Paper root and `data-testid="resolve-thread-button"` on Resolve button in `InlineCommentThread.tsx`.
-**Notes:** Navigate to "Home Page" entry first, then Escape to close navigator drawer before interacting with the form. The "New comment" button is always in the DOM (no hover required). After resolving, the "Resolved" badge appears and the Resolve button disappears.
+**data-testids added:** `data-testid="field-comment-{canopyPath}"` on the field's comment control and `data-testid="new-thread-textarea"` / `"create-thread-button"` in its popover (`CommentThreadsPopover.tsx`); `data-testid="inline-comment-thread"` on Paper root and `data-testid="resolve-thread-button"` on Resolve button in `InlineCommentThread.tsx`.
+**Notes:** Navigate to "Home Page" entry first, then Escape to close navigator drawer before interacting with the form. The comment control is always in the DOM but transparent until its field is hovered or focused, so `startFieldComment` hovers first. After resolving, the "Resolved" badge appears and the Resolve button disappears.
 
 ---
 

@@ -9,6 +9,7 @@ import {
   ensureMainBranch,
   createBranchViaAPI,
   submitBranchViaAPI,
+  saveHomeChangeViaAPI,
   withdrawBranchViaAPI,
   approveBranchViaAPI,
   deleteBranchViaAPI,
@@ -135,7 +136,7 @@ test.describe('Branch State Badges', () => {
   test('protected badge and submit/delete rails on the base branch (B4)', async () => {
     const protectedBranch = await findProtectedBranch(BASE_URL, 'admin')
 
-    await test.step('UI: protected badge visible, submit and delete disabled', async () => {
+    await test.step('UI: protected badge visible, submit and delete not offered', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
@@ -143,11 +144,9 @@ test.describe('Branch State Badges', () => {
 
       await expect(branchPage.getProtectedBadge(protectedBranch.name)).toBeVisible()
 
-      const submitDisabled = await branchPage.isActionButtonDisabled(protectedBranch.name, 'submit')
-      expect(submitDisabled).toBe(true)
-
-      const deleteDisabled = await branchPage.isActionButtonDisabled(protectedBranch.name, 'delete')
-      expect(deleteDisabled).toBe(true)
+      await expect(branchPage.getProtectedBadge(protectedBranch.name)).toHaveText('Protected')
+      expect(await branchPage.actionState(protectedBranch.name, 'submit')).toBe('absent')
+      expect(await branchPage.actionState(protectedBranch.name, 'delete')).toBe('absent')
     })
 
     await test.step('API: submit is refused with 403 and the base-branch message', async () => {
@@ -189,6 +188,7 @@ test.describe('Branch State Badges', () => {
     })
 
     await test.step('submit via API and reload', async () => {
+      await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
       const res = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(res.ok).toBe(true)
       await page.reload()
@@ -196,12 +196,20 @@ test.describe('Branch State Badges', () => {
     })
 
     await test.step('status-locked banner is visible and save is disabled', async () => {
-      const banner = page.locator('[data-testid="status-locked-banner"]')
+      const banner = editorPage.statusLockedBanner()
       await expect(banner).toBeVisible()
       await expect(banner).toContainText(
         `Branch "${branchName}" is submitted for review and locked for edits`,
       )
       await expect(editorPage.saveButton).toBeDisabled()
+    })
+
+    await test.step('the form is read-only', async () => {
+      await editorPage.openContentNavigator()
+      await editorPage.selectEntry('Home Page')
+      const title = editorPage.getFieldInput('title')
+      await expect(title).not.toBeEditable()
+      await expect(title).toHaveAttribute('readonly', '')
     })
 
     await test.step('server: a content write is refused with 403', async () => {
@@ -224,7 +232,7 @@ test.describe('Branch State Badges', () => {
       await page.reload()
       await editorPage.waitForReady()
 
-      await expect(page.locator('[data-testid="status-locked-banner"]')).not.toBeVisible()
+      await expect(editorPage.statusLockedBanner()).not.toBeVisible()
       // NOTE: save-button stays disabled right after reload regardless of
       // the status lock -- it's also gated on `hasUnsavedChanges` and
       // `currentEntry`, neither of which survives a reload (see
@@ -233,7 +241,7 @@ test.describe('Branch State Badges', () => {
       // actually editing and saving below.
 
       // Prove editing genuinely works again, not just that the banner is gone.
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
       await editorPage.fillTextField('title', `Restored-${Date.now()}`)
       await editorPage.saveAndVerify()
@@ -246,6 +254,7 @@ test.describe('Branch State Badges', () => {
     await test.step('create, submit, approve, then mark merged', async () => {
       const createRes = await createBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(createRes.ok).toBe(true)
+      await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
       const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(submitRes.ok).toBe(true)
       const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')
@@ -275,6 +284,7 @@ test.describe('Branch State Badges', () => {
     await test.step('create, submit, approve via API', async () => {
       const createRes = await createBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(createRes.ok).toBe(true)
+      await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
       const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(submitRes.ok).toBe(true)
       const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')

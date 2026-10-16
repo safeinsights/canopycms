@@ -5,10 +5,11 @@ import {
   findUnknownKeys,
   mergeBodyIntoData,
   normalizeReferenceValues,
-  referenceValueId,
   validateEntryData,
   validateEntryFormValue,
 } from '../entry-validator'
+import { referenceValueId } from '../field-traversal'
+import { buildMissingReference } from '../../entry-schema'
 
 const schema: EntrySchema = [
   { name: 'title', type: 'string', required: true },
@@ -46,6 +47,44 @@ const validData = {
 describe('validateEntryData', () => {
   it('accepts valid data', () => {
     expect(validateEntryData(schema, validData)).toEqual([])
+  })
+
+  describe('with required checks off', () => {
+    const groupSchema: EntrySchema = [
+      {
+        name: 'meta',
+        type: 'group',
+        fields: [{ name: 'summary', type: 'string', required: true }],
+      },
+    ]
+
+    it('skips required fields at the top level, in objects, block items and inline groups', () => {
+      const data = { hero: {}, blocks: [{ template: 'quote', value: {} }] }
+      expect(validateEntryData(schema, data, '', { required: false })).toEqual([])
+      expect(validateEntryData(groupSchema, {}, '', { required: false })).toEqual([])
+    })
+
+    it('still reports the same places as missing when the checks are on', () => {
+      const data = { hero: {}, blocks: [{ template: 'quote', value: {} }] }
+      expect(validateEntryData(schema, data).map((e) => e.fieldPath)).toEqual([
+        'title',
+        'author',
+        'hero.headline',
+        'blocks[0].text',
+      ])
+      expect(validateEntryData(groupSchema, {}).map((e) => e.fieldPath)).toEqual(['summary'])
+    })
+
+    it('still checks the type of every value present, nested ones included', () => {
+      const data = {
+        title: 42,
+        hero: { headline: 7 },
+        blocks: [{ template: 'quote', value: { text: 1 } }],
+      }
+      expect(
+        validateEntryData(schema, data, '', { required: false }).map((e) => e.fieldPath),
+      ).toEqual(['title', 'hero.headline', 'blocks[0].text'])
+    })
   })
 
   it('rejects a missing required field', () => {
@@ -112,6 +151,20 @@ describe('validateEntryData', () => {
       ],
     })
     expect(errors).toEqual([{ fieldPath: 'blocks[1].text', message: 'This field is required' }])
+  })
+
+  it('reports a required block field when the value is null or an array', () => {
+    const errors = validateEntryData(schema, {
+      ...validData,
+      blocks: [
+        { template: 'quote', value: null },
+        { template: 'quote', value: ['fine'] },
+      ],
+    })
+    expect(errors).toEqual([
+      { fieldPath: 'blocks[0].text', message: 'This field is required' },
+      { fieldPath: 'blocks[1].text', message: 'This field is required' },
+    ])
   })
 
   it('rejects block items with an unknown template', () => {
@@ -210,6 +263,23 @@ describe('validateEntryData - image fields', () => {
     expect(errors).toEqual([{ fieldPath: 'hero.crop', message: 'Invalid image crop rect' }])
   })
 
+  it('rejects a crop rect that rounds to zero extent, which its transform URL could not carry', () => {
+    for (const crop of [
+      { x: 0, y: 0, w: 0.00004, h: 1 },
+      { x: 0.99996, y: 0, w: 0.00004, h: 1 },
+    ]) {
+      const errors = validateEntryData(imageSchema, { hero: { src: '/x.jpg', alt: 'x', crop } })
+      expect(errors).toEqual([{ fieldPath: 'hero.crop', message: 'Invalid image crop rect' }])
+    }
+  })
+
+  it('accepts an over-precision crop rect that survives rounding', () => {
+    const errors = validateEntryData(imageSchema, {
+      hero: { src: '/x.jpg', alt: 'x', crop: { x: 0.123456, y: 0, w: 0.5, h: 0.25 } },
+    })
+    expect(errors).toEqual([])
+  })
+
   it('rejects a crop rect with a non-positive w/h', () => {
     const errors = validateEntryData(imageSchema, {
       hero: { src: '/x.jpg', alt: 'x', crop: { x: 0, y: 0, w: 0, h: 0.5 } },
@@ -249,6 +319,7 @@ describe('referenceValueId / normalizeReferenceValues', () => {
   it('extracts ids from strings and resolved objects', () => {
     expect(referenceValueId('abc')).toBe('abc')
     expect(referenceValueId({ id: 'abc', slug: 's' })).toBe('abc')
+    expect(referenceValueId(buildMissingReference('abc'))).toBe('abc')
     expect(referenceValueId(7)).toBeUndefined()
     expect(referenceValueId(null)).toBeUndefined()
   })
@@ -319,6 +390,39 @@ describe('findUnknownKeys', () => {
         blocks: [{ _type: 'quote', text: 'Hi' }],
       }),
     ).toEqual([])
+  })
+
+  it('never reports the `_key` of an object-list item, but still reports an unknown sibling', () => {
+    const listSchema: EntrySchema = [
+      {
+        name: 'cards',
+        type: 'object',
+        list: true,
+        fields: [{ name: 'label', type: 'string' }],
+      },
+    ]
+    expect(findUnknownKeys(listSchema, { cards: [{ _key: 'a1', label: 'One' }] })).toEqual([])
+    expect(
+      findUnknownKeys(listSchema, { cards: [{ _key: 'a1', label: 'One', href: '/one' }] }),
+    ).toEqual(['cards[0].href'])
+  })
+
+  it('never reports the `_key` of a block, in the canonical or the inline `_type` shape', () => {
+    expect(
+      findUnknownKeys(schema, {
+        ...validData,
+        blocks: [
+          { _key: 'b1', template: 'quote', value: { text: 'Hi' } },
+          { _key: 'b2', _type: 'quote', text: 'Hi' },
+        ],
+      }),
+    ).toEqual([])
+    expect(
+      findUnknownKeys(schema, {
+        ...validData,
+        blocks: [{ _key: 'b2', _type: 'quote', text: 'Hi', attribution: 'stale' }],
+      }),
+    ).toEqual(['blocks[0].attribution'])
   })
 
   it('treats an inline group as transparent, reporting at the parent level', () => {

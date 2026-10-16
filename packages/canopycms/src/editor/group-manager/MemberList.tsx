@@ -1,27 +1,19 @@
 'use client'
 
-import React from 'react'
-import {
-  ActionIcon,
-  Badge,
-  Button,
-  Group,
-  Loader,
-  Paper,
-  Stack,
-  Text,
-  TextInput,
-} from '@mantine/core'
-import { IconSearch, IconX } from '@tabler/icons-react'
+import React, { useRef } from 'react'
+import { Button, Group, Loader, Paper, Stack, Text, TextInput } from '@mantine/core'
+import { IconSearch } from '@tabler/icons-react'
 import type { UserSearchResult, CanopyGroupId, CanopyUserId } from './types'
 import { UserBadge } from '../components/UserBadge'
+import { useFocusAfterRemove } from '../utils/focus-return'
 
 export interface MemberListProps {
   groupId: CanopyGroupId
   members: CanopyUserId[]
   onRemoveMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
   onAddMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
-  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** Names each member; an id never shows as the label, since an unresolved one reads "Name unavailable". */
+  onGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
   showUserSearch: boolean
   searchQuery: string
   searchResults: UserSearchResult[]
@@ -49,6 +41,13 @@ export const MemberList: React.FC<MemberListProps> = ({
   onHideSearch,
   canSearch,
 }) => {
+  const { listRef, focusAfterRemove } = useFocusAfterRemove()
+  const addMemberRef = useRef<HTMLButtonElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const headingRef = useRef<HTMLParagraphElement>(null)
+  // With no member left, focus goes to whichever of these the section shows and can focus.
+  const emptyListFocus = showUserSearch ? searchInputRef : canSearch ? addMemberRef : headingRef
+
   const handleAddMember = (userId: CanopyUserId) => {
     onAddMember(groupId, userId)
     onHideSearch()
@@ -56,46 +55,28 @@ export const MemberList: React.FC<MemberListProps> = ({
 
   return (
     <div>
-      <Text size="xs" fw={500} mb={4}>
+      <Text size="xs" fw={500} mb={4} ref={headingRef} tabIndex={-1}>
         Members
       </Text>
-      <Group gap="xs" mb="xs">
+      <Group gap="xs" mb="xs" ref={listRef}>
         {members.length > 0 ? (
-          members.map((userId) =>
-            onGetUserMetadata ? (
-              <UserBadge
-                key={userId}
-                userId={userId}
-                getUserMetadata={onGetUserMetadata}
-                variant="avatar-name"
-                size="xs"
-                badgeVariant="filled"
-                color="blue"
-                onRemove={() => onRemoveMember(groupId, userId)}
-                showEmailTooltip={true}
-              />
-            ) : (
-              <Badge
-                key={userId}
-                variant="filled"
-                color="blue"
-                pr={3}
-                rightSection={
-                  <ActionIcon
-                    size="xs"
-                    color="blue"
-                    radius="xl"
-                    variant="transparent"
-                    onClick={() => onRemoveMember(groupId, userId)}
-                  >
-                    <IconX size={10} style={{ color: 'white' }} />
-                  </ActionIcon>
-                }
-              >
-                {userId}
-              </Badge>
-            ),
-          )
+          members.map((userId, index) => (
+            <UserBadge
+              key={userId}
+              userId={userId}
+              getUserMetadata={onGetUserMetadata}
+              variant="avatar-name"
+              size="xs"
+              badgeVariant="light"
+              color="blue"
+              onRemove={() => {
+                onRemoveMember(groupId, userId)
+                focusAfterRemove(index, emptyListFocus)
+              }}
+              showEmailTooltip={true}
+              revealIdOnFallback
+            />
+          ))
         ) : (
           <Text size="xs" c="dimmed">
             No members
@@ -103,11 +84,11 @@ export const MemberList: React.FC<MemberListProps> = ({
         )}
       </Group>
 
-      {/* Add member search panel */}
       {showUserSearch ? (
         <Paper withBorder p="sm" mt="xs">
           <Stack gap="xs">
             <TextInput
+              ref={searchInputRef}
               placeholder="Search users by name or email..."
               value={searchQuery}
               onChange={(e) => onSearchQueryChange(e.target.value)}
@@ -116,7 +97,7 @@ export const MemberList: React.FC<MemberListProps> = ({
             />
             {isSearching && <Loader size="xs" />}
             {searchError && (
-              <Text size="xs" c="red">
+              <Text size="xs" c="var(--canopy-danger-text)">
                 {searchError}
               </Text>
             )}
@@ -130,25 +111,14 @@ export const MemberList: React.FC<MemberListProps> = ({
                     style={{ cursor: 'pointer' }}
                     onClick={() => handleAddMember(user.id)}
                   >
-                    {onGetUserMetadata ? (
-                      <UserBadge
-                        userId={user.id}
-                        getUserMetadata={onGetUserMetadata}
-                        variant="full"
-                        size="sm"
-                        cachedUser={user}
-                        showEmailTooltip={false}
-                      />
-                    ) : (
-                      <>
-                        <Text size="sm" fw={500}>
-                          {user.name}
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          {user.email}
-                        </Text>
-                      </>
-                    )}
+                    <UserBadge
+                      userId={user.id}
+                      getUserMetadata={onGetUserMetadata}
+                      variant="full"
+                      size="sm"
+                      cachedUser={user}
+                      showEmailTooltip={false}
+                    />
                   </Paper>
                 ))}
               </Stack>
@@ -158,20 +128,20 @@ export const MemberList: React.FC<MemberListProps> = ({
                 No users found
               </Text>
             )}
-            <Button size="xs" variant="subtle" onClick={onHideSearch}>
+            <Button variant="subtle" onClick={onHideSearch}>
               Cancel
             </Button>
           </Stack>
         </Paper>
       ) : (
         <Button
-          size="xs"
+          ref={addMemberRef}
           variant="subtle"
           leftSection={<IconSearch size={14} />}
           onClick={onShowSearch}
           disabled={!canSearch}
         >
-          Add Member
+          Add member
         </Button>
       )}
     </div>

@@ -13,12 +13,11 @@ import {
 
 /**
  * E2E tests for the Group Manager and Permission Manager (Settings gear ->
- * "Manage Groups" / "Manage Permissions"): admin gating (D3), group CRUD
- * round trip (D1), and path-permission assignment round trip (D2).
+ * "Manage groups" / "Manage permissions"): admin gating (D3), group CRUD
+ * round trip (D1), path-permission assignment round trip (D2), and the
+ * discard confirm on closing with staged changes (D6).
  *
- * Selector strategy is documented in `../fixtures/settings-managers-page.ts`
- * — neither module carries `data-testid`s, so every locator here is
- * role/text based and was confirmed against the component source.
+ * Selector strategy is documented in `../fixtures/settings-managers-page.ts`.
  */
 test.describe('Permissions and Groups', () => {
   let editorPage: EditorPage
@@ -31,63 +30,52 @@ test.describe('Permissions and Groups', () => {
     await test.step('switch user', () => switchUser(page, 'admin'))
   })
 
-  test('D3: Settings menu items open their drawers for an admin; the underlying APIs 403 for a non-admin', async ({
+  test('D3: admin surfaces are offered to an admin only; the underlying APIs 403 for a non-admin', async ({
     page,
   }) => {
+    const groupManager = new GroupManagerPage(page)
+    const permissionManager = new PermissionManagerPage(page)
+
     await test.step('open editor as admin', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
     })
 
     await test.step('as admin: both menu items are present and open their drawers', async () => {
-      await page.getByRole('button', { name: 'Settings' }).click()
-      await expect(page.getByRole('menuitem', { name: 'Manage Permissions' })).toBeVisible()
-      await expect(page.getByRole('menuitem', { name: 'Manage Groups' })).toBeVisible()
+      await editorPage.openSettingsMenu()
+      await expect(editorPage.settingsMenuItem('Permissions')).toBeVisible()
+      await expect(editorPage.settingsMenuItem('Groups')).toBeVisible()
 
-      await page.getByRole('menuitem', { name: 'Manage Permissions' }).click()
-      const permissionsDrawer = page.getByRole('dialog', { name: 'Permissions' })
+      await editorPage.settingsMenuItem('Permissions').click()
+      const permissionsDrawer = permissionManager.drawer
       await expect(permissionsDrawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
-      await expect(permissionsDrawer.getByRole('button', { name: 'Expand All' })).toBeVisible()
-      await page.keyboard.press('Escape')
-      await expect(permissionsDrawer).toBeHidden({ timeout: SHORT_TIMEOUT })
+      await expect(permissionsDrawer.getByRole('button', { name: 'Expand all' })).toBeVisible()
+      await permissionManager.close()
 
-      await page.getByRole('button', { name: 'Settings' }).click()
-      await page.getByRole('menuitem', { name: 'Manage Groups' }).click()
-      const groupsDrawer = page.getByRole('dialog', { name: 'Groups' })
-      await expect(groupsDrawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
-      await expect(groupsDrawer.getByRole('tab', { name: 'Internal Groups' })).toBeVisible()
-      await page.keyboard.press('Escape')
-      await expect(groupsDrawer).toBeHidden({ timeout: SHORT_TIMEOUT })
+      await groupManager.open()
+      const groupsDrawer = groupManager.drawer
+      await expect(groupsDrawer.getByRole('tab', { name: 'Internal groups' })).toBeVisible()
+      await groupManager.close()
     })
 
-    // NOTE (checked against source, not assumed): unlike "System health" —
-    // whose menu item Editor.tsx renders only when `isAdmin(userContext?.groups)`
-    // is true (`onSystemHealthOpen={showSystemHealth ? ... : undefined}`) —
-    // EditorSidebar's `onPermissionManagerOpen`/`onGroupManagerOpen` are wired
-    // unconditionally (Editor.tsx), and both managers are instantiated with
-    // `canEdit={true}` hardcoded rather than derived from the viewer's role.
-    // So for a non-admin the menu items stay visible and the drawers open;
-    // what actually protects the data is the server-side `guards: ['admin']`
-    // on the GET/PUT routes, which the client-side load surfaces only as a
-    // generic "Failed to load..." notification, not an access-denied message.
-    await test.step('as editor: menu items are still rendered and drawers still open (no client-side admin gate)', async () => {
+    await test.step('as editor: no admin menu items, and no collection admin actions', async () => {
       await switchUser(page, 'editor')
       await page.reload()
       await editorPage.waitForReady()
 
-      await page.getByRole('button', { name: 'Settings' }).click()
-      await expect(page.getByRole('menuitem', { name: 'Manage Permissions' })).toBeVisible()
-      await expect(page.getByRole('menuitem', { name: 'Manage Groups' })).toBeVisible()
+      await editorPage.openSettingsMenu()
+      await expect(editorPage.settingsMenuItem('About')).toBeVisible()
+      await expect(editorPage.settingsMenuItem('Permissions')).toHaveCount(0)
+      await expect(editorPage.settingsMenuItem('Groups')).toHaveCount(0)
+      await expect(editorPage.settingsMenuItem('System health')).toHaveCount(0)
+      await page.keyboard.press('Escape')
 
-      await page.getByRole('menuitem', { name: 'Manage Permissions' }).click()
-      const permissionsDrawer = page.getByRole('dialog', { name: 'Permissions' })
-      await expect(permissionsDrawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
-      // The drawer opens, but the load silently fails behind the scenes —
-      // this is the "truthful" behavior: no access-denied messaging, just a
-      // generic load failure (usePermissionManager.ts).
-      await expect(
-        page.locator('.mantine-Notification-root', { hasText: 'Failed to load permissions' }),
-      ).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await editorPage.openContentNavigator()
+      const items = await editorPage.collectionMenuItems('Posts')
+      await expect(items.filter({ hasText: 'Add entry…' })).toHaveCount(1)
+      for (const adminOnly of ['Add sub-collection…', 'Edit collection…', 'Delete collection']) {
+        await expect(items.filter({ hasText: adminOnly })).toHaveCount(0)
+      }
       await page.keyboard.press('Escape')
     })
 
@@ -120,7 +108,7 @@ test.describe('Permissions and Groups', () => {
       removeE2eGroupsViaApi(page))
 
     try {
-      await test.step('open editor and Manage Groups', async () => {
+      await test.step('open editor and Manage groups', async () => {
         await editorPage.goto()
         await editorPage.waitForReady()
         await groupManager.open()
@@ -166,6 +154,75 @@ test.describe('Permissions and Groups', () => {
     }
   })
 
+  test('D6: closing the group manager with a staged group asks first; keep editing keeps it, discard drops it', async ({
+    page,
+  }) => {
+    const groupName = `e2e-group-${Date.now()}-staged`
+    const groupManager = new GroupManagerPage(page)
+
+    await test.step('self-heal: remove e2e groups left by prior runs', () =>
+      removeE2eGroupsViaApi(page))
+
+    try {
+      await test.step('open editor and Manage groups', async () => {
+        // A short viewport makes the group list overflow, so the save bar is only in view if sticky.
+        await page.setViewportSize({ width: 1280, height: 600 })
+        await editorPage.goto()
+        await editorPage.waitForReady()
+        await groupManager.open()
+      })
+
+      await test.step('add a group: it is staged, marked unsaved, and the save bar is in view', async () => {
+        await groupManager.createGroup(groupName, 'Staged by permissions-groups.spec.ts (D6)')
+        await expect(
+          groupManager.groupCard(groupName).getByText('Unsaved', { exact: true }),
+        ).toBeVisible()
+        await expect(
+          groupManager.drawer.getByText('Unsaved changes', { exact: true }),
+        ).toBeVisible()
+        await expect(groupManager.saveButton).toBeInViewport()
+      })
+
+      await test.step('try to close: the discard confirm opens; "Keep editing" keeps the drawer and the group', async () => {
+        await page.keyboard.press('Escape')
+        await expect(groupManager.discardConfirm).toBeVisible({ timeout: SHORT_TIMEOUT })
+        await groupManager.discardConfirm.getByRole('button', { name: 'Keep editing' }).click()
+        await expect(groupManager.discardConfirm).toBeHidden({ timeout: SHORT_TIMEOUT })
+        await expect(groupManager.drawer).toBeVisible()
+        await expect(groupManager.groupEntry(groupName)).toBeVisible()
+      })
+
+      await test.step('try to close again and discard: the drawer closes and the group is gone on reopen', async () => {
+        await page.keyboard.press('Escape')
+        await expect(groupManager.discardConfirm).toBeVisible({ timeout: SHORT_TIMEOUT })
+        await groupManager.discardConfirm
+          .getByRole('button', { name: 'Discard changes', exact: true })
+          .click()
+        await expect(groupManager.drawer).toBeHidden({ timeout: SHORT_TIMEOUT })
+
+        await groupManager.open()
+        await expect(
+          groupManager.drawer.getByRole('tab', { name: 'Internal groups' }),
+        ).toBeVisible()
+        await expect(groupManager.groupEntry(groupName)).toBeHidden()
+      })
+
+      await test.step('nothing reached the server', async () => {
+        const res = await page.request.get('/api/canopycms/groups/internal', {
+          headers: { 'X-Test-User': 'admin' },
+        })
+        expect(res.status()).toBe(200)
+        const body = (await res.json()) as { data: { groups: Array<{ name: string }> } }
+        expect(body.data.groups.map((g) => g.name)).not.toContain(groupName)
+      })
+    } finally {
+      await test.step('cleanup: remove any e2e group (settings workspace is never reset)', () =>
+        removeE2eGroupsViaApi(page).catch((err) =>
+          console.warn('e2e group cleanup failed (state self-heals next run):', err),
+        ))
+    }
+  })
+
   test('D2: permission manager round trip — assign a group at a level, save, and verify persistence', async ({
     page,
   }) => {
@@ -180,7 +237,7 @@ test.describe('Permissions and Groups', () => {
     })
 
     try {
-      await test.step('open editor and Manage Permissions', async () => {
+      await test.step('open editor and Manage permissions', async () => {
         await editorPage.goto()
         await editorPage.waitForReady()
         await permissionManager.open()

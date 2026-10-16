@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-14, branch `feat/block-registry-types-and-recipes`, `integration-202608-b` epic) — adopter request #16, recipe + caveat documented. README's new "Shared / Referenced Blocks" section gives the full recipe (snippet-style entry type + one-field block template holding a `reference`); the `listEntries`-never-resolves-references caveat is called out in that section and again at the top of "Listing Entries". `apps/example1/app/schemas.ts` now wires one real shared-block reference, rendered null-safely in `PostView.tsx`. The underlying capability gap it left open — `listEntries` not resolving references at all — was **closed separately on `fix/list-entries-reference-resolution`** (opt-in `resolveReferences` on `listEntries` and `buildContentTree`); this row closed the documentation gap only
+---
 # Shared/referenced blocks mostly work — but `listEntries` never resolves them
 
 ## RESOLVED (2026-08-14, branch `feat/block-registry-types-and-recipes`, `integration-202608-b` epic)

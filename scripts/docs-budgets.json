@@ -1,5 +1,5 @@
 {
-  "$comment": "Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: words and maxSectionWords are written as actual plus the margin, historyMarkers as the actual count, and a write that would raise any existing number is refused without --allow-raise. historyMarkers: null means that file is a dated changelog whose markers are not checked; the null is kept across rewrites.",
+  "$comment": "Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: words and maxSectionWords are written as actual plus the margin, historyMarkers as the actual count, and a write that would raise any existing number is refused without --allow-raise. Raise one file with `--write-baseline --only <file> --allow-raise`: it leaves every other entry alone and raises only the numbers that file has outgrown: word counts to the count plus 2% (at least 10 and at most 40 words), historyMarkers to the count. historyMarkers: null with maxEntryWords marks a dated changelog: its markers, total and sections are not checked, each ### entry under ## Unreleased is capped at maxEntryWords, and the entry is kept as written across rewrites.",
   "files": {
     ".claude/agents/branch-review.md": {
       "historyMarkers": 0,
@@ -56,6 +56,11 @@
       "maxSectionWords": 180,
       "words": 518
     },
+    ".claude/agents/ux-review.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 164,
+      "words": 627
+    },
     "AGENTS.md": {
       "historyMarkers": 0,
       "maxSectionWords": 333,
@@ -64,37 +69,41 @@
     "ARCHITECTURE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 2901,
-      "words": 23940
+      "words": 24520
+    },
+    "CHANGELOG.md": {
+      "historyMarkers": null,
+      "maxEntryWords": 275
     },
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 744,
-      "words": 4119
+      "maxSectionWords": 839,
+      "words": 4425
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 5580,
-      "words": 12986
+      "maxSectionWords": 5597,
+      "words": 13498
     },
     "README.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 4772,
-      "words": 15186
-    },
-    "docs/adopter-migration.md": {
-      "historyMarkers": null,
-      "maxSectionWords": 9591,
-      "words": 14629
+      "maxSectionWords": 4969,
+      "words": 16664
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 1280,
-      "words": 5486
+      "maxSectionWords": 1466,
+      "words": 5865
     },
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 1766,
-      "words": 9180
+      "maxSectionWords": 1820,
+      "words": 12292
+    },
+    "docs/ux-guidelines.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 298,
+      "words": 2139
     },
     "packages/canopycms/src/AGENTS.md": {
       "historyMarkers": 0,
@@ -103,8 +112,8 @@
     },
     "packages/canopycms/src/ai/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 243,
-      "words": 276
+      "maxSectionWords": 281,
+      "words": 313
     },
     "packages/canopycms/src/api/AGENTS.md": {
       "historyMarkers": 0,
@@ -113,7 +122,7 @@
     },
     "packages/canopycms/src/assets/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 136,
+      "maxSectionWords": 68,
       "words": 173
     },
     "packages/canopycms/src/authorization/AGENTS.md": {
@@ -123,18 +132,18 @@
     },
     "packages/canopycms/src/build/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 271,
-      "words": 308
+      "maxSectionWords": 284,
+      "words": 320
     },
     "packages/canopycms/src/cli/AGENTS.md": {
       "historyMarkers": 0,
       "maxSectionWords": 158,
-      "words": 267
+      "words": 259
     },
     "packages/canopycms/src/editor/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 81,
-      "words": 459
+      "maxSectionWords": 88,
+      "words": 467
     },
     "packages/canopycms/src/editor/hooks/README.md": {
       "historyMarkers": 0,
@@ -158,8 +167,8 @@
     },
     "packages/canopycms/src/utils/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 170,
-      "words": 206
+      "maxSectionWords": 191,
+      "words": 227
     },
     "packages/canopycms/src/validation/AGENTS.md": {
       "historyMarkers": 0,
@@ -168,8 +177,8 @@
     },
     "packages/canopycms/src/worker/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 220,
-      "words": 531
+      "maxSectionWords": 330,
+      "words": 789
     }
   }
 }

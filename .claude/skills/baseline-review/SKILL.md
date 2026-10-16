@@ -155,6 +155,6 @@ Produce a single consolidated report with:
 7. **Positive observations**: Things the codebase does well (important for calibration)
 
 Write this report to `docs/reviews/<YYYY-MM>.md` (e.g. `docs/reviews/2026-09.md`).
-**Never overwrite an existing report** — prior reports are cited by `.claude/future-tasks/` files as
+**Never overwrite an existing report** — prior reports are cited by issues and by `.claude/future-tasks/resolved/` as
 historical records. If a report for the current month already exists, append a dated re-verification
 section to it rather than replacing it.

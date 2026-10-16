@@ -1,3 +1,8 @@
+---
+adopters: NEITHER
+summary: >-
+  RESOLVED (2026-08-21, branch `fix/example1-build-gate`, epic `adopter-request-intake`) — `apps/example1` is now built in CI by a new path-gated `example1-build` job, and the build's exit code is deliberately NOT trusted: `build-verify.test.ts` asserts the emitted `.next/server/app/index.html` contains the home entry's real hero title (not an empty not-found-boundary shell) and `sitemap.xml.body` advertises `/` while never advertising the stale `/home`. Both halves of the historical bug were reproduced and confirmed to turn the suite red, then reverted. Duplicate-URL collisions are deliberately not re-checked separately — `assertNoDuplicateUrlPaths` already runs during a normal `next build` via the sitemap and static-params calls, so a real collision already fails the build. **Found while proving the gate fails correctly, not anticipated by the original filing:** this app's `mode: 'dev'` base-branch resolution falls back to `main` under a detached HEAD — true for its BUILD-TIME read, not only a request-time one — so the CI job must attach HEAD to a real branch pointing at the checked-out commit (`git checkout -B main`, same fix `apps/dual-build-fixture` already uses) or it silently builds against the wrong content and the gate means nothing
+---
 # `apps/example1` is never built in CI — a broken reference app ships green
 
 **RESOLVED** (2026-08-21, branch `fix/example1-build-gate`, epic `adopter-request-intake`) — see

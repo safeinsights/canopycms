@@ -5,10 +5,16 @@ import os from 'node:os'
 import { BranchSchemaCache } from './branch-schema-cache'
 import type { FieldConfig } from './config'
 import type { OperatingMode } from './operating-mode'
-import type { EntrySchemaRegistry, SchemaResolutionResult } from './schema/types'
+import type {
+  EntrySchemaRegistry,
+  SchemaResolutionResult,
+  UnknownSchemaPolicy,
+} from './schema/types'
 import { invalidateBranchContentCaches } from './content-index-generation'
 import { resourceGenerationPath, readResourceGeneration } from './resource-generation'
 import { initTestRepo } from './test-utils'
+import { registryFingerprint } from './schema/registry-fingerprint'
+import { resetCanopyLogger, setCanopyLogger } from './utils/logger'
 
 /** Test subclass exposing a resolve counter, for asserting cache-hit/miss behavior. */
 class CountingBranchSchemaCache extends BranchSchemaCache {
@@ -17,9 +23,10 @@ class CountingBranchSchemaCache extends BranchSchemaCache {
   protected async resolveFresh(
     contentRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
+    unknownSchema: UnknownSchemaPolicy,
   ): Promise<SchemaResolutionResult> {
     this.resolveCount++
-    return super.resolveFresh(contentRoot, entrySchemaRegistry)
+    return super.resolveFresh(contentRoot, entrySchemaRegistry, unknownSchema)
   }
 }
 
@@ -53,8 +60,9 @@ class BlockingBranchSchemaCache extends BranchSchemaCache {
   protected async resolveFresh(
     contentRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
+    unknownSchema: UnknownSchemaPolicy,
   ): Promise<SchemaResolutionResult> {
-    const result = await super.resolveFresh(contentRoot, entrySchemaRegistry)
+    const result = await super.resolveFresh(contentRoot, entrySchemaRegistry, unknownSchema)
     this.resolveResolved()
     await this.gate
     return result
@@ -148,7 +156,7 @@ describe('BranchSchemaCache', () => {
       // Verify cache structure
       const cacheContent = await fs.readFile(cachePath, 'utf-8')
       const cache = JSON.parse(cacheContent)
-      expect(cache.version).toBe(3)
+      expect(cache.version).toBe(4)
       expect(cache.schema).toBeDefined()
       expect(cache.flatSchema).toBeDefined()
       expect(cache.cachedAt).toBeDefined()
@@ -386,7 +394,7 @@ describe('BranchSchemaCache', () => {
       expect(result.schema.label).toBe('Root') // re-resolved from disk, not the stale v2 blob
 
       const cache = JSON.parse(await fs.readFile(cachePath, 'utf-8'))
-      expect(cache.version).toBe(3)
+      expect(cache.version).toBe(4)
     })
 
     it('serves a fresh resolve but does not persist when the marker is unreadable', async () => {
@@ -489,11 +497,13 @@ describe('BranchSchemaCache', () => {
       await fs.writeFile(
         cachePath,
         JSON.stringify({
-          version: 3,
+          version: 4,
           schema: { label: 'Foreign stale snapshot', entries: [] },
           flatSchema: [],
           cachedAt: new Date().toISOString(),
           generation: t1Read.token,
+          registryFingerprint: registryFingerprint(entrySchemaRegistry),
+          issues: [],
         }),
       )
 
@@ -601,11 +611,13 @@ describe('BranchSchemaCache', () => {
       // And a schema cache built before the call is now stale.
       const registry = new CountingBranchSchemaCache('prod')
       const cache: import('./branch-schema-cache').BranchSchemaCacheEntry = {
-        version: 3,
+        version: 4,
         schema: { label: 'Pre-existing', entries: [] },
         flatSchema: [],
         cachedAt: new Date().toISOString(),
         generation: null,
+        registryFingerprint: registryFingerprint(entrySchemaRegistry),
+        issues: [],
       }
       await fs.mkdir(path.dirname(cachePath), { recursive: true })
       await fs.writeFile(cachePath, JSON.stringify(cache))
@@ -616,11 +628,21 @@ describe('BranchSchemaCache', () => {
     })
   })
 
-  // A reference field scoped to an entry type that does not exist used to
-  // resolve silently and then return zero options at runtime, with nothing
-  // pointing at the misspelling. Validated here, at the same point the schema
-  // is already rejected for having no content, and before anything is cached.
+  /** Run `fn` with process.cwd() at branchRoot: the checkout, as a build or static deploy reads it. */
+  const atCheckout = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(branchRoot)
+    try {
+      return await fn()
+    } finally {
+      cwdSpy.mockRestore()
+    }
+  }
+
   describe('reference entryTypes validation', () => {
+    // Degraded resolves log their issues; captured here so tests that do not assert on them stay quiet.
+    beforeEach(() => setCanopyLogger({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }))
+    afterEach(() => resetCanopyLogger())
+
     const registryWithReference: Record<string, readonly FieldConfig[]> = {
       pageSchema: [
         { name: 'title', type: 'string', label: 'Title' },
@@ -628,27 +650,35 @@ describe('BranchSchemaCache', () => {
       ],
     }
 
-    it('rejects a schema whose reference field names an unknown entry type', async () => {
+    it('rejects, at the checkout, a schema whose reference field names an unknown entry type', async () => {
       const registry = new BranchSchemaCache()
 
-      await expect(registry.getSchema(branchRoot, registryWithReference)).rejects.toThrow(
-        /entryType.*"pge"/s,
+      await atCheckout(() =>
+        expect(registry.getSchema(branchRoot, registryWithReference)).rejects.toThrow(
+          /entryType.*"pge"/s,
+        ),
       )
     })
 
     it('names the field and suggests the closest real entry type', async () => {
       const registry = new BranchSchemaCache()
 
-      await expect(registry.getSchema(branchRoot, registryWithReference)).rejects.toThrow(
-        /Did you mean "page"\?/,
+      await atCheckout(() =>
+        expect(registry.getSchema(branchRoot, registryWithReference)).rejects.toThrow(
+          /Did you mean "page"\?/,
+        ),
       )
     })
 
-    it('does not persist a cache entry for an invalid schema', async () => {
+    it('reports it as an issue in a branch workspace instead of failing the schema', async () => {
       const registry = new BranchSchemaCache()
 
-      await expect(registry.getSchema(branchRoot, registryWithReference)).rejects.toThrow()
-      await expect(fs.stat(cachePath)).rejects.toThrow()
+      const result = await registry.getSchema(branchRoot, registryWithReference)
+
+      expect(result.schema.entries?.[0].name).toBe('page')
+      expect(result.issues).toEqual([
+        { kind: 'reference-entry-type', message: expect.stringMatching(/entryType "pge"/) },
+      ])
     })
 
     it('still resolves when the entryType exists', async () => {
@@ -661,6 +691,181 @@ describe('BranchSchemaCache', () => {
         ],
       })
       expect(result.schema.label).toBe('Root')
+      expect(result.issues).toEqual([])
+    })
+  })
+
+  // A merge can sync content naming a schema into a workspace before the image defining it is
+  // live; that must cost one entry type, not the branch's whole schema.
+  describe('unknown entry schema', () => {
+    // Degraded resolves log their issues; captured here so tests that do not assert on them stay quiet.
+    beforeEach(() => setCanopyLogger({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }))
+    afterEach(() => resetCanopyLogger())
+
+    const writeMetaNaming = (schema: string) =>
+      fs.writeFile(
+        collectionPath,
+        JSON.stringify({
+          label: 'Root',
+          entries: [
+            { name: 'page', format: 'md', schema: 'pageSchema' },
+            { name: 'widget', format: 'json', schema },
+          ],
+          order: [],
+        }),
+        'utf-8',
+      )
+
+    it('marks only the entry type naming it unavailable, in a branch workspace', async () => {
+      await writeMetaNaming('widgetSchemaA')
+      const registry = new BranchSchemaCache('prod')
+
+      const result = await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+      const [page, widget] = result.schema.entries ?? []
+      expect(page.schema).toBe(entrySchemaRegistry.pageSchema)
+      expect(page.unavailable).toBeUndefined()
+      expect(widget).toMatchObject({
+        name: 'widget',
+        schema: [],
+        schemaRef: 'widgetSchemaA',
+        unavailable: {
+          reason: 'unknown-schema',
+          schemaRef: 'widgetSchemaA',
+          metaFile: '.collection.json',
+        },
+      })
+      const flatWidget = result.flatSchema.find((item) => item.name === 'widget')
+      expect(flatWidget?.type === 'entry-type' && flatWidget.unavailable?.schemaRef).toBe(
+        'widgetSchemaA',
+      )
+      expect(result.issues).toEqual([
+        expect.objectContaining({
+          kind: 'unknown-schema',
+          collectionPath: '',
+          entryType: 'widget',
+          schemaRef: 'widgetSchemaA',
+          metaFile: '.collection.json',
+        }),
+      ])
+    })
+
+    it('throws at the checkout, where code and content share a commit', async () => {
+      await writeMetaNaming('widgetSchemaB')
+      const registry = new BranchSchemaCache('prod')
+
+      await atCheckout(() =>
+        expect(registry.getSchema(branchRoot, entrySchemaRegistry)).rejects.toThrow(
+          /Schema reference "widgetSchemaB".*not found in registry/,
+        ),
+      )
+    })
+
+    it('logs each missing schema once per process, cached or not', async () => {
+      await writeMetaNaming('widgetSchemaC')
+      const warn = vi.fn()
+      setCanopyLogger({ log: vi.fn(), warn, error: vi.fn() })
+      try {
+        const registry = new CountingBranchSchemaCache('prod')
+        await registry.getSchema(branchRoot, entrySchemaRegistry)
+        await registry.getSchema(branchRoot, entrySchemaRegistry)
+        await new BranchSchemaCache('prod').resolveAndPersist(branchRoot, entrySchemaRegistry)
+
+        expect(registry.resolveCount).toBe(1) // the second read was the cached snapshot
+        const lines = warn.mock.calls.map((call) => String(call[0]))
+        expect(lines.filter((line) => line.includes('"widgetSchemaC"'))).toHaveLength(1)
+      } finally {
+        resetCanopyLogger()
+      }
+    })
+
+    it('logs the issues of a snapshot another process resolved', async () => {
+      const issue = {
+        kind: 'unknown-schema' as const,
+        collectionPath: '',
+        entryType: 'widget',
+        schemaRef: 'widgetSchemaE',
+        metaFile: '.collection.json',
+        message: 'not found in registry',
+      }
+      const snapshot: import('./branch-schema-cache').BranchSchemaCacheEntry = {
+        version: 4,
+        schema: { label: 'Resolved elsewhere', entries: [] },
+        flatSchema: [],
+        cachedAt: new Date().toISOString(),
+        generation: null,
+        registryFingerprint: registryFingerprint(entrySchemaRegistry),
+        issues: [issue],
+      }
+      await fs.mkdir(path.dirname(cachePath), { recursive: true })
+      await fs.writeFile(cachePath, JSON.stringify(snapshot))
+      const warn = vi.fn()
+      setCanopyLogger({ log: vi.fn(), warn, error: vi.fn() })
+      try {
+        const registry = new CountingBranchSchemaCache('prod')
+        const result = await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+        expect(registry.resolveCount).toBe(0)
+        expect(result.issues).toEqual([issue])
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('"widgetSchemaE"'))
+      } finally {
+        resetCanopyLogger()
+      }
+    })
+
+    it('recovers on the first read under an image whose registry defines it, with no marker bump', async () => {
+      await writeMetaNaming('widgetSchemaD')
+      const registry = new CountingBranchSchemaCache('prod')
+      const degraded = await registry.getSchema(branchRoot, entrySchemaRegistry)
+      expect(degraded.issues).toHaveLength(1)
+
+      const deployed = {
+        ...entrySchemaRegistry,
+        widgetSchemaD: [{ name: 'size', type: 'number', label: 'Size' }] as FieldConfig[],
+      }
+      const result = await registry.getSchema(branchRoot, deployed)
+
+      expect(registry.resolveCount).toBe(2)
+      expect(result.issues).toEqual([])
+      expect(result.schema.entries?.[1]).toMatchObject({
+        name: 'widget',
+        schema: deployed.widgetSchemaD,
+      })
+      expect(result.schema.entries?.[1].unavailable).toBeUndefined()
+    })
+  })
+
+  describe('registry fingerprint', () => {
+    // A deploy bumps no generation marker, so a snapshot must name the registry it was resolved
+    // against; otherwise a new image keeps validating saves against the old image's fields.
+    it('re-resolves when the registry changes with no marker bump', async () => {
+      const registry = new CountingBranchSchemaCache('prod')
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+      const changedFields = {
+        pageSchema: [
+          { name: 'title', type: 'string', label: 'Title' },
+          { name: 'summary', type: 'string', label: 'Summary' },
+        ] as FieldConfig[],
+      }
+      const result = await registry.getSchema(branchRoot, changedFields)
+
+      expect(registry.resolveCount).toBe(2)
+      const page = result.flatSchema.find((item) => item.type === 'entry-type')
+      expect(page?.type === 'entry-type' && page.schema.map((field) => field.name)).toEqual([
+        'title',
+        'summary',
+      ])
+    })
+
+    it('serves the snapshot to an equal registry built separately, as on another cold start', async () => {
+      const registry = new CountingBranchSchemaCache('prod')
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+      const coldStart = JSON.parse(JSON.stringify(entrySchemaRegistry)) as EntrySchemaRegistry
+      await registry.getSchema(branchRoot, coldStart)
+
+      expect(registry.resolveCount).toBe(1)
     })
   })
 })

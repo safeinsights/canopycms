@@ -11,6 +11,7 @@ import {
   ensureMainBranch,
   createBranchViaAPI,
   submitBranchViaAPI,
+  saveHomeChangeViaAPI,
   approveBranchViaAPI,
 } from '../fixtures/test-workspace'
 import {
@@ -24,6 +25,9 @@ import {
   bumpBranchRegistry,
   TRASH_NAME_RE,
   CORRUPT_ARCHIVE_RE,
+  POSTS_COLLECTION_DIR,
+  seedDuplicateContentId,
+  listPostsCollectionFiles,
 } from '../fixtures/admin-workspace'
 
 /** Navigate to the editor, open System health, and land on the loaded Branches tab. */
@@ -96,16 +100,16 @@ test.describe('Admin Branch Health', () => {
 
     const mainRow = adminPage.branchRow('main')
     await expect(mainRow).toBeVisible()
-    await expect(mainRow).toContainText('editing')
+    await expect(mainRow).toContainText('Editing')
 
     const baseDirName = await getBaseBranchDirName(page)
     const baseRow = adminPage.branchRow(baseDirName)
     await expect(baseRow).toBeVisible()
-    await expect(baseRow.getByText('base')).toBeVisible()
+    await expect(baseRow.getByText('Base', { exact: true })).toBeVisible()
 
     const branchRow = adminPage.branchRow(branchName)
     await expect(branchRow).toBeVisible()
-    await expect(branchRow).toContainText('editing')
+    await expect(branchRow).toContainText('Editing')
   })
 
   test('corrupt metadata repairs to editing/current-admin; registry quarantines it in the meantime (B9)', async ({
@@ -115,7 +119,7 @@ test.describe('Admin Branch Health', () => {
     await seedCorruptBranchDir(dirName)
 
     const adminPage = await openBranchesTab(page)
-    await expect(adminPage.branchRow(dirName)).toContainText('corrupt metadata')
+    await expect(adminPage.branchRow(dirName)).toContainText('Corrupt metadata')
 
     await test.step('B9: GET /branches still 200s and lists main despite the corrupt dir', async () => {
       const res = await page.request.get('/api/canopycms/branches', {
@@ -163,7 +167,7 @@ test.describe('Admin Branch Health', () => {
     await seedOrphanBranchDir(dirName, 20 * 60_000)
 
     const adminPage = await openBranchesTab(page)
-    await expect(adminPage.branchRow(dirName)).toContainText('orphan')
+    await expect(adminPage.branchRow(dirName)).toContainText('Orphan')
 
     await adminPage.purgeDirButton(dirName).click()
     await adminPage.confirmDialog('Purge directory', 'Purge')
@@ -196,7 +200,9 @@ test.describe('Admin Branch Health', () => {
     await expect(purgeButton).toBeDisabled()
 
     await purgeButton.hover()
-    await expect(page.getByText('May be a clone in progress')).toBeVisible()
+    await expect(
+      page.getByText('This may be a clone in progress. Try again in a few minutes.'),
+    ).toBeVisible()
   })
 
   test('the base branch can never be purged: healthy row has no control; corrupt row disables it; API 400s', async ({
@@ -206,7 +212,7 @@ test.describe('Admin Branch Health', () => {
     // 60s such calls set -- a local setTimeout would shrink headroom.
     const adminPage = await openBranchesTab(page)
     const baseDirName = await getBaseBranchDirName(page)
-    await expect(adminPage.branchRow(baseDirName)).toContainText('base')
+    await expect(adminPage.branchRow(baseDirName)).toContainText('Base')
     // A healthy row renders no Purge control at all -- purgeGateFor only
     // offers Purge for corrupt-metadata/orphan rows.
     await expect(adminPage.purgeDirButton(baseDirName)).toHaveCount(0)
@@ -223,14 +229,14 @@ test.describe('Admin Branch Health', () => {
         await fs.writeFile(metaPath, '{ this is not valid json', 'utf8')
         await bumpBranchRegistry()
         await refreshBranchesTab(adminPage)
-        await expect(adminPage.branchRow(baseDirName)).toContainText('corrupt metadata')
+        await expect(adminPage.branchRow(baseDirName)).toContainText('Corrupt metadata')
       })
 
       await test.step('UI rail: Purge renders but is disabled, with the base-branch tooltip', async () => {
         const purgeButton = adminPage.purgeDirButton(baseDirName)
         await expect(purgeButton).toBeDisabled()
         await purgeButton.hover()
-        await expect(page.getByText('The base branch can never be purged')).toBeVisible()
+        await expect(page.getByText('The base branch can never be purged.')).toBeVisible()
       })
 
       await test.step('API rail: POST purge is refused with the base-branch 400', async () => {
@@ -281,6 +287,7 @@ test.describe('Admin Branch Health', () => {
   }) => {
     const branchName = `merge-approved-${Date.now()}`
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
+    await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
     const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
     expect(submitRes.ok).toBe(true)
     const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')
@@ -298,5 +305,60 @@ test.describe('Admin Branch Health', () => {
     // but the server only accepted 'submitted' and 400'd -- this is that
     // regression, end to end.
     await expect.poll(async () => (await readBranchMetadata(branchName)).status).toBe('archived')
+  })
+
+  test('duplicate content IDs: the badge opens its own confirmation; cancel changes nothing, confirm archives the duplicate', async ({
+    page,
+  }) => {
+    const branchName = `dup-ids-${Date.now()}`
+    await createBranchViaAPI(BASE_URL, branchName, 'admin')
+    const { keptFile, droppedFile } = await seedDuplicateContentId(branchName)
+    const repairRequests: string[] = []
+    page.on('request', (req) => {
+      if (req.url().includes('/repair-content-duplicates')) repairRequests.push(req.url())
+    })
+
+    const adminPage = await openBranchesTab(page)
+    const badge = adminPage.duplicateIdsBadge(branchName)
+    await expect(badge).toHaveText('1 duplicate ID')
+    const dialog = page.getByRole('dialog', { name: 'Fix duplicate content IDs' })
+
+    await test.step('the dialog names the kept and archived files; Cancel changes nothing', async () => {
+      await badge.click()
+      await expect(dialog).toBeVisible()
+      await expect(dialog).toContainText(`Keep: ${POSTS_COLLECTION_DIR}/${keptFile}`)
+      await expect(dialog).toContainText(`Archive: ${POSTS_COLLECTION_DIR}/${droppedFile}`)
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+      await expect(dialog).toBeHidden()
+
+      expect(repairRequests).toEqual([])
+      const files = await listPostsCollectionFiles(branchName)
+      expect(files).toEqual(expect.arrayContaining([keptFile, droppedFile]))
+      expect(files.some((f) => f.startsWith('.duplicate-content-id.'))).toBe(false)
+      await expect(badge).toBeVisible()
+    })
+
+    await test.step('Archive duplicates archives only the dropped file, and the badge clears', async () => {
+      await badge.click()
+      await adminPage.confirmDialog('Fix duplicate content IDs', 'Archive duplicates')
+
+      await expect.poll(() => repairRequests.length).toBe(1)
+      await expect
+        .poll(async () => {
+          const files = await listPostsCollectionFiles(branchName)
+          return {
+            kept: files.includes(keptFile),
+            dropped: files.includes(droppedFile),
+            archived: files.some(
+              (f) => f.startsWith('.duplicate-content-id.') && f.endsWith(droppedFile),
+            ),
+          }
+        })
+        .toEqual({ kept: true, dropped: false, archived: true })
+      await expect(badge).toHaveCount(0)
+      await expect(adminPage.panel.getByTestId('duplicate-id-summary')).toHaveText(
+        'No duplicate content IDs found.',
+      )
+    })
   })
 })

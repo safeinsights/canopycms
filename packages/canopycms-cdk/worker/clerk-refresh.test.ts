@@ -15,13 +15,17 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { refreshClerkCacheMock } = vi.hoisted(() => ({ refreshClerkCacheMock: vi.fn() }))
+const { refreshClerkCacheMock, fetchClerkSnapshotMock } = vi.hoisted(() => ({
+  refreshClerkCacheMock: vi.fn(),
+  fetchClerkSnapshotMock: vi.fn(),
+}))
 
 vi.mock('canopycms-auth-clerk/cache-writer', () => ({
   refreshClerkCache: refreshClerkCacheMock,
+  fetchClerkSnapshot: fetchClerkSnapshotMock,
 }))
 
-import { createClerkAuthCacheRefresher } from './clerk-refresh'
+import { createClerkAuthCacheRefresher, createClerkSnapshotFetcher } from './clerk-refresh'
 import type { ReactiveSecret } from './credential-refresh'
 
 /** An error shaped the way `@clerk/backend`'s `ClerkAPIResponseError` is. */
@@ -57,6 +61,7 @@ let errorSpy: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
   refreshClerkCacheMock.mockReset()
+  fetchClerkSnapshotMock.mockReset()
   // Swallowed rather than tolerated: `quietTestOutput.onConsoleLog` in
   // vitest.shared.ts THROWS on a write to stdout OR stderr under CI, which
   // leaves a GREEN test count and a non-zero exit. See secrets.test.ts's
@@ -228,5 +233,150 @@ describe('the circuit breaker', () => {
     // attempts per tick, which is what an unguarded retry would cost.
     expect(refreshClerkCacheMock).toHaveBeenCalledTimes(20)
     expect(secret.refresh).toHaveBeenCalledTimes(20)
+  })
+})
+
+describe('createClerkSnapshotFetcher: the gateway’s half, fetching what the worker writes', () => {
+  const snapshot = { users: [], groups: [], memberships: {} }
+
+  /** Every `secretKey` `fetchClerkSnapshot` was called with, in order. */
+  const fetchKeys = (): (string | undefined)[] =>
+    fetchClerkSnapshotMock.mock.calls.map(
+      (args: unknown[]) => (args[0] as { secretKey?: string }).secretKey,
+    )
+
+  it('builds no fetcher without a key', () => {
+    expect(createClerkSnapshotFetcher({ secret: fakeSecret(undefined) })).toBeUndefined()
+  })
+
+  it('returns the snapshot, fetched with the key and the organisations as groups', async () => {
+    fetchClerkSnapshotMock.mockResolvedValue(snapshot)
+    const secret = fakeSecret('sk_live_good')
+    const fetcher = createClerkSnapshotFetcher({ secret })!
+
+    await expect(fetcher()).resolves.toBe(snapshot)
+
+    expect(fetchClerkSnapshotMock).toHaveBeenCalledWith(
+      expect.objectContaining({ secretKey: 'sk_live_good', useOrganizationsAsGroups: true }),
+    )
+    expect(secret.refresh).not.toHaveBeenCalled()
+  })
+
+  it('hands its own warn to the fetch, so membership warnings leave through the gateway', async () => {
+    fetchClerkSnapshotMock.mockResolvedValue(snapshot)
+    const log = { warn: vi.fn(), error: vi.fn() }
+    const fetcher = createClerkSnapshotFetcher({ secret: fakeSecret('sk_live_good'), log })!
+
+    await fetcher()
+
+    expect(fetchClerkSnapshotMock.mock.calls[0][0].warn).toBe(log.warn)
+  })
+
+  it('reads the key per call rather than capturing it', async () => {
+    fetchClerkSnapshotMock.mockResolvedValue(snapshot)
+    const secret = fakeSecret('sk_live_first', 'sk_live_second')
+    const fetcher = createClerkSnapshotFetcher({ secret })!
+
+    await fetcher()
+    await secret.refresh()
+    await fetcher()
+
+    expect(fetchKeys()).toEqual(['sk_live_first', 'sk_live_second'])
+  })
+
+  it('throws when the key is gone at call time', async () => {
+    const fetcher = createClerkSnapshotFetcher({
+      secret: {
+        current: vi.fn().mockReturnValueOnce('sk_live_good').mockReturnValue(undefined),
+        refresh: vi.fn(),
+      },
+    })!
+
+    await expect(fetcher()).rejects.toThrow('No Clerk secret key is configured')
+    expect(fetchClerkSnapshotMock).not.toHaveBeenCalled()
+  })
+
+  it.each([401, 403])('retries once with the rotated key on a %s', async (status) => {
+    fetchClerkSnapshotMock.mockRejectedValueOnce(clerkError(status)).mockResolvedValueOnce(snapshot)
+    const secret = fakeSecret('sk_live_revoked', 'sk_live_rotated')
+    const fetcher = createClerkSnapshotFetcher({ secret })!
+
+    await expect(fetcher()).resolves.toBe(snapshot)
+
+    expect(fetchKeys()).toEqual(['sk_live_revoked', 'sk_live_rotated'])
+  })
+
+  it.each([
+    ['a 500', clerkError(500)],
+    ['a 404', clerkError(404)],
+    ['a network error', new Error('socket hang up')],
+  ])('never re-reads on %s', async (_label, failure) => {
+    fetchClerkSnapshotMock.mockRejectedValue(failure)
+    const secret = fakeSecret('sk_live_good', 'sk_live_rotated')
+    const fetcher = createClerkSnapshotFetcher({ secret })!
+
+    await expect(fetcher()).rejects.toBe(failure)
+
+    expect(secret.refresh).not.toHaveBeenCalled()
+    expect(fetchClerkSnapshotMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('rethrows the original rejection when the re-read fails, and logs the failure through its own log', async () => {
+    const rejection = clerkError(401, 'Unauthenticated')
+    fetchClerkSnapshotMock.mockRejectedValue(rejection)
+    const log = { warn: vi.fn(), error: vi.fn() }
+    const secret = {
+      current: () => 'sk_live_wrong',
+      refresh: vi.fn(async () => {
+        throw new Error('AccessDeniedException')
+      }),
+    }
+    const fetcher = createClerkSnapshotFetcher({ secret, log })!
+
+    await expect(fetcher()).rejects.toBe(rejection)
+
+    expect(fetchClerkSnapshotMock).toHaveBeenCalledTimes(1)
+    expect(log.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('AccessDeniedException'),
+    )
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('rethrows the original rejection when the re-read answers undefined', async () => {
+    const rejection = clerkError(403, 'Forbidden')
+    fetchClerkSnapshotMock.mockRejectedValue(rejection)
+    const secret = fakeSecret('sk_live_wrong')
+    const fetcher = createClerkSnapshotFetcher({ secret })!
+
+    await expect(fetcher()).rejects.toBe(rejection)
+
+    expect(secret.refresh).toHaveBeenCalledTimes(1)
+    expect(fetchClerkSnapshotMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retry a second rejection', async () => {
+    fetchClerkSnapshotMock.mockRejectedValue(clerkError(401, 'still wrong'))
+    const secret = fakeSecret('sk_live_wrong', 'sk_live_also_wrong')
+    const fetcher = createClerkSnapshotFetcher({ secret })!
+
+    await expect(fetcher()).rejects.toThrow('still wrong')
+
+    expect(fetchClerkSnapshotMock).toHaveBeenCalledTimes(2)
+    expect(secret.refresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('warns of the retry through its own log', async () => {
+    fetchClerkSnapshotMock.mockRejectedValueOnce(clerkError(401)).mockResolvedValueOnce(snapshot)
+    const log = { warn: vi.fn(), error: vi.fn() }
+    const fetcher = createClerkSnapshotFetcher({
+      secret: fakeSecret('sk_live_revoked', 'sk_live_rotated'),
+      log,
+    })!
+
+    await fetcher()
+
+    expect(log.warn).toHaveBeenCalledTimes(1)
+    expect(warnSpy).not.toHaveBeenCalled()
   })
 })

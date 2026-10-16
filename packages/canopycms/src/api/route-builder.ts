@@ -12,6 +12,13 @@
 import type { z } from 'zod'
 import type { ApiContext, ApiRequest } from './types'
 import { type GuardId, type ComputeGuardContext, executeGuards } from './guards'
+import type { BranchContext } from '../types'
+
+function isOkResponse(response: unknown): boolean {
+  return (
+    typeof response === 'object' && response !== null && 'ok' in response && response.ok === true
+  )
+}
 
 /**
  * Cast specification for branded types in mock data.
@@ -37,6 +44,10 @@ export interface RouteMetadata {
   defaultMockData?: unknown
   /** Casts to apply to mock data fields for branded types */
   mockDataCasts?: MockDataCasts
+  /** See `EndpointConfigBase['clientTimeout']`. */
+  clientTimeout?: 'long' | 'none'
+  /** See `EndpointConfigBase['readOnly']`. */
+  readOnly?: true
 }
 
 /**
@@ -140,6 +151,16 @@ interface EndpointConfigBase<
   mockDataCasts?: MockDataCasts
   /** See `RouteDefinition['bodyFormat']` above. */
   bodyFormat?: 'multipart'
+  /**
+   * The generated client's timeout for this endpoint, when not `standard`; see
+   * `REQUEST_TIMEOUT_MS` in request-deadline.ts.
+   */
+  clientTimeout?: 'long' | 'none'
+  /**
+   * A non-GET endpoint that changes nothing, such as a lookup taking its input in a body. Its
+   * timeout then says to try again rather than that it may have gone through (`ApiTimeoutError`).
+   */
+  readOnly?: true
 }
 
 /** Config for an endpoint without guards */
@@ -199,6 +220,8 @@ export function defineEndpoint(config: any): RouteDefinition<any, any, any> {
     responseTypeName: config.responseType,
     defaultMockData: config.defaultMockData,
     mockDataCasts: config.mockDataCasts,
+    clientTimeout: config.clientTimeout,
+    readOnly: config.readOnly,
   })
 
   // Convert path template to pattern array for router
@@ -249,6 +272,7 @@ export function defineEndpoint(config: any): RouteDefinition<any, any, any> {
   if (config.guards && config.guards.length > 0) {
     const guards = config.guards as readonly GuardId[]
     const guardedHandler = config.handler
+    const recordsEditor = guards.includes('writableBranch')
 
     handler = async (ctx: ApiContext, req: ApiRequest, ...args: unknown[]) => {
       // Extract params from args (first arg after ctx/req if present)
@@ -258,7 +282,19 @@ export function defineEndpoint(config: any): RouteDefinition<any, any, any> {
         return guardResult.response
       }
       // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
-      return (guardedHandler as Function)(guardResult.guardContext, ctx, req, ...args)
+      const response = await (guardedHandler as Function)(
+        guardResult.guardContext,
+        ctx,
+        req,
+        ...args,
+      )
+      // Every 'writableBranch' endpoint changes the branch's working tree, so one that succeeds
+      // makes its user an editor of the branch.
+      if (recordsEditor && isOkResponse(response)) {
+        const { branchContext } = guardResult.guardContext as { branchContext: BranchContext }
+        await ctx.services.recordBranchEditor(branchContext, req.user)
+      }
+      return response
     }
   } else {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

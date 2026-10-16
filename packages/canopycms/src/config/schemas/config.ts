@@ -8,6 +8,7 @@ import type { AuthPlugin } from '../../auth/plugin'
 import type { EntryLinkUrlResolver } from '../../entry-link-resolver'
 import type { EditorSignInProps, ValidateEntryHook } from '../types'
 import { relativePathSchema } from './collection'
+import { mdxAllowlistSchema } from './field'
 import { mediaSchema } from './media'
 import { previewPrefixSchema } from './url'
 
@@ -57,7 +58,6 @@ const devConfigSchema = z.object({
 
 const editorConfigSchema = z.object({
   title: z.string().optional(),
-  subtitle: z.string().optional(),
   theme: z.unknown().optional(),
   previewBase: z.record(z.union([z.string(), z.literal(false)])).optional(),
   previewPrefix: previewPrefixSchema.optional(),
@@ -82,8 +82,8 @@ export const CanopyConfigSchema = z
     defaultBranchAccess: defaultBranchAccessSchema,
     defaultPathAccess: defaultPathAccessSchema,
     // .optional() deliberately defeats defaultBaseBranchSchema's .default('main'):
-    // unset must stay undefined after parsing so dev mode can detect the fork
-    // point from git HEAD (see resolveBaseBranch in utils/git.ts).
+    // unset must stay undefined after parsing so dev and prod can detect the
+    // fork point (see resolveBaseBranch in utils/git.ts).
     defaultBaseBranch: defaultBaseBranchSchema.optional(),
     defaultActiveBranch: z.string().min(1).optional(),
     defaultRemoteName: defaultRemoteNameSchema.optional(),
@@ -112,10 +112,13 @@ export const CanopyConfigSchema = z
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
     basePath: basePathSchema,
+    unauthenticatedStatus: z.union([z.literal(401), z.literal(419)]).optional(),
+    danglingReferences: z.enum(['error', 'warn']).optional(),
     editor: editorConfigSchema.optional(),
     authPlugin: z.custom<AuthPlugin>().optional(),
     entryLinkUrl: z.custom<EntryLinkUrlResolver>().optional(),
     validateEntry: z.custom<ValidateEntryHook>().optional(),
+    mdxAllow: mdxAllowlistSchema.optional(),
     dev: devConfigSchema.optional(),
   })
   .strict()

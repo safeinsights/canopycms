@@ -179,6 +179,7 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
         getSchema: vi.fn().mockResolvedValue({
           schema: {},
           flatSchema: [],
+          issues: [],
         }),
         // SchemaOps.invalidateSchemaCache() calls resolveAndPersist() (not
         // getSchema()) for its eager post-mutation re-resolve -- see
@@ -188,6 +189,7 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
         resolveAndPersist: vi.fn().mockResolvedValue({
           schema: {},
           flatSchema: [],
+          issues: [],
         }),
         invalidate: vi.fn().mockResolvedValue(undefined),
       } as any),
@@ -207,13 +209,18 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
     githubService: options.githubService,
     bootstrapAdminIds: options.bootstrapAdminIds ?? new Set<string>(),
     commitFiles: options.commitFiles ?? vi.fn().mockResolvedValue(undefined),
-    submitBranch: options.submitBranch ?? vi.fn().mockResolvedValue({ changedPaths: [] }),
+    submitBranch:
+      options.submitBranch ??
+      vi.fn().mockResolvedValue({ changedPaths: [], editors: [], stamped: [] }),
     commitToSettingsBranch:
       options.commitToSettingsBranch ??
       vi.fn().mockResolvedValue({ committed: true, pushed: true }),
     getSettingsBranchRoot:
       options.getSettingsBranchRoot ?? vi.fn().mockResolvedValue('/mock/settings'),
     refreshActiveBranch: options.refreshActiveBranch ?? vi.fn().mockResolvedValue(undefined),
+    resolvePendingBaseBranch:
+      options.resolvePendingBaseBranch ?? vi.fn().mockResolvedValue(undefined),
+    recordBranchEditor: options.recordBranchEditor ?? vi.fn().mockResolvedValue(undefined),
   }
 }
 

@@ -1,3 +1,7 @@
+---
+summary: >-
+  Done 2026-09-08. `@clerk/nextjs` 6.39.5 -> 7.9.1 and `@clerk/backend` 2.33.5 -> 3.17.1, peers widened to `^6 || ^7` / `^2 || ^3`. **Both findings that made this look like design work were wrong**, and the file records the retraction: `verifyToken` was NOT removed (the guide's `verify()` consolidation is the machine-auth surface; the session-token option set is byte-identical across the majors), and `CLERK_ENCRYPTION_KEY` never reaches us (its throw is gated on an explicitly-passed `secretKey`, and our middleware template passes only `jwtKey`). Networkless PEM verification proven by execution with no network (`fetchCalls: 0`, wrong-key control rejected). One real code change: `ClerkProvider` moved inside `<body>` in example1. `clerkMiddleware` still requires a non-empty `secretKey` in 7.x, so [deploy-test-lambda-plaintext-clerk-secret.md](../deploy-test-lambda-plaintext-clerk-secret.md) is neither resolved nor worsened by this
+---
 # [P2] `@clerk/nextjs` is pinned to the 6.x major while 7.x is the active line
 
 Raised 2026-09-08 by the adopter building the SafeInsights site, alongside

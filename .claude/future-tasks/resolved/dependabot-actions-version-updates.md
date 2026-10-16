@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-09-11, JP's decision: Dependabot stays security-only for both ecosystems, and `.github/dependabot.yml` is unchanged. Actions pins move only when an annotation or advisory forces a manual sweep, as DEVELOPING.md's CI Workflow Conventions says. The file points the next sweep at the Node 20 fix's worked method and notes that a sweep must include the adopter deploy template and the example. Dependabot never scans those, and `lint:actions` checks only that they are SHA-pinned.
+---
 # [P3] RESOLVED — Nothing keeps GitHub Actions pins current — decide whether Dependabot should
 
 Filed 2026-09-11, alongside the fix in

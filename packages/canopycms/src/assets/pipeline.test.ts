@@ -354,25 +354,13 @@ describe('runFinalizePipeline - raster formats', () => {
   })
 
   it('accepts a valid animation with MORE frames than the cap - it is capped, not rejected', async () => {
-    // The OLD version of this test used 65 frames of 32x32 (animatedFrames'
-    // fixed size) - 66,560 total pixels, nowhere near MAX_INPUT_PIXELS
-    // (16,777,216) even read completely uncapped. Nothing distinguished
-    // "accepted because capped" from "accepted because an uncapped read fit
-    // too" - the test passed identically with the Math.min cap in
-    // rasterIsDecodable (pipeline.ts) deleted outright.
-    //
-    // This version picks a per-frame size where the arithmetic actually
-    // forces the distinction:
-    //   FRAMES = MAX_ANIMATED_FRAMES (60) + 5 = 65
-    //   SIZE   = 512
-    //   FRAMES * SIZE^2 = 65 * 512 * 512 = 17,039,360  > MAX_INPUT_PIXELS  (uncapped read: over budget)
-    //   MAX_ANIMATED_FRAMES * SIZE^2 = 60 * 512 * 512  = 15,728,640 <= MAX_INPUT_PIXELS  (capped read: fits)
-    //   SIZE^2 = 512 * 512 = 262,144 <= MAX_INPUT_PIXELS  (the caller's cheap single-frame header check still passes)
-    // So acceptance below can only be explained by the cap actually applying
-    // - an uncapped decode of these exact bytes is asserted to fail two
-    // lines down, before the behavior-under-test assertion even runs.
+    // SIZE is the largest square frame whose MAX_ANIMATED_FRAMES copies fit the pixel cap, so
+    // five more frames do not: acceptance below can only come from the frame cap. The uncapped
+    // decode asserted to fail below keeps the fixture honest.
     const FRAMES = MAX_ANIMATED_FRAMES + 5
-    const SIZE = 512
+    const SIZE = Math.floor(Math.sqrt(MAX_INPUT_PIXELS / MAX_ANIMATED_FRAMES))
+    expect(MAX_ANIMATED_FRAMES * SIZE * SIZE).toBeLessThanOrEqual(MAX_INPUT_PIXELS)
+    expect(FRAMES * SIZE * SIZE).toBeGreaterThan(MAX_INPUT_PIXELS)
     const gif = await makeLargeAnimatedGif(FRAMES, SIZE)
 
     // Sanity: the fixture really has the frame count and per-frame
@@ -405,7 +393,7 @@ describe('runFinalizePipeline - raster formats', () => {
   it('rejects a raster whose declared dimensions exceed the pixel-count cap (413), a decompression-bomb defense', async () => {
     // 30000x30000 = 900,000,000 pixels, comfortably within a 50 MiB byte cap
     // for a solid-color (highly compressible) real PNG, but far past
-    // MAX_INPUT_PIXELS (4096x4096 = 16,777,216). Header-only: this is
+    // MAX_INPUT_PIXELS. Header-only: this is
     // rejected by the cheap header-based pixel-count check before the real
     // decode check ever runs, so it never needs to be a genuine 900M-pixel
     // sharp image.
@@ -419,16 +407,23 @@ describe('runFinalizePipeline - raster formats', () => {
   })
 
   it('accepts a genuinely decodable raster right at the pixel-count cap boundary', async () => {
-    const atCap = Math.sqrt(MAX_INPUT_PIXELS)
-    expect(Number.isInteger(atCap)).toBe(true) // 4096x4096 - sanity-check the cap is a perfect square before relying on it below
+    expect(6000 * 4000).toBe(MAX_INPUT_PIXELS)
     const result = await runFinalizePipeline({
-      data: await makePng(atCap, atCap),
+      data: await makePng(6000, 4000),
       filename: 'ok.png',
     })
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.meta.width).toBe(atCap)
-    expect(result.meta.height).toBe(atCap)
+    expect(result.meta.width).toBe(6000)
+    expect(result.meta.height).toBe(4000)
+  })
+
+  it('rejects a genuinely decodable raster one row past the pixel-count cap (413)', async () => {
+    const result = await runFinalizePipeline({
+      data: await makePng(6000, 4001),
+      filename: 'over.png',
+    })
+    expect(result).toMatchObject({ ok: false, status: 413 })
   })
 
   it('rejects a raster over the defensive 50 MiB byte cap (413), independent of dimensions', async () => {

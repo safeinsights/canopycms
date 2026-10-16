@@ -8,6 +8,7 @@ export {
 
 export {
   AssetContextProvider,
+  authenticatedAssetBase,
   useAssetContext,
   type AssetContextValue,
   type AssetContextProviderProps,
@@ -16,3 +17,5 @@ export {
 export { SWRProvider, type SWRProviderProps } from './SWRProvider'
 
 export { useEditorLoading, useEditorModals, useEditorPreview } from './EditorStateContext'
+
+export { SiteMdxAllowContext, useSiteMdxAllow } from './SiteMdxAllowContext'

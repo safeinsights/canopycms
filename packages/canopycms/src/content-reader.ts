@@ -1,4 +1,5 @@
 import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
+import { SchemaUnavailableError } from './schema/schema-unavailable-error'
 import { ContentStore, ContentStoreError, type ReferenceTargetAccess } from './content-store'
 import {
   namesNoWorkspace,
@@ -9,7 +10,7 @@ import {
   type Slug,
 } from './paths'
 import { trimSlashes } from './paths/normalize'
-import { isIndexSlug } from './utils/entry-url'
+import { computeEntryUrl, isIndexSlug } from './utils/entry-url'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
@@ -17,6 +18,8 @@ import type { CanopyUser } from './user'
 import { isDeployedStatic, isBuildMode, readsFromCheckout } from './build-mode'
 import { isNotFoundError } from './utils/error'
 import { resolveEntryLinksInData } from './entry-link-resolver'
+import { baseBranchOf } from './utils/base-branch'
+import { CONTENT_READER_USER_ID } from './system-users'
 
 export interface ContentReaderOptions {
   services: CanopyServices
@@ -102,6 +105,10 @@ export interface ContentReadMeta {
    * `{type}.{slug}.{id}.{ext}`) -- see the `entryType` caveat above for what that implies.
    */
   entryId?: ContentId
+  /** The entry's slug within its collection, by the rule `listEntries` uses. */
+  slug: Slug
+  /** The entry's URL path with no query, by the rule `listEntries` uses. */
+  urlPath: string
 }
 
 export interface ContentReader {
@@ -110,6 +117,11 @@ export interface ContentReader {
     message?: string,
   ) => Promise<{
     data: T
+    /**
+     * The requested `entryPath` and slug as a percent-encoded URL path, plus `?branch=<name>`.
+     * Through an entry-type `entryPath` it is not the entry's URL. Compare entries by
+     * `meta.urlPath`.
+     */
     path: string
     meta: ContentReadMeta
   }>
@@ -124,12 +136,9 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const operatingMode: OperatingMode = services.config.mode
   const basePathOverride = options.basePathOverride
   const defaultBranch =
-    options.defaultBranch ??
-    services.config.defaultActiveBranch ??
-    services.config.defaultBaseBranch ??
-    'main'
+    options.defaultBranch ?? services.config.defaultActiveBranch ?? baseBranchOf(services.config)
   const allowCreateBranch = options.allowCreateBranch ?? false
-  const createdBy = options.createdBy ?? 'canopycms-content-reader'
+  const createdBy = options.createdBy ?? CONTENT_READER_USER_ID
 
   const resolveBranchContext = async (branchName: string): Promise<BranchContext> => {
     // Static deployments and builds read from the checkout: loadOrCreateBranchContext
@@ -245,7 +254,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     // deliberately does not resolve the former, so a caller linking `path` linked to a 404.
     // Same index decision as computeEntryUrl/listEntries/buildPreviewSrc, through the same
     // predicate. NOTE this builder still keeps its own content-root strip and its own encoding
-    // rather than delegating wholesale -- see .claude/future-tasks/default-build-path-url-rule-copy.md.
+    // rather than delegating wholesale -- see safeinsights/canopycms#646.
     const encodedSlug = isIndexSlug(opts.slug) ? '' : encodeSlug(opts.slug)
     const url = encodedSlug ? `${trimmed}/${encodedSlug}` : trimmed || '/'
     return appendBranch(url)
@@ -274,6 +283,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     // key by them without a separate listEntries lookup or filename parse.
     let entryType: string
     let entryId: ContentId | undefined
+    let urlPath: string
+    let resolvedSlug: Slug
     try {
       const resolved = await store.resolveDocumentPath(entryPath, slug ?? '')
       logicalPath = resolved.logicalPath
@@ -283,6 +294,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       // absent, for legacy entry files without an embedded ID (see ContentReadMeta).
       entryType = resolved.entryTypeName
       entryId = resolved.id as ContentId | undefined
+      resolvedSlug = resolved.slug
+      urlPath = computeEntryUrl(resolved.collectionPath, resolved.slug, contentRoot)
     } catch (err) {
       const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
       const code = err instanceof ContentStoreError ? err.code : 'VALIDATION'
@@ -335,9 +348,10 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
         resolveReferences: input.resolveReferences ?? true,
         referenceAccess,
       })
-      return { doc, store, physicalPath, entryType, entryId }
+      return { doc, store, physicalPath, entryType, entryId, slug: resolvedSlug, urlPath }
     } catch (err: unknown) {
-      if (isNotFoundError(err)) return null
+      // An entry of an unavailable type reads as absent, as adopter listings leave it out.
+      if (isNotFoundError(err) || err instanceof SchemaUnavailableError) return null
       throw err
     }
   }
@@ -352,7 +366,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const defaultMessage = `Content not found for ${entryPath}${slug ? `/${slug}` : ''} on branch ${branchName}`
       throw new ContentStoreError(message ?? defaultMessage, 'NOT_FOUND')
     }
-    const { doc, store, physicalPath, entryType, entryId } = result
+    const { doc, store, physicalPath, entryType, entryId, slug: entrySlug, urlPath } = result
 
     // For md/mdx format, merge the body into the data so callers get a complete object.
     // The field name comes from the schema's isBody flag (defaults to 'body').
@@ -372,7 +386,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       slug,
       branch: branchName,
     })
-    return { data, path, meta: { physicalPath, entryType, entryId } }
+    return { data, path, meta: { physicalPath, entryType, entryId, slug: entrySlug, urlPath } }
   }
 
   return { read }

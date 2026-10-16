@@ -1,6 +1,5 @@
 export type { ApiResponse, ApiRequest, ApiContext } from './types'
 export type {
-  BranchResponse,
   BranchListItemResponse,
   BranchListResponse,
   BranchDeleteResponse,
@@ -81,3 +80,5 @@ export { USER_ROUTES } from './user'
 // Export client
 export { CanopyApiClient, createApiClient } from './client'
 export type { ApiClientOptions } from './client'
+export { ApiTimeoutError, isApiTimeoutError } from './request-deadline'
+export type { RequestOptions } from './request-deadline'

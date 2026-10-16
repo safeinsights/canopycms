@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-13) — adversarial-review findings from the Workstream B epic that were not fixed in it. Its last open finding was `GitManager.forcePush`'s bare `--force-with-lease`, which cannot work in a tracking-ref-less clone; the method is now **deleted** (verified no production callers and not re-exported from any entrypoint or the `exports` map, so not a breaking change), which closes the finding outright rather than leaving a footgun documented as "safer". Every finding in the file is struck, so it moves here and its in-place merge-conflict note no longer applies — that note existed **because** the file still held open work
+---
 # Workstream B final-review findings not fixed in the epic
 
 Found by the adversarial review of the full `epic/canopy-hardening` diff

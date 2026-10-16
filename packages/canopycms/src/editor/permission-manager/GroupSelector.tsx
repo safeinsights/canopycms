@@ -35,7 +35,7 @@ export const GroupSelector: React.FC<GroupSelectorProps> = ({
           style={{
             width: '100%',
             padding: '4px 6px',
-            border: '1px solid var(--mantine-color-gray-4)',
+            border: '1px solid var(--canopy-input-border)',
             borderRadius: 'var(--mantine-radius-sm)',
             fontSize: '12px',
           }}
@@ -52,7 +52,7 @@ export const GroupSelector: React.FC<GroupSelectorProps> = ({
                   fontSize: '12px',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--mantine-color-gray-1)'
+                  e.currentTarget.style.backgroundColor = 'var(--mantine-color-default-hover)'
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.backgroundColor = 'transparent'

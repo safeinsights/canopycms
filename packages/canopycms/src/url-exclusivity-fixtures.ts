@@ -15,7 +15,7 @@
  * Scope of the invariant it checks: entries written in the `{type}.{slug}.{id}.{ext}` grammar
  * with a type their collection declares -- exactly the set `listEntries` can see. A legacy
  * untyped file (`overview.json`) is invisible to enumeration and is deliberately NOT probed here;
- * see `.claude/future-tasks/legacy-untyped-files-url-addressable.md`.
+ * see safeinsights/canopycms#728.
  */
 
 import { flattenSchema, type RootCollectionConfig } from './config'
@@ -89,6 +89,8 @@ export interface UrlExclusivityReport {
   unresolved: string[]
   /** Published URLs that resolved to some OTHER entry than the one that published them. */
   mismatched: Array<{ urlPath: string; expectedEntryId?: string; actualEntryId?: string }>
+  /** Published URLs whose read reports a `meta.slug` or `meta.urlPath` other than the listing's. */
+  misreported: Array<{ urlPath: string; slug: string; readSlug: string; readUrlPath: string }>
   /** Every adjacent URL probed, sorted. */
   probes: string[]
   /** Probes that resolved despite not being published -- the phantom URLs. Must be empty. */
@@ -113,11 +115,20 @@ export const collectUrlExclusivityReport = async (
 
   const unresolved: string[] = []
   const mismatched: UrlExclusivityReport['mismatched'] = []
+  const misreported: UrlExclusivityReport['misreported'] = []
   for (const item of items) {
     const result = await ctx.readByUrlPath(item.urlPath)
     if (!result) {
       unresolved.push(item.urlPath)
       continue
+    }
+    if (result.meta.slug !== item.slug || result.meta.urlPath !== item.urlPath) {
+      misreported.push({
+        urlPath: item.urlPath,
+        slug: item.slug,
+        readSlug: result.meta.slug,
+        readUrlPath: result.meta.urlPath,
+      })
     }
     if (result.meta.entryId !== item.entryId) {
       mismatched.push({
@@ -141,6 +152,7 @@ export const collectUrlExclusivityReport = async (
     duplicates: findDuplicateUrlPaths(items),
     unresolved: unresolved.sort(),
     mismatched,
+    misreported,
     probes: [...probes].sort(),
     phantoms: phantoms.sort(),
   }

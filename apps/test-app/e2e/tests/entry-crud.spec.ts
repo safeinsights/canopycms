@@ -1,9 +1,16 @@
+import fs from 'node:fs/promises'
 import { BASE_URL } from '../fixtures/base-url'
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
-import { resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
-import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
+import {
+  resetWorkspace,
+  ensureMainBranch,
+  findContentFile,
+  getContentFilePath,
+  readContentFile,
+} from '../fixtures/test-workspace'
+import { SHORT_TIMEOUT, STANDARD_TIMEOUT } from '../fixtures/timeouts'
 
 /**
  * E2E tests for entry CRUD operations.
@@ -28,50 +35,27 @@ test.describe('Entry CRUD Operations', () => {
     })
 
     await test.step('open entry navigator', async () => {
-      await editorPage.openEntryNavigator()
-      await expect(editorPage.entryNavigator).toBeVisible()
+      await editorPage.openContentNavigator()
+      await expect(editorPage.contentNavigator).toBeVisible()
     })
 
-    await test.step('open Posts collection menu and click Add Entry', async () => {
-      const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
-      await collectionMenuButton.waitFor({
-        state: 'visible',
-        timeout: STANDARD_TIMEOUT,
-      })
-      await collectionMenuButton.click()
-
-      const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
-      await addEntryItem.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-      await addEntryItem.click()
-    })
-
-    await test.step('fill in slug and submit', async () => {
-      const modal = page.locator('[data-testid="create-entry-modal"]')
-      await expect(modal).toBeVisible()
-
-      const slugInput = page.locator('[data-testid="entry-slug-input"]')
-      await slugInput.fill(testSlug)
-
-      const createButton = page.locator('[data-testid="create-entry-submit"]')
-      await createButton.click()
-
-      // Wait for modal to close (entry creation involves server-side file writes)
-      await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+    await test.step('create a Posts entry from the collection menu', async () => {
+      await editorPage.createEntry('Posts', testSlug, 'Post')
     })
 
     await test.step('verify new entry appears in navigator', async () => {
-      // The entry label comes from the entry type label ("Post"), not the slug.
+      // The entry label is the title typed into the create form, not the slug.
       // The Posts collection should be auto-expanded after creation.
-      const navItem = page.locator('[data-testid="entry-nav-item-post"]')
+      const navItem = editorPage.navigatorItem('Post')
       await expect(navItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
     })
 
     await test.step('reload and verify persistence', async () => {
       await page.reload()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
 
-      const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
+      const postsCollection = editorPage.navigatorItem('Posts')
       await postsCollection.waitFor({
         state: 'visible',
         timeout: STANDARD_TIMEOUT,
@@ -84,10 +68,10 @@ test.describe('Entry CRUD Operations', () => {
       // the collection collapsed and hide the entry we're asserting on. Give
       // auto-expand a short grace window (not an instant isVisible check) so
       // it can't land between the check and the click.
-      const navItem = page.locator('[data-testid="entry-nav-item-post"]')
+      const navItem = editorPage.navigatorItem('Post')
       await navItem
         .waitFor({ state: 'visible', timeout: 1500 })
-        .catch(() => postsCollection.click())
+        .catch(() => editorPage.toggleCollection('Posts'))
       await expect(navItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
     })
   })
@@ -99,71 +83,41 @@ test.describe('Entry CRUD Operations', () => {
     })
 
     await test.step('open entry navigator', async () => {
-      await editorPage.openEntryNavigator()
-      await expect(editorPage.entryNavigator).toBeVisible()
+      await editorPage.openContentNavigator()
+      await expect(editorPage.contentNavigator).toBeVisible()
     })
 
     await test.step('create a post entry (setup)', async () => {
-      const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
-      await collectionMenuButton.waitFor({
-        state: 'visible',
-        timeout: STANDARD_TIMEOUT,
-      })
-      await collectionMenuButton.click()
-
-      const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
-      await addEntryItem.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-      await addEntryItem.click()
-
-      const modal = page.locator('[data-testid="create-entry-modal"]')
-      await expect(modal).toBeVisible()
-      await page.locator('[data-testid="entry-slug-input"]').fill('post-to-rename')
-      await page.locator('[data-testid="create-entry-submit"]').click()
-      await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+      await editorPage.createEntry('Posts', 'post-to-rename', 'Post')
 
       // Wait for entry to appear in navigator
-      await expect(page.locator('[data-testid="entry-nav-item-post"]')).toBeVisible({
+      await expect(editorPage.navigatorItem('Post')).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
     })
 
-    await test.step('open entry context menu and click Rename Entry', async () => {
-      const entryMenu = page.locator('[data-testid="entry-menu-post"]')
-      await entryMenu.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-      await entryMenu.click()
-
-      const renameItem = page.locator('[data-testid="rename-entry-menu-item"]')
-      await renameItem.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-      await renameItem.click()
-    })
-
-    await test.step('fill in new slug and submit', async () => {
-      const modal = page.locator('[data-testid="rename-entry-modal"]')
-      await expect(modal).toBeVisible()
-
-      // fill() replaces the pre-filled current slug
-      await page.locator('[data-testid="rename-slug-input"]').fill('renamed-post')
-      await page.locator('[data-testid="rename-entry-submit"]').click()
-
-      await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+    await test.step('rename the entry through its context menu', async () => {
+      await editorPage.renameEntry('Post', 'renamed-post')
     })
 
     await test.step('reload and verify renamed entry persists', async () => {
       await page.reload()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
-
-      // Expand the Posts collection (collapsed after reload)
-      const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
-      await postsCollection.waitFor({
+      // The renamed entry stays open across the reload, so the navigator opens expanded to it.
+      await expect(editorPage.currentEntryLabel()).toContainText('Post', {
+        timeout: STANDARD_TIMEOUT,
+      })
+      await editorPage.openContentNavigator()
+      await editorPage.navigatorItem('Posts').waitFor({
         state: 'visible',
         timeout: STANDARD_TIMEOUT,
       })
-      await postsCollection.click()
+      if (!(await editorPage.isCollectionExpanded('Posts'))) {
+        await editorPage.toggleCollection('Posts')
+      }
 
-      // Label stays "Post" (rename only changes slug, not the display label)
-      const navItem = page.locator('[data-testid="entry-nav-item-post"]')
-      await expect(navItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      // Label stays "Post" (rename only changes the slug, not the title)
+      await expect(editorPage.navigatorItem('Post')).toBeVisible({ timeout: STANDARD_TIMEOUT })
     })
   })
 
@@ -174,71 +128,175 @@ test.describe('Entry CRUD Operations', () => {
     })
 
     await test.step('open entry navigator', async () => {
-      await editorPage.openEntryNavigator()
-      await expect(editorPage.entryNavigator).toBeVisible()
+      await editorPage.openContentNavigator()
+      await expect(editorPage.contentNavigator).toBeVisible()
     })
 
     await test.step('create a post entry (setup)', async () => {
-      const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
-      await collectionMenuButton.waitFor({
-        state: 'visible',
-        timeout: STANDARD_TIMEOUT,
-      })
-      await collectionMenuButton.click()
+      await editorPage.createEntry('Posts', 'post-to-delete', 'Post')
 
-      const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
-      await addEntryItem.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-      await addEntryItem.click()
-
-      const createModal = page.locator('[data-testid="create-entry-modal"]')
-      await expect(createModal).toBeVisible()
-      await page.locator('[data-testid="entry-slug-input"]').fill('post-to-delete')
-      await page.locator('[data-testid="create-entry-submit"]').click()
-      await expect(createModal).not.toBeVisible({ timeout: LONG_TIMEOUT })
-
-      await expect(page.locator('[data-testid="entry-nav-item-post"]')).toBeVisible({
+      await expect(editorPage.navigatorItem('Post')).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
     })
 
-    await test.step('open entry context menu and click Delete Entry', async () => {
-      const entryMenu = page.locator('[data-testid="entry-menu-post"]')
-      await entryMenu.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-      await entryMenu.click()
-
-      const deleteItem = page.locator('[data-testid="delete-entry-menu-item"]')
-      await deleteItem.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-      await deleteItem.click()
-    })
-
-    await test.step('confirm deletion', async () => {
-      const modal = page.locator('[data-testid="confirm-delete-modal"]')
-      await expect(modal).toBeVisible()
-
-      await page.locator('[data-testid="confirm-delete-submit"]').click()
-      await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+    await test.step('delete the entry through its context menu and confirm', async () => {
+      await editorPage.deleteEntry('Post')
     })
 
     await test.step('verify entry is removed from navigator', async () => {
-      const navItem = page.locator('[data-testid="entry-nav-item-post"]')
-      await expect(navItem).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.navigatorItem('Post')).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
     })
 
     await test.step('reload and verify entry is gone', async () => {
       await page.reload()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
 
       // Expand Posts collection
-      const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
-      await postsCollection.waitFor({
+      await editorPage.navigatorItem('Posts').waitFor({
         state: 'visible',
         timeout: STANDARD_TIMEOUT,
       })
-      await postsCollection.click()
+      await editorPage.toggleCollection('Posts')
 
-      const navItem = page.locator('[data-testid="entry-nav-item-post"]')
-      await expect(navItem).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await expect(editorPage.navigatorItem('Post')).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+    })
+  })
+
+  test("rename and delete the open entry from the top bar's entry menu", async () => {
+    await test.step('open editor and create a post (setup)', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.openContentNavigator()
+      await editorPage.createEntry('Posts', 'post-from-top-bar', 'Post')
+      await expect(editorPage.currentEntryLabel()).toContainText('Post', {
+        timeout: STANDARD_TIMEOUT,
+      })
+    })
+
+    await test.step('rename it from the entry menu', async () => {
+      await editorPage.renameOpenEntry('renamed-from-top-bar')
+      await expect(editorPage.currentEntryLabel()).toContainText('Post')
+      await expect
+        .poll(() => findContentFile('posts.qrstuvwxyz12/post.renamed-from-top-bar.'), {
+          timeout: STANDARD_TIMEOUT,
+        })
+        .toBeTruthy()
+    })
+
+    await test.step('delete it from the entry menu and confirm', async () => {
+      const modal = await editorPage.startDeleteOpenEntry()
+      await expect(modal).toContainText('Delete "Post"?')
+      await editorPage.deleteConfirmButton().click()
+      await expect(modal).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.currentEntryLabel()).toHaveText('No entry open')
+      await expect
+        .poll(() => findContentFile('posts.qrstuvwxyz12/post.renamed-from-top-bar.'), {
+          timeout: STANDARD_TIMEOUT,
+        })
+        .toBeNull()
+    })
+  })
+
+  /** Save, and return the content PUT's response. */
+  const saveForResponse = async (page: Page) => {
+    const [response] = await Promise.all([
+      page.waitForResponse(
+        (resp) => resp.url().includes('/api/canopycms/') && resp.request().method() === 'PUT',
+        { timeout: STANDARD_TIMEOUT },
+      ),
+      editorPage.save(),
+    ])
+    return response
+  }
+
+  test('a save of an entry deleted elsewhere is refused, and "Save as new entry" brings it back on request', async ({
+    page,
+  }) => {
+    const slug = `deleted-elsewhere-${Date.now()}`
+    const filePrefix = `posts.qrstuvwxyz12/post.${slug}.`
+    const editedTitle = 'Edited after the delete'
+
+    await test.step('create and open a post', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.openContentNavigator()
+      await editorPage.createEntry('Posts', slug, 'Post')
+      await editorPage.selectEntry('Post')
+    })
+
+    await test.step('another editor deletes its file', async () => {
+      const file = await findContentFile(filePrefix)
+      expect(file).not.toBeNull()
+      await fs.rm(getContentFilePath(file!))
+    })
+
+    const goneToast = editorPage.notification(/was deleted since you opened it/)
+    await test.step('edit and save: refused as gone, and not re-created', async () => {
+      await editorPage.fillTextField('title', editedTitle)
+      const response = await saveForResponse(page)
+      expect(response.status()).toBe(409)
+      expect(await response.json()).toMatchObject({ code: 'ENTRY_GONE' })
+      await expect(goneToast).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      expect(await findContentFile(filePrefix)).toBeNull()
+      await editorPage.verifyFieldValue('title', editedTitle)
+    })
+
+    await test.step('"Save as new entry" creates it from the edits', async () => {
+      await goneToast.getByRole('button', { name: 'Save as new entry' }).click()
+      await expect(editorPage.notification('Saved as a new entry')).toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
+      await expect(goneToast).toHaveCount(0)
+      const file = await findContentFile(filePrefix)
+      expect(file).not.toBeNull()
+      expect(await readContentFile<{ title?: string }>(file!)).toMatchObject({
+        title: editedTitle,
+      })
+      await editorPage.verifyFieldValue('title', editedTitle)
+    })
+  })
+
+  test('a save of an entry renamed elsewhere follows it, and saving again lands on the new name', async ({
+    page,
+  }) => {
+    const slug = `renamed-elsewhere-${Date.now()}`
+    const editedTitle = 'Edited after the rename'
+    let renamedFile = ''
+
+    await test.step('create and open a post', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.openContentNavigator()
+      await editorPage.createEntry('Posts', slug, 'Post')
+      await editorPage.selectEntry('Post')
+    })
+
+    await test.step('another editor renames it, keeping its content ID', async () => {
+      const file = await findContentFile(`posts.qrstuvwxyz12/post.${slug}.`)
+      expect(file).not.toBeNull()
+      renamedFile = file!.replace(`post.${slug}.`, `post.${slug}-new.`)
+      await fs.rename(getContentFilePath(file!), getContentFilePath(renamedFile))
+    })
+
+    await test.step('edit and save: refused, then the editor opens it under its new name', async () => {
+      await editorPage.fillTextField('title', editedTitle)
+      const response = await saveForResponse(page)
+      expect(response.status()).toBe(409)
+      await expect(editorPage.notification(/was renamed since you opened it/)).toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
+      await editorPage.verifyFieldValue('title', editedTitle)
+    })
+
+    await test.step('saving again writes the renamed file, and the old name stays gone', async () => {
+      const response = await saveForResponse(page)
+      expect(response.status()).toBe(200)
+      expect(await readContentFile<{ title?: string }>(renamedFile)).toMatchObject({
+        title: editedTitle,
+      })
+      expect(await findContentFile(`posts.qrstuvwxyz12/post.${slug}.`)).toBeNull()
     })
   })
 })

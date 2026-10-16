@@ -9,7 +9,12 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { writeWorkerStatus, WORKER_STATUS_FILE } from './worker-status'
+import {
+  readCarriedOverStatus,
+  readWorkerStartupFailure,
+  writeWorkerStatus,
+  WORKER_STATUS_FILE,
+} from './worker-status'
 import type { WorkerStatusReport } from '../types'
 
 describe('writeWorkerStatus', () => {
@@ -87,5 +92,218 @@ describe('writeWorkerStatus', () => {
     expect(parsed.lastFatalError).toBeUndefined()
     expect(parsed.lastGitSync).toBeUndefined()
     expect(parsed.lastTaskCycleAt).toBe('2026-01-01T00:02:00.000Z')
+  })
+})
+
+describe('readCarriedOverStatus', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-status-carry-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it("returns the previous worker's fatal error and shutdown record, and nothing else", async () => {
+    const lastFatalError = {
+      message: 'dead',
+      at: '2026-01-01T00:00:00.000Z',
+      phase: 'run' as const,
+    }
+    const lastShutdown = {
+      reason: 'SIGTERM',
+      at: '2026-01-01T00:01:00.000Z',
+      workerStartedAt: '2026-01-01T00:00:00.000Z',
+      outcome: 'deadline' as const,
+      drainMs: 90_000,
+      abandoned: ['git sync'],
+    }
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: 'x',
+      lastTaskCycleAt: '2026-01-01T00:00:30.000Z',
+      lastFatalError,
+      lastShutdown,
+    })
+
+    expect(await readCarriedOverStatus(tmpDir)).toEqual({ lastFatalError, lastShutdown })
+  })
+
+  it('reports a worker that stopped without recording a shutdown as not drained', async () => {
+    // The file's writer started after the recorded shutdown's worker: it inherited
+    // that record and then died without replacing it.
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-02T00:00:00.000Z',
+      updatedAt: 'x',
+      lastShutdown: {
+        reason: 'SIGTERM',
+        at: '2026-01-01T00:01:00.000Z',
+        workerStartedAt: '2026-01-01T00:00:00.000Z',
+        outcome: 'drained',
+        drainMs: 10,
+      },
+    })
+    const written = JSON.parse(
+      await fs.readFile(path.join(tmpDir, WORKER_STATUS_FILE), 'utf-8'),
+    ) as WorkerStatusReport
+
+    expect((await readCarriedOverStatus(tmpDir)).lastShutdown).toEqual({
+      reason: 'stopped without draining',
+      at: written.updatedAt,
+      workerStartedAt: '2026-01-02T00:00:00.000Z',
+      outcome: 'not-drained',
+    })
+  })
+
+  it('reports not drained when the previous worker recorded no shutdown at all', async () => {
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-02T00:00:00.000Z',
+      updatedAt: 'x',
+    })
+
+    expect((await readCarriedOverStatus(tmpDir)).lastShutdown?.outcome).toBe('not-drained')
+  })
+
+  it("keeps the last running worker's shutdown when the file's own worker failed to start", async () => {
+    const lastShutdown = {
+      reason: 'SIGTERM',
+      at: '2026-01-01T00:01:00.000Z',
+      workerStartedAt: '2026-01-01T00:00:00.000Z',
+      outcome: 'drained' as const,
+      drainMs: 10,
+    }
+    const lastFatalError = {
+      message: 'clone failed',
+      at: '2026-01-02T00:00:05.000Z',
+      phase: 'startup' as const,
+      workerStartedAt: '2026-01-02T00:00:00.000Z',
+    }
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-02T00:00:00.000Z',
+      updatedAt: 'x',
+      lastShutdown,
+      lastFatalError,
+    })
+    expect(await readCarriedOverStatus(tmpDir)).toEqual({ lastFatalError, lastShutdown })
+
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-02T00:00:00.000Z',
+      updatedAt: 'x',
+      lastFatalError,
+    })
+    expect(await readCarriedOverStatus(tmpDir)).toEqual({ lastFatalError })
+  })
+
+  it('reports not drained when a worker carried a failed start forward and then died', async () => {
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-03T00:00:00.000Z',
+      updatedAt: 'x',
+      lastShutdown: {
+        reason: 'SIGTERM',
+        at: '2026-01-01T00:01:00.000Z',
+        workerStartedAt: '2026-01-01T00:00:00.000Z',
+        outcome: 'drained',
+        drainMs: 10,
+      },
+      lastFatalError: {
+        message: 'clone failed',
+        at: '2026-01-02T00:00:05.000Z',
+        phase: 'startup',
+        workerStartedAt: '2026-01-02T00:00:00.000Z',
+      },
+    })
+
+    expect((await readCarriedOverStatus(tmpDir)).lastShutdown).toMatchObject({
+      workerStartedAt: '2026-01-03T00:00:00.000Z',
+      outcome: 'not-drained',
+    })
+  })
+
+  it('returns nothing when there is no readable status file', async () => {
+    expect(await readCarriedOverStatus(tmpDir)).toEqual({})
+    await fs.writeFile(path.join(tmpDir, WORKER_STATUS_FILE), '{not json')
+    expect(await readCarriedOverStatus(tmpDir)).toEqual({})
+  })
+})
+
+describe('readWorkerStartupFailure', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-startup-failure-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const write = (report: Partial<WorkerStatusReport>) =>
+    fs.writeFile(path.join(tmpDir, WORKER_STATUS_FILE), JSON.stringify(report))
+
+  it('is current when the snapshot that recorded it is the attempt that failed', async () => {
+    await write({
+      startedAt: '2026-10-09T10:00:00.000Z',
+      lastFatalError: { message: 'boom', at: '2026-10-09T10:00:00.000Z', phase: 'startup' },
+    })
+    expect(await readWorkerStartupFailure(tmpDir)).toEqual({
+      message: 'boom',
+      at: '2026-10-09T10:00:00.000Z',
+      current: true,
+    })
+  })
+
+  it('is not current once a newer worker has carried it forward', async () => {
+    await write({
+      startedAt: '2026-10-09T10:00:05.000Z',
+      lastFatalError: { message: 'boom', at: '2026-10-09T10:00:00.000Z', phase: 'startup' },
+    })
+    expect((await readWorkerStartupFailure(tmpDir))?.current).toBe(false)
+  })
+
+  it('decides by the worker that recorded it, not by clocks that can disagree across hosts', async () => {
+    // A successor whose clock runs behind the failed worker's.
+    await write({
+      startedAt: '2026-10-09T10:00:00.000Z',
+      lastFatalError: {
+        message: 'boom',
+        at: '2026-10-09T10:00:30.000Z',
+        phase: 'startup',
+        workerStartedAt: '2026-10-09T10:00:29.000Z',
+      },
+    })
+    expect((await readWorkerStartupFailure(tmpDir))?.current).toBe(false)
+
+    await write({
+      startedAt: '2026-10-09T10:00:00.000Z',
+      lastFatalError: {
+        message: 'boom',
+        at: '2026-10-09T10:00:05.000Z',
+        phase: 'startup',
+        workerStartedAt: '2026-10-09T10:00:00.000Z',
+      },
+    })
+    expect((await readWorkerStartupFailure(tmpDir))?.current).toBe(true)
+  })
+
+  it('ignores a failure while running, which a missing remote cannot follow', async () => {
+    await write({
+      startedAt: '2026-10-09T10:00:00.000Z',
+      lastFatalError: { message: 'boom', at: '2026-10-09T10:01:00.000Z', phase: 'run' },
+    })
+    expect(await readWorkerStartupFailure(tmpDir)).toBeUndefined()
+  })
+
+  it('returns nothing when there is no readable status file', async () => {
+    expect(await readWorkerStartupFailure(tmpDir)).toBeUndefined()
+    await fs.writeFile(path.join(tmpDir, WORKER_STATUS_FILE), '{not json')
+    expect(await readWorkerStartupFailure(tmpDir)).toBeUndefined()
   })
 })

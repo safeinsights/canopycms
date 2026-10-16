@@ -194,6 +194,98 @@ describe('createEntrySchemaRegistry', () => {
     },
   )
 
+  it.each([
+    ['empty', [{ type: 'string', name: '' }], ''],
+    ['all digits', [{ type: 'string', name: '2024' }], '2024'],
+    ['containing a dot', [{ type: 'string', name: 'meta.title' }], 'meta.title'],
+    [
+      'inside an object, containing a bracket',
+      [{ type: 'object', name: 'stats', fields: [{ type: 'number', name: 'q[1]' }] }],
+      'q[1]',
+    ],
+    [
+      'inside a block template',
+      [
+        {
+          type: 'block',
+          name: 'sections',
+          templates: [{ name: 'hero', fields: [{ type: 'string', name: '0' }] }],
+        },
+      ],
+      '0',
+    ],
+    [
+      'inside an inline group',
+      [{ type: 'group', name: 'seo', fields: [{ type: 'string', name: 'og.title' }] }],
+      'og.title',
+    ],
+  ] as const)('throws for a field name %s, which no path can spell', (_, fields, name) => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        page: [{ type: 'string', name: 'title' }, ...fields] as EntrySchema,
+      }),
+    ).toThrow(
+      `Field "${name}": field names can't be empty, all digits, or contain '.', '[' or ']'; they're used in field paths`,
+    )
+  })
+
+  it.each([
+    ['at the top level', [{ type: 'string', name: '_key' }]],
+    [
+      'inside an object',
+      [{ type: 'object', name: 'stats', fields: [{ type: 'string', name: '_key' }] }],
+    ],
+    [
+      'inside a list object',
+      [{ type: 'object', name: 'cards', list: true, fields: [{ type: 'string', name: '_key' }] }],
+    ],
+    [
+      'inside a block template',
+      [
+        {
+          type: 'block',
+          name: 'sections',
+          templates: [{ name: 'hero', fields: [{ type: 'string', name: '_key' }] }],
+        },
+      ],
+    ],
+    [
+      'inside an inline group',
+      [{ type: 'group', name: 'seo', fields: [{ type: 'string', name: '_key' }] }],
+    ],
+  ] as const)(
+    'throws for a field named _key %s, the name list items and blocks carry',
+    (_, fields) => {
+      expect(() =>
+        createEntrySchemaRegistry({
+          page: [{ type: 'string', name: 'title' }, ...fields] as EntrySchema,
+        }),
+      ).toThrow(
+        'Field "_key": the name is reserved for the key CanopyCMS gives each list item and block. Rename the field, and the key in your content files with it.',
+      )
+    },
+  )
+
+  it('allows a field whose name only contains _key', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        page: [
+          { type: 'string', name: 'title' },
+          { type: 'string', name: 'monkey_key' },
+          { type: 'string', name: 'key' },
+        ],
+      }),
+    ).not.toThrow()
+  })
+
+  it("allows an inline group's own name to be anything, since no path spells it", () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        page: [{ type: 'group', name: 'seo.v2', fields: [{ type: 'string', name: 'metaTitle' }] }],
+      }),
+    ).not.toThrow()
+  })
+
   it('allows unavailable nested inside an object field, which is not a top-level key', () => {
     expect(() =>
       createEntrySchemaRegistry({
@@ -259,6 +351,154 @@ describe('createEntrySchemaRegistry', () => {
         ],
       }),
     ).toThrow('Field name collision in entry schema "post"')
+  })
+})
+
+describe('createEntrySchemaRegistry: markdown field options', () => {
+  it('throws on mdxAllow on a markdown field without renderAs, inside a block', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        page: [
+          {
+            name: 'blocks',
+            type: 'block',
+            templates: [
+              { name: 'prose', fields: [{ name: 'text', type: 'markdown', mdxAllow: {} }] },
+            ],
+          },
+        ],
+      }),
+    ).toThrow(`Field "text": mdxAllow applies to MDX; set renderAs: 'mdx'`)
+  })
+
+  it('throws on an mdxAllow its schema refuses, naming where', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [
+          {
+            name: 'meta',
+            type: 'object',
+            fields: [{ name: 'body', type: 'mdx', mdxAllow: { htmlTags: ['script'] } }],
+          },
+        ],
+      }),
+    ).toThrow('Field "body": mdxAllow.htmlTags.0 must be one of the HTML tags')
+  })
+
+  it('throws on a string prop allowance with a bad maxLength, naming where', () => {
+    const withTitle = (title: unknown) => () =>
+      createEntrySchemaRegistry({
+        post: [
+          {
+            name: 'body',
+            type: 'mdx',
+            mdxAllow: { components: { Callout: { props: { title } } } },
+          },
+        ],
+      })
+    expect(withTitle({ type: 'string', maxLength: 5 })).not.toThrow()
+    expect(withTitle({ type: 'string', maxLength: 0 })).toThrow(
+      /Field "body": mdxAllow\.components\.Callout\.props\.title/,
+    )
+  })
+
+  it('throws on a field in an inline group, and on a renderAs other than mdx', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [
+          {
+            name: 'seo',
+            type: 'group',
+            fields: [{ name: 'text', type: 'markdown', mdxAllow: {} }],
+          },
+        ],
+      }),
+    ).toThrow('Field "text": mdxAllow applies to MDX')
+    const renderAs: unknown = 'markdown'
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [{ name: 'body', type: 'markdown', renderAs } as EntrySchema[number]],
+      }),
+    ).toThrow(`Field "body": renderAs must be 'mdx'`)
+  })
+
+  it('accepts a narrow allowlist on a markdown field rendered as MDX', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [
+          {
+            name: 'body',
+            type: 'markdown',
+            isBody: true,
+            renderAs: 'mdx',
+            mdxAllow: {
+              components: { Callout: { props: { type: ['info', 'warning'] } } },
+              htmlTags: [],
+              expressions: false,
+              fragments: false,
+            },
+          },
+        ],
+      }),
+    ).not.toThrow()
+  })
+})
+
+describe('createEntrySchemaRegistry: stampOnPublish', () => {
+  const stamp = (field: Record<string, unknown>): EntrySchema[number] =>
+    ({
+      name: 'publishedAt',
+      type: 'datetime',
+      stampOnPublish: true,
+      ...field,
+    }) as EntrySchema[number]
+  const register = (schema: EntrySchema) => () => createEntrySchemaRegistry({ post: schema })
+  const where = 'Entry schema registry entry "post": field "publishedAt" has stampOnPublish'
+
+  it('accepts it on a top-level optional datetime, and on one in an inline group', () => {
+    expect(register([{ name: 'title', type: 'string' }, stamp({})])).not.toThrow()
+    expect(register([{ name: 'meta', type: 'group', fields: [stamp({})] }])).not.toThrow()
+    expect(register([stamp({ stampOnPublish: false, type: 'string' })])).not.toThrow()
+  })
+
+  it('refuses it on a type other than datetime, built-in or custom', () => {
+    expect(register([stamp({ type: 'string' })])).toThrow(
+      `${where}, but it is type "string", not "datetime"`,
+    )
+    expect(register([stamp({ type: 'select', options: ['a'] })])).toThrow(
+      `${where}, but it is type "select", not "datetime"`,
+    )
+    expect(register([stamp({ type: 'publishDate' })])).toThrow(
+      `${where}, but it is type "publishDate", not "datetime"`,
+    )
+  })
+
+  it('refuses it on a list', () => {
+    expect(register([stamp({ list: true })])).toThrow(`${where}, but it is list: true`)
+  })
+
+  it('refuses it on a required field, which can never be saved empty', () => {
+    expect(register([stamp({ required: true })])).toThrow(
+      `${where}, but it is required: true, so it can never be saved empty to be stamped`,
+    )
+    expect(register([stamp({ required: false })])).not.toThrow()
+  })
+
+  it('refuses it inside an object or a block', () => {
+    expect(register([{ name: 'meta', type: 'object', fields: [stamp({})] }])).toThrow(
+      `${where}, but it is inside object field "meta"; only a top-level field is stamped`,
+    )
+    expect(
+      register([
+        { name: 'blocks', type: 'block', templates: [{ name: 'hero', fields: [stamp({})] }] },
+      ]),
+    ).toThrow(`${where}, but it is inside block field "blocks"`)
+  })
+
+  it('refuses a value that is not a boolean', () => {
+    expect(register([stamp({ stampOnPublish: 'yes' })])).toThrow(
+      `${where}, which must be true or false`,
+    )
   })
 })
 

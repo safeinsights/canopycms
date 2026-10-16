@@ -12,6 +12,7 @@ import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { createAIContentHandler } from '../handler'
 import type { AIManifest } from '../types'
 import { WORKER_NOT_READY_MESSAGE } from '../../http/worker-not-ready'
+import { writeWorkerStatus } from '../../task-queue/worker-status'
 
 const tmpDir = () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-ai-handler-'))
 
@@ -206,6 +207,43 @@ describe('createAIContentHandler', () => {
     expect(consoleSpy).toHaveErrored('AI content handler error')
 
     consoleSpy.restore()
+  })
+
+  // The AI route is unauthenticated, so a worker's recorded failure is never named here.
+  it("answers a worker's failed start without naming it", async () => {
+    const consoleSpy = mockConsole()
+    const workspaceRoot = await tmpDir()
+    const previous = process.env.CANOPYCMS_WORKSPACE_ROOT
+    process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+    try {
+      const now = new Date().toISOString()
+      await writeWorkerStatus(path.join(workspaceRoot, '.tasks'), {
+        version: 1,
+        startedAt: now,
+        updatedAt: now,
+        lastFatalError: {
+          message: 'Secret arn:aws:secretsmanager:us-east-1:123456789012:secret:bot has no field',
+          at: now,
+          phase: 'startup',
+        },
+      })
+      const prodHandler = createAIContentHandler({
+        config: defineCanopyTestConfig({ schema: testSchema, mode: 'prod' }),
+        entrySchemaRegistry: {},
+      })
+
+      const response = await callHandler(prodHandler, 'manifest.json')
+      expect(response.status).toBe(503)
+      expect(response.headers.get('Retry-After')).toBeNull()
+      const { error } = (await response.json()) as { error: string }
+      expect(error).toContain('The CMS worker failed to start.')
+      expect(error).not.toContain('secretsmanager')
+    } finally {
+      if (previous === undefined) delete process.env.CANOPYCMS_WORKSPACE_ROOT
+      else process.env.CANOPYCMS_WORKSPACE_ROOT = previous
+      await fs.rm(workspaceRoot, { recursive: true, force: true })
+      consoleSpy.restore()
+    }
   })
 
   // Drives the real prod workspace provisioning, so the typed error reaches the catch

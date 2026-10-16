@@ -47,7 +47,6 @@ export { resolveLogicalPath } from './resolve'
 
 export {
   resolveBranchPath,
-  ensureBranchRoot,
   getDefaultBranchBase,
   resolveBranchPaths,
   BranchPathError,

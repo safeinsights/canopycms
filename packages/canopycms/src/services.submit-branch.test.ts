@@ -9,8 +9,14 @@ import { createTestServices } from './config-test'
 import { GitManager, ensureGitExcludePattern } from './git-manager'
 import { initTestRepo, mockConsole, openBareRepo } from './test-utils'
 import type { BranchContext } from './types'
-import type { CanopyServices } from './services'
+import { NothingToSubmitError, type CanopyServices } from './services'
+import { BranchMetadataFileManager } from './branch-metadata'
 import { ContentWriteLockBusyError, tryAcquireContentWriteLock } from './utils/content-write-lock'
+import { ContentConflictError, ContentStore } from './content-store'
+import { listEntries } from './content-listing'
+import { flattenSchema } from './config/flatten'
+import { generateId } from './id'
+import type { LogicalPath, Slug } from './paths/types'
 
 // Deliberately does NOT mock 'simple-git' (unlike services.test.ts) -- this
 // bug is about the interaction between real git state (a commit landing
@@ -183,13 +189,63 @@ describe('services submitBranch', () => {
     expect(pushSpy).not.toHaveBeenCalled()
   })
 
-  it('a never-pushed branch with a clean tree still pushes', async () => {
-    // No file changes -> the tree is clean immediately after checkout, but
-    // this branch (created fresh from origin/main) has never reached the
-    // mirror under its own name.
-    await services.submitBranch({ context, message: 'no changes, first submit' })
+  describe('nothing to submit', () => {
+    it('refuses a branch with no changes, pushing nothing', async () => {
+      const before = await localSha()
 
-    expect(await remoteBranchSha('feature-1')).toBe(await localSha())
+      await expect(services.submitBranch({ context, message: 'no changes' })).rejects.toThrow(
+        NothingToSubmitError,
+      )
+
+      expect(await localSha()).toBe(before)
+      expect(await remoteBranchSha('feature-1')).toBeUndefined()
+    })
+
+    it('refuses saved edits that restore the base content, pushing nothing', async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+      await services.submitBranch({ context, message: 'first submit' })
+      const pushed = await remoteBranchSha('feature-1')
+      await fs.rm(path.join(localPath, 'a.txt'))
+
+      await expect(services.submitBranch({ context, message: 'revert' })).rejects.toThrow(
+        'Nothing to submit yet: "feature-1" has no saved changes compared with "main"',
+      )
+
+      expect(await remoteBranchSha('feature-1')).toBe(pushed)
+      // The refused submit's own commit is undone; the saved deletion stays in the working tree.
+      expect(await localSha()).toBe(pushed)
+      const tree = await simpleGit({ baseDir: localPath }).status()
+      expect(tree.deleted).toEqual(['a.txt'])
+      expect(tree.staged).toEqual([])
+    })
+
+    it('moves nothing when the commit step committed nothing', async () => {
+      // Staged, then deleted: status lists the path, but staging leaves the index at HEAD, so
+      // git's commit succeeds without creating one.
+      await fs.writeFile(path.join(localPath, 'c.txt'), 'c', 'utf8')
+      await simpleGit({ baseDir: localPath }).add(['c.txt'])
+      await fs.rm(path.join(localPath, 'c.txt'))
+      const before = await localSha()
+
+      await expect(services.submitBranch({ context, message: 'no-op commit' })).rejects.toThrow(
+        NothingToSubmitError,
+      )
+
+      expect(await localSha()).toBe(before)
+      expect((await simpleGit({ baseDir: localPath }).status()).files).toEqual([])
+    })
+
+    it('submits when the changes cannot be listed', async () => {
+      mockConsole()
+      vi.spyOn(GitManager.prototype, 'listChangedPathsSinceBase').mockRejectedValue(
+        new Error('simulated fetch failure'),
+      )
+
+      const result = await services.submitBranch({ context, message: 'no changes' })
+
+      expect(result.changedPaths).toEqual([])
+      expect(await remoteBranchSha('feature-1')).toBe(await localSha())
+    })
   })
   describe("canopycms's own state", () => {
     const CACHE = '.canopy-meta/schema-cache.json'
@@ -217,7 +273,11 @@ describe('services submitBranch', () => {
     it('commits the content change but never canopycms state, tracked or not', async () => {
       await trackCanopyMetaUpstream()
       await fs.writeFile(path.join(localPath, CACHE), '{"rewritten":"per branch"}', 'utf8')
-      await fs.writeFile(path.join(localPath, '.canopy-meta', 'branch.json'), '{}', 'utf8')
+      await fs.writeFile(
+        path.join(localPath, '.canopy-meta', 'branch.json'),
+        JSON.stringify({ branch: { name: 'feature-1', status: 'editing', access: {} } }),
+        'utf8',
+      )
       await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
 
       await services.submitBranch({ context, message: 'submit' })
@@ -232,14 +292,16 @@ describe('services submitBranch', () => {
       ])
     })
 
-    it('creates no commit when canopycms state is the only change', async () => {
+    it('refuses a submit whose only change is canopycms state, creating no commit', async () => {
       const upstreamSha = await trackCanopyMetaUpstream()
       await fs.writeFile(path.join(localPath, CACHE), '{"rewritten":"per branch"}', 'utf8')
 
-      await services.submitBranch({ context, message: 'submit' })
+      await expect(services.submitBranch({ context, message: 'submit' })).rejects.toThrow(
+        NothingToSubmitError,
+      )
 
       expect(await localSha()).toBe(upstreamSha)
-      expect(await remoteBranchSha('feature-1')).toBe(upstreamSha)
+      expect(await remoteBranchSha('feature-1')).toBeUndefined()
     })
   })
 
@@ -327,6 +389,147 @@ describe('services submitBranch', () => {
       expect((await headCommit()).trailers).toBe(
         'Edited-by: Eve Signed-off-by: Mallory m＠evil.example (user_1)',
       )
+    })
+  })
+
+  describe('credits the recorded editors', () => {
+    const jane = { userId: 'user_2abc', name: 'Jane Doe', email: 'jane@example.com' }
+    const people: Record<string, { id: string; name: string; email: string }> = {
+      user_raj: { id: 'user_raj', name: 'Raj Patel', email: 'raj@example.com' },
+      user_ana: { id: 'user_ana', name: 'Ana Li', email: 'ana@example.com' },
+    }
+
+    async function writeEditors(editors: string[], uncommittedEditors: string[]): Promise<void> {
+      await fs.mkdir(path.join(localPath, '.canopy-meta'), { recursive: true })
+      await fs.writeFile(
+        path.join(localPath, '.canopy-meta', 'branch.json'),
+        JSON.stringify({
+          branch: { name: 'feature-1', status: 'editing', access: {}, editors, uncommittedEditors },
+        }),
+        'utf8',
+      )
+    }
+
+    async function recordedOnDisk(): Promise<{
+      editors?: string[]
+      uncommittedEditors?: string[]
+    }> {
+      const raw = await fs.readFile(path.join(localPath, '.canopy-meta', 'branch.json'), 'utf8')
+      return (JSON.parse(raw) as { branch: { editors?: string[]; uncommittedEditors?: string[] } })
+        .branch
+    }
+
+    async function trailers(): Promise<string> {
+      const git = simpleGit({ baseDir: localPath })
+      return (await git.raw(['log', '-1', '--format=%(trailers:only,unfold)'])).trim()
+    }
+
+    it('names the submitter and the uncommitted editors, then clears them', async () => {
+      await writeEditors(['user_ana', 'user_raj'], ['user_raj'])
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+
+      const result = await services.submitBranch({
+        context,
+        submitter: jane,
+        lookupEditor: async (id) => people[id] ?? null,
+      })
+
+      expect(await trailers()).toBe(
+        'Edited-by: Jane Doe (user_2abc)\nEdited-by: Raj Patel (user_raj)',
+      )
+      expect(result.editors).toEqual([
+        { userId: 'user_ana', name: 'Ana Li', email: 'ana@example.com' },
+        { userId: 'user_raj', name: 'Raj Patel', email: 'raj@example.com' },
+      ])
+      const onDisk = await recordedOnDisk()
+      expect(onDisk.uncommittedEditors).toBeUndefined()
+      expect(onDisk.editors).toEqual(['user_ana', 'user_raj'])
+    })
+
+    it('looks editors up without holding the content-write lock', async () => {
+      await writeEditors(['user_raj'], ['user_raj'])
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+      const lockFreeDuringLookup: boolean[] = []
+
+      await services.submitBranch({
+        context,
+        submitter: jane,
+        lookupEditor: async (id) => {
+          const release = await tryAcquireContentWriteLock(localPath).catch(() => undefined)
+          lockFreeDuringLookup.push(release !== undefined)
+          await release?.()
+          return people[id] ?? null
+        },
+      })
+
+      expect(lockFreeDuringLookup).toEqual([true])
+      expect(await trailers()).toContain('Edited-by: Raj Patel (user_raj)')
+    })
+
+    it('keeps the uncommitted editors when a commit is undone for having nothing to submit', async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+      await services.submitBranch({ context, message: 'first submit' })
+      await fs.rm(path.join(localPath, 'a.txt'))
+      await writeEditors(['user_raj'], ['user_raj'])
+
+      await expect(services.submitBranch({ context, submitter: jane })).rejects.toThrow(
+        NothingToSubmitError,
+      )
+
+      expect((await recordedOnDisk()).uncommittedEditors).toEqual(['user_raj'])
+    })
+
+    it('names, by id, an editor recorded after the names were looked up', async () => {
+      await writeEditors(['user_raj'], ['user_raj'])
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+
+      await services.submitBranch({
+        context,
+        submitter: jane,
+        lookupEditor: async (id) => {
+          if (id === 'user_raj')
+            await writeEditors(['user_raj', 'user_late'], ['user_raj', 'user_late'])
+          return people[id] ?? null
+        },
+      })
+
+      expect(await trailers()).toBe(
+        'Edited-by: Jane Doe (user_2abc)\nEdited-by: Raj Patel (user_raj)\nEdited-by: user_late',
+      )
+    })
+
+    it('lists in the PR an editor recorded after the commit read the editors', async () => {
+      await writeEditors(['user_raj'], ['user_raj'])
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+      const markCommitted = BranchMetadataFileManager.prototype.markEditorsCommitted
+      vi.spyOn(BranchMetadataFileManager.prototype, 'markEditorsCommitted').mockImplementation(
+        async function (this: BranchMetadataFileManager, ids) {
+          await markCommitted.call(this, ids)
+          await writeEditors(['user_raj', 'user_ana'], ['user_ana'])
+        },
+      )
+
+      const result = await services.submitBranch({
+        context,
+        submitter: jane,
+        lookupEditor: async (id) => people[id] ?? null,
+      })
+
+      expect(await trailers()).not.toContain('user_ana')
+      expect(result.editors.map((e) => e.userId)).toEqual(['user_raj', 'user_ana'])
+    })
+
+    it('credits an editor by id when the lookup finds no one', async () => {
+      await writeEditors(['user_gone'], ['user_gone'])
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+
+      const result = await services.submitBranch({
+        context,
+        lookupEditor: async () => null,
+      })
+
+      expect(await trailers()).toBe('Edited-by: user_gone')
+      expect(result.editors).toEqual([{ userId: 'user_gone' }])
     })
   })
 
@@ -439,6 +642,394 @@ describe('services submitBranch', () => {
 
       await commit()
       expect(await localSha()).not.toBe(shaBefore)
+    })
+  })
+
+  describe('stampOnPublish', () => {
+    const title = { name: 'title', type: 'string' as const }
+    const stamp = { name: 'publishedAt', type: 'datetime' as const, stampOnPublish: true }
+    const post = {
+      name: 'post',
+      format: 'md' as const,
+      schema: [title, stamp, { name: 'body', type: 'markdown' as const, isBody: true }],
+    }
+    const stampSchema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            post,
+            {
+              name: 'note',
+              format: 'yaml' as const,
+              schema: [title, { name: 'meta', type: 'group' as const, fields: [stamp] }],
+            },
+            { name: 'card', format: 'json' as const, schema: [title, stamp] },
+            {
+              name: 'release',
+              format: 'json' as const,
+              schema: [stamp, { ...stamp, name: 'announcedAt' }],
+            },
+          ],
+        },
+        { name: 'news', path: 'news', entries: [post] },
+        {
+          name: 'pages',
+          path: 'pages',
+          entries: [
+            {
+              name: 'page',
+              format: 'md' as const,
+              schema: [title, { name: 'publishedAt', type: 'datetime' as const }],
+            },
+          ],
+        },
+      ],
+    }
+    const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+
+    beforeEach(async () => {
+      services = await createTestServices({
+        schema: stampSchema,
+        mode: 'dev',
+        defaultBaseBranch: 'main',
+      })
+    })
+
+    const entryPath = (collection: string, type: string, slug: string, id: string, ext: string) =>
+      `content/${collection}/${type}.${slug}.${id}.${ext}`
+
+    async function writeEntry(relativePath: string, text: string): Promise<void> {
+      await fs.mkdir(path.dirname(path.join(localPath, relativePath)), { recursive: true })
+      await fs.writeFile(path.join(localPath, relativePath), text, 'utf8')
+    }
+
+    const readEntry = (relativePath: string) =>
+      fs.readFile(path.join(localPath, relativePath), 'utf8')
+
+    /** The file as the pushed branch holds it. */
+    const pushedEntry = (relativePath: string) =>
+      openBareRepo(remotePath).raw(['show', `feature-1:${relativePath}`])
+
+    /** Commit everything in the clone to main and push it, making it the base. */
+    async function commitToBase(): Promise<void> {
+      const git = simpleGit({ baseDir: localPath })
+      await git.add(['.'])
+      await git.commit('base content')
+      await git.push('origin', 'main')
+    }
+
+    /** What `text` holds where `template` holds STAMP, failing unless every other byte matches. */
+    function stampIn(text: string, template: string): string {
+      const [before, after] = template.split('STAMP')
+      expect(text.startsWith(before) && text.endsWith(after), text).toBe(true)
+      return text.slice(before.length, text.length - after.length)
+    }
+
+    it("stamps a new entry's empty field with the submit's time, committed and pushed", async () => {
+      const file = entryPath('posts', 'post', 'hello', generateId(), 'md')
+      await writeEntry(file, "---\ntitle: Hello\npublishedAt: ''\n---\nBody\n")
+      const before = Date.now()
+
+      await services.submitBranch({ context })
+
+      const stamped = stampIn(
+        await readEntry(file),
+        "---\ntitle: Hello\npublishedAt: 'STAMP'\n---\nBody\n",
+      )
+      expect(stamped).toMatch(ISO_UTC)
+      expect(Date.parse(stamped)).toBeGreaterThanOrEqual(before)
+      expect(Date.parse(stamped)).toBeLessThanOrEqual(Date.now())
+      expect(await pushedEntry(file)).toBe(await readEntry(file))
+      expect((await simpleGit({ baseDir: localPath }).status()).files).toEqual([])
+    })
+
+    it('reports each stamped entry with the version a save must then send', async () => {
+      const id = generateId()
+      const file = entryPath('posts', 'post', 'reported', id, 'md')
+      await writeEntry(file, "---\ntitle: Reported\npublishedAt: ''\n---\nBody\n")
+      const store = new ContentStore(localPath, flattenSchema(stampSchema, 'content'))
+      const read = () => store.read('content/posts' as LogicalPath, 'reported' as Slug)
+      const before = (await read()).version!
+      await new Promise((resolve) => setTimeout(resolve, 5))
+
+      const { stamped } = await services.submitBranch({ context })
+
+      const value = stampIn(
+        await readEntry(file),
+        "---\ntitle: Reported\npublishedAt: 'STAMP'\n---\nBody\n",
+      )
+      const after = (await read()).version!
+      expect(stamped).toEqual([
+        { contentId: id, fields: { publishedAt: value }, previousVersion: before, version: after },
+      ])
+      const save = (expectedVersion: number) =>
+        store.write('content/posts' as LogicalPath, 'reported' as Slug, {
+          format: 'md',
+          data: { title: 'Saved', publishedAt: value },
+          body: 'Body\n',
+          expectedVersion,
+        })
+      await expect(save(before)).rejects.toThrow(ContentConflictError)
+      await expect(save(after)).resolves.toMatchObject({ data: { title: 'Saved' } })
+    })
+
+    it('reports an entry with two stamp fields once, at the version after both', async () => {
+      const id = generateId()
+      const file = entryPath('posts', 'release', 'two', id, 'json')
+      await writeEntry(file, '{ "publishedAt": "", "announcedAt": "" }\n')
+
+      const { stamped } = await services.submitBranch({ context })
+
+      const { mtimeMs } = await fs.stat(path.join(localPath, file))
+      const value = stamped[0]?.fields.publishedAt
+      expect(stamped).toEqual([
+        {
+          contentId: id,
+          fields: { publishedAt: value, announcedAt: value },
+          previousVersion: expect.any(Number),
+          version: mtimeMs,
+        },
+      ])
+      expect(await readEntry(file)).toBe(
+        `{ "publishedAt": "${value}", "announcedAt": "${value}" }\n`,
+      )
+    })
+
+    it('keeps every other byte of YAML, frontmatter and JSON entries, with one value per submit', async () => {
+      const md = entryPath('posts', 'post', 'styled', generateId(), 'md')
+      const yaml = entryPath('posts', 'note', 'styled', generateId(), 'yaml')
+      const json = entryPath('posts', 'card', 'styled', generateId(), 'json')
+      const mdTemplate =
+        '---\n# leading comment\ntitle:   "Hello"   # trailing comment\npublishedAt: \'STAMP\'\n' +
+        'updated: 2024-01-01\ntags: [a,  b]\n---\n\nBody with *emphasis*   and spaces  \n\n- item\n'
+      const yamlTemplate = '# a note\ntitle: Note   # c\npublishedAt: "STAMP"\nextra:\n  -   x\n'
+      const jsonTemplate =
+        '{\n    "title": "Card",\n    "publishedAt": "STAMP",\n    "n": [1,2,  3]\n}'
+      await writeEntry(md, mdTemplate.replace('STAMP', ''))
+      await writeEntry(yaml, yamlTemplate.replace('STAMP', ''))
+      await writeEntry(json, jsonTemplate.replace('STAMP', ''))
+
+      await services.submitBranch({ context })
+
+      const values = [
+        stampIn(await readEntry(md), mdTemplate),
+        stampIn(await readEntry(yaml), yamlTemplate),
+        stampIn(await readEntry(json), jsonTemplate),
+      ]
+      expect(values[0]).toMatch(ISO_UTC)
+      expect(values).toEqual([values[0], values[0], values[0]])
+    })
+
+    it('adds an absent field, which every reader reads back as a string', async () => {
+      const md = entryPath('posts', 'post', 'bare', generateId(), 'md')
+      const json = entryPath('posts', 'card', 'bare', generateId(), 'json')
+      const yaml = entryPath('posts', 'note', 'bare', generateId(), 'yaml')
+      await writeEntry(md, '---\ntitle: Bare # c\n---\nBody\n')
+      await writeEntry(json, '{\n  "title": "Bare"\n}\n')
+      await writeEntry(yaml, 'title: Bare # c\n')
+
+      await services.submitBranch({ context })
+
+      const value = stampIn(
+        await readEntry(md),
+        "---\ntitle: Bare # c\npublishedAt: 'STAMP'\n---\nBody\n",
+      )
+      expect(value).toMatch(ISO_UTC)
+      expect(await readEntry(json)).toBe(`{\n  "title": "Bare",\n  "publishedAt": "${value}"\n}\n`)
+      expect(await readEntry(yaml)).toBe(`title: Bare # c\npublishedAt: ${value}\n`)
+      const flatSchema = flattenSchema(stampSchema, 'content')
+      const doc = await new ContentStore(localPath, flatSchema).read(
+        'content/posts' as LogicalPath,
+        'bare' as Slug,
+      )
+      expect(doc.data.publishedAt).toBe(value)
+      const listed = await listEntries(localPath, flatSchema, 'content')
+      expect(listed.map((e) => e.data.publishedAt)).toEqual([value, value, value])
+    })
+
+    it('never stamps an entry the base has, even renamed or moved, nor a field without the flag', async () => {
+      const kept = entryPath('posts', 'post', 'kept', generateId(), 'md')
+      const renamedId = generateId()
+      const movedId = generateId()
+      const page = entryPath('pages', 'page', 'about', generateId(), 'md')
+      const empty = (t: string) => `---\ntitle: ${t}\npublishedAt: ''\n---\nBody\n`
+      await writeEntry(kept, empty('Kept'))
+      await writeEntry(entryPath('posts', 'post', 'old-slug', renamedId, 'md'), empty('Renamed'))
+      await writeEntry(entryPath('posts', 'post', 'moved', movedId, 'md'), empty('Moved'))
+      await commitToBase()
+      const clone = simpleGit({ baseDir: localPath })
+      await clone.raw([
+        'mv',
+        entryPath('posts', 'post', 'old-slug', renamedId, 'md'),
+        entryPath('posts', 'post', 'new-slug', renamedId, 'md'),
+      ])
+      await fs.mkdir(path.join(localPath, 'content/news'), { recursive: true })
+      await clone.raw([
+        'mv',
+        entryPath('posts', 'post', 'moved', movedId, 'md'),
+        entryPath('news', 'post', 'moved', movedId, 'md'),
+      ])
+      await writeEntry(page, empty('About'))
+      const readFile = vi.spyOn(fs, 'readFile')
+
+      const result = await services.submitBranch({ context })
+
+      expect(result.stamped).toEqual([])
+      // Entries the base has are not even read.
+      const read = readFile.mock.calls.map(([file]) => String(file))
+      expect(read.filter((file) => file.includes(renamedId) || file.includes('kept'))).toEqual([])
+      expect(await readEntry(kept)).toBe(empty('Kept'))
+      expect(await readEntry(entryPath('posts', 'post', 'new-slug', renamedId, 'md'))).toBe(
+        empty('Renamed'),
+      )
+      expect(await readEntry(entryPath('news', 'post', 'moved', movedId, 'md'))).toBe(
+        empty('Moved'),
+      )
+      expect(await readEntry(page)).toBe(empty('About'))
+    })
+
+    it('never stamps an entry the fork point had, though the base has deleted it since', async () => {
+      const file = entryPath('posts', 'post', 'gone-upstream', generateId(), 'md')
+      const text = "---\ntitle: Gone upstream\npublishedAt: ''\n---\nBody\n"
+      await writeEntry(file, text)
+      await commitToBase()
+      await simpleGit({ baseDir: localPath }).checkoutLocalBranch('feature-1')
+      // The base deletes the entry from another clone; this branch is not rebased onto that.
+      const seed = simpleGit({ baseDir: path.join(tmpDir, 'seed') })
+      await seed.pull('origin', 'main')
+      await seed.raw(['rm', '-q', '--', file])
+      await seed.commit('delete upstream')
+      await seed.push('origin', 'main')
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'another change', 'utf8')
+
+      const { stamped } = await services.submitBranch({ context })
+
+      expect(stamped).toEqual([])
+      expect(await readEntry(file)).toBe(text)
+    })
+
+    it("judges newness by the base's entry files, not its collection directories", async () => {
+      const id = generateId()
+      await writeEntry(`content/archive.${id}/readme.txt`, 'a directory carrying the id')
+      await commitToBase()
+      const file = entryPath('posts', 'post', 'fresh', id, 'md')
+      await writeEntry(file, "---\ntitle: Fresh\npublishedAt: ''\n---\nBody\n")
+
+      await services.submitBranch({ context })
+
+      expect(
+        stampIn(await readEntry(file), "---\ntitle: Fresh\npublishedAt: 'STAMP'\n---\nBody\n"),
+      ).toMatch(ISO_UTC)
+    })
+
+    it('keeps a value an editor set', async () => {
+      const files: Array<[string, string]> = [
+        [
+          entryPath('posts', 'post', 'dated', generateId(), 'md'),
+          "---\ntitle: Dated\npublishedAt: '2020-01-02T03:04:05.000Z'\n---\nBody\n",
+        ],
+        [
+          entryPath('posts', 'note', 'dated', generateId(), 'yaml'),
+          'title: Dated\npublishedAt: 2020-01-02T03:04:05.000Z\n',
+        ],
+        [
+          entryPath('posts', 'card', 'dated', generateId(), 'json'),
+          '{ "title": "Dated", "publishedAt": "2020-01-02T03:04:05.000Z" }\n',
+        ],
+      ]
+      for (const [file, text] of files) await writeEntry(file, text)
+
+      await services.submitBranch({ context })
+
+      for (const [file, text] of files) expect(await readEntry(file)).toBe(text)
+    })
+
+    it("keeps the first submit's date on a resubmit", async () => {
+      const file = entryPath('posts', 'post', 'again', generateId(), 'md')
+      const template = "---\ntitle: TITLE\npublishedAt: 'STAMP'\n---\nBody\n"
+      await writeEntry(file, template.replace('TITLE', 'First').replace('STAMP', ''))
+      await services.submitBranch({ context })
+      const first = stampIn(await readEntry(file), template.replace('TITLE', 'First'))
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      await writeEntry(file, template.replace('TITLE', 'Second').replace('STAMP', first))
+
+      await services.submitBranch({ context })
+
+      expect(await pushedEntry(file)).toBe(
+        template.replace('TITLE', 'Second').replace('STAMP', first),
+      )
+    })
+
+    it('stamps an entry an earlier attempt committed but could not push', async () => {
+      const consoleSpy = mockConsole()
+      const file = entryPath('posts', 'post', 'retry', generateId(), 'md')
+      const template = "---\ntitle: Retry\npublishedAt: 'STAMP'\n---\nBody\n"
+      await writeEntry(file, template.replace('STAMP', ''))
+      vi.spyOn(GitManager.prototype, 'listBaseFiles').mockRejectedValueOnce(
+        new Error('simulated fetch failure'),
+      )
+      vi.spyOn(GitManager.prototype, 'push').mockRejectedValueOnce(
+        new Error('simulated push failure'),
+      )
+      await expect(services.submitBranch({ context })).rejects.toThrow('simulated push failure')
+      expect(await readEntry(file)).toBe(template.replace('STAMP', ''))
+      expect((await simpleGit({ baseDir: localPath }).status()).files).toEqual([])
+
+      await services.submitBranch({ context })
+
+      expect(stampIn(await pushedEntry(file), template)).toMatch(ISO_UTC)
+      consoleSpy.restore()
+    })
+
+    it('a failed push after stamping reports no stamps (drafts re-sync via the 409 path)', async () => {
+      const file = entryPath('posts', 'post', 'unpushed', generateId(), 'md')
+      const template = "---\ntitle: Unpushed\npublishedAt: 'STAMP'\n---\nBody\n"
+      await writeEntry(file, template.replace('STAMP', ''))
+      vi.spyOn(GitManager.prototype, 'push').mockRejectedValueOnce(
+        new Error('simulated push failure'),
+      )
+
+      // A rejection carries no result, so the stamps never reach the editor.
+      await expect(services.submitBranch({ context })).rejects.toThrow('simulated push failure')
+
+      const committed = await simpleGit({ baseDir: localPath }).show([`HEAD:${file}`])
+      expect(stampIn(committed, template)).toMatch(ISO_UTC)
+      expect(await remoteBranchSha('feature-1')).toBeUndefined()
+      // The retry pushes the stamp but finds nothing left to stamp.
+      expect((await services.submitBranch({ context })).stamped).toEqual([])
+    })
+
+    it('submits unstamped, with a redacted warning, when the base cannot be read', async () => {
+      const consoleSpy = mockConsole()
+      const file = entryPath('posts', 'post', 'offline', generateId(), 'md')
+      const text = "---\ntitle: Offline\npublishedAt: ''\n---\nBody\n"
+      await writeEntry(file, text)
+      vi.spyOn(GitManager.prototype, 'listBaseFiles').mockRejectedValue(
+        new Error('fatal: unable to access https://x-access-token:s3cret@github.com/o/r.git'),
+      )
+
+      await services.submitBranch({ context })
+
+      expect(await pushedEntry(file)).toBe(text)
+      expect(consoleSpy).toHaveWarned('Could not finish stamping the new entries on feature-1')
+      expect(JSON.stringify(consoleSpy.all().warn)).not.toContain('s3cret')
+      consoleSpy.restore()
+    })
+
+    it('never reads the base when no entry type stamps', async () => {
+      services = await createTestServices({
+        schema: testSchema,
+        mode: 'dev',
+        defaultBaseBranch: 'main',
+      })
+      const listBase = vi.spyOn(GitManager.prototype, 'listBaseFiles')
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+
+      await services.submitBranch({ context })
+
+      expect(listBase).not.toHaveBeenCalled()
     })
   })
 }, 30_000)

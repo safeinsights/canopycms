@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-14, epic `integration-202608-b`) — adopter request #17. `parseTypedFilename`/`defaultBuildPath`/`updatedAt` landed first (commit `4a8992fe`); this closes the rest: `resolveEntryTitle` exported from `canopycms/server` and the root `canopycms` entry (client-safe), `toPlainText` (new, built on `ai/strip-mdx.ts`'s `stripMdxImports`) exported from `canopycms/ai`, and the boot-block pattern formalized as `createBuildCanopy(config, options)` in `canopycms/server` rather than left as prose. `extractSearchDocuments` itself remains deliberately unbuilt — see `docs/adopter-migration.md`
+---
 # Search-document extraction: the requested API is wrong; ship the real primitives instead
 
 **RESOLVED (2026-08-14, epic `integration-202608-b`)** — all five items under "What

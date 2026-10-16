@@ -18,7 +18,7 @@
 import type { CanopyConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'
-import type { BranchContext } from './types'
+import type { BranchContext, BranchMetadata, BranchPaths } from './types'
 import type { CanopyUser } from './user'
 import {
   createCheckBranchAccess,
@@ -36,28 +36,34 @@ import { operatingStrategy } from './operating-mode'
 import { BranchSchemaCache } from './branch-schema-cache'
 import { enqueueTask } from './task-queue/cms-task-queue'
 import { getTaskQueueDir } from './task-queue/task-queue-config'
+import { baseBranchOf } from './utils/base-branch'
 import { detectHeadBranch, isCanopyInternalPath } from './utils/git'
 import { readsFromCheckout } from './build-mode'
 import { timeRequestPhase } from './utils/request-timing'
-import { BRANCH_META_DIR } from './branch-metadata-file'
 import {
   appendTrailers,
   buildEditorTrailers,
+  describeEditors,
+  type EditorLookup,
   type SubmissionEditor,
 } from './submission-attribution'
+import { getBranchMetadataFileManager, recordBranchEditor } from './branch-metadata'
+import { readBranchMetadataFile } from './branch-metadata-file'
 import { getErrorMessage, redactCredentials } from './utils/error'
 import { withContentWriteLock } from './utils/content-write-lock'
+import { ContentStore } from './content-store'
+import { stampNewEntries, type StampedEntry } from './stamp-on-publish'
 
 /**
  * A per-instance active-branch detector with its own 5s TTL cache, in priority
  * order: an explicitly configured value; `defaultBaseBranch ?? 'main'` with no
  * git for static deployments and builds; git HEAD in dev; and
- * `defaultBaseBranch ?? 'main'` in prod.
+ * `defaultBaseBranch` in prod, `undefined` while that is still unresolved.
  */
 function createActiveBranchDetector() {
   let cache: { value: string; expiresAt: number } | null = null
 
-  return async (config: CanopyConfig): Promise<string> => {
+  return async (config: CanopyConfig): Promise<string | undefined> => {
     if (config.defaultActiveBranch) return config.defaultActiveBranch
     // Static deployments and builds read content from the checkout — never shell out to git
     if (readsFromCheckout(config)) return config.defaultBaseBranch ?? 'main'
@@ -73,7 +79,7 @@ function createActiveBranchDetector() {
       cache = { value: branch, expiresAt: now + 5000 }
       return branch
     }
-    return config.defaultBaseBranch ?? 'main'
+    return config.defaultBaseBranch
   }
 }
 
@@ -92,9 +98,57 @@ export const getBootstrapAdminIds = (): Set<string> => {
   )
 }
 
+/**
+ * Submit found nothing to send: the branch's saved content, committed or not, matches its base
+ * as of the fork point. Raised before anything is pushed and after undoing any commit the
+ * submit made, so the branch's commits and saved edits are as they were.
+ */
+export class NothingToSubmitError extends Error {
+  constructor(branch: string, base: string) {
+    super(
+      `Nothing to submit yet: "${branch}" has no saved changes compared with "${base}". ` +
+        'Save your edits, then submit.',
+    )
+    this.name = 'NothingToSubmitError'
+  }
+}
+
+type RecordedEditors = Pick<BranchMetadata, 'editors' | 'uncommittedEditors'>
+
+/** The branch's recorded editor ids, or undefined, with a warning, when branch.json cannot be read. */
+async function readRecordedEditors(context: BranchContext): Promise<RecordedEditors | undefined> {
+  try {
+    return (await readBranchMetadataFile(context.branchRoot))?.branch
+  } catch (err) {
+    console.warn(
+      `CanopyCMS: Could not read the recorded editors of ${context.branch.name}:`,
+      getErrorMessage(err),
+    )
+    return undefined
+  }
+}
+
+/** One lookup per user per submit, however often the submit asks. */
+function memoizeLookup(lookup: EditorLookup | undefined): EditorLookup | undefined {
+  if (!lookup) return undefined
+  const seen = new Map<string, ReturnType<EditorLookup>>()
+  return (userId) => {
+    let found = seen.get(userId)
+    if (!found) {
+      found = lookup(userId)
+      seen.set(userId, found)
+    }
+    return found
+  }
+}
+
 export interface SubmitBranchResult {
   /** Repo-relative paths the branch changes, excluding canopycms runtime metadata. */
   changedPaths: string[]
+  /** Every recorded editor of the branch, for the PR body. */
+  editors: SubmissionEditor[]
+  /** The entries this submit stamped (stamp-on-publish.ts), for the editor's open forms. */
+  stamped: StampedEntry[]
 }
 
 export interface CanopyServices {
@@ -105,6 +159,14 @@ export interface CanopyServices {
    * content serving since the editor is pinned to its own branch via URL params.
    */
   refreshActiveBranch: () => Promise<void>
+  /**
+   * Resolve a prod base branch that was still pending at creation because the worker had not yet
+   * created the remote it is read from; a no-op once resolved. Rejects with RemoteNotReadyError
+   * (a 503) until the remote exists. The HTTP handler (http/handler.ts) and
+   * createCanopyContext's getContext (context.ts) await it before reading
+   * `config.defaultBaseBranch`.
+   */
+  resolvePendingBaseBranch: () => Promise<void>
   /** Entry schema registry mapping entry schema names to field definitions */
   entrySchemaRegistry: EntrySchemaRegistry
   /** Per-branch schema cache */
@@ -142,14 +204,19 @@ export interface CanopyServices {
     message: string
   }) => Promise<void>
   /**
-   * Submit branch: commit all changes (with the submitter's trailers) and push
-   * to remote. Resolves with every path the branch changes against its base.
+   * Submit branch: fill new entries' empty `stampOnPublish` fields
+   * (stamp-on-publish.ts), commit all changes (with the submitter's trailers)
+   * and push to remote. Resolves with every path the branch changes against its base,
+   * and with `stamped`, the entries this submit stamped.
    * Holds the branch's content-write lock; rejects with
-   * `ContentWriteLockBusyError` when busy.
+   * `ContentWriteLockBusyError` when busy, and with `NothingToSubmitError`
+   * before pushing when the branch changes nothing.
    */
   submitBranch: (options: {
     context: BranchContext
     submitter?: SubmissionEditor
+    /** Names the recorded editors; without it they are credited by id. */
+    lookupEditor?: EditorLookup
     message?: string
   }) => Promise<SubmitBranchResult>
   /** Commit to the settings branch (for permissions/groups) and push it; never opens a PR */
@@ -165,6 +232,8 @@ export interface CanopyServices {
   }>
   /** Get the root path for settings storage (ensures workspace exists) */
   getSettingsBranchRoot: () => Promise<string>
+  /** Records `user` as an editor of the branch for its next submit (branch-metadata.ts). */
+  recordBranchEditor: (context: BranchPaths, user: CanopyUser) => Promise<void>
 }
 
 export interface CreateCanopyServicesOptions {
@@ -225,22 +294,28 @@ async function _createCanopyServicesInternal(
   const detectActiveBranch = createActiveBranchDetector()
   const explicitActiveBranch = config.defaultActiveBranch
   const explicitBaseBranch = config.defaultBaseBranch
-  const defaultActiveBranch = await detectActiveBranch(config)
-  // Unset, the base branch follows the same dev-mode HEAD detection, matching
-  // resolveBaseBranch in utils/git.ts — the canonical definition workspace
-  // provisioning uses.
+  // Unset, the base branch follows the rule workspace provisioning uses
+  // (GitManager.resolveWorkspaceBaseBranch): dev detects git HEAD, prod reads
+  // the remote's HEAD and fails loudly when it cannot. Prod stays pending
+  // (undefined) only while the worker has not created the remote yet; see
+  // resolvePendingBaseBranch.
   const defaultBaseBranch =
     explicitBaseBranch ??
-    (config.mode === 'dev' && !readsFromCheckout(config)
-      ? await detectActiveBranch({ ...config, defaultActiveBranch: undefined })
-      : 'main')
+    (readsFromCheckout(config)
+      ? 'main'
+      : config.mode === 'dev'
+        ? await detectActiveBranch({ ...config, defaultActiveBranch: undefined })
+        : await GitManager.detectBaseBranch(config, 'pending'))
+  const defaultActiveBranch = await detectActiveBranch({ ...config, defaultBaseBranch })
   config = { ...config, defaultActiveBranch, defaultBaseBranch }
 
   const bootstrapAdminIds = getBootstrapAdminIds()
 
   const branchSchemaCache = options.branchSchemaCache ?? new BranchSchemaCache(config.mode)
 
-  const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', config)
+  // Reads services.config per call: the protected base branch may resolve after creation.
+  const checkBranchAccess: CanopyServices['checkBranchAccess'] = (context, user) =>
+    createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', services.config)(context, user)
   // Content access loads permissions dynamically from the settings branch (orphan git branch)
   const ensureSettingsBranchRoot =
     options.getSettingsBranchRoot ??
@@ -250,7 +325,7 @@ async function _createCanopyServicesInternal(
       const settingsRoot = strategy.getSettingsRoot()
       const branchName = strategy.getSettingsBranchName(config)
 
-      const manager = new SettingsWorkspaceManager(config)
+      const manager = new SettingsWorkspaceManager(services.config)
       await manager.ensureGitWorkspace({
         settingsRoot,
         branchName,
@@ -284,7 +359,7 @@ async function _createCanopyServicesInternal(
   ) =>
     new GitManager({
       repoPath,
-      baseBranch: opts?.baseBranch ?? config.defaultBaseBranch ?? 'main',
+      baseBranch: opts?.baseBranch ?? baseBranchOf(services.config),
       remote: opts?.remote ?? config.defaultRemoteName ?? configDefaults.remoteName,
       skipIndexMarker: opts?.skipIndexMarker,
     })
@@ -312,16 +387,48 @@ async function _createCanopyServicesInternal(
     })
   }
 
+  /** Runs inside submitBranch's content-write lock; a stamp that fails never blocks the submit. */
+  const stampNewEntriesOrWarn = async (
+    context: BranchContext,
+    git: GitManager,
+  ): Promise<StampedEntry[]> => {
+    const contentRoot = services.config.contentRoot || 'content'
+    try {
+      const { flatSchema } = await services.branchSchemaCache.getSchema(
+        context.branchRoot,
+        services.entrySchemaRegistry,
+        contentRoot,
+      )
+      return await stampNewEntries({
+        git,
+        store: new ContentStore(context.branchRoot, flatSchema, { contentRootName: contentRoot }),
+        branchRoot: context.branchRoot,
+        flatSchema,
+        contentRoot,
+        stampedAt: new Date().toISOString(),
+        warn: (message) => console.warn(redactCredentials(message)),
+      })
+    } catch (err) {
+      console.warn(
+        `CanopyCMS: Could not finish stamping the new entries on ${context.branch.name}; ` +
+          'submitting with only the stamps already written:',
+        redactCredentials(getErrorMessage(err)),
+      )
+      return []
+    }
+  }
+
   const submitBranch = async (options: {
     context: BranchContext
     submitter?: SubmissionEditor
+    lookupEditor?: EditorLookup
     message?: string
   }): Promise<SubmitBranchResult> => {
     // Defense-in-depth: refuse to push the base branch to itself even if the
     // 'submittableBranch' guard was somehow bypassed. Prefer the recorded fork
-    // point (context.branch.baseBranch) over config.defaultBaseBranch — the
-    // closure-captured `config` can go stale after dev refreshActiveBranch().
-    const effectiveBase = options.context.branch.baseBranch ?? config.defaultBaseBranch ?? 'main'
+    // point (context.branch.baseBranch) over the config value, which dev's
+    // refreshActiveBranch() can move.
+    const effectiveBase = options.context.branch.baseBranch ?? baseBranchOf(services.config)
     if (sanitizeBranchName(options.context.branch.name) === sanitizeBranchName(effectiveBase)) {
       throw new Error(
         `Refusing to commit and push the base branch "${options.context.branch.name}" — submitting requires a separate editing branch`,
@@ -341,9 +448,27 @@ async function _createCanopyServicesInternal(
     // lands on the branch, and the rebase's `--abort` resets the branch past it
     // after this reported success. The push stays inside so no rebase rewrites
     // the commit between commit and push.
+    const lookupEditor = memoizeLookup(options.lookupEditor)
+    const readRecorded = () => readRecordedEditors(options.context)
+    // Names are looked up before taking the lock, so a slow auth provider never holds it.
+    const named = new Map(
+      (await describeEditors((await readRecorded())?.editors ?? [], lookupEditor)).map((e) => [
+        e.userId,
+        e,
+      ]),
+    )
+    let recorded: RecordedEditors = {}
+    let stamped: StampedEntry[] = []
     const submitted = await withContentWriteLock(options.context.branchRoot, async () => {
       await git.checkoutBranch(options.context.branch.name)
+      // Before the status read, so the stamp joins this commit even when an earlier attempt
+      // already committed the entry and only its push failed.
+      stamped = await stampNewEntriesOrWarn(options.context, git)
       const status = await git.status()
+      // A save records its editor only after releasing this lock, so a save that lands just
+      // before this submit can be committed here while its editor is named by the next commit.
+      recorded = (await readRecorded()) ?? {}
+      const uncommitted = recorded.uncommittedEditors ?? []
       // Commit and push answer two DIFFERENT questions. Committing cleans the
       // working tree, so one combined "tree is dirty" gate makes a retry after a
       // failed push a silent no-op: nothing left to commit, the block is skipped,
@@ -353,39 +478,70 @@ async function _createCanopyServicesInternal(
       // canopycms's own state under .canopy-meta/ is never content, so it neither
       // makes a commit worth creating nor gets staged into one.
       let committed = false
+      const preCommitSha = await git.headSha()
       if (status.files.some((f) => !isCanopyInternalPath(f.path))) {
         await git.addAllExceptCanopyState()
-        const trailers = buildEditorTrailers(options.submitter ? [options.submitter] : [], {
-          editedBy: config.gitEditedByTrailers ?? true,
-          coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,
-        })
+        const committers = uncommitted.map((userId) => named.get(userId) ?? { userId })
+        const trailers = buildEditorTrailers(
+          options.submitter ? [options.submitter, ...committers] : committers,
+          {
+            editedBy: config.gitEditedByTrailers ?? true,
+            coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,
+          },
+        )
         await git.commit(
           appendTrailers(options.message ?? `Submit ${options.context.branch.name}`, trailers),
         )
         committed = true
       }
+      // The diff runs after the commit so it covers saved-but-uncommitted edits too, and
+      // before the push so a branch with nothing to submit never reaches the remote. A diff
+      // that cannot be computed lets the submit through: the list only feeds the PR body, and
+      // GitHub's own refusal of an empty branch is handled on both paths (api/github-sync.ts,
+      // worker/task-runner.ts).
+      let changedPaths: string[] | undefined
+      try {
+        changedPaths = (await git.listChangedPathsSinceBase()).filter(
+          (p) => !isCanopyInternalPath(p),
+        )
+      } catch (err) {
+        console.warn(
+          `CanopyCMS: Could not list the changes on ${options.context.branch.name} against its base; ` +
+            "the PR body lists only this submit's changes:",
+          redactCredentials(getErrorMessage(err)),
+        )
+      }
+      if (changedPaths?.length === 0) {
+        if (committed) await git.resetKeepingChanges(preCommitSha)
+        throw new NothingToSubmitError(options.context.branch.name, effectiveBase)
+      }
+      // A failure here leaves them uncommitted, so the next commit names them again.
+      if (committed && uncommitted.length > 0) {
+        try {
+          await getBranchMetadataFileManager(
+            options.context.branchRoot,
+            options.context.baseRoot,
+          ).markEditorsCommitted(uncommitted)
+        } catch (err) {
+          console.warn(
+            `CanopyCMS: Could not clear the committed editors of ${options.context.branch.name}:`,
+            getErrorMessage(err),
+          )
+        }
+      }
       if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
         await git.push(options.context.branch.name)
       }
-      return status
+      return changedPaths ?? status.files.map((f) => f.path).filter((p) => !isCanopyInternalPath(p))
     })
 
-    // The list only feeds the PR body, so a failure to compute it falls back to
-    // this submit's own working-tree changes rather than failing a submit that
-    // has already been pushed.
-    let changedPaths: string[]
-    try {
-      changedPaths = await git.listChangedPathsSinceBase()
-    } catch (err) {
-      console.warn(
-        `CanopyCMS: Could not list the changes on ${options.context.branch.name} against its base; ` +
-          "the PR body lists only this submit's changes:",
-        redactCredentials(getErrorMessage(err)),
-      )
-      changedPaths = submitted.files.map((f) => f.path)
-    }
+    // Re-read after the lock, so the PR body also names an editor recorded after the read above:
+    // one whose save this commit carries, or one whose save will reach the PR with a later push.
+    const editorIds = (await readRecorded())?.editors ?? recorded.editors ?? []
     return {
-      changedPaths: changedPaths.filter((p) => !p.startsWith(`${BRANCH_META_DIR}/`)),
+      changedPaths: submitted,
+      editors: await describeEditors(editorIds, lookupEditor),
+      stamped,
     }
   }
 
@@ -517,6 +673,7 @@ async function _createCanopyServicesInternal(
     submitBranch,
     commitToSettingsBranch,
     getSettingsBranchRoot,
+    recordBranchEditor,
     refreshActiveBranch: async () => {
       if (services.config.mode !== 'dev') return
       // Static deployments and builds serve from the checkout — no git HEAD to track
@@ -544,12 +701,24 @@ async function _createCanopyServicesInternal(
         changed = true
       }
       if (changed) {
-        // The closures above (getSettingsBranchRoot, checkContentAccess,
-        // createGitManagerFor, …) captured the original `config` local. Only
-        // branch identity changes here: git operations on existing branches use
-        // the fork point in branch metadata, and anything needing the fresh
-        // values must read services.config.
+        // The closures above captured the original `config` local. Only branch
+        // identity changes here: git operations on existing branches use the
+        // fork point in branch metadata, and anything needing the fresh values
+        // reads services.config.
         services.config = next
+      }
+    },
+    resolvePendingBaseBranch: async () => {
+      if (services.config.defaultBaseBranch) return
+      // In-process and write-once in effect: concurrent requests each read the
+      // same remote HEAD and assign the same value, and nothing is written to
+      // disk, so no lock is needed. Later changes to that HEAD are not followed
+      // (configure defaultBaseBranch to move the base branch).
+      const detected = await GitManager.detectBaseBranch(services.config, 'throw')
+      services.config = {
+        ...services.config,
+        defaultBaseBranch: detected,
+        defaultActiveBranch: services.config.defaultActiveBranch ?? detected,
       }
     },
   }

@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — decided delete. `BranchAccessControl.adminOnly` had exactly one occurrence repo-wide (the declaration) and was not settable: `updateAccess`'s body schema accepts only `allowedUsers`/`allowedGroups`. Enforcing a field no API can set is dead weight; admin-only branches, if wanted, need a real feature (body-schema field + UI + tests)
+---
 # `BranchAccessControl.adminOnly` is defined but never enforced
 
 ## RESOLVED (2026-08-12) — deleted the field

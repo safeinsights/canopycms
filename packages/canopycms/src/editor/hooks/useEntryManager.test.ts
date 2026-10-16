@@ -1,10 +1,20 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useEntryManager, listAllEntries, SaveApiError } from './useEntryManager'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import {
+  useEntryManager,
+  listAllEntries,
+  SaveApiError,
+  EntrySchemaUnavailableError,
+} from './useEntryManager'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import type { ContentId } from '../../paths/types'
 import { notifications } from '@mantine/notifications'
+import { UnansweredError } from '../unanswered'
+import type React from 'react'
+import { ApiTimeoutError, WRITE_TIMED_OUT_MESSAGE } from '../../api/request-deadline'
+import { MayHaveLandedError } from '../unanswered'
+import type { RetryToastMessageProps } from '../components/RetryToastMessage'
 import {
   setupMockApiClient,
   setupMockLocation,
@@ -12,6 +22,7 @@ import {
   setupMockConsole,
   createApiClientWrapper,
   createStrictModeApiClientWrapper,
+  gatewayPage,
 } from './__test__/test-utils'
 import {
   unsafeAsLogicalPath,
@@ -33,6 +44,7 @@ vi.mock('../../api', async () => {
 vi.mock('@mantine/notifications', () => ({
   notifications: {
     show: vi.fn(),
+    hide: vi.fn(),
   },
 }))
 
@@ -103,6 +115,54 @@ describe('useEntryManager', () => {
     expect(result.current.currentEntry).toEqual(mockEntry)
   })
 
+  it('opens no entry, with the navigator open, for an empty entry param, until one is chosen', async () => {
+    setupMockLocation({ href: 'http://localhost/edit?entry=', search: '?entry=' })
+    mockClient.entries.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { entries: [mockCollectionItem], pagination: { hasMore: false, limit: 100 } },
+    })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+
+    await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+    expect(result.current.entries.map((e) => e.path)).toEqual(['entry1'])
+    expect(result.current.selectedPath).toBe('')
+    expect(result.current.navigatorOpen).toBe(true)
+
+    // Once the author has opened an entry, losing the selection opens the first entry again.
+    act(() => result.current.setSelectedPath('entry1'))
+    act(() => result.current.setSelectedPath(''))
+    await waitFor(() => expect(result.current.selectedPath).toBe('entry1'))
+  })
+
+  it('stops honouring an empty entry param once an entry is chosen before any have loaded', async () => {
+    setupMockLocation({ href: 'http://localhost/edit?entry=', search: '?entry=' })
+    mockClient.entries.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { entries: [], pagination: { hasMore: false, limit: 100 } },
+    })
+    const { result } = renderHook(
+      () => useEntryManager({ ...defaultOptions, initialEntries: [] }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+    act(() => result.current.setSelectedPath('entry1'))
+
+    mockClient.entries.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { entries: [mockCollectionItem], pagination: { hasMore: false, limit: 100 } },
+    })
+    await act(async () => {
+      await result.current.refreshEntries()
+    })
+    await waitFor(() => expect(result.current.entries).toHaveLength(1))
+    act(() => result.current.setSelectedPath(''))
+
+    await waitFor(() => expect(result.current.selectedPath).toBe('entry1'))
+  })
+
   it('uses initialSelectedId when provided', () => {
     const { result } = renderHook(
       () => useEntryManager({ ...defaultOptions, initialSelectedId: 'entry1' }),
@@ -110,6 +170,70 @@ describe('useEntryManager', () => {
     )
 
     expect(result.current.selectedPath).toBe('entry1')
+  })
+
+  describe('a create or rename that times out', () => {
+    let restoreConsole: () => void
+    beforeEach(() => {
+      restoreConsole = setupMockConsole(['error']).restore
+    })
+    afterEach(() => restoreConsole())
+
+    it('keeps the create form open with the error, and reloads the content tree', async () => {
+      mockClient.content.write.mockRejectedValueOnce(
+        new ApiTimeoutError('PUT', '/main/content/content/posts/new-post', 75_000),
+      )
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await act(async () => {
+        await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
+      })
+      const listCalls = mockClient.entries.list.mock.calls.length
+
+      await act(async () => {
+        await result.current.handleCreateModalSubmit('new-post', 'post')
+      })
+
+      expect(result.current.createModalOpen).toBe(true)
+      expect(result.current.createModalError).toBe(WRITE_TIMED_OUT_MESSAGE)
+      await waitFor(() =>
+        expect(mockClient.entries.list.mock.calls.length).toBeGreaterThan(listCalls),
+      )
+    })
+
+    it("treats a gateway's 5xx page on create the same way", async () => {
+      mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await act(async () => {
+        await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
+      })
+      const listCalls = mockClient.entries.list.mock.calls.length
+
+      await act(async () => {
+        await result.current.handleCreateModalSubmit('new-post', 'post')
+      })
+
+      expect(result.current.createModalError).toBe(WRITE_TIMED_OUT_MESSAGE)
+      await waitFor(() =>
+        expect(mockClient.entries.list.mock.calls.length).toBeGreaterThan(listCalls),
+      )
+    })
+
+    it('reloads the content tree after a timed-out rename', async () => {
+      mockClient.content.renameEntry.mockRejectedValueOnce(
+        new ApiTimeoutError('PATCH', '/main/rename-entry/content/posts/a', 75_000),
+      )
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(mockClient.entries.list).toHaveBeenCalled())
+      const listCalls = mockClient.entries.list.mock.calls.length
+
+      await act(async () => {
+        await result.current.renameEntry('content/posts/a', 'b').catch(() => {})
+      })
+
+      await waitFor(() =>
+        expect(mockClient.entries.list.mock.calls.length).toBeGreaterThan(listCalls),
+      )
+    })
   })
 
   it('builds collectionByPath map correctly', () => {
@@ -145,6 +269,22 @@ describe('useEntryManager', () => {
       branch: 'main',
       path: 'posts/test',
     })
+  })
+
+  it('readEntryValue returns the normalized value without recording a version token', async () => {
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { format: 'json', data: { title: 'Test Entry' }, version: 777 } as any,
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+
+    const value = await result.current.readEntryValue(mockEntry)
+
+    expect(value).toEqual({ title: 'Test Entry' })
+    expect(mockClient.content.read).toHaveBeenCalledWith({ branch: 'main', path: 'posts/test' })
+    expect(result.current.getEntryVersion(mockEntry.contentId)).toBeUndefined()
   })
 
   /** saveEntry refuses an entry it holds no token for, so a save test reads the entry first. */
@@ -192,6 +332,33 @@ describe('useEntryManager', () => {
     )
   })
 
+  it('throws EntrySchemaUnavailableError, not a generic load failure, on a SCHEMA_UNAVAILABLE refusal', async () => {
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      code: 'SCHEMA_UNAVAILABLE',
+      error: 'Entry type widget is unavailable',
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
+
+    await expect(result.current.loadEntry(mockEntry)).rejects.toBeInstanceOf(
+      EntrySchemaUnavailableError,
+    )
+  })
+
+  it("rejects a save answered by a gateway's 5xx page as unanswered, not as the server's refusal", async () => {
+    mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    await loadForSave(result)
+
+    await expect(result.current.saveEntry(mockEntry, { title: 'T' })).rejects.toBeInstanceOf(
+      UnansweredError,
+    )
+  })
+
   it('saves entry successfully', async () => {
     const mockValue = { title: 'Updated Title', body: 'Updated Content' }
     const mockResponse = { title: 'Updated Title', body: 'Updated Content' }
@@ -217,6 +384,21 @@ describe('useEntryManager', () => {
         body: 'Updated Content',
         expectedVersion: LOADED_VERSION,
       },
+    )
+  })
+
+  it('sends an adopted version with the next save', async () => {
+    mockClient.content.write.mockResolvedValueOnce({ ok: true, status: 200, data: {} as any })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    await loadForSave(result)
+
+    result.current.adoptEntryVersion(mockEntry.contentId, LOADED_VERSION + 7)
+    await result.current.saveEntry(mockEntry, { title: 'T' })
+
+    expect(result.current.getEntryVersion(mockEntry.contentId)).toBe(LOADED_VERSION + 7)
+    expect(mockClient.content.write).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ expectedVersion: LOADED_VERSION + 7 }),
     )
   })
 
@@ -315,6 +497,26 @@ describe('useEntryManager', () => {
 
     await loadForSave(result)
     await expect(result.current.saveEntry(mockEntry, {})).rejects.toThrow('Save failed: 500')
+  })
+
+  it('carries the response code on a refused save', async () => {
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      code: 'SCHEMA_UNAVAILABLE',
+      error: 'not known yet',
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
+
+    await loadForSave(result)
+    await expect(result.current.saveEntry(mockEntry, {})).rejects.toMatchObject({
+      status: 503,
+      code: 'SCHEMA_UNAVAILABLE',
+      message: 'not known yet',
+    })
   })
 
   it('refreshes entries successfully', async () => {
@@ -589,6 +791,75 @@ describe('useEntryManager', () => {
     expect(result.current.createModalOpen).toBe(false)
     // The create flow navigates to the newly created entry
     expect(result.current.selectedPath).toBe('new-post')
+  })
+
+  describe('create payload title', () => {
+    const titledCollections: EditorCollection[] = [
+      {
+        path: unsafeAsLogicalPath('content/posts'),
+        name: 'posts',
+        label: 'Posts',
+        type: 'collection',
+        format: 'mdx',
+        entryTypes: [
+          { name: 'post', format: 'mdx', titleField: ['hero', 'title'] },
+          { name: 'data', format: 'json', titleField: ['title'] },
+          { name: 'plain', format: 'json' },
+        ],
+      },
+    ]
+
+    // The mocked entry list never contains the new entry, so the post-create navigation warns.
+    beforeEach(() => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+    })
+    afterEach(() => {
+      vi.mocked(console.warn).mockRestore()
+    })
+
+    const submit = async (entryTypeName: string, title?: string) => {
+      mockClient.content.write.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { format: 'json', data: {} },
+      })
+      const { result } = renderHook(
+        () => useEntryManager({ ...defaultOptions, collections: titledCollections }),
+        { wrapper },
+      )
+      await act(async () => {
+        await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
+      })
+      await act(async () => {
+        await result.current.handleCreateModalSubmit('new-post', entryTypeName, title)
+      })
+      return mockClient.content.write.mock.calls[0][1] as { data: unknown }
+    }
+
+    it('writes the title at the nested title path of a markdown entry', async () => {
+      const body = await submit('post', 'Hello')
+      expect(body).toMatchObject({
+        format: 'mdx',
+        data: { hero: { title: 'Hello' } },
+        body: '',
+        expectedVersion: null,
+      })
+    })
+
+    it('writes the title into the data of a data-only entry', async () => {
+      const body = await submit('data', 'Hello')
+      expect(body).toMatchObject({ format: 'json', data: { title: 'Hello' } })
+    })
+
+    it('writes empty data when the type has no title field', async () => {
+      const body = await submit('plain', 'Ignored')
+      expect(body.data).toEqual({})
+    })
+
+    it('writes empty data when no title is given', async () => {
+      const body = await submit('post')
+      expect(body.data).toEqual({})
+    })
   })
 
   it('closes modal without creating entry', async () => {
@@ -961,6 +1232,583 @@ describe('useEntryManager', () => {
       expect(mockClient.content.write.mock.calls[1][1]).toEqual(
         expect.objectContaining({ expectedVersion: 200 }),
       )
+    })
+  })
+
+  describe('an entry a save reported gone (ENTRY_GONE)', () => {
+    const listOf = (...items: Array<Partial<typeof mockCollectionItem>>) => ({
+      ok: true as const,
+      status: 200,
+      data: {
+        entries: items.map((item) => ({ ...mockCollectionItem, ...item })),
+        pagination: { hasMore: false, limit: 200 },
+      },
+    })
+    /** The entry as the server lists it: `mockEntry`'s content ID at `mockEntry`'s path. */
+    const listedAsOpenedItem = { contentId: mockEntry.contentId, logicalPath: mockEntry.path }
+    const listedAsOpened = () => listOf(listedAsOpenedItem)
+
+    /** An `entries.list` response held until the test resolves it. */
+    const deferredList = () => {
+      let resolve!: (value: ReturnType<typeof listOf>) => void
+      const promise = new Promise<ReturnType<typeof listOf>>((res) => {
+        resolve = res
+      })
+      return { promise, resolve }
+    }
+
+    /** Mount with the entry listed as opened, and return the entry object the editor holds. */
+    const mountWithOpenedEntry = async () => {
+      mockClient.entries.list.mockResolvedValue(listedAsOpened())
+      const hook = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(hook.result.current.entriesInitializing).toBe(false))
+      const opened = hook.result.current.entries[0]
+      expect(opened.contentId).toBe(mockEntry.contentId)
+      return { ...hook, opened }
+    }
+
+    it('keeps a renamed entry selected while the list it moved in loads', async () => {
+      const { result, opened } = await mountWithOpenedEntry()
+      act(() => result.current.setSelectedPath(opened.path))
+      mockClient.content.renameEntry.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { newPath: 'entry1-renamed' },
+      })
+      const list = deferredList()
+      mockClient.entries.list.mockReturnValue(list.promise)
+
+      let renaming!: Promise<void>
+      act(() => {
+        renaming = result.current.renameEntry(opened.path, 'renamed')
+      })
+      // Renders while the list still holds only the old path.
+      await act(async () => {})
+      await act(async () => {
+        // Listed first, so it is what the selection would fall back to.
+        list.resolve(
+          listOf(
+            {
+              contentId: unsafeAsContentId('other0000001'),
+              logicalPath: unsafeAsLogicalPath('aaa'),
+            },
+            {
+              contentId: mockEntry.contentId,
+              logicalPath: unsafeAsLogicalPath('entry1-renamed'),
+              slug: unsafeAsSlug('renamed'),
+            },
+          ),
+        )
+        await renaming
+      })
+
+      expect(result.current.selectedPath).toBe('entry1-renamed')
+    })
+
+    it('reports a rename that landed as renamed even when the list then fails to load', async () => {
+      const restoreConsole = setupMockConsole(['error']).restore
+      onTestFinished(restoreConsole)
+      const { result, opened } = await mountWithOpenedEntry()
+      act(() => result.current.setSelectedPath(opened.path))
+      mockClient.content.renameEntry.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { newPath: 'entry1-renamed' },
+      })
+      mockClient.entries.list.mockRejectedValue(new Error('Schema fetch failed: 502'))
+
+      await act(async () => {
+        await result.current.renameEntry(opened.path, 'renamed')
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Entry renamed' }),
+      )
+      // Not listed, so not selected: the selection check would fall back to the first entry.
+      expect(result.current.selectedPath).toBe(opened.path)
+    })
+
+    it('opens the first entry on a branch switch after closeEntry', async () => {
+      mockClient.entries.list.mockResolvedValue(listedAsOpened())
+      const { result, rerender } = renderHook(
+        (props: { branchName: string }) => useEntryManager({ ...defaultOptions, ...props }),
+        { wrapper, initialProps: { branchName: 'main' } },
+      )
+      await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+      act(() => result.current.closeEntry())
+      await waitFor(() => expect(result.current.selectedPath).toBe(''))
+
+      rerender({ branchName: 'feature' })
+      await waitFor(() => expect(result.current.selectedPath).toBe('entry1'))
+    })
+
+    it('leaves an entry chosen while a rename lands open', async () => {
+      const { result, opened } = await mountWithOpenedEntry()
+      act(() => result.current.setSelectedPath(opened.path))
+      mockClient.content.renameEntry.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { newPath: 'entry1-renamed' },
+      })
+      const list = deferredList()
+      mockClient.entries.list.mockReturnValue(list.promise)
+      const renamedList = listOf(
+        { contentId: unsafeAsContentId('other0000001'), logicalPath: unsafeAsLogicalPath('aaa') },
+        {
+          contentId: mockEntry.contentId,
+          logicalPath: unsafeAsLogicalPath('entry1-renamed'),
+          slug: unsafeAsSlug('renamed'),
+        },
+      )
+
+      let renaming!: Promise<void>
+      act(() => {
+        renaming = result.current.renameEntry(opened.path, 'renamed')
+      })
+      await act(async () => {})
+      act(() => result.current.setSelectedPath('aaa'))
+      await act(async () => {
+        list.resolve(renamedList)
+        await renaming
+      })
+
+      expect(result.current.selectedPath).toBe('aaa')
+    })
+
+    describe('a rename with no answer', () => {
+      let restoreConsole: () => void
+      beforeEach(() => {
+        restoreConsole = setupMockConsole(['error']).restore
+      })
+      afterEach(() => restoreConsole())
+
+      it('keeps the entry selected at its new path when the rename landed', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        act(() => result.current.setSelectedPath(opened.path))
+        mockClient.content.renameEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
+        )
+        // Listed first, so it is what the selection would fall back to.
+        mockClient.entries.list.mockResolvedValue(
+          listOf(
+            {
+              contentId: unsafeAsContentId('other0000001'),
+              logicalPath: unsafeAsLogicalPath('aaa'),
+            },
+            {
+              contentId: mockEntry.contentId,
+              logicalPath: unsafeAsLogicalPath('entry1-renamed'),
+              slug: unsafeAsSlug('renamed'),
+            },
+          ),
+        )
+
+        await act(async () => {
+          await result.current.renameEntry(opened.path, 'renamed')
+        })
+
+        expect(result.current.selectedPath).toBe('entry1-renamed')
+        expect(result.current.currentEntry?.contentId).toBe(mockEntry.contentId)
+      })
+
+      it('does not count a rename to another slug as this one landing', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        mockClient.content.renameEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
+        )
+        mockClient.entries.list.mockResolvedValue(
+          listOf({
+            contentId: mockEntry.contentId,
+            logicalPath: unsafeAsLogicalPath('entry1-elsewhere'),
+            slug: unsafeAsSlug('elsewhere'),
+          }),
+        )
+
+        let err: unknown
+        await act(async () => {
+          err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
+        })
+        expect(err).toBeInstanceOf(MayHaveLandedError)
+        expect(String(err)).toContain(`Renaming "${opened.label}" may have gone through`)
+      })
+
+      it('leaves the outcome unknown when the entry is still at its old path', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        mockClient.content.renameEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
+        )
+
+        let err: unknown
+        await act(async () => {
+          err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
+        })
+        expect(err).toBeInstanceOf(MayHaveLandedError)
+        expect(String(err)).toContain(`Renaming "${opened.label}" may have gone through`)
+      })
+
+      it('leaves the outcome unknown when the entries cannot be re-read', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        mockClient.content.renameEntry.mockRejectedValueOnce(
+          new ApiTimeoutError('PATCH', `/main/rename-entry/${opened.path}`, 75_000),
+        )
+        mockClient.entries.list.mockRejectedValue(new Error('offline'))
+
+        let err: unknown
+        await act(async () => {
+          err = await result.current.renameEntry(opened.path, 'renamed').catch((e) => e)
+        })
+        expect(err).toBeInstanceOf(MayHaveLandedError)
+      })
+    })
+
+    describe('followMovedEntry', () => {
+      it('finds a renamed entry by its content ID, refreshes the list and selects the new path', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        // Listed first, so it is what a refresh would select if nothing selected the renamed entry.
+        mockClient.entries.list.mockResolvedValue(
+          listOf(
+            {
+              contentId: unsafeAsContentId('other0000001'),
+              logicalPath: unsafeAsLogicalPath('aaa'),
+            },
+            {
+              contentId: mockEntry.contentId,
+              logicalPath: unsafeAsLogicalPath('entry1-renamed'),
+              slug: unsafeAsSlug('renamed'),
+            },
+          ),
+        )
+
+        let moved: EditorEntry | undefined
+        await act(async () => {
+          moved = await result.current.followMovedEntry(opened)
+        })
+
+        expect(moved).toMatchObject({
+          contentId: mockEntry.contentId,
+          path: 'entry1-renamed',
+          slug: 'renamed',
+        })
+        expect(result.current.selectedPath).toBe('entry1-renamed')
+        expect(result.current.entries.map((e) => e.path)).toEqual(['aaa', 'entry1-renamed'])
+        expect(result.current.currentEntry?.contentId).toBe(mockEntry.contentId)
+      })
+
+      it.each([
+        ['deleted', () => listOf()],
+        [
+          'recreated under a new content ID',
+          () =>
+            listOf({
+              contentId: unsafeAsContentId('recreated0001'),
+              logicalPath: unsafeAsLogicalPath('entry1'),
+            }),
+        ],
+      ])(
+        'finds nothing for an entry that was %s, and leaves the list and selection alone',
+        async (_label, listing) => {
+          const { result, opened } = await mountWithOpenedEntry()
+          const listCalls = mockClient.entries.list.mock.calls.length
+          mockClient.entries.list.mockResolvedValue(listing())
+
+          let moved: EditorEntry | undefined
+          await act(async () => {
+            moved = await result.current.followMovedEntry(opened)
+          })
+
+          // It did look: the list was fetched again.
+          expect(mockClient.entries.list.mock.calls.length).toBeGreaterThan(listCalls)
+          expect(moved).toBeUndefined()
+          // Refreshing would have replaced the gone entry's form with this listing.
+          expect(result.current.entries).toEqual([opened])
+          expect(result.current.selectedPath).toBe('entry1')
+          expect(result.current.currentEntry).toEqual(opened)
+        },
+      )
+
+      it('finds nothing for an entry still at its own path', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        const listCalls = mockClient.entries.list.mock.calls.length
+
+        let moved: EditorEntry | undefined
+        await act(async () => {
+          moved = await result.current.followMovedEntry(opened)
+        })
+
+        expect(mockClient.entries.list.mock.calls.length).toBeGreaterThan(listCalls)
+        expect(moved).toBeUndefined()
+        expect(result.current.selectedPath).toBe('entry1')
+      })
+
+      it('leaves the selection on an entry the user chose while the refresh was in flight', async () => {
+        const { result, opened } = await mountWithOpenedEntry()
+        const other = {
+          contentId: unsafeAsContentId('other0000001'),
+          logicalPath: unsafeAsLogicalPath('entry2'),
+        }
+        mockClient.entries.list.mockResolvedValue(listOf(listedAsOpenedItem, other))
+        await act(async () => {
+          await result.current.refreshEntries()
+        })
+        const renamedListing = listOf(
+          { contentId: mockEntry.contentId, logicalPath: unsafeAsLogicalPath('entry1-renamed') },
+          other,
+        )
+        // The first list finds the rename; the second, the refresh that commits it, is held.
+        const refresh = deferredList()
+        mockClient.entries.list
+          .mockResolvedValueOnce(renamedListing)
+          .mockImplementationOnce(() => refresh.promise)
+
+        const listCalls = mockClient.entries.list.mock.calls.length
+        let following: Promise<EditorEntry | undefined> = Promise.resolve(undefined)
+        await act(async () => {
+          following = result.current.followMovedEntry(opened)
+          await waitFor(() => expect(mockClient.entries.list.mock.calls.length).toBe(listCalls + 2))
+        })
+        act(() => result.current.setSelectedPath(other.logicalPath))
+        await act(async () => {
+          refresh.resolve(renamedListing)
+          await following
+        })
+
+        // The refresh did commit the rename, and still did not pull the selection to it.
+        expect(result.current.entries.map((e) => e.path)).toEqual(['entry1-renamed', 'entry2'])
+        expect(await following).toMatchObject({
+          contentId: mockEntry.contentId,
+          path: 'entry1-renamed',
+        })
+        expect(result.current.selectedPath).toBe('entry2')
+      })
+    })
+
+    describe('recreateEntry', () => {
+      const created = unsafeAsContentId('created00001')
+      const gone: EditorEntry = { ...mockEntry, entryType: 'settings' }
+
+      it('writes a create (expectedVersion null) at the entry path, then selects the created entry', async () => {
+        const { result } = await mountWithOpenedEntry()
+        const other = {
+          contentId: unsafeAsContentId('other0000001'),
+          logicalPath: unsafeAsLogicalPath('entry2'),
+        }
+        mockClient.entries.list.mockResolvedValue(listOf(listedAsOpenedItem, other))
+        await act(async () => {
+          await result.current.refreshEntries()
+        })
+        mockClient.content.write.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { format: 'mdx', data: { title: 'Mine' }, body: 'Words', version: 77 } as any,
+        })
+        mockClient.entries.list.mockResolvedValue(
+          listOf({ contentId: created, logicalPath: mockEntry.path }, other),
+        )
+
+        let recreated: EditorEntry | undefined
+        await act(async () => {
+          recreated = await result.current.recreateEntry(gone, { title: 'Mine', body: 'Words' })
+        })
+
+        expect(mockClient.content.write).toHaveBeenCalledTimes(1)
+        const [params, body] = mockClient.content.write.mock.calls[0]
+        expect(params).toEqual({ branch: 'main', path: 'posts/test', entryType: 'settings' })
+        expect(body).toEqual({
+          format: 'mdx',
+          data: { title: 'Mine' },
+          body: 'Words',
+          expectedVersion: null,
+        })
+        expect(recreated?.contentId).toBe(created)
+        expect(result.current.selectedPath).toBe('entry1')
+        expect(result.current.currentEntry?.contentId).toBe(created)
+        // The new entry is saveable at once: it carries the version the create returned.
+        expect(result.current.getEntryVersion(created)).toBe(77)
+        expect(result.current.getEntryVersion(mockEntry.contentId)).toBeUndefined()
+      })
+
+      it('leaves the selection alone when the user has moved to another entry meanwhile', async () => {
+        const { result } = await mountWithOpenedEntry()
+        const other = {
+          contentId: unsafeAsContentId('other0000001'),
+          logicalPath: unsafeAsLogicalPath('entry2'),
+        }
+        mockClient.entries.list.mockResolvedValue(listOf(listedAsOpenedItem, other))
+        await act(async () => {
+          await result.current.refreshEntries()
+        })
+        act(() => result.current.setSelectedPath(other.logicalPath))
+        mockClient.content.write.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { format: 'mdx', data: { title: 'Mine' }, body: 'Words', version: 77 } as any,
+        })
+        mockClient.entries.list.mockResolvedValue(
+          listOf({ contentId: created, logicalPath: mockEntry.path }, other),
+        )
+
+        let recreated: EditorEntry | undefined
+        await act(async () => {
+          recreated = await result.current.recreateEntry(gone, { title: 'Mine', body: 'Words' })
+        })
+
+        expect(recreated?.contentId).toBe(created)
+        expect(result.current.selectedPath).toBe('entry2')
+      })
+
+      it('resolves a create that got no answer as created when the list then shows a new entry there', async () => {
+        const { result } = await mountWithOpenedEntry()
+        mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+        mockClient.entries.list.mockResolvedValue(
+          listOf({ contentId: created, logicalPath: mockEntry.path }),
+        )
+
+        let recreated: EditorEntry | undefined
+        await act(async () => {
+          recreated = await result.current.recreateEntry(gone, { title: 'Mine', body: 'Words' })
+        })
+
+        expect(recreated?.contentId).toBe(created)
+        expect(result.current.currentEntry?.contentId).toBe(created)
+      })
+
+      it('leaves the selection on an entry the user chose while the refresh after the create was in flight', async () => {
+        const { result } = await mountWithOpenedEntry()
+        const other = {
+          contentId: unsafeAsContentId('other0000001'),
+          logicalPath: unsafeAsLogicalPath('entry2'),
+        }
+        mockClient.entries.list.mockResolvedValue(listOf(listedAsOpenedItem, other))
+        await act(async () => {
+          await result.current.refreshEntries()
+        })
+        mockClient.content.write.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { format: 'mdx', data: { title: 'Mine' }, body: 'Words', version: 77 } as any,
+        })
+        const createdListing = listOf({ contentId: created, logicalPath: mockEntry.path }, other)
+        const refresh = deferredList()
+        mockClient.entries.list.mockImplementationOnce(() => refresh.promise)
+
+        const listCalls = mockClient.entries.list.mock.calls.length
+        let recreating: Promise<EditorEntry | undefined> = Promise.resolve(undefined)
+        await act(async () => {
+          recreating = result.current.recreateEntry(gone, { title: 'Mine', body: 'Words' })
+          await waitFor(() => expect(mockClient.entries.list.mock.calls.length).toBe(listCalls + 1))
+        })
+        act(() => result.current.setSelectedPath(other.logicalPath))
+        await act(async () => {
+          refresh.resolve(createdListing)
+          await recreating
+        })
+
+        expect((await recreating)?.contentId).toBe(created)
+        // The refresh did commit the created entry, and still did not pull the selection to it.
+        expect(result.current.entries.map((e) => e.contentId)).toEqual([created, other.contentId])
+        expect(result.current.selectedPath).toBe('entry2')
+      })
+
+      it('records the version of a create that got no answer, by reading the entry the list shows', async () => {
+        const { result } = await mountWithOpenedEntry()
+        mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+        mockClient.entries.list.mockResolvedValue(
+          listOf({ contentId: created, logicalPath: mockEntry.path }),
+        )
+        mockClient.content.read.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { format: 'mdx', data: { title: 'Mine' }, body: 'Words', version: 88 } as any,
+        })
+
+        let recreated: EditorEntry | undefined
+        await act(async () => {
+          recreated = await result.current.recreateEntry(gone, { title: 'Mine', body: 'Words' })
+        })
+
+        expect(recreated?.contentId).toBe(created)
+        expect(mockClient.content.read).toHaveBeenCalledTimes(1)
+        expect(mockClient.content.read).toHaveBeenCalledWith({ branch: 'main', path: 'posts/test' })
+        // The create returned no version, so it is the read's: the entry is saveable at once.
+        expect(result.current.getEntryVersion(created)).toBe(88)
+      })
+
+      it('resolves undefined, rather than throwing, when the refresh after an answered create fails', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+        try {
+          const { result } = await mountWithOpenedEntry()
+          mockClient.content.write.mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            data: { format: 'mdx', data: { title: 'Mine' }, body: 'Words', version: 77 } as any,
+          })
+          mockClient.entries.list.mockRejectedValue(new Error('list failed'))
+
+          let outcome: { value?: EditorEntry; error?: unknown } = {}
+          await act(async () => {
+            outcome = await result.current
+              .recreateEntry(gone, { title: 'Mine', body: 'Words' })
+              .then(
+                (value) => ({ value }),
+                (error: unknown) => ({ error }),
+              )
+          })
+
+          // The create was sent and the refresh was attempted and failed.
+          expect(mockClient.content.write).toHaveBeenCalledTimes(1)
+          expect(consoleError).toHaveBeenCalledWith(
+            expect.objectContaining({ message: 'list failed' }),
+          )
+          expect(outcome.error).toBeUndefined()
+          expect(outcome.value).toBeUndefined()
+          expect(result.current.getEntryVersion(created)).toBeUndefined()
+        } finally {
+          consoleError.mockRestore()
+        }
+      })
+
+      it('still throws a create that got no answer when the list shows only the gone entry there', async () => {
+        const { result } = await mountWithOpenedEntry()
+        mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+        mockClient.entries.list.mockResolvedValue(listOf(listedAsOpenedItem))
+
+        await expect(
+          result.current.recreateEntry(gone, { title: 'Mine', body: 'Words' }),
+        ).rejects.toBeInstanceOf(UnansweredError)
+      })
+
+      it('throws the 409 with its server code when the path is taken, and creates nothing', async () => {
+        const { result } = await mountWithOpenedEntry()
+        const listCalls = mockClient.entries.list.mock.calls.length
+        mockClient.content.write.mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          error: 'An entry already exists at this path',
+          code: 'WRITE_OUTCOME_UNKNOWN',
+        })
+
+        const attempt = result.current.recreateEntry(gone, { title: 'Mine' })
+
+        await expect(attempt).rejects.toBeInstanceOf(SaveApiError)
+        await expect(attempt).rejects.toMatchObject({
+          status: 409,
+          serverMessage: 'An entry already exists at this path',
+          code: 'WRITE_OUTCOME_UNKNOWN',
+        })
+        expect(mockClient.content.write).toHaveBeenCalledTimes(1)
+        expect(mockClient.entries.list.mock.calls.length).toBe(listCalls)
+        expect(result.current.selectedPath).toBe('entry1')
+      })
+
+      it("throws UnansweredError for a gateway's 5xx page", async () => {
+        const { result } = await mountWithOpenedEntry()
+        mockClient.content.write.mockResolvedValueOnce(await gatewayPage(504))
+
+        await expect(result.current.recreateEntry(gone, { title: 'Mine' })).rejects.toBeInstanceOf(
+          UnansweredError,
+        )
+        expect(mockClient.content.write).toHaveBeenCalledTimes(1)
+      })
     })
   })
 
@@ -1346,6 +2194,87 @@ describe('useEntryManager', () => {
         expect.objectContaining({ color: 'red' }),
       )
       restore()
+    })
+
+    it("hides the load-failure toast once the branch shown loads, and replaces another branch's", async () => {
+      const { restore } = setupMockConsole(['error'])
+      try {
+        const succeeded = mockClient.schema.get.getMockImplementation()
+        mockClient.schema.get.mockImplementation((params: Record<string, string>) =>
+          params.branch === 'branch-ok'
+            ? (succeeded?.(params) ?? Promise.reject(new Error('no default')))
+            : Promise.reject(new ApiTimeoutError('GET', `/${params.branch}/schema`, 75_000)),
+        )
+        const failureToasts = () =>
+          vi
+            .mocked(notifications.show)
+            .mock.calls.map(([n]) => n)
+            .filter((n) => n.id === 'canopy-entries-load-failed')
+
+        const { rerender } = renderHook((props) => useEntryManager(props), {
+          wrapper,
+          initialProps: optionsFor('branch-a'),
+        })
+        await waitFor(() => expect(failureToasts()).toHaveLength(1))
+
+        // Another failing branch: its own toast, after the first is taken down.
+        vi.mocked(notifications.hide).mockClear()
+        rerender(optionsFor('branch-b'))
+        await waitFor(() => expect(failureToasts()).toHaveLength(2))
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-entries-load-failed')
+
+        // Back to a branch whose failure is cached: no error-free render takes the toast down.
+        vi.mocked(notifications.hide).mockClear()
+        rerender(optionsFor('branch-a'))
+        await waitFor(() => expect(failureToasts()).toHaveLength(3))
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-entries-load-failed')
+
+        // A branch that loads: the toast goes, with no Retry pressed.
+        vi.mocked(notifications.hide).mockClear()
+        rerender(optionsFor('branch-ok'))
+        await waitFor(() =>
+          expect(notifications.hide).toHaveBeenCalledWith('canopy-entries-load-failed'),
+        )
+        expect(failureToasts()).toHaveLength(3)
+      } finally {
+        restore()
+      }
+    })
+
+    it('a timed-out load settles, fetches once, and its toast stays with a Retry that reloads it', async () => {
+      const { restore } = setupMockConsole(['error'])
+      try {
+        const succeeded = mockClient.schema.get.getMockImplementation()
+        mockClient.schema.get.mockRejectedValueOnce(
+          new ApiTimeoutError('GET', '/branch-a/schema', 30_000),
+        )
+
+        const { result } = renderHook((props) => useEntryManager(props), {
+          wrapper,
+          initialProps: optionsFor('branch-a'),
+        })
+
+        await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+        const toast = vi
+          .mocked(notifications.show)
+          .mock.calls.map(([n]) => n)
+          .find((n) => n.id === 'canopy-entries-load-failed')
+        expect(toast).toMatchObject({ color: 'red', autoClose: false })
+        // No retry loop behind the toast's back.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(mockClient.schema.get).toHaveBeenCalledTimes(1)
+
+        if (succeeded) mockClient.schema.get.mockImplementation(succeeded)
+        const message = toast?.message as React.ReactElement<RetryToastMessageProps>
+        await act(async () => message.props.onRetry())
+
+        await waitFor(() => expect(mockClient.schema.get).toHaveBeenCalledTimes(2))
+        await waitFor(() =>
+          expect(vi.mocked(notifications.hide)).toHaveBeenCalledWith('canopy-entries-load-failed'),
+        )
+      } finally {
+        restore()
+      }
     })
 
     it('a failed load after switching branches settles to the empty state and reports, rather than loading forever', async () => {

@@ -26,6 +26,7 @@ import {
   type ReferenceTargetAccess,
 } from './content-store'
 import { isBuildMode } from './build-mode'
+import { withItemKeys } from './item-keys'
 
 const log = createDebugLogger({ prefix: 'ContentListing' })
 
@@ -249,6 +250,21 @@ export interface ListingReferenceResolver {
 }
 
 /**
+ * A collection's listed entries minus those of an `unavailable` entry type, for the listings
+ * adopter pages render: data whose shape the running code does not know renders wrong rather
+ * than failing. The editor's own listing keeps them, so it can say why they cannot be opened.
+ */
+export const withoutUnavailableEntries = (
+  items: CollectionListItem[],
+  collection: CollectionSchemaItem,
+): CollectionListItem[] => {
+  const unavailable = new Set(
+    collection.entries?.filter((e) => e.unavailable).map((e) => e.name) ?? [],
+  )
+  return unavailable.size > 0 ? items.filter((item) => !unavailable.has(item.entryType)) : items
+}
+
+/**
  * Resolve `reference` fields in a collection's listed entries, in place of their raw data.
  *
  * Shared by `listEntries` and `buildContentTree` so both opt into resolution through one
@@ -272,6 +288,7 @@ export const resolveCollectionItemReferences = async (
           fields,
           resolver.cache,
           resolver.access,
+          item.logicalPath,
         ),
       }
     }),
@@ -325,8 +342,9 @@ export async function listEntries<T = Record<string, unknown>>(
     : null
   const collectionResults = await Promise.all(
     collections.map(async (collection) => {
-      const entries = await listCollectionEntries(branchRoot, collection, (file) =>
-        skippedFiles.push(file),
+      const entries = withoutUnavailableEntries(
+        await listCollectionEntries(branchRoot, collection, (file) => skippedFiles.push(file)),
+        collection,
       )
       const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.logicalPath)) : entries
       // Resolve AFTER the visibility filter (a denied entry is never resolved, so its
@@ -377,7 +395,7 @@ export async function listEntries<T = Record<string, unknown>>(
       // One deliberate copy of the rule remains: `content-tree.ts`'s `defaultBuildPath`,
       // exported for adopters to extend and also handling the collection case
       // `computeEntryUrl` does not model. Folding it in is tracked in
-      // `.claude/future-tasks/default-build-path-url-rule-copy.md`.
+      // safeinsights/canopycms#646.
       const urlPath = computeEntryUrl(entry.collectionPath, entry.slug, contentRootName)
 
       const raw = entry.data
@@ -495,11 +513,15 @@ const looksLikeMalformedEntry = (
  * -- a `README.md`, a colocated sibling artifact -- is always dropped with a debug-gated
  * `log.warn` and never passed to `onSkip`. Optional and purely diagnostic: `listEntries` uses
  * it to turn the skip into a hard build-time failure instead of a silent one.
+ *
+ * `readsId`, when given, leaves out every entry whose ContentId it rejects before its file is
+ * read, so a caller wanting a few entries does not pay for the rest.
  */
 export const listCollectionEntries = async (
   root: string,
   collection: FlatSchemaItem,
   onSkip?: (file: SkippedListingFile) => void,
+  readsId?: (id: ContentId) => boolean,
 ): Promise<CollectionListItem[]> => {
   if (collection.type !== 'collection' || !collection.entries) {
     return []
@@ -558,14 +580,17 @@ export const listCollectionEntries = async (
       }
 
       const { type: entryTypeName, slug, id: contentId } = parsed
+      if (readsId && !readsId(contentId)) return null
       const entryType = entryTypes.find((e) => e.name === entryTypeName)
       const format: ContentFormat = entryType?.format || 'json'
       const bodyField = entryType?.schema ? findBodyFieldName(entryType.schema) : 'body'
 
-      const [stats, data] = await Promise.all([
+      const [stats, rawData] = await Promise.all([
         fs.stat(absolutePath),
         readEntryData(absolutePath, format, bodyField),
       ])
+      // Keyed as `ContentStore.read` keys it, so every reader names an item alike.
+      const data = withItemKeys(entryType?.schema ?? [], rawData, 'content')
 
       const item: CollectionListItem = {
         logicalPath: entryLogicalPath(collection.logicalPath, slug),

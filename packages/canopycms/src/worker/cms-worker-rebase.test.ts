@@ -72,7 +72,10 @@ interface BranchSetup {
   branchPath: string
   contentBranchesPath: string
   branchGit: SimpleGit
+  /** The working repository commits are made in before they are pushed to the bare `remote.git`. */
   remoteGit: SimpleGit
+  /** Push the working repository's base branch into the bare `remote.git`. */
+  publishRemote: () => Promise<void>
   /** Add a commit to the origin remote (makes the branch workspace "behind"). */
   pushToRemote: (files: Record<string, string>, message?: string) => Promise<void>
   /** Commit changes in the branch workspace. */
@@ -80,32 +83,44 @@ interface BranchSetup {
 }
 
 /**
- * Creates a local git setup: a "remote" repo and a branch-workspace clone.
+ * Creates a local git setup: a bare `remote.git` (fed from a sibling working repository,
+ * as production's is fed by pushes) and a branch-workspace clone.
  * The branch workspace's feature branch tracks origin/<baseBranch>.
  */
 async function createBranchSetup(
   tmpDir: string,
   branchName: string,
-  opts: { baseBranch?: string; initialFiles?: Record<string, string> } = {},
+  opts: {
+    baseBranch?: string
+    initialFiles?: Record<string, string>
+    /** Make the clone sparse with this cone, as content-branch provisioning does. */
+    sparseCone?: string[]
+  } = {},
 ): Promise<BranchSetup> {
-  const { baseBranch = 'main', initialFiles = { '.gitkeep': '' } } = opts
+  const { baseBranch = 'main', initialFiles = { '.gitkeep': '' }, sparseCone } = opts
 
   const remotePath = path.join(tmpDir, 'remote.git')
+  const upstreamPath = path.join(tmpDir, 'upstream')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
   const branchPath = path.join(contentBranchesPath, branchName)
 
   // --- Set up remote repo ---
-  await fs.mkdir(remotePath)
-  const remoteGit = await initTestRepo(remotePath)
+  await fs.mkdir(upstreamPath)
+  const remoteGit = await initTestRepo(upstreamPath)
   await remoteGit.raw(['branch', '-M', baseBranch])
+  await simpleGit().raw(['init', '--bare', '--initial-branch', baseBranch, remotePath])
+  const publishRemote = async () => {
+    await remoteGit.raw(['push', '-q', '--force', remotePath, `${baseBranch}:${baseBranch}`])
+  }
 
   for (const [name, content] of Object.entries(initialFiles)) {
-    const fullPath = path.join(remotePath, name)
+    const fullPath = path.join(upstreamPath, name)
     await fs.mkdir(path.dirname(fullPath), { recursive: true })
     await fs.writeFile(fullPath, content)
   }
   await remoteGit.add(['.'])
   await remoteGit.commit('initial commit')
+  await publishRemote()
 
   // --- Clone remote to branch workspace ---
   await fs.mkdir(contentBranchesPath, { recursive: true })
@@ -116,13 +131,13 @@ async function createBranchSetup(
   const branchGit = simpleGit({ baseDir: branchPath, unsafe: { allowUnsafeEditor: true } })
   await branchGit.addConfig('user.name', 'Test Bot')
   await branchGit.addConfig('user.email', 'test@canopycms.test')
-  // Prevent interactive editor prompts during `rebase --continue`
-  await branchGit.addConfig('core.editor', 'true')
 
   // Exclude .canopy-meta/ from git tracking (matches production setup via ensureGitExclude)
   const excludeFile = path.join(branchPath, '.git', 'info', 'exclude')
   await fs.mkdir(path.dirname(excludeFile), { recursive: true })
   await fs.appendFile(excludeFile, '\n.canopy-meta/\n')
+
+  if (sparseCone) await branchGit.raw(['sparse-checkout', 'set', '--cone', '--', ...sparseCone])
 
   // Check out a feature branch (distinct from baseBranch) that tracks origin/<baseBranch>
   await branchGit.checkoutBranch(branchName, `origin/${baseBranch}`)
@@ -130,12 +145,13 @@ async function createBranchSetup(
 
   const pushToRemote = async (files: Record<string, string>, message = 'remote commit') => {
     for (const [name, content] of Object.entries(files)) {
-      const fullPath = path.join(remotePath, name)
+      const fullPath = path.join(upstreamPath, name)
       await fs.mkdir(path.dirname(fullPath), { recursive: true })
       await fs.writeFile(fullPath, content)
     }
     await remoteGit.add(['.'])
     await remoteGit.commit(message)
+    await publishRemote()
   }
 
   const commitToBranch = async (files: Record<string, string>, message = 'branch commit') => {
@@ -144,7 +160,7 @@ async function createBranchSetup(
       await fs.mkdir(path.dirname(fullPath), { recursive: true })
       await fs.writeFile(fullPath, content)
     }
-    await branchGit.add(['.'])
+    await branchGit.raw(['add', '--sparse', '.'])
     await branchGit.commit(message)
   }
 
@@ -153,6 +169,7 @@ async function createBranchSetup(
     contentBranchesPath,
     branchGit,
     remoteGit,
+    publishRemote,
     pushToRemote,
     commitToBranch,
   }
@@ -289,6 +306,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
             workspacePath: tmpDir,
             githubOwner: 'test-owner',
             githubRepo: 'test-repo',
+            baseBranch: 'main',
             githubToken: 'fake-token',
             settingsBranch,
           })
@@ -376,20 +394,24 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(meta?.conflictFiles).toBeUndefined()
     })
 
-    it('clears stale conflictFiles when branch catches up without new conflicts', async () => {
+    it('keeps the conflict record and clears a stale rebaseFailure when the branch is caught up', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature')
-      // Write stale conflict state
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {
         conflictStatus: 'conflicts-detected',
-        conflictFiles: ['staleContentId123'],
+        conflictFiles: ['EARLIERabcde'],
+        rebaseFailure: {
+          message: 'old',
+          firstAt: '2026-01-01T00:00:00Z',
+          lastAt: '2026-01-01T00:00:00Z',
+        },
       })
 
-      const worker = makeWorker(tmpDir)
-      await runRebase(worker)
+      await runRebase(makeWorker(tmpDir))
 
       const meta = await readMeta(setup.branchPath)
-      expect(meta?.conflictStatus).toBe('clean')
-      expect(meta?.conflictFiles).toEqual([])
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.conflictFiles).toEqual(['EARLIERabcde'])
+      expect(meta?.rebaseFailure).toBeUndefined()
     })
   })
 
@@ -457,7 +479,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
       const consoleSpy = mockConsole()
       await runRebase(makeWorker(tmpDir))
-      expect(consoleSpy).toHaveLogged(/Skipping my-feature: not yet provisioned/)
+      expect(consoleSpy).not.toHaveLogged(/my-feature/)
       consoleSpy.restore()
 
       await expect(behindCount(setup)).resolves.toBeGreaterThan(0)
@@ -480,14 +502,19 @@ describe('CmsWorker rebaseActiveBranches', () => {
     })
   })
 
-  describe("canopycms's own state", () => {
+  // Adopter-tracked `.canopy-meta` is inside a content branch's cone, so a sparse clone behaves
+  // the same.
+  describe.each([
+    { clone: 'full', sparseCone: undefined },
+    { clone: 'sparse', sparseCone: ['content', '.canopy-meta'] },
+  ])("canopycms's own state ($clone clone)", ({ sparseCone }) => {
     const behindCount = async (setup: BranchSetup) => {
       await setup.branchGit.fetch('origin', 'main')
       return (await setup.branchGit.status()).behind
     }
 
     it('rebases when the only dirt is untracked canopycms state (a clone without the exclude)', async () => {
-      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      const setup = await createBranchSetup(tmpDir, 'my-feature', { sparseCone })
       await fs.writeFile(path.join(setup.branchPath, '.git', 'info', 'exclude'), '')
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
@@ -504,6 +531,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
     it('restores the retired in-tree schema cache a repo tracks, then rebases', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        sparseCone,
         initialFiles: { '.canopy-meta/schema-cache.json': '{"v":"committed"}' },
       })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
@@ -522,6 +550,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
     it('skips, naming the fix, when other tracked canopycms state is modified', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        sparseCone,
         initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
       })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
@@ -553,6 +582,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
     it('names the fix from its own remote.git path when the clone records another origin', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        sparseCone,
         initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
       })
       // The path the cloning process saw, which this process cannot resolve.
@@ -579,6 +609,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
     it('leaves the index and the bytes alone even after the base branch untracks the state', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        sparseCone,
         initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
       })
       // A pre-fix submit committed the state on the branch; replaying this
@@ -589,6 +620,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await fs.writeFile(commentsPath, '{"threads":["live"]}')
       await setup.remoteGit.raw(['rm', '-r', '--cached', '-q', '.canopy-meta'])
       await setup.remoteGit.commit('untrack canopycms state')
+      await setup.publishRemote()
       const headBefore = (await setup.branchGit.revparse(['HEAD'])).trim()
 
       const consoleSpy = mockConsole()
@@ -605,7 +637,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
     })
 
     it('still skips real editor dirt when canopycms state is dirty too', async () => {
-      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      const setup = await createBranchSetup(tmpDir, 'my-feature', { sparseCone })
       await fs.writeFile(path.join(setup.branchPath, '.git', 'info', 'exclude'), '')
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
@@ -662,6 +694,41 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const meta = await readMeta(setup.branchPath)
       expect(meta?.conflictStatus).toBe('conflicts-detected')
       expect(meta?.conflictFiles).toContain(ENTRY_ID)
+    })
+
+    it("adds a rebase's conflicts to the ones already recorded", async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
+      })
+      await setup.commitToBranch({ [ENTRY_FILE]: '{"title":"branch version"}' }, 'branch')
+      await setup.pushToRemote({ [ENTRY_FILE]: '{"title":"main version"}' }, 'main')
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        conflictStatus: 'conflicts-detected',
+        conflictFiles: ['EARLIERabcde'],
+      })
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.conflictFiles).toEqual(['EARLIERabcde', ENTRY_ID])
+    })
+
+    it('keeps an earlier conflict through a later clean rebase', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        conflictStatus: 'conflicts-detected',
+        conflictFiles: ['EARLIERabcde'],
+      })
+
+      await runRebase(makeWorker(tmpDir))
+
+      expect((await setup.branchGit.status()).behind).toBe(0)
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.conflictFiles).toEqual(['EARLIERabcde'])
     })
 
     it('excludes non-entry files from conflictFiles (conflictStatus stays clean)', async () => {
@@ -841,6 +908,37 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(meta?.conflictFiles).toContain(COLLECTION_ID)
       expect(meta?.conflictFiles).toContain('TESTENTRYabc')
     })
+
+    it('resolves conflicts on paths outside the cone of a sparse clone, keeping the branch side', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: {
+          'content/a.md': 'a',
+          'src/both.ts': 'base',
+          'src/branch-deletes.ts': 'base',
+          'src/main-deletes.ts': 'base',
+        },
+        sparseCone: ['content', '.canopy-meta'],
+      })
+      await setup.commitToBranch({ 'src/both.ts': 'branch', 'src/main-deletes.ts': 'branch' })
+      await setup.branchGit.raw(['rm', '-q', '--sparse', '--', 'src/branch-deletes.ts'])
+      await setup.branchGit.commit('branch: delete')
+      await setup.pushToRemote({ 'src/both.ts': 'main', 'src/branch-deletes.ts': 'main' })
+      await setup.remoteGit.rm(['src/main-deletes.ts'])
+      await setup.remoteGit.commit('main: delete')
+      await setup.publishRemote()
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.rebaseFailure).toBeUndefined()
+      expect((await setup.branchGit.status()).behind).toBe(0)
+      const tree = (await setup.branchGit.raw(['ls-tree', '-r', '--name-only', 'HEAD']))
+        .trim()
+        .split('\n')
+      expect(tree).toEqual(['content/a.md', 'src/both.ts', 'src/main-deletes.ts'])
+      expect(await setup.branchGit.show(['HEAD:src/both.ts'])).toBe('branch')
+    })
   })
 
   // -------------------------------------------------------------------------
@@ -849,16 +947,13 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
   describe('rebaseFailure recording', () => {
     /**
-     * Installs a pre-rebase hook that always refuses the rebase before it
-     * starts. This drives the round loop's "unexpected error" branch for
-     * real (not a conflict -- st.conflicted stays empty since the rebase
-     * never begins -- and not the "nothing to commit"/"apply --skip" empty-
-     * commit message), without mocking simple-git internals.
+     * Leaves a stale `.git/index.lock`, so the rebase refuses to start. This drives the round
+     * loop's "unexpected error" branch for real (not a conflict -- st.conflicted stays empty since
+     * the rebase never begins -- and not the "nothing to commit"/"apply --skip" empty-commit
+     * message), without mocking simple-git internals. Not a hook: the worker runs none.
      */
-    const installRefusingPreRebaseHook = async (branchPath: string) => {
-      const hookPath = path.join(branchPath, '.git', 'hooks', 'pre-rebase')
-      await fs.writeFile(hookPath, '#!/bin/sh\necho "blocked by test hook" >&2\nexit 1\n')
-      await fs.chmod(hookPath, 0o755)
+    const blockRebaseWithIndexLock = async (branchPath: string) => {
+      await fs.writeFile(path.join(branchPath, '.git', 'index.lock'), '')
     }
 
     const readRawBranchJson = async (branchPath: string): Promise<Record<string, unknown>> => {
@@ -871,7 +966,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
-      await installRefusingPreRebaseHook(setup.branchPath)
+      await blockRebaseWithIndexLock(setup.branchPath)
 
       const worker = makeWorker(tmpDir)
       await runRebase(worker)
@@ -951,7 +1046,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
-      await installRefusingPreRebaseHook(setup.branchPath)
+      await blockRebaseWithIndexLock(setup.branchPath)
 
       const worker = makeWorker(tmpDir)
       await runRebase(worker) // first cycle: records the failure
@@ -967,7 +1062,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
-      await installRefusingPreRebaseHook(setup.branchPath)
+      await blockRebaseWithIndexLock(setup.branchPath)
 
       const worker = makeWorker(tmpDir)
       await runRebase(worker) // first cycle: records the real failure message

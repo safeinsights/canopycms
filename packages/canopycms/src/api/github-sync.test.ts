@@ -31,7 +31,7 @@ vi.mock('../task-queue/task-queue-config', () => ({
   getTaskQueueDir: vi.fn().mockReturnValue('/mock/.tasks'),
 }))
 
-import { syncSubmitPr } from './github-sync'
+import { syncDeleteRemoteBranch, syncSubmitPr } from './github-sync'
 import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
 
 const noSubmission = { changedPaths: [] }
@@ -152,6 +152,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
         prUrl: 'https://github.com/owner/repo/pull/123',
         prNumber: 123,
         syncStatus: 'synced',
+        pushedToGitHub: true,
       })
     })
 
@@ -211,6 +212,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
         prUrl: 'https://github.com/owner/repo/pull/123',
         prNumber: 123,
         syncStatus: 'synced',
+        pushedToGitHub: true,
       })
       expect(consoleSpy).toHaveWarned('Failed to convert PR #123 to ready for review')
       consoleSpy.restore()
@@ -237,6 +239,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
         prUrl: 'https://github.com/owner/repo/pull/123',
         prNumber: 123,
         syncStatus: 'synced',
+        pushedToGitHub: true,
       })
     })
 
@@ -345,6 +348,34 @@ describe('syncSubmitPr (GIT-H1)', () => {
       expect(body).not.toContain('`Old`')
     })
 
+    it('lists every recorded editor other than the submitter, on both paths', async () => {
+      const editors = [
+        { userId: 'user_2abc', name: 'Jane Doe' },
+        { userId: 'user_3def', name: 'Raj Patel', email: 'raj@example.com' },
+        { userId: 'user_4ghi' },
+      ]
+      const githubService = makeGitHubService()
+      const branchContext = createMockBranchContext({ branchName: 'feature/new' })
+
+      await syncSubmitPr(
+        createMockApiContext({ services: { config: baseConfig, githubService } }),
+        branchContext,
+        { ...submission, editors },
+      )
+      await syncSubmitPr(
+        createMockApiContext({ services: { config: baseConfig, githubService: undefined } }),
+        branchContext,
+        { ...submission, editors },
+      )
+
+      const direct = vi.mocked(githubService.createOrUpdatePR).mock.calls[0]?.[0]?.body
+      const task = mockEnqueueTask.mock.calls[0]?.[1] as { payload: { body: string } }
+      for (const body of [direct, task.payload.body]) {
+        expect(body).toContain('Also edited by: `Raj Patel` (`user_3def`), `user_4ghi`')
+        expect(body).not.toContain('raj@example.com')
+      }
+    })
+
     it('marks the worker task so the worker merges the section into an existing body', async () => {
       const ctx = createMockApiContext({
         services: { config: baseConfig, githubService: undefined },
@@ -390,6 +421,26 @@ describe('syncSubmitPr (GIT-H1)', () => {
       expect(result.syncStatus).toBe('pending-sync')
     })
 
+    it("carries the submit's stamp to the worker and records no GitHub push of its own", async () => {
+      const ctx = createMockApiContext({
+        services: { config: baseConfig, githubService: undefined },
+      })
+      const branchContext = createMockBranchContext({ branchName: 'feature/new' })
+
+      const result = await syncSubmitPr(ctx, branchContext, {
+        changedPaths: [],
+        submittedAt: '2026-03-01T00:00:00.000Z',
+      })
+
+      expect(mockEnqueueTask).toHaveBeenCalledWith(
+        '/mock/.tasks',
+        expect.objectContaining({
+          payload: expect.objectContaining({ submittedAt: '2026-03-01T00:00:00.000Z' }),
+        }),
+      )
+      expect(result.pushedToGitHub).toBeUndefined()
+    })
+
     it('still enqueues push-and-create-or-update-pr (not push-and-update-pr) when pullRequestNumber is already known', async () => {
       // Regression guard: the pre-fix code branched to 'push-and-update-pr'
       // here, which calls a blind pulls.update. That's fine when the number
@@ -430,5 +481,30 @@ describe('syncSubmitPr (GIT-H1)', () => {
       expect(consoleSpy).toHaveErrored('Failed to enqueue task')
       consoleSpy.restore()
     })
+  })
+})
+
+describe('syncDeleteRemoteBranch', () => {
+  const withPr = createMockBranchContext({ branchName: 'feature-x', pullRequestNumber: 9 })
+
+  it('queues nothing when there is no githubService and the mode has no PRs', async () => {
+    const ctx = createMockApiContext({
+      services: { config: { ...baseConfig, mode: 'dev' }, githubService: undefined },
+    })
+
+    await expect(syncDeleteRemoteBranch(ctx, withPr)).resolves.toBeUndefined()
+    expect(mockEnqueueTask).not.toHaveBeenCalled()
+  })
+
+  it('treats a 404 from GitHub as already deleted', async () => {
+    const githubService = makeGitHubService({
+      deleteBranch: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('Not Found'), { status: 404 })),
+    })
+    const ctx = createMockApiContext({ services: { config: baseConfig, githubService } })
+
+    await expect(syncDeleteRemoteBranch(ctx, withPr)).resolves.toBeUndefined()
+    expect(githubService.deleteBranch).toHaveBeenCalledWith('feature-x')
   })
 })

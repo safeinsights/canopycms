@@ -15,7 +15,7 @@
  * Divergence is a CONDITION, not an event: it holds until someone runs `sync push`, so the report
  * must not repeat into a scrolling request log (`reportOnce`) yet must be hard to scroll past (the
  * gutter block). A log cannot hold a condition; see
- * `.claude/future-tasks/dev-divergence-in-app-surface.md` for the in-app surface that would
+ * safeinsights/canopycms#654 for the in-app surface that would
  * replace the terminal as its primary home.
  *
  * All logic lives here; framework adapters call startDevContentWatcher() once at dev startup (see

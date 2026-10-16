@@ -13,6 +13,8 @@ import {
 } from '../authorization'
 import { permissionPathSchema } from './validators'
 import { MAX_ENTRIES_PER_PAGE } from './entries-constants'
+import { MAX_USER_METADATA_BATCH } from './users-constants'
+import { lookupUsersMetadata } from '../auth/user-metadata-lookup'
 import { defineEndpoint } from './route-builder'
 import { getSettingsBranchContext, commitSettings } from './settings-helpers'
 import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
@@ -30,6 +32,9 @@ export type ListGroupsResponse = ApiResponse<{ groups: PermissionGroupOption[] }
 export type GetUserMetadataResponse = ApiResponse<{
   user: UserSearchResult | null
 }>
+
+/** Response type for batch user metadata: the users found, in no guaranteed order; unknown ids are absent */
+export type BatchGetUserMetadataResponse = ApiResponse<{ users: UserSearchResult[] }>
 
 const permissionTargetSchema = z.object({
   allowedUsers: z.array(z.string()).optional(),
@@ -60,10 +65,17 @@ const getUserMetadataParamsSchema = z.object({
   userId: z.string(),
 })
 
+const userIdSchema = z.string().min(1).max(256)
+
+const batchGetUserMetadataBodySchema = z.object({
+  userIds: z.array(userIdSchema).min(1).max(MAX_USER_METADATA_BATCH),
+})
+
 export type UpdatePermissionsBody = z.infer<typeof updatePermissionsBodySchema>
-/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
+/** @internal No importer; deletion candidate in safeinsights/canopycms#725. */
 export type SearchUsersParams = z.infer<typeof searchUsersParamsSchema>
-/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
+export type BatchGetUserMetadataBody = z.infer<typeof batchGetUserMetadataBodySchema>
+/** @internal No importer; deletion candidate in safeinsights/canopycms#725. */
 export type GetUserMetadataParams = z.infer<typeof getUserMetadataParamsSchema>
 
 const getPermissionsHandler = async (
@@ -137,6 +149,7 @@ const updatePermissionsHandler = async (
       branchRoot: context.branchRoot,
       fileName: 'permissions.json',
       message: 'Update permissions',
+      actor: req.user,
       mode,
     })
 
@@ -151,7 +164,7 @@ const updatePermissionsHandler = async (
     return { ok: true, status: 200, data: {} }
   } catch (error) {
     if (error instanceof SettingsVersionConflictError) {
-      return { ok: false, status: 409, error: error.message }
+      return { ok: false, status: 409, error: error.message, code: 'SETTINGS_CHANGED' }
     }
     if (error instanceof SettingsFileConflictError) {
       return { ok: false, status: 409, error: 'Settings are busy, please try again.' }
@@ -279,8 +292,35 @@ const getUserMetadataHandler = async (
   }
 
   try {
-    const user = await authPlugin.getUserMetadata(params.userId)
-    return { ok: true, status: 200, data: { user } }
+    const users = await lookupUsersMetadata(authPlugin, [params.userId])
+    return { ok: true, status: 200, data: { user: users.get(params.userId) ?? null } }
+  } catch (error) {
+    return {
+      ok: false,
+      status: 500,
+      error: sanitizeErrorMessage(getErrorMessage(error)),
+    }
+  }
+}
+
+/**
+ * Get metadata for many users at once (for UI display)
+ */
+const batchGetUserMetadataHandler = async (
+  _gc: Record<string, never>,
+  ctx: ApiContext,
+  _req: ApiRequest,
+  body: BatchGetUserMetadataBody,
+): Promise<BatchGetUserMetadataResponse> => {
+  const authPlugin = ctx.authPlugin
+  if (!authPlugin) {
+    return { ok: false, status: 501, error: 'Auth plugin not configured' }
+  }
+
+  try {
+    const found = await lookupUsersMetadata(authPlugin, body.userIds)
+    const users = [...found.values()].filter((user): user is UserSearchResult => user !== null)
+    return { ok: true, status: 200, data: { users } }
   } catch (error) {
     return {
       ok: false,
@@ -375,6 +415,25 @@ const getUserMetadata = defineEndpoint({
 })
 
 /**
+ * Get metadata for up to MAX_USER_METADATA_BATCH users (admin/reviewer only)
+ * POST /users/batch
+ */
+const batchGetUserMetadata = defineEndpoint({
+  namespace: 'permissions',
+  name: 'batchGetUserMetadata',
+  method: 'POST',
+  readOnly: true,
+  path: '/users/batch',
+  body: batchGetUserMetadataBodySchema,
+  bodyType: 'BatchGetUserMetadataBody',
+  responseType: 'BatchGetUserMetadataResponse',
+  response: {} as BatchGetUserMetadataResponse,
+  defaultMockData: { users: [] },
+  guards: ['privileged'] as const,
+  handler: batchGetUserMetadataHandler,
+})
+
+/**
  * Exported routes for router registration
  */
 export const PERMISSION_ROUTES = {
@@ -383,4 +442,5 @@ export const PERMISSION_ROUTES = {
   searchUsers: searchUsers,
   listGroups: listGroups,
   getUserMetadata: getUserMetadata,
+  batchGetUserMetadata: batchGetUserMetadata,
 } as const

@@ -8,6 +8,7 @@ import {
   completeTask,
   failTask,
   retryTask,
+  releaseTask,
   requeueFailedTask,
   getTask,
   listTasks,
@@ -257,6 +258,33 @@ describe('Task Queue', () => {
 
       const task = await dequeueTask(tmpDir)
       expect(task!.id).toBe(id)
+    })
+  })
+
+  describe('release', () => {
+    it('moves a processing task back to pending with its retry state untouched', async () => {
+      const id = await enqueueTask(tmpDir, { action: 'push', payload: {} })
+      await dequeueTask(tmpDir)
+      await retryTask(tmpDir, id, 'Transient error')
+      const pendingPath = path.join(tmpDir, 'pending', `${id}.json`)
+      const retried = JSON.parse(await fs.readFile(pendingPath, 'utf-8'))
+      retried.retryAfter = new Date(Date.now() - 1000).toISOString()
+      await fs.writeFile(pendingPath, JSON.stringify(retried), 'utf-8')
+      await dequeueTask(tmpDir)
+
+      await releaseTask(tmpDir, id)
+
+      const task = JSON.parse(await fs.readFile(pendingPath, 'utf-8'))
+      expect(task.status).toBe('pending')
+      expect(task.retryCount).toBe(1)
+      expect(task.retryAfter).toBe(retried.retryAfter)
+      expect(task.error).toBe('Transient error')
+      await expect(fs.stat(path.join(tmpDir, 'processing', `${id}.json`))).rejects.toThrow()
+      expect((await dequeueTask(tmpDir))?.id).toBe(id)
+    })
+
+    it('is a no-op for a task no longer in processing', async () => {
+      await expect(releaseTask(tmpDir, 'missing')).resolves.toBeUndefined()
     })
   })
 

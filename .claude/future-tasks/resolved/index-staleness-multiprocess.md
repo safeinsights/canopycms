@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — in-process invalidation (PR #91) + cross-process on-disk generation marker, suspicious-lookup backstop, and write existence guard (PR fix/content-index-cross-process). Residual NFS-caching windows documented in the file.
+---
 # Index Staleness and Multi-Process Consistency
 
 ## Status: RESOLVED (in-process PR #91, cross-process PR "fix/content-index-cross-process") — residual windows documented below

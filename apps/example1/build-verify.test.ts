@@ -180,6 +180,23 @@ function readPostHeroHeadline(slug: string): string {
   return match[1].trim()
 }
 
+// Mantine's CSS custom-property namespace. It appears verbatim in Mantine's stylesheets and in
+// its component JS, and survives minification because it is data, not an identifier.
+const MANTINE_SIGNAL = '--mantine-'
+
+/**
+ * The `.next/static` scripts and stylesheets a prerendered page loads: its `<script src>` and
+ * `<link href>` tags and the chunk paths in its inline RSC payload.
+ */
+function pageStaticAssets(html: string): string[] {
+  const assets = new Set<string>()
+  // Paths in the HTML are URL-encoded (`%5Bslug%5D`); on disk they are not.
+  for (const match of html.matchAll(/static\/(?:chunks|css)\/[\w./%[\]-]+?\.(?:js|css)/g)) {
+    assets.add(decodeURIComponent(match[0]))
+  }
+  return [...assets]
+}
+
 /** `<loc>` values from a Next sitemap route's emitted XML body. */
 function sitemapLocs(xml: string): string[] {
   return [...xml.matchAll(/<loc>(.*?)<\/loc>/g)].map((m) => m[1])
@@ -254,6 +271,26 @@ describe('apps/example1 `next build`', () => {
       `"/posts/${NON_HOME_POST_SLUG}" did not contain the post's hero headline (${JSON.stringify(nonHomePostHeadline)}) -- ` +
         'same failure shape as the home-route check above, on a route the sitemap assertions below cannot catch.',
     ).toBe(true)
+  })
+
+  // A public page renders its view through `withCanopyPreview` (`canopycms-next/preview`). That
+  // entry must not pull the editor into the page: Mantine's CSS would override the site's own
+  // styles inside the editor's preview, and the public page would ship the editor.
+  it('ships no Mantine to a public page ("/posts/hello-world")', () => {
+    const htmlPath = path.join(SERVER_APP_DIR, 'posts', `${NON_HOME_POST_SLUG}.html`)
+    const assets = pageStaticAssets(readFileSync(htmlPath, 'utf8'))
+    expect(
+      assets.filter((asset) => asset.endsWith('.js')).length,
+      `found no script chunks in "/posts/${NON_HOME_POST_SLUG}"; the check below would pass vacuously`,
+    ).toBeGreaterThan(0)
+
+    const withMantine = assets.filter((asset) =>
+      readFileSync(path.join(NEXT_DIR, asset), 'utf8').includes(MANTINE_SIGNAL),
+    )
+    expect(
+      withMantine,
+      `"/posts/${NON_HOME_POST_SLUG}" loads Mantine -- something it imports reaches the editor`,
+    ).toEqual([])
   })
 
   it('sitemap.xml advertises "/" and never the stale "/home"', () => {

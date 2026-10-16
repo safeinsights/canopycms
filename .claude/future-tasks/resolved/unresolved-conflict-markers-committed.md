@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  **`AGENTS.md` on `epic/adopter-request-intake` contains live git conflict markers**, and its whole "Top-level files" module inventory appears twice in two divergent versions — so every agent session in this repo is reading contradictory project instructions and picking one. Prettier ate the closing `>>>>>>>`, which is why the usual grep misses it. A second, complete conflict sits in `entrypath-read-resolves-by-entry-type-name.md`. Neither side of the AGENTS.md conflict is disposable: one carries the gray-matter frontmatter-copy note, the other the `isIndexSlug` collection-named-`index` note. Fix = union the paragraphs, then add a marker check that keys on `^=======$` independently
+---
 # Unresolved git conflict markers are committed on `epic/adopter-request-intake`
 
 **Status:** RESOLVED 2026-08-22. **Priority: P1 (was).**

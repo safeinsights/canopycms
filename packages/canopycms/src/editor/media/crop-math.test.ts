@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { formatDirectives, parseTransformPath } from '../../assets/transform-directives'
 import { cropAreaPercentToRect, cropRectToAreaPercent, parseAspectRatio } from './crop-math'
 
 describe('cropAreaPercentToRect', () => {
@@ -19,6 +20,15 @@ describe('cropAreaPercentToRect', () => {
     expect(rect!.w).toBe(0.3333)
     // 4 decimal places, not more
     expect(rect!.x.toString().split('.')[1]?.length ?? 0).toBeLessThanOrEqual(4)
+  })
+
+  it('stores a crop that is already canonical, so its transform URL carries it unchanged', () => {
+    const rect = cropAreaPercentToRect({ x: 12.345678, y: 66.665, width: 33.335, height: 33.335 })
+    if (!rect) throw new Error('expected a rect')
+    const directive = formatDirectives({ identity: false, crop: rect })
+    const parsed = parseTransformPath([directive, 'a'.repeat(32), 'p.png'], 'any')
+    if (!parsed.ok || parsed.directives.identity) throw new Error('expected a crop directive')
+    expect(parsed.directives.crop).toEqual(rect)
   })
 
   it('shrinks width when rounding pushes x+w a hair over 1', () => {

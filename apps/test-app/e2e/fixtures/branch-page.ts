@@ -48,6 +48,12 @@ export async function findProtectedBranch(
   return protectedBranch
 }
 
+/** A workflow or admin action on a branch card; each lives on the card or in its "…" menu. */
+export type BranchAction = 'submit' | 'withdraw' | 'request-changes' | 'delete'
+
+/** What a user sees of an action: usable, shown but not usable, or not offered at all. */
+export type BranchActionState = 'enabled' | 'disabled' | 'absent'
+
 /**
  * Page object for interacting with the Branch Manager in CanopyCMS.
  * Provides methods for branch lifecycle operations like create, submit, approve, delete.
@@ -56,9 +62,8 @@ export class BranchPage {
   readonly page: Page
 
   // Branch menu and buttons
-  readonly branchDropdownButton: Locator
-  readonly branchMenu: Locator
-  readonly manageBranchesMenuItem: Locator
+  private readonly branchDropdownButton: Locator
+  private readonly manageBranchesMenuItem: Locator
 
   // Branch manager modal/drawer
   readonly branchManager: Locator
@@ -75,7 +80,6 @@ export class BranchPage {
 
     // Branch dropdown in header
     this.branchDropdownButton = page.locator('[data-testid="branch-dropdown-button"]')
-    this.branchMenu = page.locator('[data-testid="branch-menu"]')
     this.manageBranchesMenuItem = page.locator('[data-testid="manage-branches-menu-item"]')
 
     // Branch manager
@@ -90,10 +94,17 @@ export class BranchPage {
   }
 
   /**
+   * Open the header's branch menu.
+   */
+  async openBranchMenu(): Promise<void> {
+    await this.branchDropdownButton.click()
+  }
+
+  /**
    * Open the branch manager modal/drawer.
    */
   async openBranchManager(): Promise<void> {
-    await this.branchDropdownButton.click()
+    await this.openBranchMenu()
     await this.manageBranchesMenuItem.click()
     await this.branchManager.waitFor({
       state: 'visible',
@@ -168,9 +179,16 @@ export class BranchPage {
     return this.branchManager.locator(`[data-testid="conflicts-badge-${branchName}"]`)
   }
 
-  /** Badge shown on the protected base branch's row. */
+  /** The status badge of the protected base branch's row, which reads "Protected". */
   getProtectedBadge(branchName: string): Locator {
-    return this.branchManager.locator(`[data-testid="branch-protected-badge-${branchName}"]`)
+    return this.branchManager.locator(
+      `[data-testid="branch-status-badge-${branchName}"][data-protected]`,
+    )
+  }
+
+  /** The "Current" badge of the branch the editor has open. */
+  getCurrentBadge(branchName: string): Locator {
+    return this.branchManager.locator(`[data-testid="branch-current-badge-${branchName}"]`)
   }
 
   /** Badge shown once an approved/archived branch has been merged. */
@@ -184,15 +202,16 @@ export class BranchPage {
   }
 
   /**
-   * Get the status text of a branch.
+   * Get the raw workflow status of a branch, read from the badge's `data-status`
+   * (the badge text is a display label such as "In review").
    *
    * @param branchName - The name of the branch
-   * @returns The status text (e.g., 'editing', 'submitted')
+   * @returns The status (e.g., 'editing', 'submitted')
    */
   async getBranchStatus(branchName: string): Promise<string> {
     const badge = this.getBranchStatusBadge(branchName)
     await badge.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-    return (await badge.textContent()) || ''
+    return (await badge.getAttribute('data-status')) || ''
   }
 
   /**
@@ -217,10 +236,12 @@ export class BranchPage {
    * @param branchName - The name of the branch to switch to
    */
   async switchToBranch(branchName: string): Promise<void> {
-    const switchButton = this.branchManager.locator(
-      `[data-testid="switch-to-branch-button-${branchName}"]`,
-    )
-    await switchButton.click()
+    // The current branch has no Open button: it is already the one open.
+    if (!(await this.getCurrentBadge(branchName).isVisible())) {
+      await this.branchManager
+        .locator(`[data-testid="switch-to-branch-button-${branchName}"]`)
+        .click()
+    }
 
     // Wait for the branch dropdown to reflect the new branch (condition-based)
     await expect(this.branchDropdownButton).toContainText(branchName, {
@@ -229,33 +250,97 @@ export class BranchPage {
   }
 
   /**
+   * Find an action on a branch's card: its primary button when the card shows it there, else
+   * its item in the card's "…" menu, which this opens (the menu renders in a portal, hence
+   * `this.page`). Without either, the locator matches nothing. Callers that open the menu
+   * (`menuOpened`) close it with {@link closeActionMenu}.
+   */
+  private async locateAction(
+    branchName: string,
+    action: BranchAction,
+    timeout = SHORT_TIMEOUT,
+  ): Promise<{ locator: Locator; menuOpened: boolean }> {
+    const card = this.getBranchListItem(branchName)
+    const testId = `${action}-branch-button-${branchName}`
+    const primary = card.locator(`[data-testid="${testId}"]`)
+    const trigger = card.locator(`[data-testid="branch-actions-menu-${branchName}"]`)
+
+    // Whichever the card shows first: it has rendered once one of them is there.
+    await primary
+      .or(trigger)
+      .first()
+      .waitFor({ state: 'visible', timeout })
+      .catch(() => undefined)
+    if (await primary.isVisible()) return { locator: primary, menuOpened: false }
+    if (!(await trigger.isVisible())) return { locator: primary, menuOpened: false }
+
+    await trigger.click()
+    // An item missing from a menu that never opened must not read as an action that is not offered.
+    await this.page
+      .locator('[role="menu"]')
+      .waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+      .catch(() => {
+        throw new Error(
+          `The actions menu for branch ${branchName} did not open, so whether ${action} is offered is unknown.`,
+        )
+      })
+    const item = this.page.locator(`[role="menu"] [data-testid="${testId}"]`)
+    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT }).catch(() => undefined)
+    return { locator: item, menuOpened: true }
+  }
+
+  /** Close a card's "…" menu with Escape, which leaves the drawer open. */
+  private async closeActionMenu(): Promise<void> {
+    await this.page.keyboard.press('Escape')
+    await this.page.locator('[role="menu"]').waitFor({ state: 'hidden', timeout: SHORT_TIMEOUT })
+  }
+
+  /**
+   * Whether a branch's action is offered, and if so whether it can be used now. A blocked
+   * action is `aria-disabled`, which Playwright's `isDisabled()` reads on buttons and menu items.
+   *
+   * @param branchName - The name of the branch
+   * @param action - The action
+   */
+  async actionState(branchName: string, action: BranchAction): Promise<BranchActionState> {
+    const { locator, menuOpened } = await this.locateAction(branchName, action)
+    try {
+      if (!(await locator.isVisible())) return 'absent'
+      return (await locator.isDisabled()) ? 'disabled' : 'enabled'
+    } finally {
+      if (menuOpened) await this.closeActionMenu()
+    }
+  }
+
+  /**
+   * Click an action that is offered, from the card or its menu, once it is enabled: a status
+   * change the last action made can still be on its way to the list.
+   */
+  private async clickAction(branchName: string, action: BranchAction): Promise<void> {
+    const { locator, menuOpened } = await this.locateAction(branchName, action)
+    const enabled = await expect(locator)
+      .toBeEnabled({ timeout: STANDARD_TIMEOUT })
+      .then(() => true)
+      .catch(() => false)
+    if (!enabled || !(await locator.isVisible())) {
+      const state = (await locator.isVisible()) ? 'disabled' : 'not offered'
+      if (menuOpened) await this.closeActionMenu()
+      throw new Error(
+        `The ${action} action for branch ${branchName} is ${state}. The branch may be in another status, or the user may lack access.`,
+      )
+    }
+    await locator.click()
+  }
+
+  /**
    * Submit a branch for review (creates PR).
    *
    * @param branchName - The name of the branch to submit
    */
   async submitBranch(branchName: string): Promise<void> {
-    const submitButton = this.branchManager.locator(
-      `[data-testid="submit-branch-button-${branchName}"]`,
-    )
+    await this.clickAction(branchName, 'submit')
 
-    // Wait for button to be enabled
-    await submitButton.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-
-    // Check if button is disabled and throw a clear error
-    const isDisabled = await submitButton.isDisabled()
-    if (isDisabled) {
-      throw new Error(
-        `Submit button for branch ${branchName} is disabled. The branch may not be in 'editing' status or user may not be the creator.`,
-      )
-    }
-
-    await submitButton.click()
-
-    // Confirm the Mantine confirmation modal (exact: true avoids matching "Submit Branch..." in EditorHeader)
-    const confirmButton = this.page.getByRole('button', {
-      name: 'Submit Branch',
-      exact: true,
-    })
+    const confirmButton = this.page.locator('[data-testid="confirm-submit-branch"]')
     await confirmButton.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
     await confirmButton.click()
   }
@@ -266,16 +351,9 @@ export class BranchPage {
    * @param branchName - The name of the branch to withdraw
    */
   async withdrawBranch(branchName: string): Promise<void> {
-    const withdrawButton = this.branchManager.locator(
-      `[data-testid="withdraw-branch-button-${branchName}"]`,
-    )
-    await withdrawButton.click()
+    await this.clickAction(branchName, 'withdraw')
 
-    // Confirm the Mantine confirmation modal (exact: true avoids matching "Withdraw Branch..." in EditorHeader)
-    const confirmButton = this.page.getByRole('button', {
-      name: 'Withdraw Branch',
-      exact: true,
-    })
+    const confirmButton = this.page.locator('[data-testid="confirm-withdraw-branch"]')
     await confirmButton.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
     await confirmButton.click()
   }
@@ -284,16 +362,15 @@ export class BranchPage {
   // outside the editor (via GitHub PR). Only request-changes is available for reviewers.
 
   /**
-   * Request changes on a submitted branch (reviewer action).
-   * Note: request-changes has no confirmation modal — the action fires immediately.
+   * Request changes on a submitted branch (reviewer action), confirming the dialog.
    *
    * @param branchName - The name of the branch
    */
   async requestChanges(branchName: string): Promise<void> {
-    const requestChangesButton = this.branchManager.locator(
-      `[data-testid="request-changes-branch-button-${branchName}"]`,
-    )
-    await requestChangesButton.click()
+    await this.clickAction(branchName, 'request-changes')
+    const confirmButton = this.page.locator('[data-testid="confirm-request-changes"]')
+    await confirmButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await confirmButton.click()
   }
 
   /**
@@ -302,20 +379,10 @@ export class BranchPage {
    * @param branchName - The name of the branch to delete
    */
   async deleteBranch(branchName: string): Promise<void> {
-    const deleteButton = this.branchManager.locator(
-      `[data-testid="delete-branch-button-${branchName}"]`,
-    )
-    await deleteButton.click()
+    await this.clickAction(branchName, 'delete')
 
-    // Deletion ALWAYS confirms now, so wait for the dialog rather than probing
-    // for it. The previous form was `if (await confirmButton.isVisible(...))`,
-    // which reads like a wait but is not one: locator.isVisible() resolves
-    // immediately and does not auto-wait. That branch was written
-    // speculatively and never actually fired -- no confirmation existed -- so
-    // its raciness stayed invisible until a real modal was added, at which
-    // point it lost the race against the modal's render, silently skipped the
-    // click, and left the test waiting 30s for a branch that was never
-    // deleted.
+    // Deletion always confirms. Wait for the dialog: `isVisible()` resolves at once and
+    // would race the modal's render.
     const confirmButton = this.page.locator('[data-testid="confirm-delete-branch"]')
     await confirmButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
     await confirmButton.click()
@@ -327,42 +394,41 @@ export class BranchPage {
   }
 
   /**
-   * Verify a button is visible for a specific branch action.
+   * Verify an action is offered for a specific branch, on its card or in its "…" menu.
    *
    * @param branchName - The name of the branch
-   * @param action - The action (submit, withdraw, approve, request-changes, delete, switch-to)
-   * @returns True if the button is visible
+   * @param action - The action (submit, withdraw, request-changes, delete, switch-to)
+   * @returns True if the action is shown, enabled or not
    */
   async isActionButtonVisible(
     branchName: string,
-    action: 'submit' | 'withdraw' | 'request-changes' | 'delete' | 'switch-to',
+    action: BranchAction | 'switch-to',
   ): Promise<boolean> {
-    const button = this.branchManager.locator(
-      `[data-testid="${action}-branch-button-${branchName}"]`,
-    )
-    try {
-      await button.waitFor({ state: 'visible', timeout: 2000 })
-      return true
-    } catch {
-      return false
+    if (action === 'switch-to') {
+      return await this.branchManager
+        .locator(`[data-testid="switch-to-branch-button-${branchName}"]`)
+        .isVisible()
     }
+    return (await this.actionState(branchName, action)) !== 'absent'
   }
 
   /**
-   * Verify a button is disabled for a specific branch action.
+   * Verify an action is shown but disabled for a specific branch.
    *
    * @param branchName - The name of the branch
-   * @param action - The action (submit, withdraw, approve, request-changes, delete, switch-to)
-   * @returns True if the button is disabled
+   * @param action - The action (submit, withdraw, request-changes, delete, switch-to)
+   * @returns True if the action is shown and disabled; false if it is enabled or not offered
    */
   async isActionButtonDisabled(
     branchName: string,
-    action: 'submit' | 'withdraw' | 'request-changes' | 'delete' | 'switch-to',
+    action: BranchAction | 'switch-to',
   ): Promise<boolean> {
-    const button = this.branchManager.locator(
-      `[data-testid="${action}-branch-button-${branchName}"]`,
-    )
-    return await button.isDisabled()
+    if (action === 'switch-to') {
+      return await this.branchManager
+        .locator(`[data-testid="switch-to-branch-button-${branchName}"]`)
+        .isDisabled()
+    }
+    return (await this.actionState(branchName, action)) === 'disabled'
   }
 
   /**
@@ -377,14 +443,15 @@ export class BranchPage {
   }
 
   /**
-   * Verify the branch status changed to expected value.
+   * Verify the branch status changed to expected value, compared against the badge's
+   * `data-status` (the badge text is a display label such as "In review").
    *
    * @param branchName - The name of the branch
    * @param expectedStatus - Expected status (editing, submitted, archived, etc.)
    */
   async verifyBranchStatus(branchName: string, expectedStatus: string): Promise<void> {
     const badge = this.getBranchStatusBadge(branchName)
-    await expect(badge).toContainText(expectedStatus, {
+    await expect(badge).toHaveAttribute('data-status', expectedStatus, {
       timeout: STANDARD_TIMEOUT,
     })
   }

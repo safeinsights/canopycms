@@ -12,8 +12,17 @@ import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 
-import { S3Client } from '@aws-sdk/client-s3'
+import {
+  CopyObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  NotFound,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
+import { mockClient } from 'aws-sdk-client-mock'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { S3AssetStore } from './store-s3'
@@ -133,6 +142,368 @@ describe('S3AssetStore.beginUpload upload target', () => {
     expect(
       () => new S3AssetStore({ bucket: BUCKET, region: REGION, uploadUrl: '//evil.example.com' }),
     ).toThrow(/Invalid uploadUrl/)
+  })
+})
+
+describe('S3AssetStore.presignPublicObjectRead', () => {
+  const KEY = `assets/t/w=320/${'a'.repeat(32)}/photo.png`
+  const s3Mock = mockClient(S3Client)
+
+  afterEach(() => {
+    s3Mock.reset()
+  })
+
+  it('returns null without signing when the HEAD finds no object', async () => {
+    s3Mock
+      .on(HeadObjectCommand)
+      .rejects(new NotFound({ message: 'Not Found', $metadata: { httpStatusCode: 404 } }))
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    expect(await store.presignPublicObjectRead(KEY)).toBeNull()
+    expect(s3Mock.commandCalls(HeadObjectCommand)[0].args[0].input).toEqual({
+      Bucket: BUCKET,
+      Key: KEY,
+    })
+  })
+
+  it('signs a short-lived GET of exactly that key when the object exists', async () => {
+    s3Mock.on(HeadObjectCommand).resolves({})
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    const signed = await store.presignPublicObjectRead(KEY)
+    if (signed === null) throw new Error('expected a presigned URL')
+    const url = new URL(signed)
+
+    // The signer percent-encodes `=` in the directive segment; S3 decodes it back to the key.
+    expect(url.origin).toBe(`https://${BUCKET}.s3.${REGION}.amazonaws.com`)
+    expect(decodeURIComponent(url.pathname)).toBe(`/${KEY}`)
+    expect(url.searchParams.get('X-Amz-Expires')).toBe('300')
+    expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/)
+    // Signing is local: the only request the store made was the HEAD.
+    expect(s3Mock.commandCalls(GetObjectCommand)).toHaveLength(0)
+  })
+
+  it('propagates a HEAD failure that is not a missing object', async () => {
+    s3Mock.on(HeadObjectCommand).rejects(new Error('AccessDenied'))
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    await expect(store.presignPublicObjectRead(KEY)).rejects.toThrow('AccessDenied')
+  })
+})
+
+describe('S3AssetStore missing key vs missing bucket', () => {
+  let s3Mock: ReturnType<typeof mockClient>
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  const awsError = (name: string) =>
+    Object.assign(new Error(name), { name, $metadata: { httpStatusCode: 404 } })
+
+  it('reads a missing key as absent', async () => {
+    s3Mock.on(GetObjectCommand).rejects(awsError('NoSuchKey'))
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+    expect(await store.getMeta('a'.repeat(32))).toBeNull()
+  })
+
+  it('reads an original by its expected ext without listing, and lists only on a miss', async () => {
+    const body = { transformToByteArray: async () => new TextEncoder().encode('png-bytes') }
+    s3Mock
+      .on(GetObjectCommand, { Key: `asset-originals/${'a'.repeat(32)}.png` })
+      .resolves({ Body: body, ContentType: 'image/png' } as never)
+    s3Mock
+      .on(GetObjectCommand, { Key: `asset-originals/${'a'.repeat(32)}.jpg` })
+      .rejects(awsError('NoSuchKey'))
+    s3Mock.on(ListObjectsV2Command).resolves({ Contents: [] })
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    expect(await store.readOriginal('a'.repeat(32), 'png')).toMatchObject({ ext: 'png' })
+    expect(s3Mock.commandCalls(ListObjectsV2Command)).toHaveLength(0)
+
+    expect(await store.readOriginal('a'.repeat(32), 'jpg')).toBeNull()
+    expect(s3Mock.commandCalls(ListObjectsV2Command)).toHaveLength(1)
+  })
+
+  it('throws for a missing bucket rather than reading every key as absent', async () => {
+    s3Mock.on(GetObjectCommand).rejects(awsError('NoSuchBucket'))
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+    await expect(store.getMeta('a'.repeat(32))).rejects.toThrow('NoSuchBucket')
+  })
+})
+
+describe('S3AssetStore.listPublicObjectKeys', () => {
+  // Created per test, not per describe: a second describe-level mockClient(S3Client) would
+  // replace the stub the presign suite above installed at collection time.
+  let s3Mock: ReturnType<typeof mockClient>
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  it('follows continuation tokens and yields every key under the prefix', async () => {
+    s3Mock
+      .on(ListObjectsV2Command)
+      .resolvesOnce({
+        Contents: [{ Key: 'assets/t/w=320/a/x.png' }, { Key: 'assets/t/w=320/b/y.png' }],
+        IsTruncated: true,
+        NextContinuationToken: 'next',
+      })
+      .resolvesOnce({ Contents: [{ Key: 'assets/t/w=320/c/z.png' }], IsTruncated: false })
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    const keys: string[] = []
+    for await (const key of store.listPublicObjectKeys('assets/t/w=320/')) keys.push(key)
+
+    expect(keys).toEqual([
+      'assets/t/w=320/a/x.png',
+      'assets/t/w=320/b/y.png',
+      'assets/t/w=320/c/z.png',
+    ])
+    // The paginator reuses one input object across pages, so only the last state is observable.
+    const calls = s3Mock.commandCalls(ListObjectsV2Command)
+    expect(calls).toHaveLength(2)
+    expect(calls[1].args[0].input).toMatchObject({
+      Bucket: BUCKET,
+      Prefix: 'assets/t/w=320/',
+      ContinuationToken: 'next',
+    })
+  })
+})
+
+describe('S3AssetStore.putPublicObject tags', () => {
+  let s3Mock: ReturnType<typeof mockClient>
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+    s3Mock.on(PutObjectCommand).resolves({})
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  const put = (tags?: Record<string, string>) =>
+    new S3AssetStore({ bucket: BUCKET, region: REGION }).putPublicObject({
+      key: 'assets/t/w=320/a/x.png',
+      data: new Uint8Array([1]),
+      contentType: 'image/png',
+      tags,
+    })
+
+  it('sends tags as the URL-encoded Tagging header', async () => {
+    await put({ 'canopy-transform': 'lazy', k: 'a&b c' })
+    const calls = s3Mock.commandCalls(PutObjectCommand)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].args[0].input.Tagging).toBe('canopy-transform=lazy&k=a%26b%20c')
+  })
+
+  it.each([undefined, {}])('sends no Tagging header for tags %j', async (tags) => {
+    await put(tags)
+    const calls = s3Mock.commandCalls(PutObjectCommand)
+    expect(calls).toHaveLength(1)
+    expect(Object.keys(calls[0].args[0].input)).toContain('Key')
+    expect(calls[0].args[0].input.Tagging).toBeUndefined()
+  })
+})
+
+describe('S3AssetStore create-only writes', () => {
+  let s3Mock: ReturnType<typeof mockClient>
+  let sleep: ReturnType<typeof vi.fn<(ms: number) => Promise<void>>>
+
+  const awsError = (name: string, httpStatusCode: number) =>
+    Object.assign(new Error(name), { name, $metadata: { httpStatusCode } })
+  const conflict = () => awsError('ConditionalRequestConflict', 409)
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+    sleep = vi.fn<(ms: number) => Promise<void>>().mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  const store = () => new S3AssetStore({ bucket: BUCKET, region: REGION, sleep })
+  const putDerivative = () =>
+    store().putPublicObject({
+      key: 'assets/t/w=320/a/x.png',
+      data: new Uint8Array([1]),
+      contentType: 'image/png',
+    })
+
+  it('sends IfNoneMatch on every content-addressed put', async () => {
+    s3Mock.on(PutObjectCommand).resolves({})
+    const s = store()
+    await s.putOriginal({ hash32: 'a', ext: 'png', data: new Uint8Array([1]), contentType: 'x' })
+    await putDerivative()
+    await s.putMetaIfAbsent('a', {
+      hash32: 'a',
+      filename: 'a.png',
+      slug: 'a',
+      ext: 'png',
+      mime: 'image/png',
+      size: 1,
+      kind: 'raster',
+      uploadedAt: '2026-01-01T00:00:00.000Z',
+    })
+    const inputs = s3Mock.commandCalls(PutObjectCommand).map((call) => call.args[0].input)
+    expect(inputs.map((input) => input.Key)).toEqual([
+      'asset-originals/a.png',
+      'assets/t/w=320/a/x.png',
+      'asset-meta/a.json',
+    ])
+    expect(inputs.map((input) => input.IfNoneMatch)).toEqual(['*', '*', '*'])
+  })
+
+  it('reports a 412 as already-exists', async () => {
+    s3Mock.on(PutObjectCommand).rejects(awsError('PreconditionFailed', 412))
+    expect(await putDerivative()).toBe('already-exists')
+    expect(sleep).not.toHaveBeenCalled()
+  })
+
+  it('retries a ConditionalRequestConflict, then reports what the retry found', async () => {
+    s3Mock
+      .on(PutObjectCommand)
+      .rejectsOnce(conflict())
+      .rejectsOnce(awsError('PreconditionFailed', 412))
+    expect(await putDerivative()).toBe('already-exists')
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(2)
+    expect(sleep).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a ConditionalRequestConflict that clears into a created write', async () => {
+    s3Mock.on(PutObjectCommand).rejectsOnce(conflict()).resolves({})
+    expect(await putDerivative()).toBe('created')
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(2)
+  })
+
+  it('throws the conflict after 4 attempts and under 1.75 s of waiting', async () => {
+    s3Mock.on(PutObjectCommand).rejects(conflict())
+    await expect(putDerivative()).rejects.toMatchObject({ name: 'ConditionalRequestConflict' })
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(4)
+    const delays = sleep.mock.calls.map(([ms]) => ms)
+    expect(delays).toHaveLength(3)
+    expect(delays.every((ms) => ms > 0)).toBe(true)
+    expect(delays.reduce((sum, ms) => sum + ms, 0)).toBeLessThan(1750)
+  })
+
+  it('counts a 412 after an SDK-retried error as created for a public object, not for meta', async () => {
+    const retried = Object.assign(awsError('PreconditionFailed', 412), {
+      $metadata: { httpStatusCode: 412, attempts: 2 },
+    })
+    s3Mock.on(PutObjectCommand).rejects(retried)
+    expect(await putDerivative()).toBe('created')
+    expect(
+      await store().putMetaIfAbsent('a', {
+        hash32: 'a',
+        filename: 'a.png',
+        slug: 'a',
+        ext: 'png',
+        mime: 'image/png',
+        size: 1,
+        kind: 'raster',
+        uploadedAt: '2026-01-01T00:00:00.000Z',
+      }),
+    ).toBe('already-exists')
+  })
+
+  it('counts a 412 as created when an earlier conflict had been retried by the SDK', async () => {
+    const sdkRetriedConflict = Object.assign(conflict(), {
+      $metadata: { httpStatusCode: 409, attempts: 2 },
+    })
+    s3Mock
+      .on(PutObjectCommand)
+      .rejectsOnce(sdkRetriedConflict)
+      .rejectsOnce(awsError('PreconditionFailed', 412))
+    expect(await putDerivative()).toBe('created')
+  })
+
+  it('does not retry any other 409', async () => {
+    s3Mock.on(PutObjectCommand).rejects(awsError('OperationAborted', 409))
+    await expect(putDerivative()).rejects.toMatchObject({ name: 'OperationAborted' })
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(1)
+    expect(sleep).not.toHaveBeenCalled()
+  })
+})
+
+describe('S3AssetStore.copyPublicObject', () => {
+  let s3Mock: ReturnType<typeof mockClient>
+  let sleep: ReturnType<typeof vi.fn<(ms: number) => Promise<void>>>
+  const awsError = (name: string, httpStatusCode: number) =>
+    Object.assign(new Error(name), { name, $metadata: { httpStatusCode } })
+  const source = `assets/t/c=0.1:0.2:0.3:0.4,w=320/${'a'.repeat(32)}/photo.webp`
+  const dest = `previews/7/${source}`
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+    sleep = vi.fn<(ms: number) => Promise<void>>().mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  const copy = () =>
+    new S3AssetStore({ bucket: BUCKET, region: REGION, sleep }).copyPublicObject(source, dest)
+
+  it('sends a create-only copy that keeps headers, drops tags and encodes each source segment', async () => {
+    s3Mock.on(CopyObjectCommand).resolves({})
+    expect(await copy()).toBe('created')
+    expect(s3Mock.commandCalls(CopyObjectCommand)[0].args[0].input).toEqual({
+      Bucket: BUCKET,
+      Key: dest,
+      CopySource: `${BUCKET}/assets/t/c%3D0.1%3A0.2%3A0.3%3A0.4%2Cw%3D320/${'a'.repeat(32)}/photo.webp`,
+      IfNoneMatch: '*',
+      MetadataDirective: 'COPY',
+      TaggingDirective: 'REPLACE',
+    })
+  })
+
+  it('reports a 412 as already-exists', async () => {
+    s3Mock.on(CopyObjectCommand).rejects(awsError('PreconditionFailed', 412))
+    expect(await copy()).toBe('already-exists')
+  })
+
+  it('counts a 412 after an SDK-retried copy as created', async () => {
+    s3Mock.on(CopyObjectCommand).rejects(
+      Object.assign(awsError('PreconditionFailed', 412), {
+        $metadata: { httpStatusCode: 412, attempts: 3 },
+      }),
+    )
+    expect(await copy()).toBe('created')
+  })
+
+  it('retries a ConditionalRequestConflict through the shared create-only helper', async () => {
+    s3Mock
+      .on(CopyObjectCommand)
+      .rejectsOnce(awsError('ConditionalRequestConflict', 409))
+      .resolves({})
+    expect(await copy()).toBe('created')
+    expect(s3Mock.commandCalls(CopyObjectCommand)).toHaveLength(2)
+    expect(sleep).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a missing source as source-missing', async () => {
+    s3Mock.on(CopyObjectCommand).rejects(awsError('NoSuchKey', 404))
+    expect(await copy()).toBe('source-missing')
+  })
+
+  it.each([
+    ['NoSuchBucket', 404],
+    ['NotFound', 404],
+    ['AccessDenied', 403],
+  ])('throws %s rather than reading it as a missing source', async (name, status) => {
+    s3Mock.on(CopyObjectCommand).rejects(awsError(name, status))
+    await expect(copy()).rejects.toMatchObject({ name })
   })
 })
 

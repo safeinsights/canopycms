@@ -1,8 +1,9 @@
 import { z } from 'zod'
 import { branchParamSchema } from './validators'
-import type { ApiContext, ApiRequest } from './types'
+import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContext } from '../types'
-import { toBranchListItem, type BranchListItemResponse, type BranchResponse } from './branch'
+import { toBranchListItem, type BranchListItem, type BranchListItemResponse } from './branch'
+import type { StampedEntry } from '../stamp-on-publish'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
@@ -13,20 +14,35 @@ import { syncSubmitPr } from './github-sync'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 import { isNonFastForwardRejection } from '../utils/git'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
-import { submissionEditorFromUser } from '../submission-attribution'
+import { submissionEditorFromUser, type SubmissionEditor } from '../submission-attribution'
+import { NothingToSubmitError } from '../services'
+import { baseBranchOf } from '../utils/base-branch'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
 
+/**
+ * A submit's answer: the branch, plus the entries the submit stamped (stamp-on-publish.ts) when
+ * there were any, so the editor can carry its open forms and drafts onto their new versions.
+ */
+export type SubmitBranchResponse = ApiResponse<{
+  branch: BranchListItem
+  stamped?: StampedEntry[]
+}>
+
 const getBranchStatusHandler = async (
   gc: { branchContext: BranchContext },
-  _ctx: ApiContext,
-  _req: ApiRequest,
+  ctx: ApiContext,
+  req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
-): Promise<BranchResponse> => {
+): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
-  return { ok: true, status: 200, data: { branch: branchContext.branch } }
+  return {
+    ok: true,
+    status: 200,
+    data: { branch: toBranchListItem(ctx.services.config, branchContext.branch, req.user) },
+  }
 }
 
 const submitBranchForMergeHandler = async (
@@ -34,7 +50,7 @@ const submitBranchForMergeHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
-): Promise<BranchListItemResponse> => {
+): Promise<SubmitBranchResponse> => {
   const { branchContext } = gc
 
   // Check if user can perform workflow actions (creator OR ACL access). isProtectedBranch
@@ -53,7 +69,7 @@ const submitBranchForMergeHandler = async (
     return {
       ok: false,
       status: 403,
-      error: 'Only the branch creator or users with explicit branch access can submit this branch',
+      error: 'You do not have permission to submit this branch for review.',
     }
   }
 
@@ -63,9 +79,8 @@ const submitBranchForMergeHandler = async (
   // (merged) branch could be re-submitted by its creator, re-stamping it
   // 'submitted' and overwriting the merged PR's title/body.
   //
-  // Fails closed on a missing status (branch.json is read with a bare
-  // JSON.parse, no schema validation, so a damaged file can yield
-  // `undefined`) -- same as runWritableBranchGuard's unreadable-status arm.
+  // Fails closed on a missing status, same as runWritableBranchGuard's
+  // unreadable-status arm.
   const status = branchContext.branch.status
   if (status !== 'editing') {
     return {
@@ -80,10 +95,20 @@ const submitBranchForMergeHandler = async (
 
   // Commit and push changes
   const submitter = submissionEditorFromUser(req.user)
+  const { authPlugin } = ctx
   let changedPaths: string[]
+  let editors: SubmissionEditor[]
+  let stamped: StampedEntry[]
   try {
-    ;({ changedPaths } = await ctx.services.submitBranch({ context: branchContext, submitter }))
+    ;({ changedPaths, editors, stamped } = await ctx.services.submitBranch({
+      context: branchContext,
+      submitter,
+      lookupEditor: authPlugin ? (id) => authPlugin.getUserMetadata(id) : undefined,
+    }))
   } catch (err) {
+    if (err instanceof NothingToSubmitError) {
+      return { ok: false, status: 400, error: err.message }
+    }
     // Retriable either way: a resubmit commits nothing new and pushes only
     // what has not reached the remote.
     if (err instanceof ContentWriteLockBusyError) {
@@ -140,14 +165,36 @@ const submitBranchForMergeHandler = async (
   }
 
   // Create or update PR (sync via githubService, or async via task queue)
-  const prResult = await syncSubmitPr(ctx, branchContext, { submitter, changedPaths })
+  const submittedAt = new Date().toISOString()
+  const prResult = await syncSubmitPr(ctx, branchContext, {
+    submitter,
+    editors,
+    changedPaths,
+    submittedAt,
+  })
 
-  // Update metadata with status and PR info
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
+  const pushed = prResult.pushedToGitHub ? { pushedToGitHubAt: submittedAt } : {}
+  // GitHub found nothing between the pushed branch and its base, though the diff above found
+  // changes: GitHub's base can already hold them, or the diff could not be computed. The branch
+  // stays editable; the stamp records that it is now on GitHub, for delete.
+  if (prResult.nothingToSubmit) {
+    await meta.save({ branch: { name: branchContext.branch.name, ...pushed } })
+    const base = branchContext.branch.baseBranch ?? baseBranchOf(ctx.services.config)
+    return {
+      ok: false,
+      status: 400,
+      error: new NothingToSubmitError(branchContext.branch.name, base).message,
+    }
+  }
+
   const updated = await meta.save({
     branch: {
       name: branchContext.branch.name,
       status: 'submitted',
+      submittedAt,
+      ...pushed,
+      syncFailureReason: prResult.syncFailureReason,
       pullRequestUrl: prResult.prUrl ?? branchContext.branch.pullRequestUrl,
       pullRequestNumber: prResult.prNumber ?? branchContext.branch.pullRequestNumber,
       ...(prResult.syncStatus !== undefined ? { syncStatus: prResult.syncStatus } : {}),
@@ -161,7 +208,10 @@ const submitBranchForMergeHandler = async (
   return {
     ok: true,
     status: 200,
-    data: { branch: toBranchListItem(ctx.services.config, updated.branch) },
+    data: {
+      branch: toBranchListItem(ctx.services.config, updated.branch, req.user),
+      ...(stamped.length > 0 ? { stamped } : {}),
+    },
   }
 }
 
@@ -171,8 +221,8 @@ const getBranchStatus = defineEndpoint({
   method: 'GET',
   path: '/:branch/status',
   params: branchParamSchema,
-  responseType: 'BranchResponse',
-  response: {} as BranchResponse,
+  responseType: 'BranchListItemResponse',
+  response: {} as BranchListItemResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',
@@ -190,11 +240,12 @@ const getBranchStatus = defineEndpoint({
 const submitBranchForMerge = defineEndpoint({
   namespace: 'workflow',
   name: 'submit',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/:branch/submit',
   params: branchParamSchema,
-  responseType: 'BranchListItemResponse',
-  response: {} as BranchListItemResponse,
+  responseType: 'SubmitBranchResponse',
+  response: {} as SubmitBranchResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',

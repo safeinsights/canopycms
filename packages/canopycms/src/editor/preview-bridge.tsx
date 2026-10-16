@@ -1,24 +1,49 @@
 'use client'
 
-import type { CSSProperties } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+/**
+ * The preview bridge's protocol and its host-page side: the hooks a framed page runs. Served to
+ * hosts through `canopycms/preview`, so everything it reaches stays free of CSS and editor UI
+ * (`pnpm lint:bundle`); the editor's side is `PreviewFrame.tsx`.
+ */
 
-import { formatCanopyPath, type CanopyPathSegment } from './canopy-path'
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
+
+import type { ResolvedReferenceMeta } from '../entry-schema'
+import { createFieldProps } from './field-props'
+import { setPreviewAssetBase } from './preview-asset-base'
 import { isSamePreviewPath } from './preview-path'
-
-export const __CANOPY_PREVIEW_CLIENT__ = true
+import { readAssetBase } from './raw-asset-base'
 
 export const CANOPY_PREVIEW_MESSAGE = 'canopycms:draft:update'
 export const CANOPY_PREVIEW_FOCUS = 'canopycms:preview:focus'
 export const CANOPY_PREVIEW_HIGHLIGHT = 'canopycms:preview:highlight'
 export const CANOPY_PREVIEW_READY = 'canopycms:preview:ready'
 export const CANOPY_PREVIEW_ERROR = 'canopycms:preview:error'
+export const CANOPY_PREVIEW_MARKS = 'canopycms:preview:marks'
+
+/**
+ * The shape of the preview's `isLoading` for data of type `T`: a `boolean` at each reference
+ * position, `true` while the editor is still resolving that reference, under the same keys and
+ * indexes as the data. A reference typed by `resolvedSchema` is recognized by its resolved or
+ * `unavailable` shape; any other non-object leaf may be an untyped reference, so it is a
+ * `boolean` too. Every key is optional because only reference positions are present, and nothing
+ * is before the first draft arrives.
+ */
+export type PreviewLoadingState<T> = T extends readonly (infer U)[]
+  ? PreviewLoadingState<NonNullable<U>>[]
+  : T extends ResolvedReferenceMeta | { unavailable: true }
+    ? boolean
+    : T extends object
+      ? { [K in keyof T]?: PreviewLoadingState<NonNullable<T[K]>> }
+      : boolean
 
 export interface DraftUpdateMessage {
   type: typeof CANOPY_PREVIEW_MESSAGE
   path: string
   data?: unknown
   isLoading?: unknown
+  /** The editor's authenticated asset route; see `PreviewFrame`'s `assetBase`. */
+  assetBase?: unknown
 }
 
 /**
@@ -42,7 +67,7 @@ export const resolveMessageOrigin = (url?: string): string => {
  * a sandboxed embed shares that string, so it identifies nothing, and postMessage
  * throws on a literal 'null' targetOrigin. '' covers the SSR fallback.
  */
-const isOpaqueOrigin = (origin: string): boolean => origin === 'null' || origin === ''
+export const isOpaqueOrigin = (origin: string): boolean => origin === 'null' || origin === ''
 
 /**
  * True only for messages from the embedding editor window with the expected origin.
@@ -60,17 +85,6 @@ export const isTrustedEditorMessage = (event: MessageEvent, editorOrigin?: strin
   return event.origin === expected && event.source === window.parent
 }
 
-export const sendDraftUpdate = (
-  iframe: HTMLIFrameElement | null,
-  message: DraftUpdateMessage,
-  targetOrigin?: string,
-) => {
-  if (!iframe?.contentWindow) return
-  const target = targetOrigin ?? resolveMessageOrigin(iframe.src)
-  if (isOpaqueOrigin(target)) return
-  iframe.contentWindow.postMessage(message, target)
-}
-
 export interface PreviewFocusMessage {
   type: typeof CANOPY_PREVIEW_FOCUS
   entryPath: string
@@ -80,6 +94,21 @@ export interface PreviewFocusMessage {
 export interface HighlightMessage {
   type: typeof CANOPY_PREVIEW_HIGHLIGHT
   enabled: boolean
+}
+
+/** The most distinct mark paths one report carries, and the longest path it carries. */
+export const MARK_REPORT_LIMITS = { paths: 500, pathLength: 512 } as const
+
+/**
+ * Preview → editor, while highlighting is on: how many `data-canopy-path` elements the page has,
+ * so the editor can say when there is nothing to outline, and their distinct paths as the page
+ * spells them, within `MARK_REPORT_LIMITS`, so it can say which name no field. An older bridge
+ * sends no report, and one before `paths` sends only the count.
+ */
+export interface PreviewMarksMessage {
+  type: typeof CANOPY_PREVIEW_MARKS
+  count: number
+  paths?: string[]
 }
 
 /**
@@ -116,9 +145,7 @@ export const useCanopyPreview = <T,>(opts: {
   const highlightEnabled = usePreviewHighlight(bridgeOpts)
   usePreviewFocusEmitter(resolvedPath, bridgeOpts)
 
-  const fieldProps = (canopyPath: string | CanopyPathSegment[]) => ({
-    'data-canopy-path': Array.isArray(canopyPath) ? formatCanopyPath(canopyPath) : canopyPath,
-  })
+  const fieldProps = createFieldProps<T>()
 
   /**
    * Report that the current draft fails to compile/render (the editor surfaces it
@@ -152,9 +179,10 @@ export const usePreviewData = <T,>(
   path: string,
   initialData: T,
   opts?: { editorOrigin?: string },
-): { data: T; isLoading: Record<string, boolean> } => {
+): { data: T; isLoading: PreviewLoadingState<T> } => {
   const [data, setData] = useState<T>(initialData)
-  const [isLoading, setIsLoading] = useState<Record<string, boolean>>({})
+  // Every key of the loading state is optional, so an empty object is a valid one.
+  const [isLoading, setIsLoading] = useState<PreviewLoadingState<T>>({} as PreviewLoadingState<T>)
   const editorOrigin = opts?.editorOrigin
 
   useEffect(() => {
@@ -166,15 +194,17 @@ export const usePreviewData = <T,>(
       const msg = event.data as DraftUpdateMessage
       if (!msg || msg.type !== CANOPY_PREVIEW_MESSAGE) return
       if (typeof msg.path !== 'string' || !isSamePreviewPath(msg.path, path)) return
+      // Before setData, so the render the draft triggers already reads it.
+      setPreviewAssetBase(readAssetBase(msg.assetBase))
       setData(msg.data as T)
       if (msg.isLoading !== undefined) {
-        setIsLoading(msg.isLoading as Record<string, boolean>)
+        setIsLoading(msg.isLoading as PreviewLoadingState<T>)
       }
     }
     window.addEventListener('message', handler)
     // Notify parent that this preview page is ready to receive draft updates.
-    // This is needed because onLoad in the parent fires before React effects run,
-    // so the first postMessage from the parent arrives before this listener is set up.
+    // This is needed because onLoad in the parent can fire before React effects run,
+    // so the first postMessage from the parent may arrive before this listener is set up.
     const target = resolveMessageOrigin(editorOrigin)
     if (!isOpaqueOrigin(target)) {
       window.parent.postMessage({ type: CANOPY_PREVIEW_READY, path }, target)
@@ -183,6 +213,28 @@ export const usePreviewData = <T,>(
   }, [path, editorOrigin])
 
   return { data, isLoading }
+}
+
+/** React 18 warns about a layout effect in a server render, where no effect runs. */
+const useBrowserLayoutEffect: typeof useLayoutEffect = (effect, deps) =>
+  (typeof window === 'undefined' ? useEffect : useLayoutEffect)(effect, deps)
+
+/**
+ * Holds a `createPreviewPage` view back until hydration commits, then stores `assetBase` and opens
+ * before paint: the server HTML has no public `/assets/t/` URL and nothing to mismatch. A draft's
+ * prefix still wins, since drafts follow the ready message `usePreviewData` posts from a passive
+ * effect. With no `assetBase` (a public page) it is open from the start.
+ * @internal `withCanopyPreview` is its only caller.
+ */
+export const usePreviewAssetBaseGate = (assetBase: unknown): boolean => {
+  const held = assetBase !== undefined
+  const [open, setOpen] = useState(!held)
+  useBrowserLayoutEffect(() => {
+    if (open) return
+    setPreviewAssetBase(readAssetBase(assetBase))
+    setOpen(true)
+  }, [open, assetBase])
+  return open
 }
 
 /**
@@ -221,6 +273,64 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
     return () => window.removeEventListener('message', handler)
   }, [editorOrigin])
 
+  // Reported after the render that turned highlighting on, whenever the marks change (content
+  // rendered after hydration), and after every trusted draft even when they do not: the editor checks a
+  // report against its draft as it stood when the report arrived, so a block whose template
+  // changed under unchanged marks needs a fresh one.
+  useEffect(() => {
+    if (!enabled || window.parent === window) return
+    const target = resolveMessageOrigin(editorOrigin)
+    if (isOpaqueOrigin(target)) return
+    let reported: string | undefined
+    const report = () => {
+      const marks = document.querySelectorAll<HTMLElement>('[data-canopy-path]')
+      const paths = new Set<string>()
+      for (const mark of marks) {
+        if (paths.size === MARK_REPORT_LIMITS.paths) break
+        const path = mark.getAttribute('data-canopy-path') ?? ''
+        if (path.length <= MARK_REPORT_LIMITS.pathLength) paths.add(path)
+      }
+      const msg: PreviewMarksMessage = {
+        type: CANOPY_PREVIEW_MARKS,
+        count: marks.length,
+        paths: [...paths],
+      }
+      const key = JSON.stringify([msg.count, msg.paths])
+      if (key === reported) return
+      reported = key
+      window.parent.postMessage(msg, target)
+    }
+    report()
+    // A trailing throttle, so steady DOM churn cannot hold the report back, on a timer rather
+    // than requestAnimationFrame, which a hidden frame never runs. It also gives a draft time to
+    // render before the report it triggers.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const schedule = () => {
+      timer ??= setTimeout(() => {
+        timer = undefined
+        report()
+      }, 100)
+    }
+    const observer = new MutationObserver(schedule)
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributeFilter: ['data-canopy-path'],
+    })
+    const onDraft = (event: MessageEvent) => {
+      if (!isTrustedEditorMessage(event, editorOrigin)) return
+      if ((event.data as { type?: unknown })?.type !== CANOPY_PREVIEW_MESSAGE) return
+      reported = undefined
+      schedule()
+    }
+    window.addEventListener('message', onDraft)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('message', onDraft)
+      clearTimeout(timer)
+    }
+  }, [enabled, editorOrigin])
+
   return enabled
 }
 
@@ -249,175 +359,4 @@ export const usePreviewFocusEmitter = (entryPath: string, opts?: { editorOrigin?
     document.addEventListener('click', handleClick)
     return () => document.removeEventListener('click', handleClick)
   }, [entryPath, editorOrigin])
-}
-
-/**
- * Lightweight iframe wrapper to keep the preview in sync with form state.
- * It posts the latest draft data to the iframe after load and when data changes.
- */
-export const PreviewFrame = ({
-  src,
-  path,
-  data,
-  isLoading,
-  className,
-  style,
-  highlightEnabled,
-  onPreviewError,
-}: {
-  src: string
-  path: string
-  data?: unknown
-  isLoading?: unknown
-  className?: string
-  style?: CSSProperties
-  highlightEnabled?: boolean
-  /** Called when the preview reports a draft compile/render error; null clears it. */
-  onPreviewError?: (error: { message: string; fieldPath?: string } | null) => void
-}) => {
-  const iframeRef = useRef<HTMLIFrameElement>(null)
-  // Pin the preview origin from the src prop: outbound messages target it (never '*'),
-  // and inbound messages must come from it. An iframe that navigates cross-origin
-  // silently stops participating in the bridge.
-  const previewOrigin = resolveMessageOrigin(src)
-  // Show progress bar while waiting for the preview's ready handshake.
-  const [syncPending, setSyncPending] = useState(data !== undefined)
-
-  // Reset when navigating to a different entry (src change = new iframe page load).
-  const [prevSrc, setPrevSrc] = useState(src)
-  if (src !== prevSrc) {
-    setPrevSrc(src)
-    setSyncPending(data !== undefined)
-  }
-
-  // Inject the progress bar keyframe animation once per page.
-  useEffect(() => {
-    const styleId = 'canopycms-preview-sync-style'
-    if (!document.getElementById(styleId)) {
-      const el = document.createElement('style')
-      el.id = styleId
-      el.textContent = `@keyframes canopy-preview-sync { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }`
-      document.head.appendChild(el)
-    }
-  }, [])
-
-  const post = () => {
-    if (data === undefined) return
-    sendDraftUpdate(
-      iframeRef.current,
-      {
-        type: CANOPY_PREVIEW_MESSAGE,
-        path,
-        data,
-        isLoading,
-      },
-      previewOrigin,
-    )
-  }
-  const postHighlight = () => {
-    if (!iframeRef.current?.contentWindow) return
-    if (isOpaqueOrigin(previewOrigin)) return
-    const msg: HighlightMessage = {
-      type: CANOPY_PREVIEW_HIGHLIGHT,
-      enabled: Boolean(highlightEnabled),
-    }
-    iframeRef.current.contentWindow.postMessage(msg, previewOrigin)
-  }
-
-  // Keep refs pointing at the latest closures so the message handler below never goes stale.
-  const postRef = useRef(post)
-  const postHighlightRef = useRef(postHighlight)
-  const onPreviewErrorRef = useRef(onPreviewError)
-  useEffect(() => {
-    postRef.current = post
-    postHighlightRef.current = postHighlight
-    onPreviewErrorRef.current = onPreviewError
-  })
-
-  useEffect(() => {
-    post()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- post is tracked via ref
-  }, [data, isLoading])
-
-  useEffect(() => {
-    postHighlight()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- postHighlight is tracked via ref
-  }, [highlightEnabled])
-
-  // When the preview page's React effects have run and its message listener is ready,
-  // it sends CANOPY_PREVIEW_READY. We respond with the current data so the preview
-  // receives the draft even if it wasn't ready when onLoad fired.
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return
-      // Source check alone is insufficient if the iframe navigated cross-origin.
-      if (isOpaqueOrigin(previewOrigin) || event.origin !== previewOrigin) return
-      const type = (event.data as { type?: string })?.type
-      if (type === CANOPY_PREVIEW_READY) {
-        postRef.current()
-        postHighlightRef.current()
-        setSyncPending(false)
-      } else if (type === CANOPY_PREVIEW_ERROR) {
-        const msg = event.data as Partial<PreviewErrorMessage>
-        // Shape-check the payload: an adopter passing an Error object (instead of
-        // err.message) must not crash the editor when rendered as a React child.
-        if (msg.message != null && typeof msg.message !== 'string') return
-        const fieldPath = typeof msg.fieldPath === 'string' ? msg.fieldPath : undefined
-        onPreviewErrorRef.current?.(
-          msg.message == null
-            ? null
-            : { message: msg.message, ...(fieldPath ? { fieldPath } : {}) },
-        )
-      }
-    }
-    window.addEventListener('message', handleMessage)
-    return () => window.removeEventListener('message', handleMessage)
-  }, [previewOrigin])
-
-  return (
-    <div className={className} style={{ position: 'relative', overflow: 'hidden', ...style }}>
-      {syncPending && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 3,
-            zIndex: 1,
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              height: '100%',
-              width: '40%',
-              background: 'var(--mantine-color-blue-filled, #228be6)',
-              borderRadius: '0 2px 2px 0',
-              animation: 'canopy-preview-sync 1.5s ease-in-out infinite',
-            }}
-          />
-        </div>
-      )}
-      <iframe
-        ref={iframeRef}
-        src={src}
-        style={{
-          display: 'block',
-          position: 'absolute',
-          inset: 0,
-          width: '100%',
-          height: '100%',
-          border: 'none',
-        }}
-        onLoad={() => {
-          post()
-          postHighlight()
-        }}
-      />
-    </div>
-  )
 }

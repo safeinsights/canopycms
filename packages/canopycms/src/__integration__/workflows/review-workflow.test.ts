@@ -8,9 +8,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-user'
-import { createApiClient } from '../test-utils/api-client'
+import { createApiClient, saveSamplePost } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
-import type { BranchResponse } from '../../api/branch'
+import type { BranchListItemResponse } from '../../api/branch'
 import type { ApiResponse } from '../../api/types'
 import type {
   CommentsResponse,
@@ -65,7 +65,7 @@ describe('Review Workflow Integration', () => {
     })
 
     expect(createResponse.status).toBe(200)
-    const createData = await createResponse.json<BranchResponse>()
+    const createData = await createResponse.json<BranchListItemResponse>()
     expect(createData.data?.branch.status).toBe('editing')
 
     // STEP 2: Editor writes content
@@ -92,7 +92,7 @@ describe('Review Workflow Integration', () => {
     })
 
     expect(submitResponse.status).toBe(200)
-    const submitData = await submitResponse.json<BranchResponse>()
+    const submitData = await submitResponse.json<BranchListItemResponse>()
     expect(submitData.data?.branch.status).toBe('submitted')
 
     // STEP 4: Reviewer adds comment
@@ -116,7 +116,7 @@ describe('Review Workflow Integration', () => {
     )
 
     expect(requestChangesResponse.status).toBe(200)
-    const requestChangesData = await requestChangesResponse.json<BranchResponse>()
+    const requestChangesData = await requestChangesResponse.json<BranchListItemResponse>()
     expect(requestChangesData.data?.branch.status).toBe('editing')
 
     // STEP 6: Editor updates content and resubmits
@@ -153,7 +153,7 @@ describe('Review Workflow Integration', () => {
     )
 
     expect(approveResponse.status).toBe(200)
-    const approveData = await approveResponse.json<BranchResponse>()
+    const approveData = await approveResponse.json<BranchListItemResponse>()
     expect(approveData.data?.branch.status).toBe('approved')
   })
 
@@ -163,6 +163,8 @@ describe('Review Workflow Integration', () => {
       branch: 'feature/multi-reviewer',
       title: 'Multi Reviewer Test',
     })
+
+    await saveSamplePost(editorClient, 'feature-multi-reviewer')
 
     await editorClient.post('/api/canopycms/feature-multi-reviewer/submit', {
       message: 'Ready for review',
@@ -199,6 +201,8 @@ describe('Review Workflow Integration', () => {
       title: 'Permission Test',
     })
 
+    await saveSamplePost(editorClient, 'feature-permission-test')
+
     await editorClient.post('/api/canopycms/feature-permission-test/submit', {
       message: 'Ready',
     })
@@ -220,6 +224,8 @@ describe('Review Workflow Integration', () => {
       branch: 'feature/comment-threads',
       title: 'Comment Threads Test',
     })
+
+    await saveSamplePost(editorClient, 'feature-comment-threads')
 
     await editorClient.post('/api/canopycms/feature-comment-threads/submit', {
       message: 'Ready',
@@ -249,12 +255,31 @@ describe('Review Workflow Integration', () => {
     expect(resolveData.data?.resolved).toBe(true)
   })
 
+  it('refuses to submit a branch with no saved changes, leaving it editable', async () => {
+    await editorClient.post('/api/canopycms/branches', {
+      branch: 'feature/empty-submit',
+      title: 'Empty Submit',
+    })
+
+    const submitResponse = await editorClient.post('/api/canopycms/feature-empty-submit/submit', {
+      message: 'Ready',
+    })
+
+    expect(submitResponse.status).toBe(400)
+    const body = await submitResponse.json<BranchListItemResponse>()
+    expect(body.error).toMatch(/^Nothing to submit yet: "feature-empty-submit"/)
+    const status = await editorClient.get('/api/canopycms/feature-empty-submit/status')
+    expect((await status.json<BranchListItemResponse>()).data?.branch.status).toBe('editing')
+  })
+
   it('allows withdrawal from review', async () => {
     // Create and submit branch
     await editorClient.post('/api/canopycms/branches', {
       branch: 'feature/withdraw-test',
       title: 'Withdraw Test',
     })
+
+    await saveSamplePost(editorClient, 'feature-withdraw-test')
 
     const submitResponse = await editorClient.post('/api/canopycms/feature-withdraw-test/submit', {
       message: 'Ready',
@@ -269,7 +294,7 @@ describe('Review Workflow Integration', () => {
     )
 
     expect(withdrawResponse.status).toBe(200)
-    const withdrawData = await withdrawResponse.json<BranchResponse>()
+    const withdrawData = await withdrawResponse.json<BranchListItemResponse>()
     expect(withdrawData.data?.branch.status).toBe('editing')
   })
 })

@@ -1,3 +1,7 @@
+---
+summary: >-
+  RETIRED 2026-10-05, resolved by events: the first deployed editor went live without the deploy-test rebuild; the live checks are in [infra-review-2026-08-deploy-verification.md](../infra-review-2026-08-deploy-verification.md).
+---
 # Program D — Rebuild and exercise the deploy-test stack
 
 **Closed 2026-10-05, resolved by events:** the first real deployed editor went live without this rebuild; the checks that remain live as [infra-review-2026-08-deploy-verification.md](../infra-review-2026-08-deploy-verification.md).
@@ -32,7 +36,7 @@ Record:
 
 - the `canopy-cms-deploy-test` stack's existence and status
 - the `CDKToolkit-canopy` bootstrap stack
-- **the `docs-site-proto` stacks sharing account `905418271997` — do not touch these**
+- **the adopter's own stacks sharing the sandbox account — do not touch these**
 - the current `builds/{sha}` behind `dev-docs.sandbox…`, as the rollback point for E
 
 This inventory also resolves open decision #2 (whether testing/production is

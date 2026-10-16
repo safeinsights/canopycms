@@ -20,7 +20,12 @@ import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../bran
 // Same constants the reader uses, rather than a second copy of the two string
 // literals.
 import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
-import { scanBranchHealth, type BranchHealthEntry } from '../branch-health'
+import {
+  ORPHAN_YOUTH_THRESHOLD_MS,
+  scanBranchHealth,
+  type BranchHealthEntry,
+} from '../branch-health'
+import { formatDirStamp } from '../branch-provisioning'
 import { ContentIdIndex } from '../content-id-index'
 import { invalidateContentIndexesDurable } from '../content-index-generation'
 import { getDefaultBranchBase, sanitizeBranchName } from '../paths'
@@ -34,16 +39,29 @@ import {
 import { getErrorMessage, isNodeError, isNotFoundError } from '../utils/error'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
+import { baseBranchOf } from '../utils/base-branch'
 
 /** [H1] A fresh (< 5 min old) init lock blocks purge -- provisioning may be running. */
 const PROVISIONING_LOCK_FRESH_MS = 5 * 60_000
 
-/** An orphan dir younger than this may still be a clone in progress; corrupt dirs are exempt. */
-const ORPHAN_YOUTH_THRESHOLD_MS = 15 * 60_000
+/**
+ * Wall-clock budget the opt-in duplicate-ID scan shares across every healthy
+ * branch: well inside the CMS Lambda's default 60 s timeout
+ * (`DEFAULT_CMS_LAMBDA_TIMEOUT` in canopycms-cdk), leaving the rest of the
+ * request its headroom.
+ * @internal Exported for tests.
+ */
+export const DUPLICATE_ID_SCAN_BUDGET_MS = 20_000
 
 export interface BranchHealthData {
   entries: BranchHealthEntry[]
   generatedAt: string
+  /**
+   * Present only when the request asked for the duplicate-ID scan. `truncated`
+   * is true when the budget ran out before every healthy branch was scanned;
+   * those branches report `duplicateIdScan.state === 'unknown'`.
+   */
+  duplicateIdScan?: { budgetMs: number; truncated: boolean }
 }
 
 /** Response type for GET /admin/branch-health */
@@ -108,15 +126,14 @@ const dirNameSchema = z
   .refine((v) => !v.startsWith('.'), { message: 'dirName must not be dot-prefixed' })
 
 const branchDirParamsSchema = z.object({ dirName: dirNameSchema })
-type BranchDirParams = z.infer<typeof branchDirParamsSchema>
 
-/** Compact UTC stamp for trash/archive names: `YYYYMMDDTHHMMSSZ` (no colons -- portability). */
-function formatTrashStamp(date: Date): string {
-  return date
-    .toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\.\d{3}Z$/, 'Z')
-}
+/**
+ * `duplicates=1` opts in to the duplicate-ID scan, a full content-tree readdir
+ * per healthy branch. The panel's 30 s poll leaves it off.
+ */
+const branchHealthParamsSchema = z.object({ duplicates: z.literal('1').optional() })
+type BranchHealthParams = z.infer<typeof branchHealthParamsSchema>
+type BranchDirParams = z.infer<typeof branchDirParamsSchema>
 
 /**
  * Re-resolve dirName under baseRoot and enforce containment (belt-and-
@@ -145,20 +162,36 @@ const getBranchHealthHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
   _req: ApiRequest,
+  params: BranchHealthParams,
 ): Promise<BranchHealthResponse> => {
   // Same derivation services.ts uses to construct the BranchRegistry --
   // admin handlers must agree with it or the scan silently looks at the
   // wrong directory.
   const baseRoot = getDefaultBranchBase(ctx.services.config.mode)
-  const baseBranchName = ctx.services.config.defaultBaseBranch ?? 'main'
+  const baseBranchName = baseBranchOf(ctx.services.config)
   const contentRootName = ctx.services.config.contentRoot || 'content'
 
+  const scanDuplicates = params.duplicates === '1'
+
   try {
-    const entries = await scanBranchHealth(baseRoot, { baseBranchName, contentRootName })
+    const entries = await scanBranchHealth(baseRoot, {
+      baseBranchName,
+      contentRootName,
+      ...(scanDuplicates ? { duplicateIdScan: { budgetMs: DUPLICATE_ID_SCAN_BUDGET_MS } } : {}),
+    })
+    const truncated = entries.some(
+      (e) => e.duplicateIdScan?.state === 'unknown' && e.duplicateIdScan.reason === 'out-of-time',
+    )
     return {
       ok: true,
       status: 200,
-      data: { entries, generatedAt: new Date().toISOString() },
+      data: {
+        entries,
+        generatedAt: new Date().toISOString(),
+        ...(scanDuplicates
+          ? { duplicateIdScan: { budgetMs: DUPLICATE_ID_SCAN_BUDGET_MS, truncated } }
+          : {}),
+      },
     }
   } catch (err) {
     return { ok: false, status: 500, error: getErrorMessage(err) }
@@ -193,7 +226,7 @@ const purgeBranchDirHandler = async (
   params: BranchDirParams,
 ): Promise<PurgeBranchDirResponse> => {
   const baseRoot = getDefaultBranchBase(ctx.services.config.mode)
-  const baseBranchName = ctx.services.config.defaultBaseBranch ?? 'main'
+  const baseBranchName = baseBranchOf(ctx.services.config)
   const sanitizedBaseBranchName = sanitizeBranchName(baseBranchName)
 
   if (params.dirName === sanitizedBaseBranchName) {
@@ -295,7 +328,7 @@ const purgeBranchDirHandler = async (
       // [C1] The timestamp lives in the NAME, not the dir's mtime: rename()
       // preserves the original mtime, so mtime-based retention would delete
       // a months-stale orphan's trash on the very first cleanup pass.
-      const trashName = `.trash-${params.dirName}-${formatTrashStamp(new Date())}`
+      const trashName = `.trash-${params.dirName}-${formatDirStamp(new Date())}`
       const trashPath = path.join(baseRoot, trashName)
       try {
         await fs.rename(dirPath, trashPath)
@@ -413,7 +446,7 @@ const repairBranchDirHandler = async (
           throw new RepairPreconditionError('No metadata file -- use purge for orphans', 409)
         }
 
-        const archivedName = `${BRANCH_META_FILE}.corrupt-${formatTrashStamp(new Date())}`
+        const archivedName = `${BRANCH_META_FILE}.corrupt-${formatDirStamp(new Date())}`
         await fs.rename(branchJsonPath, path.join(dirPath, BRANCH_META_DIR, archivedName))
         return archivedName
       })
@@ -531,7 +564,7 @@ async function checkStillCorrupt(dirPath: string): Promise<'corrupt' | 'healthy'
 const repairContentDuplicatesHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
-  _req: ApiRequest,
+  req: ApiRequest,
   params: BranchDirParams,
 ): Promise<RepairContentDuplicatesResponse> => {
   const baseRoot = getDefaultBranchBase(ctx.services.config.mode)
@@ -570,7 +603,7 @@ const repairContentDuplicatesHandler = async (
           return { ok: false, status: 409, error: 'No duplicate content IDs found' }
         }
 
-        const stamp = formatTrashStamp(new Date())
+        const stamp = formatDirStamp(new Date())
         try {
           for (const dup of duplicates) {
             const archivedAs: string[] = []
@@ -613,17 +646,27 @@ const repairContentDuplicatesHandler = async (
         ? `${getErrorMessage(err)} (partially repaired first - already archived: ${completed.join(', ')})`
         : getErrorMessage(err),
     }
+  } finally {
+    // Archived files leave the branch at its next submit, a partial repair's included, so the
+    // admin is one of its editors. No `writableBranch` guard can say so: this route names a
+    // directory, not a branch.
+    if (resolved.length > 0) {
+      await ctx.services.recordBranchEditor({ branchRoot: dirPath, baseRoot }, req.user)
+    }
   }
 }
 
 /**
- * Branch directory health scan (healthy/corrupt-metadata/orphan)
+ * Branch directory health scan (healthy/corrupt-metadata/orphan); `duplicates=1`
+ * adds the bounded duplicate-ID scan
  */
 const getBranchHealth = defineEndpoint({
   namespace: 'admin',
   name: 'branchHealth',
+  clientTimeout: 'long',
   method: 'GET',
   path: '/admin/branch-health',
+  params: branchHealthParamsSchema,
   responseType: 'BranchHealthResponse',
   response: {} as BranchHealthResponse,
   defaultMockData: { entries: [], generatedAt: '2024-01-01T00:00:00.000Z' },
@@ -637,6 +680,7 @@ const getBranchHealth = defineEndpoint({
 const purgeBranchDir = defineEndpoint({
   namespace: 'admin',
   name: 'purgeBranchDir',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/admin/branch-dirs/:dirName/purge',
   params: branchDirParamsSchema,
@@ -653,6 +697,7 @@ const purgeBranchDir = defineEndpoint({
 const repairBranchDir = defineEndpoint({
   namespace: 'admin',
   name: 'repairBranchDir',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/admin/branch-dirs/:dirName/repair-metadata',
   params: branchDirParamsSchema,
@@ -683,6 +728,7 @@ const repairBranchDir = defineEndpoint({
 const repairContentDuplicates = defineEndpoint({
   namespace: 'admin',
   name: 'repairContentDuplicates',
+  clientTimeout: 'long',
   method: 'POST',
   path: '/admin/branch-dirs/:dirName/repair-content-duplicates',
   params: branchDirParamsSchema,

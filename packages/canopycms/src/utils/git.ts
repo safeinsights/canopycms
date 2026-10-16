@@ -4,6 +4,8 @@ import type { Stats } from 'node:fs'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import type { OperatingMode } from '../operating-mode'
+import { BaseBranchUnresolvedError } from './base-branch'
+import { getErrorMessage } from './error'
 
 const NETWORK_SCHEME_PATTERN = /^(https?|ssh|git):\/\//i
 // git's "transport helper" syntax (`ext::sh -c ...`, `fd::7`): any `scheme::` prefix hands the
@@ -94,11 +96,11 @@ export function isStaleLeaseRejection(message: string): boolean {
   return message.includes(REJECTED_MARKER) && message.includes(STALE_LEASE_REASON)
 }
 
-// GitHub's reason text when a push would introduce workflow content the credential may not write.
-// It names the credential kind ("a GitHub App", "an OAuth App", ...) and then the file.
-// Both classes stop at a newline, so the match stays on the one status line that carries it.
-const WORKFLOW_REFUSAL_PATTERN =
-  /refusing to allow an? [^`\n]+? to create or update workflow `([^`\n]+)`/
+// GitHub's reason text when a push would introduce workflow content the credential may not write:
+// `refusing to allow <credential kind> to create or update workflow `<file>``, where the kind
+// ("a GitHub App", "an OAuth App", ...) holds no backquote and the file is the next quoted span.
+const WORKFLOW_REFUSAL_LEADS = ['refusing to allow a ', 'refusing to allow an ']
+const WORKFLOW_REFUSAL_TAIL = ' to create or update workflow '
 
 /**
  * The workflow file named by GitHub's refusal of a push that would add workflow content the
@@ -107,9 +109,28 @@ const WORKFLOW_REFUSAL_PATTERN =
  * GitHub refuses only content it does not already hold: carrying a base-branch workflow change by
  * rebase, merge or fast-forward is accepted. Retrying the identical push can never succeed, so the
  * worker fails it fast. The text is GitHub's own, not git's, so no locale pinning is needed.
+ *
+ * A scan of each line's backquote-delimited spans, linear in the message, which is git's output of
+ * any length: this rule as a regex, with its run between lead and tail, is quadratic on a line
+ * that repeats the lead without the tail.
  */
 export function workflowPushRefusalFile(message: string): string | null {
-  return WORKFLOW_REFUSAL_PATTERN.exec(message)?.[1] ?? null
+  for (const line of message.split('\n')) {
+    const spans = line.split('`')
+    // The last span is closed by no backquote, so the file can be at most the one before it.
+    for (let i = 0; i + 2 < spans.length; i++) {
+      const span = spans[i]
+      const file = spans[i + 1]
+      if (file === '' || !span.endsWith(WORKFLOW_REFUSAL_TAIL)) continue
+      const head = span.slice(0, -WORKFLOW_REFUSAL_TAIL.length)
+      const named = WORKFLOW_REFUSAL_LEADS.some((lead) => {
+        const at = head.indexOf(lead)
+        return at !== -1 && at + lead.length < head.length
+      })
+      if (named) return file
+    }
+  }
+  return null
 }
 
 // git's message when `git fetch <remote> <branch>` names a ref the remote does not have. Both
@@ -178,9 +199,13 @@ export function isCanopyInternalPath(repoRelativePath: string): boolean {
  * {@link CANOPY_META_DIR}, including files an adopter committed there by mistake. Stage-all then
  * unstage, because git rejects `:(exclude)` pathspecs (six spellings tried) with "paths are ignored" when
  * the excluded directory is itself ignored, which `.git/info/exclude` makes it in every clone.
+ *
+ * `--sparse`: in a sparse clone a plain `add -A` fails on any file present outside the cone.
+ * With it, such a file is staged like any other, and a tracked file absent only because it is
+ * outside the cone is still not staged as a deletion. A no-op in a full clone.
  */
 export async function stageAllExceptCanopyState(git: SimpleGit): Promise<void> {
-  await git.add(['-A'])
+  await git.raw(['add', '-A', '--sparse'])
   await git.raw(['reset', '-q', '--', CANOPY_META_DIR])
 }
 
@@ -228,11 +253,33 @@ export async function detectHeadBranch(
 }
 
 /**
+ * The branch the HEAD of the repository at `gitDir` names; for a bare repo, its default branch.
+ * Throws when HEAD is detached, unreadable, or names a branch with no commit.
+ *
+ * `--git-dir` rather than cwd discovery, which `safe.bareRepository=explicit` refuses for bare
+ * repos. `git` is how the worker passes the instance it runs a shared repository with.
+ */
+export async function readHeadBranch(
+  gitDir: string,
+  git: SimpleGit = simpleGit(),
+): Promise<string> {
+  const ref = (await git.raw(['--git-dir', gitDir, 'symbolic-ref', 'HEAD'])).trim()
+  if (!ref.startsWith('refs/heads/')) {
+    throw new Error(`its HEAD does not name a branch (${ref || 'empty'})`)
+  }
+  // No `--quiet`: simple-git rejects only on a non-zero exit WITH stderr output.
+  await git.raw(['--git-dir', gitDir, 'rev-parse', '--verify', `${ref}^{commit}`])
+  return ref.slice('refs/heads/'.length)
+}
+
+/**
  * Resolve the base branch — the fork point for CMS editing branches and the branch workspace
  * clones are seeded from. The single definition of base-branch behavior (see ARCHITECTURE.md
  * "Branch Identity"): a configured `defaultBaseBranch` always wins in both modes; dev mode
  * otherwise detects the current git HEAD, so workspaces fork from the developer's checked-out
- * branch; otherwise 'main'.
+ * branch, falling back to 'main'; prod otherwise reads the HEAD of `remoteGitDir`, the bare repo
+ * the workspaces clone from, and throws when it is not given one or cannot read it. Prod never
+ * assumes 'main'.
  *
  * Static deployments never reach git operations, so callers on static paths must short-circuit
  * before calling this (see createCanopyServices).
@@ -242,10 +289,24 @@ export async function resolveBaseBranch(options: {
   mode: OperatingMode
   /** Repo root used for dev-mode HEAD detection. Defaults to process.cwd(). */
   detectFrom?: string
+  /** Prod: the local bare remote whose HEAD names the base branch (GitManager.detectBaseBranch). */
+  remoteGitDir?: string
 }): Promise<string> {
   if (options.defaultBaseBranch) return options.defaultBaseBranch
   if (options.mode === 'dev') {
     return detectHeadBranch(options.detectFrom ?? process.cwd())
   }
-  return 'main'
+  if (!options.remoteGitDir) {
+    throw new BaseBranchUnresolvedError(
+      'defaultBaseBranch is not set, and no remote was given to read the base branch from.',
+    )
+  }
+  try {
+    return await readHeadBranch(options.remoteGitDir)
+  } catch (err) {
+    throw new BaseBranchUnresolvedError(
+      `defaultBaseBranch is not set, and the base branch could not be read from ` +
+        `${options.remoteGitDir}: ${getErrorMessage(err)}.`,
+    )
+  }
 }

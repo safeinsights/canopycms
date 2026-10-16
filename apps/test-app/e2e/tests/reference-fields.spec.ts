@@ -1,9 +1,14 @@
 import { BASE_URL } from '../fixtures/base-url'
-import { test, expect } from '@playwright/test'
+import { test, expect, type Locator } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
-import { resetWorkspace, ensureMainBranch, readContentFile } from '../fixtures/test-workspace'
-import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
+import {
+  resetWorkspace,
+  ensureMainBranch,
+  readContentFile,
+  findContentFile,
+} from '../fixtures/test-workspace'
+import { STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
 
 /**
  * E2E tests for reference field functionality.
@@ -31,10 +36,9 @@ test.describe('Reference Fields', () => {
     })
 
     await test.step('navigate to Home Page entry', async () => {
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
     })
 
     await test.step('verify relatedPost reference field loads options', async () => {
@@ -42,15 +46,11 @@ test.describe('Reference Fields', () => {
       const field = editorPage.getReferenceField('relatedPost')
       await expect(field).toBeVisible({ timeout: STANDARD_TIMEOUT })
 
-      // Open the dropdown to see available options
-      const input = field.locator('input:not([type="hidden"])')
-      await input.click()
-
-      // Both post titles should appear as options (scope to Select dropdown)
-      await expect(page.locator('.mantine-Select-option', { hasText: 'Alpha Post' })).toBeVisible({
+      const options = await editorPage.openReferenceOptions('relatedPost')
+      await expect(options.filter({ hasText: 'Alpha Post' })).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
-      await expect(page.locator('.mantine-Select-option', { hasText: 'Beta Post' })).toBeVisible({
+      await expect(options.filter({ hasText: 'Beta Post' })).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
 
@@ -67,10 +67,9 @@ test.describe('Reference Fields', () => {
     })
 
     await test.step('navigate to Home Page', async () => {
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
     })
 
     await test.step('select the reference option', async () => {
@@ -105,15 +104,14 @@ test.describe('Reference Fields', () => {
     })
   })
 
-  test('single reference field: clear selection', async ({ page }) => {
+  test('single reference field: clear selection', async () => {
     await test.step('set up: create post, select reference, save', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.createPost('clearable-post', 'Clearable Post')
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
       await editorPage.selectReferenceOption('relatedPost', 'Clearable Post')
       await editorPage.saveAndVerify()
     })
@@ -142,10 +140,9 @@ test.describe('Reference Fields', () => {
     })
 
     await test.step('navigate to Home Page', async () => {
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
     })
 
     await test.step('select both posts in featuredPosts multi-select', async () => {
@@ -189,7 +186,7 @@ test.describe('Reference Fields', () => {
     })
   })
 
-  test('reference field search filters options', async ({ page }) => {
+  test('reference field search filters options', async () => {
     await test.step('create three posts with distinct titles', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
@@ -199,25 +196,57 @@ test.describe('Reference Fields', () => {
     })
 
     await test.step('navigate to Home Page', async () => {
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
     })
 
     await test.step('open dropdown and type to filter', async () => {
       await editorPage.waitForReferenceOptions('relatedPost')
-      const field = editorPage.getReferenceField('relatedPost')
-      const input = field.locator('input:not([type="hidden"])')
-      await input.click()
-      await input.fill('Ban')
+      const options = await editorPage.openReferenceOptions('relatedPost')
+      await expect(options).toHaveCount(3, { timeout: STANDARD_TIMEOUT })
+      await editorPage
+        .getReferenceField('relatedPost')
+        .locator('input:not([type="hidden"])')
+        .fill('Ban')
 
-      // Only Banana should be visible (scope to Select dropdown)
-      await expect(page.locator('.mantine-Select-option', { hasText: 'Banana' })).toBeVisible({
+      await expect(options).toHaveText(['Banana'], { timeout: STANDARD_TIMEOUT })
+    })
+  })
+  test('deleting a referenced post names the referencing entry, then deletes on confirm', async () => {
+    await test.step('reference a new post from the Home Page and save', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.createPost('doomed-post', 'Doomed Post')
+      await editorPage.openContentNavigator()
+      await editorPage.selectEntry('Home Page')
+      await editorPage.closeContentNavigator()
+      await editorPage.selectReferenceOption('relatedPost', 'Doomed Post')
+      await editorPage.saveAndVerify()
+    })
+
+    let modal: Locator
+
+    await test.step('delete the post: the dialog names the Home Page', async () => {
+      await editorPage.openContentNavigator()
+      modal = await editorPage.startDeleteEntry('Doomed Post')
+      await editorPage.deleteConfirmButton().click()
+
+      const list = modal.locator('[data-testid="referenced-by-list"]')
+      await expect(list).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(list).toContainText('Home Page')
+      await expect(list).toContainText('relatedPost')
+      await expect(editorPage.deleteConfirmButton()).toHaveText('Delete anyway')
+      expect(await findContentFile('posts.qrstuvwxyz12/post.doomed-post.')).not.toBeNull()
+    })
+
+    await test.step('Delete anyway removes the post', async () => {
+      await editorPage.deleteConfirmButton().click()
+      await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+      await expect(editorPage.navigatorItem('Doomed Post')).not.toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
-      await expect(page.locator('.mantine-Select-option', { hasText: 'Apple' })).not.toBeVisible()
-      await expect(page.locator('.mantine-Select-option', { hasText: 'Cherry' })).not.toBeVisible()
+      expect(await findContentFile('posts.qrstuvwxyz12/post.doomed-post.')).toBeNull()
     })
   })
 })

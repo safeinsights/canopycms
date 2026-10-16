@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — program workstream A: `int` dist-tag prerelease channel publishable on demand from any non-main branch (PR #171), standing draft PR #172, `int` mode in the KB's canopy-deps. Implementation summary + npm trusted-publisher constraint inside
+---
 # Program A — Release path
 
 **RESOLVED 2026-07-30.** Prereleases are publishable on demand from any non-`main`

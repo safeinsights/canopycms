@@ -42,6 +42,17 @@ describe('withContentWriteLock outcomes', () => {
     await fs.rm(branchRoot, { recursive: true, force: true })
   })
 
+  it('never recreates a branch root that no longer exists', async () => {
+    const goneRoot = path.join(branchRoot, 'deleted-branch')
+    const work = vi.fn()
+
+    await expect(withContentWriteLock(goneRoot, work, 50)).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(work).not.toHaveBeenCalled()
+    await expect(fs.stat(goneRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it("reports 'not-run' when the wait expires, without running the work", async () => {
     const release = await tryAcquireContentWriteLock(branchRoot)
     const work = vi.fn().mockResolvedValue('done')

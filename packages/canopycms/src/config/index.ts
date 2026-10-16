@@ -28,6 +28,10 @@ export type {
   SelectFieldConfig,
   ReferenceFieldConfig,
   ImageFieldConfig,
+  MarkdownFieldConfig,
+  MdxAllowlist,
+  MdxComponentAllow,
+  MdxPropAllow,
   ImageFieldValue,
   ObjectFieldConfig,
   InlineGroupFieldConfig,
@@ -36,6 +40,7 @@ export type {
   EntrySchema,
   BranchSchema,
   EntryTypeConfig,
+  EntryTypeUnavailable,
   CollectionConfig,
   RootCollectionConfig,
   // Media

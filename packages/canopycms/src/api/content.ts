@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { ENTRY_CHANGED_MESSAGE, ENTRY_GONE_MESSAGE } from './entries-constants'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import {
   BranchSyncingError,
@@ -7,12 +8,20 @@ import {
   ContentStoreError,
   ContentConflictError,
   DuplicateContentIdError,
+  EntryGoneError,
   UrlPathConflictError,
   getDefaultEntryType,
   type WriteInput,
 } from '../content-store'
-import type { EntrySchema, EntryTypeConfig, EntryValidationIssue, FlatSchemaItem } from '../config'
+import type {
+  EntrySchema,
+  EntryTypeConfig,
+  EntryValidationIssue,
+  FlatSchemaItem,
+  MdxAllowlist,
+} from '../config'
 import { defineEndpoint } from './route-builder'
+import { SchemaUnavailableError } from '../schema/schema-unavailable-error'
 import { ReferenceValidator } from '../validation/reference-validator'
 import {
   findUnknownKeys,
@@ -22,11 +31,16 @@ import {
   type EntryFieldError,
 } from '../validation/entry-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
+import { findMarkdownSafetyIssues, splitByStored } from '../validation/markdown-safety'
+import type { MarkdownSafetyFinding } from '../validation/markdown-safety'
+import { collectReferenceIds } from '../validation/field-traversal'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
-import { entryLogicalPath, parseSlug, type Slug } from '../paths'
+import { entryLogicalPath, parseSlug, type LogicalPath, type Slug } from '../paths'
 import type { BranchContextWithSchema } from '../types'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
+import { withItemKeys } from '../item-keys'
+import { findBodyFieldName } from '../utils/body-field'
 
 /**
  * Parse an API path into logical path segments, prepending the content root if needed.
@@ -87,8 +101,8 @@ export interface WriteContentBody {
   body?: string
   /**
    * OCC token. A number from a prior read/write response makes this an update,
-   * rejected with 409 if the file's mtime no longer matches (a file deleted
-   * since is written anew). `null` or omitted makes it
+   * rejected with 409 if the file's mtime no longer matches, or with 409 `ENTRY_GONE` if the
+   * file is gone (deleted or moved since the read). `null` or omitted makes it
    * a create, rejected with 409 if the entry already exists. There is no blind
    * write: without a token, "no conflict detection" would be indistinguishable
    * from "lost the token", so an update has to prove which version it read.
@@ -217,6 +231,57 @@ const readContentHandler = async (
   }
 }
 
+/**
+ * A reference's field and id, positions dropped (`blocks[2].author` → `blocks.author`), so
+ * reordering blocks or list items keeps a match while moving an id to a field of another name
+ * does not.
+ */
+const referenceSite = (fieldPath: string, id: string) =>
+  `${fieldPath.replace(/\[\d+\]/g, '')}\0${id}`
+
+/** Every reference site the stored entry holds, read raw so a missing target still yields its id. */
+const storedReferenceSites = async (
+  store: ContentStore,
+  collectionPath: LogicalPath,
+  slug: Slug,
+  fields: EntrySchema,
+): Promise<Set<string>> => {
+  const doc = await store.read(collectionPath, slug, { resolveReferences: false })
+  return new Set(
+    collectReferenceIds(fields, doc.data).map((ref) => referenceSite(ref.path, ref.id)),
+  )
+}
+
+function withoutKey(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  if (!(key in record)) return record
+  const { [key]: _dropped, ...rest } = record
+  return rest
+}
+
+/** The policy's issues in the stored entry, which a save may keep. */
+const storedMarkdownSafetyIssues = async (
+  store: ContentStore,
+  collectionPath: LogicalPath,
+  slug: Slug,
+  fields: EntrySchema,
+  siteAllow: MdxAllowlist | undefined,
+): Promise<MarkdownSafetyFinding[]> => {
+  // A stored file that does not read keeps nothing, so the save's code is refused, not a 500.
+  const doc = await store
+    .read(collectionPath, slug, { resolveReferences: false })
+    .catch(() => undefined)
+  if (doc === undefined) return []
+  const data = 'body' in doc ? mergeBodyIntoData(fields, doc.data, doc.body) : doc.data
+  return findMarkdownSafetyIssues(fields, doc.format, data, siteAllow)
+}
+
+const entryGoneResponse = (): ApiResponse<never> => ({
+  ok: false,
+  status: 409,
+  error: ENTRY_GONE_MESSAGE,
+  code: 'ENTRY_GONE',
+})
+
 const writeContentHandler = async (
   gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
@@ -257,15 +322,22 @@ const writeContentHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
+  // Update guard: an update whose entry is gone is refused before anything below judges it,
+  // since its entry type can no longer be read off the file and every check that follows would
+  // treat it as a create. store.write() re-enforces it in-lock (EntryGoneError).
+  const exists = await store.documentExists(schemaItem.logicalPath, slug)
+  if (body.expectedVersion != null && !exists) return entryGoneResponse()
+
   // Authoritative schema validation at the write boundary (COMPOUND-2): the server re-checks
   // required fields, type/format correctness, and non-empty required references (rules shared
   // with the editor via validation/entry-validator), plus reference EXISTENCE and
   // EntryTypeConfig.maxItems (SCH-H3) — so a direct API call can't bypass what the editor's form
   // enforces client-side.
   //
-  // Carve-out: a create scaffold (target doesn't exist yet, payload is entirely empty `{}`/no
-  // body) skips field validation, since the editor's create flow writes an empty scaffold before
-  // the user fills the form.
+  // Carve-outs for a create (the target doesn't exist yet), because the editor creates an entry
+  // before the user fills its form: an entirely empty payload (`{}`, no body) skips field
+  // validation, and any other create skips only the required-field checks, so a create carrying
+  // just a title lands. Every save after that is checked in full.
 
   // Resolve the entry-type config the store will write with (mirrors ContentStore.write)
   let entryTypeConfig: EntryTypeConfig | undefined
@@ -319,9 +391,20 @@ const writeContentHandler = async (
     fields = entryTypeConfig?.schema ?? []
     maxItems = entryTypeConfig?.maxItems
   }
+  // Refused before validation, which an empty `fields` would wave through; mapped to a 503.
+  const resolvedEntryType = schemaItem.type === 'entry-type' ? schemaItem : entryTypeConfig
+  if (resolvedEntryType?.unavailable) {
+    throw new SchemaUnavailableError(resolvedEntryType.name, resolvedEntryType.unavailable)
+  }
 
-  const data = body.data ?? {}
   const isDataOnly = isDataOnlyFormat(body.format)
+  // An md/mdx file's body field is its body, so a frontmatter key of that name is dropped: no
+  // check would see it, and a read or a resolved reference would serve it as the body.
+  const requestData =
+    isDataOnly || body.data === undefined
+      ? body.data
+      : withoutKey(body.data, findBodyFieldName(fields))
+  const data = requestData ?? {}
   // The store's own `undefined` (blind write) is never reachable from here: an omitted token is
   // a create, so an update that lost its token 409s instead of overwriting unchecked.
   const expectedVersion = body.expectedVersion ?? null
@@ -330,13 +413,12 @@ const writeContentHandler = async (
       ? `An entry with slug "${slug}" already exists`
       : `An entry with slug "${slug}" already exists; an update must send the expectedVersion from its last read`
 
+  const keptWarnings: EntryValidationIssue[] = []
   try {
-    const exists = await store.documentExists(schemaItem.logicalPath, slug)
-
     // Create guard: a create against a slug that already has content must never silently
     // overwrite it — short-circuit with 409 before field validation runs, so the error names the
     // real problem instead of "field is required" or a bare conflict. store.write() re-enforces
-    // this itself inside its per-entry lock against a fresh stat (the race-safe authoritative
+    // this itself inside its per-entry lock against a fresh open (the race-safe authoritative
     // check); this is just a cheaper fast path for the common case.
     if (expectedVersion === null && exists) {
       return { ok: false, status: 409, error: createConflictError }
@@ -388,7 +470,28 @@ const writeContentHandler = async (
       // Pure rules (shared with the editor). For md/mdx the body is validated
       // as the schema's isBody field.
       const dataForValidation = isDataOnly ? data : mergeBodyIntoData(fields, data, body.body ?? '')
-      const fieldErrors: EntryFieldError[] = validateEntryData(fields, dataForValidation)
+      const fieldErrors: EntryFieldError[] = validateEntryData(fields, dataForValidation, '', {
+        required: exists,
+      })
+
+      // Code in markdown or MDX (validation/markdown-safety.ts). A field the stored entry held
+      // with code is kept, with a warning, when saved unchanged; any other code is refused.
+      const { mdxAllow } = ctx.services.config
+      const unsafe = findMarkdownSafetyIssues(fields, body.format, dataForValidation, mdxAllow)
+      if (unsafe.length > 0) {
+        const stored = exists
+          ? await storedMarkdownSafetyIssues(store, schemaItem.logicalPath, slug, fields, mdxAllow)
+          : []
+        const { refused, kept } = splitByStored(unsafe, stored)
+        fieldErrors.push(...refused)
+        for (const e of kept) {
+          keptWarnings.push({
+            level: 'warning',
+            fieldPath: e.fieldPath,
+            message: `holds content this field refuses, kept because the saved entry already had it: ${e.message}. Ask a developer to move it into a component, or to allow it.`,
+          })
+        }
+      }
 
       // Reference existence (server-only: reads the content ID index). Editor
       // payloads may still carry resolved `{ id, ... }` objects from a prior
@@ -401,9 +504,25 @@ const writeContentHandler = async (
           (name) => store.resolveCollectionItem(name)?.logicalPath,
         )
         const refResult = await refValidator.validate(normalizeReferenceValues(fields, data))
-        fieldErrors.push(
-          ...refResult.errors.map((e) => ({ fieldPath: e.fieldPath, message: e.error })),
-        )
+        // A dangling id the file already holds in that field is kept with a warning, so an entry
+        // whose target was deleted stays saveable and the id survives; the production build is
+        // what fails on it. A dangling id this save introduces, or moves to a field of another name, is
+        // refused.
+        const storedSites =
+          exists && refResult.errors.some((e) => e.dangling)
+            ? await storedReferenceSites(store, schemaItem.logicalPath, slug, fields)
+            : new Set<string>()
+        for (const e of refResult.errors) {
+          if (e.dangling && storedSites.has(referenceSite(e.fieldPath, e.id))) {
+            keptWarnings.push({
+              level: 'warning',
+              fieldPath: e.fieldPath,
+              message: `references a missing entry (${e.id}). It is kept as it was; repoint or clear it.`,
+            })
+          } else {
+            fieldErrors.push({ fieldPath: e.fieldPath, message: e.error })
+          }
+        }
       }
 
       if (fieldErrors.length > 0) {
@@ -426,7 +545,8 @@ const writeContentHandler = async (
   // Adopter save-time validation, run BEFORE the file is written: 'error' issues
   // refuse the save (e.g. a body that would break the site's production build),
   // 'warning' issues are returned alongside the successful write.
-  let validationWarnings: EntryValidationIssue[] | undefined
+  let validationWarnings: EntryValidationIssue[] | undefined =
+    keptWarnings.length > 0 ? keptWarnings : undefined
   const validateEntry = ctx.services.config.validateEntry
   // Collapse resolved reference objects back to bare ID strings before persisting (the reference
   // validator above gets its own copy). The editor's GET resolves references by default, so form
@@ -434,8 +554,14 @@ const writeContentHandler = async (
   // left unnormalized, a save would freeze that snapshot into the file (resolution only
   // re-resolves plain ID strings), permanently severing the reference from its target. Idempotent:
   // a payload that already holds ID strings is unchanged.
+  //
+  // Every list item and block leaves a save keyed (`item-keys.ts`). A key sent is kept, so a
+  // thread naming it still finds its item; one missing is filled from the item's content, as a
+  // read fills one.
   const normalizedData =
-    body.data === undefined ? undefined : normalizeReferenceValues(fields, body.data)
+    requestData === undefined
+      ? undefined
+      : withItemKeys(fields, normalizeReferenceValues(fields, requestData), 'content')
   // Computed before the validateEntry hook and the entry-link scan too, not just the write, so
   // every consumer agrees on the same bytes — otherwise an adopter's hook could see a resolved
   // object while the file got an ID string, depending on whether the post came from the editor.
@@ -455,6 +581,7 @@ const writeContentHandler = async (
       const overflow = unknownKeys.length - shown.length
       const list = overflow > 0 ? `${shown.join(', ')} (and ${overflow} more)` : shown.join(', ')
       validationWarnings = [
+        ...(validationWarnings ?? []),
         {
           level: 'warning',
           message:
@@ -472,7 +599,9 @@ const writeContentHandler = async (
       issues = await validateEntry({
         entryPath: logicalPathSegments.join('/'),
         branch: params.branch,
-        ...(params.entryType ? { entryType: params.entryType } : {}),
+        // The type the store writes with, so a request that omits `entryType` can't skip a
+        // type-gated rule.
+        ...(entryTypeName ? { entryType: entryTypeName } : {}),
         format: body.format,
         data: normalizedData ?? {},
         body: body.body,
@@ -497,8 +626,8 @@ const writeContentHandler = async (
           .join('; '),
       }
     }
-    // Appended, not assigned: the unknown-key scan above may already have found some, and the
-    // editor shows the channel as one notification.
+    // Appended, not assigned: the scans above may already have found some, and the editor shows
+    // the channel as one notification.
     const warnings = issues.filter((issue) => issue.level === 'warning')
     if (warnings.length > 0) validationWarnings = [...(validationWarnings ?? []), ...warnings]
   }
@@ -545,7 +674,12 @@ const writeContentHandler = async (
       // refused outright, but a lock compromised mid-write can still land it — each case carries
       // its own message, so pass `err.message` through rather than the generic conflict below.
       if (err instanceof BranchSyncingError) {
-        return { ok: false, status: 409, error: err.message }
+        return {
+          ok: false,
+          status: 409,
+          error: err.message,
+          code: err.outcome === 'unknown' ? 'WRITE_OUTCOME_UNKNOWN' : 'BRANCH_SYNCING',
+        }
       }
       // [F1] Also not an editor collision: this content ID is quarantined on two files
       // (ContentIdIndex's duplicate-ID detection). The generic message below would send the
@@ -560,16 +694,14 @@ const writeContentHandler = async (
       if (err instanceof UrlPathConflictError) {
         return { ok: false, status: 409, error: err.message }
       }
+      // Gone since the `exists` check above: deleted or moved between it and the in-lock open.
+      if (err instanceof EntryGoneError) return entryGoneResponse()
       // Race-safe fallback: the early `exists` check above catches the common case; this covers a
-      // collision that lands between that check and store.write()'s in-lock stat.
+      // collision that lands between that check and store.write()'s in-lock open.
       if (expectedVersion === null) {
         return { ok: false, status: 409, error: createConflictError }
       }
-      return {
-        ok: false,
-        status: 409,
-        error: 'Content conflict: entry was modified by another editor',
-      }
+      return { ok: false, status: 409, error: ENTRY_CHANGED_MESSAGE }
     }
     // C2: a ContentStoreError is an expected client fault (bad slug, validation, etc.) and keeps
     // its 400. Anything else — ENOSPC, EACCES, a bug — is a genuine server fault and must not be
@@ -730,7 +862,7 @@ const renameEntryHandler = async (
       return {
         ok: false,
         status: 409,
-        error: passThrough ? err.message : 'Content conflict: entry was modified by another editor',
+        error: passThrough ? err.message : ENTRY_CHANGED_MESSAGE,
       }
     }
     // C2: same rule as writeContentHandler's catch above (ContentStoreError -> 400, everything
@@ -789,6 +921,7 @@ const validateReferences = defineEndpoint({
   namespace: 'content',
   name: 'validateReferences',
   method: 'POST',
+  readOnly: true,
   path: '/:branch/validate-references/...path',
   params: validateReferencesParamsSchema,
   body: validateReferencesBodySchema,

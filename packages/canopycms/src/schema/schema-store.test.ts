@@ -1525,12 +1525,14 @@ describe('SchemaOps', () => {
         resolveProceed = resolve
       })
 
+      // The branch root leaves by one rename, as branch delete does. An `rm -rf` would delete the
+      // held lock directory before `.canopy-meta`, and a retry landing in that gap would take the
+      // lock and fail on the missing collection meta instead.
+      const removedRoot = `${tempDir}-removed`
       const holder = withOccFileLock(schemaLockPath, async () => {
         resolveHolderAcquired()
         await proceed
-        // The queued attempt keeps creating lock directories under .canopy-meta while this
-        // removal runs, so a single pass can hit ENOTEMPTY; let rm retry.
-        await fs.rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 })
+        await fs.rename(tempDir, removedRoot)
       })
 
       await holderAcquired
@@ -1548,6 +1550,7 @@ describe('SchemaOps', () => {
       const failStart = Date.now()
       await expect(addPromise).rejects.toThrow(SchemaStoreBusyError)
       expect(Date.now() - failStart).toBeLessThan(5000)
+      await fs.rm(removedRoot, { recursive: true, force: true })
     }, 15_000)
   })
 

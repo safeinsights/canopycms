@@ -1,10 +1,17 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
+import type React from 'react'
+import { ApiTimeoutError } from '../../api/request-deadline'
+import { CanopyApiClient } from '../../api/client'
+import type { RetryToastMessageProps } from '../components/RetryToastMessage'
+import { act, render, renderHook, waitFor } from '@testing-library/react'
+import { MantineProvider } from '@mantine/core'
 import { useSWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  branchActionOutcomeUnknown,
   CREATED_BRANCH_GRACE_MS,
   useBranchManager,
   UseBranchManagerOptions,
+  withdrawPullRequestBullet,
 } from './useBranchManager'
 import type { BranchListItem } from '../../api/branch'
 import { BRANCHES_KEY } from './useBranchesData'
@@ -74,6 +81,12 @@ describe('useBranchManager', () => {
     },
   ]
 
+  // The listing with 'feature' still being edited, so a submit of it goes through.
+  const editingFeature: BranchMetadata[] = [
+    mockBranches[0],
+    { ...mockBranches[1], status: 'editing' },
+  ]
+
   const mockSetBusy = vi.fn()
 
   const defaultOptions: UseBranchManagerOptions = {
@@ -99,7 +112,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { branches: [] },
+      data: { branches: [], users: [] },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions), {
@@ -114,7 +127,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { branches: mockBranches },
+      data: { branches: mockBranches, users: [] },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions), {
@@ -138,7 +151,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { branches: mockBranches },
+      data: { branches: mockBranches, users: [] },
     })
 
     const strictWrapper = createStrictModeApiClientWrapper(mockClient)
@@ -155,7 +168,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { branches: mockBranches, defaultBranch: 'feature-x' },
+      data: { branches: mockBranches, defaultBranch: 'feature-x', users: [] },
     })
 
     const { result } = renderHook(
@@ -172,7 +185,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { branches: mockBranches, defaultBranch: 'feature-x' },
+      data: { branches: mockBranches, defaultBranch: 'feature-x', users: [] },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions), {
@@ -190,7 +203,7 @@ describe('useBranchManager', () => {
     const { notifications } = await import('@mantine/notifications')
     mockClient.branches.list
       .mockResolvedValueOnce({ ok: false, status: 503, error: 'provisioning failed' })
-      .mockResolvedValue({ ok: true, status: 200, data: { branches: mockBranches } })
+      .mockResolvedValue({ ok: true, status: 200, data: { branches: mockBranches, users: [] } })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
@@ -203,6 +216,35 @@ describe('useBranchManager', () => {
     await act(() => result.current.loadBranches())
 
     expect(notifications.hide).toHaveBeenCalledWith('canopy-branches-load-failed')
+    restore()
+  })
+
+  it('offers Retry on the sticky error toast, which reloads the branch list', async () => {
+    const { restore } = setupMockConsole(['error'])
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.branches.list
+      .mockRejectedValueOnce(new ApiTimeoutError('GET', '/branches', 30_000))
+      .mockResolvedValue({ ok: true, status: 200, data: { branches: mockBranches, users: [] } })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+
+    let toast: { message?: unknown } | undefined
+    await waitFor(() => {
+      toast = vi
+        .mocked(notifications.show)
+        .mock.calls.map(([n]) => n)
+        .find((n) => n.id === 'canopy-branches-load-failed')
+      expect(toast).toBeDefined()
+    })
+    expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
+    expect(toast).toMatchObject({ title: 'Could not load branches' })
+
+    await act(async () =>
+      (toast?.message as React.ReactElement<RetryToastMessageProps>).props.onRetry(),
+    )
+
+    await waitFor(() => expect(result.current.branches).toEqual(mockBranches))
+    expect(mockClient.branches.list).toHaveBeenCalledTimes(2)
     restore()
   })
 
@@ -251,13 +293,45 @@ describe('useBranchManager', () => {
     await waitFor(() => {
       expect(notifications.show).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: "Branch workspace provisioning failed for 'main': clone failed",
+          message: expect.objectContaining({
+            props: expect.objectContaining({
+              message: "Branch workspace provisioning failed for 'main': clone failed",
+            }),
+          }),
           color: 'red',
         }),
       )
     })
 
     restore()
+  })
+
+  it('passes the managerOrAdminAllowed lockdown through branchSummaries', async () => {
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        branches: [
+          mockBranches[0],
+          {
+            ...mockBranches[1],
+            access: { ...mockBranches[1].access, managerOrAdminAllowed: true },
+          },
+        ],
+        users: [],
+      },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.branchSummaries).toHaveLength(2)
+    })
+
+    expect(result.current.branchSummaries[0].access?.managerOrAdminAllowed).toBeUndefined()
+    expect(result.current.branchSummaries[1].access?.managerOrAdminAllowed).toBe(true)
   })
 
   it('passes pullRequestState and mergedAt through branchSummaries unchanged', async () => {
@@ -276,7 +350,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { branches: branchesWithPrState },
+      data: { branches: branchesWithPrState, users: [] },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions), {
@@ -318,7 +392,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { branches: branchesWithFlags },
+      data: { branches: branchesWithFlags, users: [] },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions), {
@@ -359,7 +433,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { branches: branchesWithFlags, defaultBranch: 'main' },
+      data: { branches: branchesWithFlags, defaultBranch: 'main', users: [] },
     })
 
     const { result } = renderHook(
@@ -393,7 +467,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { branches: branchesWithSyncState },
+      data: { branches: branchesWithSyncState, users: [] },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions), {
@@ -423,7 +497,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { branches: mockBranches },
+      data: { branches: mockBranches, users: [] },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions), {
@@ -447,7 +521,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { branches: [mockBranches[0], sanitizedBranch] },
+      data: { branches: [mockBranches[0], sanitizedBranch], users: [] },
     })
 
     const { result } = renderHook(
@@ -483,7 +557,7 @@ describe('useBranchManager', () => {
       mockClient.branches.list.mockResolvedValue({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: mockBranches, users: [] },
       })
 
     const renderLoaded = async () => {
@@ -570,7 +644,7 @@ describe('useBranchManager', () => {
       mockClient.branches.list.mockResolvedValue({
         ok: true,
         status: 200,
-        data: { branches: [...mockBranches, serverCopy] },
+        data: { branches: [...mockBranches, serverCopy], users: [] },
       })
       await act(async () => {
         await result.current.loadBranches()
@@ -659,7 +733,7 @@ describe('useBranchManager', () => {
       mockClient.branches.list.mockResolvedValue({
         ok: true,
         status: 200,
-        data: { branches: [...mockBranches, serverCopy] },
+        data: { branches: [...mockBranches, serverCopy], users: [] },
       })
       await act(async () => {
         await result.current.swr.mutate(BRANCHES_KEY)
@@ -842,17 +916,219 @@ describe('useBranchManager', () => {
     })
   })
 
+  describe('confirmation dialog copy', () => {
+    const lastDialog = async () => {
+      const { modals } = await import('@mantine/modals')
+      const options = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
+      if (!options) throw new Error('no confirm dialog was opened')
+      const shown = render(<MantineProvider>{options.children}</MantineProvider>)
+      const body = shown.container.textContent ?? ''
+      shown.unmount()
+      return { options, body }
+    }
+    const loaded = async (
+      branches: BranchMetadata[],
+      overrides: Partial<UseBranchManagerOptions> = {},
+    ) => {
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches, users: [] },
+      })
+      const hook = renderHook(() => useBranchManager({ ...defaultOptions, ...overrides }), {
+        wrapper,
+      })
+      await waitFor(() => {
+        expect(hook.result.current.branches).toHaveLength(2)
+      })
+      return hook
+    }
+
+    it('asks to submit for review, with a labelled confirm button', async () => {
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+      const { result } = await loaded(editingFeature)
+
+      await act(async () => {
+        await result.current.handleSubmit('feature')
+      })
+
+      const { options, body } = await lastDialog()
+      expect(options.title).toBe('Submit for review')
+      expect(options.labels).toEqual({ confirm: 'Submit for review', cancel: 'Cancel' })
+      expect(options.confirmProps).toEqual(
+        expect.objectContaining({ 'data-testid': 'confirm-submit-branch' }),
+      )
+      expect(body).toContain('Submit "feature" for review?')
+      expect(body).toContain('• Create a pull request for review')
+      expect(body).not.toContain('Are you sure')
+    })
+
+    it('names unsaved entries on the open branch, which the submit leaves out', async () => {
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+      const getUnsaved = vi.fn(async () => ({ count: 2, labels: ['Home', 'About'] }))
+      const { result } = await loaded(editingFeature, { initialBranch: 'feature', getUnsaved })
+
+      await act(async () => {
+        await result.current.handleSubmit('feature')
+      })
+
+      const { options, body } = await lastDialog()
+      expect(options.labels).toEqual({ confirm: 'Submit anyway', cancel: 'Cancel' })
+      expect(body).toContain("2 entries have unsaved changes that won't be submitted")
+      expect(body).toContain('Unsaved changes in: "Home", "About".')
+      expect(body).toContain('Submit "feature" for review?')
+    })
+
+    it('checks the open branch opened by its unsanitized name, showing busy meanwhile', async () => {
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+      let answer: (summary: { count: number; labels: string[] }) => void = () => {}
+      const getUnsaved = vi.fn(
+        () => new Promise<{ count: number; labels: string[] }>((resolve) => (answer = resolve)),
+      )
+      const { result } = await loaded(
+        [mockBranches[0], { ...mockBranches[1], name: 'feature-x', status: 'editing' }],
+        { initialBranch: 'feature/x', getUnsaved },
+      )
+      mockSetBusy.mockClear()
+
+      let pending!: Promise<void>
+      act(() => {
+        pending = result.current.handleSubmit('feature/x')
+      })
+      await waitFor(() => expect(getUnsaved).toHaveBeenCalled())
+      expect(mockSetBusy).toHaveBeenLastCalledWith(true)
+      await act(async () => {
+        answer({ count: 1, labels: ['Home'] })
+        await pending
+      })
+
+      const { options } = await lastDialog()
+      expect(options.labels).toEqual({ confirm: 'Submit anyway', cancel: 'Cancel' })
+    })
+
+    it("asks nothing about another branch's drafts", async () => {
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+      const getUnsaved = vi.fn(async () => ({ count: 1, labels: ['Home'] }))
+      const { result } = await loaded(editingFeature, { getUnsaved })
+
+      await act(async () => {
+        await result.current.handleSubmit('feature')
+      })
+
+      const { options, body } = await lastDialog()
+      expect(getUnsaved).not.toHaveBeenCalled()
+      expect(options.labels).toEqual({ confirm: 'Submit for review', cancel: 'Cancel' })
+      expect(body).not.toContain('unsaved')
+    })
+
+    describe("a submit's stamps", () => {
+      const stamped = [
+        {
+          contentId: unsafeAsContentId('abc123def456'),
+          fields: { publishedAt: '2026-10-14T09:00:00.000Z' },
+          previousVersion: 100,
+          version: 150,
+        },
+      ]
+      const answer = () =>
+        mockClient.workflow.submit.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: {
+            branch: { ...editingFeature[1], status: 'submitted' } as BranchListItem,
+            stamped,
+          },
+        })
+
+      it('hands the entries stamped on the open branch to the drafts', async () => {
+        answer()
+        const onStamped = vi.fn()
+        const { result } = await loaded(editingFeature, { initialBranch: 'feature', onStamped })
+
+        await act(async () => {
+          await result.current.handleSubmit('feature')
+        })
+
+        expect(onStamped).toHaveBeenCalledWith(stamped)
+      })
+
+      it('says how many new entries the submit dated', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        answer()
+        const { result } = await loaded(editingFeature, { initialBranch: 'feature' })
+
+        await act(async () => {
+          await result.current.handleSubmit('feature')
+        })
+
+        expect(notifications.show).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'Branch submitted for review. Dates set on 1 new entry.',
+          }),
+        )
+      })
+
+      it("hands over nothing from another branch's submit", async () => {
+        answer()
+        const onStamped = vi.fn()
+        const { result } = await loaded(editingFeature, { onStamped })
+
+        await act(async () => {
+          await result.current.handleSubmit('feature')
+        })
+
+        expect(mockClient.workflow.submit).toHaveBeenCalled()
+        expect(onStamped).not.toHaveBeenCalled()
+      })
+    })
+
+    it('asks to withdraw from review, with a labelled confirm button', async () => {
+      mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: true, status: 200 })
+      const { result } = await loaded(mockBranches)
+
+      await act(async () => {
+        await result.current.handleWithdraw('feature')
+      })
+
+      const { options, body } = await lastDialog()
+      expect(options.title).toBe('Withdraw from review')
+      expect(options.labels).toEqual({ confirm: 'Withdraw from review', cancel: 'Cancel' })
+      expect(options.confirmProps).toEqual(
+        expect.objectContaining({ 'data-testid': 'confirm-withdraw-branch' }),
+      )
+      expect(body).toContain('Withdraw "feature" from review?')
+      expect(body).toContain('• Change the branch status back to "editing"')
+      expect(body).not.toContain('Are you sure')
+    })
+
+    it('asks to delete the branch in sentence case', async () => {
+      mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+      const { result } = await loaded(mockBranches)
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      const { options, body } = await lastDialog()
+      expect(options.title).toBe('Delete branch')
+      expect(options.labels).toEqual({ confirm: 'Delete branch', cancel: 'Cancel' })
+      expect(body).toContain('Delete "feature"?')
+      expect(body).toContain('This cannot be undone.')
+      expect(body).not.toContain('Are you sure')
+    })
+  })
+
   it('submits branch successfully', async () => {
     mockClient.branches.list
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: editingFeature, users: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: editingFeature, users: [] },
       })
 
     mockClient.workflow.submit.mockResolvedValueOnce({
@@ -884,7 +1160,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { branches: mockBranches },
+      data: { branches: editingFeature, users: [] },
     })
 
     mockClient.workflow.submit.mockResolvedValueOnce({
@@ -916,17 +1192,194 @@ describe('useBranchManager', () => {
     restore()
   })
 
+  it('ends a timed-out submit, says it may have gone through, and reloads the list to show it', async () => {
+    const { restore } = setupMockConsole(['error'])
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: editingFeature, users: [] },
+    })
+    mockClient.workflow.submit.mockRejectedValueOnce(
+      new ApiTimeoutError('POST', '/feature/submit', 180_000),
+    )
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    await waitFor(() => expect(result.current.branches).toHaveLength(2))
+    let finishReload: () => void = () => {}
+    mockClient.branches.list.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishReload = () =>
+            resolve({ ok: true, status: 200, data: { branches: editingFeature, users: [] } })
+        }),
+    )
+
+    let settled = false
+    await act(async () => {
+      void result.current
+        .handleSubmit('feature')
+        .catch(() => {})
+        .finally(() => (settled = true))
+    })
+
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: branchActionOutcomeUnknown('Submit for review'),
+        color: 'yellow',
+        autoClose: false,
+      }),
+    )
+    // The reload runs inside the action's busy window: still busy until the list answers.
+    expect(settled).toBe(false)
+    expect(mockSetBusy).toHaveBeenLastCalledWith(true)
+    await act(async () => finishReload())
+    await waitFor(() => expect(settled).toBe(true))
+    expect(mockSetBusy).toHaveBeenLastCalledWith(false)
+    restore()
+  })
+
+  describe('a delete that times out', () => {
+    const deleteTimesOut = async (listedAfter: BranchMetadata[]) => {
+      mockClient.branches.list
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { branches: editingFeature, users: [] },
+        })
+        .mockResolvedValue({ ok: true, status: 200, data: { branches: listedAfter, users: [] } })
+      mockClient.branches.delete.mockRejectedValueOnce(
+        new ApiTimeoutError('DELETE', '/feature', 75_000),
+      )
+      const hook = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(hook.result.current.branches).toHaveLength(2))
+      act(() => hook.result.current.setBranchName('feature'))
+      await act(async () => {
+        await hook.result.current.handleDelete('feature')
+      })
+      return hook
+    }
+
+    it('reports it deleted, and leaves it, when the reloaded list no longer has it', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const remaining = editingFeature.filter((b) => b.name !== 'feature')
+      const { result } = await deleteTimesOut(remaining)
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Branch deleted' }),
+      )
+      expect(result.current.branchName).not.toBe('feature')
+    })
+
+    it('does not report a just-created branch deleted when only the listing lacks it', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const created = { ...mockBranches[1], name: 'brand-new', status: 'editing' as const }
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: editingFeature, users: [] },
+      })
+      mockClient.branches.delete.mockRejectedValueOnce(
+        new ApiTimeoutError('DELETE', '/brand-new', 75_000),
+      )
+      const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+      act(() => result.current.addCreatedBranch(created as unknown as BranchListItem))
+      act(() => result.current.setBranchName('brand-new'))
+
+      await act(async () => {
+        await result.current.handleDelete('brand-new')
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: branchActionOutcomeUnknown('Delete branch') }),
+      )
+      expect(result.current.branchName).toBe('brand-new')
+    })
+
+    it("takes the API's 404 as an earlier delete having gone through, and leaves the branch", async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const remaining = editingFeature.filter((b) => b.name !== 'feature')
+      mockClient.branches.list
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { branches: editingFeature, users: [] },
+        })
+        .mockResolvedValue({ ok: true, status: 200, data: { branches: remaining, users: [] } })
+      mockClient.branches.delete.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        error: 'Branch not found',
+      })
+      const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+      act(() => result.current.setBranchName('feature'))
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Branch deleted' }),
+      )
+      expect(result.current.branchName).not.toBe('feature')
+    })
+
+    it('treats a gateway error page like no answer', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const gateway = new CanopyApiClient({
+        fetch: vi.fn().mockResolvedValue({
+          ok: false,
+          status: 504,
+          headers: new Headers(),
+          json: async () => {
+            throw new SyntaxError('Unexpected token <')
+          },
+        }),
+      })
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: editingFeature, users: [] },
+      })
+      mockClient.workflow.submit.mockResolvedValueOnce(
+        await gateway.workflow.submit({ branch: 'feature' }),
+      )
+      const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+
+      await act(async () => {
+        await result.current.handleSubmit('feature').catch(() => {})
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: branchActionOutcomeUnknown('Submit for review') }),
+      )
+    })
+
+    it('says it may have gone through when the branch is still listed', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const { result } = await deleteTimesOut(editingFeature)
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: branchActionOutcomeUnknown('Delete branch') }),
+      )
+      expect(result.current.branchName).toBe('feature')
+    })
+  })
+
   it('withdraws branch successfully', async () => {
     mockClient.branches.list
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: mockBranches, users: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: mockBranches, users: [] },
       })
 
     mockClient.workflow.withdraw.mockResolvedValueOnce({
@@ -961,7 +1414,7 @@ describe('useBranchManager', () => {
       mockClient.branches.list.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: mockBranches, users: [] },
       })
       mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
 
@@ -991,7 +1444,7 @@ describe('useBranchManager', () => {
     it('cancelling the confirmation issues no delete request', async () => {
       const { modals } = await import('@mantine/modals')
       // Override the default auto-confirm mock for this test only: simulate
-      // the user clicking "Cancel" instead of "Delete Branch".
+      // the user clicking "Cancel" instead of "Delete branch".
       vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {
         options.onCancel?.()
         return 'mock-modal-id'
@@ -1000,7 +1453,7 @@ describe('useBranchManager', () => {
       mockClient.branches.list.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: mockBranches, users: [] },
       })
 
       const { result } = renderHook(() => useBranchManager(defaultOptions), {
@@ -1033,7 +1486,7 @@ describe('useBranchManager', () => {
       mockClient.branches.list.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: mockBranches, users: [] },
       })
 
       const { result } = renderHook(() => useBranchManager(defaultOptions), {
@@ -1055,7 +1508,7 @@ describe('useBranchManager', () => {
       mockClient.branches.list.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: mockBranches, users: [] },
       })
       mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
 
@@ -1081,12 +1534,12 @@ describe('useBranchManager', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: mockBranches, users: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: mockBranches, users: [] },
       })
 
     mockClient.workflow.requestChanges.mockResolvedValueOnce({
@@ -1109,17 +1562,72 @@ describe('useBranchManager', () => {
     expect(mockClient.workflow.requestChanges).toHaveBeenCalledWith({ branch: 'feature' })
   })
 
+  it('opens one Request changes confirm for a double-click', async () => {
+    const { modals } = await import('@mantine/modals')
+    vi.mocked(modals.openConfirmModal).mockImplementation(() => 'mock-modal-id')
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches, users: [] },
+    })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    await waitFor(() => {
+      expect(result.current.branches).toHaveLength(2)
+    })
+
+    act(() => {
+      void result.current.handleRequestChanges('feature')
+      void result.current.handleRequestChanges('feature')
+    })
+
+    expect(
+      vi
+        .mocked(modals.openConfirmModal)
+        .mock.calls.filter(([options]) => options.title === 'Request changes'),
+    ).toHaveLength(1)
+  })
+
+  it('asks before requesting changes, and a cancel sends nothing', async () => {
+    const { modals } = await import('@mantine/modals')
+    vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {
+      options.onCancel?.()
+      return 'mock-modal-id'
+    })
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches, users: [] },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    await waitFor(() => {
+      expect(result.current.branches).toHaveLength(2)
+    })
+
+    await act(async () => {
+      await expect(result.current.handleRequestChanges('feature')).resolves.toBeUndefined()
+    })
+
+    expect(modals.openConfirmModal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Request changes',
+        confirmProps: expect.objectContaining({ color: 'red' }),
+      }),
+    )
+    expect(mockClient.workflow.requestChanges).not.toHaveBeenCalled()
+  })
+
   it('reloads branch data', async () => {
     mockClient.branches.list
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: mockBranches, users: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { branches: mockBranches },
+        data: { branches: mockBranches, users: [] },
       })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions), {
@@ -1142,7 +1650,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { branches: mockBranches },
+      data: { branches: mockBranches, users: [] },
     })
 
     renderHook(() => useBranchManager(defaultOptions), { wrapper })
@@ -1160,7 +1668,7 @@ describe('useBranchManager', () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { branches: mockBranches },
+      data: { branches: mockBranches, users: [] },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions), {
@@ -1186,5 +1694,394 @@ describe('useBranchManager', () => {
     })
 
     restore()
+  })
+  describe('one confirm per action and branch', () => {
+    type ConfirmOptions = {
+      children?: { props: { children: string } }
+      onConfirm?: () => void
+      onCancel?: () => void
+      onClose?: () => void
+    }
+
+    // Holds each confirm open until the test acts on it, the way a user leaves one on screen.
+    const holdConfirms = async (): Promise<ConfirmOptions[]> => {
+      const { modals } = await import('@mantine/modals')
+      const opened: ConfirmOptions[] = []
+      vi.mocked(modals.openConfirmModal).mockImplementation((options) => {
+        opened.push(options as ConfirmOptions)
+        return `modal-${opened.length}`
+      })
+      return opened
+    }
+
+    // What Mantine does on a click of the confirm button: onConfirm, then onClose.
+    const confirm = (modal: ConfirmOptions) => {
+      modal.onConfirm?.()
+      modal.onClose?.()
+    }
+
+    const renderLoaded = async (branches: BranchMetadata[] = editingFeature) => {
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches, defaultBranch: 'main', users: [] },
+      })
+      const rendered = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => {
+        expect(rendered.result.current.branches).toHaveLength(branches.length)
+      })
+      return rendered
+    }
+
+    afterEach(async () => {
+      const { modals } = await import('@mantine/modals')
+      vi.mocked(modals.openConfirmModal).mockReset()
+    })
+
+    it('a second submit while the first confirm is open opens nothing, and confirming submits once', async () => {
+      const opened = await holdConfirms()
+      mockClient.workflow.submit.mockResolvedValue({ ok: true, status: 200 })
+      const { result } = await renderLoaded()
+
+      let first!: Promise<void>
+      act(() => {
+        first = result.current.handleSubmit('feature')
+      })
+      await act(async () => {
+        await expect(result.current.handleSubmit('feature')).resolves.toBeUndefined()
+      })
+      expect(opened).toHaveLength(1)
+
+      await act(async () => {
+        confirm(opened[0])
+        await first
+      })
+      expect(mockClient.workflow.submit).toHaveBeenCalledTimes(1)
+      expect(mockClient.workflow.submit).toHaveBeenCalledWith({ branch: 'feature' })
+    })
+
+    it('a repeat request while the confirmed work is still in flight opens nothing', async () => {
+      const opened = await holdConfirms()
+      let finishSubmit!: () => void
+      mockClient.workflow.submit.mockReturnValue(
+        new Promise((resolve) => {
+          finishSubmit = () => resolve({ ok: true, status: 200 })
+        }),
+      )
+      const { result } = await renderLoaded()
+
+      let first!: Promise<void>
+      act(() => {
+        first = result.current.handleSubmit('feature')
+      })
+      act(() => confirm(opened[0]))
+      await act(async () => {
+        await expect(result.current.handleSubmit('feature')).resolves.toBeUndefined()
+      })
+      expect(opened).toHaveLength(1)
+
+      await act(async () => {
+        finishSubmit()
+        await first
+      })
+      expect(mockClient.workflow.submit).toHaveBeenCalledTimes(1)
+    })
+
+    it.each(['submit', 'withdraw', 'delete'] as const)(
+      'a %s confirm frees the action once it is dismissed, and never blocks another branch',
+      async (action) => {
+        const opened = await holdConfirms()
+        const { result } = await renderLoaded()
+        const handlers = {
+          submit: result.current.handleSubmit,
+          withdraw: result.current.handleWithdraw,
+          delete: result.current.handleDelete,
+        }
+
+        let first!: Promise<void>
+        act(() => {
+          first = handlers[action]('feature')
+        })
+        await act(async () => {
+          await handlers[action]('feature')
+        })
+        expect(opened).toHaveLength(1)
+
+        let other!: Promise<void>
+        act(() => {
+          other = handlers[action]('main')
+        })
+        expect(opened).toHaveLength(2)
+
+        await act(async () => {
+          opened[0].onClose?.()
+          opened[1].onClose?.()
+          await first
+          await other
+        })
+
+        act(() => {
+          void handlers[action]('feature')
+        })
+        expect(opened).toHaveLength(3)
+        act(() => opened[2].onClose?.())
+      },
+    )
+
+    it('a confirmed submit of a branch the listing already shows submitted calls nothing', async () => {
+      const opened = await holdConfirms()
+      const { result } = await renderLoaded(mockBranches)
+
+      await act(async () => {
+        const pending = result.current.handleSubmit('feature')
+        confirm(opened[0])
+        await expect(pending).resolves.toBeUndefined()
+      })
+      expect(mockClient.workflow.submit).not.toHaveBeenCalled()
+    })
+
+    it('treats the raw form of a listed name as that branch', async () => {
+      const opened = await holdConfirms()
+      mockClient.workflow.submit.mockResolvedValue({ ok: true, status: 200 })
+      const featureX: BranchMetadata = {
+        ...editingFeature[1],
+        name: 'feature-x',
+        pullRequestNumber: 7,
+        pullRequestState: 'open',
+      }
+      const { result } = await renderLoaded([mockBranches[0], featureX])
+
+      let first!: Promise<void>
+      act(() => {
+        first = result.current.handleSubmit('feature/x')
+      })
+      await act(async () => {
+        await result.current.handleSubmit('feature-x')
+      })
+      expect(opened).toHaveLength(1)
+      await act(async () => {
+        confirm(opened[0])
+        await first
+      })
+      expect(mockClient.workflow.submit).toHaveBeenCalledWith({ branch: 'feature-x' })
+
+      act(() => {
+        void result.current.handleWithdraw('feature/x')
+      })
+      expect(opened[1].children?.props.children).toContain('Convert pull request #7 to a draft')
+      act(() => opened[1].onClose?.())
+    })
+
+    describe('withdraw copy', () => {
+      const withPr = (pr: Partial<BranchMetadata>): BranchMetadata[] => [
+        mockBranches[0],
+        { ...mockBranches[1], ...pr },
+      ]
+
+      it.each([
+        [
+          'an open PR',
+          withPr({ pullRequestNumber: 7, pullRequestState: 'open' }),
+          'Convert pull request #7 to a draft',
+        ],
+        [
+          'a PR whose state is not yet known',
+          withPr({ pullRequestNumber: 7 }),
+          'Convert pull request #7 to a draft',
+        ],
+        [
+          'a closed PR',
+          withPr({ pullRequestNumber: 7, pullRequestState: 'closed' }),
+          'Leave the closed pull request #7 as it is; submitting again opens a new one',
+        ],
+        [
+          'a merged PR',
+          withPr({ pullRequestNumber: 7, pullRequestState: 'merged' }),
+          'Leave the merged pull request #7 as it is',
+        ],
+      ])('for %s says "%s"', async (_label, branches, bullet) => {
+        const opened = await holdConfirms()
+        const { result } = await renderLoaded(branches)
+        act(() => {
+          void result.current.handleWithdraw('feature')
+        })
+        const text = opened[0].children?.props.children ?? ''
+        expect(text).toContain(`• ${bullet}\n`)
+        expect(text.match(/pull request/g)).toHaveLength(1)
+        act(() => opened[0].onClose?.())
+      })
+
+      it('for a branch without a PR mentions no pull request', async () => {
+        const opened = await holdConfirms()
+        const { result } = await renderLoaded(mockBranches)
+        act(() => {
+          void result.current.handleWithdraw('feature')
+        })
+        const text = opened[0].children?.props.children ?? ''
+        expect(text).not.toMatch(/pull request/i)
+        expect(text).toContain('• Change the branch status back to "editing"')
+        act(() => opened[0].onClose?.())
+      })
+
+      it('says nothing about a PR state when no PR number is recorded', () => {
+        expect(withdrawPullRequestBullet({ pullRequestState: 'closed' })).toBeUndefined()
+      })
+    })
+
+    describe('delete copy', () => {
+      it('says the GitHub branch goes too when the branch has a PR', async () => {
+        const opened = await holdConfirms()
+        const { result } = await renderLoaded([
+          mockBranches[0],
+          { ...mockBranches[1], status: 'editing', pullRequestNumber: 7 },
+        ])
+        act(() => {
+          void result.current.handleDelete('feature')
+        })
+        expect(opened[0].children?.props.children).toContain(
+          '• Delete its branch on GitHub too, which closes pull request #7 if it is still open',
+        )
+        act(() => opened[0].onClose?.())
+      })
+
+      it('says nothing about GitHub when the branch has no PR', async () => {
+        const opened = await holdConfirms()
+        const { result } = await renderLoaded()
+        act(() => {
+          void result.current.handleDelete('feature')
+        })
+        expect(opened[0].children?.props.children).not.toMatch(/GitHub/)
+        act(() => opened[0].onClose?.())
+      })
+    })
+  })
+
+  describe('deleting the open branch', () => {
+    const lastUrl = () => {
+      const calls = vi.mocked(window.history.replaceState).mock.calls
+      return String(calls[calls.length - 1]?.[2] ?? '')
+    }
+
+    const listings = (defaultBranch: string | undefined) => {
+      mockClient.branches.list
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { branches: editingFeature, defaultBranch, users: [] },
+        })
+        .mockResolvedValue({
+          ok: true,
+          status: 200,
+          data: { branches: [mockBranches[0]], defaultBranch, users: [] },
+        })
+      mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+    }
+
+    it('switches to the default branch, and the URL follows', async () => {
+      listings('main')
+      const { result } = renderHook(
+        () => useBranchManager({ ...defaultOptions, initialBranch: 'feature' }),
+        { wrapper },
+      )
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+      expect(lastUrl()).toContain('branch=feature')
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      expect(result.current.branchName).toBe('main')
+      expect(result.current.currentBranch?.name).toBe('main')
+      await waitFor(() => expect(lastUrl()).toContain('branch=main'))
+    })
+
+    it('switches when the URL carries the raw form of the deleted branch name', async () => {
+      const featureX: BranchMetadata = { ...editingFeature[1], name: 'feature-x' }
+      mockClient.branches.list
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { branches: [mockBranches[0], featureX], defaultBranch: 'main', users: [] },
+        })
+        .mockResolvedValue({
+          ok: true,
+          status: 200,
+          data: { branches: [mockBranches[0]], defaultBranch: 'main', users: [] },
+        })
+      mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+      const { result } = renderHook(
+        () => useBranchManager({ ...defaultOptions, initialBranch: 'feature/x' }),
+        { wrapper },
+      )
+      await waitFor(() => expect(result.current.currentBranch?.name).toBe('feature-x'))
+
+      await act(async () => {
+        await result.current.handleDelete('feature-x')
+      })
+
+      expect(result.current.branchName).toBe('main')
+    })
+
+    it('stays on the open branch when another branch is deleted', async () => {
+      listings('main')
+      const { result } = renderHook(
+        () => useBranchManager({ ...defaultOptions, initialBranch: 'main' }),
+        { wrapper },
+      )
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      expect(result.current.branchName).toBe('main')
+    })
+
+    it('shows the server cleanup warning instead of a plain success', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      listings('main')
+      mockClient.branches.delete.mockReset()
+      mockClient.branches.delete.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { deleted: true, cleanupWarning: 'GitHub said no' },
+      })
+      const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Branch deleted, with a warning: GitHub said no',
+          color: 'yellow',
+        }),
+      )
+      expect(notifications.show).not.toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Branch deleted' }),
+      )
+    })
+
+    it('stays on the branch when the delete fails', async () => {
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: editingFeature, defaultBranch: 'main', users: [] },
+      })
+      mockClient.branches.delete.mockResolvedValueOnce({ ok: false, status: 409, error: 'busy' })
+      const { result } = renderHook(
+        () => useBranchManager({ ...defaultOptions, initialBranch: 'feature' }),
+        { wrapper },
+      )
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      expect(result.current.branchName).toBe('feature')
+    })
   })
 })

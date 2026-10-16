@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-14, PR #233) — the re-diagnosis this file asked for, carried out. Both guesses it left open were right and were the same cause: the assertion waits on `React.lazy`'s **real dynamic import** of `@mdxeditor/editor` under `waitFor`'s ~1000ms default, so it was measuring how long vitest takes to transform that module, not whether the editor mounts. Fixed by preloading — each test file now statically imports the same specifier, putting the module in vitest's registry during the file's import phase so the lazy promise resolves from cache on the first microtask. A longer timeout was tried first and rejected: it widens the window the measurement has to fit in without stopping the test from measuring the host. `FormRenderer.test.tsx`'s sibling mount test had the identical defect and got the identical fix
+---
 # MarkdownField MDXEditor-mount unit test is flaky under full-suite load
 
 **RESOLVED 2026-08-14 (PR #233).** Kept as the record, because the diagnosis took

@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-21, epic `epic/infra-review-2026-08`) — both routes to a clone stuck mid-rebase are closed, and the state now self-heals. (1) A modify/delete conflict (`UD`/`DU`) has no "their version", so `git checkout --theirs` exited non-zero and simple-git threw — from inside the round loop's OWN catch, so it escaped the loop and skipped BOTH `rebase --abort` sites. Resolution is now keyed on the index/working-tree code pair, verified against real git: `UD` (branch deleted it) becomes `git rm`, `DU` (branch modified it) becomes `git add`, and any remaining per-file failure routes into the existing `!completed` abort-and-record path rather than escaping. (2) A rebase interrupted by worker termination — the ASG rolls the instance on every `cdk deploy` — is now detected and aborted at the top of the per-branch body, INSIDE the [SYNC-C1] content-write lock and before the dirty check. A `finally`-block guard makes the no-mid-rebase-on-exit guarantee total; it lives there rather than in the outer catch because that catch runs after the lock is released, where an abort could hard-reset a tree a concurrent save is racing. Detection is `isRebaseInProgress` (`utils/git.ts`), shared with `branch-health.ts`, which now carries an advisory `rebaseInProgress` flag so the window stops scanning as unqualified healthy. Five regression tests, all verified red first — the wedge reproduced as a leftover `.git/rebase-merge`, an unrebased branch, and conflict markers sitting in content an editor could save over
+---
 # [P1] Two ways a branch clone is left mid-rebase forever, with no recovery path
 
 Found by the 2026-08-20 three-round infrastructure review (round 1), at HEAD

@@ -1,16 +1,17 @@
 import { Text } from '@mantine/core'
 
 export interface NoEditPermissionNoticeProps {
-  /** Logical path of the entry the user cannot edit. */
-  entryPath: string
+  /** Label of the entry the user cannot edit. */
+  entryLabel: string
 }
 
 /**
  * Explains why an entry cannot be edited and whom to ask. An entry's `canEdit` is false only
- * when a path rule (or `defaultPathAccess`) denies edit, so that is the reason it gives; a
- * locked or protected branch shows its own banner in the header and a read-only form instead.
+ * when a path rule (or `defaultPathAccess`) denies edit, so that is the reason it gives. A locked
+ * or protected branch instead shows its banner in the header over a read-only form, the rule
+ * `contentReadOnly` in `Editor.tsx` holds.
  */
-export function NoEditPermissionNotice({ entryPath }: NoEditPermissionNoticeProps) {
+export function NoEditPermissionNotice({ entryLabel }: NoEditPermissionNoticeProps) {
   return (
     <div
       role="status"
@@ -25,8 +26,8 @@ export function NoEditPermissionNotice({ entryPath }: NoEditPermissionNoticeProp
       }}
     >
       <Text size="sm" c="dimmed">
-        You don&apos;t have edit access to &quot;{entryPath}&quot;. Ask a CanopyCMS admin to grant
-        it in Manage Permissions.
+        You don&apos;t have edit access to &quot;{entryLabel}&quot;. Ask a CanopyCMS admin to grant
+        it in &quot;Manage permissions&quot;.
       </Text>
     </div>
   )

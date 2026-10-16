@@ -1,19 +1,24 @@
 /**
  * S3-backed AssetStore. Same bucket-prefix layout as LocalAssetStore (see
  * keys.ts). Assumes an EXISTING content bucket (versioning/SSE/replication
- * already configured by the site's CDK stack) — this store only ever reads
- * and writes objects under the five asset prefixes.
+ * already configured by the site's CDK stack). It reads and writes under the
+ * five asset prefixes, plus a caller's output prefix for `copyPublicObject`.
  */
 
 import { randomUUID } from 'node:crypto'
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
+  type PutObjectCommandInput,
   S3Client,
+  paginateListObjectsV2,
 } from '@aws-sdk/client-s3'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 import { isHttpUrlOrSameOriginPath } from '../utils/sanitize-href'
 import { ASSET_PREFIXES, createKeyBuilders, type AssetPrefixes } from './keys'
@@ -21,6 +26,7 @@ import type {
   AssetMeta,
   AssetStore,
   BeginUploadInput,
+  CreateOnlyResult,
   PublicObject,
   StagedUploadTarget,
 } from './types'
@@ -42,10 +48,14 @@ export interface S3AssetStoreOptions {
   uploadUrl?: string
   /** Override the default bucket-prefix layout (rarely needed). */
   prefixes?: AssetPrefixes
+  /** @internal Test seam for the conditional-write retry delay. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 const PRESIGN_EXPIRY_SECONDS = 15 * 60
+/** A presigned read is followed by the browser at once; it is never stored or cached. */
+const PRESIGNED_READ_EXPIRY_SECONDS = 5 * 60
 
 /**
  * Shape of the fields an AWS SDK v3 service exception carries, narrowed from
@@ -55,7 +65,8 @@ const PRESIGN_EXPIRY_SECONDS = 15 * 60
  */
 interface AwsServiceErrorShape {
   name?: string
-  $metadata?: { httpStatusCode?: number }
+  /** `attempts` counts the SDK's own retries of the request that threw. */
+  $metadata?: { httpStatusCode?: number; attempts?: number }
 }
 
 function matchesAwsError(err: unknown, name: string, httpStatusCode: number): boolean {
@@ -67,7 +78,24 @@ function matchesAwsError(err: unknown, name: string, httpStatusCode: number): bo
 const isPreconditionFailed = (err: unknown): boolean =>
   matchesAwsError(err, 'PreconditionFailed', 412)
 
-const isNoSuchKey = (err: unknown): boolean => matchesAwsError(err, 'NoSuchKey', 404)
+/**
+ * S3's 409 for a conditional write racing another write to the same key that is still in flight.
+ * Matched by name only: a 409 is also `OperationAborted`, which is not this.
+ */
+const isConditionalRequestConflict = (err: unknown): boolean =>
+  err instanceof Error && err.name === 'ConditionalRequestConflict'
+
+/** At most 4 attempts and under 1.75 s of waiting; a race still unresolved after that throws the 409. */
+const CONFLICT_ATTEMPTS = 4
+const CONFLICT_BASE_DELAY_MS = 250
+
+/**
+ * A missing key, never a missing bucket: S3 answers both with 404, and only a GET's error code names
+ * which. A HEAD's 404 has no body, so `hasPublicObject` reads either as absent; a caller that must
+ * tell them apart follows with a GET (assets/materialize.ts does).
+ */
+const isNoSuchKey = (err: unknown): boolean =>
+  matchesAwsError(err, 'NoSuchKey', 404) && (err as AwsServiceErrorShape).name !== 'NoSuchBucket'
 
 export class S3AssetStore implements AssetStore {
   readonly capabilities = { directUpload: true }
@@ -77,6 +105,7 @@ export class S3AssetStore implements AssetStore {
   private readonly uploadUrl: string | undefined
   private readonly keys: ReturnType<typeof createKeyBuilders>
   private readonly stagingPrefix: string
+  private readonly sleep: (ms: number) => Promise<void>
 
   constructor(options: S3AssetStoreOptions) {
     this.bucket = options.bucket
@@ -92,6 +121,48 @@ export class S3AssetStore implements AssetStore {
     const prefixes = options.prefixes ?? ASSET_PREFIXES
     this.keys = createKeyBuilders(prefixes)
     this.stagingPrefix = `${prefixes.staging}/`
+    this.sleep =
+      options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  }
+
+  /**
+   * Sends one create-only request (`IfNoneMatch: '*'`), so S3 answers a taken key with 412. A
+   * `ConditionalRequestConflict` is retried here, the only retry layer for it, so a caller with no
+   * retry of its own (the lazy transform Lambda, finalize) ends in one of the two results.
+   *
+   * With `retriedIsCreated`, a 412 after any error the SDK had already retried counts as
+   * `created`: one of those attempts may have committed and lost its response. Public objects use
+   * it; meta does not, since a meta `already-exists` sends finalize to read the stored winner.
+   */
+  private async createIfAbsent(
+    send: () => Promise<unknown>,
+    options: { retriedIsCreated?: boolean } = {},
+  ): Promise<CreateOnlyResult> {
+    let sdkRetried = false
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await send()
+        return 'created'
+      } catch (err: unknown) {
+        sdkRetried ||= ((err as AwsServiceErrorShape).$metadata?.attempts ?? 1) > 1
+        if (isPreconditionFailed(err)) {
+          return options.retriedIsCreated && sdkRetried ? 'created' : 'already-exists'
+        }
+        if (!isConditionalRequestConflict(err) || attempt >= CONFLICT_ATTEMPTS) throw err
+        await this.sleep(CONFLICT_BASE_DELAY_MS * 2 ** (attempt - 1) * (0.5 + Math.random() / 2))
+      }
+    }
+  }
+
+  private putIfAbsent(
+    input: Omit<PutObjectCommandInput, 'Bucket' | 'IfNoneMatch'>,
+    options: { retriedIsCreated?: boolean } = {},
+  ): Promise<CreateOnlyResult> {
+    return this.createIfAbsent(
+      () =>
+        this.client.send(new PutObjectCommand({ ...input, Bucket: this.bucket, IfNoneMatch: '*' })),
+      options,
+    )
   }
 
   /**
@@ -159,20 +230,24 @@ export class S3AssetStore implements AssetStore {
     ext: string
     data: Uint8Array
     contentType: string
-  }): Promise<void> {
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: this.keys.originalKey(input.hash32, input.ext),
-        Body: input.data,
-        ContentType: input.contentType,
-      }),
-    )
+  }): Promise<CreateOnlyResult> {
+    return this.putIfAbsent({
+      Key: this.keys.originalKey(input.hash32, input.ext),
+      Body: input.data,
+      ContentType: input.contentType,
+    })
   }
 
   async readOriginal(
     hash32: string,
+    ext?: string,
   ): Promise<{ data: Uint8Array; ext: string; contentType?: string } | null> {
+    if (ext !== undefined) {
+      const direct = await this.getObject(this.keys.originalKey(hash32, ext))
+      const data = await direct?.Body?.transformToByteArray()
+      if (data) return { data, ext, contentType: direct?.ContentType }
+    }
+
     const prefix = this.keys.originalPrefix(hash32)
     const listed = await this.client.send(
       new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, MaxKeys: 1 }),
@@ -193,17 +268,58 @@ export class S3AssetStore implements AssetStore {
     contentType: string
     contentDisposition?: string
     cacheControl?: string
-  }): Promise<void> {
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
+    tags?: Readonly<Record<string, string>>
+  }): Promise<CreateOnlyResult> {
+    // `encodeURIComponent` writes a space as `%20`, which reads the same to any decoder;
+    // URLSearchParams writes `+`.
+    const tagging = Object.entries(input.tags ?? {})
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join('&')
+    return this.putIfAbsent(
+      {
         Key: input.key,
         Body: input.data,
         ContentType: input.contentType,
         ContentDisposition: input.contentDisposition,
         CacheControl: input.cacheControl,
-      }),
+        Tagging: tagging || undefined,
+      },
+      { retriedIsCreated: true },
     )
+  }
+
+  /**
+   * A server-side CopyObject. S3 URL-decodes `CopySource`, and keys hold `=`, `,` and `:`, so each
+   * segment is encoded and the `/` between them is not. `MetadataDirective: 'COPY'` keeps the
+   * source's Content-Type, Cache-Control and Content-Disposition; `TaggingDirective: 'REPLACE'`
+   * with no `Tagging` leaves the copy untagged and needs no tagging permission, even from a
+   * lazy-tagged source; `COPY` would need `s3:GetObjectTagging` and `s3:PutObjectTagging`.
+   */
+  async copyPublicObject(
+    sourceKey: string,
+    destKey: string,
+  ): Promise<CreateOnlyResult | 'source-missing'> {
+    const copySource = `${this.bucket}/${sourceKey.split('/').map(encodeURIComponent).join('/')}`
+    try {
+      return await this.createIfAbsent(
+        () =>
+          this.client.send(
+            new CopyObjectCommand({
+              Bucket: this.bucket,
+              Key: destKey,
+              CopySource: copySource,
+              IfNoneMatch: '*',
+              MetadataDirective: 'COPY',
+              TaggingDirective: 'REPLACE',
+            }),
+          ),
+        { retriedIsCreated: true },
+      )
+    } catch (err: unknown) {
+      // By name alone: a copy's error always carries its code, and a missing bucket is a 404 too.
+      if (err instanceof Error && err.name === 'NoSuchKey') return 'source-missing'
+      throw err
+    }
   }
 
   async readPublicObject(key: string): Promise<PublicObject | null> {
@@ -219,22 +335,46 @@ export class S3AssetStore implements AssetStore {
     }
   }
 
-  async putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<'created' | 'already-exists'> {
+  /**
+   * A HEAD. S3 answers a missing key with 403, not 404, unless the caller may `s3:ListBucket`,
+   * so a role without it sees an error here rather than `false`.
+   */
+  async hasPublicObject(key: string): Promise<boolean> {
     try {
-      await this.client.send(
-        new PutObjectCommand({
-          Bucket: this.bucket,
-          Key: this.keys.metaKey(hash32),
-          Body: JSON.stringify(meta),
-          ContentType: 'application/json',
-          IfNoneMatch: '*',
-        }),
-      )
-      return 'created'
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }))
+      return true
     } catch (err: unknown) {
-      if (isPreconditionFailed(err)) return 'already-exists'
+      if (isNoSuchKey(err)) return false
       throw err
     }
+  }
+
+  async *listPublicObjectKeys(prefix: string): AsyncIterable<string> {
+    const pages = paginateListObjectsV2(
+      { client: this.client },
+      { Bucket: this.bucket, Prefix: prefix },
+    )
+    for await (const page of pages) {
+      for (const object of page.Contents ?? []) {
+        if (object.Key) yield object.Key
+      }
+    }
+  }
+
+  /** HEADs first: signing is local and succeeds for a missing key too. */
+  async presignPublicObjectRead(key: string): Promise<string | null> {
+    if (!(await this.hasPublicObject(key))) return null
+    return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
+      expiresIn: PRESIGNED_READ_EXPIRY_SECONDS,
+    })
+  }
+
+  async putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<CreateOnlyResult> {
+    return this.putIfAbsent({
+      Key: this.keys.metaKey(hash32),
+      Body: JSON.stringify(meta),
+      ContentType: 'application/json',
+    })
   }
 
   async getMeta(hash32: string): Promise<AssetMeta | null> {

@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-25) — `pnpm lint:bundle` (dependency-cruiser reachability rule from `src/client.ts` to any node built-in) in CI + pre-commit; replaces the proposed ESLint zones because reachability also covers the transitive `api/guards.ts → authorization/protected-branch.ts → paths/branch.ts` shape a directory-scoped import rule would have missed. Verified against both historical regressions; e2e prod build stays the backstop for server-only npm packages.
+---
 # Lint guard: keep node-importing modules out of the client-bundle graph
 
 **Priority:** P2 — **RESOLVED 2026-07-25**

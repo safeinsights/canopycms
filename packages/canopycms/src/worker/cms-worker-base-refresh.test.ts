@@ -48,9 +48,13 @@ const refreshBase = (worker: CmsWorker): Promise<BaseRefreshReport> =>
 interface BaseWorkspaceSetup {
   basePath: string
   contentBranchesPath: string
+  /** The bare `remote.git` the worker fetches from. */
   remotePath: string
+  /** The working repository commits are made in before they are pushed to `remotePath`. */
   remoteGit: SimpleGit
   baseGit: SimpleGit
+  /** Push the working repository's base branch into the bare `remote.git`. */
+  publishRemote: () => Promise<void>
   /** Add a commit to the origin remote (makes the base workspace "behind"). */
   pushToRemote: (files: Record<string, string>, message?: string) => Promise<void>
 }
@@ -58,7 +62,9 @@ interface BaseWorkspaceSetup {
 /**
  * Creates a local git setup where content-branches/<baseBranch> is a clone
  * checked out AS the base branch itself (not a distinct feature branch) --
- * matching what Lambda provisions for the base branch's own workspace.
+ * matching what Lambda provisions for the base branch's own workspace. `remote.git`
+ * is bare, as in production; commits are made in a sibling working repository and
+ * pushed into it.
  */
 async function createBaseWorkspaceSetup(
   tmpDir: string,
@@ -67,24 +73,37 @@ async function createBaseWorkspaceSetup(
     initialFiles?: Record<string, string>
     /** Leave .git/info/exclude without `.canopy-meta/`, as an older clone has it. */
     skipExclude?: boolean
+    /** Make the clone sparse with this cone, as content-branch provisioning does. */
+    sparseCone?: string[]
   } = {},
 ): Promise<BaseWorkspaceSetup> {
-  const { baseBranch = 'main', initialFiles = { '.gitkeep': '' }, skipExclude = false } = opts
+  const {
+    baseBranch = 'main',
+    initialFiles = { '.gitkeep': '' },
+    skipExclude = false,
+    sparseCone,
+  } = opts
 
   const remotePath = path.join(tmpDir, 'remote.git')
+  const upstreamPath = path.join(tmpDir, 'upstream')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
   const basePath = path.join(contentBranchesPath, baseBranch)
 
-  await fs.mkdir(remotePath, { recursive: true })
-  const remoteGit = await initTestRepo(remotePath)
+  await fs.mkdir(upstreamPath, { recursive: true })
+  const remoteGit = await initTestRepo(upstreamPath)
   await remoteGit.raw(['branch', '-M', baseBranch])
+  const publishRemote = async () => {
+    await remoteGit.raw(['push', '-q', '--force', remotePath, `${baseBranch}:${baseBranch}`])
+  }
   for (const [name, content] of Object.entries(initialFiles)) {
-    const fullPath = path.join(remotePath, name)
+    const fullPath = path.join(upstreamPath, name)
     await fs.mkdir(path.dirname(fullPath), { recursive: true })
     await fs.writeFile(fullPath, content)
   }
   await remoteGit.add(['.'])
   await remoteGit.commit('initial commit')
+  await simpleGit().raw(['init', '--bare', '--initial-branch', baseBranch, remotePath])
+  await publishRemote()
 
   await fs.mkdir(contentBranchesPath, { recursive: true })
   await simpleGit().clone(remotePath, basePath, ['--branch', baseBranch])
@@ -94,7 +113,7 @@ async function createBaseWorkspaceSetup(
   const baseGit = simpleGit({ baseDir: basePath, unsafe: { allowUnsafeEditor: true } })
   await baseGit.addConfig('user.name', 'Test Bot')
   await baseGit.addConfig('user.email', 'test@canopycms.test')
-  await baseGit.addConfig('core.editor', 'true')
+  if (sparseCone) await baseGit.raw(['sparse-checkout', 'set', '--cone', '--', ...sparseCone])
 
   // Exclude .canopy-meta/ from git tracking (matches production ensureGitExclude)
   if (!skipExclude) {
@@ -110,15 +129,24 @@ async function createBaseWorkspaceSetup(
 
   const pushToRemote = async (files: Record<string, string>, message = 'remote commit') => {
     for (const [name, content] of Object.entries(files)) {
-      const fullPath = path.join(remotePath, name)
+      const fullPath = path.join(upstreamPath, name)
       await fs.mkdir(path.dirname(fullPath), { recursive: true })
       await fs.writeFile(fullPath, content)
     }
     await remoteGit.add(['.'])
     await remoteGit.commit(message)
+    await publishRemote()
   }
 
-  return { basePath, contentBranchesPath, remotePath, remoteGit, baseGit, pushToRemote }
+  return {
+    basePath,
+    contentBranchesPath,
+    remotePath,
+    remoteGit,
+    baseGit,
+    publishRemote,
+    pushToRemote,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +233,23 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     const afterToken = await readContentIndexGeneration(basePath)
     expect(afterToken).not.toBeNull()
     expect(afterToken).not.toBe(beforeToken)
+  })
+
+  it('fast-forwards a sparse clone, bringing in-cone changes and leaving the rest out', async () => {
+    const { basePath, baseGit, pushToRemote } = await createBaseWorkspaceSetup(tmpDir, {
+      initialFiles: { 'content/a.md': 'a', 'src/app.ts': 'app' },
+      sparseCone: ['content', '.canopy-meta'],
+    })
+    await pushToRemote({ 'content/b.md': 'b', 'permissions.json': '{}', 'src/app.ts': 'app v2' })
+
+    const report = await refreshBase(makeWorker(tmpDir))
+
+    expect(report.outcome).toBe('refreshed')
+    expect((await baseGit.status()).isClean()).toBe(true)
+    await expect(fs.readFile(path.join(basePath, 'content/b.md'), 'utf8')).resolves.toBe('b')
+    await expect(fs.readFile(path.join(basePath, 'permissions.json'), 'utf8')).resolves.toBe('{}')
+    await expect(fs.stat(path.join(basePath, 'src'))).rejects.toThrow()
+    expect(await baseGit.show(['HEAD:src/app.ts'])).toBe('app v2')
   })
 
   it('is a no-op when already up to date', async () => {
@@ -379,9 +424,15 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     })
   })
 
-  describe("canopycms's own state", () => {
+  // Adopter-tracked `.canopy-meta` is inside a content branch's cone, so a sparse clone behaves
+  // the same.
+  describe.each([
+    { clone: 'full', sparseCone: undefined },
+    { clone: 'sparse', sparseCone: ['content', '.canopy-meta'] },
+  ])("canopycms's own state ($clone clone)", ({ sparseCone }) => {
     it('fast-forwards despite a modified tracked .canopy-meta file, and reports the tracking', async () => {
       const { basePath, pushToRemote } = await createBaseWorkspaceSetup(tmpDir, {
+        sparseCone,
         initialFiles: { '.canopy-meta/comments.json': '{"committed":true}' },
       })
       await pushToRemote({ 'remote-update.txt': 'from origin' })
@@ -407,6 +458,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
 
     it('warns about tracked state once per process, but reports it every cycle', async () => {
       await createBaseWorkspaceSetup(tmpDir, {
+        sparseCone,
         initialFiles: { '.canopy-meta/comments.json': '{}' },
       })
       const worker = makeWorker(tmpDir)
@@ -422,7 +474,8 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     })
 
     it("restores the retired in-tree schema cache, so the adopter's untracking commit fast-forwards", async () => {
-      const { basePath, remoteGit } = await createBaseWorkspaceSetup(tmpDir, {
+      const { basePath, remoteGit, publishRemote } = await createBaseWorkspaceSetup(tmpDir, {
+        sparseCone,
         initialFiles: { 'content/a.md': 'a', '.canopy-meta/schema-cache.json': '{"v":"old"}' },
       })
       // What a pre-move canopycms left behind in the clone.
@@ -430,6 +483,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
       // The adopter's fix lands upstream.
       await remoteGit.raw(['rm', '-r', '--cached', '.canopy-meta'])
       await remoteGit.commit('untrack canopycms state')
+      await publishRemote()
 
       const consoleSpy = mockConsole()
       const report = await refreshBase(makeWorker(tmpDir))
@@ -442,7 +496,8 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     })
 
     it("fast-forwards past the adopter's untracking commit without touching live state", async () => {
-      const { basePath, remoteGit } = await createBaseWorkspaceSetup(tmpDir, {
+      const { basePath, remoteGit, publishRemote } = await createBaseWorkspaceSetup(tmpDir, {
+        sparseCone,
         initialFiles: {
           'content/a.md': 'a',
           '.canopy-meta/comments.json': '{"threads":[]}',
@@ -453,6 +508,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
       await fs.writeFile(commentsPath, '{"threads":["live"]}')
       await remoteGit.raw(['rm', '-r', '--cached', '-q', '.canopy-meta'])
       await remoteGit.commit('untrack canopycms state')
+      await publishRemote()
 
       const consoleSpy = mockConsole()
       const report = await refreshBase(makeWorker(tmpDir))
@@ -473,7 +529,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     })
 
     it('re-applies the .canopy-meta/ exclude to a clone that predates it', async () => {
-      const { basePath } = await createBaseWorkspaceSetup(tmpDir, { skipExclude: true })
+      const { basePath } = await createBaseWorkspaceSetup(tmpDir, { skipExclude: true, sparseCone })
 
       await refreshBase(makeWorker(tmpDir))
 
@@ -485,7 +541,10 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
       const files = Object.fromEntries(
         Array.from({ length: 12 }, (_, i) => [`content/f${i}.md`, 'x']),
       )
-      const { basePath } = await createBaseWorkspaceSetup(tmpDir, { initialFiles: files })
+      const { basePath } = await createBaseWorkspaceSetup(tmpDir, {
+        initialFiles: files,
+        sparseCone,
+      })
       for (const name of Object.keys(files)) {
         await fs.writeFile(path.join(basePath, name), 'edited')
       }

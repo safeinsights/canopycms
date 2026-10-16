@@ -9,7 +9,7 @@ const markAsMergedParamsSchema = z.object({
   branch: branchNameSchema,
 })
 
-/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
+/** @internal No importer; deletion candidate in safeinsights/canopycms#725. */
 export interface MarkAsMergedParams {
   branch: string
 }
@@ -80,7 +80,7 @@ const markAsMergedHandler = async (
   //   }
   // }
 
-  // Comments.json is already in the branch workspace at .canopycms/comments.json
+  // Comments.json is already in the branch workspace at .canopy-meta/comments.json
   // It will be preserved with the archived branch - no action needed
 
   return {

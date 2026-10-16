@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-05, branch `fix/context-read-no-provision`. Reproduced: a request-scoped `read` with any `?branch=` created a branch workspace, even for a user later denied. `read`/`readByUrlPath` now share the listing methods' branch resolution: only the active branch provisions, any other is load-only and access-checked before its files are read, and a missing or denied branch, an array, or a traversal, over-long or file name is `NOT_FOUND` (null from `readByUrlPath`). `createContentReader` now defaults `allowCreateBranch` to `false` and treats a `getBranchContext` resolver as authoritative
+---
 # Request-scoped `read` provisions a workspace for any requested branch
 
 ## RESOLVED 2026-10-05, branch `fix/context-read-no-provision`

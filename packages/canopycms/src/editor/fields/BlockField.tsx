@@ -1,34 +1,41 @@
 'use client'
 
-import React, { useId, useMemo, useState } from 'react'
+import React, { useId, useRef, useState } from 'react'
 
-let blockKeyCounter = 0
-
-import { ActionIcon, Button, Group, Paper, Select, Stack, Text } from '@mantine/core'
 import {
-  DndContext,
-  type DragEndEvent,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import {
-  SortableContext,
-  arrayMove,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
+  ActionIcon,
+  Box,
+  Button,
+  Group,
+  Menu,
+  Paper,
+  ScrollArea,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core'
+import { useMediaQuery } from '@mantine/hooks'
+import { IconPlus } from '@tabler/icons-react'
 
-import type { BlockConfig, FieldConfig } from '../../config'
+import type { BlockConfig, BlockFieldConfig, FieldConfig } from '../../config'
+import { ITEM_KEY, mintItemKey, withFreshItemKeys } from '../../item-keys'
+import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
-import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { useFieldCommentControl } from '../comments/field-comment-context'
+import { ExpandAllButton } from './ExpandAllButton'
+import { groupDescriptionProps } from './FieldDescription'
+import { FieldLabel } from './FieldLabel'
+import { ItemList } from './ItemList'
+import { useItemExpansion } from './item-expansion'
+import { useListItemKeys } from './list-item-keys'
+import { listItemSecondary } from './list-item-title'
+import { schemaLabel } from '../schema-label'
 
 export interface BlockInstance {
   template: string
   value: Record<string, unknown>
+  /** The block's key (`item-keys.ts`). */
+  [ITEM_KEY]?: string
 }
 
 type RenderField = (
@@ -40,6 +47,7 @@ type RenderField = (
 
 export interface BlockFieldProps {
   label?: string
+  required?: boolean
   description?: string
   templates: BlockConfig[]
   value: BlockInstance[]
@@ -47,48 +55,120 @@ export interface BlockFieldProps {
   renderField: RenderField
   path: Array<string | number>
   dataCanopyField?: string
+  /** No add, remove, reorder or drag; rows still collapse. */
+  readOnly?: boolean
+  /** Names the entry being edited; another entry starts with the default rows open. */
+  resetKey?: string
+  /** True when a field inside block `index` has a validation error. */
+  hasErrors?: (index: number) => boolean
+  /** Told of each block Remove takes out, so the caller can offer Undo. */
+  onRemoved?: (index: number, block: BlockInstance) => void
 }
 
 const findTemplate = (templates: BlockConfig[], name: string) =>
   templates.find((t) => t.name === name)
 
-const SortableBlock: React.FC<{
-  id: string
-  children: React.ReactNode
-}> = ({ id, children }) => {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id,
-  })
+const ADD_SECTION = 'Add section'
 
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.85 : 1,
-  }
+/**
+ * The block templates as a menu, each with its description, so an editor picks a section by
+ * what it is for. `target` is the control that opens it.
+ */
+const TemplateMenu: React.FC<{
+  templates: BlockConfig[]
+  onPick: (templateName: string) => void
+  onOpenChange?: (opened: boolean) => void
+  target: React.ReactNode
+}> = ({ templates, onPick, onOpenChange, target }) => (
+  <Menu position="bottom-start" withinPortal shadow="md" width={320} onChange={onOpenChange}>
+    {target}
+    <Menu.Dropdown data-testid="block-template-menu">
+      <ScrollArea.Autosize mah={360} type="auto">
+        {templates.map((template) => (
+          <Menu.Item
+            key={template.name}
+            onClick={() => onPick(template.name)}
+            data-testid={`block-template-${template.name}`}
+          >
+            <Text size="sm" fw={500}>
+              {schemaLabel(template)}
+            </Text>
+            {template.description && (
+              <Text size="xs" c="dimmed" style={{ whiteSpace: 'normal' }}>
+                {template.description}
+              </Text>
+            )}
+          </Menu.Item>
+        ))}
+      </ScrollArea.Autosize>
+    </Menu.Dropdown>
+  </Menu>
+)
 
+/**
+ * The gap before a block. Its add control shows while the gap is hovered, the control is focused
+ * or its menu is open, and stays in the tab order, so a keyboard reaches it before each block.
+ */
+const InsertBetween: React.FC<{
+  templates: BlockConfig[]
+  onPick: (templateName: string) => void
+}> = ({ templates, onPick }) => {
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const [opened, setOpened] = useState(false)
+  // A touch screen has no hover, so the control stays faintly visible there.
+  const noHover = useMediaQuery('(hover: none)')
+  const shown = hovered || focused || opened
+  const opacity = shown ? 1 : noHover ? 0.6 : 0
   return (
-    <Paper ref={setNodeRef} withBorder radius="md" p="sm" shadow="xs" style={style}>
-      <Group align="flex-start" gap="sm">
-        <ActionIcon
-          key="drag-handle"
-          variant="subtle"
-          aria-label="Drag to reorder"
-          {...attributes}
-          {...listeners}
-          style={{ cursor: 'grab' }}
-        >
-          ⇅
-        </ActionIcon>
-        <div key="content" style={{ flex: 1, minWidth: 0, width: '100%' }}>
-          {children}
-        </div>
+    <Box
+      h={20}
+      pos="relative"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      data-testid="block-insert-between"
+    >
+      <Box
+        aria-hidden
+        pos="absolute"
+        left={0}
+        right={0}
+        top="50%"
+        h={2}
+        bg="var(--mantine-primary-color-filled)"
+        style={{ opacity: shown ? 1 : 0, transition: 'opacity 120ms ease' }}
+      />
+      <Group justify="center" h="100%" style={{ position: 'relative' }}>
+        <TemplateMenu
+          templates={templates}
+          onPick={onPick}
+          onOpenChange={setOpened}
+          target={
+            <Tooltip label="Add section here" openDelay={300}>
+              <Menu.Target>
+                <ActionIcon
+                  size="sm"
+                  radius="xl"
+                  variant="default"
+                  aria-label="Add section here"
+                  onFocus={() => setFocused(true)}
+                  onBlur={() => setFocused(false)}
+                  style={{ opacity, transition: 'opacity 120ms ease' }}
+                >
+                  <IconPlus size={14} aria-hidden />
+                </ActionIcon>
+              </Menu.Target>
+            </Tooltip>
+          }
+        />
       </Group>
-    </Paper>
+    </Box>
   )
 }
 
 export const BlockField: React.FC<BlockFieldProps> = ({
   label,
+  required,
   description,
   templates,
   value,
@@ -96,177 +176,160 @@ export const BlockField: React.FC<BlockFieldProps> = ({
   renderField,
   path,
   dataCanopyField,
+  readOnly = false,
+  resetKey = '',
+  hasErrors,
+  onRemoved,
 }) => {
   const descriptionBaseId = useId()
-  const [itemKeys, setItemKeys] = useState<string[]>(() =>
-    value.map(() => `block-${blockKeyCounter++}`),
-  )
-  const [pendingTemplate, setPendingTemplate] = useState<string | null>(null)
+  const commentControl = useFieldCommentControl(dataCanopyField ?? formatCanopyPath(path))
+  const keysFor = useListItemKeys()
+  const itemKeys = keysFor(value, 'blocks')
+  const expansion = useItemExpansion(itemKeys, resetKey)
+  const focusAfterRenderRef = useRef<number | null>(null)
 
-  // Keeps itemKeys in sync with value's length; setState runs directly in render, not an effect.
-  if (value.length > itemKeys.length) {
-    const extras = Array.from(
-      { length: value.length - itemKeys.length },
-      () => `block-${blockKeyCounter++}`,
-    )
-    setItemKeys((prev) => [...prev, ...extras])
-  } else if (value.length < itemKeys.length) {
-    setItemKeys((prev) => prev.slice(0, value.length))
+  const emit = (next: BlockInstance[]) => {
+    if (!readOnly) onChange(next)
   }
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  )
-
-  const addBlock = (templateName: string) => {
-    const template = findTemplate(templates, templateName)
-    if (!template) return
-    onChange([...value, { template: templateName, value: {} }])
-    setItemKeys((prev) => [
-      ...prev,
-      `block-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    ])
+  const insertAt = (index: number, block: BlockInstance) => {
+    focusAfterRenderRef.current = index
+    emit([...value.slice(0, index), block, ...value.slice(index)])
   }
 
-  const moveBlock = (from: number, to: number) => {
-    if (from === to || from < 0 || to < 0 || from >= value.length || to >= value.length) return
-    onChange(arrayMove(value, from, to))
-    setItemKeys((prev) => arrayMove(prev, from, to))
-  }
-
-  const removeBlock = (index: number) => {
-    onChange(value.filter((_, idx) => idx !== index))
-    setItemKeys((prev) => prev.filter((_, idx) => idx !== index))
+  const addAt = (index: number) => (templateName: string) => {
+    if (findTemplate(templates, templateName))
+      insertAt(index, { template: templateName, value: {}, [ITEM_KEY]: mintItemKey() })
   }
 
   const updateBlockValue = (index: number, val: Record<string, unknown>) => {
     const next = [...value]
     next[index] = { ...next[index], value: val }
-    onChange(next)
+    emit(next)
   }
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-
-    const oldIndex = itemKeys.indexOf(String(active.id))
-    const newIndex = itemKeys.indexOf(String(over.id))
-    if (oldIndex === -1 || newIndex === -1) return
-    moveBlock(oldIndex, newIndex)
-  }
-
-  const selectableTemplates = useMemo(
-    () => templates.map((t) => ({ value: t.name, label: t.label ?? t.name })),
-    [templates],
-  )
 
   return (
     <Paper
       withBorder
-      radius="md"
       p="md"
-      bg="gray.0"
+      bg="var(--canopy-surface-subtle)"
       data-canopy-field={dataCanopyField ?? formatCanopyPath(path)}
+      role="group"
+      aria-label={label ?? 'Blocks'}
+      data-removal-focus
+      tabIndex={-1}
       shadow="xs"
       {...groupDescriptionProps(descriptionBaseId, description)}
     >
       <Stack gap="sm">
-        <Group justify="space-between">
-          <Text size="xs" fw={700} c="dimmed">
-            {label ?? 'Blocks'}
+        <FieldLabel
+          label={label ?? 'Blocks'}
+          required={required}
+          description={description}
+          descriptionBaseId={descriptionBaseId}
+          commentControl={commentControl}
+          actions={value.length > 1 && <ExpandAllButton expansion={expansion} />}
+        />
+
+        <ItemList
+          items={value}
+          itemKeys={itemKeys}
+          path={path}
+          readOnly={readOnly}
+          expansion={expansion}
+          focusAfterRenderRef={focusAfterRenderRef}
+          hasErrors={hasErrors}
+          summarize={(block) => {
+            const template = findTemplate(templates, block.template)
+            return {
+              title: template ? schemaLabel(template) : (block.template ?? 'Unknown block'),
+              secondary: template ? listItemSecondary(block.value, template.fields) : undefined,
+            }
+          }}
+          describe={(block) => findTemplate(templates, block.template)?.description}
+          onMove={(from, to) => {
+            if (from === to || to < 0 || to >= value.length) return
+            const next = [...value]
+            const [moved] = next.splice(from, 1)
+            next.splice(to, 0, moved)
+            emit(next)
+          }}
+          onDuplicate={(idx) =>
+            // Focus stays on the row's menu, which stands in for the item that acted. The copy
+            // gets new keys, so no comment thread follows it.
+            emit([
+              ...value.slice(0, idx + 1),
+              withFreshItemKeys(
+                { type: 'block', name: 'blocks', templates } satisfies BlockFieldConfig,
+                structuredClone(value[idx]),
+              ),
+              ...value.slice(idx + 1),
+            ])
+          }
+          onRemove={(idx) => {
+            if (readOnly) return
+            const block = value[idx]
+            emit(value.filter((_, i) => i !== idx))
+            onRemoved?.(idx, block)
+          }}
+          renderBetween={
+            readOnly
+              ? undefined
+              : (idx) => <InsertBetween templates={templates} onPick={addAt(idx)} />
+          }
+          renderItem={(block, idx) => {
+            const template = findTemplate(templates, block.template)
+            const currentPath = [...path, idx]
+            if (!template) {
+              return (
+                <Text size="sm" c="var(--canopy-danger-text)">
+                  No template found for &quot;{block.template}&quot;
+                </Text>
+              )
+            }
+            return template.fields.map((f: FieldConfig) => (
+              <React.Fragment key={f.name}>
+                {renderField(
+                  f,
+                  block.value?.[f.name],
+                  (next) =>
+                    updateBlockValue(idx, {
+                      ...(isPlainRecord(block.value) ? block.value : {}),
+                      [f.name]: next,
+                    }),
+                  [...currentPath, f.name],
+                )}
+              </React.Fragment>
+            ))
+          }}
+        />
+
+        {value.length === 0 && (
+          <Text size="sm" c="dimmed">
+            {readOnly ? 'No sections.' : 'No sections yet.'}
           </Text>
-          <Select
-            aria-label="Add block"
-            placeholder="Add block..."
-            data={selectableTemplates}
-            value={pendingTemplate}
-            onChange={(next) => {
-              if (next) {
-                addBlock(next)
+        )}
+
+        {!readOnly && (
+          <Group>
+            <TemplateMenu
+              templates={templates}
+              onPick={addAt(value.length)}
+              target={
+                <Menu.Target>
+                  <Button
+                    variant="light"
+                    size="xs"
+                    leftSection={<IconPlus size={14} aria-hidden />}
+                    data-testid="block-add-section"
+                  >
+                    {ADD_SECTION}
+                  </Button>
+                </Menu.Target>
               }
-              setPendingTemplate(null)
-            }}
-            allowDeselect
-            size="xs"
-            w={180}
-          />
-        </Group>
-        <FieldDescription baseId={descriptionBaseId} description={description} />
-
-        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-          <SortableContext items={itemKeys} strategy={verticalListSortingStrategy}>
-            <Stack gap="sm">
-              {value.map((block, idx) => {
-                const template = findTemplate(templates, block.template)
-                const currentPath = [...path, idx]
-
-                return (
-                  <SortableBlock key={itemKeys[idx]} id={itemKeys[idx]}>
-                    <Stack gap="xs">
-                      <Group justify="space-between" align="flex-start">
-                        <Text size="sm" fw={600}>
-                          {template?.label ?? block.template ?? 'Unknown block'}
-                        </Text>
-                        <Group gap={4}>
-                          <ActionIcon
-                            variant="light"
-                            aria-label="Move block up"
-                            disabled={idx === 0}
-                            onClick={() => moveBlock(idx, idx - 1)}
-                          >
-                            ↑
-                          </ActionIcon>
-                          <ActionIcon
-                            variant="light"
-                            aria-label="Move block down"
-                            disabled={idx === value.length - 1}
-                            onClick={() => moveBlock(idx, idx + 1)}
-                          >
-                            ↓
-                          </ActionIcon>
-                          <Button
-                            variant="subtle"
-                            color="red"
-                            size="xs"
-                            onClick={() => removeBlock(idx)}
-                          >
-                            Remove
-                          </Button>
-                        </Group>
-                      </Group>
-
-                      {template ? (
-                        <Stack gap="sm">
-                          {template.fields.map((f: FieldConfig) => (
-                            <React.Fragment key={f.name}>
-                              {renderField(
-                                f,
-                                block.value?.[f.name],
-                                (next) =>
-                                  updateBlockValue(idx, {
-                                    ...block.value,
-                                    [f.name]: next,
-                                  }),
-                                [...currentPath, f.name],
-                              )}
-                            </React.Fragment>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Text size="xs" c="red">
-                          No template found for &quot;{block.template}&quot;
-                        </Text>
-                      )}
-                    </Stack>
-                  </SortableBlock>
-                )
-              })}
-            </Stack>
-          </SortableContext>
-        </DndContext>
+            />
+          </Group>
+        )}
       </Stack>
     </Paper>
   )

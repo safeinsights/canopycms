@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-14) — adopter request #11 (typed listing with data), decided and shipped as **option 1**: the request-scoped `listEntries` **and** `buildContentTree` now filter through `createContentAccessChecker`, and `NextCanopyContextResult` gained a phase-selecting `listEntries`. Three corrections to the original write-up drove that call: it was **not latent** (`CanopyContext extends CanopyBuildContext`, so `getCanopy().listEntries()` already returned unfiltered full-`data` listings at prod request time — `guardBuildContext` only ever guarded the build context); `buildContentTree` had the **identical** hole, including via the `meta.indexEntry` handed to a collection's `extract`; and option 1 was far cheaper than feared — `createContentAccessChecker` already existed as the batch primitive, so it added **no sixth matcher** and no `lint:bundle` exposure. Branch-pinning half split out to [context-listing-branch-pinning.md](context-listing-branch-pinning.md)
+---
 # Expose `listEntries` beyond build context — but it has no ACL awareness
 
 ## RESOLVED (2026-08-14) — option 1 shipped: enforcement, not deferral

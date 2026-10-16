@@ -7,8 +7,10 @@ import type {
   CreateEntryTypeInput,
   UpdateEntryTypeInput,
 } from '../../api'
+import type { EntryReferencedBy } from '../../api/entries'
 import type { LogicalPath, ContentId } from '../../paths/types'
 import { getErrorMessage } from '../../utils/error'
+import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 
 export interface UseSchemaManagerOptions {
   branchName: string
@@ -24,12 +26,40 @@ export interface UseSchemaManagerOptions {
  * sites (e.g. `updateOrder` from a reorder click) compiling without turning
  * them into unhandled rejections.
  */
-export type SchemaOpResult = { ok: true } | { ok: false; error: string }
+export type SchemaOpResult = { ok: true } | SchemaOpFailure
+
+/**
+ * `unanswered`: the write timed out or got a gateway's 5xx page, so it may have landed
+ * (`editor/unanswered.ts`); `onSchemaChange` has been called so the content tree shows which.
+ */
+type SchemaOpFailure = { ok: false; error: string; unanswered?: true }
+
+const SCHEMA_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-schema-outcome-unknown'
+// A collection create or details save has its own, so settling one leaves another write's up.
+const COLLECTION_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-collection-outcome-unknown'
+const CHECK_CONTENT_PANEL = 'Check the "Content" panel'
+
+/** Takes down a collection create's or details save's unknown-outcome toast, once it landed. */
+export const hideCollectionOutcomeUnknown = (): void => {
+  notifications.hide(COLLECTION_OUTCOME_UNKNOWN_TOAST_ID)
+}
+
+/** @internal Exported for tests. */
+export const schemaChangeOutcomeUnknown = (action: string, check: string) =>
+  `${action} may have gone through even though the server didn't answer. ${check} before trying again.`
+
+/**
+ * {@link SchemaOpResult}, or a refusal because other entries reference the one being deleted.
+ * That refusal shows no toast: the caller asks the user, then retries with `confirmReferenced`.
+ */
+type DeleteEntryResult =
+  | SchemaOpResult
+  | { ok: false; error: string; referencedBy: EntryReferencedBy }
 
 /** Same shape as {@link SchemaOpResult}, plus a payload on success. */
 type CreateCollectionResult =
   | { ok: true; data: { collectionPath: LogicalPath; contentId: ContentId } }
-  | { ok: false; error: string }
+  | SchemaOpFailure
 
 export interface UseSchemaManagerReturn {
   // Collection operations
@@ -56,7 +86,10 @@ export interface UseSchemaManagerReturn {
   updateOrder: (collectionPath: LogicalPath, order: string[]) => Promise<SchemaOpResult>
 
   // Delete entry
-  deleteEntry: (entryPath: LogicalPath) => Promise<SchemaOpResult>
+  deleteEntry: (
+    entryPath: LogicalPath,
+    options?: { confirmReferenced?: boolean },
+  ) => Promise<DeleteEntryResult>
 
   // State
   isLoading: boolean
@@ -71,19 +104,58 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   const apiClient = useApiClient()
   const [isLoading, setIsLoading] = useState(false)
 
-  // Toasts on every failure (relied on by fire-and-forget callers that ignore
-  // the returned result) and returns the underlying message so callers that
-  // do inspect the result can also surface it inline (e.g. in a modal).
-  const handleError = useCallback((message: string, error: unknown): string => {
-    console.error(message, error)
-    const errorMessage = getErrorMessage(error)
-    notifications.show({
-      title: 'Error',
-      message: `${message}: ${errorMessage}`,
-      color: 'red',
-    })
-    return errorMessage
-  }, [])
+  // Collection, order and entry operations toast each failure that reaches here
+  // (relied on by fire-and-forget callers that ignore the returned result).
+  // Entry-type operations pass `toast: false`: their only caller,
+  // CollectionEditor, shows each result inline. Both return the underlying
+  // message for callers that surface it themselves.
+  const handleError = useCallback(
+    (message: string, error: unknown, { toast = true }: { toast?: boolean } = {}): string => {
+      console.error(message, error)
+      const errorMessage = getErrorMessage(error)
+      if (toast) {
+        notifications.show({
+          title: 'Error',
+          message: `${message}: ${errorMessage}`,
+          color: 'red',
+        })
+      }
+      return errorMessage
+    },
+    [],
+  )
+
+  /**
+   * The failure result for a write. An unanswered one may have landed, so the content tree
+   * reloads, and its toast (only with `unknown`) says to check rather than that it failed.
+   */
+  const fail = useCallback(
+    (
+      error: unknown,
+      message: string,
+      {
+        toast = true,
+        unknown,
+        unknownId = SCHEMA_OUTCOME_UNKNOWN_TOAST_ID,
+      }: { toast?: boolean; unknown?: string; unknownId?: string } = {},
+    ): SchemaOpFailure => {
+      if (!isUnanswered(error)) return { ok: false, error: handleError(message, error, { toast }) }
+      console.error(message, error)
+      void Promise.resolve(options.onSchemaChange?.()).catch(console.error)
+      if (unknown) {
+        notifications.hide(unknownId)
+        notifications.show({
+          id: unknownId,
+          message: unknown,
+          color: 'yellow',
+          autoClose: false,
+          withCloseButton: true,
+        })
+      }
+      return { ok: false, error: getErrorMessage(error), unanswered: true }
+    },
+    [options.onSchemaChange, handleError],
+  )
 
   const createCollection = useCallback(
     async (input: CreateCollectionInput): Promise<CreateCollectionResult> => {
@@ -93,6 +165,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           { branch: options.branchName },
           input,
         )
+        if (isGatewayFailure(result)) throw new UnansweredError()
         if (!result.ok || !result.data) {
           throw new Error(result.error || 'Failed to create collection')
         }
@@ -103,12 +176,15 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         options.onSchemaChange?.()
         return { ok: true, data: result.data }
       } catch (error) {
-        return { ok: false, error: handleError('Failed to create collection', error) }
+        return fail(error, 'Failed to create collection', {
+          unknown: schemaChangeOutcomeUnknown('Creating the collection', CHECK_CONTENT_PANEL),
+          unknownId: COLLECTION_OUTCOME_UNKNOWN_TOAST_ID,
+        })
       } finally {
         setIsLoading(false)
       }
     },
-    [apiClient, options.branchName, options.onSchemaChange, handleError],
+    [apiClient, options.branchName, options.onSchemaChange, fail],
   )
 
   const updateCollection = useCallback(
@@ -122,6 +198,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           { branch: options.branchName, collectionPath },
           updates,
         )
+        if (isGatewayFailure(result)) throw new UnansweredError()
         if (!result.ok) {
           throw new Error(result.error || 'Failed to update collection')
         }
@@ -129,15 +206,22 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           message: 'Collection updated',
           color: 'green',
         })
-        await options.onSchemaChange?.()
+        // The write landed, so a failed refresh is logged rather than reported as its failure.
+        await Promise.resolve(options.onSchemaChange?.()).catch(console.error)
         return { ok: true }
       } catch (error) {
-        return { ok: false, error: handleError('Failed to update collection', error) }
+        return fail(error, 'Failed to update collection', {
+          unknown: schemaChangeOutcomeUnknown(
+            'Saving collection details',
+            'Reopen the collection to check',
+          ),
+          unknownId: COLLECTION_OUTCOME_UNKNOWN_TOAST_ID,
+        })
       } finally {
         setIsLoading(false)
       }
     },
-    [apiClient, options.branchName, options.onSchemaChange, handleError],
+    [apiClient, options.branchName, options.onSchemaChange, fail],
   )
 
   const deleteCollection = useCallback(
@@ -148,6 +232,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           branch: options.branchName,
           collectionPath,
         })
+        if (isGatewayFailure(result)) throw new UnansweredError()
         if (!result.ok) {
           throw new Error(result.error || 'Failed to delete collection')
         }
@@ -158,12 +243,14 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
-        return { ok: false, error: handleError('Failed to delete collection', error) }
+        return fail(error, 'Failed to delete collection', {
+          unknown: schemaChangeOutcomeUnknown('Deleting the collection', CHECK_CONTENT_PANEL),
+        })
       } finally {
         setIsLoading(false)
       }
     },
-    [apiClient, options.branchName, options.onSchemaChange, handleError],
+    [apiClient, options.branchName, options.onSchemaChange, fail],
   )
 
   const addEntryType = useCallback(
@@ -177,22 +264,19 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           { branch: options.branchName, collectionPath },
           entryType,
         )
+        if (isGatewayFailure(result)) throw new UnansweredError()
         if (!result.ok) {
           throw new Error(result.error || 'Failed to add entry type')
         }
-        notifications.show({
-          message: `Entry type "${entryType.name}" added`,
-          color: 'green',
-        })
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
-        return { ok: false, error: handleError('Failed to add entry type', error) }
+        return fail(error, 'Failed to add entry type', { toast: false })
       } finally {
         setIsLoading(false)
       }
     },
-    [apiClient, options.branchName, options.onSchemaChange, handleError],
+    [apiClient, options.branchName, options.onSchemaChange, fail],
   )
 
   const updateEntryType = useCallback(
@@ -207,22 +291,19 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           { branch: options.branchName, collectionPath, entryTypeName },
           updates,
         )
+        if (isGatewayFailure(result)) throw new UnansweredError()
         if (!result.ok) {
           throw new Error(result.error || 'Failed to update entry type')
         }
-        notifications.show({
-          message: 'Entry type updated',
-          color: 'green',
-        })
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
-        return { ok: false, error: handleError('Failed to update entry type', error) }
+        return fail(error, 'Failed to update entry type', { toast: false })
       } finally {
         setIsLoading(false)
       }
     },
-    [apiClient, options.branchName, options.onSchemaChange, handleError],
+    [apiClient, options.branchName, options.onSchemaChange, fail],
   )
 
   const removeEntryType = useCallback(
@@ -234,22 +315,19 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           collectionPath,
           entryTypeName,
         })
+        if (isGatewayFailure(result)) throw new UnansweredError()
         if (!result.ok) {
           throw new Error(result.error || 'Failed to remove entry type')
         }
-        notifications.show({
-          message: `Entry type "${entryTypeName}" removed`,
-          color: 'green',
-        })
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
-        return { ok: false, error: handleError('Failed to remove entry type', error) }
+        return fail(error, 'Failed to remove entry type', { toast: false })
       } finally {
         setIsLoading(false)
       }
     },
-    [apiClient, options.branchName, options.onSchemaChange, handleError],
+    [apiClient, options.branchName, options.onSchemaChange, fail],
   )
 
   const updateOrder = useCallback(
@@ -260,6 +338,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           { branch: options.branchName, collectionPath },
           { order },
         )
+        if (isGatewayFailure(result)) throw new UnansweredError()
         if (!result.ok) {
           throw new Error(result.error || 'Failed to update order')
         }
@@ -267,22 +346,33 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
-        return { ok: false, error: handleError('Failed to update order', error) }
+        return fail(error, 'Failed to update order', {
+          unknown: schemaChangeOutcomeUnknown('Reordering entries', CHECK_CONTENT_PANEL),
+        })
       } finally {
         setIsLoading(false)
       }
     },
-    [apiClient, options.branchName, options.onSchemaChange, handleError],
+    [apiClient, options.branchName, options.onSchemaChange, fail],
   )
 
   const deleteEntry = useCallback(
-    async (entryPath: LogicalPath): Promise<SchemaOpResult> => {
+    async (
+      entryPath: LogicalPath,
+      deleteOptions?: { confirmReferenced?: boolean },
+    ): Promise<DeleteEntryResult> => {
       setIsLoading(true)
       try {
         const result = await apiClient.entries.delete({
           branch: options.branchName,
           entryPath,
+          ...(deleteOptions?.confirmReferenced ? { confirmReferenced: 'true' } : {}),
         })
+        const referencedBy = result.data?.referencedBy
+        if (!result.ok && referencedBy) {
+          return { ok: false, error: result.error ?? 'Entry is referenced', referencedBy }
+        }
+        if (isGatewayFailure(result)) throw new UnansweredError()
         if (!result.ok) {
           throw new Error(result.error || 'Failed to delete entry')
         }
@@ -293,12 +383,14 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         options.onSchemaChange?.()
         return { ok: true }
       } catch (error) {
-        return { ok: false, error: handleError('Failed to delete entry', error) }
+        return fail(error, 'Failed to delete entry', {
+          unknown: schemaChangeOutcomeUnknown('Deleting the entry', CHECK_CONTENT_PANEL),
+        })
       } finally {
         setIsLoading(false)
       }
     },
-    [apiClient, options.branchName, options.onSchemaChange, handleError],
+    [apiClient, options.branchName, options.onSchemaChange, fail],
   )
 
   return {

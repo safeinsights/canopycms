@@ -7,9 +7,11 @@ where those rules live.
 
 ## Overview
 
-CLI commands (`init`, `init-deploy`, `init-github-app`, `worker run-once`, `generate-ai-content`, `sync`, `migrate`); project-root discovery (`project-root.ts`)
+CLI commands (`init`, `init-deploy`, `init-github-app`, `worker run-once`, `generate-ai-content`, `collect-asset-refs` and `materialize-assets` in `asset-refs.ts`, `sync`, `migrate`); project-root discovery (`project-root.ts`)
 
-`cli.ts`'s `KNOWN_AUTH_MODES`/`KnownAuthMode`/`isKnownAuthMode(value)` are exported so `worker run-once`'s auth-mode dispatch is independently testable — the dispatch below only recognizes `'clerk'`/`'dev'` and its surrounding `catch` fires solely on an import FAILURE, so before this guard a typo'd `CANOPY_AUTH_MODE` (e.g. `Clerk`) selected no plugin, silently skipped the auth-cache refresh, and still exited 0
+`asset-refs.ts`'s `resolveStore` builds an `S3AssetStore` from `--bucket`/`--region`, else imports `configured-asset-store.ts` (jiti) and refuses a non-S3 store without `--allow-local`; `MATERIALIZE_EXIT_CODES` is the exit contract a release gates on
+
+`cli.ts` exports `KNOWN_AUTH_MODES`/`isKnownAuthMode` (`worker run-once`'s auth-mode dispatch) and `findMultiValuedMaterializeFlag` (`materialize-assets`'s single-value flags, such as `--output-prefix`) for testing; each one's comment holds its rule
 
 ## `init-github-app.ts`
 
@@ -31,4 +33,4 @@ clean argv for `spawn`; `passthroughArgs(argv)` narrows it without an `any`.
 
 ## `project-detect.ts`
 
-best-effort adopter-project detection (package manager, default branch, GitHub owner/repo, missing CDK deps) consumed by `init-deploy aws`, which now also scaffolds a full CDK app (`cdk.json`, `infrastructure/bin/app.ts`, `infrastructure/lib/cms-stack.ts`, and the `infrastructure/tsconfig.json` the generated workflow type-checks it with) via `templates.ts`
+Best-effort project detection for `init-deploy aws`, which scaffolds a CDK app (`cdk.json`, `infrastructure/bin/app.ts`, `infrastructure/lib/cms-stack.ts`, `infrastructure/tsconfig.json`) via `templates.ts`. `aws-deploy-example.ts` renders `examples/aws-deployment/` through the same functions; `pnpm generate:aws-example` writes it, and its test fails on drift.

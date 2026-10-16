@@ -151,6 +151,14 @@ export { findDuplicateUrlPaths } from './static'
 export type { DuplicateUrlPath } from './static'
 
 /**
+ * Find every reference naming no entry — the check a production build runs and fails on unless
+ * `danglingReferences: 'warn'`. Pass an unscoped `listEntries()`.
+ */
+export { findDanglingReferences } from './static'
+
+export type { DanglingReference } from './static'
+
+/**
  * SEO field extraction and URL shaping, framework-agnostic. `isNoindexEntry` is the single
  * predicate behind both `robots: noindex` and sitemap exclusion.
  */
@@ -192,19 +200,18 @@ export { createAssetStore } from './assets/factory'
 /**
  * The five S3/local bucket-prefix strings (`asset-originals/`, `asset-staging/`, `asset-meta/`,
  * `assets/`, `assets/t/`). Exported so server-only consumers outside this package — notably the
- * prod transform Lambda (`packages/canopycms-cdk/lambda/asset-transform`) — build and parse
+ * lazy transform Lambda (`packages/canopycms-cdk/lambda/asset-transform`) — build and parse
  * asset keys through the same constants `S3AssetStore` uses rather than duplicating the strings.
  */
 export { ASSET_PREFIXES, type AssetPrefixes } from './assets/keys'
 
-/** Asset metadata sidecar shape (`asset-meta/{hash32}.json`), written by the finalize pipeline and read by the transform layer (dev-mode emulation and the prod transform Lambda). */
+/** Asset metadata sidecar shape (`asset-meta/{hash32}.json`), written by the finalize pipeline and read by `storeTransform`. */
 export type { AssetMeta } from './assets/types'
 
 /**
  * Parse the three path segments after `assets/t/` (`{directives}/{hash32}/{slug}.{ext}`) into a
- * validated `TransformDirectives` set, or a structured parse error. Reused unchanged by the
- * dev-mode lazy `/assets/t/*` emulation (`api/assets.ts`) and the prod transform Lambda, so the
- * URL grammar is defined in exactly one place.
+ * validated `TransformDirectives` set, or a structured parse error, so the URL grammar is
+ * defined in exactly one place.
  */
 export { parseTransformPath } from './assets/transform-directives'
 
@@ -213,17 +220,105 @@ export type { ParsedTransformPath, ParseTransformPathResult } from './assets/tra
 /**
  * Canonical string form of a `TransformDirectives` set — the cache key every transform output is
  * stored under (`assets/t/{formatDirectives(...)}/{hash32}/{slug}.{ext}`). Equivalent directive
- * sets (different key order or float formatting) always format to the same string. Reused by the
- * prod transform Lambda so its writes agree with the dev-mode emulation and `assetUrl()`.
+ * sets (different key order or float formatting) always format to the same string.
  */
 export { formatDirectives } from './assets/transform-directives'
 
 /**
+ * Parse `assets/t/` path segments and resolve them to the canonical spelling their output is
+ * stored under, with directives re-parsed from that spelling. The lazy transform Lambda 301s a
+ * non-canonical request to it; the authenticated raw route serves the canonical bytes.
+ */
+export { canonicalizeTransformPath } from './assets/transform-directives'
+
+export type {
+  CanonicalTransformPathResult,
+  TransformWidthPolicy,
+} from './assets/transform-directives'
+
+/**
  * Apply a parsed `TransformDirectives` set to source image bytes with sharp:
  * resize/format/quality/crop, EXIF stripped on every re-encode, identity included. Server-only
- * (sharp); reused unchanged by the dev-mode lazy `/assets/t/*` emulation and the prod transform
- * Lambda.
+ * (sharp); `storeTransform` below wraps it for every caller that stores the output.
  */
 export { applyTransform } from './assets/transform'
 
 export type { ApplyTransformInput, TransformResult } from './assets/transform'
+
+/**
+ * Compute the transform a canonical `assets/t/` path names and store it under that key: meta
+ * lookup, raster-only, slug and ext checks, then `applyTransform`. Shared by the authenticated raw
+ * route, `materialize-assets` and the lazy transform Lambda. A 404's `error` names hashes and
+ * slugs, so a caller answering a browser replaces it.
+ */
+export { storeTransform, type StoreTransformResult } from './assets/materialize'
+
+/** The `Cache-Control` every stored transform output carries: content-addressed, so immutable. */
+export { TRANSFORM_CACHE_CONTROL } from './assets/materialize'
+
+/** The object tag the lazy transform Lambda's outputs carry, which its `assets/t/` expiry filters on. */
+export { LAZY_TRANSFORM_TAG } from './assets/materialize'
+
+/**
+ * Make every `assets/t/` key a build references exist in `store` (transforming only the missing
+ * ones from the stored originals) and check every referenced svg/pdf key exists. Under an
+ * `outputPrefix`, keys are written beneath it, and those production already stores are copied. A
+ * release job that bundles its own tool calls this with a store from `createAssetStore` and gates
+ * on the returned report; no site config is involved. Needs sharp only when something is missing.
+ */
+export { materializeAssets } from './assets/materialize'
+
+/**
+ * The live preview's asset prefix on the server: the signed-in raw route under a `basePath`, the
+ * same-origin check every preview prefix passes, and the hook registering the request-scoped getter
+ * `assetUrl` reads.
+ * @internal `canopycms-next`'s preview page is their consumer.
+ */
+export { authenticatedAssetBase, readAssetBase } from './editor/raw-asset-base'
+/** @internal */
+export { setServerPreviewAssetBaseGetter } from './editor/preview-asset-base'
+
+/** The asset store `createAssetStore` returns and `materializeAssets` takes. */
+export type { AssetStore } from './assets/types'
+
+/** What a create-only store write did: `created`, or `already-exists` (the stored object was kept). */
+export type { CreateOnlyResult } from './assets/types'
+
+/** Thrown by `materializeAssets` when sharp cannot load and keys are missing, so none can be produced. */
+export { SharpUnavailableError } from './assets/materialize'
+
+/**
+ * Thrown by `materializeAssets` before any store request when `outputPrefix` is not a relative,
+ * `/`-terminated run of `[A-Za-z0-9._-]` segments outside every canopy prefix.
+ */
+export { InvalidOutputPrefixError } from './assets/materialize'
+
+/** The `schemaVersion` carried by every `MaterializeReport`. */
+export { MATERIALIZE_REPORT_SCHEMA_VERSION } from './assets/materialize'
+
+/** Options for `materializeAssets`: the store, the referenced keys, an output prefix, and concurrency/retry limits. */
+export type { MaterializeOptions } from './assets/materialize'
+
+/** What `materializeAssets` returns: a versioned summary and one result per key, sorted by key. */
+export type { MaterializeReport } from './assets/materialize'
+
+/** One key's outcome in a `MaterializeReport`: `existed`, `created`, `copied` or `failed` (`content` or `store`). */
+export type { MaterializeResult } from './assets/materialize'
+
+/** One key a build references, with the pages and output files that reference it. */
+export type { MaterializeTarget } from './assets/materialize'
+
+/**
+ * Scan a static build's output for `/assets/…` URLs and write `canopy-asset-refs.json` into it.
+ * Throws `AssetRefsError` for a URL no stored object can answer (non-canonical or malformed).
+ */
+export { collectAssetRefs, type CollectAssetRefsResult } from './build/asset-refs'
+
+/** Read and validate a `canopy-asset-refs.json`; throws when it is unreadable or malformed. */
+export { readAssetRefsFile } from './build/asset-refs'
+
+/** Thrown by `collectAssetRefs`; `problems` lists each offending file and URL. */
+export { AssetRefsError } from './build/asset-refs'
+
+/** The shape of `canopy-asset-refs.json`: the transform and static keys a build references. */
+export type { AssetRefsFile } from './build/asset-refs'

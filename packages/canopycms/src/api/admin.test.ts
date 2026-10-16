@@ -8,7 +8,11 @@ import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockUser } from '../test-utils'
 import { enqueueTask, dequeueTask, failTask } from '../task-queue/cms-task-queue'
 import type { AssetStore } from '../assets/types'
+import type { BranchSchemaCache } from '../branch-schema-cache'
 import { CANOPYCMS_VERSION } from '../version'
+
+const { loadSharpMock } = vi.hoisted(() => ({ loadSharpMock: vi.fn() }))
+vi.mock('../assets/sharp-loader', () => ({ loadSharp: loadSharpMock }))
 
 // Extract composed (guard + handler) functions for testing, matching
 // branch-merge.test.ts's pattern.
@@ -29,6 +33,9 @@ describe('admin api', () => {
     // getTaskQueueDir({mode:'prod'}) resolves to {CANOPYCMS_WORKSPACE_ROOT}/.tasks
     process.env.CANOPYCMS_WORKSPACE_ROOT = tmpDir
     taskDir = path.join(tmpDir, '.tasks')
+
+    loadSharpMock.mockReset()
+    loadSharpMock.mockResolvedValue(() => undefined)
 
     ctx = createMockApiContext({ services: { config: { mode: 'prod' } as CanopyConfig } })
     req = { user: createMockUser('admin'), body: {} }
@@ -72,6 +79,24 @@ describe('admin api', () => {
       it('reports the asset store as not configured when the context has none', async () => {
         const result = await statusHandler(ctx, req)
         expect(result.data?.assetStore).toEqual({ configured: false })
+      })
+    })
+
+    describe('image processing', () => {
+      it('reports image processing as available when sharp loads', async () => {
+        const result = await statusHandler(ctx, req)
+        expect(result.data?.imageProcessing).toEqual({ available: true })
+      })
+
+      it('reports image processing as unavailable with the error when sharp fails to load, and still answers 200', async () => {
+        loadSharpMock.mockRejectedValue(new Error('libvips-cpp.so.42: cannot open shared object'))
+        const result = await statusHandler(ctx, req)
+        expect(result.ok).toBe(true)
+        expect(result.status).toBe(200)
+        expect(result.data?.imageProcessing).toEqual({
+          available: false,
+          error: 'libvips-cpp.so.42: cannot open shared object',
+        })
       })
     })
 
@@ -162,6 +187,45 @@ describe('admin api', () => {
       const result = await statusHandler(ctx, req)
 
       expect(result.data).not.toHaveProperty('settingsWorkspaceError')
+    })
+
+    it("reports the base branch's schema issues", async () => {
+      const issue = {
+        kind: 'unknown-schema' as const,
+        collectionPath: 'people',
+        entryType: 'contributor',
+        schemaRef: 'contributorSchema',
+        metaFile: 'people/.collection.json',
+        message: 'not found in registry',
+      }
+      const getSchema = vi.fn().mockResolvedValue({ schema: {}, flatSchema: [], issues: [issue] })
+      ctx = createMockApiContext({
+        services: {
+          config: { mode: 'prod', defaultBaseBranch: 'main' } as CanopyConfig,
+          branchSchemaCache: { getSchema } as unknown as BranchSchemaCache,
+        },
+      })
+
+      const result = await statusHandler(ctx, req)
+
+      expect(result.data?.schemaIssues).toEqual([issue])
+      expect(ctx.getBranchContext).toHaveBeenCalledWith('main')
+    })
+
+    it('omits schemaIssues when there are none, or the schema cannot be read', async () => {
+      expect((await statusHandler(ctx, req)).data).not.toHaveProperty('schemaIssues')
+
+      ctx = createMockApiContext({
+        services: {
+          config: { mode: 'prod' } as CanopyConfig,
+          branchSchemaCache: {
+            getSchema: vi.fn().mockRejectedValue(new Error('no schema')),
+          } as unknown as BranchSchemaCache,
+        },
+      })
+      const result = await statusHandler(ctx, req)
+      expect(result.ok).toBe(true)
+      expect(result.data).not.toHaveProperty('schemaIssues')
     })
 
     it('returns null status + statusReadError for a garbage worker-status.json', async () => {

@@ -8,6 +8,7 @@ import {
   ensureMainBranch,
   createBranchViaAPI,
   submitBranchViaAPI,
+  saveHomeChangeViaAPI,
 } from '../fixtures/test-workspace'
 
 /**
@@ -51,7 +52,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.closeBranchManager()
 
     // Step 5: Make some edits
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
     const testValue = `Branch-Test-${Date.now()}`
     await editorPage.fillTextField('title', testValue)
@@ -115,6 +116,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
     // Create branch via API as editor
     const createResponse = await createBranchViaAPI(BASE_URL, branchName, 'editor')
     expect(createResponse.ok).toBe(true)
+    await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
 
     await editorPage.goto()
     await editorPage.waitForReady()
@@ -145,6 +147,24 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.verifyBranchStatus(branchName, 'submitted')
   })
 
+  test('refuses to submit a branch with nothing saved, leaving it editable', async ({ page }) => {
+    const branchName = `test-empty-submit-${Date.now()}`
+
+    await switchUser(page, 'editor')
+    const createResponse = await createBranchViaAPI(BASE_URL, branchName, 'editor')
+    expect(createResponse.ok).toBe(true)
+
+    await editorPage.goto()
+    await editorPage.waitForReady()
+    await branchPage.openBranchManager()
+    await branchPage.waitForBranchInList(branchName)
+
+    await branchPage.submitBranch(branchName)
+
+    await expect(editorPage.notification(`Nothing to submit yet: "${branchName}"`)).toBeVisible()
+    await branchPage.verifyBranchStatus(branchName, 'editing')
+  })
+
   test('request changes flow', async ({ page }) => {
     const branchName = `test-request-changes-${Date.now()}`
 
@@ -153,6 +173,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
 
     // Create and submit branch as editor
     await createBranchViaAPI(BASE_URL, branchName, 'editor')
+    await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
     const submitResponse = await submitBranchViaAPI(BASE_URL, branchName, 'editor')
     expect(submitResponse.ok).toBe(true)
 
@@ -186,12 +207,13 @@ test.describe('Branch Lifecycle & Workflow', () => {
     expect(canSubmit).toBe(true)
   })
 
-  test('permission boundaries: non-reviewers cannot request changes', async ({ page }) => {
+  test('permission boundaries: non-reviewers are not offered request changes', async ({ page }) => {
     const branchName = `test-permissions-${Date.now()}`
 
     // Set editor user and create/submit branch
     await switchUser(page, 'editor')
     await createBranchViaAPI(BASE_URL, branchName, 'editor')
+    await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
     const submitResponse = await submitBranchViaAPI(BASE_URL, branchName, 'editor')
     expect(submitResponse.ok).toBe(true)
 
@@ -204,9 +226,9 @@ test.describe('Branch Lifecycle & Workflow', () => {
     // Wait for branch to appear (editor can see their own branch)
     await branchPage.waitForBranchInList(branchName)
 
-    // Verify request changes button is disabled for non-reviewer
-    const isDisabled = await branchPage.isActionButtonDisabled(branchName, 'request-changes')
-    expect(isDisabled).toBe(true)
+    // Request changes is not offered to a non-reviewer at all, though the branch is in review
+    expect(await branchPage.actionState(branchName, 'request-changes')).toBe('absent')
+    expect(await branchPage.actionState(branchName, 'withdraw')).toBe('enabled')
   })
 
   test("permission boundaries: admin can withdraw another user's branch", async ({ page }) => {
@@ -214,6 +236,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
 
     // Create and submit branch as editor
     await createBranchViaAPI(BASE_URL, branchName, 'editor')
+    await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
     await submitBranchViaAPI(BASE_URL, branchName, 'editor')
 
     // Try to withdraw as different user (admin can, but let's test another editor)
@@ -240,6 +263,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
 
     // Create branch as editor
     await createBranchViaAPI(BASE_URL, branchName, 'editor')
+    await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
 
     await editorPage.goto()
     await editorPage.waitForReady()
@@ -262,11 +286,11 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.verifyBranchStatus(branchName, 'submitted')
 
     // Cannot delete submitted branch
-    const canDeleteSubmitted = await branchPage.isActionButtonDisabled(branchName, 'delete')
-    expect(canDeleteSubmitted).toBe(true)
+    expect(await branchPage.actionState(branchName, 'delete')).toBe('disabled')
 
     // Withdraw it
     await branchPage.withdrawBranch(branchName)
+    await branchPage.verifyBranchStatus(branchName, 'editing')
 
     // Now can delete again
     await branchPage.deleteBranch(branchName)
@@ -291,6 +315,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await editorPage.waitForReady()
 
     // Submit the second branch via API
+    await saveHomeChangeViaAPI(BASE_URL, submittedBranch, 'editor')
     const submitResponse = await submitBranchViaAPI(BASE_URL, submittedBranch, 'editor')
     expect(submitResponse.ok).toBe(true)
 

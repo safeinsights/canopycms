@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-21, epic `epic/infra-review-2026-08`) — the cost and storage halves are closed. `reservedConcurrentExecutions: 10` caps the anonymous `/assets/t/*` path (a reservation, i.e. a CAP on the account pool — it costs nothing idle, unlike provisioned concurrency); **slug is now validated against `meta.slug`** in BOTH the prod Lambda and dev-mode `serveLazyTransform`, which kills the aliasing multiplier outright — an arbitrary slug 404s and writes nothing; and an S3 lifecycle rule expires `assets/t/` derivatives at 180 days, self-healing because an expired derivative is simply regenerated on next request. Originals/meta are untouched, and a test asserts that. One correction to the filed analysis: a CloudFront miss does NOT invoke the Lambda — the behavior is an OriginGroup with **S3 primary** and the Lambda as a 403/404 failover, so routine evictions cost an S3 GET. The unbounded-crop half is deferred by decision to [transform-crop-signing.md](transform-crop-signing.md)
+---
 # [P2] Transform Lambda is an unauthenticated, uncapped compute and storage amplifier
 
 Found by the 2026-08-20 three-round infrastructure review (round 1) at HEAD

@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-09-13, branch `fix/task-failure-credential-refresh`, base `int-202609-a`. `processTaskQueue`'s per-task catch now calls a new `WorkerContext.refreshGitHubCredential()` (a function, per the INVARIANT), so a publish meeting a rotated PAT picks the new token up on its own retry instead of exhausting its budget before the 5-minute sync refresh. Both trigger sites share one never-throwing `CmsWorker.refreshGitHubCredential`, bounded by `taskTimeoutMs`, because a provider read can outlast it (the AWS one, up to 87s). Called after the outcome is recorded, not before as filed. Closes store-then-revoke only normally, and does **not** close revoke-then-store: the provider's 5-minute floor is shared by both triggers — see the file's "What this does not close".
+---
 # [P2] A publish inside the credential-rotation window fails permanently, though a working token is already available
 
 Found by adversarial review round 1 on PR #334 (reactive secret re-read), 2026-09-13.
@@ -57,7 +61,7 @@ The test that matters is not "the provider was called" but that a task **which w
 otherwise have exhausted its retries** now succeeds on a later attempt after a rotation —
 otherwise the assertion passes with the fix doing nothing useful.
 
-Related: [worker-app-env-var-check-untested.md](../worker-app-env-var-check-untested.md),
+Related: [worker-app-env-var-check-untested.md](worker-app-env-var-check-untested.md),
 [refresh-auth-cache-error-handling.md](../refresh-auth-cache-error-handling.md).
 
 ## Resolution — 2026-09-13, branch `fix/task-failure-credential-refresh`, base `int-202609-a`

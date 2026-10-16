@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { PathPermission } from '../../config'
 import type { PermissionGroupOption } from '../../auth/types'
 import { useApiClient } from '../context'
+import { SETTINGS_CHANGED_CODE, SettingsChangedError } from '../settings-conflict'
 
 export interface UsePermissionManagerOptions {
   /**
@@ -61,17 +62,23 @@ export function usePermissionManager(
         expectedContentVersion: versionRef.current,
       })
       if (!result.ok) {
-        throw new Error(result.error || 'Failed to save permissions')
+        const message = result.error || 'Failed to save permissions'
+        throw result.code === SETTINGS_CHANGED_CODE
+          ? new SettingsChangedError(message)
+          : new Error(message)
       }
       notifications.show({
-        title: 'Permissions Saved',
+        title: 'Permissions saved',
         message: 'Permissions have been updated',
         color: 'green',
       })
       await loadPermissions()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save permissions'
-      notifications.show({ message, color: 'red' })
+      notifications.show({
+        message,
+        color: err instanceof SettingsChangedError ? 'yellow' : 'red',
+      })
       throw err
     }
   }
@@ -83,13 +90,14 @@ export function usePermissionManager(
   // an unreadable groups.json rendered as a silently empty picker with no
   // warning, which is the same failure class listGroupsHandler's deliberate
   // 500 exists to prevent.
-  const handleListGroups = async () => {
+  // Stable identity: useGroupsAndUsers reloads groups whenever this function changes.
+  const handleListGroups = useCallback(async () => {
     const result = await apiClient.permissions.listGroups()
     if (!result.ok) {
       throw new Error(result.error || 'Failed to load groups')
     }
     return result.data?.groups ?? []
-  }
+  }, [apiClient])
 
   useEffect(() => {
     if (options.isOpen) {

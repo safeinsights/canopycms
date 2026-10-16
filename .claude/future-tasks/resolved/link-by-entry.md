@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (commit `183e2c1f`) — stable entry-ID links shipped as proposed and then some: `entry-link-resolver.ts` resolves `[text](entry:CONTENT_ID)` server-side at read time, wired into `read()` by default (`content-reader.ts:243-247`), with `resolveEntryUrl`/`resolveEntryLinksInText`/`resolveEntryLinksInData`/`extractEntryLinkIds` exported from `server.ts`. ARCHITECTURE.md:1778-1807 additionally documents an editor "Insert Entry Link" button, live preview resolution, save-time broken-link warnings and AI-pipeline resolution. **Same shape as the row above** — implemented in the very commit that added the task file
+---
 # Link-by-Entry Support
 
 ## Problem

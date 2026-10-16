@@ -41,11 +41,11 @@ const baseConfig = {
   gitBotAuthorEmail: 'bot@example.com',
   editor: {
     title: 'Config Title',
-    subtitle: 'Config Subtitle',
     theme: { colors: { brand: '#123456' } },
     previewBase: { 'content/posts': '/blog' },
     previewPrefix: '/preview',
   },
+  mdxAllow: { htmlTags: [] },
 } as const
 
 // The editor mounts behind EditorAuthGate, which asks the API who the user is first.
@@ -60,7 +60,9 @@ beforeEach(() => {
       json: async () =>
         whoamiStatus === 200
           ? { ok: true, status: 200, data: { userId: 'u1', groups: [] } }
-          : { ok: false, status: whoamiStatus, error: 'Unauthorized' },
+          : whoamiStatus === 412
+            ? { ok: false, status: 412, code: 'EDITOR_MODE_MISMATCH', error: 'mismatch' }
+            : { ok: false, status: whoamiStatus, error: 'Unauthorized' },
     })),
   )
 })
@@ -69,19 +71,19 @@ afterEach(() => {
 })
 
 describe('CanopyEditor', () => {
-  it('derives collections, preview bases, title/subtitle/theme from config', async () => {
+  it('derives collections, preview bases, title/theme from config', async () => {
     capturedProps = undefined
     renderComponent()
     const editor = await screen.findByTestId('mock-editor')
     const props = capturedProps as EditorProps | undefined
 
     expect(editor.textContent).toBe('Config Title')
-    expect(props?.subtitle).toBe('Config Subtitle')
     // First collection is now the content root, posts is a child
     expect(props?.collections?.[0]?.path).toBe('content')
     expect(props?.collections?.[0]?.children?.[0]?.path).toBe('content/posts')
     expect(props?.previewBaseByCollection).toEqual({ 'content/posts': '/blog' })
     expect(props?.previewPrefix).toBe('/preview')
+    expect(props?.mdxAllow).toEqual({ htmlTags: [] })
     expect(props?.themeOptions).toMatchObject({ colors: { brand: '#123456' } })
   })
 
@@ -118,14 +120,26 @@ describe('CanopyEditor', () => {
     expect(screen.queryByTestId('mock-editor')).toBeNull()
     expect(capturedProps).toBeUndefined()
   })
+
+  it('sends config.mode with each request and names it when the server refuses it', async () => {
+    whoamiStatus = 412
+    renderComponent({}, {}, { mode: 'prod' })
+
+    const notice = await screen.findByTestId('canopy-mode-mismatch')
+    expect(notice.textContent).toContain('built for "prod" mode')
+    const [, init] = vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit]
+    expect(init.headers).toMatchObject({ 'x-canopy-editor-mode': 'prod' })
+  })
 })
 
 function renderComponent(
   extraProps: Partial<Omit<React.ComponentProps<typeof CanopyEditor>, 'config'>> = {},
   editorOverrides: NonNullable<CanopyClientConfig['editor']> = {},
+  configOverrides: Partial<CanopyClientConfig> = {},
 ) {
   const config = {
     ...baseConfig,
+    ...configOverrides,
     editor: { ...baseConfig.editor, ...editorOverrides },
     flatSchema: flattenSchema(baseConfig.schema, baseConfig.contentRoot),
   } as unknown as CanopyClientConfig

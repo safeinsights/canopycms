@@ -22,14 +22,14 @@ test.describe('Preview Bridge', () => {
     await test.step('open editor and select Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
     })
 
     await test.step('wait for preview iframe to sync home content', async () => {
       // The preview iframe loads /?branch=main (the config's previewBase); after preview bridge sync,
       // the title element (with data-canopy-path="title") should show content.
-      const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+      const previewFrame = editorPage.previewFrame()
       const titleEl = previewFrame.locator('[data-canopy-path="title"]')
       await titleEl.waitFor({ state: 'visible', timeout: 20000 })
       // Verify the preview content was synced (shows the actual title)
@@ -37,7 +37,7 @@ test.describe('Preview Bridge', () => {
     })
 
     await test.step('click title in preview pane', async () => {
-      const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+      const previewFrame = editorPage.previewFrame()
       await previewFrame.locator('[data-canopy-path="title"]').click()
     })
 
@@ -55,14 +55,14 @@ test.describe('Preview Bridge', () => {
     })
   })
 
-  test('preview reflects live edits without saving', async ({ page }) => {
-    const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+  test('preview reflects live edits without saving', async () => {
+    const previewFrame = editorPage.previewFrame()
     const previewTitle = previewFrame.locator('[data-canopy-path="title"]')
 
     await test.step('open editor and select Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
     })
 
@@ -85,13 +85,83 @@ test.describe('Preview Bridge', () => {
     })
   })
 
+  test('preview resolves a reference inside an object without saving', async () => {
+    const previewFrame = editorPage.previewFrame()
+    const spotlight = previewFrame.locator('[data-testid="spotlight"]')
+
+    await test.step('create a post, then open Home Page', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.createPost('spotlight-target', 'Spotlight Target Post')
+      await editorPage.openContentNavigator()
+      await editorPage.selectEntry('Home Page')
+      await editorPage.closeContentNavigator()
+      await expect(previewFrame.locator('[data-canopy-path="title"]')).toContainText('Home Page', {
+        timeout: 15000,
+      })
+    })
+
+    await test.step('pick the post in the nested reference field', async () => {
+      await expect(spotlight).toHaveCount(0)
+      await editorPage.selectReferenceOption('spotlight.post', 'Spotlight Target Post')
+    })
+
+    await test.step('preview shows the resolved post, unsaved', async () => {
+      await expect(spotlight).toHaveText('Spotlight: Spotlight Target Post', { timeout: 10000 })
+      await expect(editorPage.saveButton).toBeEnabled()
+    })
+  })
+
   test('an entry with no page shows no preview and frames nothing', async () => {
     await editorPage.goto()
     await editorPage.waitForReady()
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Test Site')
 
     await expect(editorPage.previewPane).toContainText('No preview for this entry.')
     await expect(editorPage.previewPane.locator('iframe')).toHaveCount(0)
+  })
+
+  test('a maximized preview keeps its page and draft, and Esc restores the form', async ({
+    page,
+  }) => {
+    const previewTitle = editorPage.previewFrame().locator('[data-canopy-path="title"]')
+    const formPanel = page.getByTestId('form-pane').locator('..')
+    const liveTitle = `Maximized-${Date.now()}`
+
+    await editorPage.goto()
+    await editorPage.waitForReady()
+    await editorPage.openContentNavigator()
+    await editorPage.selectEntry('Home Page')
+    await editorPage.fillTextField('title', liveTitle)
+    await expect(previewTitle).toContainText(liveTitle, { timeout: 10000 })
+    // Survives only if the frame is never reloaded.
+    await previewTitle.evaluate(() => Object.assign(window, { __sameFrame: true }))
+
+    await test.step('Maximize covers the form and puts focus on Restore', async () => {
+      await editorPage.maximizePreviewButton().click()
+      await expect(editorPage.restorePreviewButton()).toBeFocused()
+      await expect(formPanel).toHaveAttribute('inert', '')
+      const main = await page.locator('[data-canopy-region="main"]').boundingBox()
+      const preview = await page.getByTestId('preview-pane').boundingBox()
+      for (const side of ['x', 'y', 'width', 'height'] as const) {
+        expect(Math.abs((preview?.[side] ?? 0) - (main?.[side] ?? -9))).toBeLessThanOrEqual(1)
+      }
+      await expect(previewTitle).toContainText(liveTitle)
+    })
+
+    await test.step('Esc restores it and returns focus to Maximize', async () => {
+      await page.keyboard.press('Escape')
+      await expect(editorPage.restorePreviewButton()).toHaveCount(0)
+      await expect(editorPage.maximizePreviewButton()).toBeFocused()
+      await expect(formPanel).not.toHaveAttribute('inert', '')
+      expect(await previewTitle.evaluate(() => '__sameFrame' in window)).toBe(true)
+    })
+
+    await test.step('drafts still reach the same frame', async () => {
+      await editorPage.fillTextField('title', `${liveTitle}-again`)
+      await expect(previewTitle).toContainText(`${liveTitle}-again`, { timeout: 10000 })
+      expect(await previewTitle.evaluate(() => '__sameFrame' in window)).toBe(true)
+    })
   })
 })

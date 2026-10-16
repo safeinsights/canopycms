@@ -26,7 +26,7 @@ vi.mock('@clerk/backend', () => ({
   verifyToken: vi.fn(),
 }))
 
-import { ClerkAuthPlugin } from './clerk-plugin'
+import { ClerkAuthPlugin, CLERK_USER_LIST_MAX_IDS } from './clerk-plugin'
 import { verifyToken, createClerkClient } from '@clerk/backend'
 import type { CanopyRequest } from 'canopycms/http'
 
@@ -192,6 +192,30 @@ describe('ClerkAuthPlugin', () => {
       })
     })
 
+    it('returns no name for a user with no full name or username, never the id', async () => {
+      const plugin = new ClerkAuthPlugin({ useOrganizationsAsGroups: false })
+      const req = {
+        method: 'GET',
+        header: vi.fn().mockImplementation((name: string) => {
+          if (name === 'Authorization') return 'Bearer valid_token'
+          return null
+        }),
+      } as unknown as CanopyRequest
+      mockVerifyToken.mockResolvedValue({ sub: 'user_nameless', sid: 'sess_1' })
+      mockGetUser.mockResolvedValue({
+        id: 'user_nameless',
+        fullName: null,
+        primaryEmailAddress: { emailAddress: 'private.person@example.com' },
+      })
+
+      const result = await plugin.authenticate(req)
+
+      expect(result.success).toBe(true)
+      expect(result.user?.name).toBeUndefined()
+      expect(result.user?.userId).toBe('user_nameless')
+      expect(result.user?.email).toBe('private.person@example.com')
+    })
+
     it('returns user without external groups if organizations disabled', async () => {
       const plugin = new ClerkAuthPlugin({ useOrganizationsAsGroups: false })
       const req = {
@@ -353,6 +377,102 @@ describe('ClerkAuthPlugin', () => {
 
       expect(result).toBeNull()
       consoleSpy.restore()
+    })
+  })
+
+  describe('getUsersMetadata', () => {
+    const clerkUserFor = (id: string) => ({
+      id,
+      fullName: `Name ${id}`,
+      primaryEmailAddress: { emailAddress: `${id}@example.com` },
+    })
+
+    it('makes ceil(N / CLERK_USER_LIST_MAX_IDS) list calls, each with a limit covering its chunk', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockImplementation(async ({ userId }: { userId: string[] }) => ({
+        data: userId.map(clerkUserFor),
+        totalCount: userId.length,
+      }))
+      const ids = Array.from({ length: CLERK_USER_LIST_MAX_IDS * 2 + 1 }, (_, i) => `user_${i}`)
+
+      const result = await plugin.getUsersMetadata(ids)
+
+      expect(mockGetUserList.mock.calls.map(([params]) => params)).toEqual([
+        { userId: ids.slice(0, 100), limit: 100 },
+        { userId: ids.slice(100, 200), limit: 100 },
+        { userId: ids.slice(200), limit: 1 },
+      ])
+      expect(mockGetUser).not.toHaveBeenCalled()
+      expect(result).toHaveLength(ids.length)
+      expect(result[0]).toEqual({
+        id: 'user_0',
+        name: 'Name user_0',
+        email: 'user_0@example.com',
+        avatarUrl: undefined,
+      })
+    })
+
+    it('rejects on a Clerk failure, so core never caches it as unknown users', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockRejectedValue(new Error('Too Many Requests'))
+      await expect(plugin.getUsersMetadata(['user_1'])).rejects.toThrow('Too Many Requests')
+    })
+  })
+
+  describe('a user with no usable name', () => {
+    const nameless = {
+      id: 'user_2abNameless',
+      primaryEmailAddress: { emailAddress: 'private.person@example.com' },
+    }
+
+    it('gets an empty name from every lookup, never the id or any part of the email', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUser.mockResolvedValue(nameless)
+      mockGetUserList.mockResolvedValue({ data: [nameless] })
+
+      const results = [
+        await plugin.getUserMetadata(nameless.id),
+        (await plugin.searchUsers('private'))[0],
+        (await plugin.getUsersMetadata([nameless.id]))[0],
+      ]
+
+      for (const result of results) {
+        expect(result?.name).toBe('')
+        expect(result?.name).not.toBe(nameless.id)
+        expect(result?.name).not.toContain('private')
+        expect(result?.email).toBe('private.person@example.com')
+      }
+    })
+
+    it('prefers fullName, then snake_case full_name, then username', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockResolvedValue({
+        data: [
+          { id: 'u1', fullName: 'Camel Name', full_name: 'Snake Name', username: 'handle' },
+          { id: 'u2', full_name: 'Snake Name', username: 'handle' },
+          { id: 'u3', username: 'handle' },
+        ],
+      })
+
+      const results = await plugin.getUsersMetadata(['u1', 'u2', 'u3'])
+
+      expect(results.map((r) => r.name)).toEqual(['Camel Name', 'Snake Name', 'handle'])
+    })
+
+    it('falls through an empty or whitespace-only name to the next, and trims', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockResolvedValue({
+        data: [
+          { id: 'u1', fullName: '   ', username: 'handle' },
+          { id: 'u2', fullName: '', full_name: null, username: ' handle2 ' },
+          { id: 'u3', fullName: '  Padded Name ' },
+          { id: 'u4', fullName: ' ', username: '  ' },
+        ],
+      })
+
+      const results = await plugin.getUsersMetadata(['u1', 'u2', 'u3', 'u4'])
+
+      expect(results.map((r) => r.name)).toEqual(['handle', 'handle2', 'Padded Name', ''])
     })
   })
 

@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-05, branch `fix/content-write-lock-coverage`, base `int-202610-a`. Every working-tree mutator a rebase could revert now takes the [SYNC-C1] content-write lock: `SchemaOps` and CLI migrate (via `withBranchSchemaLock`, still 409), `submitBranch` and `commitFiles` from checkout through push, CLI sync's replace/merge/abort, and the worker's base-branch refresh (try-only). Assets are branch-agnostic and outside every clone, so not exposed. One global acquisition order is documented in docs/concurrency.md
+---
 # [P1] Working-tree mutations still outside the content-write lock
 
 ## Resolution (2026-10-05, branch `fix/content-write-lock-coverage`, base `int-202610-a`)

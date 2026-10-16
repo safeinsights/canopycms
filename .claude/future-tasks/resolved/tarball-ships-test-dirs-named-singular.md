@@ -1,3 +1,8 @@
+---
+adopters: NEITHER
+summary: >-
+  RESOLVED (2026-08-22, branch `fix/packaging-guard-blind-spots`, epic `adopter-request-intake`) — widened repo-wide after an independent review found the same defect class beyond canopycms. Fixed `tsconfig.build.json` excludes in all three affected packages (canopycms's singular `__test__` dirs plus five loose test-helper files with zero non-test importers; canopycms-next's `.test.tsx`; canopycms-auth-dev's previously-nonexistent exclude array) and added a permanent regression guard, `checkNoStrayTestArtifacts` in `scripts/check-esm-imports.mjs`, run on every `pnpm check:esm` (CI-gated) — exactly the guard this file originally suggested. `canopycms-next`'s own `test-utils.js` was checked and left alone: it is re-exported from `src/index.ts` (`createMockAuthPlugin`), a real export, not a leak
+---
 # Published tarballs shipped compiled test/story artifacts (repo-wide)
 
 RESOLVED (2026-08-22, branch `fix/packaging-guard-blind-spots`, epic `adopter-request-intake`) —

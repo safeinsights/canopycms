@@ -263,6 +263,40 @@ export async function retryTask(
 }
 
 /**
+ * Hand an in-flight task back to pending/ unchanged, with no retry spent and no
+ * backoff, for a consumer abandoning it while shutting down. Safe only for an
+ * idempotent action: the abandoned attempt may have done part of its work.
+ */
+export async function releaseTask(
+  taskDir: string,
+  taskId: string,
+  logger: TaskQueueLogger = nullLogger,
+): Promise<void> {
+  const processingPath = path.join(taskDir, 'processing', `${taskId}.json`)
+  const pendingPath = path.join(taskDir, 'pending', `${taskId}.json`)
+
+  let task: Task
+  try {
+    const content = await fs.readFile(processingPath, 'utf-8')
+    const parsed = parseTaskJson(content)
+    if (!parsed) {
+      logger.debug('Corrupt task file in processing, removing', { id: taskId })
+      await fs.unlink(processingPath).catch(() => {})
+      return
+    }
+    task = parsed
+  } catch (err) {
+    if (isNotFoundError(err)) return
+    throw err
+  }
+
+  task.status = 'pending'
+  await atomicWriteFile(pendingPath, JSON.stringify(task, null, 2))
+  await fs.unlink(processingPath).catch(() => {})
+  logger.debug('Released task', { id: taskId })
+}
+
+/**
  * Requeue a permanently-failed task: reads failed/{taskId}.json and creates a
  * brand-new pending task with a fresh `id`, never the original — `dequeueTask`
  * and `recoverOrphanedTasks` dedup completed/failed by ID, so reusing it would

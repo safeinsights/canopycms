@@ -16,13 +16,30 @@ import { branchProvisioningLockName } from './utils/provisioning-lock'
  * Without it two stuck states have no in-product recovery, and prod admins have
  * no filesystem access to see them: a branch dir whose `.canopy-meta/branch.json`
  * is corrupt (the registry drops it silently) and an orphan dir with no
- * `branch.json` at all (a partial delete crash — see `api/branch.ts`).
+ * `branch.json` at all (a clone or delete killed in place, until the worker
+ * quarantines it — see branch-provisioning.ts).
  *
  * `scanBranchHealth` mirrors the registry's own directory-listing rules (skip
  * non-directories and dot-prefixed names) so the two never disagree about what
  * counts as missing.
  */
 type BranchHealthKind = 'healthy' | 'corrupt-metadata' | 'orphan'
+
+/**
+ * An orphan younger than this may still be a clone in progress: admin purge refuses it and the
+ * worker does not quarantine it. Corrupt-metadata dirs are exempt.
+ */
+export const ORPHAN_YOUTH_THRESHOLD_MS = 15 * 60_000
+
+/**
+ * One healthy branch's duplicate-content-ID scan (see content-id-index.ts).
+ * `unknown` means the scan did not finish — it failed, or the request's time
+ * budget ran out first — and must never be read as `none`.
+ */
+export type DuplicateIdScan =
+  | { state: 'none' }
+  | { state: 'found'; duplicates: DuplicateContentId[] }
+  | { state: 'unknown'; reason: 'failed' | 'out-of-time' }
 
 export interface BranchHealthEntry {
   dirName: string
@@ -32,19 +49,19 @@ export interface BranchHealthEntry {
   /** healthy only */
   branch?: BranchMetadata
   /**
-   * healthy only, non-empty only: duplicate content IDs in this branch's
-   * content tree (see content-id-index.ts). The branch stays usable — only the
-   * quarantined IDs degrade, dropping out of ID-based lookups and refusing
-   * saves (`DuplicateContentIdError`, a 409 naming the repair action) rather
-   * than mutating an ambiguous target.
+   * healthy only, and only when the caller asked for the duplicate-ID scan: see
+   * {@link DuplicateIdScan}. The branch stays usable while IDs are duplicated —
+   * only the quarantined IDs degrade, dropping out of ID-based lookups and
+   * refusing saves (`DuplicateContentIdError`) rather than mutating an
+   * ambiguous target.
    */
-  duplicateContentIds?: DuplicateContentId[]
+  duplicateIdScan?: DuplicateIdScan
   /**
    * healthy only, true only: this clone has an interrupted rebase on disk
    * (`.git/rebase-merge` / `.git/rebase-apply`).
    *
    * Advisory on `healthy` rather than its own `BranchHealthKind`, like
-   * `duplicateContentIds`: the metadata is intact and the state is usually
+   * `duplicateIdScan`: the metadata is intact and the state is usually
    * transient, since the worker's sync loop aborts an interrupted rebase at the
    * top of its next per-branch pass. The flag buys visibility in the window
    * before that, where the branch otherwise scans as plain `healthy` while
@@ -114,22 +131,52 @@ async function readMetaMtime(branchRoot: string): Promise<string | undefined> {
 }
 
 /**
- * Scan a healthy branch's content tree for duplicate embedded IDs (see
- * content-id-index.ts). Never throws: one branch's unreadable content tree must
- * not take down the whole health scan. Costs a full recursive readdir — the
- * same class of cost as a ContentStore's first-access warm-up, fine for an
- * admin-triggered scan and not for a hot path.
+ * The duplicate-ID scan's shared budget. `spent` is set when the deadline is
+ * observed to pass, by either clock: a Node timer can fire a millisecond before
+ * `Date.now()` reaches the deadline, so once a scan has timed out no later
+ * branch may start on the sliver `Date.now()` still reports.
+ */
+type DuplicateScanBudget = { deadline: number; spent: boolean }
+
+/**
+ * Scan a healthy branch's content tree for duplicate embedded IDs, giving up
+ * when `budget` runs out. Never throws: one branch's unreadable content tree
+ * must not take down the whole health scan. Costs a full recursive readdir, so
+ * it runs only on request and under a budget. A readdir cannot be cancelled: a
+ * scan that misses the deadline keeps running unobserved until it settles.
  */
 async function scanDuplicateContentIds(
   branchRoot: string,
   contentRootName: string,
-): Promise<DuplicateContentId[]> {
+  budget: DuplicateScanBudget,
+): Promise<DuplicateIdScan> {
+  const remainingMs = budget.deadline - Date.now()
+  if (budget.spent || remainingMs <= 0) {
+    budget.spent = true
+    return { state: 'unknown', reason: 'out-of-time' }
+  }
+
+  const scan = (async (): Promise<DuplicateIdScan> => {
+    try {
+      const idIndex = new ContentIdIndex(branchRoot)
+      await idIndex.buildFromFilenames(contentRootName)
+      const duplicates = idIndex.getDuplicateIds()
+      return duplicates.length ? { state: 'found', duplicates } : { state: 'none' }
+    } catch {
+      return { state: 'unknown', reason: 'failed' }
+    }
+  })()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const outOfTime = new Promise<DuplicateIdScan>((resolve) => {
+    timer = setTimeout(() => {
+      budget.spent = true
+      resolve({ state: 'unknown', reason: 'out-of-time' })
+    }, remainingMs)
+  })
   try {
-    const idIndex = new ContentIdIndex(branchRoot)
-    await idIndex.buildFromFilenames(contentRootName)
-    return idIndex.getDuplicateIds()
-  } catch {
-    return []
+    return await Promise.race([scan, outOfTime])
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -139,11 +186,22 @@ async function scanDuplicateContentIds(
  * metadata must not take down the whole scan, as in the registry's quarantine.
  * A missing `baseRoot` returns `[]`, so the admin endpoint can call this
  * without a pre-existence check.
+ *
+ * `duplicateIdScan` opts in to the per-branch duplicate-ID scan, which shares
+ * one `budgetMs` across every healthy branch, scanned in turn; a branch
+ * reached after the budget is spent reports `unknown`/`out-of-time`.
  */
 export async function scanBranchHealth(
   baseRoot: string,
-  opts: { baseBranchName: string; contentRootName?: string },
+  opts: {
+    baseBranchName: string
+    contentRootName?: string
+    duplicateIdScan?: { budgetMs: number }
+  },
 ): Promise<BranchHealthEntry[]> {
+  const duplicateScanBudget: DuplicateScanBudget | undefined = opts.duplicateIdScan
+    ? { deadline: Date.now() + opts.duplicateIdScan.budgetMs, spent: false }
+    : undefined
   const resolvedRoot = path.resolve(baseRoot)
   const sanitizedBaseBranchName = sanitizeBranchName(opts.baseBranchName)
   const contentRootName = opts.contentRootName ?? 'content'
@@ -178,13 +236,14 @@ export async function scanBranchHealth(
 
     if (loadErr) {
       // Every loadOnly failure lands here — BranchMetadataCorruptError for bad
-      // JSON, EACCES/EISDIR and the rest for everything else — since all of
-      // them need admin attention and none may throw out of the scan.
+      // JSON or a failed schema check, EACCES/EISDIR and the rest for
+      // everything else — since all of them need admin attention and none may
+      // throw out of the scan.
       //
       // [REDACT] parseError reaches the browser through the admin branch-health
       // endpoint, so it must never carry the absolute workspace path.
-      // BranchMetadataCorruptError's `parseCause` is the path-free JSON.parse
-      // message for exactly this, while its `message` embeds branchRoot and is
+      // BranchMetadataCorruptError's `parseCause` is the path-free cause
+      // for exactly this, while its `message` embeds branchRoot and is
       // for server logs only. Node errors embed the path in `message` too, so
       // only their `code` is safe to surface.
       const parseError =
@@ -209,8 +268,10 @@ export async function scanBranchHealth(
     }
 
     if (meta) {
-      const [duplicateContentIds, rebaseInProgress] = await Promise.all([
-        scanDuplicateContentIds(branchRoot, contentRootName),
+      const [duplicateIdScan, rebaseInProgress] = await Promise.all([
+        duplicateScanBudget === undefined
+          ? undefined
+          : scanDuplicateContentIds(branchRoot, contentRootName, duplicateScanBudget),
         isRebaseInProgress(branchRoot),
       ])
       entries.push({
@@ -218,7 +279,7 @@ export async function scanBranchHealth(
         kind: 'healthy',
         ...(isBaseBranch ? { isBaseBranch } : {}),
         branch: meta.branch,
-        ...(duplicateContentIds.length ? { duplicateContentIds } : {}),
+        ...(duplicateIdScan ? { duplicateIdScan } : {}),
         ...(rebaseInProgress ? { rebaseInProgress } : {}),
       })
       continue

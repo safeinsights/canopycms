@@ -10,6 +10,7 @@ import { ApiClientProvider } from './context'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 import { RESERVED_GROUPS } from '../authorization'
 import { mockConsole } from '../test-utils/console-spy'
+import { SYSTEM_USER_ID } from '../system-users'
 
 // Editor.tsx no longer wraps its own SWR cache (only CanopyEditor.tsx does,
 // via SWRProvider) -- these tests render <Editor> directly, so they need
@@ -263,16 +264,16 @@ describe('Editor integration', () => {
     })
 
     // Verify save button is disabled when there are no unsaved changes
-    let saveButton = await screen.findByRole('button', { name: /save file/i })
-    expect(saveButton.hasAttribute('disabled')).toBe(true)
+    let saveButton = await screen.findByRole('button', { name: /^save$/i })
+    expect(saveButton.getAttribute('aria-disabled')).toBe('true')
 
     // Make a change to the form
     fireEvent.change(input!, { target: { value: 'Modified title' } })
 
     // Verify save button becomes enabled after making a change
     await waitFor(() => {
-      saveButton = screen.getByRole('button', { name: /save file/i })
-      expect(saveButton.hasAttribute('disabled')).toBe(false)
+      saveButton = screen.getByRole('button', { name: /^save$/i })
+      expect(saveButton.getAttribute('aria-disabled')).toBeNull()
     })
 
     fireEvent.click(saveButton)
@@ -299,6 +300,177 @@ describe('Editor integration', () => {
       format: 'json',
       data: { title: 'Modified title' },
       expectedVersion: 100,
+    })
+  })
+
+  it("carries an unsaved draft onto the version a submit's stamp left", async () => {
+    const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
+    const stamp = '2026-10-14T09:00:00.000Z'
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('content/posts/hello'),
+      contentId: unsafeAsContentId('def456ABC123'),
+      label: 'Hello',
+      status: 'entry',
+      schema: [
+        { name: 'title', type: 'string' },
+        { name: 'publishedAt', type: 'datetime', stampOnPublish: true },
+      ],
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      collectionName: 'posts',
+      slug: 'hello',
+      format: 'json',
+      type: 'entry',
+    }
+    const branch = {
+      name: 'main',
+      status: 'editing',
+      access: {},
+      createdBy: SYSTEM_USER_ID,
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-01',
+      isProtected: false,
+      readOnly: false,
+      writeBlocked: false,
+      submitBlocked: false,
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { branches: [branch], defaultBranch: 'main' } }),
+        )
+      }
+      if (url.endsWith('/api/canopycms/main/submit') && init?.method === 'POST') {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branch: { ...branch, status: 'submitted' },
+              stamped: [
+                {
+                  contentId: 'def456ABC123',
+                  fields: { publishedAt: stamp },
+                  previousVersion: 100,
+                  version: 150,
+                },
+              ],
+            },
+          }),
+        )
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'entry-type',
+                  logicalPath: 'content/posts/post',
+                  name: 'post',
+                  parentPath: 'content/posts',
+                  format: 'json',
+                  schemaRef: 'postSchema',
+                },
+              ],
+              entrySchemas: { postSchema: entry.schema },
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  logicalPath: 'content/posts',
+                  contentId: 'abc123XYZ789',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: entry.schema,
+                  order: [],
+                },
+              ],
+              entries: [
+                {
+                  logicalPath: entry.path,
+                  contentId: 'def456ABC123',
+                  collectionPath: entry.collectionPath,
+                  collectionName: entry.collectionName,
+                  slug: entry.slug,
+                  format: entry.format,
+                  entryType: 'post',
+                  physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
+                  exists: true,
+                },
+              ],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: { title: 'Loaded title', publishedAt: '', version: 100 },
+          }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { modals } = await import('@mantine/modals')
+
+    renderWithProviders(
+      <Editor
+        entries={[entry]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+      />,
+    )
+    let input: HTMLInputElement
+    await waitFor(() => {
+      const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
+      expect(el?.value).toBe('Loaded title')
+      input = el!
+    })
+    fireEvent.change(input!, { target: { value: 'Unsaved title' } })
+    await waitFor(() => expect(readPersistedDrafts('main')).toHaveProperty('def456ABC123'))
+
+    fireEvent.click(await screen.findByTestId('submit-button'))
+    await waitFor(() => expect(vi.mocked(modals.openConfirmModal)).toHaveBeenCalled())
+    await act(async () => {
+      vi.mocked(modals.openConfirmModal).mock.lastCall?.[0].onConfirm?.()
+    })
+
+    await waitFor(() =>
+      expect(readPersistedDrafts('main').def456ABC123).toMatchObject({
+        title: 'Unsaved title',
+        publishedAt: stamp,
+      }),
+    )
+    // Once the branch is editable again, the draft saves against the stamped version.
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).startsWith(entryApiPath) && init?.method === 'PUT',
+      )
+      expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({
+        data: { title: 'Unsaved title', publishedAt: stamp },
+        expectedVersion: 150,
+      })
     })
   })
 
@@ -443,11 +615,11 @@ describe('Editor integration', () => {
     })
 
     // ...and the editor agrees there is nothing modified.
-    const saveButton = await screen.findByRole('button', { name: /save file/i })
-    expect(saveButton.hasAttribute('disabled')).toBe(true)
+    const saveButton = await screen.findByRole('button', { name: /^save$/i })
+    expect(saveButton.getAttribute('aria-disabled')).toBe('true')
   })
 
-  it('names the entry path and whom to ask, and renders no form, for an entry the user cannot edit', async () => {
+  it('names the entry by its label and whom to ask, and renders no form, for an entry the user cannot edit', async () => {
     const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/hello'),
@@ -570,7 +742,7 @@ describe('Editor integration', () => {
 
     const notice = await screen.findByTestId('no-edit-permission-notice')
     expect(notice.textContent).toBe(
-      'You don\'t have edit access to "content/posts/hello". Ask a CanopyCMS admin to grant it in Manage Permissions.',
+      'You don\'t have edit access to "hello". Ask a CanopyCMS admin to grant it in "Manage permissions".',
     )
     expect(screen.queryByRole('textbox', { name: /title/i })).toBeNull()
   })
@@ -780,8 +952,8 @@ describe('Editor integration', () => {
     // edit there would 409 instead of being blindly overwritten.
     fireEvent.change(input, { target: { value: 'Edited on feature' } })
     const saveButton = await waitFor(() => {
-      const btn = screen.getByRole('button', { name: /save file/i })
-      expect(btn.hasAttribute('disabled')).toBe(false)
+      const btn = screen.getByRole('button', { name: /^save$/i })
+      expect(btn.getAttribute('aria-disabled')).toBeNull()
       return btn
     })
     fireEvent.click(saveButton)
@@ -954,11 +1126,9 @@ describe('Editor integration', () => {
     // Entry A's load starts (parked, not yet resolved).
     await waitFor(() => expect(resolvers[entryAApiPath]).toBeDefined())
 
-    // Navigate to entry B via the File menu -> All Files -> entry click,
+    // Navigate to entry B via the File menu -> All content -> entry click,
     // while A is still in flight.
-    fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    await waitFor(() => expect(screen.getByTestId('all-files-menu-item')).toBeDefined())
-    fireEvent.click(screen.getByTestId('all-files-menu-item'))
+    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
     await waitFor(() => expect(screen.getByTestId('entry-nav-item-world')).toBeDefined())
     fireEvent.click(screen.getByTestId('entry-nav-item-world'))
 
@@ -1167,8 +1337,8 @@ describe('Editor integration', () => {
       // server value, so dirty-tracking is truthful rather than a permanent
       // false positive.
       await waitFor(() => {
-        const saveButton = screen.getByRole('button', { name: /save file/i })
-        expect(saveButton.hasAttribute('disabled')).toBe(false)
+        const saveButton = screen.getByRole('button', { name: /^save$/i })
+        expect(saveButton.getAttribute('aria-disabled')).toBeNull()
       })
     } finally {
       window.localStorage.removeItem('canopycms:drafts:main')
@@ -1327,8 +1497,8 @@ describe('Editor integration', () => {
       await waitFor(() => {
         const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
         expect(el?.value).toBe('Draft title from localStorage')
-        saveButton = screen.getByRole('button', { name: /save file/i })
-        expect(saveButton.hasAttribute('disabled')).toBe(false)
+        saveButton = screen.getByRole('button', { name: /^save$/i })
+        expect(saveButton.getAttribute('aria-disabled')).toBeNull()
       })
 
       fireEvent.click(saveButton)
@@ -1336,13 +1506,14 @@ describe('Editor integration', () => {
       await waitFor(() =>
         expect(notifications.show).toHaveBeenCalledWith(
           expect.objectContaining({
-            message: 'Content was modified by another editor. Reload to see the latest changes.',
+            message:
+              "This entry hasn't finished loading, so it can't be saved yet. Reload it and try again (your unsaved edits will be lost).",
           }),
         ),
       )
       expect(fetchMock.mock.calls.some(isPut)).toBe(false)
       expect(consoleSpy).toHaveErrored(/Load failed: 500/)
-      expect(consoleSpy).toHaveErrored(/has not been loaded from the server/)
+      expect(consoleSpy).toHaveErrored(/hasn't finished loading/)
     } finally {
       window.localStorage.removeItem('canopycms:drafts:main')
       consoleSpy.restore()
@@ -1482,14 +1653,12 @@ describe('Editor integration', () => {
       expect(screen.getByTestId('protected-branch-banner')).toBeDefined()
     })
     expect(screen.getByText(/protected base branch "main"/i)).toBeDefined()
-    expect(screen.getByRole('button', { name: /create a branch/i })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'New branch…' })).toBeDefined()
 
     // Submit is hidden entirely (not just disabled) on the protected branch.
     expect(screen.queryByTestId('submit-button')).toBeNull()
 
-    // Wait for the entry to load, then dirty it -- Save must stay disabled
-    // despite unsaved changes, proving branchReadOnly overrides the normal
-    // hasUnsavedChanges enable logic.
+    // The form is read-only: typing writes no draft, so Save stays disabled.
     let input: HTMLInputElement
     await waitFor(() => {
       const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
@@ -1500,20 +1669,16 @@ describe('Editor integration', () => {
 
     await waitFor(() => {
       const saveButton = screen.getByTestId('save-button')
-      expect(saveButton.hasAttribute('disabled')).toBe(true)
+      expect(saveButton.getAttribute('aria-disabled')).toBe('true')
     })
 
-    // Open the entry navigator (File dropdown -> All Files) and confirm the
+    // Open the entry navigator (File dropdown -> All content) and confirm the
     // read-only branch hides every mutation affordance: the per-collection
     // context menu (EntryNavigator's readOnly gating) and the drawer header's
-    // "Content actions" button (Add Entry/Add Collection for the root), which
+    // "Content actions" button (Add entry/Add collection for the root), which
     // reads navCollections[0].onAdd directly and would otherwise bypass
     // EntryNavigator's gating entirely.
-    fireEvent.click(screen.getByTestId('file-dropdown-button'))
-    await waitFor(() => {
-      expect(screen.getByTestId('all-files-menu-item')).toBeDefined()
-    })
-    fireEvent.click(screen.getByTestId('all-files-menu-item'))
+    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
 
     await waitFor(() => {
       expect(screen.getByTestId('entry-nav-item-posts')).toBeDefined()
@@ -1594,7 +1759,7 @@ describe('Editor integration', () => {
 
     await waitFor(() => {
       const withdrawButton = screen.getByTestId('withdraw-button')
-      expect(withdrawButton.hasAttribute('disabled')).toBe(false)
+      expect(withdrawButton.getAttribute('aria-disabled')).toBeNull()
     })
   })
 
@@ -1720,11 +1885,13 @@ describe('Editor integration', () => {
     })
     fireEvent.change(input!, { target: { value: 'Modified title' } })
 
-    // Save stays disabled despite the edit -- writeBlocked's absence must
-    // fail closed, not read as "server says go ahead".
+    // writeBlocked's absence fails closed, not as "server says go ahead": the
+    // form is read-only, the edit writes no draft, and Save stays disabled.
+    expect(input!.readOnly).toBe(true)
+    expect(readPersistedDrafts('main')).not.toHaveProperty('def456ABC123')
     await waitFor(() => {
       const saveButton = screen.getByTestId('save-button')
-      expect(saveButton.hasAttribute('disabled')).toBe(true)
+      expect(saveButton.getAttribute('aria-disabled')).toBe('true')
     })
 
     // isProtected's absence must also fail closed -- Submit hides entirely,
@@ -1769,6 +1936,12 @@ describe('Editor integration', () => {
     // A branch list that leaves the branch unlocked (editing, unprotected),
     // so the reorder UI is reachable at all -- otherwise Change 1's
     // fail-closed default would hide it and these tests would prove nothing.
+    const adminWhoami = {
+      ok: true,
+      status: 200,
+      data: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+    }
+
     const unlockedBranchesResponse = {
       ok: true,
       status: 200,
@@ -1792,11 +1965,7 @@ describe('Editor integration', () => {
     }
 
     const openNavigatorAndFindSubA = async () => {
-      fireEvent.click(screen.getByTestId('file-dropdown-button'))
-      await waitFor(() => {
-        expect(screen.getByTestId('all-files-menu-item')).toBeDefined()
-      })
-      fireEvent.click(screen.getByTestId('all-files-menu-item'))
+      fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
       // hiddenRootPath collapses the single "content/posts" root (contentRoot
       // is pinned to it below), so its children render directly at the top
       // level with no expand click needed.
@@ -1811,6 +1980,10 @@ describe('Editor integration', () => {
           typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
         if (url.endsWith('/api/canopycms/branches')) {
           return Promise.resolve(okJson(unlockedBranchesResponse))
+        }
+        // Entry order is an admin action (its API takes the `admin` guard).
+        if (url.endsWith('/whoami')) {
+          return Promise.resolve(okJson(adminWhoami))
         }
         if (url.includes('/schema') && !url.includes('/schema/')) {
           // Empty flatSchema -- collectionsFromApi (buildEditorCollections)
@@ -1857,7 +2030,7 @@ describe('Editor integration', () => {
       await openNavigatorAndFindSubA()
 
       fireEvent.click(screen.getByTestId('collection-menu-sub-a'))
-      const moveDown = await screen.findByText('Move Down')
+      const moveDown = await screen.findByText('Move down')
       fireEvent.click(moveDown)
 
       const { notifications } = await import('@mantine/notifications')
@@ -1885,6 +2058,10 @@ describe('Editor integration', () => {
           typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
         if (url.endsWith('/api/canopycms/branches')) {
           return Promise.resolve(okJson(unlockedBranchesResponse))
+        }
+        // Entry order is an admin action (its API takes the `admin` guard).
+        if (url.endsWith('/whoami')) {
+          return Promise.resolve(okJson(adminWhoami))
         }
         if (url.includes('/schema') && !url.includes('/schema/')) {
           return Promise.resolve(
@@ -1958,7 +2135,7 @@ describe('Editor integration', () => {
       await openNavigatorAndFindSubA()
 
       fireEvent.click(screen.getByTestId('collection-menu-sub-a'))
-      const moveDown = await screen.findByText('Move Down')
+      const moveDown = await screen.findByText('Move down')
       fireEvent.click(moveDown)
 
       await waitFor(() => {
@@ -2213,10 +2390,10 @@ describe('preview pane', () => {
 
   it("frames a root entry's own page, not the site root", async () => {
     stubApi()
-    const { container } = renderSelected(about)
+    const { baseElement } = renderSelected(about)
 
     await waitFor(() =>
-      expect(container.querySelector('iframe')?.getAttribute('src')).toBe(
+      expect(baseElement.querySelector('iframe')?.getAttribute('src')).toBe(
         '/edit/preview/about?branch=main',
       ),
     )
@@ -2224,7 +2401,7 @@ describe('preview pane', () => {
 
   it('says an entry with no page has no preview, and frames nothing', async () => {
     stubApi()
-    const { container } = renderSelected(settings)
+    const { baseElement } = renderSelected(settings)
 
     await waitFor(() =>
       expect(
@@ -2232,6 +2409,6 @@ describe('preview pane', () => {
       ).toBe('Loaded'),
     )
     expect(screen.getByText('No preview for this entry.')).toBeTruthy()
-    expect(container.querySelector('iframe')).toBeNull()
+    expect(baseElement.querySelector('iframe')).toBeNull()
   })
 })

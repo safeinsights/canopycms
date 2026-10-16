@@ -180,9 +180,9 @@ test.describe('Assets / Media pipeline', () => {
 
     await test.step('attempt to save is blocked client-side', async () => {
       await editorPage.save()
-      await expect(
-        page.locator('.mantine-Notification-root', { hasText: 'Cannot save yet' }),
-      ).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.notification('Cannot save yet')).toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
       // Scoped to the field: the same message also appears in FormRenderer's
       // form-level error summary ("heroImage.alt: Image alt text is
       // required"), which would otherwise make this a strict-mode violation.
@@ -377,8 +377,6 @@ test.describe('Assets / Media pipeline', () => {
       expect(src).toMatch(/^\/assets\/t\/orig\//)
     })
 
-    // Width must be on the allowlist (multiple of 160, [160,4096] - see
-    // transform-directives.ts) - 320 is the smallest valid step above 160.
     const derivedUrl = src.replace('/orig/', '/w=320/')
 
     await test.step('first request computes and serves the transform', async () => {

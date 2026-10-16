@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-05, backlog curation. The premise is gone: `assignDefaults` occurs 0 times in CODEBASE_GUIDE.md.
+---
 # [P3] CODEBASE_GUIDE.md's with-canopy.ts row still cites bare `assignDefaults`
 
 **RESOLVED 2026-10-05:** the premise is gone; `assignDefaults` occurs 0 times in CODEBASE_GUIDE.md.

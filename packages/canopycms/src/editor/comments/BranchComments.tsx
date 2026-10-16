@@ -11,7 +11,7 @@ export interface BranchCommentsProps {
   comments: CommentThread[]
   /** Current user ID */
   currentUserId: string
-  /** Whether user can resolve threads */
+  /** Whether the user may resolve any thread; a thread's own author always may resolve it. */
   canResolve: boolean
   /** Handler to add a comment */
   onAddComment: (
@@ -59,7 +59,6 @@ export const BranchComments: React.FC<BranchCommentsProps> = ({
     return (
       <Box>
         <Button
-          size="xs"
           variant="subtle"
           color="gray"
           onClick={() => setShowCarousel(true)}
@@ -74,7 +73,7 @@ export const BranchComments: React.FC<BranchCommentsProps> = ({
   return (
     <ThreadCarousel
       threads={branchThreads}
-      label="Branch Discussion"
+      label="Branch discussion"
       contextType="branch"
       currentUserId={currentUserId}
       canResolve={canResolve}

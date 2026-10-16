@@ -1,0 +1,141 @@
+import { LRUCache } from 'lru-cache'
+import type { AuthPlugin } from './plugin'
+import type { UserProfile, UserSearchResult } from './types'
+import type { CanopyUserId } from '../types'
+import { CachingAuthPlugin } from './caching-auth-plugin'
+import { MAX_USER_METADATA_BATCH } from '../api/users-constants'
+import { isSystemUserId } from '../system-users'
+import { ANONYMOUS_USER } from '../user'
+import { personName } from './person-name'
+
+/**
+ * How long a looked-up user, or the fact that an id is unknown, is served without asking again.
+ * @internal Exported for tests.
+ */
+export const USER_METADATA_TTL_MS = 5 * 60 * 1000
+const MAX_CACHED_USERS = 5000
+/** Concurrent `getUserMetadata` calls for a plugin without `getUsersMetadata`. */
+const SINGLE_LOOKUP_CONCURRENCY = 8
+
+/** Boxed so an unknown id (`null`) can be cached; LRUCache values must be non-nullish. */
+interface CachedUser {
+  user: UserSearchResult | null
+}
+
+/**
+ * Per-process, in-memory, never persisted: each process keeps its own copy, so a changed name or
+ * avatar shows everywhere within one TTL. Keyed by plugin so two plugins never share answers.
+ */
+const caches = new WeakMap<AuthPlugin, LRUCache<CanopyUserId, CachedUser>>()
+
+function cacheFor(plugin: AuthPlugin): LRUCache<CanopyUserId, CachedUser> {
+  let cache = caches.get(plugin)
+  if (!cache) {
+    cache = new LRUCache({ max: MAX_CACHED_USERS, ttl: USER_METADATA_TTL_MS })
+    caches.set(plugin, cache)
+  }
+  return cache
+}
+
+/**
+ * Resolves each id to its user, or `null` when the provider does not know it. Unknown ids are
+ * cached like found ones, so a stale id in permissions.json costs a process one provider call
+ * per TTL. A rejection caches nothing; a `getUserMetadata` that answers `null` on failure is
+ * cached as unknown.
+ */
+export async function lookupUsersMetadata(
+  plugin: AuthPlugin,
+  userIds: readonly CanopyUserId[],
+): Promise<Map<CanopyUserId, UserSearchResult | null>> {
+  const unique = [...new Set(userIds)]
+  // Answered from an in-memory copy of the worker-written file cache; a TTL on top would only
+  // delay the worker's refreshes. canopycms-next wraps every plugin with `verifyTokenOnly`.
+  if (plugin instanceof CachingAuthPlugin) return fetchFromPlugin(plugin, unique)
+
+  const cache = cacheFor(plugin)
+  const result = new Map<CanopyUserId, UserSearchResult | null>()
+  const missing: CanopyUserId[] = []
+  for (const id of unique) {
+    const hit = cache.get(id)
+    if (hit) result.set(id, hit.user)
+    else missing.push(id)
+  }
+  if (missing.length === 0) return result
+
+  const fetched = await fetchFromPlugin(plugin, missing)
+  for (const [id, user] of fetched) {
+    cache.set(id, { user })
+    result.set(id, user)
+  }
+  return result
+}
+
+/** Every lookup answers with the same name the editor shows: blank or id-equal names become ''. */
+const withPersonName = (user: UserSearchResult | null): UserSearchResult | null =>
+  user && { ...user, name: personName(user.id, user.name) ?? '' }
+
+async function fetchFromPlugin(
+  plugin: AuthPlugin,
+  ids: CanopyUserId[],
+): Promise<Map<CanopyUserId, UserSearchResult | null>> {
+  const result = new Map<CanopyUserId, UserSearchResult | null>(ids.map((id) => [id, null]))
+  const getUsersMetadata = plugin.getUsersMetadata?.bind(plugin)
+  if (getUsersMetadata) {
+    for (let i = 0; i < ids.length; i += MAX_USER_METADATA_BATCH) {
+      const users = await getUsersMetadata(ids.slice(i, i + MAX_USER_METADATA_BATCH))
+      // A provider answering for an id nobody asked about must not plant it in the cache.
+      for (const user of users) if (result.has(user.id)) result.set(user.id, withPersonName(user))
+    }
+    return result
+  }
+
+  let next = 0
+  const worker = async () => {
+    while (next < ids.length) {
+      const id = ids[next++]
+      result.set(id, withPersonName(await plugin.getUserMetadata(id)))
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(SINGLE_LOOKUP_CONCURRENCY, ids.length) }, worker))
+  return result
+}
+
+/** Matches the id bound `/users/batch` accepts; ids read from stored JSON are unvalidated. */
+const MAX_USER_ID_LENGTH = 256
+
+/**
+ * The name and avatar of each id a response may show to any reader, never the email. Callers pass
+ * only ids the requester can already see. Non-string, empty, oversized, bot and anonymous ids are
+ * skipped: the editor labels bots and the anonymous user without a lookup. Unknown ids are absent.
+ */
+export async function lookupUserProfiles(
+  plugin: AuthPlugin,
+  ids: Iterable<unknown>,
+): Promise<UserProfile[]> {
+  const wanted = new Set<CanopyUserId>()
+  for (const id of ids) {
+    if (
+      typeof id === 'string' &&
+      id.length > 0 &&
+      id.length <= MAX_USER_ID_LENGTH &&
+      id !== ANONYMOUS_USER.userId &&
+      !isSystemUserId(id)
+    ) {
+      wanted.add(id)
+    }
+  }
+  if (wanted.size === 0) return []
+  const found = await lookupUsersMetadata(plugin, [...wanted])
+  const profiles: UserProfile[] = []
+  // Built field by field: a provider's user record carries an email, which a profile never does.
+  for (const [id, user] of found) {
+    // A record for some other id (a provider resolving an alias) names someone nobody asked about.
+    if (user === null || user.id !== id) continue
+    profiles.push(
+      user.avatarUrl === undefined
+        ? { id: user.id, name: user.name }
+        : { id: user.id, name: user.name, avatarUrl: user.avatarUrl },
+    )
+  }
+  return profiles
+}

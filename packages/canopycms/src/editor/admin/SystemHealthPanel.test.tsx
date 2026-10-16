@@ -1,5 +1,5 @@
 import React from 'react'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -10,9 +10,11 @@ import { CanopyCMSProvider } from '../theme'
 import { SystemHealthPanel } from './SystemHealthPanel'
 import type { AdminStatusData, AdminTasksData } from '../../api/admin'
 import type { Task } from '../../task-queue'
-import type { BranchHealthEntry } from '../../branch-health'
-import type { BaseRefreshReport, WorkerStatusReport } from '../../types'
+import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
+import type { BranchHealthData } from '../../api/admin-branch-health'
+import type { BaseRefreshReport, BaseSchemaHold, WorkerStatusReport } from '../../types'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
+import { formatRelativeTime } from '../relative-time'
 
 // Mock the API client module (both useApiClient() and useSystemHealth() must
 // resolve to the same mock client instance) -- same pattern as
@@ -44,6 +46,7 @@ function makeStatus(overrides: Partial<AdminStatusData> = {}): AdminStatusData {
     workerStatus: null,
     build: { canopycmsVersion: '1.2.3', sourceRevision: 'abcdef0123456789abcdef' },
     assetStore: { configured: true },
+    imageProcessing: { available: true },
     ...overrides,
   }
 }
@@ -182,6 +185,125 @@ describe('SystemHealthPanel', () => {
         expect(text).toContain('CANOPY_SOURCE_SHA')
       })
 
+      it('shows how the previous worker shut down, in orange when its drain hit the deadline', async () => {
+        const base = statusWithWorkerVersion('1.2.3')
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess({
+            ...base,
+            workerStatus: {
+              ...base.workerStatus!,
+              lastShutdown: {
+                reason: 'ASG termination',
+                at: '2026-01-01T00:00:00.000Z',
+                workerStartedAt: '2025-12-31T00:00:00.000Z',
+                outcome: 'deadline',
+                drainMs: 90_000,
+                abandoned: ['task queue'],
+              },
+            },
+          }),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-last-shutdown')).toBeTruthy())
+        const text = screen.getByTestId('build-last-shutdown').textContent ?? ''
+        expect(text).toContain('ASG termination')
+        expect(text).toContain('drain deadline hit, aborted task queue')
+      })
+
+      it('says when the previous worker stopped without draining', async () => {
+        const base = statusWithWorkerVersion('1.2.3')
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess({
+            ...base,
+            workerStatus: {
+              ...base.workerStatus!,
+              lastShutdown: {
+                reason: 'stopped without draining',
+                at: '2026-01-01T00:00:00.000Z',
+                workerStartedAt: '2025-12-31T00:00:00.000Z',
+                outcome: 'not-drained',
+              },
+            },
+          }),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-last-shutdown')).toBeTruthy())
+        const text = screen.getByTestId('build-last-shutdown').textContent ?? ''
+        expect(text).toContain('stopped without draining')
+        expect(text).toContain('a crash or a forced stop')
+        expect(text).not.toContain('drained in')
+      })
+
+      it('shows the last drained shutdown and, separately, a failed start after it', async () => {
+        const base = statusWithWorkerVersion('1.2.3')
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess({
+            ...base,
+            workerStatus: {
+              ...base.workerStatus!,
+              lastShutdown: {
+                reason: 'SIGTERM',
+                at: '2026-01-01T00:00:00.000Z',
+                workerStartedAt: '2025-12-31T00:00:00.000Z',
+                outcome: 'drained',
+                drainMs: 1_500,
+              },
+              lastFatalError: {
+                message: 'clone failed',
+                at: '2026-01-02T00:00:05.000Z',
+                phase: 'startup',
+              },
+            },
+          }),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-last-shutdown')).toBeTruthy())
+        const shutdown = screen.getByTestId('build-last-shutdown').textContent ?? ''
+        expect(shutdown).toContain('SIGTERM at 2026-01-01T00:00:00.000Z')
+        expect(shutdown).toContain('drained in 1.5s')
+        expect(shutdown).not.toContain('a crash or a forced stop')
+        expect(screen.getByTestId('build-failed-start').textContent).toBe(
+          'Last start failed at 2026-01-02T00:00:05.000Z',
+        )
+      })
+
+      it('shows no failed-start line for a failure while running', async () => {
+        const base = statusWithWorkerVersion('1.2.3')
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess({
+            ...base,
+            workerStatus: {
+              ...base.workerStatus!,
+              lastFatalError: {
+                message: 'lost lock',
+                at: '2026-01-02T00:00:05.000Z',
+                phase: 'run',
+              },
+            },
+          }),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.queryByTestId('build-failed-start')).toBeNull()
+      })
+
+      it('shows no shutdown line when the status file has none', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.3')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.queryByTestId('build-last-shutdown')).toBeNull()
+      })
+
       it('shows the worker version as unknown when the worker did not report one', async () => {
         mockClient.admin.status.mockResolvedValueOnce(
           mockSuccess(statusWithWorkerVersion(undefined)),
@@ -272,6 +394,33 @@ describe('SystemHealthPanel', () => {
           'not configured — uploads are disabled',
         )
       })
+
+      it('shows image processing as available', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatus()))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-image-processing')).toBeTruthy())
+        expect(screen.getByTestId('build-image-processing').textContent).toBe(
+          'Image processing: available',
+        )
+      })
+
+      it('shows image processing as unavailable with the error text', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess(
+            makeStatus({ imageProcessing: { available: false, error: 'libvips missing' } }),
+          ),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-image-processing')).toBeTruthy())
+        const text = screen.getByTestId('build-image-processing').textContent
+        expect(text).toContain('unavailable')
+        expect(text).toContain('libvips missing')
+        expect(text).not.toContain('Image processing: available')
+      })
     })
 
     it('shows a muted dev-mode note instead of alarming colors', async () => {
@@ -306,8 +455,33 @@ describe('SystemHealthPanel', () => {
       renderPanel()
 
       await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
-      expect(screen.getByText('Worker crash detected')).toBeTruthy()
+      expect(screen.getByText('The worker failed to start')).toBeTruthy()
       expect(screen.getByText('Worker crashed on boot')).toBeTruthy()
+    })
+
+    it('says the worker stopped while running for a failure after startup', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(
+          makeStatus({
+            worker: { state: 'absent' },
+            workerStatus: {
+              version: 1,
+              startedAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: new Date().toISOString(),
+              lastFatalError: {
+                message: 'The worker lost its lock on the shared workspace and stopped',
+                at: new Date().toISOString(),
+                phase: 'run',
+              },
+            },
+          }),
+        ),
+      )
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('The worker stopped while running')).toBeTruthy())
+      expect(screen.queryByText('The worker failed to start')).toBeNull()
     })
   })
 
@@ -334,6 +508,178 @@ describe('SystemHealthPanel', () => {
 
       await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
       expect(screen.queryByText(/Settings workspace unavailable/)).toBeNull()
+    })
+  })
+
+  describe('Overview tab: schema issues', () => {
+    it('lists each issue under a title naming the content types this editor does not know', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(
+          makeStatus({
+            schemaIssues: [
+              {
+                kind: 'unknown-schema',
+                collectionPath: 'widgets',
+                entryType: 'widget',
+                schemaRef: 'widgetSchema',
+                metaFile: 'content/widgets/.collection.json',
+                message: 'unused for this kind',
+              },
+              {
+                kind: 'reference-entry-type',
+                message:
+                  'field "related" points at entry type "gadget", which no collection declares',
+              },
+            ],
+          }),
+        ),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('schema-issues-alert')
+      expect(alert.textContent).toContain("Content types this editor version doesn't know")
+      expect(alert.textContent).toContain(
+        'content/widgets/.collection.json names widgetSchema, so entry type widget is unavailable',
+      )
+      expect(alert.textContent).toContain(
+        'field "related" points at entry type "gadget", which no collection declares',
+      )
+    })
+
+    it('shows no schema alert when the status reports no issues', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatus({ schemaIssues: [] })))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
+      expect(screen.queryByTestId('schema-issues-alert')).toBeNull()
+    })
+  })
+
+  describe('Overview tab: base branch held for an editor deploy', () => {
+    const hold: BaseSchemaHold = {
+      since: '2026-01-01T00:20:00.000Z',
+      firstSeen: {
+        personSchema: '2026-01-01T00:20:00.000Z',
+        teamSchema: '2026-01-01T00:22:00.000Z',
+      },
+      incomingSha: 'f00dfeed',
+      missingSchemas: ['personSchema', 'teamSchema'],
+      files: ['content/people/.collection.json'],
+      fileCount: 1,
+      editorBuild: { canopycmsVersion: '1.2.3', sourceRevision: 'abcdef0123456789abcdef' },
+      editorRecordedAt: '2026-01-01T00:00:00.000Z',
+    }
+    const statusWithHold = (baseHold: BaseSchemaHold): AdminStatusData => {
+      const status = makeStatusWithSync()
+      if (!status.workerStatus) throw new Error('expected a worker status')
+      status.workerStatus.baseHold = baseHold
+      return status
+    }
+
+    it('says the worker is waiting, naming the schemas, the editor build and the files', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithHold(hold)))
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('base-hold-alert')
+      expect(alert.textContent).toContain('Waiting for editor deploy')
+      expect(alert.textContent).toContain(
+        'Newly merged content names personSchema, teamSchema, which the running editor (built from abcdef012345) does not define.',
+      )
+      expect(alert.textContent).toContain('keeps the base branch at its current version')
+      expect(alert.textContent).toContain('content/people/.collection.json')
+    })
+
+    it('counts the files past the first ten it lists', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithHold({ ...hold, fileCount: 13 })),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('base-hold-alert')
+      expect(alert.textContent).toContain('content/people/.collection.json and 12 more')
+    })
+
+    it('says the worker stopped waiting once the hold expired', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithHold({ ...hold, expired: true })),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('base-hold-alert')
+      expect(alert.textContent).toContain('Stopped waiting for the editor deploy')
+      expect(alert.textContent).toContain('updated the base branch anyway')
+    })
+
+    it('shows no hold alert when the last sync held nothing', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatusWithSync()))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
+      expect(screen.queryByTestId('base-hold-alert')).toBeNull()
+    })
+  })
+
+  describe('Overview tab: diverged branches', () => {
+    const statusWithDiverged = (diverged: string[]): AdminStatusData => {
+      const status = makeStatusWithSync()
+      if (!status.workerStatus?.lastGitSync) throw new Error('expected a last git sync')
+      status.workerStatus.lastGitSync.tracked = {
+        created: [],
+        fastForwarded: [],
+        ahead: [],
+        diverged,
+      }
+      return status
+    }
+
+    it('lists each diverged branch, says what it means and what to do', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithDiverged(['feature-a', 'feature-b'])),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('diverged-branches-alert')
+      expect(alert.textContent).toContain('2 branches diverged from GitHub')
+      expect(alert.textContent).toContain(
+        'holds editor work that conflicts with the branch on GitHub',
+      )
+      expect(alert.textContent).toContain('first push it to a new branch name on GitHub')
+      expect(alert.textContent).toContain('"Delete branch" in the editor')
+      expect(alert.textContent).toContain('withdraw it from review first')
+      expect(alert.textContent).not.toContain('purge')
+      expect(alert.textContent).toContain('feature-a')
+      expect(alert.textContent).toContain('feature-b')
+    })
+
+    it('shows a hostile branch name escaped, never as markup or hidden characters', async () => {
+      const markup = '<img src=x onerror="alert(1)">'
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithDiverged([markup, 'feature-\u202eevil\u200b'])),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('diverged-branches-alert')
+      expect(alert.querySelector('img')).toBeNull()
+      expect(alert.textContent).toContain(markup)
+      expect(alert.textContent).toContain('feature-\\u{202e}evil\\u{200b}')
+      expect(alert.textContent).not.toMatch(/[\u202e\u200b]/)
+    })
+
+    it('shows no alert when nothing diverged', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithDiverged([])))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
+      expect(screen.queryByTestId('diverged-branches-alert')).toBeNull()
     })
   })
 
@@ -507,11 +853,14 @@ describe('SystemHealthPanel', () => {
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-02T00:00:00.000Z',
       },
-      duplicateContentIds: [
+    }
+    const duplicateFound: DuplicateIdScan = {
+      state: 'found',
+      duplicates: [
         {
           id: unsafeAsContentId('a1b2c3d4e5f6'),
-          keptPath: unsafeAsPhysicalPath('content/posts/one.md'),
-          droppedPaths: [unsafeAsPhysicalPath('content/notes/one.md')],
+          keptPath: unsafeAsPhysicalPath('content/posts/post.one.a1b2c3d4e5f6.json'),
+          droppedPaths: [unsafeAsPhysicalPath('content/posts/post.two.a1b2c3d4e5f6.json')],
         },
       ],
     }
@@ -581,22 +930,130 @@ describe('SystemHealthPanel', () => {
       expect(screen.getByText('broken-branch')).toBeTruthy()
       // Multiple corrupt-metadata fixtures are seeded in this describe block
       // (broken-branch, broken-locked, main) -- assert count, not identity.
-      expect(screen.getAllByText('corrupt metadata').length).toBeGreaterThanOrEqual(1)
+      expect(screen.getAllByText('Corrupt metadata').length).toBeGreaterThanOrEqual(1)
       expect(screen.getByText('orphan-young')).toBeTruthy()
       expect(screen.getByText('orphan-old')).toBeTruthy()
     })
 
-    // The editor's 409 says an administrator must resolve the duplicate; this
-    // is the only place an administrator can see which branch is affected.
-    it('surfaces duplicate content IDs on a healthy branch, read-only', async () => {
-      renderPanel()
-      await userEvent.click(screen.getByText('Branches'))
+    describe('duplicate content IDs', () => {
+      /**
+       * Answers the plain request with `entries` and the `duplicates=1` scan
+       * with each healthy entry's `scans[dirName]` (omitted when absent).
+       */
+      const mockScan = (
+        entries: BranchHealthEntry[],
+        scans: Record<string, DuplicateIdScan>,
+        truncated = false,
+      ) => {
+        mockClient.admin.branchHealth.mockImplementation(async (params) => {
+          const data: BranchHealthData =
+            params?.duplicates === '1'
+              ? {
+                  entries: entries.map((e) =>
+                    scans[e.dirName] ? { ...e, duplicateIdScan: scans[e.dirName] } : e,
+                  ),
+                  generatedAt: '2026-01-01T00:00:00.000Z',
+                  duplicateIdScan: { budgetMs: 20_000, truncated },
+                }
+              : { entries, generatedAt: '2026-01-01T00:00:00.000Z' }
+          return mockSuccess(data)
+        })
+      }
+      const summary = () => screen.getByTestId('duplicate-id-summary').textContent
 
-      await waitFor(() => expect(screen.getByText('feature-dupes')).toBeTruthy())
-      const badge = screen.getByTestId('duplicate-content-ids-feature-dupes')
-      expect(badge.textContent).toBe('1 duplicate ID')
-      // No repair control here: the action would sit beside Purge.
-      expect(screen.queryByTestId('repair-content-duplicates-feature-dupes')).toBeNull()
+      it('opens its own confirmation from the badge, showing kept and archived paths, and confirm runs only the repair', async () => {
+        const { modals } = await import('@mantine/modals')
+        mockScan([healthyWithDuplicateIds, oldOrphan], { 'feature-dupes': duplicateFound })
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+
+        const badge = await screen.findByTestId('duplicate-content-ids-feature-dupes')
+        expect(badge.textContent).toBe('1 duplicate ID')
+        expect(summary()).toBe('Duplicate content IDs found on 1 branch.')
+
+        await userEvent.click(badge)
+
+        const options = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
+        expect(options?.title).toBe('Fix duplicate content IDs')
+        expect(options?.labels).toEqual({ confirm: 'Archive duplicates', cancel: 'Cancel' })
+        cleanup()
+        render(<CanopyCMSProvider>{options?.children}</CanopyCMSProvider>)
+        expect(screen.getByText('content/posts/post.one.a1b2c3d4e5f6.json')).toBeTruthy()
+        expect(screen.getByText('content/posts/post.two.a1b2c3d4e5f6.json')).toBeTruthy()
+        expect(screen.getByText(/Nothing is deleted/)).toBeTruthy()
+
+        await waitFor(() =>
+          expect(mockClient.admin.repairContentDuplicates).toHaveBeenCalledWith({
+            dirName: 'feature-dupes',
+          }),
+        )
+        expect(mockClient.admin.purgeBranchDir).not.toHaveBeenCalled()
+      })
+
+      it('says not checked, never clean, for a branch the scan could not finish or did not include', async () => {
+        const late: BranchHealthEntry = { ...healthyWithDuplicateIds, dirName: 'feature-late' }
+        const added: BranchHealthEntry = { ...healthyWithDuplicateIds, dirName: 'feature-new' }
+        mockScan(
+          [healthyWithDuplicateIds, late, added],
+          {
+            'feature-dupes': { state: 'none' },
+            'feature-late': { state: 'unknown', reason: 'out-of-time' },
+          },
+          true,
+        )
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+
+        await screen.findByTestId('duplicate-ids-unchecked-feature-late')
+        expect(screen.getByTestId('duplicate-ids-unchecked-feature-new')).toBeTruthy()
+        expect(screen.queryByTestId('duplicate-ids-unchecked-feature-dupes')).toBeNull()
+        expect(screen.queryByTestId('duplicate-content-ids-feature-late')).toBeNull()
+        expect(summary()).toBe('Could not check 2 branches.')
+
+        await userEvent.hover(screen.getByTestId('duplicate-ids-unchecked-feature-late'))
+        expect((await screen.findByRole('tooltip')).textContent).toBe(
+          'The duplicate ID check ran out of time before reaching this branch.',
+        )
+      })
+
+      it('says clean only when every healthy branch was scanned clean', async () => {
+        mockScan([healthyWithDuplicateIds, corruptEntry], { 'feature-dupes': { state: 'none' } })
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+
+        await waitFor(() => expect(summary()).toBe('No duplicate content IDs found.'))
+        expect(screen.queryByTestId('duplicate-content-ids-feature-dupes')).toBeNull()
+        expect(screen.queryByTestId('duplicate-ids-unchecked-feature-dupes')).toBeNull()
+      })
+
+      it('reports a failed scan request as not checked', async () => {
+        mockClient.admin.branchHealth.mockImplementation(async (params) =>
+          params?.duplicates === '1'
+            ? { ok: false, status: 500, error: 'Lambda timed out' }
+            : mockSuccess({
+                entries: [healthyWithDuplicateIds],
+                generatedAt: '2026-01-01T00:00:00.000Z',
+              }),
+        )
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+
+        await waitFor(() =>
+          expect(summary()).toBe('Could not check for duplicate content IDs: Lambda timed out'),
+        )
+      })
+
+      it('Check again re-runs the scan', async () => {
+        mockScan([healthyWithDuplicateIds], { 'feature-dupes': { state: 'none' } })
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+        await waitFor(() => expect(summary()).toBe('No duplicate content IDs found.'))
+
+        mockScan([healthyWithDuplicateIds], { 'feature-dupes': duplicateFound })
+        await userEvent.click(screen.getByRole('button', { name: 'Check again' }))
+
+        await screen.findByTestId('duplicate-content-ids-feature-dupes')
+      })
     })
 
     it('shows Mark merged only for submitted/approved branches with a PR, and confirms the prod verification gap', async () => {
@@ -623,6 +1080,25 @@ describe('SystemHealthPanel', () => {
       expect(screen.getByTestId('rebase-failure-feature-a')).toBeTruthy() // editing: rebased
       expect(screen.queryByTestId('rebase-failure-feature-b')).toBeNull() // submitted: skipped
       expect(screen.queryByTestId('rebase-failure-feature-c')).toBeNull() // archived: skipped
+    })
+
+    it('reaches the rebase failure by keyboard: a named focusable icon described by the message', async () => {
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('feature-a')).toBeTruthy())
+
+      const icon = screen.getByTestId('rebase-failure-feature-a')
+      const trigger = icon.closest('[tabindex="0"]') as HTMLElement
+      expect(trigger.tagName).toBe('SPAN')
+      expect(screen.getByRole('img', { name: 'Rebase failing' })).toBe(trigger)
+      act(() => trigger.focus())
+      expect(document.activeElement).toBe(trigger)
+      const detail = `merge conflict (first failed ${formatRelativeTime('2026-01-01T00:00:00.000Z')}, ${new Date('2026-01-01T00:00:00.000Z').toLocaleString()})`
+      expect(document.getElementById(trigger.getAttribute('aria-describedby')!)?.textContent).toBe(
+        detail,
+      )
+      // The tooltip names the icon, which is all a sighted user sees.
+      expect((await screen.findByRole('tooltip')).textContent).toBe(`Rebase failing: ${detail}`)
     })
 
     describe('base branch row', () => {
@@ -664,6 +1140,27 @@ describe('SystemHealthPanel', () => {
         )
       })
 
+      it('reaches the base refresh warning by keyboard: a named focusable icon described by it', async () => {
+        mockClient.admin.status.mockResolvedValue(mockSuccess(makeStatusWithSync(dirtyBaseRefresh)))
+
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+        const icon = await screen.findByTestId('base-refresh-warning-main')
+
+        const trigger = icon.closest('[tabindex="0"]') as HTMLElement
+        expect(trigger.tagName).toBe('SPAN')
+        expect(screen.getByRole('img', { name: 'Base branch refresh failing' })).toBe(trigger)
+        act(() => trigger.focus())
+        expect(document.activeElement).toBe(trigger)
+        const description = document.getElementById(
+          trigger.getAttribute('aria-describedby')!,
+        )?.textContent
+        expect(description).toMatch(/Uncommitted: content\/home\.md/)
+        expect((await screen.findByRole('tooltip')).textContent).toBe(
+          `Base branch refresh failing: ${description}`,
+        )
+      })
+
       it('carries no warning when the worker reports no baseRefresh', async () => {
         mockClient.admin.status.mockResolvedValue(mockSuccess(makeStatusWithSync()))
 
@@ -702,8 +1199,47 @@ describe('SystemHealthPanel', () => {
       await userEvent.click(screen.getByText('Branches'))
       await waitFor(() => expect(screen.getByText('feature-d')).toBeTruthy())
 
-      await userEvent.hover(screen.getByText('sync-failed'))
-      expect(await screen.findByText(/moved on GitHub/)).toBeTruthy()
+      await userEvent.hover(screen.getByText('Sync failed'))
+      expect((await screen.findByRole('tooltip')).textContent).toMatch(/moved on GitHub/)
+    })
+
+    it('reaches the sync-failed reason by keyboard: a focusable trigger described by the reason', async () => {
+      mockClient.admin.branchHealth.mockResolvedValueOnce(
+        mockSuccess({
+          entries: [
+            {
+              dirName: 'feature-d',
+              kind: 'healthy',
+              branch: {
+                name: 'feature-d',
+                status: 'editing',
+                access: {},
+                createdBy: 'user-1',
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-02T00:00:00.000Z',
+                syncStatus: 'sync-failed',
+                syncFailureReason: 'Push rejected for branch "feature-d": it has moved on GitHub',
+              },
+            },
+          ],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('feature-d')).toBeTruthy())
+
+      expect(screen.queryByRole('button', { name: /sync/i })).toBeNull()
+      const trigger = screen.getByText('Sync failed').closest('[tabindex="0"]') as HTMLElement
+      expect(trigger.tagName).toBe('SPAN')
+      act(() => trigger.focus())
+      expect(document.activeElement).toBe(trigger)
+      const describedBy = trigger.getAttribute('aria-describedby')
+      expect(document.getElementById(describedBy!)?.textContent).toBe(
+        'Push rejected for branch "feature-d": it has moved on GitHub — retry from the "Tasks" tab',
+      )
+      expect((await screen.findByRole('tooltip')).textContent).toMatch(/moved on GitHub/)
     })
 
     it('disables purge for a young orphan and confirms the 30-day trash retention for an old one', async () => {
@@ -712,10 +1248,18 @@ describe('SystemHealthPanel', () => {
       await waitFor(() => expect(screen.getByText('orphan-young')).toBeTruthy())
 
       const youngPurgeButton = screen.getByTestId('purge-dir-orphan-young')
-      expect(youngPurgeButton).toHaveProperty('disabled', true)
+      expect(youngPurgeButton.getAttribute('aria-disabled')).toBe('true')
+      // Blocked, it stays focusable and says why on keyboard focus, and its click does nothing.
+      expect(youngPurgeButton.hasAttribute('disabled')).toBe(false)
+      act(() => youngPurgeButton.focus())
+      expect(
+        await screen.findByText('This may be a clone in progress. Try again in a few minutes.'),
+      ).toBeTruthy()
+      await userEvent.click(youngPurgeButton)
+      expect(mockClient.admin.purgeBranchDir).not.toHaveBeenCalled()
 
       const oldPurgeButton = screen.getByTestId('purge-dir-orphan-old')
-      expect(oldPurgeButton).toHaveProperty('disabled', false)
+      expect(oldPurgeButton.getAttribute('aria-disabled')).toBeNull()
 
       await userEvent.click(oldPurgeButton)
       expect(await lastConfirmText()).toContain('30 days')
@@ -729,8 +1273,10 @@ describe('SystemHealthPanel', () => {
       await userEvent.click(screen.getByText('Branches'))
       await waitFor(() => expect(screen.getByText('broken-branch')).toBeTruthy())
 
-      expect(screen.getByTestId('purge-dir-broken-branch')).toHaveProperty('disabled', false)
-      expect(screen.getByTestId('purge-dir-broken-locked')).toHaveProperty('disabled', true)
+      expect(screen.getByTestId('purge-dir-broken-branch').getAttribute('aria-disabled')).toBeNull()
+      expect(screen.getByTestId('purge-dir-broken-locked').getAttribute('aria-disabled')).toBe(
+        'true',
+      )
     })
 
     it('disables purge for the base branch even when corrupt or orphaned (LOW-2)', async () => {
@@ -739,10 +1285,10 @@ describe('SystemHealthPanel', () => {
       await waitFor(() => expect(screen.getByText('main')).toBeTruthy())
 
       const corruptBasePurge = screen.getByTestId('purge-dir-main')
-      expect(corruptBasePurge).toHaveProperty('disabled', true)
+      expect(corruptBasePurge.getAttribute('aria-disabled')).toBe('true')
 
       const orphanBasePurge = screen.getByTestId('purge-dir-main-orphan')
-      expect(orphanBasePurge).toHaveProperty('disabled', true)
+      expect(orphanBasePurge.getAttribute('aria-disabled')).toBe('true')
     })
   })
 })

@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-14) — adopter request #12 was already fully shipped before it was asked: `collectStaticParams(..., {shape: 'single'})` (`canopycms-next/src/static.ts:23,64-66`), documented (`README.md:1420-1428`), used in-repo (`apps/example1/app/posts/[slug]/page.tsx:14-15`), and already available on the website's pinned 0.0.41. Zero work — a discoverability gap on the request side, not a package gap
+---
 # Leaf-slug static params (adopter request #12)
 
 ## RESOLVED (2026-08-14) — already fully shipped; request itself was stale

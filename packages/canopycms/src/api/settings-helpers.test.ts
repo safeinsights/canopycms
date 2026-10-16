@@ -3,6 +3,7 @@ import type { ApiContext } from './types'
 import { createMockApiContext, mockConsole } from '../test-utils'
 import { commitSettings, getSettingsBranchContext } from './settings-helpers'
 import { clearStrategyCache } from '../operating-mode'
+import { ANONYMOUS_USER, type CanopyUser } from '../user'
 
 describe('commitSettings (API-H1)', () => {
   const baseOptions = {
@@ -10,6 +11,13 @@ describe('commitSettings (API-H1)', () => {
     branchRoot: '/test/settings',
     fileName: 'permissions.json',
     message: 'Update permissions',
+    actor: {
+      type: 'authenticated',
+      userId: 'user_jane',
+      groups: [],
+      name: 'Jane Doe',
+      email: 'jane@example.com',
+    } satisfies CanopyUser,
   }
 
   it('reports pushed: true when the commit is pushed successfully', async () => {
@@ -23,6 +31,37 @@ describe('commitSettings (API-H1)', () => {
     const result = await commitSettings(ctx, { ...baseOptions, mode: 'dev' })
 
     expect(result).toEqual({ pushed: true })
+  })
+
+  it('names the acting user in an Edited-by trailer on the settings commit', async () => {
+    const commitToSettingsBranch = vi.fn().mockResolvedValue({ committed: true, pushed: true })
+    const ctx: ApiContext = createMockApiContext({
+      services: { config: { mode: 'prod' } as any, commitToSettingsBranch },
+    })
+
+    await commitSettings(ctx, { ...baseOptions, mode: 'prod' })
+
+    expect(commitToSettingsBranch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Update permissions\n\nEdited-by: Jane Doe (user_jane)',
+      }),
+    )
+  })
+
+  it('follows the trailer config, and names no one for an anonymous actor', async () => {
+    const commitToSettingsBranch = vi.fn().mockResolvedValue({ committed: true, pushed: true })
+    const config = { mode: 'prod', gitEditedByTrailers: false, gitCoAuthoredByTrailers: true }
+    const ctx: ApiContext = createMockApiContext({
+      services: { config: config as any, commitToSettingsBranch },
+    })
+
+    await commitSettings(ctx, { ...baseOptions, mode: 'prod' })
+    await commitSettings(ctx, { ...baseOptions, actor: ANONYMOUS_USER, mode: 'prod' })
+
+    expect(commitToSettingsBranch.mock.calls.map(([options]) => options.message)).toEqual([
+      'Update permissions\n\nCo-authored-by: Jane Doe <jane@example.com>',
+      'Update permissions',
+    ])
   })
 
   it('reports pushed: false with a sanitized error when the push fails', async () => {

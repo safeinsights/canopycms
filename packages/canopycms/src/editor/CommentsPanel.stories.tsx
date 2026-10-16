@@ -5,6 +5,7 @@ import type { CommentThread } from '../comment-store'
 const meta: Meta<typeof CommentsPanel> = {
   title: 'Editor/CommentsPanel',
   component: CommentsPanel,
+  args: { opened: true },
   parameters: {
     layout: 'fullscreen',
   },
@@ -85,13 +86,25 @@ const sampleThreads: CommentThread[] = [
   },
 ]
 
+const entryLabels: Record<string, string> = {
+  'blog/intro': 'Getting started',
+  'pages/about': 'About us',
+  'products/widget': 'Widget',
+}
+const fieldLabels: Record<string, string> = {
+  title: 'Title',
+  'hero.image': 'Page sections › Hero › Image',
+  'pricing.monthly': 'Pricing › Monthly price',
+}
+
 export const Default: Story = {
   args: {
     branchName: 'feature/new-content',
     comments: sampleThreads,
     canResolve: true,
-    onAddComment: async (text: string, threadId?: string) => {
-      console.log('Add comment:', { text, threadId })
+    currentUserId: 'alice',
+    onAddComment: async (text, type, entryPath, canopyPath, threadId) => {
+      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
       await new Promise((resolve) => setTimeout(resolve, 500))
     },
     onResolveThread: async (threadId: string) => {
@@ -99,6 +112,21 @@ export const Default: Story = {
       await new Promise((resolve) => setTimeout(resolve, 500))
     },
     onClose: () => console.log('Close panel'),
+    entryLabel: (entryPath) => entryLabels[entryPath],
+    fieldLabel: (thread) => fieldLabels[thread.canopyPath ?? ''],
+  },
+}
+
+// As the comments response names them, without email; `charlie` is one it could not name.
+const namedUsers: Record<string, { id: string; name: string; email: string }> = {
+  alice: { id: 'alice', name: 'Alice Johnson', email: '' },
+  bob: { id: 'bob', name: 'Bob Lee', email: '' },
+}
+
+export const WithNames: Story = {
+  args: {
+    ...Default.args,
+    onGetUserMetadata: async (userId: string) => namedUsers[userId] ?? null,
   },
 }
 
@@ -107,6 +135,7 @@ export const Empty: Story = {
     branchName: 'feature/empty-branch',
     comments: [],
     canResolve: true,
+    currentUserId: 'alice',
     onAddComment: async (text: string) => {
       console.log('Add comment:', text)
     },
@@ -117,13 +146,15 @@ export const Empty: Story = {
   },
 }
 
+/** A user who cannot resolve any thread still resolves the ones they started (Alice's). */
 export const ViewerOnly: Story = {
   args: {
     branchName: 'feature/review-only',
     comments: sampleThreads,
     canResolve: false,
-    onAddComment: async (text: string, threadId?: string) => {
-      console.log('Add comment:', { text, threadId })
+    currentUserId: 'alice',
+    onAddComment: async (text, type, entryPath, canopyPath, threadId) => {
+      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
     },
     onResolveThread: async (threadId: string) => {
       console.log('Resolve thread (should not be called):', threadId)
@@ -132,6 +163,7 @@ export const ViewerOnly: Story = {
   },
 }
 
+/** Several open threads: each shows a Reply button; the box opens in place. */
 export const ManyComments: Story = {
   args: {
     branchName: 'feature/active-discussion',
@@ -173,12 +205,112 @@ export const ManyComments: Story = {
       },
     ],
     canResolve: true,
-    onAddComment: async (text: string, threadId?: string) => {
-      console.log('Add comment:', { text, threadId })
+    currentUserId: 'alice',
+    onAddComment: async (text, type, entryPath, canopyPath, threadId) => {
+      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
     },
     onResolveThread: async (threadId: string) => {
       console.log('Resolve thread:', threadId)
     },
     onClose: () => console.log('Close panel'),
+  },
+}
+
+/** Threads named by entry and field titles instead of their paths. */
+export const HumanLabels: Story = {
+  args: {
+    ...Default.args,
+    comments: [
+      ...sampleThreads,
+      {
+        id: 'thread-4',
+        type: 'branch',
+        authorId: 'dan',
+        resolved: false,
+        createdAt: new Date(Date.now() - 600000).toISOString(),
+        comments: [
+          {
+            id: 'comment-6',
+            threadId: 'thread-4',
+            userId: 'dan',
+            timestamp: new Date(Date.now() - 600000).toISOString(),
+            text: 'What about adding a call-to-action button at the end?',
+          },
+        ],
+      },
+    ],
+    entryLabel: (entryPath) => entryLabels[entryPath],
+    fieldLabel: (thread) => fieldLabels[thread.canopyPath ?? ''],
+  },
+}
+
+/** Each open thread offers the jump its kind allows, and the branch thread its discussion. */
+export const WithJumpButtons: Story = {
+  args: {
+    ...HumanLabels.args,
+    onJumpToField: (entryPath, canopyPath, threadId) =>
+      console.log('Jump to field:', { entryPath, canopyPath, threadId }),
+    onJumpToEntry: (entryPath, threadId) => console.log('Jump to entry:', { entryPath, threadId }),
+    onJumpToBranch: (threadId) => console.log('Open branch discussion:', threadId),
+  },
+}
+
+async function typeInto(textarea: HTMLTextAreaElement, text: string): Promise<void> {
+  const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+  setValue?.call(textarea, text)
+  textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+/** A comment write that never settles: the jumps are blocked, and closing the drawer says why it stays. */
+export const WriteInFlight: Story = {
+  args: {
+    ...WithJumpButtons.args,
+    onAddComment: () => new Promise<void>(() => {}),
+  },
+  play: async () => {
+    const textarea = document.querySelector<HTMLTextAreaElement>('[data-testid="comment-textarea"]')
+    if (!textarea) return
+    await typeInto(textarea, 'Waiting on the server')
+    document.querySelector<HTMLButtonElement>('[data-testid="comment-submit"]')?.click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    document.querySelector<HTMLButtonElement>('.mantine-Drawer-close')?.click()
+  },
+}
+
+/**
+ * A field thread whose list item or block is gone: marked "On a removed item", named by the
+ * field's breadcrumb, and jumping to its entry rather than to a field.
+ */
+export const RemovedItemThread: Story = {
+  args: {
+    ...WithJumpButtons.args,
+    comments: [
+      {
+        id: 'thread-removed',
+        type: 'field',
+        entryPath: 'blog/intro',
+        canopyPath: 'features[2].description',
+        itemKeys: ['k-gone'],
+        onRemovedItem: true,
+        authorId: 'alice',
+        resolved: false,
+        createdAt: new Date(Date.now() - 3600000).toISOString(),
+        comments: [
+          {
+            id: 'comment-removed',
+            threadId: 'thread-removed',
+            userId: 'alice',
+            timestamp: new Date(Date.now() - 3600000).toISOString(),
+            text: 'Is this still true?',
+          },
+        ],
+      },
+      ...sampleThreads,
+    ],
+    fieldLabel: (thread) =>
+      thread.onRemovedItem
+        ? 'Key features › Offline › Description'
+        : fieldLabels[thread.canopyPath ?? ''],
   },
 }

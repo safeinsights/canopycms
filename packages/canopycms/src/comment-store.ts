@@ -42,6 +42,17 @@ export interface CommentThread {
   // Addressing (all optional based on type)
   entryPath?: string // Required for field/entry, undefined for branch
   canopyPath?: string // Required for field, undefined for entry/branch
+  /**
+   * For a field thread inside list items or blocks: the key (`item-keys.ts`) of each item on
+   * `canopyPath`, outermost first. The thread follows those items wherever they move; the
+   * indexes in `canopyPath` are only where they were when it was made.
+   */
+  itemKeys?: string[]
+  /**
+   * Set by the editor, never stored: an item named by `itemKeys` is gone from the value it shows,
+   * so the thread stays on the entry rather than on whichever item holds its old index.
+   */
+  onRemovedItem?: boolean
 }
 
 export interface CommentsFile {
@@ -49,6 +60,16 @@ export interface CommentsFile {
   version: number // Incremented on each write for optimistic locking
   writeId?: string // Unique ID for each write, used to verify write ownership
   threads: Record<string, CommentThread>
+}
+
+/**
+ * A thread by id, own properties only: `threads` is a JSON-parsed plain object, so an id such
+ * as `__proto__` or `constructor` would otherwise reach `Object.prototype` or `Object`.
+ */
+function ownThread(data: CommentsFile, threadId: string): CommentThread | undefined {
+  return Object.prototype.hasOwnProperty.call(data.threads, threadId)
+    ? data.threads[threadId]
+    : undefined
 }
 
 /**
@@ -166,6 +187,7 @@ export class CommentStore {
     type: CommentType
     entryPath?: string
     canopyPath?: string
+    itemKeys?: string[]
   }): Promise<{ threadId: string; commentId: string }> {
     // Generate IDs outside the mutation so they stay stable across retries
     const threadId = options.threadId || randomUUID()
@@ -182,7 +204,8 @@ export class CommentStore {
         text: options.text,
       }
 
-      if (!data.threads[threadId]) {
+      const existing = ownThread(data, threadId)
+      if (!existing) {
         data.threads[threadId] = {
           id: threadId,
           comments: [comment],
@@ -192,9 +215,10 @@ export class CommentStore {
           authorId: options.userId,
           entryPath: options.entryPath,
           canopyPath: options.canopyPath,
+          ...(options.itemKeys?.length ? { itemKeys: options.itemKeys } : {}),
         }
       } else {
-        data.threads[threadId].comments.push(comment)
+        existing.comments.push(comment)
       }
 
       await this.writeData(data, version)
@@ -202,15 +226,47 @@ export class CommentStore {
     })
   }
 
+  /**
+   * Append a comment to an existing thread, or return null when `threadId` names none at write
+   * time. Unlike {@link addComment}, a missing thread is never created, so a reply cannot plant
+   * a thread under an id or entry path nobody checked.
+   */
+  async addReply(options: {
+    userId: string
+    text: string
+    threadId: string
+  }): Promise<{ threadId: string; commentId: string } | null> {
+    const commentId = randomUUID()
+
+    return this.withMutation(async (data, version) => {
+      const thread = ownThread(data, options.threadId)
+      if (!thread) {
+        return null
+      }
+
+      thread.comments.push({
+        id: commentId,
+        threadId: options.threadId,
+        userId: options.userId,
+        timestamp: new Date().toISOString(),
+        text: options.text,
+      })
+
+      await this.writeData(data, version)
+      return { threadId: options.threadId, commentId }
+    })
+  }
+
   async resolveThread(threadId: string, userId: string): Promise<boolean> {
     return this.withMutation(async (data, version) => {
-      if (!data.threads[threadId]) {
+      const thread = ownThread(data, threadId)
+      if (!thread) {
         return false
       }
 
-      data.threads[threadId].resolved = true
-      data.threads[threadId].resolvedBy = userId
-      data.threads[threadId].resolvedAt = new Date().toISOString()
+      thread.resolved = true
+      thread.resolvedBy = userId
+      thread.resolvedAt = new Date().toISOString()
 
       await this.writeData(data, version)
       return true
@@ -230,12 +286,12 @@ export class CommentStore {
 
   async getThread(threadId: string): Promise<CommentThread | null> {
     const data = await this.load()
-    return data.threads[threadId] || null
+    return ownThread(data, threadId) ?? null
   }
 
   async deleteThread(threadId: string): Promise<boolean> {
     return this.withMutation(async (data, version) => {
-      if (!data.threads[threadId]) {
+      if (!ownThread(data, threadId)) {
         return false
       }
 

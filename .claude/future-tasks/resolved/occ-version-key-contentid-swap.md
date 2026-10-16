@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-04, branch `fix/occ-contentid-swap`, base `int-202610-a`. The content write API now treats an omitted `expectedVersion` as create-only, so a version-less write to an existing entry 409s, both before and inside the store lock. `saveEntry` also refuses to send a save it holds no token for. Through the UI the reachable path turned out to be a restored draft whose load failed; the delete+recreate sequence was reachable only through the hook API. Both are pinned by tests
+---
 # OCC version tokens are keyed by contentId, so a contentId swap silently disables conflict detection
 
 **RESOLVED 2026-10-04**, branch `fix/occ-contentid-swap`, base `int-202610-a`. Fixed on
@@ -24,7 +28,7 @@ before the fix, 409 + recreated content kept after), the `OCC token on save` blo
 
 Two adjacent issues found while verifying are filed separately:
 [draft-orphaned-by-contentid-swap.md](../draft-orphaned-by-contentid-swap.md) and
-[save-recreates-deleted-entry.md](../save-recreates-deleted-entry.md).
+[save-recreates-deleted-entry.md](save-recreates-deleted-entry.md).
 
 Found while fixing the branch-switch stale-mirror bug
 ([program-b-final-review-followups.md](program-b-final-review-followups.md),

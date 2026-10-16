@@ -1,10 +1,11 @@
 import type { CollectionItem, ListEntriesResponse } from '../api/entries'
-import type { ContentFormat, EntrySchema, FlatSchemaItem } from '../config'
+import type { ContentFormat, EntrySchema, EntryTypeUnavailable, FlatSchemaItem } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorEntry, EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
 // Import directly from normalize to avoid pulling in server-only branch.ts
 import { normalizeFilesystemPath } from '../paths/normalize'
+import { humanizeName } from './schema-label'
 import { computeEntryUrl, isIndexSlug } from '../utils/entry-url'
 import { isDataOnlyFormat } from '../utils/format'
 import {
@@ -83,7 +84,7 @@ const previewBaseFor = (
  * `listEntries` publishes it, so a root entry previews at `/<slug>` and only a root index at `/`.
  * Site-relative unless a matching value is absolute.
  */
-const buildPreviewRoute = (
+export const buildPreviewRoute = (
   entry: PreviewEntry,
   { previewBaseByCollection, contentRoot = 'content' }: PreviewContext & { contentRoot?: string },
 ): string | undefined => {
@@ -115,8 +116,8 @@ const buildPreviewRoute = (
  * (from `previewBaseByCollection`) skips all three and gets only `?branch=`. An entry's own
  * `previewSrc` gets only the `basePath`.
  *
- * The result must equal the framed page's own URL: the `<iframe src>` (`PreviewFrame` in
- * preview-bridge.tsx) 404s without the prefixes, and a URL the host redirects costs a round trip
+ * The result must equal the framed page's own URL: the `<iframe src>` (`PreviewFrame.tsx`)
+ * 404s without the prefixes, and a URL the host redirects costs a round trip
  * on every load. `trailingSlash` defaults to the value `withCanopy` inlines at build time.
  *
  * `undefined` means the entry has no page, so the editor frames nothing rather than another page.
@@ -192,6 +193,7 @@ export const buildEntriesFromListResponse = ({
   return response.entries.map((entry) => {
     // Resolve schema from flatSchema using parentPath + name
     let schema: EntrySchema = []
+    let unavailable: EntryTypeUnavailable | undefined
     if (entry.collectionPath && entry.entryType) {
       const entryTypeItem = flatSchema.find(
         (item) =>
@@ -201,6 +203,7 @@ export const buildEntriesFromListResponse = ({
       )
       if (entryTypeItem && entryTypeItem.type === 'entry-type') {
         schema = entryTypeItem.schema
+        unavailable = entryTypeItem.unavailable
       }
     }
 
@@ -218,6 +221,7 @@ export const buildEntriesFromListResponse = ({
       entryType: entry.entryType,
       type: 'entry' as const,
       canEdit: entry.canEdit,
+      ...(unavailable && { unavailable }),
     }
   })
 }
@@ -239,38 +243,67 @@ export const buildCollectionLabels = (collections?: EditorCollection[]): Map<str
 }
 
 /**
- * Builds breadcrumb segments for an entry based on its collection hierarchy.
- *
- * @param currentEntry - The entry to build breadcrumbs for (or undefined for root)
- * @param collectionLabels - Map of collection IDs to labels
- * @returns Array of breadcrumb segment strings, starting with 'All Files'
+ * An entry's type as its collection labels it, else its name read as words; undefined when
+ * untyped.
+ */
+export const entryTypeLabel = (
+  collections: EditorCollection[] | undefined,
+  entry: Pick<EditorEntry, 'collectionPath' | 'entryType'>,
+): string | undefined => {
+  if (!entry.entryType) return undefined
+  const find = (nodes: EditorCollection[]): EditorCollection | undefined => {
+    for (const c of nodes) {
+      if (c.path === entry.collectionPath) return c
+      const inner = c.children ? find(c.children) : undefined
+      if (inner) return inner
+    }
+    return undefined
+  }
+  const collection = collections ? find(collections) : undefined
+  const type = collection?.entryTypes?.find((t) => t.name === entry.entryType)
+  return type?.label ?? humanizeName(entry.entryType)
+}
+
+/** An entry's navigator badge: "Missing" when its file is gone, else its type's label or name. */
+export const entryStatusLabel = (
+  collections: EditorCollection[] | undefined,
+  entry: Pick<EditorEntry, 'status' | 'collectionPath' | 'entryType'>,
+): string | undefined => {
+  if (entry.status === 'missing') return 'Missing'
+  return entryTypeLabel(collections, entry) ?? (entry.status && humanizeName(entry.status))
+}
+
+/** One crumb before the entry's own: "All content", a collection, or a folder of a nested slug. */
+export interface BreadcrumbSegment {
+  label: string
+  /** The collection the crumb opens in the content panel; absent on "All content" and slug folders. */
+  collectionPath?: string
+  /** A slug folder, which is not a node of the content tree, so it navigates nowhere. */
+  folder?: true
+}
+
+/**
+ * Builds breadcrumb segments for an entry based on its collection hierarchy, starting with
+ * "All content". The first path part is skipped as the content root, which the tree does not show.
  */
 export const buildBreadcrumbSegments = (
   currentEntry: EditorEntry | undefined,
   collectionLabels: Map<string, string>,
-): string[] => {
-  if (!currentEntry) return ['All Files']
-  const segments = ['All Files']
+): BreadcrumbSegment[] => {
+  const segments: BreadcrumbSegment[] = [{ label: 'All content' }]
+  if (!currentEntry) return segments
 
-  // Show collection hierarchy for entries that belong to a collection
   if (currentEntry.collectionPath) {
-    // Split the collectionPath into path parts and build cumulative paths
-    // e.g., "content/documentation/guides" -> ["content/documentation", "content/documentation/guides"]
     const parts = currentEntry.collectionPath.split('/').filter(Boolean)
     for (let i = 1; i < parts.length; i++) {
       const pathUpToHere = parts.slice(0, i + 1).join('/')
       const label = collectionLabels.get(pathUpToHere)
-      if (label) {
-        segments.push(label)
-      }
+      if (label) segments.push({ label, collectionPath: pathUpToHere })
     }
   }
 
-  // Add slug path segments (for nested slugs like "folder/file")
   const slugSegments = (currentEntry.slug ?? '').split('/').filter(Boolean)
-  if (slugSegments.length > 1) {
-    segments.push(...slugSegments.slice(0, -1))
-  }
+  for (const folder of slugSegments.slice(0, -1)) segments.push({ label: folder, folder: true })
 
   return segments
 }

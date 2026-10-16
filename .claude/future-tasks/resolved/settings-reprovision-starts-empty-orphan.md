@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-05, branch `fix/settings-reprovision-uses-remote-branch`, base `int-202610-a`. Provisioning checks out the remote's settings branch and creates an empty orphan only when the remote has none; an unreadable remote fails closed (503 not-ready in prod while `remote.git` is missing). A workspace stuck on an empty initial commit unrelated to the remote's is repaired when its tree is clean; local commits or uncommitted files throw instead and show in System Health. Reproduced in prod and dev before the fix
+---
 # A re-provisioned settings workspace starts as an empty orphan, and the next settings save fails
 
 **Status:** RESOLVED 2026-10-05 on branch `fix/settings-reprovision-uses-remote-branch` (see

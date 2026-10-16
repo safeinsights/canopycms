@@ -1,29 +1,29 @@
 'use client'
 
 /**
- * MarkdownField's MDXEditor plugins: a catch-all JSX editor, and a guard that
- * turns what MDXEditor would lose without an error into `onError`. Imported only
- * from MarkdownField's lazy loader, keeping MDXEditor out of the first chunk.
+ * MarkdownField's MDXEditor plugins: a catch-all JSX editor, a guard that
+ * turns what MDXEditor would lose without an error into `onError`, and export
+ * visitors for block shapes its own export writes wrong.
+ *
+ * MDXEditor is passed in from MarkdownField's import of the package entry. A named
+ * import here enters the jsx plugin's import cycle mid-cycle; where Turbopack merged
+ * the cycle's modules under several ids, it evaluates them twice (two `LexicalJsxNode`
+ * classes and nested-editor contexts), and the first markdown export throws.
  */
 
 import React from 'react'
 
-import {
-  NestedLexicalEditor,
-  UnrecognizedMarkdownConstructError,
-  addImportVisitor$,
-  importVisitors$,
-  isMdastHTMLNode,
-  isMdastJsxNode,
-  jsxPlugin,
-  realmPlugin,
-  type JsxComponentDescriptor,
-  type JsxEditorProps,
-  type MdastImportVisitor,
-  type MdastJsx,
+import type * as MdxEditor from '@mdxeditor/editor'
+import type {
+  JsxComponentDescriptor,
+  JsxEditorProps,
+  MdastImportVisitor,
+  MdastJsx,
 } from '@mdxeditor/editor'
 
-type MdastNode = Parameters<typeof isMdastJsxNode>[0]
+type MdxEditorModule = typeof MdxEditor
+
+type MdastNode = Parameters<MdxEditorModule['isMdastJsxNode']>[0]
 
 function childrenOf(node: MdastNode): MdastNode[] {
   return 'children' in node && Array.isArray(node.children) ? node.children : []
@@ -34,41 +34,6 @@ function describeAttribute(attribute: MdastJsx['attributes'][number]): string {
   if (attribute.value === null || attribute.value === undefined) return attribute.name
   if (typeof attribute.value === 'string') return `${attribute.name}="${attribute.value}"`
   return `${attribute.name}={…}`
-}
-
-/**
- * Shows an element's tag and attributes read-only (they are edited as source)
- * and edits its children, inline or block per the parsed node: one `*`
- * descriptor serves both, and a block editor rejects inline children.
- */
-const CatchAllJsxEditor: React.FC<JsxEditorProps> = ({ mdastNode }) => {
-  const inline = mdastNode.type === 'mdxJsxTextElement'
-  const tag = [mdastNode.name ?? '', ...mdastNode.attributes.map(describeAttribute)]
-    .join(' ')
-    .trim()
-  const Wrapper = inline ? 'span' : 'div'
-  return (
-    <Wrapper className={inline ? 'canopy-mdx-jsx canopy-mdx-jsx-inline' : 'canopy-mdx-jsx'}>
-      <span className="canopy-mdx-jsx-tag" data-testid="mdx-jsx-tag" title={tag}>
-        {`<${tag}>`}
-      </span>
-      {mdastNode.children.length > 0 ? (
-        <NestedLexicalEditor<MdastJsx>
-          block={!inline}
-          getContent={(node) => node.children}
-          getUpdatedMdastNode={(node, children) => ({ ...node, children }) as MdastJsx}
-        />
-      ) : null}
-    </Wrapper>
-  )
-}
-
-const catchAllJsxDescriptor: JsxComponentDescriptor = {
-  name: '*',
-  kind: 'flow',
-  props: [],
-  hasChildren: true,
-  Editor: CatchAllJsxEditor,
 }
 
 type JsxAttribute = MdastJsx['attributes'][number]
@@ -115,79 +80,233 @@ function roundTripsImage(node: MdastJsx): boolean {
 
 // Why MDXEditor cannot round-trip this JSX element, or null if it can. A
 // fragment has no name, which MDXEditor's HTML handling throws on.
-function unsupportedJsx(node: MdastNode): string | null {
-  if (!isMdastJsxNode(node)) return null
+function unsupportedJsx(mdx: MdxEditorModule, node: MdastNode): string | null {
+  if (!mdx.isMdastJsxNode(node)) return null
   if (node.name === null) return 'fragments (<>…</>)'
   // `img` is the image plugin's, not in MDXEditor's HTML tag list.
   if (node.name === 'img') return roundTripsImage(node) ? null : 'this <img>'
-  if (isMdastHTMLNode(node) && breaksSpanCollapse(node)) {
+  if (mdx.isMdastHTMLNode(node) && breaksSpanCollapse(node)) {
     return `<${node.name}> wrapping a <span>, with an {expression} class or style`
   }
   return null
 }
 
+// Blocks that run into the block before them in a list item, by that block's type.
+const RUNS_INTO: Partial<Record<string, readonly string[]>> = {
+  paragraph: ['thematicBreak'],
+  blockquote: ['paragraph', 'blockquote', 'table'],
+  table: ['paragraph', 'table'],
+}
+
+const BLOCK_NAMES: Partial<Record<string, string>> = {
+  paragraph: 'paragraph',
+  blockquote: 'quote',
+  table: 'table',
+  thematicBreak: 'horizontal rule',
+}
+
+/**
+ * Why MDXEditor would change what this list item says, or null. Its import moves a nested list into
+ * a new item after its own, so what follows the list comes out before it; its export writes an item
+ * tight, so `---` underlines a paragraph and a line continues a quote or table (`RUNS_INTO`).
+ */
+function rearrangedBlocks(node: MdastNode): string | null {
+  if (node.type !== 'listItem') return null
+  for (let i = 1; i < node.children.length; i++) {
+    const before = node.children[i - 1].type
+    const after = node.children[i].type
+    if (before === 'list') return 'a list item with content after its nested list'
+    if (RUNS_INTO[before]?.includes(after)) {
+      return `a list item with a ${BLOCK_NAMES[before] ?? before} followed by a ${BLOCK_NAMES[after] ?? after}`
+    }
+  }
+  return null
+}
+
+type ExportParams = Parameters<NonNullable<MdxEditor.LexicalVisitor['visitLexicalNode']>>[0]
+type LexicalNode = ExportParams['lexicalNode']
+type MdastParent = ExportParams['mdastParent']
+type MdastParagraph = Extract<MdastNode, { type: 'paragraph' }>
+type MdastBlockquote = Extract<MdastNode, { type: 'blockquote' }>
+
+interface LexicalParent {
+  getChildren(): LexicalNode[]
+}
+
+const isLexicalParent = (node: object): node is LexicalParent =>
+  'getChildren' in node && typeof node.getChildren === 'function'
+
+const hasBlockChild = (node: LexicalNode) =>
+  isLexicalParent(node) && node.getChildren().some((child) => !child.isInline())
+
+// Writes `node`'s children into `target`: a run of inline children as one paragraph, a block as itself.
+function writeBlocks(node: LexicalNode, target: MdastParent, actions: ExportParams['actions']) {
+  let paragraph: MdastParagraph | null = null
+  for (const child of isLexicalParent(node) ? node.getChildren() : []) {
+    if (!child.isInline()) {
+      paragraph = null
+      actions.visit(child, target)
+      continue
+    }
+    if (paragraph === null) {
+      const created: MdastParagraph = { type: 'paragraph', children: [] }
+      actions.appendToParent(target, created)
+      paragraph = created
+    }
+    actions.visit(child, paragraph)
+  }
+}
+
+// MDXEditor 4 exports each child of a quote as a block, so inline children the toolbar's Quote,
+// the `> ` shortcut or a merge put in a quote would come out one paragraph each.
+const quoteExportVisitor: MdxEditor.LexicalVisitor = {
+  priority: 100,
+  testLexicalNode: (node): node is LexicalNode => node.getType() === 'quote',
+  visitLexicalNode({ lexicalNode, mdastParent, actions }) {
+    const quote: MdastBlockquote = { type: 'blockquote', children: [] }
+    actions.appendToParent(mdastParent, quote)
+    writeBlocks(lexicalNode, quote, actions)
+  },
+}
+
+// Backspace at the start of a quote moves its paragraphs and lists into one paragraph, which
+// MDXEditor would export as one run of text; they are written as the blocks they show.
+const paragraphOfBlocksExportVisitor: MdxEditor.LexicalVisitor = {
+  priority: 100,
+  testLexicalNode: (node): node is LexicalNode =>
+    node.getType() === 'paragraph' && hasBlockChild(node),
+  visitLexicalNode({ lexicalNode, mdastParent, actions }) {
+    writeBlocks(lexicalNode, mdastParent, actions)
+  },
+}
+
 /** Typed `string` because the mdast node union this package resolves omits the ESM node. */
 const ESM_NODE_TYPE: string = 'mdxjsEsm'
 
-/** Node types the table visitor imports itself, so they have no visitor of their own. */
+/** Node types inside a table, imported by its cell editors rather than by visitors. */
 const CONSUMED_BY_PARENT_VISITOR = new Set(['tableRow', 'tableCell'])
 
-/**
- * Reports through `onError`, at import, what MDXEditor would otherwise lose
- * silently: `import`/`export` lines (its visitor for them is a no-op), elements
- * `unsupportedJsx` rejects, and content with no visitor inside a JSX element or
- * table, whose children nested editors import later, only logging a failure and
- * writing partial children back on edit. It throws an error class MDXEditor's
- * import reports; any other error would crash the editor.
- */
-const roundTripGuardPlugin = realmPlugin({
-  init(realm) {
-    const guard: MdastImportVisitor<MdastNode> = {
-      priority: 100,
-      testNode: (node) =>
-        node.type === ESM_NODE_TYPE || node.type === 'table' || isMdastJsxNode(node),
-      visitNode({ mdastNode, descriptors, actions }) {
-        if (mdastNode.type === ESM_NODE_TYPE) {
-          throw new UnrecognizedMarkdownConstructError(
-            'import/export statements cannot be edited in the rich-text editor',
-          )
-        }
-        const reject = (node: MdastNode) => {
-          const reason = unsupportedJsx(node)
-          if (reason !== null) {
+/** Creates the JSX plugins from MDXEditor's exports; call once per load of MDXEditor. */
+export function createMdxJsxPlugins(mdx: MdxEditorModule): () => MdxEditor.RealmPlugin[] {
+  const {
+    NestedLexicalEditor,
+    UnrecognizedMarkdownConstructError,
+    addExportVisitor$,
+    addImportVisitor$,
+    importVisitors$,
+    isMdastJsxNode,
+    jsxPlugin,
+    realmPlugin,
+  } = mdx
+
+  /**
+   * Shows an element's tag and attributes read-only (they are edited as source)
+   * and edits its children, inline or block per the parsed node: one `*`
+   * descriptor serves both, and a block editor rejects inline children.
+   */
+  const CatchAllJsxEditor: React.FC<JsxEditorProps> = ({ mdastNode }) => {
+    const inline = mdastNode.type === 'mdxJsxTextElement'
+    const tag = [mdastNode.name ?? '', ...mdastNode.attributes.map(describeAttribute)]
+      .join(' ')
+      .trim()
+    const Wrapper = inline ? 'span' : 'div'
+    return (
+      <Wrapper className={inline ? 'canopy-mdx-jsx canopy-mdx-jsx-inline' : 'canopy-mdx-jsx'}>
+        <span className="canopy-mdx-jsx-tag" data-testid="mdx-jsx-tag" title={tag}>
+          {`<${tag}>`}
+        </span>
+        {mdastNode.children.length > 0 ? (
+          <NestedLexicalEditor<MdastJsx>
+            block={!inline}
+            getContent={(node) => node.children}
+            getUpdatedMdastNode={(node, children) => ({ ...node, children }) as MdastJsx}
+          />
+        ) : null}
+      </Wrapper>
+    )
+  }
+
+  const catchAllJsxDescriptor: JsxComponentDescriptor = {
+    name: '*',
+    kind: 'flow',
+    props: [],
+    hasChildren: true,
+    Editor: CatchAllJsxEditor,
+  }
+
+  /**
+   * Reports through `onError`, at import, what MDXEditor would otherwise lose or
+   * break on without reporting it: `import`/`export` lines (its visitor for them
+   * is a no-op), what `unsupportedJsx` and `rearrangedBlocks` reject, and content
+   * with no visitor inside a JSX element or table, whose children nested editors
+   * import later, only logging a failure and writing partial children back on
+   * edit. It throws an error class MDXEditor's import reports; any other error
+   * crashes the editor.
+   */
+  const roundTripGuardPlugin = realmPlugin({
+    init(realm) {
+      const guard: MdastImportVisitor<MdastNode> = {
+        priority: 100,
+        testNode: (node) =>
+          node.type === ESM_NODE_TYPE ||
+          node.type === 'table' ||
+          node.type === 'listItem' ||
+          isMdastJsxNode(node),
+        visitNode({ mdastNode, descriptors, actions }) {
+          if (mdastNode.type === ESM_NODE_TYPE) {
             throw new UnrecognizedMarkdownConstructError(
-              `${reason} cannot be edited in the rich-text editor`,
+              'import/export statements cannot be edited in the rich-text editor',
             )
           }
-        }
-        reject(mdastNode)
-        const visitors = realm.getValue(importVisitors$).filter((visitor) => visitor !== guard)
-        const hasVisitor = (node: MdastNode) =>
-          visitors.some((visitor) =>
-            typeof visitor.testNode === 'string'
-              ? visitor.testNode === node.type
-              : visitor.testNode(node, descriptors),
-          )
-        const check = (node: MdastNode) => {
-          for (const child of childrenOf(node)) {
-            reject(child)
-            if (!CONSUMED_BY_PARENT_VISITOR.has(child.type) && !hasVisitor(child)) {
-              const where = isMdastJsxNode(mdastNode) ? `<${mdastNode.name ?? ''}>` : 'A table'
+          const reject = (node: MdastNode) => {
+            const reason = unsupportedJsx(mdx, node) ?? rearrangedBlocks(node)
+            if (reason !== null) {
               throw new UnrecognizedMarkdownConstructError(
-                `${where} contains ${child.type} content the rich-text editor cannot edit`,
+                `${reason} cannot be edited in the rich-text editor`,
               )
             }
-            check(child)
           }
-        }
-        check(mdastNode)
-        actions.nextVisitor()
-      },
-    }
-    realm.pub(addImportVisitor$, guard)
-  },
-})
+          reject(mdastNode)
+          if (mdastNode.type === 'listItem') {
+            actions.nextVisitor()
+            return
+          }
+          const visitors = realm.getValue(importVisitors$).filter((visitor) => visitor !== guard)
+          const hasVisitor = (node: MdastNode) =>
+            visitors.some((visitor) =>
+              typeof visitor.testNode === 'string'
+                ? visitor.testNode === node.type
+                : visitor.testNode(node, descriptors),
+            )
+          const check = (node: MdastNode) => {
+            for (const child of childrenOf(node)) {
+              reject(child)
+              if (!CONSUMED_BY_PARENT_VISITOR.has(child.type) && !hasVisitor(child)) {
+                const where = isMdastJsxNode(mdastNode) ? `<${mdastNode.name ?? ''}>` : 'A table'
+                throw new UnrecognizedMarkdownConstructError(
+                  `${where} contains ${child.type} content the rich-text editor cannot edit`,
+                )
+              }
+              check(child)
+            }
+          }
+          check(mdastNode)
+          actions.nextVisitor()
+        },
+      }
+      realm.pub(addImportVisitor$, guard)
+    },
+  })
 
-export function mdxJsxPlugins() {
-  return [jsxPlugin({ jsxComponentDescriptors: [catchAllJsxDescriptor] }), roundTripGuardPlugin()]
+  const blockExportPlugin = realmPlugin({
+    init(realm) {
+      realm.pub(addExportVisitor$, [quoteExportVisitor, paragraphOfBlocksExportVisitor])
+    },
+  })
+
+  return () => [
+    jsxPlugin({ jsxComponentDescriptors: [catchAllJsxDescriptor] }),
+    roundTripGuardPlugin(),
+    blockExportPlugin(),
+  ]
 }

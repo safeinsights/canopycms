@@ -1,3 +1,8 @@
+---
+adopters: NEITHER
+summary: >-
+  RESOLVED (2026-08-20, branch `fix/canopycms-test-utils-export`) — `add-js-extensions.mjs` rewrote `dist/*.js` but skipped `.d.ts`, so declarations still said `export * from './content-reader'`. Reproduced against a real tarball, and the impact was WORSE than this file predicted: not a red build but a **silent** one — under `nodenext` TypeScript cannot resolve the re-export, recovers by typing the import `any`, and the adopter's build stays green while every exported type degrades (verified with a bogus-property probe: caught under `bundler`, not caught under `nodenext`). `skipLibCheck: true`, which most scaffolds set, removes even the diagnostics. Fixed by rewriting `.d.ts` too; that surfaced a second gap — the pattern required a slash, so a bare `from '.'` was invisible — now expanded to `./index.js`. Guarded by a new `checkDeclarationResolution()` pass in `check-esm-imports.mjs` (nodenext, `skipLibCheck` off, ~2s), verified to go red on an injected regression that leaves the runtime probe green
+---
 # Published `.d.ts` files use extensionless relative imports
 
 **RESOLVED 2026-08-20** (branch `fix/canopycms-test-utils-export`, off

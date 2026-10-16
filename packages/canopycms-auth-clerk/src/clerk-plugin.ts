@@ -2,6 +2,7 @@ import { createClerkClient, verifyToken as clerkVerifyToken } from '@clerk/backe
 import type { AuthPlugin, AuthPluginFactory } from 'canopycms/auth'
 import type { UserSearchResult, GroupMetadata, AuthenticationResult } from 'canopycms/auth'
 import { extractHeaders, type HeadersLike } from 'canopycms/auth'
+import { clerkDisplayName, toUserSearchResult, type ClerkUserData } from './clerk-user'
 
 export interface ClerkAuthConfig {
   /**
@@ -26,19 +27,6 @@ export interface ClerkAuthConfig {
    * If not provided, will parse from CLERK_AUTHORIZED_PARTIES env var.
    */
   authorizedParties?: string[]
-}
-
-// These handle both camelCase and snake_case variants from different Clerk SDK versions
-
-interface ClerkUserData {
-  id: string
-  username?: string
-  fullName?: string | null
-  full_name?: string | null
-  imageUrl?: string | null
-  image_url?: string | null
-  primaryEmailAddress?: { emailAddress: string } | null
-  email_addresses?: Array<{ email_address: string }> | null
 }
 
 interface ClerkOrganization {
@@ -66,19 +54,8 @@ function unwrapClerkResponse<T>(response: ClerkResponse<T>): T[] {
   return Array.isArray(response) ? response : response.data
 }
 
-function mapClerkUserData(clerkUser: ClerkUserData): {
-  email?: string
-  name: string
-  avatarUrl?: string
-} {
-  const avatarUrl = clerkUser.imageUrl ?? clerkUser.image_url
-  return {
-    email:
-      clerkUser.primaryEmailAddress?.emailAddress ?? clerkUser.email_addresses?.[0]?.email_address,
-    name: clerkUser.fullName ?? clerkUser.full_name ?? clerkUser.username ?? clerkUser.id,
-    avatarUrl: avatarUrl ?? undefined,
-  }
-}
+/** Most ids Clerk's user list accepts in one `userId` filter. */
+export const CLERK_USER_LIST_MAX_IDS = 100
 
 function getOrgMemberCount(org: ClerkOrganization): number | undefined {
   return org.membersCount ?? org.members_count
@@ -231,13 +208,15 @@ export class ClerkAuthPlugin implements AuthPlugin {
         externalGroups = memberships.map((m) => m.organization.id)
       }
 
-      const userData = mapClerkUserData(clerkUser)
+      const profile = toUserSearchResult(clerkUser)
 
       return {
         success: true,
         user: {
           userId: clerkUser.id,
-          ...userData,
+          name: clerkDisplayName(clerkUser),
+          email: profile.email || undefined,
+          avatarUrl: profile.avatarUrl,
           externalGroups,
         },
       }
@@ -257,16 +236,7 @@ export class ClerkAuthPlugin implements AuthPlugin {
         limit,
       })) as ClerkResponse<ClerkUserData>
 
-      const users = unwrapClerkResponse(response)
-      return users.map((u) => {
-        const mapped = mapClerkUserData(u)
-        return {
-          id: u.id,
-          name: mapped.name,
-          email: mapped.email ?? '',
-          avatarUrl: mapped.avatarUrl,
-        }
-      })
+      return unwrapClerkResponse(response).map(toUserSearchResult)
     } catch (error) {
       console.error('ClerkAuthPlugin: searchUsers failed', error)
       return []
@@ -277,17 +247,27 @@ export class ClerkAuthPlugin implements AuthPlugin {
     const clerkClient = this.getClerkClient()
     try {
       const user = (await clerkClient.users.getUser(userId)) as ClerkUserData
-      const mapped = mapClerkUserData(user)
-      return {
-        id: user.id,
-        name: mapped.name,
-        email: mapped.email ?? '',
-        avatarUrl: mapped.avatarUrl,
-      }
+      return toUserSearchResult(user)
     } catch (error) {
       console.error('ClerkAuthPlugin: getUserMetadata failed', error)
       return null
     }
+  }
+
+  /** Errors propagate, unlike getUserMetadata's, so core never caches a failure as unknown. */
+  async getUsersMetadata(userIds: string[]): Promise<UserSearchResult[]> {
+    const clerkClient = this.getClerkClient()
+    const users: UserSearchResult[] = []
+    for (let i = 0; i < userIds.length; i += CLERK_USER_LIST_MAX_IDS) {
+      const chunk = userIds.slice(i, i + CLERK_USER_LIST_MAX_IDS)
+      // limit defaults to 10, so it must cover the whole chunk.
+      const response = (await clerkClient.users.getUserList({
+        userId: chunk,
+        limit: chunk.length,
+      })) as ClerkResponse<ClerkUserData>
+      users.push(...unwrapClerkResponse(response).map(toUserSearchResult))
+    }
+    return users
   }
 
   async getGroupMetadata(groupId: string): Promise<GroupMetadata | null> {

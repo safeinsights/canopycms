@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-13) — **the verification was run and found nothing**. PR #190 made a bad reference-field `entryTypes` a hard error at schema resolution (`branch-schema-cache.ts:300-309`), so one stale `.collection.json` typo would take a whole branch down; this task was the check that implied. Result against real schemas: `docs-site-proto/src/app/schemas.ts`'s 5 reference fields all name entry types that exist (`dataCatalog, dataSource, dataset, doc, home, partner`); `website/src/app/schemas.ts` has no reference fields at all; `apps/example1`'s single `author` field is valid. No landmines, so Workstream E is not gated on this. Validating `collections` names the same way is still open — [validate-collection-names.md](../validate-collection-names.md)
+---
 # Verify the entryTypes hard-error against real adopter schemas before it reaches a live site
 
 ## Priority: P2

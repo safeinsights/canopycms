@@ -1,27 +1,45 @@
+import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import lockfile from 'proper-lockfile'
-import { Octokit } from '@octokit/rest'
 import { recoverOrphanedTasks, cmsTaskQueueLogger } from '../task-queue/cms-task-queue'
 import type { Task } from '../task-queue/cms-task-queue'
-import { createCanopyOctokit } from '../github-service'
+import { resolveWorkerGitHubAuth, type GitHubAuthConfig } from './github-auth'
+import { seedFromGitHub, unreachableFrom, type TransferContext } from './github-transfer'
 import {
-  isTransientAuthFailure,
-  resolveWorkerGitHubAuth,
-  type GitHubAuthConfig,
-  type ResolvedGitHubAuth,
-} from './github-auth'
+  createLocalGitHubGateway,
+  type GitHubGateway,
+  type LocalGitHubGatewayOptions,
+} from './github-gateway'
 import type { BranchMetadataFile } from '../branch-metadata'
+import { GITHUB_TRACKING_REF_PREFIX, ensureRemoteGitConfig, failOnSignalExit } from '../git-manager'
+import { readHeadBranch } from '../utils/git'
 import { type SanitizedBranchName } from '../paths/types'
-import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
+import {
+  isSettingsBranchName,
+  sanitizeBranchName,
+  RESERVED_SETTINGS_BRANCH_PREFIX,
+} from '../paths/branch-name'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
-import type { BaseRefreshReport, WorkerStatusReport } from '../types'
+import type { BaseRefreshReport, WorkerShutdownRecord, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { readLastFatalError, writeWorkerStatus } from '../task-queue/worker-status'
+import {
+  readCarriedOverStatus,
+  readWorkerStatusStartedAt,
+  writeWorkerStatus,
+} from '../task-queue/worker-status'
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
+import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
 import type { WorkerContext } from './worker-context'
+import {
+  SharedRepoRefusalError,
+  UntrustedRepoConfigError,
+  assertSharedRepoConfig,
+  sharedRepoGit,
+} from './shared-repo-git'
 import {
   executeTask,
   orphanRecoveryMaxAgeMs,
@@ -52,12 +70,55 @@ export { workerLog, workerLogWarn, workerLogError, installWorkerLogger } from '.
 // see github-auth.ts) and needs the shape to inject and the key normalizer to
 // apply.
 export {
+  // The gateway process resolves its credential from its own config.
+  resolveWorkerGitHubAuth,
   normalizeGitHubAppPrivateKey,
   DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS,
   DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS,
   type GitHubAppAuth,
   type GitHubAuthConfig,
 } from './github-auth'
+
+// Re-exported for the same reason: an entrypoint that runs the GitHub gateway and the worker as
+// two processes serves the in-process gateway on a socket in one, and connects to it in the other.
+export {
+  createLocalGitHubGateway,
+  type GitHubGateway,
+  type GitHubGatewayHealth,
+  type LocalGitHubGatewayOptions,
+} from './github-gateway'
+export {
+  serveGitHubGateway,
+  connectGitHubGateway,
+  type GitHubGatewayClientOptions,
+  type GitHubGatewayListen,
+  type GitHubGatewayServer,
+  type GitHubGatewayServerOptions,
+} from './github-gateway-http'
+export { GitHubGatewayUnreachableError } from './github-gateway-wire'
+// A gateway that failed to boot still serves the instance operations.
+export { GatewayInstance, type GatewayInstanceOptions } from './gateway-instance'
+// The gateway process's scrubbed log lines, and the exact scrubs for the secrets it holds that
+// are not GitHub tokens (the auth provider's key, the App's private key). `redactEgress` scrubs
+// the cause a failed boot hands the worker.
+export {
+  gatewayLog,
+  gatewayLogWarn,
+  gatewayLogError,
+  registerSecretText,
+  registerPrivateKey,
+  redactEgress,
+} from './gateway-egress'
+// The boot self-checks the split entrypoint runs in each role (.claude/future-tasks/resolved/
+// worker-shared-repo-git-process-split.md §5).
+export {
+  assertSelfChecks,
+  gatewaySelfChecks,
+  workerSelfChecks,
+  type SelfCheckEnvironment,
+  type SelfCheckName,
+  type SelfCheckResult,
+} from './self-checks'
 
 /**
  * Auth cache refresh function type; adopters supply their auth-plugin-specific
@@ -75,6 +136,21 @@ export type AuthCacheRefresher = () => Promise<void>
 export interface CmsWorkerConfig extends GitHubAuthConfig {
   /** Path to workspace root on EFS (e.g., /mnt/efs) */
   workspacePath: string
+  /**
+   * A directory only this worker can write, never on the shared filesystem: it holds the private
+   * GitHub mirror, the one repository any git command carrying the credential runs in
+   * (worker/github-mirror.ts). The AWS worker passes systemd's `StateDirectory=`. Default: a
+   * directory under `os.tmpdir()`, which the worker refuses unless it owns it and no one else can
+   * write to it.
+   */
+  stateDirectory?: string
+  /**
+   * A GitHub gateway to use instead of building the in-process one: a client of a gateway another
+   * process serves (`connectGitHubGateway`), which holds the credential, the protected set and the
+   * mirror. Exclusive with `githubToken`, `githubAppAuth`, `refreshGitHubToken` and
+   * `protectedBranches`, which configure the in-process one.
+   */
+  githubGateway?: GitHubGateway
   /** GitHub owner (e.g., 'acme') */
   githubOwner: string
   /** GitHub repo name (e.g., 'site') */
@@ -87,8 +163,14 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   gitSyncInterval?: number
   /** Auth cache refresh interval in ms (default: 15 * 60 * 1000) */
   authCacheRefreshInterval?: number
-  /** Base branch name (default: 'main') */
+  /** Base branch name (default: detected at start(); see `resolveBaseBranch`) */
   baseBranch?: string
+  /**
+   * Branches the worker never pushes, deletes or opens a pull request from, beside the configured
+   * base branch and GitHub's default branch: exact names, or globs in which `*` matches any run of
+   * characters (`release/*`), which never match a settings branch. See worker/branch-policy.ts.
+   */
+  protectedBranches?: readonly string[]
   /**
    * Names THIS worker's own settings branch
    * (`canopycms-settings-{deploymentName}`, default 'prod' — ProdStrategy's
@@ -115,16 +197,102 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   /** Content root directory name relative to repo root (default: 'content') */
   contentRoot?: string
   /**
+   * Longest the git sync holds the base branch for content naming entry schemas the serving
+   * editor does not define, before advancing anyway (default: 30 minutes). See worker/schema-gate.ts.
+   */
+  schemaHoldMaxMs?: number
+  /**
    * Worker lock staleness TTL in ms (default 60000, minimum 2000). The holder
    * refreshes the heartbeat at half this interval; a lock whose heartbeat is
    * older than this is abandoned and taken over by the next worker to start.
    */
   lockStaleMs?: number
+  /**
+   * How long `stop()` waits for in-flight work before aborting it, in ms
+   * (default {@link DEFAULT_DRAIN_DEADLINE_MS}). An entrypoint's process
+   * manager must allow this plus {@link ABORT_GRACE_MS} before it kills the
+   * process.
+   */
+  drainDeadlineMs?: number
 }
 
-const DEFAULT_TASK_TIMEOUT = 60_000
+/** Per workspace, so two workers on one host (tests, dev) never share a mirror. */
+function defaultStateDirectory(workspacePath: string): string {
+  const key = createHash('sha256').update(path.resolve(workspacePath)).digest('hex').slice(0, 16)
+  return path.join(os.tmpdir(), `canopycms-worker-${key}`)
+}
+
+/** How many refs a refusal to replace remote.git names before summarising the rest. */
+const MAX_REFS_LISTED = 20
+
+/** A refusal to replace a poisoned remote.git because it holds work GitHub does not have. */
+class RemoteGitKeptError extends Error {}
+
+/**
+ * Every ref in the bare repo at `gitDir` outside the GitHub tracking namespace, which only ever
+ * holds GitHub's own branches, mapped to the object it names. A ref missing from this list is one
+ * a replacement would discard unchecked, so it throws when git reports anything on stderr
+ * (`for-each-ref` skips a ref it cannot read with only a warning and exit 0) and when git is killed
+ * by a signal, which simple-git otherwise resolves as empty output. A dangling symbolic ref is
+ * skipped without a warning, and names nothing to lose.
+ */
+async function listRemoteGitRefs(gitDir: string): Promise<Map<string, string>> {
+  let stderr = ''
+  const output = await sharedRepoGit(gitDir, 'bare', { errors: failOnSignalExit })
+    .outputHandler((_command, _stdout, err) => {
+      err.on('data', (chunk: Buffer | string) => {
+        stderr += String(chunk)
+      })
+    })
+    .raw(['for-each-ref', '--format=%(objectname) %(refname)'])
+  if (stderr.trim() !== '') throw new Error(stderr.trim())
+  const refs = new Map<string, string>()
+  for (const line of output.split('\n')) {
+    const space = line.indexOf(' ')
+    if (space === -1) continue
+    const ref = line.slice(space + 1)
+    if (!ref.startsWith(GITHUB_TRACKING_REF_PREFIX)) refs.set(ref, line.slice(0, space))
+  }
+  return refs
+}
+
+function sameRefs(a: Map<string, string>, b: Map<string, string>): boolean {
+  return a.size === b.size && [...a].every(([ref, id]) => b.get(ref) === id)
+}
+
+/**
+ * The default `taskTimeoutMs`. Exported because a split worker's gateway client passes it as its
+ * `fetchInactivityMs` and the gateway uses it as its `timeoutMs`, as the in-process gateway does.
+ */
+export const DEFAULT_TASK_TIMEOUT = 60_000
 const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_LOCK_STALE_MS = 60_000
+/**
+ * 90s fits inside an EC2 spot interruption's two-minute notice with room to
+ * exit, and exceeds the default task timeout, so a task already running when
+ * the drain begins normally finishes or times out on its own.
+ */
+export const DEFAULT_DRAIN_DEADLINE_MS = 90_000
+/**
+ * After aborting at the drain deadline, how long to let the aborted work
+ * unwind: this, or the deadline itself if that is shorter.
+ */
+const ABORT_GRACE_MS = 5_000
+
+/** Whether every promise settles within `ms`. */
+async function settlesWithin(operations: Promise<unknown>[], ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      Promise.allSettled(operations).then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 /**
  * CMS Worker daemon: the operations Lambda, which has no internet, cannot
@@ -135,22 +303,143 @@ const DEFAULT_LOCK_STALE_MS = 60_000
  * Auth-agnostic (no specific auth provider) and cloud-agnostic (git/Octokit
  * directly, no AWS SDK dependency).
  */
+/** Why a worker stopped itself; see {@link CmsWorker.selfStopped}. */
+export interface WorkerSelfStop {
+  reason: string
+}
+
+// Shown as the last shutdown's reason in System health, so it reads as a sentence there.
+const LOCK_COMPROMISED_REASON = 'the worker lost its lock on the shared workspace'
+
+/**
+ * Take the cross-host worker lock (see {@link CmsWorker}'s `acquireLock`), retrying for up to
+ * `waitMs`. Rejects with ELOCKED while another holder keeps it fresh.
+ */
+function lockWorkerTaskDir(
+  taskDir: string,
+  lockStaleMs: number,
+  options: { waitMs?: number; onCompromised: (err: Error) => void },
+): Promise<() => Promise<void>> {
+  const waitMs = options.waitMs ?? 0
+  const intervalMs = Math.max(250, Math.min(5_000, Math.floor(lockStaleMs / 4)))
+  return lockfile.lock(taskDir, {
+    lockfilePath: path.join(taskDir, '.worker-lock'),
+    stale: lockStaleMs,
+    onCompromised: options.onCompromised,
+    ...(waitMs > 0
+      ? {
+          retries: {
+            retries: Math.ceil(waitMs / intervalMs),
+            factor: 1,
+            minTimeout: intervalMs,
+            maxTimeout: intervalMs,
+          },
+        }
+      : {}),
+  })
+}
+
+/**
+ * The fields a new status snapshot carries from the previous file: `lastFatalError` and
+ * `lastShutdown` (task-queue/worker-status.ts) and the schema gate's hold, so its bound keeps
+ * counting from the first worker that saw each schema missing.
+ */
+async function readCarriedFields(
+  taskDir: string,
+): Promise<Pick<WorkerStatusReport, 'lastFatalError' | 'lastShutdown' | 'baseHold'>> {
+  const { lastFatalError, lastShutdown } = await readCarriedOverStatus(taskDir)
+  const baseHold = await readCarriedBaseHold(taskDir)
+  return {
+    ...(lastFatalError ? { lastFatalError } : {}),
+    ...(lastShutdown ? { lastShutdown } : {}),
+    ...(baseHold ? { baseHold } : {}),
+  }
+}
+
+/**
+ * Record a worker that failed before {@link CmsWorker.start} as `lastFatalError` (phase
+ * `startup`), so System health and the API's not-ready answer say why. For an entrypoint's own
+ * boot steps (its environment, its secrets); start() records its own failures.
+ *
+ * Writes under the worker lock like every status write, and writes nothing while the lock looks
+ * held (fresher than twice `lockStaleMs`, see recordLockLoss): its holder owns the file. Never
+ * throws, since its caller is already exiting.
+ */
+export async function recordWorkerStartupFailure(options: {
+  workspacePath: string
+  error: unknown
+  lockStaleMs?: number
+  /**
+   * Write nothing when the file is a failed start's own record (its `lastFatalError` was written
+   * by the worker that wrote the file) and this accepts that record: for a failure that only says
+   * the recorded cause is still in the way (the GitHub gateway unreachable while it restarts after
+   * its own fatal error), which must not replace that cause. A record a later worker carried
+   * forward is never kept: that worker got past it.
+   */
+  keepRecordedFatal?: (recorded: NonNullable<WorkerStatusReport['lastFatalError']>) => boolean
+}): Promise<void> {
+  const taskDir = path.join(options.workspacePath, '.tasks')
+  let release: (() => Promise<void>) | undefined
+  try {
+    await fs.mkdir(taskDir, { recursive: true })
+    // Twice the usual staleness, for the reason recordLockLoss gives: a lost record costs
+    // nothing, a removed live lock costs a worker.
+    release = await lockWorkerTaskDir(taskDir, 2 * (options.lockStaleMs ?? DEFAULT_LOCK_STALE_MS), {
+      onCompromised: (err) =>
+        workerLogError('Worker lock lost while recording a startup failure:', getErrorMessage(err)),
+    })
+    const now = new Date().toISOString()
+    const { lastFatalError, lastShutdown, baseHold } = await readCarriedFields(taskDir)
+    if (
+      lastFatalError &&
+      options.keepRecordedFatal &&
+      lastFatalError.workerStartedAt === (await readWorkerStatusStartedAt(taskDir)) &&
+      options.keepRecordedFatal(lastFatalError)
+    ) {
+      return
+    }
+    await writeWorkerStatus(taskDir, {
+      version: 1,
+      workerVersion: CANOPYCMS_VERSION,
+      startedAt: now,
+      updatedAt: now,
+      ...(lastShutdown ? { lastShutdown } : {}),
+      ...(baseHold ? { baseHold } : {}),
+      lastFatalError: {
+        // [REDACT] Served to the browser by the admin panel and the API's not-ready answer.
+        message: redactCredentials(getErrorMessage(options.error)),
+        at: now,
+        phase: 'startup',
+        workerStartedAt: now,
+      },
+    })
+  } catch (err) {
+    workerLogError(
+      isNodeError(err) && err.code === 'ELOCKED'
+        ? 'Not recording the startup failure: another worker holds the lock and owns worker-status.json'
+        : `Failed to record the startup failure: ${getErrorMessage(err)}`,
+    )
+  } finally {
+    await release?.().catch(() => {})
+  }
+}
+
 export class CmsWorker {
-  // Built by ensureGitHubAuth(), not the constructor, so a credential config
-  // error is throwable somewhere start()'s catch can record it. A FIELD rather
-  // than a getter because two test files assign a mock over it (the same
-  // INVARIANT worker-context.ts states), and ensureGitHubAuth() will not
-  // overwrite one that is already there.
-  private octokit!: Octokit
+  // Created by github(), not the constructor, so a credential config error is
+  // throwable somewhere start()'s catch can record it. A FIELD because tests
+  // install their own (test-utils/worker-gateway.ts), which github() keeps.
+  private gateway?: GitHubGateway
   private taskDir: string
   private remoteGitPath: string
+  private stateDirectory: string
   private contentBranchesPath: string
-  private baseBranch: string
+  // Set by the constructor when configured, else by resolveBaseBranch() in
+  // start(); read through the two getters below, which throw until then.
   // Workspace directories use sanitized names; git refs (fetch/rev-list/merge
   // against remote.git) must keep using the raw `baseBranch` name.
   // Computed once so both filesystem call sites agree instead of re-deriving it
   // and risking drift.
-  private sanitizedBaseBranch: SanitizedBranchName
+  private resolvedBaseBranch?: { name: string; sanitized: SanitizedBranchName }
   // This deployment's own settings branch — see CmsWorkerConfig.deploymentName.
   // `pushSettingsBranches` pushes ONLY this branch, never another
   // `canopycms-settings-*` it happens to find locally. Resolved lazily by
@@ -159,12 +448,19 @@ export class CmsWorker {
   private settingsBranchResolved?: string
   private activeTimeouts = new Set<NodeJS.Timeout>()
   private running = false
-  private activeOperations = new Set<Promise<void>>()
+  // In-flight loop iterations, each labelled for the drain's log lines and
+  // `lastShutdown.abandoned`.
+  private activeOperations = new Map<Promise<void>, string>()
+  private stopping: Promise<void> | null = null
+  private drainDeadlineMs: number
+  // Aborted when a draining stop() reaches its deadline; see WorkerContext.
+  private shutdownController = new AbortController()
   private maxTasksPerCycle: number
   private taskTimeoutMs: number
   private maxRetries: number
   private lockFilePath: string
   private lockStaleMs: number
+  private schemaHoldMaxMs: number
   private releaseLockFn: (() => Promise<void>) | null = null
   private contentRoot: string
   private log = cmsTaskQueueLogger
@@ -172,24 +468,42 @@ export class CmsWorker {
   // Normally initialized at the top of start(); see ensureStatusReport() for
   // the lazy-init fallback.
   private statusReport?: WorkerStatusReport
-  // Which GitHub credential this worker uses, resolved ONCE so Octokit and
-  // every git URL provably authenticate as the same identity. Resolved lazily
-  // by ensureGitHubAuth(), NOT in the constructor (see that method):
-  // `undefined` means "not resolved yet", never "no credential".
-  private githubAuth?: ResolvedGitHubAuth
+  private warnedDivergences = new Map<string, string>()
+  // Set by a lock compromise that starts the stop, so the drain records it; see selfStopped.
+  private lockLostMessage?: string
+  // Who wrote worker-status.json when this worker took the lock: until its own first write
+  // lands, the file is still that worker's, and recordLockLoss may replace it.
+  private statusWriterAtLock?: string
+  private settleSelfStopped!: (stop: WorkerSelfStop) => void
+
+  /**
+   * Settles once the worker has stopped for a reason it chose itself (its lock was
+   * compromised), after the drain and its record in worker-status.json. Never settles for a
+   * stop() the entrypoint asked for. Nothing else ends the process, so an entrypoint exits
+   * non-zero on it and its process manager starts a fresh worker.
+   */
+  readonly selfStopped: Promise<WorkerSelfStop> = new Promise((resolve) => {
+    this.settleSelfStopped = resolve
+  })
 
   constructor(private config: CmsWorkerConfig) {
     this.taskDir = path.join(config.workspacePath, '.tasks')
-    this.remoteGitPath = path.join(config.workspacePath, 'remote.git')
+    // Absolute: git can read a relative path such as `sub/remote.git` as a remote's name and use
+    // that remote's `remote.<name>.url` from a clone's config; never one that starts with '/'.
+    this.remoteGitPath = path.join(path.resolve(config.workspacePath), 'remote.git')
+    this.stateDirectory = path.resolve(
+      config.stateDirectory ?? defaultStateDirectory(config.workspacePath),
+    )
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
-    this.baseBranch = config.baseBranch ?? 'main'
-    this.sanitizedBaseBranch = sanitizeBranchName(this.baseBranch)
+    if (config.baseBranch !== undefined) this.setBaseBranch(config.baseBranch)
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
     this.lockFilePath = path.join(config.workspacePath, '.tasks', '.worker-lock')
     this.lockStaleMs = config.lockStaleMs ?? DEFAULT_LOCK_STALE_MS
+    this.drainDeadlineMs = config.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS
     this.contentRoot = config.contentRoot ?? 'content'
+    this.schemaHoldMaxMs = config.schemaHoldMaxMs ?? DEFAULT_SCHEMA_HOLD_MAX_MS
   }
 
   /**
@@ -223,12 +537,12 @@ export class CmsWorker {
    * as foreign and never pushes it.
    *
    * DEFERRED out of the constructor deliberately, which is the whole point of
-   * the method existing: canopycms-cdk/worker/index.ts constructs the worker
-   * before calling start(), so a throw during `new CmsWorker(...)` lands BEFORE
-   * the only code that writes `lastFatalError` -- start()'s catch. Under
-   * systemd `Type=simple` + `Restart=always` with no cfn-signal, that is an
-   * invisible ~5s crash-loop that `cdk deploy` reports as success while the
-   * admin panel shows the worker 'absent' with no fatal error to explain it.
+   * the method existing: an entrypoint constructs the worker before calling
+   * start(), so a throw during `new CmsWorker(...)` lands BEFORE start()'s
+   * catch, which records `lastFatalError` for every entrypoint. Only one that
+   * calls `recordWorkerStartupFailure` (canopycms-cdk/worker/run.ts does) would
+   * record it otherwise; under systemd `Restart=always` the rest crash-loop
+   * every ~5s with System health showing the worker 'absent' and no reason.
    *
    * Lazy rather than start()-only so unit tests driving pushSettingsBranches()
    * still see the value, exactly as ensureStatusReport() above. Idempotent: the
@@ -250,40 +564,58 @@ export class CmsWorker {
    * Built FRESH on every call, with instance-backed members as functions rather
    * than copied values. See WorkerContext's INVARIANT: a context that captured
    * any of them at construction time would hand the extracted code the pre-test
-   * value, which for `buildGitHubUrl` means a test's push going to github.com
-   * for real instead of its local fixture repo.
+   * value, which for the GitHub gateway means a test's push going to
+   * github.com for real instead of its local fixture repo.
    */
   private ctx(): WorkerContext {
     return {
-      githubOwner: this.config.githubOwner,
-      githubRepo: this.config.githubRepo,
       baseBranch: this.baseBranch,
       sanitizedBaseBranch: this.sanitizedBaseBranch,
       taskDir: this.taskDir,
       remoteGitPath: this.remoteGitPath,
       contentBranchesPath: this.contentBranchesPath,
       contentRoot: this.contentRoot,
+      schemaHoldMaxMs: this.schemaHoldMaxMs,
       taskTimeoutMs: this.taskTimeoutMs,
       maxTasksPerCycle: this.maxTasksPerCycle,
       maxRetries: this.maxRetries,
       log: this.log,
-      octokit: () => this.octokitClient(),
-      buildGitHubUrl: () => this.buildGitHubUrl(),
-      refreshGitHubCredential: () => this.refreshGitHubCredential(),
+      github: () => this.github(),
       branchWorkspacePath: (branchRefName) => this.branchWorkspacePath(branchRefName),
       executeTask: (task, signal) => this.executeTask(task, signal),
-      pushBranchToGitHub: (branch) => this.pushBranchToGitHub(branch),
+      pushBranchToGitHub: (branch, signal) => this.pushBranchToGitHub(branch, signal),
       isRunning: () => this.running,
+      isDraining: () => this.stopping !== null,
+      shutdownSignal: () => this.shutdownController.signal,
       ensureStatusReport: () => this.ensureStatusReport(),
       ensureSettingsBranch: () => this.ensureSettingsBranch(),
+      warnedDivergences: () => this.warnedDivergences,
       afterConflictDetectedForTesting: () => this.afterConflictDetectedForTesting(),
       afterRebaseCompletedForTesting: () => this.afterRebaseCompletedForTesting(),
     }
   }
 
-  async start(): Promise<void> {
+  /**
+   * Take the worker lock, provision, run the first sync, then schedule the
+   * loops. All of it is tracked as an operation, so a stop() that lands
+   * mid-startup -- during the lock acquisition, a first-boot clone, the first
+   * sync -- drains it before releasing the lock, and start() then resolves
+   * without scheduling anything.
+   */
+  start(): Promise<void> {
+    const starting = this.startUnderLock()
+    this.trackOperation('startup', starting)
+    return starting
+  }
+
+  private async startUnderLock(): Promise<void> {
+    // A stop() that already finished has nothing left to release a lock taken now.
+    if (this.stopping) return
     this.running = true
     workerLog('CMS Worker starting...')
+    // Each attempt is a new worker to worker-status.json: a start() retried after a failed one
+    // must not match that failure's `workerStartedAt` (see readCarriedOverStatus).
+    this.statusReport = undefined
     this.ensureStatusReport()
 
     await this.acquireLock()
@@ -292,11 +624,18 @@ export class CmsWorker {
     // minutes, and until then System health would report the old worker's
     // version. Best-effort, like the startup-failure write below. The previous
     // `lastFatalError` rides along in this snapshot only, so a crash loop keeps
-    // its alert between restarts while the first successful sync still clears it.
+    // its alert between restarts while the first successful sync still clears
+    // it. Two fields carry into the report itself: `lastShutdown`, which
+    // describes the last worker that ran until this worker's own stop() replaces it,
+    // and the schema gate's hold, so its bound keeps counting from the first
+    // worker that saw each schema missing.
     try {
-      const lastFatalError = await readLastFatalError(this.taskDir)
+      const { lastFatalError, lastShutdown, baseHold } = await readCarriedFields(this.taskDir)
+      const report = this.ensureStatusReport()
+      if (lastShutdown) report.lastShutdown = lastShutdown
+      if (baseHold) report.baseHold = baseHold
       await writeWorkerStatus(this.taskDir, {
-        ...this.ensureStatusReport(),
+        ...report,
         ...(lastFatalError ? { lastFatalError } : {}),
       })
     } catch (err) {
@@ -305,6 +644,9 @@ export class CmsWorker {
         getErrorMessage(err),
       )
     }
+    // After the carry-over, not before: a stop() during the lock acquisition
+    // writes this report, which must still hold what the previous worker left.
+    if (this.stopping) return
 
     // Everything below runs while holding the cross-host worker lock. A failure
     // here (most notably the empty-remote guard inside ensureRemoteGit) means
@@ -323,14 +665,23 @@ export class CmsWorker {
       // Same shape, same reason: a half-configured credential throws HERE,
       // inside the try, rather than out of `new CmsWorker(...)` where nothing
       // could record it.
-      this.ensureGitHubAuth()
+      const github = this.github()
+
+      // Same again. NaN would never expire a schema hold, which is the one
+      // thing the bound exists to prevent.
+      if (!Number.isFinite(this.schemaHoldMaxMs) || this.schemaHoldMaxMs < 0) {
+        throw new Error(
+          `CmsWorker: schemaHoldMaxMs must be a finite, non-negative number of milliseconds (got ${this.schemaHoldMaxMs})`,
+        )
+      }
 
       // BEFORE ensureRemoteGit(): its clone is the first thing to use the
       // credential, and its catch blames the repository rather than the
-      // credential. See preflightGitHubAppAuth().
-      await this.preflightGitHubAppAuth()
-
+      // credential. See GitHubGateway.prepare().
+      await github.prepare()
+      await this.resolveBaseBranch()
       await this.ensureRemoteGit()
+      await this.recordBaseBranchInRemoteHead()
 
       // Recover orphaned tasks immediately rather than waiting for the first
       // processTaskQueue() poll. Not the only call site: processTaskQueue()
@@ -345,12 +696,21 @@ export class CmsWorker {
         workerLog(`Recovered ${recovered} orphaned task(s)`)
       }
 
-      const initialTasks: Promise<void>[] = [this.syncGit()]
+      // Tracked like loop iterations, so a stop() during the first sync drains it.
+      const initialTasks: Promise<void>[] = [
+        this.trackOperation('git sync', this.syncGit()),
+        this.trackOperation('base branch check', this.warnIfBaseUnprotected()),
+      ]
       if (this.config.refreshAuthCache) {
-        initialTasks.push(this.refreshAuthCache())
+        initialTasks.push(this.trackOperation('auth cache refresh', this.refreshAuthCache()))
       }
       await Promise.allSettled(initialTasks)
     } catch (err) {
+      // A drain cut startup short: stop() owns the lock and the status file now.
+      if (this.stopping) {
+        workerLog(`Startup ended by the drain: ${redactCredentials(getErrorMessage(err))}`)
+        return
+      }
       // Surface a startup failure (e.g. the empty-remote guard's poisoned
       // remote.git) to the admin panel via worker-status.json, not only
       // journald/CloudWatch. Best-effort and BEFORE releaseLock(): a
@@ -359,10 +719,11 @@ export class CmsWorker {
       report.lastFatalError = {
         // [REDACT] Persisted to worker-status.json and served to the browser by
         // the admin panel -- must never carry the bot token a poisoned or
-        // failed git URL (buildGitHubUrl()) can embed.
+        // failed git URL (the gateway's) can embed.
         message: redactCredentials(getErrorMessage(err)),
         at: new Date().toISOString(),
         phase: 'startup',
+        workerStartedAt: report.startedAt,
       }
       try {
         await writeWorkerStatus(this.taskDir, report)
@@ -376,19 +737,17 @@ export class CmsWorker {
       throw err
     }
 
+    if (this.stopping) return
+
     const taskInterval = this.config.taskPollInterval ?? 5_000
     const gitInterval = this.config.gitSyncInterval ?? 5 * 60_000
 
-    this.scheduleLoop(() => this.processTaskQueue(), taskInterval)
-    // The wrapper, not syncGit() itself: a failed sync is where a rotated or
-    // revoked GitHub credential is noticed. start()'s own initial syncGit()
-    // above stays unwrapped -- there is no stale credential to refresh one line
-    // after reading it at boot.
-    this.scheduleLoop(() => this.syncGitWithCredentialRefresh(), gitInterval)
+    this.scheduleLoop('task queue', () => this.processTaskQueue(), taskInterval)
+    this.scheduleLoop('git sync', () => this.syncGit(), gitInterval)
 
     if (this.config.refreshAuthCache) {
       const cacheInterval = this.config.authCacheRefreshInterval ?? 15 * 60_000
-      this.scheduleLoop(() => this.refreshAuthCache(), cacheInterval)
+      this.scheduleLoop('auth cache refresh', () => this.refreshAuthCache(), cacheInterval)
       workerLog(`  Auth cache refresh: every ${cacheInterval / 1000}s`)
     }
 
@@ -397,22 +756,93 @@ export class CmsWorker {
     workerLog(`  Git sync: every ${gitInterval / 1000}s`)
   }
 
-  async stop(): Promise<void> {
+  /**
+   * Drain, then release the worker lock. Idempotent: a second call returns the
+   * first call's promise.
+   *
+   * 1. Stop taking work: no loop starts another iteration, and none claims
+   *    another task or starts another sync stage or branch rebase (each checks
+   *    `isDraining()` at its boundaries).
+   * 2. Wait up to the deadline (`drainDeadlineMs`, or `deadlineMs` for this
+   *    call) for what is already in flight, startup included.
+   * 3. At the deadline, abort it through `shutdownSignal()`: a task's git push
+   *    and GitHub calls are killed and the task is released to pending with no
+   *    retry spent; a sync's bundle, unbundle, ref update and settings push
+   *    are killed. The gateway's GitHub fetches and mirror maintenance run on
+   *    (safeinsights/canopycms#907). A branch rebase
+   *    is never aborted, because a rebase killed mid-branch is recovered
+   *    lossily; anything still unsettled after a short grace is abandoned to
+   *    the process exit.
+   * 4. Record `lastShutdown` in worker-status.json -- only while this worker
+   *    still holds the lock, or after a compromise that started this stop once
+   *    it has retaken it (recordLockLoss) -- and release the lock. Release comes last, so a successor starts
+   *    only once this worker's work has settled or been abandoned.
+   */
+  stop(options: { reason?: string; deadlineMs?: number } = {}): Promise<void> {
+    // A later call cannot restart the drain, but deadline 0 (a lock compromise)
+    // still cuts the running one short.
+    if (this.stopping && options.deadlineMs === 0) this.shutdownController.abort()
+    this.stopping ??= this.drainAndStop(
+      options.reason ?? 'stop requested',
+      options.deadlineMs ?? this.drainDeadlineMs,
+    )
+    return this.stopping
+  }
+
+  private async drainAndStop(reason: string, deadlineMs: number): Promise<void> {
+    const startedAt = Date.now()
     this.running = false
     for (const t of this.activeTimeouts) {
       clearTimeout(t)
     }
     this.activeTimeouts.clear()
-    let drainTimer: NodeJS.Timeout | undefined
-    await Promise.race([
-      Promise.allSettled([...this.activeOperations]),
-      new Promise<void>((r) => {
-        drainTimer = setTimeout(r, this.taskTimeoutMs)
-      }),
-    ])
-    clearTimeout(drainTimer)
+
+    const inFlight = [...this.activeOperations.values()]
+    workerLog(
+      inFlight.length > 0
+        ? `Draining (${reason}): waiting up to ${deadlineMs / 1000}s for ${inFlight.join(', ')}`
+        : `Draining (${reason}): nothing in flight`,
+    )
+
+    let abandoned: string[] = []
+    if (!(await settlesWithin([...this.activeOperations.keys()], deadlineMs))) {
+      abandoned = [...new Set(this.activeOperations.values())]
+      workerLogWarn(`Drain deadline (${deadlineMs / 1000}s) hit, aborting: ${abandoned.join(', ')}`)
+      this.shutdownController.abort()
+      const graceMs = Math.min(ABORT_GRACE_MS, this.drainDeadlineMs)
+      if (!(await settlesWithin([...this.activeOperations.keys()], graceMs))) {
+        workerLogError(
+          `Still running ${graceMs / 1000}s after the abort, abandoned to the exit: ${[
+            ...new Set(this.activeOperations.values()),
+          ].join(', ')}`,
+        )
+      }
+    }
+
+    const drainMs = Date.now() - startedAt
+    const shutdown: WorkerShutdownRecord = {
+      reason,
+      at: new Date().toISOString(),
+      workerStartedAt: this.ensureStatusReport().startedAt,
+      outcome: abandoned.length > 0 ? 'deadline' : 'drained',
+      drainMs,
+      ...(abandoned.length > 0 ? { abandoned } : {}),
+    }
+    if (this.releaseLockFn) {
+      const report = this.ensureStatusReport()
+      report.lastShutdown = shutdown
+      await writeWorkerStatus(this.taskDir, report).catch((err) =>
+        workerLogError('Failed to write worker status on shutdown:', getErrorMessage(err)),
+      )
+    } else if (this.lockLostMessage !== undefined) {
+      await this.recordLockLoss(shutdown, this.lockLostMessage)
+    }
     await this.releaseLock()
-    workerLog('CMS Worker stopped')
+    workerLog(
+      abandoned.length > 0
+        ? `CMS Worker stopped after the drain deadline (${(drainMs / 1000).toFixed(1)}s)`
+        : `CMS Worker stopped: drained in ${(drainMs / 1000).toFixed(1)}s`,
+    )
   }
 
   /**
@@ -440,16 +870,21 @@ export class CmsWorker {
   private async acquireLock(): Promise<void> {
     await fs.mkdir(this.taskDir, { recursive: true })
     try {
-      this.releaseLockFn = await lockfile.lock(this.taskDir, {
-        lockfilePath: this.lockFilePath,
-        stale: this.lockStaleMs,
+      this.releaseLockFn = await lockWorkerTaskDir(this.taskDir, this.lockStaleMs, {
         onCompromised: (err) => {
           // The heartbeat could not be maintained (lock deleted or taken over),
-          // so another worker may now be consuming the queue: stop processing
-          // to preserve the single-consumer invariant.
+          // so another worker may now be consuming the queue: abort at once,
+          // with no drain, to restore the single-consumer invariant. Unless a
+          // stop was already under way, this worker chose to stop, which
+          // selfStopped reports once the drain has recorded it.
           workerLogError('Worker lock compromised, shutting down:', getErrorMessage(err))
           this.releaseLockFn = null // the lock is already lost; nothing to release
-          void this.stop()
+          const selfStop = this.stopping === null
+          if (selfStop) this.lockLostMessage = redactCredentials(getErrorMessage(err))
+          const stopped = this.stop({ reason: LOCK_COMPROMISED_REASON, deadlineMs: 0 })
+          if (selfStop) {
+            void stopped.then(() => this.settleSelfStopped({ reason: LOCK_COMPROMISED_REASON }))
+          }
         },
       })
     } catch (err) {
@@ -460,6 +895,7 @@ export class CmsWorker {
       }
       throw err
     }
+    this.statusWriterAtLock = await readWorkerStatusStartedAt(this.taskDir).catch(() => undefined)
   }
 
   private async releaseLock(): Promise<void> {
@@ -474,11 +910,73 @@ export class CmsWorker {
   }
 
   /**
+   * Record a lock compromise in worker-status.json, under the lock: retake it, waiting out its
+   * staleness window, and write only if that succeeds and the file is still this worker's (or
+   * the one it took the lock from). A worker that took the lock over keeps it fresh, or has
+   * written the file since, and owns it, so nothing is written. A heartbeat this worker merely
+   * failed to refresh (an EFS hiccup) goes stale, and the record lands where the restarted
+   * worker carries `lastShutdown` forward. The restart waits for it: 65 s at the default `lockStaleMs`.
+   */
+  private async recordLockLoss(shutdown: WorkerShutdownRecord, message: string): Promise<void> {
+    let release: (() => Promise<void>) | undefined
+    try {
+      // Twice the usual staleness: a successor's live heartbeat can look a refresh interval
+      // plus an EFS attribute-cache window old from here, and taking it would remove its lock.
+      release = await lockWorkerTaskDir(this.taskDir, this.lockStaleMs * 2, {
+        // A refresh failure fires the compromise once this worker's own lock has gone
+        // unrefreshed for `lockStaleMs`, or up to a second less (proper-lockfile rounds the
+        // first mtime up). So the wait covers the remaining `lockStaleMs`, that second and a
+        // retry interval, and stays inside the unit's TimeoutStopSec when a SIGTERM lands
+        // mid-wait. A deleted lock is retaken at once; a foreign mtime is a successor's.
+        waitMs: this.lockStaleMs + 2_000,
+        onCompromised: (err) =>
+          workerLogError('Worker lock lost again while recording the loss:', getErrorMessage(err)),
+      })
+      const report = this.ensureStatusReport()
+      // A successor that took the lock and released it during the wait owns the file now.
+      const writtenBy = await readWorkerStatusStartedAt(this.taskDir)
+      if (
+        writtenBy !== undefined &&
+        writtenBy !== report.startedAt &&
+        writtenBy !== this.statusWriterAtLock
+      ) {
+        workerLogError(
+          'Not recording the lock loss: another worker has written worker-status.json since',
+        )
+        return
+      }
+      report.lastShutdown = shutdown
+      report.lastFatalError = {
+        message: `The worker lost its lock on the shared workspace and stopped; it restarts on its own. ${message}`,
+        at: shutdown.at,
+        phase: 'run',
+        workerStartedAt: report.startedAt,
+      }
+      await writeWorkerStatus(this.taskDir, report)
+    } catch (err) {
+      workerLogError(
+        isNodeError(err) && err.code === 'ELOCKED'
+          ? 'Not recording the lock loss: another worker holds the lock and owns worker-status.json'
+          : `Failed to record the lock loss: ${getErrorMessage(err)}`,
+      )
+    } finally {
+      await release?.().catch(() => {})
+    }
+  }
+
+  /** Register `operation` as in flight under `label` until it settles. */
+  private trackOperation(label: string, operation: Promise<void>): Promise<void> {
+    this.activeOperations.set(operation, label)
+    void operation.finally(() => this.activeOperations.delete(operation)).catch(() => {})
+    return operation
+  }
+
+  /**
    * Run `fn` repeatedly, the next invocation starting `interval` ms after the
    * previous one COMPLETES. setTimeout chaining rather than setInterval, so
    * executions cannot overlap when one runs longer than the interval.
    */
-  private scheduleLoop(fn: () => Promise<void>, interval: number): void {
+  private scheduleLoop(label: string, fn: () => Promise<void>, interval: number): void {
     const run = () => {
       if (!this.running) return
       const timeout = setTimeout(async () => {
@@ -486,9 +984,7 @@ export class CmsWorker {
         const operation = fn().catch((err) => {
           workerLogError('Worker loop error:', err instanceof Error ? err.message : err)
         })
-        this.activeOperations.add(operation)
-        operation.finally(() => this.activeOperations.delete(operation))
-        await operation
+        await this.trackOperation(label, operation)
         run()
       }, interval)
       this.activeTimeouts.add(timeout)
@@ -496,13 +992,146 @@ export class CmsWorker {
     run()
   }
 
+  private get baseBranch(): string {
+    return this.requireBaseBranch().name
+  }
+
+  private get sanitizedBaseBranch(): SanitizedBranchName {
+    return this.requireBaseBranch().sanitized
+  }
+
+  private requireBaseBranch(): { name: string; sanitized: SanitizedBranchName } {
+    if (!this.resolvedBaseBranch) {
+      throw new Error('CmsWorker: the base branch is resolved by start(); it has not run yet')
+    }
+    return this.resolvedBaseBranch
+  }
+
+  private setBaseBranch(name: string): void {
+    this.resolvedBaseBranch = { name, sanitized: sanitizeBranchName(name) }
+  }
+
+  /**
+   * An unconfigured base branch is the one remote.git's HEAD names, which is what the Lambda
+   * reads too (GitManager.detectBaseBranch); before remote.git exists, it is GitHub's default
+   * branch, which the clone then records as that HEAD. So it is too when remote.git has no branch
+   * outside the settings namespace: no base branch is there for HEAD to name, and ensureRemoteGit
+   * replaces it from GitHub unless something in it is at stake. Never assumes 'main'.
+   */
+  private async resolveBaseBranch(): Promise<void> {
+    if (this.resolvedBaseBranch) return
+    const undetermined = (err: unknown) =>
+      new Error(
+        `CANOPYCMS_BASE_BRANCH is not set (the CDK construct's \`baseBranch\` prop), and the ` +
+          `base branch could not be determined from ${this.remoteGitPath} or GitHub: ` +
+          `${redactCredentials(getErrorMessage(err))}. Set it to the branch editing branches fork ` +
+          `from, or, if remote.git is damaged, delete ${this.remoteGitPath} and restart to re-clone.`,
+      )
+    let remoteGitExists: boolean
+    try {
+      remoteGitExists = await fs.stat(this.remoteGitPath).then(
+        () => true,
+        (err: unknown) => {
+          if (isNodeError(err) && err.code === 'ENOENT') return false
+          throw err
+        },
+      )
+    } catch (err) {
+      throw undetermined(err)
+    }
+    // Before the first git to read it, and on its own: a refusal is recorded as itself, not as a
+    // base branch to configure or a remote.git to delete.
+    if (remoteGitExists) await this.assertRemoteGitConfig()
+    let name: string
+    try {
+      const fromRemoteGit = remoteGitExists && (await this.hasContentBranch(this.remoteGitPath))
+      name = fromRemoteGit
+        ? await readHeadBranch(this.remoteGitPath, sharedRepoGit(this.remoteGitPath, 'bare'))
+        : await this.github().defaultBranch()
+    } catch (err) {
+      throw undetermined(err)
+    }
+    this.setBaseBranch(name)
+    workerLog(`Base branch: '${name}' (detected; CANOPYCMS_BASE_BRANCH is not set)`)
+  }
+
+  /**
+   * Warn when the base branch is outside the gateway's protected set: it was detected from
+   * remote.git rather than configured, and is not GitHub's default branch at boot. Only the
+   * worker's own check (`pushBranchToGitHub`) then stops a push to it. A warning, not a refusal, so
+   * a change of GitHub's default branch cannot stop the worker booting.
+   */
+  private async warnIfBaseUnprotected(): Promise<void> {
+    try {
+      if (await this.github().isProtectedBranch(this.baseBranch, this.shutdownController.signal)) {
+        return
+      }
+      workerLogWarn(
+        `The base branch '${this.baseBranch}' is neither CANOPYCMS_BASE_BRANCH nor GitHub's ` +
+          `default branch, nor in CANOPYCMS_PROTECTED_BRANCHES, so the GitHub gateway's policy ` +
+          `does not protect it; only the worker's own check stops a push to it. Set ` +
+          `CANOPYCMS_BASE_BRANCH (the CDK construct's \`baseBranch\` prop).`,
+      )
+    } catch (err) {
+      workerLogWarn(
+        `Could not check that the base branch '${this.baseBranch}' is protected: ` +
+          redactCredentials(getErrorMessage(err)),
+      )
+    }
+  }
+
+  /**
+   * Check remote.git's config at boot. A refusal is never a case for replacement: it reports that
+   * something wrote there, and listing the refs a replacement would lose means running git under
+   * that config. The message says so, so System health does not read it as a routine failure.
+   */
+  private async assertRemoteGitConfig(): Promise<void> {
+    try {
+      await assertSharedRepoConfig(this.remoteGitPath, 'bare')
+    } catch (err) {
+      if (!(err instanceof SharedRepoRefusalError)) throw err
+      throw new SharedRepoRefusalError(
+        `${err.message.replace(/\.$/, '')}. This needs an operator: the worker never repairs or ` +
+          `replaces a remote.git whose config was tampered with or cannot be read.`,
+      )
+    }
+  }
+
+  /** Whether the bare repo at `gitDir` has a branch that is not a settings branch. */
+  private async hasContentBranch(gitDir: string): Promise<boolean> {
+    const branches = await sharedRepoGit(gitDir, 'bare', { errors: failOnSignalExit }).raw([
+      'for-each-ref',
+      '--format=%(refname:strip=2)',
+      'refs/heads/',
+    ])
+    return branches
+      .split('\n')
+      .some((branch) => branch !== '' && !isSettingsBranchName(branch, this.ensureSettingsBranch()))
+  }
+
+  /**
+   * Point remote.git's HEAD at the base branch this worker uses, so a Lambda left to detect it
+   * (GitManager.detectBaseBranch) reads the same name. Only the worker writes it, at boot under
+   * the worker lock, and in a fresh clone before it is renamed into place, so no Lambda reads the
+   * clone's GitHub-default HEAD first; a Lambda reads it once per process.
+   */
+  private async recordBaseBranchInRemoteHead(gitDir = this.remoteGitPath): Promise<void> {
+    const ref = `refs/heads/${this.baseBranch}`
+    const current = await readHeadBranch(gitDir, sharedRepoGit(gitDir, 'bare')).catch(
+      () => undefined,
+    )
+    if (current === this.baseBranch) return
+    // Pinned: moving HEAD fires remote.git's reference-transaction hooks.
+    await sharedRepoGit(gitDir, 'bare').raw(['symbolic-ref', 'HEAD', ref])
+    workerLog(`${path.basename(gitDir)} HEAD now names the base branch '${this.baseBranch}'`)
+  }
+
   /**
    * Whether the bare repo at `gitDir` has a local `refs/heads/<baseBranch>`.
    *
-   * Explicit `--git-dir` rather than `simpleGit({ baseDir })`, so this also
+   * The repository is named outright (sharedRepoGit's GIT_DIR), so this also
    * works where `safe.bareRepository=explicit` refuses cwd-based discovery of
-   * bare repos but expressly allows `--git-dir` (same pattern as
-   * GitManager.bareRemoteHasBranch).
+   * bare repos.
    *
    * Deliberately omits `--quiet`: simple-git treats a task as failed only when
    * the process exits non-zero AND writes to stderr, so a silent-on-failure
@@ -511,9 +1140,7 @@ export class CmsWorker {
    * which is what makes simple-git reject the promise here.
    */
   private async verifyBaseBranchExists(gitDir: string): Promise<void> {
-    await simpleGit().raw([
-      '--git-dir',
-      gitDir,
+    await sharedRepoGit(gitDir, 'bare').raw([
       'rev-parse',
       '--verify',
       `refs/heads/${this.baseBranch}`,
@@ -527,8 +1154,8 @@ export class CmsWorker {
    * `git clone https://x-access-token:<token>@github.com/...` records that URL
    * verbatim as `remote.origin.url`, and for `remote.git` that config lives on
    * shared EFS. The security model in docs/deploying-to-aws.md -- a compromised
-   * Lambda can read/write EFS content but cannot push to GitHub, secrets stay
-   * on the worker -- is false while that string is there: the Lambda could read
+   * Lambda can read/write EFS content but cannot reach the GitHub credential,
+   * which stays off EFS -- is false while that string is there: the Lambda could read
    * the token off EFS and, with no egress of its own, exfiltrate it by writing
    * it into branch content the worker then pushes to GitHub.
    *
@@ -539,7 +1166,7 @@ export class CmsWorker {
    * survives, so a failed scrub is never indistinguishable from a clean one.
    */
   private async scrubPersistedRemote(gitDir: string): Promise<void> {
-    const git = simpleGit({ baseDir: gitDir })
+    const git = sharedRepoGit(gitDir, 'bare')
     // `git config --get` exits 1 with no output when the key is absent, and
     // simple-git resolves with an empty string rather than throwing (verified
     // against 3.36), so an empty result means "absent" too.
@@ -601,17 +1228,31 @@ export class CmsWorker {
   }
 
   /**
-   * Ensure the remote.git bare repo exists, cloning it from GitHub on first
-   * run.
+   * Best-effort: without these settings remote.git still works, and a boot that
+   * cannot write its own config has a louder problem to report elsewhere.
+   */
+  private async applyRemoteGitConfig(gitDir: string): Promise<void> {
+    try {
+      await ensureRemoteGitConfig(gitDir, sharedRepoGit(gitDir, 'bare'))
+    } catch (err) {
+      workerLogWarn(`Could not apply remote.git config in ${gitDir}: ${getErrorMessage(err)}`)
+    }
+  }
+
+  /**
+   * Ensure the remote.git bare repo exists, seeding it from GitHub on first run.
    *
-   * Empty-remote guard: simple-git's bare clone of an EMPTY GitHub repo (no
-   * commits, or a base branch never pushed) exits 0 and produces a refs-less
-   * bare repo whose HEAD points at an unborn branch. `fs.stat` cannot tell that
-   * from a healthy clone, so left unchecked it silently poisons remote.git —
-   * every later branch operation breaks and the fs.stat short-circuit means it
-   * never heals. The base branch is therefore verified right after cloning AND
-   * on the already-exists fast path, since a previous run can have left a
-   * poisoned remote.git behind.
+   * Seeded through the GitHub gateway: it fetches from GitHub, and a fresh bare repo takes its
+   * branches from the bundle it answers with (worker/github-transfer.ts), so no git command run
+   * against remote.git ever carries the credential, and no token-bearing URL is ever written to
+   * EFS.
+   *
+   * Empty-remote guard: a remote.git with no base branch (one cloned from an EMPTY GitHub repo,
+   * or with a base branch never pushed) is one `fs.stat` cannot tell from a healthy one, so left
+   * unchecked it silently poisons remote.git and the stat short-circuit means it never heals. The
+   * seed refuses a GitHub without the base branch, and the base branch is verified right after
+   * seeding AND on the already-exists fast path, where a poisoned remote.git is replaced
+   * (`replacePoisonedRemoteGit`).
    */
   private async ensureRemoteGit(): Promise<void> {
     let exists: boolean
@@ -623,60 +1264,205 @@ export class CmsWorker {
     }
 
     if (exists) {
-      // SELF-HEAL, before anything else touches this repo: re-checked on every
-      // boot, not only at clone time, so a token that survived one scrub does
-      // not survive forever, and a clone interrupted between `git clone` and
-      // the scrub cannot leave a token-bearing config sitting on EFS until an
-      // operator acts.
+      // At boot, so a refusal lands in worker-status.json as a startup failure, and first: the
+      // scrub is git reading this config too.
+      await this.assertRemoteGitConfig()
+      // SELF-HEAL, before anything else changes this repo: a remote.git cloned from GitHub by an
+      // older worker recorded the token-bearing clone URL in its config.
       await this.scrubPersistedRemote(this.remoteGitPath)
 
       try {
         await this.verifyBaseBranchExists(this.remoteGitPath)
       } catch (err) {
         workerLogError(`remote.git base branch verification failed: ${getErrorMessage(err)}`)
-        // Do NOT auto-delete: an existing remote.git can hold unpushed
-        // canopycms-settings-* branches or other state worth preserving, so
-        // deletion is the operator's call.
-        throw new Error(
-          `remote.git at ${this.remoteGitPath} has no branch '${this.baseBranch}' (likely cloned while the GitHub repo was empty). Delete ${this.remoteGitPath} and restart the worker to re-clone.`,
-        )
+        await this.replacePoisonedRemoteGit()
+        return
       }
+      await this.applyRemoteGitConfig(this.remoteGitPath)
       return // Already exists and has the base branch
     }
 
     workerLog('Initializing remote.git from GitHub...')
-    const git = simpleGit()
+    const stagingPath = await this.seedRemoteGitStaging()
+    await fs.rename(stagingPath, this.remoteGitPath)
+    workerLog('remote.git initialized')
+  }
 
-    // Clone under a TEMP name and rename into place only once the token is
-    // scrubbed and the repo verified, so `remote.git` never exists on EFS in a
-    // token-bearing state. A crash mid-clone leaves only this staging
-    // directory, which the next boot deletes, rather than a poisoned
+  /**
+   * Replace an existing remote.git that has no base branch with a fresh seed from GitHub, but only
+   * when every ref in it names a commit a GitHub branch contains, so replacing it loses no commit;
+   * a branch name GitHub lacks, such as a merged branch deleted there, goes. Otherwise refuse,
+   * naming the refs at stake: unpushed work such as a settings branch.
+   *
+   * The refs are checked against the replacement itself, once it is seeded: a ref's commit counts
+   * as on GitHub only when the seed holds it, reachable from a branch GitHub had, so the decision
+   * follows exactly what would replace remote.git, whatever the gateway fetches meanwhile. They are
+   * listed again just before the swap, since the Lambda can push into remote.git while the seed
+   * runs. The swap is two renames, so the name remote.git resolves to the old repo,
+   * the new one, or for an instant nothing, never a half-built or half-deleted one.
+   */
+  private async replacePoisonedRemoteGit(): Promise<void> {
+    const poisoned =
+      `remote.git at ${this.remoteGitPath} has no branch '${this.baseBranch}' (cloned while the ` +
+      `GitHub repository was empty, or the base branch is set to one it never had)`
+    const notReplaced = (reason: string) =>
+      new Error(`${poisoned}, and it was not replaced: ${reason}`)
+
+    let refs: Map<string, string>
+    try {
+      refs = await listRemoteGitRefs(this.remoteGitPath)
+    } catch (err) {
+      throw notReplaced(
+        `its refs could not all be read (${redactCredentials(getErrorMessage(err)).trim()}), so ` +
+          `the worker cannot tell whether replacing it would lose work. Deleting ` +
+          `${this.remoteGitPath} and restarting the worker re-clones it and discards every ref in it.`,
+      )
+    }
+
+    // Only a base branch the listing confirms absent: a check that failed for any other reason
+    // is no evidence the repo is poisoned.
+    if (refs.has(`refs/heads/${this.baseBranch}`)) {
+      throw new Error(
+        `remote.git at ${this.remoteGitPath} has branch '${this.baseBranch}', but git could not ` +
+          `verify it, so the worker will not replace remote.git. Restarting the worker checks again.`,
+      )
+    }
+
+    workerLog(
+      `remote.git has no branch '${this.baseBranch}': replacing it if GitHub has every ref in it`,
+    )
+    const stagingPath = await this.seedRemoteGitStaging(async (staging, githubBranches) => {
+      const missing = await unreachableFrom(
+        this.transferContext(),
+        staging,
+        [...refs.values()],
+        [...githubBranches.values()],
+      )
+      const unpushed: string[] = []
+      for (const [ref, id] of refs) {
+        if (missing.has(id)) unpushed.push(ref)
+      }
+      if (unpushed.length === 0) return
+      const shown = unpushed.slice(0, MAX_REFS_LISTED)
+      const more = unpushed.length - shown.length
+      throw new RemoteGitKeptError(
+        `${poisoned}, and it holds ${unpushed.length === 1 ? 'a ref' : `${unpushed.length} refs`} ` +
+          `GitHub does not have, so the worker will not replace it: ${shown.join(', ')}` +
+          `${more > 0 ? ` and ${more} more` : ''}. Deleting ${this.remoteGitPath} and restarting ` +
+          `the worker re-clones it and discards ${unpushed.length === 1 ? 'that ref' : 'those refs'}.`,
+      )
+    }).catch((err: unknown) => {
+      if (err instanceof RemoteGitKeptError) throw err
+      throw notReplaced(redactCredentials(getErrorMessage(err)))
+    })
+
+    const discardStaging = () => fs.rm(stagingPath, { recursive: true, force: true })
+    let current: Map<string, string>
+    try {
+      current = await listRemoteGitRefs(this.remoteGitPath)
+    } catch (err) {
+      await discardStaging()
+      throw notReplaced(
+        `its refs could not all be read again (${getErrorMessage(err).trim()}). Restarting the ` +
+          `worker checks again.`,
+      )
+    }
+    if (!sameRefs(refs, current)) {
+      await discardStaging()
+      throw notReplaced(
+        'its refs changed while the worker seeded its replacement. Restarting the worker checks again.',
+      )
+    }
+
+    const replaced = `${this.remoteGitPath}.replaced-${Date.now()}`
+    try {
+      await fs.rename(this.remoteGitPath, replaced)
+    } catch (err) {
+      await discardStaging()
+      throw err
+    }
+    try {
+      await fs.rename(stagingPath, this.remoteGitPath)
+    } catch (err) {
+      await fs.rename(replaced, this.remoteGitPath)
+      await discardStaging()
+      throw err
+    }
+    // A push that resolved remote.git before the rename can still land in the old repo. One that
+    // lands before this listing keeps it; a later one is lost from remote.git, though the clone
+    // that pushed still has its commit.
+    const after = await listRemoteGitRefs(replaced).catch(() => null)
+    if (after !== null && sameRefs(refs, after)) {
+      // remote.git is already replaced, so a push still writing here costs only this directory.
+      await fs
+        .rm(replaced, { recursive: true, force: true, maxRetries: 3 })
+        .catch((err: unknown) => {
+          workerLogWarn(
+            `Could not remove the replaced remote.git at ${replaced}: ${getErrorMessage(err)}`,
+          )
+        })
+    } else {
+      workerLogError(
+        `Kept the replaced remote.git at ${replaced}: its refs changed as it was swapped out, so ` +
+          `it may hold work GitHub does not have.`,
+      )
+    }
+    workerLog('remote.git replaced')
+  }
+
+  /**
+   * Seed a new bare repo from GitHub at `<remote.git>.cloning`, verified and configured, and
+   * return its path for the caller to rename into place. `check` runs on the seeded repo, given
+   * GitHub's branches as the seed holds them, and its throw stops the seed. Throws with the
+   * staging directory gone.
+   */
+  private async seedRemoteGitStaging(
+    check?: (staging: string, githubBranches: ReadonlyMap<string, string>) => Promise<void>,
+  ): Promise<string> {
+    // Seeded under a TEMP name and renamed into place only once verified, so a crash mid-seed
+    // leaves only this staging directory, which the next boot deletes, rather than a poisoned
     // `remote.git` that fs.stat cannot distinguish from a healthy one.
     const stagingPath = `${this.remoteGitPath}.cloning`
     await fs.rm(stagingPath, { recursive: true, force: true })
 
     try {
-      await git.clone(await this.buildGitHubUrl(), stagingPath, ['--bare'])
+      const githubBranches = await seedFromGitHub(
+        this.transferContext(),
+        stagingPath,
+        this.baseBranch,
+      )
 
-      // Before the rename, so the token is gone from the config the moment the
-      // repo becomes reachable under its real name. Throws (rather than
-      // swallowing) if the scrub does not take.
-      await this.scrubPersistedRemote(stagingPath)
-
+      // The staging path is predictable, and so writable by the Lambda while seeding runs.
+      await assertSharedRepoConfig(stagingPath, 'bare')
+      await check?.(stagingPath, githubBranches)
       await this.verifyBaseBranchExists(stagingPath)
+      await this.recordBaseBranchInRemoteHead(stagingPath)
+      await this.applyRemoteGitConfig(stagingPath)
     } catch (err) {
-      workerLogError(`remote.git clone failed: ${redactCredentials(getErrorMessage(err))}`)
+      if (!(err instanceof RemoteGitKeptError)) {
+        workerLogError(`remote.git seeding failed: ${redactCredentials(getErrorMessage(err))}`)
+      }
       // Deleting before throwing is what makes this recoverable: the next
       // start() sees no remote.git and re-clones, instead of sticking forever
       // behind a poisoned bare repo fs.stat alone cannot detect.
       await fs.rm(stagingPath, { recursive: true, force: true })
+      if (err instanceof RemoteGitKeptError) throw err
+      if (err instanceof SharedRepoRefusalError) {
+        // Not the refusal's own advice: the directory it names is gone.
+        throw new SharedRepoRefusalError(
+          `Refusing to run git in ${stagingPath}: something wrote to it while the worker seeded ` +
+            `remote.git from it` +
+            (err instanceof UntrustedRepoConfigError
+              ? ` (${err.keys.map((k) => k.key).join(', ')})`
+              : '') +
+            `, so it was removed. Find out what wrote there; restarting the worker seeds it again.`,
+        )
+      }
       throw new Error(
         `remote.git clone of ${this.config.githubOwner}/${this.config.githubRepo} failed or has no branch '${this.baseBranch}' - the GitHub repository may be empty, or the base branch may not exist. Push an initial commit to '${this.baseBranch}' and restart the worker (systemd will retry automatically).`,
       )
     }
-
-    await fs.rename(stagingPath, this.remoteGitPath)
-    workerLog('remote.git initialized')
+    return stagingPath
   }
 
   // --- Task-queue cluster (worker/task-runner.ts) ------------------------
@@ -706,123 +1492,61 @@ export class CmsWorker {
     return updateBranchMetadata(this.ctx(), task, result)
   }
 
-  private async pushBranchToGitHub(branch: string): Promise<void> {
-    return pushBranchToGitHub(this.ctx(), branch)
+  private async pushBranchToGitHub(branch: string, signal?: AbortSignal): Promise<void> {
+    return pushBranchToGitHub(this.ctx(), branch, signal)
   }
 
   /**
-   * Resolve which GitHub credential this worker uses, once, and build the
-   * Octokit client from it.
-   *
-   * DEFERRED out of the constructor deliberately, exactly as
-   * `ensureSettingsBranch()` is and for the reason that method records:
-   * `resolveWorkerGitHubAuth` throws for a half-configured credential (both
-   * set, neither set, an unusable mint timeout or refresh interval), and a
-   * throw during `new CmsWorker(...)` lands BEFORE the only code that writes
-   * `lastFatalError` — start()'s catch.
-   *
-   * Idempotent, and it does NOT replace an `octokit` a test has already
-   * assigned onto the instance — see the field's comment.
+   * The worker's GitHub gateway, created on first use: inside start()'s try, or wherever a test
+   * entry point first reaches it. Creating it resolves the credential, which throws for a
+   * half-configured one (both set, neither set, an unusable mint timeout or refresh interval) --
+   * never in the constructor, for the reason `ensureSettingsBranch()` gives. Keeps a gateway a
+   * test installed.
    */
-  private ensureGitHubAuth(): ResolvedGitHubAuth {
-    if (!this.githubAuth) {
-      this.githubAuth = resolveWorkerGitHubAuth(this.config)
+  private github(): GitHubGateway {
+    if (this.gateway !== undefined) return this.gateway
+    const { githubGateway } = this.config
+    if (githubGateway === undefined) {
+      this.gateway = createLocalGitHubGateway(this.localGitHubGatewayOptions())
+      return this.gateway
     }
-    if (!this.octokit) {
-      this.octokit = createCanopyOctokit(this.githubAuth.octokitAuth)
-    }
-    return this.githubAuth
-  }
-
-  /**
-   * The Octokit client, built on first use. Every read goes through here rather
-   * than touching the field, which the constructor does not populate: a method
-   * reached without start() would otherwise see `undefined`.
-   * `rebaseActiveBranches()` is exactly that case — apps/test-app's e2e route
-   * calls it directly, and its `pollMergeState` dispatch reads `ctx.octokit()`.
-   */
-  private octokitClient(): Octokit {
-    this.ensureGitHubAuth()
-    return this.octokit
-  }
-
-  /**
-   * The single seam through which every git-over-HTTPS credential reaches a git
-   * command. The only other consumer is Octokit, built from the same resolution
-   * by `ensureGitHubAuth()` above.
-   *
-   * Async because under GitHub App auth `resolveGitToken` mints an installation
-   * token lasting about an hour. NOTHING may cache what this returns — a URL
-   * built from an installation token goes stale with it — and resolving per use
-   * is cheap, since `@octokit/auth-app` answers from its own cache until the
-   * token is near expiry.
-   *
-   * A mint failure propagates AS THROWN, carrying the `.status` that
-   * `isPermanentTaskFailure` classifies on — see github-auth.ts.
-   *
-   * Do NOT add a parallel token accessor alongside it. Every instance-backed
-   * WorkerContext member stays a function precisely so tests can replace it
-   * through the instance (worker-context.ts's INVARIANT); a second credential
-   * path would be one nothing stubs.
-   */
-  private async buildGitHubUrl(): Promise<string> {
-    const token = await this.ensureGitHubAuth().resolveGitToken()
-    return `https://x-access-token:${token}@github.com/${this.config.githubOwner}/${this.config.githubRepo}.git`
-  }
-
-  /**
-   * Prove the GitHub App credential works before anything depends on it.
-   *
-   * Without this the first failure comes out of `ensureRemoteGit`'s bare clone
-   * below, whose catch blames the repository ("may be empty, or the base branch
-   * may not exist") and sends an operator holding a bad private key looking for
-   * a problem that does not exist. Called from start()'s try, so the failure is
-   * also recorded as `lastFatalError` and reaches the admin panel. No-op on the
-   * token path: a PAT is a literal, so the first real request checks everything
-   * this could.
-   *
-   * FATAL UNLESS THE FAILURE POSITIVELY LOOKS TRANSIENT. Both halves are
-   * load-bearing. Not always fatal, because the two credential paths must
-   * degrade alike: on the token path a GitHub 502 during boot is absorbed (a
-   * warm `remote.git` short-circuits `ensureRemoteGit`, `Promise.allSettled`
-   * swallows the initial `syncGit`) so the worker starts and its loops retry,
-   * while rethrowing every error class would make the App path exit and systemd
-   * crash-loop it until GitHub recovered — each iteration telling the operator
-   * to check their private key.
-   *
-   * But fail CLOSED, via `isTransientAuthFailure` rather than the inverse of
-   * `isPermanentTaskFailure`: that classifier defaults a status-less error to
-   * transient, which is right on the task path (bounded by `maxRetries`) and
-   * wrong here (bounded by nothing). A key that never reaches GitHub at all —
-   * the wrong type, or too mangled to sign with — fails locally and
-   * status-lessly, so defaulting to transient would boot a worker with a dead
-   * credential, record no `lastFatalError`, and show healthy in the admin panel
-   * while every task and every sync failed.
-   */
-  private async preflightGitHubAppAuth(): Promise<void> {
-    if (!this.config.githubAppAuth) return
-    try {
-      await this.ensureGitHubAuth().resolveGitToken()
-    } catch (err) {
-      // [REDACT] Both messages below reach worker-status.json and the browser.
-      const detail = redactCredentials(getErrorMessage(err))
-      if (isTransientAuthFailure(err)) {
-        workerLogWarn(
-          `Could not verify GitHub App authentication at startup: ${detail}. ` +
-            'Continuing — this looks transient, and the credential is minted again on first use.',
-        )
-        return
-      }
-      // Re-thrown WITH context, unlike buildGitHubUrl() above, which must
-      // preserve the error identity for task classification. Nothing classifies
-      // a startup failure -- start()'s catch records the message and the
-      // process exits -- so the operator-facing wording wins here.
+    const conflicting: string[] = []
+    if (this.config.githubToken) conflicting.push('githubToken')
+    if (this.config.githubAppAuth !== undefined) conflicting.push('githubAppAuth')
+    if (this.config.refreshGitHubToken !== undefined) conflicting.push('refreshGitHubToken')
+    if ((this.config.protectedBranches?.length ?? 0) > 0) conflicting.push('protectedBranches')
+    if (conflicting.length > 0) {
       throw new Error(
-        `GitHub App authentication failed: ${detail}. ` +
-          'Check the app id, the installation id, and that the private key belongs to that app.',
+        `CmsWorker: githubGateway is exclusive with ${conflicting.join(', ')}, which configure the ` +
+          'in-process gateway; the gateway it is given holds the credential and the protected set',
       )
     }
-    workerLog('GitHub App authentication verified')
+    this.gateway = githubGateway
+    return this.gateway
+  }
+
+  /** What worker/github-transfer.ts needs, for the seeds that run before the loops' context. */
+  private transferContext(): TransferContext {
+    return {
+      github: () => this.github(),
+      remoteGitPath: this.remoteGitPath,
+      taskTimeoutMs: this.taskTimeoutMs,
+    }
+  }
+
+  /** What the in-process gateway is built from; test-utils/worker-gateway.ts builds from it too. */
+  private localGitHubGatewayOptions(): LocalGitHubGatewayOptions {
+    return {
+      githubOwner: this.config.githubOwner,
+      githubRepo: this.config.githubRepo,
+      auth: resolveWorkerGitHubAuth(this.config),
+      githubApp: Boolean(this.config.githubAppAuth),
+      stateDirectory: this.stateDirectory,
+      workspacePath: this.config.workspacePath,
+      timeoutMs: this.taskTimeoutMs,
+      baseBranch: this.config.baseBranch,
+      protectedBranches: this.config.protectedBranches,
+    }
   }
 
   /**
@@ -895,86 +1619,11 @@ export class CmsWorker {
     return syncGit(this.ctx())
   }
 
-  /**
-   * `syncGit`, plus "the credential may have rotated" on the way out.
-   *
-   * One of `refreshGitHubCredential`'s two call sites, and the one that works
-   * when nobody is publishing: it fetches from GitHub every `gitSyncInterval`
-   * whether or not anyone is editing, so a credential that has stopped working
-   * surfaces here even with no push queued for days.
-   *
-   * The SYNC failure is what propagates to `scheduleLoop`'s catch;
-   * `refreshGitHubCredential` never throws, so nothing it does can replace it.
-   */
-  private async syncGitWithCredentialRefresh(): Promise<void> {
-    try {
-      await this.syncGit()
-    } catch (err) {
-      await this.refreshGitHubCredential()
-      throw err
-    }
-  }
-
-  /**
-   * Re-read the GitHub credential, because an operation using it just failed.
-   *
-   * **Two call sites, each covering what the other cannot.** The git-sync loop
-   * (`syncGitWithCredentialRefresh`) notices a dead credential when nobody is
-   * publishing. `processTaskQueue`'s per-task catch is what saves a publish: a
-   * push task spends its retry budget on a 5s/10s/20s backoff, well inside one
-   * 5-minute sync interval, so with the sync loop as the only trigger a publish
-   * meeting a rotated token fails permanently while the working one is already
-   * in the secret store. Every consumer reaches the credential through
-   * `ensureGitHubAuth()`, which reads it per use, so a refresh from either site
-   * repairs all of them for their NEXT use — but not an attempt already failed.
-   *
-   * NOT gated on the error looking auth-shaped, at either site: a `git
-   * fetch`/`push` rejected for a dead token throws a plain simple-git error
-   * (exit 128, no HTTP `.status`) that `isPermanentTaskFailure` reads as
-   * transient, so a gate keyed on it would never fire. Two floors bound the
-   * cost instead — core's `refreshGitHubTokenMinIntervalMs` (default 60s,
-   * enforced by `refreshCredential` in github-auth.ts) and whatever floor the
-   * provider keeps (the AWS one reads at most once per five minutes) — and both
-   * call sites share both, so a read issued by one throttles the other. On the
-   * GitHub App path the refresh is a no-op.
-   *
-   * **Never throws**: both callers are already reporting the failure that must
-   * reach the log. **Bounded by `taskTimeoutMs`**, because the task loop awaits
-   * it and a read that never settled would stop every publish queued behind it
-   * (an adopter's provider may have no bound at all; the AWS one can take 87s
-   * for one `getSecret`). A losing read is not cancelled and may land later, but
-   * `refreshCredential` discards a result older than one already applied.
-   */
-  private async refreshGitHubCredential(): Promise<void> {
-    let timer: NodeJS.Timeout | undefined
-    const timedOut = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`the re-read did not settle within ${this.taskTimeoutMs}ms`)),
-        this.taskTimeoutMs,
-      )
-    })
-    try {
-      // `ensureGitHubAuth()` inside the try: it throws for a half-configured
-      // credential, and that has to be logged like any other refresh failure.
-      await Promise.race([this.ensureGitHubAuth().refreshCredential(), timedOut])
-    } catch (err) {
-      // [REDACT] The message can name the secret and, on a malformed-secret
-      // path, quote what was read. Console only, but the rule is uniform --
-      // see redactCredentials in utils/error.ts.
-      workerLogError(
-        'Failed to re-read the GitHub credential after a failure:',
-        redactCredentials(getErrorMessage(err)),
-      )
-    } finally {
-      clearTimeout(timer)
-    }
-  }
-
   private async pushSettingsBranches(
     git: ReturnType<typeof simpleGit>,
-    trackedNames: ReadonlySet<string>,
+    trackedTips: ReadonlyMap<string, string>,
   ): Promise<void> {
-    return pushSettingsBranches(this.ctx(), git, trackedNames)
+    return pushSettingsBranches(this.ctx(), git, trackedTips)
   }
 
   private async refreshBaseBranchWorkspace(): Promise<BaseRefreshReport> {

@@ -1,10 +1,14 @@
 import React, { useId } from 'react'
 
-import { Button, Group, Paper, Stack, Text } from '@mantine/core'
+import { Button, Paper, Stack } from '@mantine/core'
 
 import type { FieldConfig } from '../../config'
+import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
-import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { useFieldCommentControl } from '../comments/field-comment-context'
+import { EDITOR_ACTIONS } from '../copy'
+import { groupDescriptionProps } from './FieldDescription'
+import { FieldLabel } from './FieldLabel'
 
 export type RenderField = (
   field: FieldConfig,
@@ -15,6 +19,7 @@ export type RenderField = (
 
 export interface ObjectFieldProps {
   label?: string
+  required?: boolean
   description?: string
   fields: FieldConfig[]
   value: Record<string, unknown> | undefined
@@ -22,18 +27,13 @@ export interface ObjectFieldProps {
   renderField: RenderField
   path: Array<string | number>
   dataCanopyField?: string
-  /**
-   * When set, shows a "Clear" affordance that resets this field to unset
-   * (`undefined`) — used by `FormRenderer.tsx`'s non-list `case 'object'` so
-   * a required child can't strand the field present-but-invalid with no way
-   * back to "not filled in". Omitted for object-list items, which remove via
-   * the list's own per-item button.
-   */
+  /** Set, shows a gray "Clear" resetting the field to `undefined`; omitted for list items. */
   onRemove?: () => void
 }
 
 export const ObjectField: React.FC<ObjectFieldProps> = ({
   label,
+  required,
   description,
   fields,
   value,
@@ -43,35 +43,48 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
   dataCanopyField,
   onRemove,
 }) => {
-  const current = value ?? {}
+  const current = isPlainRecord(value) ? value : {}
   const descriptionBaseId = useId()
+  const commentControl = useFieldCommentControl(dataCanopyField ?? formatCanopyPath(path))
 
   return (
     <Paper
       withBorder
-      radius="md"
       p="md"
-      bg="gray.0"
+      bg="var(--canopy-surface-subtle)"
       data-canopy-field={dataCanopyField ?? formatCanopyPath(path)}
       shadow="xs"
       {...groupDescriptionProps(descriptionBaseId, description)}
+      role="group"
+      aria-label={label}
+      data-removal-focus
+      tabIndex={-1}
     >
       <Stack gap="sm">
-        {(label || onRemove) && (
-          <Group justify="space-between">
-            {label && (
-              <Text size="xs" fw={700} c="neutral.8">
-                {label}
-              </Text>
-            )}
-            {onRemove && (
-              <Button size="xs" variant="subtle" color="red" onClick={onRemove}>
-                Clear
+        <FieldLabel
+          label={label}
+          required={required}
+          description={description}
+          descriptionBaseId={descriptionBaseId}
+          commentControl={commentControl}
+          actions={
+            onRemove && (
+              <Button
+                variant="subtle"
+                color="gray"
+                aria-label={label ? `${EDITOR_ACTIONS.clear} "${label}"` : undefined}
+                onClick={(event) => {
+                  // The button goes with the value, so focus moves to the object, not the page.
+                  const field = event.currentTarget.closest<HTMLElement>('[data-removal-focus]')
+                  onRemove()
+                  field?.focus()
+                }}
+              >
+                {EDITOR_ACTIONS.clear}
               </Button>
-            )}
-          </Group>
-        )}
-        <FieldDescription baseId={descriptionBaseId} description={description} />
+            )
+          }
+        />
         <Stack gap="sm">
           {fields.map((field) => {
             const fieldPath = [...path, field.name]

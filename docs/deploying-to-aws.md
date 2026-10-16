@@ -11,7 +11,7 @@ Editor browser
 CloudFront (cms.docs.example.org)
     │
     ▼
-Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
+Lambda (VPC, no internet)               EC2 (t4g.nano): worker + GitHub gateway
     │                                        │
     ├── JWT verification (networkless)       ├── git push/pull ↔ GitHub
     ├── User metadata (EFS cache)            ├── GitHub API (PRs)
@@ -25,17 +25,10 @@ Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
 **Why this architecture?**
 
 - **No NAT Gateway** — Lambda has no internet access, saving ~$32/month
-- **Secrets stay on the worker** — Lambda only has public keys and config. The worker
-  does not leave the GitHub bot token on the shared filesystem: `remote.git` is
-  cloned under a staging name and renamed into place only after the token-bearing
-  `remote.origin.url` is removed and verified gone, and an existing `remote.git` is
-  re-checked (and scrubbed) on every worker start, so a token left by an older build
-  self-heals. Stated precisely, this is a bounded window rather than "never": the
-  initial bare clone does write the token into the _staging_ copy's config until the
-  scrub runs moments later, and a crash in that gap leaves it there until the next
-  worker boot deletes the staging directory. What is eliminated is unbounded
-  persistence under the real `remote.git` name. Closing the window entirely needs a
-  credential helper instead of a token-bearing clone URL
+- **Secrets stay in the GitHub gateway** — Lambda only has public keys and config, the worker
+  beside the gateway has none, and the gateway's git uses the GitHub credential only in a repository on
+  the instance's own disk, so no token is ever written to EFS
+  ([The worker instance](#the-worker-instance))
 - **Same app, two builds** — The adopter's Next.js app builds as both a static export (public site) and a standalone server (CMS Lambda)
 
 ## Prerequisites
@@ -79,7 +72,7 @@ export default withCanopy({
 - `npm run build` → static export for S3 (public site)
 - `CANOPY_BUILD=cms npm run build` → standalone server for Lambda (CMS)
 
-**sharp in the standalone image.** For the CMS build, `withCanopy()` also adds sharp's libvips shared library to Next's file tracing. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). An image built without it fails to load sharp at runtime with `ERR_DLOPEN_FAILED`. The include fixes Turbopack builds, Next 16's default. It does not fix a webpack build (Next 13 to 15, or `next build --webpack`): on Next 15.5.21 with pnpm, Next bundles sharp's JavaScript into a server chunk, so image transforms fail with or without the include. Other Next versions, Next 16's `--webpack` and npm installs have not been checked ([webpack-standalone-sharp-bundled.md](../.claude/future-tasks/webpack-standalone-sharp-bundled.md)).
+**sharp in the standalone image.** For the CMS build, `withCanopy()` also adds sharp's libvips shared library to Next's file tracing. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). An image built without it fails to load sharp at runtime with `ERR_DLOPEN_FAILED`. The include fixes Turbopack builds, Next 16's default. It does not fix a webpack build (Next 13 to 15, or `next build --webpack`): on Next 15.5.21 with pnpm, Next bundles sharp's JavaScript into a server chunk, so image transforms fail with or without the include. Other Next versions, Next 16's `--webpack` and npm installs have not been checked (safeinsights/canopycms#891).
 
 If you don't use `withCanopy()`, or your standalone build prints `CanopyCMS: could not add sharp's libvips…`, add the directory yourself. Paths are relative to the Next.js project directory. With pnpm:
 
@@ -237,8 +230,8 @@ you hand-edit the stack or the Dockerfile, or build the image some other way:
 - `environment: { CANOPY_MODE: ... }` on `CanopyCmsService` accepts only
   `'prod'`, and rejects anything else at synth.
 - **Set `NEXT_PUBLIC_CANOPY_MODE=prod` as a constant in the image's build
-  stage**: an `ENV` line in your own Dockerfile, or
-  `--build-arg NEXT_PUBLIC_CANOPY_MODE=prod` against the generated one. Every
+  stage**: an `ENV` line in your own Dockerfile. The generated one defaults
+  to `prod` and fails its build on any value but `prod` or `dev`. Every
   deployed tier runs `prod`, so one image still serves them all, and the
   build's own content reads stay in dev mode, because `resolveOperatingMode`
   reads this variable only where `window` exists. Expect one browser console
@@ -246,12 +239,11 @@ you hand-edit the stack or the Dockerfile, or build the image some other way:
   `CanopyCMS: NEXT_PUBLIC_CANOPY_MODE="prod" overrides config.mode="dev"`; that
   is the override working.
 - **Without it, the browser resolves `dev`,** and the scaffolded edit page
-  (`edit-page.tsx.template`) selects dev auth rather than Clerk against a
-  server that accepts only Clerk tokens, unless `NEXT_PUBLIC_CANOPY_AUTH_MODE=clerk`
-  was also set at build. That is the only thing CanopyCMS's client code takes
-  from the mode: the editor's capability checks answer the same in both modes,
-  and `supportsPullRequests`, the one that differs, is only consulted on the
-  server.
+  (`edit-page.tsx.template`) would select dev auth against a server that
+  accepts only Clerk tokens. The server refuses that editor before sign-in and
+  logs it once; the editor shows a blocking screen naming this variable.
+  Locally, set both variables or neither: `next dev` with only
+  `NEXT_PUBLIC_CANOPY_MODE=prod` is stopped the same way.
 - **Don't compute `mode` in `canopycms.config.ts` from either variable.** Not
   from `NEXT_PUBLIC_CANOPY_MODE`: it is set while `next build` runs, and
   Next.js inlines `NEXT_PUBLIC_*` into server bundles too, so the build would
@@ -259,8 +251,9 @@ you hand-edit the stack or the Dockerfile, or build the image some other way:
   it (see [Operating mode](#operating-mode)). Not from `CANOPY_MODE` either
   (`process.env.CANOPY_MODE === 'prod' ? 'prod' : 'dev'`): Next.js doesn't
   inline it into the browser bundle, so that literal is always `dev` there,
-  while server code on the Lambda gets `prod`. The server half looks
-  right, and the missing browser half goes unnoticed.
+  while server code on the Lambda gets `prod`. Only `NEXT_PUBLIC_CANOPY_MODE`
+  makes the browser `prod`; without it the editor shows the mode-mismatch
+  screen.
 
 ## Step 4: CDK Stack
 
@@ -287,21 +280,21 @@ without a default refuse to synth when unset, deliberately — every one of them
 has a silent-failure mode that is far more expensive to diagnose after a
 successful deploy.
 
-| Variable                                     | Required | Notes                                                                                                                                                                                |
-| -------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GITHUB_TOKEN_SECRET_ARN`                    | yes\*    | **Full** ARN including the six-character suffix — it goes verbatim into the worker's IAM policy, so a name-based ARN silently never matches and the worker gets AccessDenied at boot |
-| `CLERK_SECRET_KEY_SECRET_ARN`                | yes      | Full ARN, same reason                                                                                                                                                                |
-| `GITHUB_TOKEN_SECRET_JSON_FIELD`             | no       | Set only if that secret holds a JSON document rather than the bare token; names the key to read out of it. See [JSON secret documents](#json-secret-documents)                       |
-| `CLERK_SECRET_KEY_SECRET_JSON_FIELD`         | no       | Same, for the Clerk secret                                                                                                                                                           |
-| `GITHUB_APP_ID`                              | no       | GitHub App authentication instead of a token — see [Authenticating as a GitHub App](#authenticating-as-a-github-app). Set all three App variables or none                            |
-| `GITHUB_APP_INSTALLATION_ID`                 | no       | The App's installation on _this_ repository, not the App ID                                                                                                                          |
-| `GITHUB_APP_PRIVATE_KEY_SECRET_ARN`          | no       | Full ARN of the secret holding the App's PEM. ARN-only: the key is multi-line and never reaches the worker as a plain value                                                          |
-| `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD`   | no       | Set only if that secret holds a JSON document rather than the bare PEM                                                                                                               |
-| `CLERK_JWT_KEY`                              | yes      | Clerk's public JWKS PEM. Unset, Clerk falls back to a network JWKS fetch and the no-internet Lambda hangs at sign-in                                                                 |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`          | no       | Deploys fine when empty and ships an editor that cannot sign in                                                                                                                      |
-| `CANOPY_BOOTSTRAP_ADMIN_IDS`                 | no       | Comma-separated Clerk user IDs granted admin on first boot                                                                                                                           |
-| `CANOPYCMS_DEPLOYMENT_NAME`                  | no       | Defaults to `prod`. Two stacks sharing one GitHub repo **must** differ — see [Two deployments, one repository](#two-deployments-one-repository)                                      |
-| `CMS_DOMAIN_NAME` / `CMS_HOSTED_ZONE_DOMAIN` | no       | Set both to add CloudFront + Route53; leave unset to use the Lambda Function URL directly                                                                                            |
+| Variable                                     | Required | Notes                                                                                                                                                                                               |
+| -------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_TOKEN_SECRET_ARN`                    | yes\*    | **Full** ARN including the six-character suffix — it goes verbatim into the instance role's IAM policy, so a name-based ARN silently never matches and the GitHub gateway gets AccessDenied at boot |
+| `CLERK_SECRET_KEY_SECRET_ARN`                | yes      | Full ARN, same reason                                                                                                                                                                               |
+| `GITHUB_TOKEN_SECRET_JSON_FIELD`             | no       | Set only if that secret holds a JSON document rather than the bare token; names the key to read out of it. See [JSON secret documents](#json-secret-documents)                                      |
+| `CLERK_SECRET_KEY_SECRET_JSON_FIELD`         | no       | Same, for the Clerk secret                                                                                                                                                                          |
+| `GITHUB_APP_ID`                              | no       | GitHub App authentication instead of a token — see [Authenticating as a GitHub App](#authenticating-as-a-github-app). Set all three App variables or none                                           |
+| `GITHUB_APP_INSTALLATION_ID`                 | no       | The App's installation on _this_ repository, not the App ID                                                                                                                                         |
+| `GITHUB_APP_PRIVATE_KEY_SECRET_ARN`          | no       | Full ARN of the secret holding the App's PEM. ARN-only: the key is multi-line and never reaches the worker as a plain value                                                                         |
+| `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD`   | no       | Set only if that secret holds a JSON document rather than the bare PEM                                                                                                                              |
+| `CLERK_JWT_KEY`                              | yes      | Clerk's public JWKS PEM. Unset, Clerk falls back to a network JWKS fetch and the no-internet Lambda hangs at sign-in                                                                                |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`          | no       | Deploys fine when empty and ships an editor that cannot sign in                                                                                                                                     |
+| `CANOPY_BOOTSTRAP_ADMIN_IDS`                 | no       | Comma-separated Clerk user IDs granted admin on first boot                                                                                                                                          |
+| `CANOPYCMS_DEPLOYMENT_NAME`                  | no       | Defaults to `prod`. Two stacks sharing one GitHub repo **must** differ — see [Two deployments, one repository](#two-deployments-one-repository)                                                     |
+| `CMS_DOMAIN_NAME` / `CMS_HOSTED_ZONE_DOMAIN` | no       | Set both to add CloudFront + Route53; leave unset to use the Lambda Function URL directly                                                                                                           |
 
 \* Required unless you set the `GITHUB_APP_*` variables instead. A personal
 access token is the default; exactly one of the two credentials must be
@@ -309,9 +302,8 @@ configured, and setting both is refused at synth.
 
 Then edit `infrastructure/lib/cms-stack.ts` for anything beyond that — memory
 and concurrency, `AssetSupport` for media (a commented block in the generated
-file: uncomment it, then pass the resulting `assetSupport` to
-`CanopyCmsDistribution`'s `assetSupport` prop, which attaches its CloudFront
-behaviors in the only safe order for you), or a distribution you already own.
+file: uncomment it and pass `assetSupport` to `CanopyCmsDistribution`, which
+attaches its behaviors in the only safe order), or a distribution you already own.
 
 `githubOwner` / `githubRepo` in `infrastructure/bin/app.ts` are prefilled from
 your `origin` remote. Check them: they decide which repository the worker
@@ -319,11 +311,9 @@ pushes branches and opens PRs against.
 
 ### Why `cdk.json`'s `context` is empty
 
-`cdk init` pins a long list of feature flags into new projects. This scaffold
-deliberately pins none: the `canopycms-cdk` constructs are developed and tested
-under aws-cdk-lib's own defaults, so an inherited flag set would be untested
-here. Add flags if you need them, but note that a flag which only existed in
-CDKv1 is rejected outright at synth (`UnsupportedFeatureFlag`).
+This scaffold pins none of the feature flags `cdk init` would: the
+`canopycms-cdk` constructs are tested under aws-cdk-lib's own defaults. Add flags
+if you need them; a CDKv1-only flag is rejected at synth (`UnsupportedFeatureFlag`).
 
 ### CloudFront in front of the Function URL
 
@@ -384,10 +374,49 @@ server". `attachTo` warns about them at synth; a site that needs them should giv
 editor its own `CanopyCmsDistribution`.
 
 **No HTTP Basic auth on editor routes.** Keep `/edit`, `/edit/*`, `/api/canopycms/*`
-and the asset prefix out of any Basic-auth gate. The API's 401s carry no
-`WWW-Authenticate`, and a browser that gets a 401 drops its cached Basic credential,
-so editors are prompted again mid-session. Clerk already authenticates them; the cost
-is that the tier's published assets are readable without the site's password.
+and the asset prefix out of any Basic-auth gate; Clerk authenticates them. The cost is
+that the tier's published assets are readable without the site's password. If the
+site's pages stay behind Basic on that origin, also set `unauthenticatedStatus: 419`:
+on a 401 from the API, Chrome drops a root-cached Basic credential.
+
+### Media: the public image path
+
+`AssetSupport` serves `/assets/*` and `/assets/t/*` from the bucket and computes nothing, so
+a build's derivatives must exist before release:
+
+```sh
+canopycms collect-asset-refs out/   # after the build, before your manifest step
+canopycms materialize-assets --refs out/canopy-asset-refs.json
+```
+
+Anything not materialized is a 403; materialized derivatives are kept forever. `replicaBucket`
+adds a replica both behaviors fail over to on a 5xx; its policy must allow this distribution,
+and replication must cover `assets/`.
+
+`enforceCreateOnlyWrites: true` denies writes lacking `If-None-Match` under `assets/`,
+`asset-originals/` and `asset-meta/`; deploy the CMS and any transform Lambda on a create-only
+release first. For a bucket you pass in, add it where it is defined (an imported bucket ignores
+`addToResourcePolicy`). Replication (`s3:ReplicateObject`) is unaffected:
+
+```typescript
+bucket.addToResourcePolicy(
+  new iam.PolicyStatement({
+    effect: iam.Effect.DENY,
+    principals: [new iam.StarPrincipal()],
+    actions: ['s3:PutObject'],
+    resources: ['assets', 'asset-originals', 'asset-meta'].map((p) =>
+      bucket.arnForObjects(`${p}/*`),
+    ),
+    conditions: { Null: { 's3:if-none-match': 'true' } },
+  }),
+)
+```
+
+`lazyPublicTransforms: true` instead computes misses with a transform Lambda (allowlisted
+widths, reserved concurrency), letting anyone transform public assets; only `/assets/*`
+keeps the replica. Its outputs carry the tag `canopy-transform=lazy` and expire after 180 days.
+On a bucket you pass in, it requires `transformOutputRetention` and your own expiry rule on that
+tag, plus noncurrent versions if versioned; remove it before leaving lazy mode.
 
 ### Deploy
 
@@ -418,7 +447,7 @@ publishes it to the CDK bootstrap assets repository, and points the Lambda at
 it as part of the change set. It also rolls the EC2 worker, because
 `CanopyCmsService` gives the worker Auto Scaling Group a rolling
 `UpdatePolicy`; without that, a changed worker bundle would sit unused in a
-launch template until the next spot interruption.
+launch template until something else replaced the instance.
 
 > **Do not add an ECR push plus `aws lambda update-function-code` alongside
 > it.** That builds the image twice and leaves the function's image URI out of
@@ -591,12 +620,12 @@ see `examples/aws-deployment/deploy-cms.yml` for the full workflow.
 
 Before deploying, create these secrets in AWS Secrets Manager:
 
-| Secret                       | Value                        | Used by                         |
-| ---------------------------- | ---------------------------- | ------------------------------- |
-| `canopycms/github-token`     | GitHub PAT with `repo` scope | EC2 worker (push, PR creation)  |
-| `canopycms/clerk-secret-key` | Clerk backend secret key     | EC2 worker (user cache refresh) |
+| Secret                       | Value                        | Used by                             |
+| ---------------------------- | ---------------------------- | ----------------------------------- |
+| `canopycms/github-token`     | GitHub PAT with `repo` scope | GitHub gateway (push, PR creation)  |
+| `canopycms/clerk-secret-key` | Clerk backend secret key     | GitHub gateway (user cache refresh) |
 
-CanopyCMS's code on the Lambda needs neither secret — only the EC2 worker reads them.
+CanopyCMS's code on the Lambda needs neither secret — only the GitHub gateway on the EC2 instance reads them.
 Keeping `clerkMiddleware` changes that for the Clerk key; see [Security Model](#security-model).
 
 ### Authenticating as a GitHub App
@@ -715,10 +744,10 @@ Four things worth knowing before you choose:
   where a newline starts a new variable, and a PEM is multi-line. Pasting the key
   into `GITHUB_APP_PRIVATE_KEY_SECRET_ARN` is caught at synth.
 - **The key may live in a JSON document**, like any other credential here — set
-  `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD`. The worker also accepts a PEM whose
+  `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD`. The gateway also accepts a PEM whose
   newlines arrived as literal `\n` escapes, or one base64-wrapped to get through a
   single-line field, so a key mangled in transit still boots.
-- **The App's installation tokens last about an hour**, so the worker mints one
+- **The App's installation tokens last about an hour**, so the gateway mints one
   on demand rather than reading a credential once at boot. Both halves of its
   GitHub access — the REST API and git-over-HTTPS — share one token cache, so
   this costs roughly one extra API call an hour, not one per operation.
@@ -742,17 +771,17 @@ GITHUB_TOKEN_SECRET_JSON_FIELD=CANOPYCMS_GITHUB_TOKEN
 Those are the **environment variables the CDK app reads**, for a deploy from a laptop. From
 the generated GitHub Actions workflow, set the repository variable
 `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD` instead
-([why the prefix](#repository-secrets-and-variables)). The worker then reads that
+([why the prefix](#repository-secrets-and-variables)). The gateway then reads that
 key out of the document; leave the `_JSON_FIELD` variable unset and the whole
 value is the credential, as in the table above.
 
 Three things worth knowing before you choose:
 
 - **Do not append the field to the ARN.** `arn:…:secret:my-app/prod-AbCdEf:CANOPYCMS_GITHUB_TOKEN::`
-  is the ECS / CloudFormation dynamic-reference convention, and the worker uses
+  is the ECS / CloudFormation dynamic-reference convention, and the gateway uses
   neither — it calls `GetSecretValue`, which returns the whole document and does
   not parse that suffix. `CanopyCmsService` rejects such an ARN at synth rather
-  than letting it reach the worker's IAM policy, where it would match nothing and
+  than letting it reach the instance role's IAM policy, where it would match nothing and
   produce AccessDenied at boot.
 - **A missing or misspelled field fails loudly, at boot**, naming the field you
   asked for and the keys the document actually has. A secret that holds a JSON
@@ -766,7 +795,7 @@ Three things worth knowing before you choose:
 
 ### Rotating a secret
 
-Update the secret's value in Secrets Manager. The running worker picks it up on
+Update the secret's value in Secrets Manager. The running GitHub gateway picks it up on
 its own — **you do not need to redeploy or replace the instance.**
 
 How long it takes, and why:
@@ -777,22 +806,22 @@ How long it takes, and why:
 | Clerk secret key       | ~15 minutes            | the auth-cache refresh                                        |
 | GitHub App private key | not re-read            | — see below                                                   |
 
-The re-read is **reactive**: the worker re-reads a secret only after the
-operation using it has just failed, so a healthy deployment makes no
+The re-read is **reactive**: the gateway re-reads a secret only after an
+operation using it fails, so a healthy deployment makes no
 `GetSecretValue` calls between boots — which is also why rotation is not instant.
 
 For the GitHub token, **store the new value before you revoke the old one.**
 Then the first publish to meet the revoked token normally re-reads straight away
 and its automatic retry goes out on the new token. Normally, not always: the
-worker re-reads at most once every five minutes (and calls its credential
-provider at most once a minute), and any failure — a sync, or an unrelated
+gateway re-reads at most once every five minutes (and calls its credential
+provider at most once a minute), and any GitHub failure — a sync, or an unrelated
 publish — can consume that read, so a publish can still fail and need
 resubmitting. The two limits can stack, which is where the table's ~10 minutes
 comes from. Revoke first and a failure in the gap re-reads the old value, so
 publishes can fail for up to about six minutes.
 
 A secret that is simply wrong, rather than rotated, does not turn into a loop:
-when a re-read comes back identical to the value the worker already holds it does
+when a re-read comes back identical to the value the gateway already holds it does
 not retry the operation, since that retry could not succeed. It keeps checking at
 the same rate indefinitely, so a later correction is still picked up — twelve
 re-reads an hour per secret is the ceiling.
@@ -810,7 +839,8 @@ Two things to know:
 - **A plain env var is never re-read.** If you set `CANOPYCMS_GITHUB_TOKEN` or
   `CLERK_SECRET_KEY` directly instead of pointing at an ARN, the value is
   whatever the instance booted with: re-reading an ARN you deliberately overrode
-  would swap your override back out, so the worker leaves it alone.
+  would swap your override back out, so the gateway leaves it alone. Under the split it goes in
+  `gateway.env`: the worker refuses to start beside a secret.
 
 ## Content Publishing Flow
 
@@ -865,11 +895,11 @@ same underlying reason as `deploymentName` above: each is read independently
 by a different process, with no automatic reconciliation unless something
 wires them together.
 
-- **`CANOPYCMS_BASE_BRANCH`** — the worker's own copy of the GitHub
-  repository's default branch, stamped once into the worker's `.env` at synth
-  by `CanopyCmsService`'s `baseBranch` prop (default `'main'`). The Lambda
-  instead reads `config.defaultBaseBranch` from `canopycms.config.ts` at
-  request time.
+- **`CANOPYCMS_BASE_BRANCH`** — the worker's base branch, stamped into its
+  `.env` and the gateway's `gateway.env` at synth by `CanopyCmsService`'s `baseBranch` prop;
+  the gateway protects it only when it is set. Unset, the worker
+  uses GitHub's default branch, recorded as `remote.git`'s HEAD, which a
+  Lambda without `config.defaultBaseBranch` reads.
 
   **Get this wrong and there is no working worker at all.**
   `verifyBaseBranchExists` throws when the named branch doesn't exist in the
@@ -913,114 +943,389 @@ fine and expected — `release/v2` and `epic/foo` are ordinary branch names, and
 the worker keeps the raw name for git refs, sanitizing it only when deriving a
 workspace directory name.
 
+## New schemas wait for the editor deploy
+
+A merge adding a schema and content using it reaches the editor through both
+the worker's sync and the image deploy. Each CMS process records its schema names in
+`content-branches/.schema-registry.json` at its first API request, and the worker
+holds the base branch while incoming `.collection.json` files name a schema that
+record lacks. System health shows "Waiting for editor deploy"; the hold lifts
+at the next sync after the new editor is opened. Merges naming no new schema
+never wait; without a record, nothing waits. Once the oldest missing schema has
+waited 30 minutes the worker advances anyway; those content types stay
+unavailable until an image defining them is deployed.
+
 ## Worker observability
 
 The EC2 worker's stdout/stderr ships to CloudWatch Logs by default via the
 amazon-cloudwatch-agent — no SSM or shell access needed to see what it's doing.
-The CMS Lambda and the asset transform Lambda (if you use `AssetSupport`) each
-get their own dedicated log group too, on the same convention.
+The CMS Lambda and, with `lazyPublicTransforms`, `AssetSupport`'s transform
+Lambda get their own log groups on the same convention.
 
-- **Log groups**: all created by CDK with a custom `/canopycms/...` name,
-  90-day default retention, and `RemovalPolicy.DESTROY` — never the
-  CloudFormation-implicit `/aws/lambda/<function-name>` group Lambda would
-  otherwise auto-create (which CDK can't manage: infinite retention, and it
-  survives `cdk destroy`). Filter on the `/canopycms/` prefix in the
-  CloudWatch console to see every deployment's log groups at once.
+- **Log groups**: created by CDK with a `/canopycms/...` name, 90-day default
+  retention and `RemovalPolicy.DESTROY`, never the implicit
+  `/aws/lambda/<function-name>` group, which CDK can't manage. Filter on
+  `/canopycms/` to see every deployment's log groups.
   | Component | Default log group name | Retention override | Name override | Construct property |
   | --- | --- | --- | --- | --- |
   | EC2 worker | `/canopycms/<stackName>/worker` | `workerLogRetention` | `workerLogGroupName` | `service.workerLogGroup` |
   | CMS Lambda | `/canopycms/<stackName>/cms` | `cmsLogRetention` | `cmsLogGroupName` | `service.cmsLogGroup` |
   | Transform Lambda | `/canopycms/<stackName>/transform` | `transformLogRetention` | `transformLogGroupName` | `assetSupport.transformLogGroup` |
 
-  Name overrides are also useful if you instantiate `CanopyCmsService` or
-  `AssetSupport` twice in one stack, since the default names would otherwise
-  collide.
+  Name overrides keep two `CanopyCmsService` or `AssetSupport` instances in one
+  stack from colliding.
 
-- **Log streams**: one per instance id for the worker — a new stream appears
-  every time the spot worker is replaced (including by the rolling update
-  described in [Redeploying updates the worker too](#redeploying-updates-the-worker-too)
-  below). The Lambdas use their usual per-container-instance streams.
-- **Timestamps**: the worker emits its own ISO-8601 UTC timestamp (plus a level
-  tag) on every line, via `workerLog`/`workerLogWarn`/`workerLogError` in
-  `packages/canopycms/src/worker/log.ts` — see
-  [`.claude/future-tasks/resolved/worker-log-timestamps.md`](../.claude/future-tasks/resolved/worker-log-timestamps.md)
-  for how CloudWatch's own `multi_line_start_pattern` is keyed on that prefix,
-  which is why all worker code must log through those helpers rather than bare
-  `console.*`.
-- **On-instance file**: `/var/log/canopy-worker/worker.log`, bounded by a
-  logrotate policy (10 MB, 5 rotations, compressed). The CloudWatch agent tails
-  this file — `journalctl -u canopy-worker` no longer carries the worker's
-  output, though `systemctl status canopy-worker` still works for a basic
-  running/not-running check.
-- **Org tagging**: tag aspects applied stack-wide (`Tags.of(stack).add(...)`)
-  cascade to every log group automatically like any other CDK resource, so
-  org-wide tagging policies need no Canopy-specific configuration.
+- **Log streams**: one per worker instance id, `{instance_id}` for the worker and
+  `{instance_id}-gateway` for the GitHub gateway, so a replacement (see
+  [Redeploying updates the worker too](#redeploying-updates-the-worker-too))
+  starts a new stream. The Lambdas use their usual per-container streams.
+- **Timestamps**: every worker line starts with an ISO-8601 UTC timestamp and a
+  level tag, which CloudWatch's `multi_line_start_pattern` keys on, so worker
+  code logs through `packages/canopycms/src/worker/log.ts`, never bare `console.*`.
+- **On-instance files**: `/var/log/canopy-worker/worker.log` and the gateway's
+  `/var/log/canopy-github/gateway.log` (root only), bounded by a logrotate policy
+  (10 MB, 5 rotations, compressed). The CloudWatch agent tails them, so
+  `journalctl -u canopy-worker` shows nothing; `systemctl status canopy-worker`
+  (and `canopy-github`) still reports whether it runs. Read them with `less` or
+  `cat -v`, not a bare `tail -f`: a compromised worker chooses what its log holds,
+  terminal escape sequences included.
+- **Org tagging**: stack-wide tag aspects reach every log group.
+
+### Worker-down alarm
+
+Pass an SNS topic you own, with its own subscription (email, Slack, PagerDuty),
+as `alarmTopic`. It is notified when the worker logs no git-sync cycle for 30
+minutes, and on recovery. Without it nothing is created.
+
+```ts
+new CanopyCmsService(this, 'Cms', { /* ... */ alarmTopic: new sns.Topic(this, 'CmsAlerts') })
+```
+
+A deploy or spot replacement fits inside 30 minutes, so it does not page; a
+crash loop, boot loop, or worker that never started or stopped looping does.
+Then read System health in the editor's admin panel and the worker log group.
+It also hears once when a boot starts the worker [unpatched](#the-worker-instance).
+
+## Worker capacity
+
+The worker is one on-demand `t4g.nano` (about $3 a month) unless
+`workerCapacity` says otherwise:
+
+```ts
+workerCapacity: { type: 'on-demand', instanceType: new ec2.InstanceType('t4g.micro') }
+workerCapacity: { type: 'spot' } // t4g.nano, t4g.micro or t4g.small, price-capacity-optimized
+```
+
+Spot costs about half as much but **can leave you with no worker**: with no spot
+capacity in either zone the group keeps retrying, `cdk deploy` still succeeds,
+and `/edit` answers 500 on a first deploy (nothing has created `remote.git`).
+Auto Scaling has no fallback from spot to on-demand; spreading across three
+sizes makes a shortage less likely, not impossible. Instance types must be
+Graviton (arm64).
 
 ## Redeploying updates the worker too
 
-The worker's Auto Scaling Group has an `UpdatePolicy` (`rollingUpdate` with
-`minInstancesInService: 0`, since the ASG's `minCapacity`/`maxCapacity` are
-both 1), so `cdk deploy` actually terminates and relaunches the EC2 instance
-whenever anything in its launch template changes — most commonly a new
-worker code bundle, but also an AMI refresh, instance-role change, or
-user-data edit. Without this, CloudFormation's default behavior for an ASG
-behind a changed launch template is to update the template resource and stop
-there: the running instance keeps its old user-data, and therefore the old
-worker bundle, until a spot interruption or a manual terminate happens to
-replace it — so a plain `cdk deploy` would silently ship every other change
-except the one to the worker.
+The worker's Auto Scaling Group has a rolling `UpdatePolicy` with
+`minInstancesInService: 0` (the group holds exactly one instance), so
+`cdk deploy` replaces the instance whenever its launch template changes: a new
+worker bundle (every canopycms upgrade), an AMI refresh, a role or user-data
+change. Without it, CloudFormation would leave the old worker running.
 
-Because `minInstancesInService` must be `0` here, every such deploy causes a
-short worker outage — replacement boot time, installing packages and mounting
-EFS, is typically 2-4 minutes. This is expected and safe:
+Because `minInstancesInService` must be `0` here, every such deploy leaves no
+worker while the replacement boots (patching, installing packages and mounting EFS; see
+[The worker instance](#the-worker-instance)). This is expected and safe:
 
-- The task queue and branch workspaces live on EFS, not on the instance, so
-  the replacement worker picks up exactly where the old one left off.
-- The Lambda's Save/Publish paths only enqueue task files onto EFS and never
-  talk to the worker directly, so they queue up normally during the outage
-  instead of failing.
-- A task that was actually being processed when the old instance was
-  terminated is recovered automatically: the worker re-checks
-  `.tasks/processing/` for stranded tasks on every task-queue poll cycle, not
-  only at its own boot, so a task orphaned by the termination is moved back to
-  `pending/` and retried once it is old enough (5 minutes by default).
+- The task queue and branch workspaces live on EFS, so the replacement worker
+  picks up where the old one left off.
+- The Lambda's Save/Publish paths only enqueue task files onto EFS, never
+  talking to the worker, so they queue up during the outage instead of failing.
+- **The old worker drains first.** A terminating lifecycle hook holds the
+  instance while the worker claims nothing new and finishes its push, pull
+  request or branch rebase. Work still running after 90 seconds (inside a spot
+  notice's two minutes) is aborted, and an aborted task returns to `pending/`
+  without spending a retry. A hung worker delays termination by at most
+  `workerTerminationHeartbeat` (default 5 minutes). System health shows how the
+  last worker stopped.
+- A worker that died without draining leaves its task in `.tasks/processing/`,
+  which the next worker requeues once it is 5 minutes old.
+- No worker starts until the old one releases the worker lock on EFS.
 
-**The boot script fails fast on anything the worker needs.** A failure in a
-prerequisite step — package installs, the EFS mount, unpacking the worker
-bundle, starting the systemd service — shuts the instance down immediately so
-the ASG replaces it, which is the only automatic recovery this topology has and
-a deliberate choice over doing nothing: a half-booted instance passes the ASG's
-EC2-only health check indefinitely while doing nothing useful. That behavior is
-then explicitly turned off before the best-effort CloudWatch log-shipping setup,
-so a package-mirror hiccup while installing the logging agent cannot take down
-an otherwise-healthy worker and hand it straight back into the same outage on
-relaunch. Node installs from the OS package repository rather than a piped
-third-party script for the same reason: a routine unattended replacement should
-not depend on a third party being reachable just to boot.
+**The boot script fails fast on anything the worker needs.** A failed package
+install, EFS mount, bundle download or checksum, or service start shuts the instance down so
+the ASG replaces it — the only automatic recovery here, since a half-booted
+instance passes the EC2-only health check forever. The best-effort CloudWatch
+agent setup runs after fail-fast is turned off, so a mirror hiccup there cannot
+take down a healthy worker. Node comes from the OS package repository, so a
+replacement never depends on a third party to boot.
 
-There is deliberately no `cfn-signal`/readiness gate on this update: the
-worker's systemd unit is `Type=simple` with `Restart=always`, so
-`systemctl start` reports success the instant the process execs, regardless of
-whether it then crash-loops, and a real readiness signal would need to poll
-`worker-status.json` or `systemctl is-active` first. So to confirm a redeploy
-actually took, check the new instance's log stream (see
-[Worker observability](#worker-observability) above) rather than relying on
-`cdk deploy` exiting cleanly as proof.
+There is deliberately no `cfn-signal` readiness gate: the unit is `Type=simple`
+with `Restart=always`, so `systemctl start` succeeds the instant the process
+execs, crash-loop or not. To confirm a redeploy took, check the new instance's
+log stream (see [Worker observability](#worker-observability)).
+
+### Rolling the worker from CI
+
+By default the worker bundle is a CDK asset, so only a template deploy moves it. A pipeline
+that deploys the editor with parameter-only change sets (`--use-previous-template`) leaves the
+worker on its old version after every canopycms upgrade. `workerCode: { source: 'parameter' }`
+makes the bundle a parameter instead. It adds a bucket of bundles, a sha256 parameter, and two
+stack outputs: the bucket's name and the parameter's logical id, which a change-set gate can
+allowlist. While the parameter is empty, the worker runs the template's own
+bundle, so the first deploy needs nothing uploaded.
+
+**`cdk deploy` keeps a parameter's previous value.** Once CI has set the hash, a human
+`cdk deploy`, even of a newer canopycms, keeps running the bundle CI chose. Pass
+`--parameters <logical id>=<sha256>` to change it.
+
+To roll the worker, upload the bundle your installed package ships, under its hash, to the bucket
+the stack output names. Then put the hash in the change set beside your image parameter:
+
+```bash
+dist=node_modules/canopycms-cdk/worker/dist
+(cd "$dist" && sha256sum -c index.js.sha256) # macOS: shasum -a 256 -c
+sha=$(cut -d' ' -f1 "$dist/index.js.sha256")
+key="canopy-worker/$sha.js"
+aws s3api head-object --bucket "$WORKER_BUNDLE_BUCKET" --key "$key" >/dev/null 2>&1 ||
+  aws s3 cp "$dist/index.js" "s3://$WORKER_BUNDLE_BUCKET/$key"
+```
+
+The parameter both names the object and is the hash it is checked against, so a wrong or missing
+upload fails the boot rather than running, and the group keeps replacing the instance until the
+object is there. The bucket refuses deletes, so a rollback's bundle stays downloadable. A change
+set that carries only the hash still re-resolves the AMI parameter, so it can move the AMI too.
+
+**Gate the roll on the worker contract, not the template diff.** A parameter-only change set runs
+the new bundle under the deployed template's unit, and a bundle needing a newer unit exits at
+start. A new bundle changes the template too (the fallback's key and hash), so the
+diff cannot tell. Compare the bundle's `index.js.contract` with the stack's `WorkerContract` output, and
+deploy the template first when the bundle needs more:
+
+```bash
+needs=$(cat "$dist/index.js.contract")
+[[ "$needs" =~ ^[0-9]+$ ]] || { echo "no worker contract at $dist" >&2; exit 1; }
+has=$(aws cloudformation describe-stacks --stack-name "$STACK" --output text \
+  --query "Stacks[0].Outputs[?contains(OutputKey, 'WorkerContract')].OutputValue")
+[[ "$has" =~ ^[0-9]+$ ]] || has=0 # none, or not one number: refuse
+((has >= needs)) || { echo "bundle needs worker contract $needs, stack has $has" >&2; exit 1; }
+```
+
+Past the gate, a unit too old for the bundle still stops it at start: `template too old for this bundle`.
+
+## The worker instance
+
+The worker instance runs two services, so that the one exposed to EFS holds nothing worth
+stealing. That layout, and `canopy-inspect`, come with a bundle at worker contract 2 or later; an
+older bundle gets the single unit it was built for, which holds the secrets itself, so roll the
+bundle first:
+
+- **`canopy-worker.service`**, as `ec2-user` (uid 1000, the EFS access point's user): the task
+  queue, git sync, rebases, and every git command in `remote.git` and the branch clones. It has
+  no network but `lo`, no secret and no route to the instance metadata service. At boot it checks
+  that the network cut, `ProtectProc` and `ProtectHome` took effect, and that no secret is in its
+  environment, and it refuses to start otherwise.
+- **`canopy-github.service`**, the GitHub gateway, as the `canopy-github` system user: the GitHub
+  credential, the Clerk key, the instance role and a private mirror of the repository in
+  `/var/lib/canopy-github` (mode 0700). It cannot see `/mnt/efs`, and it refuses to start if it
+  can, if core dumps would reach a helper or its core limit is not zero, or if it owns the socket
+  or the socket is open to group or others.
+- **`canopy-github.socket`**, between them: `/run/canopy-github/gateway.sock`, mode 0600, owned
+  by `ec2-user`, so only the worker's user and root can connect. The worker asks the gateway for a fixed
+  set of operations (fetch, push, delete a branch, the pull request calls, the Clerk snapshot,
+  and the instance's termination notice and lifecycle action), and can do nothing else on
+  GitHub, Clerk or AWS.
+
+Both units share the same sandbox, rated 0.6 (worker) and 1.6 (gateway) by
+`systemd-analyze security`: only their state directories, a private `/tmp` and, for the worker,
+`/mnt/efs` are writable; `ProtectHome=tmpfs`, no capabilities, `/dev/shm` and the journal
+hidden, core dumps off, and the kernel, device and namespace protections. Their log
+directories and files are root-owned, because systemd opens a log as root, following symlinks,
+before the sandbox applies: a worker owning its log could redirect its output into any file on
+the host.
+
+**The gateway's mirror never reads `remote.git`.** Objects cross the socket as git bundles,
+staged in the gateway's state directory (`incoming/` and `outgoing/`), and the worker moves
+`remote.git`'s refs itself. So each new instance fetches the whole repository from GitHub once,
+into the mirror on the root volume. Seeding a new `remote.git` (a first deploy, or replacing a
+poisoned one) also stages the whole repository there as one bundle, and rebuilding a corrupt
+mirror holds two mirrors: leave room for two copies. Past 2 GiB the mirror logs a warning; the
+root volume is the AMI's 8 GiB.
+
+**`protectedBranches`** lists more branches the gateway never pushes, deletes or opens a pull
+request from, beside GitHub's default branch and the configured base branch (`baseBranch`), which
+it always protects: names, or globs in which `*` matches any run of characters, `/` included
+(`release/*`), case-sensitive, at most 1024 (fewer when long: user data is capped at 16 KiB). No
+entry may start with `canopycms-settings-`. Set `baseBranch` explicitly: without it the gateway
+does not know your base branch, and protects it only if it is GitHub's default. A compromised CMS Lambda can
+still drive the gateway at any other branch: see the [Security Model](#security-model).
+
+`CanopyCmsService` also hardens the instance:
+
+- **Public subnet, no inbound traffic.** The gateway reaches GitHub and AWS through the internet
+  gateway; a NAT gateway would cost more than the rest of the stack. The security group admits
+  nothing inbound.
+- **IMDSv2 only**, with a hop limit of 1: metadata answers only processes on the host, and of
+  CanopyCMS's, only the gateway has a route to it.
+- **The bundle runs only if its sha256 matches** the hash taken at synth; a mismatch fails the
+  boot. The instance can read that object and its instance files (the units and
+  `canopy-inspect`, checked the same way), not the whole CDK asset bucket.
+- **EFS refuses clients without TLS or IAM** (`efsEnforceIamAndTls`, default `true`). The
+  instance mounts with `tls,iam` through the access point its role is granted. The Lambda mounts
+  with IAM through the same access point, and
+  [uses TLS for every file-system connection](https://docs.aws.amazon.com/lambda/latest/dg/security-dataprotection.html).
+  Anything else that mounts this file system needs both, plus `ClientMount`.
+- **An encrypted gp3 root volume**, at the AMI's size. If your account's default EBS key is a
+  customer-managed key, grant the Auto Scaling service-linked role on it.
+- **Patched between deploys, except the kernel.** AL2023 pins `dnf` to its AMI's repository
+  release, so every boot first upgrades to the latest release. The kernel is excluded, because a
+  new one applies only at a reboot, so it moves only when a deploy resolves a newer AMI: deploy now
+  and then even when nothing else changed. A replacement can get newer git, Node or efs-utils than
+  the AMI. dnf needs more memory than a `t4g.nano` has free, so a 1 GiB swap file goes on first
+  (`vm.swappiness` 10). An upgrade that fails 5 attempts starts the worker unpatched, notifying
+  `alarmTopic` if set; the next boot retries. A failed swap only warns. Any other failed step
+  before the worker starts shuts the instance down for the group to replace, and
+  `aws ec2 get-console-output` names the step, or the line for a step that is not retried.
+- **Replaced weekly** (`workerMaxInstanceLifetime`, default 7 days, `null` to turn off). Auto
+  Scaling [terminates the instance and launches a new one meanwhile](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-max-instance-lifetime.html),
+  which boots while the old one drains. Saves keep working; publishing, pull requests and sync
+  wait. The worker logs `Syncing git...` at startup and every 5 minutes, so a replacement taking
+  12–15 minutes leaves a gap of about 20, inside the [worker-down alarm](#worker-down-alarm)'s 30.
+- **Termination is timed to fit the lifecycle hook.** The gateway polls instance metadata every
+  5 seconds for the notice. The worker then drains for up to 90 seconds plus a 5-second abort
+  grace, and asks the gateway to complete the lifecycle action, retrying for up to 100 seconds,
+  long enough to outlast a gateway restart. That is 195 seconds of the shortest
+  `workerTerminationHeartbeat` allowed, 210; the margin is deliberate, for detecting the notice.
+  Past the heartbeat, termination goes ahead without the completion.
+- **Git that does not trust the shared file system.** Git carrying the GitHub credential runs
+  only in the gateway's private repositories, out of the Lambda's reach. In `remote.git` and the
+  clones, hooks, helpers and non-local transports are off, and a repository whose config holds a
+  key CanopyCMS never writes, or with a repository in a submodule, is refused.
+- **Daily EFS backups** (`efsBackup`, default `true`), kept 35 days. Branches nobody has submitted
+  exist only on EFS. Backup storage is billed per GB-month. Recovery points outlive the stack:
+  their vault refuses deletes until you change its access policy.
+
+**A stale `packed-refs.lock` in `remote.git`.** A git killed while deleting a branch can leave
+`remote.git/packed-refs.lock`, which fails every branch deletion there, the Lambda's included.
+When a sync's mirroring of a GitHub branch deletion meets it 10 minutes or more after it was
+left, the worker reports it as its `lastGitSyncError` (System health) and keeps syncing; it never removes the lock, since the Lambda shares that repository and the worker cannot tell
+a lock left behind from one a live git holds. Check that no git is running in `remote.git`:
+stop `canopy-worker` (it drains first); a Lambda request ends within its timeout
+(60 s by default). Then remove
+the lock, and start the worker again:
+`sudo /opt/canopy-worker/canopy-inspect rm /mnt/efs/remote.git/packed-refs.lock`.
+
+### Inspecting EFS: `canopy-inspect`
+
+The Lambda can write git config, hooks and symlinks anywhere on EFS, and git run in a repository
+there executes what its config names. **Never read or write `/mnt/efs` as root, or as any user
+outside the worker's sandbox**: AL2023 gives `ec2-user` and Session Manager's `ssm-user`
+passwordless `sudo`, so hostile config run as either reaches root, then the secrets. Never add a
+`safe.directory` to get past git's "dubious ownership" refusal there either. Run every command on EFS through `canopy-inspect`, as root:
+
+```bash
+sudo /opt/canopy-worker/canopy-inspect git -C /mnt/efs/remote.git log -3
+sudo /opt/canopy-worker/canopy-inspect --interactive
+```
+
+It runs the command as uid 1000 inside exactly the worker's sandbox: no network, no secret, no
+`sudo`. First it proves the sandbox took effect, with the worker's own boot self-checks and then
+the user, `NoNewPrivileges`, the seccomp filter, an empty private `/run/user`, and the journal
+and `/dev/shm` hidden. Any failure refuses, and the command never runs. A single command reads
+nothing from your terminal, and its output passes through `cat -v`, so it cannot send your
+terminal escape sequences. Relative paths resolve against `/`.
+
+`--interactive` gives a shell in the same sandbox, starting in `/mnt/efs`. Its terminal relays
+escape sequences both ways, and a compromised worker can reach it: it can read your keystrokes
+and write to your screen, though it cannot run a command as you or reach a secret. Paste
+nothing from it into a root shell, and prefer single commands.
+
+**Never `nsenter` or `machinectl` into the worker's namespaces.** Entering a namespace does not
+bring the seccomp filter, `NoNewPrivileges` or the capability bounding set with it, so an
+`ec2-user` there can still `sudo`.
+
+### Installing the units by hand
+
+Without `CanopyCmsService`, install what its user data installs, as root, on an AL2023 instance
+with `nodejs22` and `git`, and EFS mounted at `/mnt/efs` with `tls,iam` through the same access
+point as the Lambda (it maps every file to uid 1000 and roots the workspace there), from an
+`/etc/fstab` entry with `_netdev`: without one, a reboot starts the worker on an empty local
+`/mnt/efs`. Every file comes from the `canopycms-cdk`
+package (`worker/`): the bundle and `instance-files.sh` from `worker/dist/`, which
+`build:worker` writes, the three units, and `gateway.env.example`.
+
+```bash
+cd node_modules/canopycms-cdk/worker
+install -D -m 0644 dist/index.js /opt/canopy-worker/index.js
+echo '{"type":"module"}' > /opt/canopy-worker/package.json
+useradd --system --no-create-home --shell /sbin/nologin canopy-github
+# The worker's environment: nothing secret (see gateway.env.example's header).
+vi /opt/canopy-worker/.env
+# The gateway's: created unreadable to the worker before anything is written to it.
+install -m 0640 -o root -g canopy-github /dev/null /opt/canopy-worker/gateway.env
+vi /opt/canopy-worker/gateway.env   # from gateway.env.example
+# No core dumps, and only lo in the worker's network namespace.
+printf '%s\n' 'kernel.core_pattern = core' 'fs.suid_dumpable = 0' \
+  'net.core.fb_tunnels_only_for_init_net = 1' > /etc/sysctl.d/99-canopy.conf
+sysctl -q -e -p /etc/sysctl.d/99-canopy.conf
+mkdir -p /etc/systemd/system.conf.d
+printf '[Manager]\nDefaultLimitCORE=0\n' > /etc/systemd/system.conf.d/canopy.conf
+# Root-owned logs.
+install -d -o root -g root -m 0755 /var/log/canopy-worker /var/log/canopy-github
+install -o root -g root -m 0644 /dev/null /var/log/canopy-worker/worker.log
+install -o root -g root -m 0640 /dev/null /var/log/canopy-github/gateway.log
+install -m 0644 canopy-worker.service canopy-github.service canopy-github.socket /etc/systemd/system/
+# canopy-inspect: unpack the instance files where only root can read them.
+install -d -m 0700 /run/canopy-instance-files
+(cd /run/canopy-instance-files && bash "$OLDPWD/dist/instance-files.sh")
+install -m 0755 /run/canopy-instance-files/{canopy-inspect,inspect-checks} /opt/canopy-worker/
+install -m 0644 /run/canopy-instance-files/inspect.rc /opt/canopy-worker/
+systemctl daemon-reload
+systemctl enable --now canopy-github.socket canopy-github.service
+systemctl enable --now canopy-worker
+```
+
+The instance needs IMDSv2 with a hop limit of 1, and a role with
+`elasticfilesystem:ClientMount`, `ClientWrite` and `DescribeMountTargets`,
+`ec2:DescribeAvailabilityZones`, `secretsmanager:GetSecretValue` on its secrets,
+`logs:CreateLogStream` and `PutLogEvents` on its log group, `AmazonSSMManagedInstanceCore` for
+Session Manager, and, in an Auto Scaling group with a termination hook named
+`canopycms-worker-drain`, `autoscaling:DescribeAutoScalingInstances` and
+`CompleteLifecycleAction`. The construct also installs logrotate for both logs, which otherwise
+grow until the disk fills, and the CloudWatch agent, run as root since `gateway.log` is root's
+alone.
+
+### First deploy checklist
+
+On a new deployment's first instance, check what a container cannot prove, through Session
+Manager:
+
+- **Only `lo` in the worker's namespace:** `systemctl show -p NRestarts canopy-worker` stays 0
+  (its boot self-check refuses any other interface, and the worker log names it),
+  `sudo /opt/canopy-worker/canopy-inspect cat /proc/self/net/dev` lists `lo` alone, and
+  `sysctl net.core.fb_tunnels_only_for_init_net` prints 1.
+- **No core dumps:** `sysctl kernel.core_pattern fs.suid_dumpable` prints `core` and 0.
+- **The gateway's log ships:** the worker log group has an `{instance_id}-gateway` stream beside
+  the `{instance_id}` one.
+- **The split works end to end:** the worker log shows `Fetched from GitHub` and System health
+  a recent sync with no error (EFS read and write from the worker unit, GitHub through the
+  gateway); with an App, the gateway log shows `GitHub App authentication verified`.
+- **The worker cannot read the secrets:**
+  `sudo /opt/canopy-worker/canopy-inspect cat /opt/canopy-worker/gateway.env` and
+  `sudo /opt/canopy-worker/canopy-inspect ls /var/lib/canopy-github` each say `Permission denied`.
 
 ## Security Model
 
-| CMS Lambda                       | EC2 Worker                                                               |
-| -------------------------------- | ------------------------------------------------------------------------ |
-| No internet access               | Outbound HTTPS only                                                      |
-| No sensitive secrets             | GitHub token _or_ an App private key, + Clerk key (from Secrets Manager) |
-| Public keys only (CLERK_JWT_KEY) | Full API access                                                          |
-| Read/write EFS only              | Read/write EFS + internet                                                |
+|          | CMS Lambda                           | Worker (`canopy-worker`)                        | GitHub gateway (`canopy-github`)                                         |
+| -------- | ------------------------------------ | ----------------------------------------------- | ------------------------------------------------------------------------ |
+| Network  | EFS and the S3 endpoint, no internet | None: only `lo` and the gateway's socket        | Outbound HTTPS (GitHub, Clerk, AWS), and instance metadata               |
+| Secrets  | Public keys only (`CLERK_JWT_KEY`)   | None: it refuses to start beside one            | GitHub token _or_ an App private key, + Clerk key (from Secrets Manager) |
+| EFS      | Read/write                           | Read/write                                      | None                                                                     |
+| AWS role | Its own execution role               | None: no route to the instance metadata service | The instance role                                                        |
 
 **The CMS Lambda is intended to receive public configuration only.** Every genuinely
-sensitive value is meant to go to the worker instead: pass the GitHub token and Clerk
+sensitive value is meant to go to the GitHub gateway instead: pass the GitHub token and Clerk
 secret key to `CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn`
 (or, for App auth, `githubAppPrivateKeySecretArn` in place of the first),
-and the worker reads them at boot with its own IAM grant. The Lambda's `environment`
+and the gateway reads them at boot with the instance role. The Lambda's `environment`
 should carry nothing you would mind reading in the output of
 `aws lambda get-function-configuration`.
 
@@ -1031,30 +1336,109 @@ endpoint for S3 for exactly that reason. Secrets Manager needs the _interface_ v
 rather than the free gateway one, so it carries an hourly and per-GB charge: a cost
 argument, not an impossibility argument.
 
-The worker's own AWS permissions are correspondingly narrow: EFS client access, Secrets
-Manager reads for its specific secrets, SSM core (the Session Manager channel, for
-operators whose roles allow it), read access to the CDK asset bucket holding its code
-bundle, and write-only access to its one CloudWatch log group.
+The instance role is correspondingly narrow: EFS mount and write through the shared access
+point, Secrets Manager reads for its specific secrets, SSM core (the Session Manager channel,
+for operators whose roles allow it), read on its bundle and instance files, completing its own
+lifecycle action, the describe calls the EFS mount and the termination watch need, and write-only
+access to its one CloudWatch log group.
+[The worker instance](#the-worker-instance) covers the instance itself.
 
 Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
 `CLERK_SECRET_KEY` (full Clerk API access) does not. CanopyCMS's own request authentication
 never reads the secret there: `createNextCanopyContext` wraps the Clerk plugin in
 `CachingAuthPlugin`, which checks each token with `verifyTokenOnly()` (the JWT key only) and
 takes user and group metadata from the auth cache on EFS. The calls that need the secret, to
-Clerk's backend API for that cache, run on the worker.
+Clerk's backend API for that cache, run in the gateway, and the worker writes what they return.
 
 **`clerkMiddleware` is the exception.** `canopycms init` generates a passthrough with it as a
 commented opt-in, and adopted, it throws on every request it matches unless it can
 resolve a secret key — `jwtKey` does not satisfy that check. So the posture above holds for a
 deployment without that middleware, and one that keeps it needs `CLERK_SECRET_KEY` in the
 Lambda's environment, or a fetch of it at run time (see
-`.claude/future-tasks/deploy-test-lambda-plaintext-clerk-secret.md`). **A middleware you keep
+safeinsights/canopycms#650). **A middleware you keep
 must also be passed `jwtKey` explicitly**: it never reads `CLERK_JWT_KEY` from the
 environment, and without the prop the internet-less Lambda hangs on sign-in fetching JWKS.
 What dropping the middleware gives up is under [Dual Build Support](#dual-build-support); the
 shape without it has not been run against a real Clerk instance, so test sign-in early.
 
-If the CMS Lambda is compromised, an attacker can read/write content on EFS but cannot exfiltrate data, push to GitHub, or access any external service.
+If the CMS Lambda is compromised, an attacker can read and write content on EFS. It has no
+internet route: it reaches only EFS and the AWS services its own role and VPC endpoints allow
+(the S3 asset bucket, as deployed). It can write the git state the worker reads, and by racing
+the worker, it may run a command as the worker. The worker has no network, no credential and no
+route to the instance metadata service. Among CanopyCMS's processes, only the GitHub gateway uses
+the GitHub credential, the Clerk secret key and the instance role. The gateway cannot see EFS,
+and it answers the worker through a fixed set of operations: push or delete a branch, open or
+update a pull request, fetch from GitHub. The Lambda can already request those through the task
+queue. The rest read GitHub's default branch, a pull request and the Clerk user directory, and
+watch for and complete the instance's termination.
+
+The gateway refuses to push to, delete, or open a pull request from the configured base branch
+(`baseBranch`), GitHub's default branch, or any branch in `protectedBranches`. Any other branch
+it can push to, force-push or delete, including with any commit already in your repository, so
+any workflow in your history can run on its content. It can also open pull requests, and update
+or close any pull request by number, which run your `push` and `pull_request` workflows. So:
+
+- list every branch that deploys or that people work on in `protectedBranches`, and protect your
+  base branch and those with GitHub rulesets the CanopyCMS credential cannot bypass;
+- give workflows read-only `permissions:`;
+- keep deployment secrets in environments with required reviewers;
+- never check out a pull request's head in `pull_request_target`;
+- use a fine-grained token or an App **without** the workflows permission, which is what stops a
+  push from adding or changing a workflow file.
+
+**Check that the protection holds against the credential itself.** Each branch above, and any
+branch a cutover will make the base branch, needs a ruleset or branch protection requiring
+a pull request and blocking force pushes and deletion. A classic token of a repository
+admin bypasses classic branch protection unless "Do not allow bypassing the above settings" is on;
+an App installation token is bound by rulesets unless the App is a bypass actor. Confirm it with
+the credential on a throwaway branch protected the same way: a direct push and a force push
+must both be rejected.
+
+The worker's host, system git config and image stay trusted.
+
+### What the separation leaves open
+
+Each item assumes an attacker who controls the CMS Lambda and has won the race to run commands as
+the worker. What it means for you, and what you can do:
+
+- **The gateway's own reach.** Beyond what the task queue can ask for, such a command can
+  fetch your Clerk user directory through the gateway as often as once a minute, which spends Clerk API quota (the
+  directory itself is already on EFS, as the auth cache), and cut the
+  instance's drain short once a termination has begun, which can cut off a push in flight; the
+  next worker requeues the task. It can also push an object the gateway's mirror still
+  holds but GitHub no longer references, by its object ID: a secret you force-pushed out of
+  history can come back on a branch. The mirror keeps such objects until the instance is
+  replaced, and `remote.git` on EFS keeps them indefinitely, so rotate any secret that ever
+  reached the repository; removing it from history is not enough.
+- **A worker run as one process** (an entrypoint of your own that constructs `CmsWorker` with a
+  credential, or a bundle older than the split) holds its credential itself, so a command won by
+  the race reaches it. Run the split units (`CanopyCmsService`, or the hand install above) with a
+  current bundle.
+- **Local escalation** from the worker's user, `ec2-user`, through a kernel bug, would reach
+  root and every secret. Its `sudo` is blocked by `NoNewPrivileges`. Deploy now and then, so the
+  instance gets a newer AMI's kernel.
+- **Parser bugs in the gateway**, in git's bundle and pack code or node's HTTP server, on input
+  the worker chooses, would run code as the gateway, with the credential. Every boot installs the
+  latest packages, so a replacement picks up fixes.
+- **A sandbox directive that silently does not apply** would leave the worker less confined than
+  this page says. The worker checks the network cut, `/proc` and `/home` at boot and refuses to
+  start without them; the gateway checks that it cannot see EFS, that a crash cannot hand its
+  memory to a core-dump helper, and who owns its socket. Run the
+  [first deploy checklist](#first-deploy-checklist) for the rest.
+- **Denial of service.** The worker can slow or stall publishing and sync, and fake the
+  `Syncing git...` lines the [worker-down alarm](#worker-down-alarm) counts, so the alarm detects
+  faults, not compromise. The gateway's log (the `{instance_id}-gateway` stream), which the worker
+  cannot write, is the record of what reached GitHub: read it when GitHub shows a change nobody
+  made.
+- **Other unix sockets** on the host that `ec2-user` can connect to are levers the worker keeps.
+  Install nothing on the instance that listens on one.
+- **A root process opening a path the worker can write** could be steered into overwriting any
+  file. None of the instance's does; anything you add that runs as root (a backup agent, a cron
+  job) must not touch `/mnt/efs`, `/var/lib/canopy-worker`, or the worker's private `/tmp` and
+  `/var/tmp` (`/tmp/systemd-private-*-canopy-worker.service-*`) either.
+- **An operator on EFS as root**, or as any user outside the worker's sandbox, runs hostile git
+  config as that user, and from a user with `sudo` (`ec2-user`, `ssm-user`) reaches root. Inspect EFS only with
+  [`canopy-inspect`](#inspecting-efs-canopy-inspect).
 
 ### CloudFront OAC and request body signing
 
@@ -1064,7 +1448,7 @@ This has one consequence adopters don't need to think about, but that's worth kn
 
 CanopyCMS's generated API client (`packages/canopycms/src/api/client.ts`, via the shared `computeContentSha256Hex` helper in `packages/canopycms/src/api/request-body-hash.ts`) computes and attaches this header automatically for every JSON request body, using WebCrypto (`crypto.subtle.digest`). GET/DELETE requests without a body are unaffected. The header is a no-op on non-AWS deployments (it's just an extra header nothing enforces), so this doesn't need to be conditionally enabled per environment.
 
-**Next.js Server Actions 403 here.** Their POSTs carry a body without that header, so don't rely on Server Actions in the CMS build (`.claude/future-tasks/oac-unhashed-body-requests.md`). `@clerk/nextjs`'s provider runs one before every `setActive`, and when it fails, sign-in hangs. The editor skips it; `router.refresh()`, which Clerk runs next, still clears Next's router cache. If your CMS build renders Clerk components outside the editor, mount `useSkipClerkSetActiveAction()` as the [Clerk package README](../packages/canopycms-auth-clerk/README.md#clerk-components-on-your-own-pages) shows. This is verified from source, not yet observed live.
+**Next.js Server Actions 403 here.** Their POSTs carry a body without that header, so don't rely on Server Actions in the CMS build (safeinsights/canopycms#759). `@clerk/nextjs`'s provider runs one before every `setActive`, and when it fails, sign-in hangs. The editor skips it; `router.refresh()`, which Clerk runs next, still clears Next's router cache. If your CMS build renders Clerk components outside the editor, mount `useSkipClerkSetActiveAction()` as the [Clerk package README](../packages/canopycms-auth-clerk/README.md#clerk-components-on-your-own-pages) shows. This is verified from source, not yet observed live.
 
 **`FormData` bodies can't be hashed this way**, because the multipart boundary is generated at send time. The one CanopyCMS request that sends one, the proxied upload (`POST /assets/upload`), serves a local asset store. With the S3 store the editor uploads by presigned POST to an unsigned S3 origin, never the Function URL. Send any new body as JSON, or as raw bytes hashed with `computeContentSha256HexFromBytes`, never as `FormData`.
 
@@ -1086,17 +1470,17 @@ new CmsStack(app, 'CmsProd', {
 })
 ```
 
-Separate AWS accounts mean these two stacks' settings branches would never collide even without `deploymentName` — but set distinct values anyway: it's the same repo's `canopycms-settings-*` branch namespace on GitHub, and a future stack sharing an account (or repo) with either of these should not have to guess that the convention exists. See [Two deployments, one repository](#two-deployments-one-repository).
+Separate AWS accounts mean these two stacks' settings branches would never collide even without `deploymentName` — but set distinct values anyway: it's the same repo's `canopycms-settings-*` branch namespace on GitHub, and a future stack sharing either's account should not have to guess the convention. See [Two deployments, one repository](#two-deployments-one-repository).
 
 The generated workflow deploys one stack by name, so adding a second one here means updating its Deploy step too — either naming both (`npx cdk deploy CmsTest CmsProd`) or, more usually, giving each environment its own workflow with its own trigger and its own OIDC role.
 
 ### Cross-account asset bucket
 
-A supported topology, and the normal one once assets are shared across per-environment accounts: the **asset bucket lives in one account** (a build account, so a promoted build's `/assets/{hash32}/…` references keep resolving as it moves between tiers) while the **compute is per tier, in the tier's own account**.
+The normal topology once assets are shared across per-environment accounts: the **asset bucket lives in one account** (a build account, so a promoted build's `/assets/{hash32}/…` references keep resolving as it moves between tiers) while the **compute is per tier, in the tier's own account**.
 
 The grant this needs has two halves. The identity half goes in the compute's stack. The **resource-policy half must be written in the bucket's own stack**, and it needs the Lambda's principal as a **plain string**.
 
-**Do not reach for the construct reference.** `assetSupport.transformFunction.role` and `service.lambdaFunction.role` both work within one account, but across an account boundary CDK emits `Fn::GetStackOutput` — a CDK-CLI-only intrinsic, resolved at deploy time by assuming a publishing role and calling DescribeStacks. Nothing in the emitted CloudFormation records the dependency, and no deploy path other than `cdk deploy` can resolve it. Unlike a same-account circular dependency, it does not fail synth.
+**Do not reach for the construct reference.** `service.lambdaFunction.role` works within one account, but across an account boundary CDK emits `Fn::GetStackOutput`, a CDK-CLI-only intrinsic: nothing in the emitted CloudFormation records the dependency, no deploy path other than `cdk deploy` can resolve it, and synth does not fail.
 
 Name the roles instead, and pass them in:
 
@@ -1117,20 +1501,33 @@ new CanopyCmsService(this, 'Cms', {
 
 ```typescript
 // Bucket stack, in the build account. No reference, no import - literals only.
-bucket.addToResourcePolicy(
-  new iam.PolicyStatement({
-    principals: [new iam.ArnPrincipal(`arn:aws:iam::${tierAccount}:role/canopy-cms-${tier}`)],
-    actions: ['s3:GetObject', 's3:PutObject'],
-    resources: [`${bucket.bucketArn}/assets/*`],
-  }),
-)
+// Each statement mirrors an identity grant the construct writes on its own side.
+const role = (name: string) => new iam.ArnPrincipal(`arn:aws:iam::${tierAccount}:role/${name}`)
+const objects = (...prefixes: string[]) => prefixes.map((p) => `${bucket.bucketArn}/${p}/*`)
+const allow = (name: string, actions: string[], resources: string[]) =>
+  bucket.addToResourcePolicy(
+    new iam.PolicyStatement({ principals: [role(name)], actions, resources }),
+  )
+
+// CanopyCmsService's `assetBucket` grants (cms-service.ts).
+const cms = `canopy-cms-${tier}`
+allow(cms, ['s3:GetObject'], objects('asset-staging', 'asset-originals', 'asset-meta', 'assets'))
+allow(cms, ['s3:PutObject'], objects('asset-staging', 'asset-originals', 'asset-meta', 'assets'))
+allow(cms, ['s3:DeleteObject'], objects('asset-staging', 'asset-meta'))
+allow(cms, ['s3:ListBucket'], [bucket.bucketArn]) // the media library lists asset-meta/
+
+// With lazyPublicTransforms, AssetSupport's transformRole. Without ListBucket an
+// unknown hash is a 500 rather than a 404.
+const transform = `canopy-transform-${tier}`
+allow(transform, ['s3:GetObject'], objects('asset-originals', 'asset-meta'))
+allow(transform, ['s3:PutObject', 's3:PutObjectTagging'], objects('assets/t'))
 ```
 
-`AssetSupport` takes the same prop for its transform Lambda, as `transformRole`. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](adopter-migration.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
+With `lazyPublicTransforms`, `AssetSupport` takes the same prop for its transform Lambda, as `transformRole`, which the last two statements above grant. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](../CHANGELOG.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
 
 Two consequences of naming a role: the tier stack needs **`CAPABILITY_NAMED_IAM`**, and a customer-named IAM role **cannot be replaced in place** without a rename — so pick names you can live with for the life of the deployment.
 
-If you are not ready to wire the narrow version, scoping the bucket policy to the tier **account** rather than the role is a bounded, reversible interim step: coarser, since any principal in that account can then reach the asset prefixes, but easy to tighten later without touching the compute.
+Scoping the bucket policy to the tier **account** instead of the role is a coarser, reversible interim step: any principal in that account can then reach the asset prefixes.
 
 ## Troubleshooting
 
@@ -1141,33 +1538,33 @@ request then logs one `[CanopyCMS:timing]` line with its route, status, total an
 milliseconds (`filter @message like /CanopyCMS:timing/` in Logs Insights). Unset it afterwards,
 because it also enables every other debug line.
 
-**Tasks stuck in pending**: Check if the EC2 worker is running. First look at its
-CloudWatch log group (`/canopycms/<stackName>/worker` — see
-[Worker observability](#worker-observability)); no shell access needed. If you can
-shell in (SSM or SSH), `systemctl status canopy-worker` on the EC2 instance also
-works.
+**Tasks stuck in pending**: Check if the EC2 worker is running. Look at its
+CloudWatch log group (see [Worker observability](#worker-observability)), or run
+`systemctl status canopy-worker` on the instance (SSM or SSH).
 
-**503 "CMS worker not ready" right after a first deploy**: the Lambda has no remote until the EC2 worker's first boot creates `remote.git` on EFS; requests get a 503 (with `Retry-After`) until then, so check the worker's CloudWatch log group if it persists.
+**503 "CMS worker not ready" right after a first deploy**: the Lambda has no remote until the EC2 worker's first boot creates `remote.git` on EFS; requests get a 503 (with `Retry-After`) until then, so check the worker's CloudWatch log group if it persists. After a recorded failed start, it drops `Retry-After` and names the failure to admins.
 
 **Auth cache empty**: Run `npx canopycms worker run-once` to populate, or wait for the EC2 worker's 15-minute refresh cycle.
 
 **Preview not rendering**: `editor.previewPrefix` must name the preview route's folder, and an entry type missing from `views` is a 404. A pane the browser will not frame lacks `frame-ancestors`.
 
-**Stranded edits on the base branch** (editor saves made directly on `main` before
-base-branch protection existed, or via any future bypass): the base clone on EFS has
-uncommitted changes that will never reach a PR. Symptoms: worker logs show
+**Stranded edits on the base branch** (editor saves made directly on `main`): the
+base clone on EFS has uncommitted changes that will never reach a PR. Symptoms: worker logs show
 `Base branch workspace (<base>) has uncommitted changes -- skipping refresh. Dirty
 files: ...` on every sync — the base workspace stops tracking origin until cleaned.
 Recovery:
 
-1. Reach the EFS mount (SSM/SSH into the worker EC2, or any shell with the
-   filesystem) and go to `{workspaceRoot}/content-branches/{baseBranch}`.
+1. On the instance, open a shell in the worker's sandbox,
+   `sudo /opt/canopy-worker/canopy-inspect --interactive`, and go to
+   `content-branches/<base>` (it starts in `/mnt/efs`, the workspace root). Run the git and
+   file steps below in that shell, never as root or your session's user
+   ([why](#inspecting-efs-canopy-inspect)).
 2. Inspect what's stranded: `git fetch origin`, then `git status` and
    `git log origin/<base>..<base>` for stranded local commits.
 3. In the editor, create a rescue branch (it forks from the origin base). Copy the
    stranded `content/` changes from the base clone into the rescue branch's clone
-   directory (or, from the base clone, `git checkout -b rescue && git push` and
-   delete the local ref afterwards).
+   directory. (A branch pushed from the base clone into `remote.git` instead is never seen by
+   the editor, and the next sync deletes it.)
 4. Only after confirming the rescue branch holds the edits, reset the base clone:
    `git checkout <base> && git reset --hard origin/<base>`, plus `git clean -fd`
    for untracked strays. The worker's base refresh resumes fast-forwarding
@@ -1175,8 +1572,7 @@ Recovery:
 5. If the base branch's `.canopy-meta/branch.json` was left in
    `status: "submitted"` / `syncStatus: "sync-failed"` (from a pre-protection
    submit attempt), set `status` back to `"editing"` and remove `syncStatus` — or
-   have an admin use **Withdraw** in the editor, which is deliberately still
-   allowed on the protected base branch as the recovery path. `mark-merged` is not
-   a cleanup option here: it requires a recorded PR number, which a failed base
-   submit never produced.
+   have an admin use **Withdraw** in the editor, which stays allowed on the
+   protected base branch for this. `mark-merged` is not an option: it requires a
+   recorded PR number, which a failed base submit never produced.
 6. Submit the rescue branch through the normal flow.

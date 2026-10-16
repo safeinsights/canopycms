@@ -23,17 +23,23 @@ Apps, under `apps/`, never published:
 
 Repo-level tooling, under `scripts/`:
 
-- `scripts/add-js-extensions.mjs` — rewrites a built `dist/`'s extensionless relative imports to explicit `.js`, for Node's ESM resolver
+- `scripts/add-js-extensions.mjs` — rewrites a built `dist/`'s extensionless relative imports to explicit `.js`
 - `scripts/check-esm-imports.mjs` — imports every published `exports` subpath under plain Node ESM; see [DEVELOPING.md](DEVELOPING.md#published-package-esm-import-check)
-- `scripts/bump-version.mjs` — sets the version across all five publishable packages in lockstep
+- `scripts/bump-version.mjs` — writes one explicit version to all five publishable packages in lockstep
 - `scripts/prerelease-version.mjs` — computes an integration publish's `X.Y.Z-int.N` version
+- `scripts/release-stable.mjs` — `--prepare` turns pending changesets into a stable release's changes
+- `scripts/npm-attested-commit.mjs` — the commit a published version's provenance names
+- `scripts/migration-notes.mjs` — assembles `CHANGELOG.md` from `.changeset/`
 - `scripts/check-docs.mjs` — doc word budgets, list-item length, backticked-path and link resolution
 - `scripts/check-comment-budget.mjs` — source-comment volume ratchet, budgets in `scripts/comment-budget.json`
-- `scripts/check-future-tasks.mjs` — backlog index and task-file link integrity; see [DEVELOPING.md](DEVELOPING.md#future-tasks-backlog-check)
-- `scripts/check-action-pins.mjs` — fails when a third-party GitHub Action is referenced by a mutable tag
+- `scripts/check-ux-copy.mjs` — `pnpm lint:ux-copy`: editor copy rules over `editor/` and every `src/` file it imports
+- `scripts/tasks-privacy-screen.mjs`, `scripts/tasks-sync.mjs` — issue screening and offline cache; see [DEVELOPING.md](DEVELOPING.md#backlog-github-issues)
+- `scripts/check-action-pins.mjs` — fails on a third-party Action pinned by a mutable tag
+- `scripts/check-account-ids.mjs` — fails on AWS account ids
 - `scripts/diff-comments-only.mjs` — proves a git range changed only comments in TypeScript files
 - `scripts/wait-for-pr-checks.mjs` — polls a PR's checks to a definite verdict; see [DEVELOPING.md](DEVELOPING.md#waiting-on-pr-checks)
 - `scripts/docs-budgets.json` — the per-doc ceilings `check-docs.mjs` enforces
+- `.changeset/` — changelog entries, see its `README.md`
 - `scripts/smoke/standalone-image.mjs` — builds and boots the generated CMS image against packed tarballs; see [DEVELOPING.md](DEVELOPING.md#standalone-cms-image-smoke-test-standalone-image-ci-job)
 
 ## Source Code Organization
@@ -45,7 +51,7 @@ Core modules, each with its own `AGENTS.md` where one exists — the invariants 
 - `packages/canopycms/src/assets/` — asset store, finalize pipeline, image-transform engine — [AGENTS.md](packages/canopycms/src/assets/AGENTS.md)
 - `packages/canopycms/src/auth/` — authentication plugin interface and cache system
 - `packages/canopycms/src/authorization/` — branch and path access control, groups — [AGENTS.md](packages/canopycms/src/authorization/AGENTS.md)
-- `packages/canopycms/src/build/` — static build output and pruning of prior runs — [AGENTS.md](packages/canopycms/src/build/AGENTS.md)
+- `packages/canopycms/src/build/` — static build output, pruning of prior runs, a build's asset URLs — [AGENTS.md](packages/canopycms/src/build/AGENTS.md)
 - `packages/canopycms/src/cli/` — CLI commands and scaffolding templates — [AGENTS.md](packages/canopycms/src/cli/AGENTS.md)
 - `packages/canopycms/src/config/` — configuration types, Zod schemas, validation
 - `packages/canopycms/src/editor/` — React editor UI — [AGENTS.md](packages/canopycms/src/editor/AGENTS.md)
@@ -56,7 +62,7 @@ Core modules, each with its own `AGENTS.md` where one exists — the invariants 
 - `packages/canopycms/src/static/` — framework-agnostic static-generation helpers and build guards — [AGENTS.md](packages/canopycms/src/static/AGENTS.md)
 - `packages/canopycms/src/task-queue/` — file-based task queue, plus the CMS queue contract
 - `packages/canopycms/src/test-utils/` — shared test utilities, workspace-internal
-- `packages/canopycms/src/utils/` — shared cross-cutting helpers — [AGENTS.md](packages/canopycms/src/utils/AGENTS.md)
+- `packages/canopycms/src/utils/` — shared helpers — [AGENTS.md](packages/canopycms/src/utils/AGENTS.md)
 - `packages/canopycms/src/validation/` — field traversal, entry and reference validation — [AGENTS.md](packages/canopycms/src/validation/AGENTS.md)
 - `packages/canopycms/src/worker/` — CmsWorker daemon, git sync, rebase loop — [AGENTS.md](packages/canopycms/src/worker/AGENTS.md)
 
@@ -65,10 +71,11 @@ Content, git and branch files have their own sections below; the rest:
 
 - `index.ts` — package main entry, client-safe exports only
 - `client.ts` — `use client` editor exports for `canopycms/client`, including `EditorSignInProps`
-- `server.ts` — server entry point exports
+- `preview.ts` — `use client` host-page exports for `canopycms/preview`
+- `server.ts` — server entry exports, e.g. `collectAssetRefs`, `readAssetRefsFile`, `materializeAssets`
 - `config.ts` — re-export shim over the `config/` module
-- `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`, `BaseRefreshReport` (`lastGitSync.baseRefresh`)
-- `services.ts` — `CanopyServices` factory; resolves and bakes both branch-identity fields, see [ARCHITECTURE.md](ARCHITECTURE.md#branch-identity-defaultbasebranch-vs-defaultactivebranch)
+- `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`, `BaseRefreshReport`
+- `services.ts` — `CanopyServices` factory; resolves and bakes both branch-identity fields (`resolvePendingBaseBranch()` per request in prod), see [ARCHITECTURE.md](ARCHITECTURE.md#branch-identity-defaultbasebranch-vs-defaultactivebranch)
 - `context.ts` — `CanopyContext` / `CanopyBuildContext` creation; see [ARCHITECTURE.md](ARCHITECTURE.md#context-architecture)
 - `build-canopy.ts` — `createBuildCanopy`, one-call build/admin context for standalone scripts; bypasses ACLs
 - `build-mode.ts` — `isDeployedStatic` / `isBuildMode` / `readsFromCheckout`; see [ARCHITECTURE.md](ARCHITECTURE.md#static-deployment-and-build-mode)
@@ -76,15 +83,16 @@ Content, git and branch files have their own sections below; the rest:
 - `config-test.ts` — test-only config helpers, `defineCanopyTestConfig` and `createTestServices`
 - `id.ts` — `generateId`, 12-character Base58 content IDs
 - `user.ts` — user utilities
+- `system-users.ts` — dependency-free ids CanopyCMS acts as: `SYSTEM_USER_ID`, `CONTENT_READER_USER_ID`, `isSystemUserId`
 - `resolve-canopy-user.ts` — shared authenticate-then-merge-internal-groups pipeline for both request entry points
-- `comment-store.ts` — field, entry and branch comment persistence under layered concurrency; see [ARCHITECTURE.md](ARCHITECTURE.md#comments--collaboration)
-- `entry-schema.ts` — `defineEntrySchema`, `TypeFromEntrySchema`, block templates, `buildResolvedReference`, `buildRestrictedReference`
+- `comment-store.ts` — comment persistence; field threads follow `item-keys.ts`' `_key`; see [ARCHITECTURE.md](ARCHITECTURE.md#comments--collaboration)
+- `entry-schema.ts` — `defineEntrySchema`, `TypeFromEntrySchema`, block templates, `buildResolvedReference`, `buildRestrictedReference`, `buildMissingReference`, `isResolvedReference`
 - `entry-schema-registry.ts` — registry for reusable field definitions; validates `isTitle` and `isBody`
 - `reference-resolver.ts` — `loadReferenceOptions`, scoped by collections and entry types
 - `entry-link-resolver.ts` — resolves `entry:ID` patterns in markdown; see [Entry Links](#entry-links)
 - `resource-generation.ts` — the on-disk generation-marker primitive behind durable cache invalidation
 - `dev-content-watcher.ts` — dev-mode working-tree vs branch-clone divergence warning
-- `sync-core.ts` — prompt-free core of working-tree to branch-clone content sync, `pushContentToWorkspace` under the content-write lock
+- `sync-core.ts` — prompt-free working-tree to branch-clone content sync, `pushContentToWorkspace` under the content-write lock
 - `url-exclusivity-fixtures.ts` — vitest-free enumerate-then-probe check for the one-URL invariant
 
 ### Static-Export Helpers
@@ -106,34 +114,35 @@ Which guards run, in what order, and what each one catches are in
 
 Route handlers, one file per endpoint namespace:
 
-- `branch.ts` — `/branches`: create, list, delete; each `BranchListItem` carries server-computed `isProtected` / `readOnly`
-- `branch-status.ts` — `/branch-status`: status and submit
+- `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes every branch response, with server-computed `isProtected` / `readOnly`
+- `branch-status.ts` — `/branch-status`: status and submit (`SubmitBranchResponse`)
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
 - `branch-review.ts` — `/branch-review`: request changes
 - `branch-merge.ts` — `/branch-merge`: merge and clean up
 - `content.ts` — `/content`: read and write; runs entry-link and adopter `validateEntry` validation on write
 - `entries.ts` — `/entries`: entry management; cursor-paginated listing
-- `assets.ts` — `/assets`: presign, finalize, upload, list, delete, plus the raw-object route
+- `assets.ts` — `/assets`: presign, finalize, upload, list, delete, plus the raw-object route (on-demand transforms, presigned S3 redirects)
 - `comments.ts` — `/comments`: comment CRUD
 - `groups.ts` — `/groups`: internal group management
-- `permissions.ts` — `/permissions`: path permissions, and the merged internal-plus-external group list
+- `permissions.ts` — `/permissions`: path permissions, and the merged internal-plus-external group list; the `/users` lookups
 - `reference-options.ts` — `/reference-options`: reference field option lookup
 - `resolve-references.ts` — `/resolve-references`: resolves reference IDs for the editor's live preview, through `ContentStore.resolveReferenceTarget` and the request's path ACLs
 - `user.ts` — `/user`: current user info
 - `schema.ts` — `/schema`: collection, entry-type and ordering CRUD, admin only
-- `admin.ts` — admin status and task-queue endpoints, and the single `ADMIN_ROUTES` export
-- `admin-branch-health.ts` — admin branch-health scan, purge and repair-metadata endpoints; see [ARCHITECTURE.md](ARCHITECTURE.md#admin-observability-and-recovery-api)
-- `github-sync.ts` — `syncSubmitPr` / `syncConvertToDraft`: direct GitHub call or queued task; see [GitHub Sync](#github-sync-direct-vs-async)
+- `admin.ts` — admin status (incl. sharp availability) and task-queue endpoints, and the single `ADMIN_ROUTES` export
+- `admin-branch-health.ts` — admin branch-health scan, purge and repair endpoints; see [ARCHITECTURE.md](ARCHITECTURE.md#admin-observability-and-recovery-api)
+- `github-sync.ts` — `syncSubmitPr` / `syncConvertToDraft` / `syncDeleteRemoteBranch`: direct GitHub call or queued task; see [GitHub Sync](#github-sync-direct-vs-async)
 
 Support files:
 
 - `routes.ts` — `buildCanopyRoutes()`, every route table plus `assetRawRoute`; the only `api/` module `http/` value-imports
-- `route-builder.ts` — declarative route builder with Zod validation, guards, and codegen metadata
+- `route-builder.ts` — declarative route builder with Zod validation, guards, and codegen metadata; a successful `writableBranch` endpoint calls `services.recordBranchEditor`
 - `guards.ts` — the declarative guard system; see [ARCHITECTURE.md](ARCHITECTURE.md#declarative-guard-system)
 - `validators.ts` — Zod schemas for branded types at API boundaries; see [Zod Validators](#zod-validators-for-api-boundaries)
 - `settings-helpers.ts` — settings-branch context resolution and commit helpers
-- `entries-constants.ts` — entries pagination caps, dependency-free so the editor bundle can import them
+- `entries-constants.ts`, `branch-create-window.ts`, `users-constants.ts` — entries pagination caps, `ENTRY_CHANGED_MESSAGE`; the idempotent branch-create window; `MAX_USER_METADATA_BATCH`. Dependency-free so the editor bundle can import them
 - `request-body-hash.ts` — computes the `x-amz-content-sha256` CloudFront OAC requires on a body-carrying request
+- `request-deadline.ts` — every client call's deadline and `ApiTimeoutError`; an endpoint's `clientTimeout` picks its class, `readOnly` its retry wording
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
 - `client.ts` — generated API client; `ApiClientOptions.onUnauthorized` reports every 401, `trailingSlash` shapes request URLs
@@ -141,8 +150,8 @@ Support files:
 Handlers reach git through [service methods](#git-operations-service-methods) and paths through
 `context.branchRoot` / `context.baseRoot`. Module boundaries, held by dependency-cruiser rules in
 `.dependency-cruiser.mjs` under `pnpm lint:cycles`: `http/` value-imports `api/` only via
-`routes.ts`; `api/` never imports `worker/`; `editor/` imports only `client.ts`, `index.ts`,
-`entries-constants.ts`.
+`routes.ts`; `api/` never imports `worker/`; `editor/` imports only `client.ts`, `index.ts` and
+the dependency-free modules above.
 
 ## Authentication & Permissions
 
@@ -150,8 +159,10 @@ Handlers reach git through [service methods](#git-operations-service-methods) an
 
 **Location**: `packages/canopycms/src/auth/`
 
-- `plugin.ts` — `AuthPlugin` interface, `verifiesCredentials` marker, `assertAuthPluginAllowedForMode`
+- `plugin.ts` — `AuthPlugin` interface (optional `getUsersMetadata`), `verifiesCredentials` marker, `assertAuthPluginAllowedForMode`
+- `user-metadata-lookup.ts` — `lookupUsersMetadata`: per-process cached, batched `/users` lookups; `lookupUserProfiles`, emailless
 - `types.ts` — `CanopyUser`, `AuthPluginConfig`, `AuthenticationResult`, `GroupMetadata`, `PermissionGroupOption`
+- `person-name.ts` — `personName`: no name when blank or the id
 - `context-helpers.ts` — auth context helpers, `extractHeaders` and `isCanopyRequest`
 - `caching-auth-plugin.ts` — `CachingAuthPlugin`, `AuthCacheProvider`, `TokenVerifier`: local token verify plus cached metadata
 - `file-based-auth-cache.ts` — `FileBasedAuthCache` reads the EFS JSON cache; `writeAuthCacheSnapshot` writes it atomically
@@ -172,7 +183,7 @@ and [Auth Caching](ARCHITECTURE.md#auth-caching-cachingauthplugin).
 - `branch.ts` — branch-level access: `checkBranchAccessWithDefault`, `createCheckBranchAccess`, `canPerformWorkflowAction`
 - `path.ts` — path-level permissions: `checkPathAccess`, `resolveDefaultPathAccess`
 - `protected-branch.ts` — `getBranchProtection`, the single source of truth for protected-base-branch policy
-- `helpers.ts` — `isAdmin`, `isReviewer`, `isPrivileged`
+- `helpers.ts` — `isAdmin`, `isReviewer`, `isPrivileged`, and `isLockedOutOfBranch` (the browser-safe branch-lockdown check)
 - `types.ts` — `BranchAccessResult`, `ContentAccessResult`, `PermissionPath`
 - `validation.ts` — permission-path validation against traversal
 - `settings-file-store.ts` — `mutateSettingsJsonFile`, the shared cross-host layered-lock mutation helper
@@ -202,12 +213,13 @@ The three access layers, reserved groups, and bootstrap admins are described in
 
 **Location**: `packages/canopycms-auth-clerk/src/`
 
-- `clerk-plugin.ts` — `ClerkAuthPlugin`, real JWT verification; resolves its secret lazily on first authenticated call
-- `jwt-verifier.ts` — `createClerkJwtVerifier`, networkless JWT-only verifier, deprecated in favour of `verifyTokenOnly()`
-- `cache-writer.ts` — `refreshClerkCache` populates the auth cache from the Clerk API
-- `ClerkSignIn.tsx` — `ClerkSignIn`, the editor's sign-in screen, re-exported from `canopycms-auth-clerk/client`
-- `skip-set-active-action.ts` — `useSkipClerkSetActiveAction`, skips `@clerk/nextjs`'s before-`setActive` Server Action while mounted; re-exported from `canopycms-auth-clerk/client`
-- `client.ts` — `useClerkAuthConfig` wires Clerk's `UserButton`, `ClerkSignIn` and sign-out into the editor
+- `clerk-plugin.ts` — `ClerkAuthPlugin`, real JWT verification; resolves its secret lazily
+- `jwt-verifier.ts` — `createClerkJwtVerifier`, deprecated for `verifyTokenOnly()`
+- `clerk-user.ts` — `toUserSearchResult`, shared with the cache writer
+- `cache-writer.ts` — `refreshClerkCache` populates the auth cache from Clerk
+- `ClerkSignIn.tsx` — `ClerkSignIn`, the editor's sign-in screen
+- `skip-set-active-action.ts` — `useSkipClerkSetActiveAction`, skips `@clerk/nextjs`'s before-`setActive` Server Action while mounted
+- `client.ts` — the `canopycms-auth-clerk/client` entry: `useClerkAuthConfig` wires Clerk's `UserButton`, `ClerkSignIn` and sign-out into the editor
 - `index.ts` — public exports
 
 ## Worker Module
@@ -216,16 +228,24 @@ The three access layers, reserved groups, and bootstrap admins are described in
 [AGENTS.md](packages/canopycms/src/worker/AGENTS.md), which holds the module map, the one-way import
 direction, and every invariant.
 
-- `cms-worker.ts` — the `CmsWorker` class: lifecycle, worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
-- `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
+- `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`, `selfStopped`), worker lock, scheduling, `remote.git` provisioning, base-branch detection (`resolveBaseBranch`, `recordBaseBranchInRemoteHead`), and one delegating method per cluster
+- `worker-context.ts` — `WorkerContext`, the only channel between the class and its clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
-- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep
+- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
+- `remote-git-maintenance.ts` — `maintainRemoteGit`: the logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
+- `sparse-cone.ts` — `reapplySparseCones`: re-cones sparse clones after a content-root change
+- `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks
+- `stale-mirror.ts` — `settleStaleMirror`: a `remote.git` head without editor work follows GitHub
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
-- `history-rewrite.ts` — force-push leasing on a known pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
-- `github-auth.ts` — which GitHub credential the worker uses, and installation-token minting
-- `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, the timestamp-and-level prefixed replacements for `console.*`
+- `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts`, `github-gateway-http.ts` its policy, scrubbing, socket
+- `github-mirror.ts`, `github-mirror-upkeep.ts`, `shared-repo-git.ts` — isolated git
+- `github-transfer.ts`, `bundle-header.ts`, `git-process.ts` — bundle transfer; `self-checks.ts` — boot checks
+- `gateway-instance.ts` — `GatewayInstance`: the gateway's termination and lifecycle operations
+- `history-rewrite.ts` — force-push leasing on a pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
+- `github-auth.ts` — credential selection and installation-token minting
+- `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, timestamped replacements for `console.*`
 
 Task actions: `push-branch`, `push-and-create-pr`, `push-and-update-pr`,
 `push-and-create-or-update-pr`, `convert-to-draft`, `close-pr`, `delete-remote-branch`. Rebase
@@ -236,7 +256,7 @@ behaviour and conflict tracking are in
 
 **Location**: `packages/canopycms/src/task-queue/` — the generic queue (zero Canopy dependencies, EFS-safe) and the CMS contract on top of it.
 
-- `task-queue.ts` — enqueue, dequeue, complete, fail, retry, recover, cleanup, query, `requeueFailedTask`, `listCorruptTaskFiles`
+- `task-queue.ts` — enqueue, dequeue, complete, fail, retry, release, recover, cleanup, query, `requeueFailedTask`, `listCorruptTaskFiles`
 - `types.ts` — `Task`, `TaskStatus`, `QueueStats`, `TaskQueueLogger`, `CorruptTaskFile`
 - `index.ts` — public re-exports
 - `cms-task-queue.ts` — the CMS contract: `TaskAction`, `WorkerTask`, `cmsTaskQueueLogger`; the `canopycms/worker/task-queue` entrypoint
@@ -250,11 +270,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 
 **Location**: `packages/canopycms/src/cli/` — [AGENTS.md](packages/canopycms/src/cli/AGENTS.md)
 
-- `cli.ts` — entrypoint: arg parsing, command routing, `isKnownAuthMode`, `passthroughArgs`
+- `cli.ts` — entrypoint: arg parsing, command routing, `isKnownAuthMode`, `passthroughArgs`, `findMultiValuedMaterializeFlag`
 - `init.ts` — `init()`, `initDeployAws()`, `workerRunOnce()` as library functions, no CLI logic
 - `templates.ts` — template generators tailored by `authProvider` and `staticBuild`
 - `template-files/` — the scaffolded files themselves: config, routes, edit page, middleware, Dockerfile, workflow, CDK app
-- `project-detect.ts` — best-effort detection of package manager, default branch, GitHub repo, missing CDK deps
+- `project-detect.ts` — detects package manager, default branch, GitHub repo, missing CDK deps; exports `PLACEHOLDER_GITHUB_REPO`
+- `aws-deploy-example.ts` — `renderAwsDeployExample()` renders `examples/aws-deployment/` (`pnpm generate:aws-example`)
 - `project-root.ts` — `findProjectRoot`, walks up to the nearest `canopycms.config.ts`
 - `sync.ts` — interactive wrapper over `sync-core.ts` for content sync between working tree and branch workspaces
 - `migrate.ts` — converts a plain content tree to CanopyCMS naming conventions, idempotent
@@ -262,29 +283,36 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 - `github-app-manifest.ts` — App naming, `CANOPY_APP_PERMISSIONS`, and the installation read-back verdict
 - `prompt.ts` — the stdin prompts, sharing one end-of-input flag
 - `generate-ai-content.ts` — the AI static-content generation command
+- `asset-refs.ts` — `collect-asset-refs` / `materialize-assets` over `build/asset-refs.ts` and `assets/materialize.ts`; `resolveStore` (`--bucket`/`--region`/`--allow-local`), `MATERIALIZE_EXIT_CODES`
+- `configured-asset-store.ts` — the jiti config loader `materialize-assets` imports only when no `--bucket` is given
 
 Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker run-once`,
-`generate-ai-content`, `sync <push|pull|both|abort>`, `migrate`. Flags and prompts are in
+`generate-ai-content`, `collect-asset-refs`, `materialize-assets`, `sync <push|pull|both|abort>`, `migrate`. Flags and prompts are in
 [README.md](README.md#quick-start) and [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 ## CDK Package (canopycms-cdk)
 
 **Location**: `packages/canopycms-cdk/`
 
-- `src/constructs/cms-service.ts` — `CanopyCmsService`: VPC, EFS, Lambda, EC2 worker ASG, worker log group; `attachTo()` wires editor routes into an existing distribution
+- `src/constructs/cms-service.ts` — `CanopyCmsService`: VPC, EFS, Lambda, EC2 worker ASG (bundle and `workerCode`: `worker-bundle.ts`), worker log group; `attachTo()` wires editor routes into an existing distribution
 - `src/constructs/cms-distribution.ts` — `CanopyCmsDistribution`: CloudFront, ACM certificate, Route53 records
 - `src/constructs/editor-routing.ts` — shared CloudFront wiring for CMS Lambda routes: `EDITOR_PATH_PATTERNS`, `attachEditorBehaviors`, response headers policy
-- `src/constructs/asset-support.ts` — `AssetSupport`: asset bucket, transform Lambda, CloudFront behaviors, upload route
+- `src/constructs/asset-support.ts` — `AssetSupport`: bucket, S3-only reads with `replicaBucket` failover, upload route; `lazyPublicTransforms` adds the transform Lambda, `enforceCreateOnlyWrites` a create-only Deny
 - `src/constructs/lambda-execution-role.ts` — `attachLambdaExecutionPolicies`, the single home for re-attaching a caller-supplied role's managed policies
-- `src/worker.ts` — re-exports `CmsWorker` from core for convenience
+- `src/worker.ts` — re-exports `CmsWorker`
 - `src/index.ts` — public package exports, including the `assetUploadBehavior` free function
-- `lambda/asset-transform/handler.ts` — the prod on-demand transform Lambda behind `/assets/t/*`
+- `lambda/asset-transform/handler.ts` — the transform Lambda behind `/assets/t/*` S3 misses, via `storeTransform`
 - `lambda/asset-transform/build.mjs` — builds that Lambda's code asset without Docker; see [DEVELOPING.md](DEVELOPING.md#building-the-transform-lambda-no-docker)
-- `worker/index.ts` — EC2 worker entrypoint: reads secrets, wires auth-cache refresh, starts `CmsWorker`
+- `src/constructs/worker-lifecycle.ts` — names the construct and bundle share, incl. `WORKER_CONTRACT_VERSION`
+- `src/constructs/worker-units.ts` — the worker instance's systemd units and `canopy-inspect`, packed by `build:worker` into `worker/dist/instance-files.sh` for user data to install; `worker/` holds copies of the split's three units
+- `worker/build.ts` — `build:worker`, which writes the contract banner user data reads, and `worker/dist/instance-files.sh`
+- `worker/index.ts` — EC2 entrypoint: the worker (`worker/run.ts`'s `runWorker`), `gateway`, or `self-check`
+- `worker/gateway-run.ts` — `runGateway`, the GitHub gateway process
+- `worker/termination-watch.ts` — instance-termination watch
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction
 - `worker/credential-refresh.ts` — `createReactiveSecret`, re-reads a secret on failure behind a five-minute floor
 - `worker/github-app-auth.ts` — `buildGitHubAppAuth`, the App credential from a key read once at boot
-- `worker/clerk-refresh.ts` — `createClerkAuthCacheRefresher`, re-reads the key and retries once on a Clerk 401/403
+- `worker/clerk-refresh.ts` — `createClerkAuthCacheRefresher`, `createClerkSnapshotFetcher`: one retry on a re-read key after a Clerk 401/403
 - `canary/bin/canary.ts` — sandbox proving ground for `AssetSupport`; see [DEVELOPING.md](DEVELOPING.md#cdk-asset-verification-the-canary-stack)
 - `test-support/test-synth.ts` — `newTestApp`, test-owned synth output; see [DEVELOPING.md](DEVELOPING.md#test-owned-cdk-synth-output-newtestapp)
 - `test-support/synth-leak-guard.ts` — fails a suite that leaves `cdk.out` directories behind in the temp dir
@@ -302,13 +330,14 @@ What each construct creates, the `deploymentName` prop, and the operational deta
 - `adapter.ts` — `createCanopyCatchAllHandler()` and `wrapNextRequest()` for the catch-all API route
 - `context-wrapper.ts` — `createNextCanopyContext()`: request-scoped `getCanopy`, `getCanopyForBuild`, phase-selecting reads, bound static helpers, `createPreviewPage`, `guardBuildContext`
 - `static.ts` — `collectStaticParams`, `generateContentSitemap`, `entryToMetadata`
-- `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself; `withCanopyPreview(View)` renders `useCanopyPreview`'s live draft plus server `extras`
-- `preview-page.tsx` — `createPreviewPageFor`, behind the context's `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]` (or a `previewView({ view, load })` whose `load` feeds `extras`), else `notFound()`; types only from `client.tsx`, held by `server-entry-client-boundary.test.ts`
+- `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself
+- `preview.tsx` — `withCanopyPreview(View)` renders `useCanopyPreview`'s live draft plus server `extras`
+- `preview-page.tsx` — `createPreviewPageFor`, behind `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]` or a `previewView`, else `notFound()`; passes `previewAssetBase`; types only from `preview.tsx` (`server-entry-client-boundary.test.ts`)
 - `config.ts` — CJS-compatible `canopycms-next/config` entry re-exporting `withCanopy`
 - `test-utils.ts` — `createMockAuthPlugin` and `createRejectingAuthPlugin`
 - `index.ts` — package main exports
 
-Entry points: `canopycms-next` (ESM), `canopycms-next/client` (ESM), `canopycms-next/config` (ESM
+Entry points: `canopycms-next` (ESM), `canopycms-next/client` (ESM), `canopycms-next/preview` (ESM), `canopycms-next/config` (ESM
 and CJS, for `next.config.ts` on Next 13/14).
 
 ### Dual-Build Support
@@ -336,41 +365,39 @@ for why a single file cannot switch between them, and
 **Location**: `packages/canopycms/src/assets/` —
 [AGENTS.md](packages/canopycms/src/assets/AGENTS.md)
 
-Three files are import-chain-pure so client bundles and static builds can reach them:
-`asset-prefixes.ts` and `transform-directives.ts` have zero imports, and `asset-url.ts` imports only
-those two plus `utils/url-prefix.ts`. Everything else here is server-only (`node:fs`, `node:crypto`,
-`sharp`, the S3 SDK) and must never be imported from client or editor code; client code needing only
-types should `import type` from `types.ts`.
+`asset-prefixes.ts`, `transform-directives.ts` and `asset-url.ts` are import-chain-pure, reachable
+from client bundles and static builds; everything else here is server-only (`node:fs`,
+`node:crypto`, `sharp`, the S3 SDK), so client code takes only types, from `types.ts`.
 
-- `types.ts` — `AssetStore`, `AssetMeta`, `StagedUploadTarget` contracts; type-only, no runtime imports
+- `types.ts` — `AssetStore` (create-only writes, public-object existence, listing, presigned reads), `CreateOnlyResult`, `AssetMeta`, `StagedUploadTarget`; type-only
 - `asset-prefixes.ts` — `ASSET_PREFIXES`, the five bucket-prefix strings
 - `keys.ts` — key, hash and slug helpers: `hashBytes`, `slugifyFilename`, `createKeyBuilders`, the per-prefix key builders
-- `store-local.ts` — `LocalAssetStore`, filesystem-backed adapter mirroring the S3 prefix layout
-- `store-s3.ts` — `S3AssetStore`; `uploadUrl` overrides the presigned-POST target and is not a URL prefix
+- `store-local.ts` — `LocalAssetStore`, filesystem mirror of the S3 prefix layout; `createExclusive` (`.asset-tmp/` + `link()`)
+- `store-s3.ts` — `S3AssetStore`; `createIfAbsent` (`IfNoneMatch: '*'`); `uploadUrl` overrides the presigned-POST target and is not a URL prefix
 - `factory.ts` — `createAssetStore`, instantiates the configured store and falls back to a local dev store
 - `pipeline.ts` — `runFinalizePipeline`: sniff, hash, dimensions, SVG sanitize, real raster decode check
 - `finalize.ts` — `finalizeAsset` / `finalizeStagedUpload`, store orchestration around the pipeline
 - `svg-sanitizer.ts` — `sanitizeSvg` via `sanitize-html`
 - `asset-src.ts` — `assetSrc(meta)`, the always-root-relative URL that gets stored in content
-- `transform-directives.ts` — pure parser and formatter for transform URLs, plus the allowed-width rule
+- `transform-directives.ts` — transform-URL parser/formatter, `TransformWidthPolicy` (`allowlist` | `any`), `MAX_INPUT_PIXELS`, `roundCropRect`, `canonicalizeTransformPath`
 - `sharp-loader.ts` — `loadSharp()`, the package's only runtime load of `sharp`, memoized
 - `transform.ts` — `applyTransform`: resize, crop, reformat, EXIF-strip
-- `asset-url.ts` — `assetUrl` / `assetSrcSet`, isomorphic; `opts.baseUrl` is applied at render time only
+- `asset-url.ts` — `assetUrl` / `assetSrcSet`, isomorphic; `baseUrl` applies at render time only; `AssetRef.crop` honored
+- `materialize.ts` — `storeTransform`, `materializeAssets` (`outputPrefix`, `assertValidOutputPrefix`, `MaterializeReport.schemaVersion`): writing transform outputs
 - `index.ts` — internal server-side barrel, not a package entrypoint
 
-Transform URL shape, the stored-versus-rendered split, and which `baseUrl` is correct per topology
-are in [ARCHITECTURE.md](ARCHITECTURE.md#asset--media-system), specifically [On-Demand Image
-Transforms](ARCHITECTURE.md#on-demand-image-transforms) and [Stored vs Rendered Asset
-URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls). Adopter configuration is in
+Design: [On-Demand Image Transforms](ARCHITECTURE.md#on-demand-image-transforms) and [Stored vs
+Rendered Asset URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls); adopter configuration:
 [README.md](README.md#media-configuration).
 
-`assetUrl`, `assetSrcSet` and the transform types are re-exported from the package's main entry.
+`assetUrl`, `assetSrcSet` and the transform types are re-exported from the main entry; `canonicalizeTransformPath` from `canopycms/server`.
 
 ## Content Store
 
 **Location**: `packages/canopycms/src/`
 
-- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `resolveReferences`, `resolveReferenceTarget` (a denied target resolves to a `RestrictedReference`), the typed `ContentStoreError` codes, and the conflict errors
+- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `fillEmptyFieldWhileHoldingWriteLock`, `resolveReferences`, `resolveReferenceTarget` (denied → `RestrictedReference`, missing → `MissingReference`), `assertEntryAvailable`, the typed `ContentStoreError` codes, and the conflict errors
+- `stamp-on-publish.ts` — `stampNewEntries`: fills a new entry's empty `stampOnPublish` fields at submit
 - `content-reader.ts` — content reading; resolves `entry:ID` body links at read time, opt-out via `resolveEntryLinks: false`
 - `content-id-index.ts` — ContentId indexing, tree and global lookups, and the duplicate-ID quarantine
 - `content-index-registry.ts` — in-process registry connecting branch-mutating operations to the stores they make stale
@@ -400,38 +427,33 @@ and search indexes.
 
 `BuildContentTreeOptions` takes `rootPath`, `extract`, `filter`, `buildPath`, `sort`, `maxDepth` and
 `resolveReferences` (default `false`). Without `sort`, children follow the collection's `order`
-array then alphabetical; with it, the comparator fully replaces that, and runs after `extract` and
-`filter`.
-
-`ContentTreeExtractMeta` is `extract`'s second argument; its fields, `indexEntry` and the optional
-`TEntryTypes` narrowing are in [README.md](README.md#content-tree-builder).
+array then alphabetical; with it, the comparator replaces that and runs after `extract` and
+`filter`. `ContentTreeExtractMeta` is in [README.md](README.md#content-tree-builder).
 
 ## Content Listing (Batch)
 
 **Location**: `packages/canopycms/src/content-listing.ts`
 
-- `content-listing.ts` — `listEntries()`, `listCollectionEntries()`, `sortByOrder()`
+- `content-listing.ts` — `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `withoutUnavailableEntries()`
 
-`ListEntriesItem` carries `pathSegments`, `urlPath` (index entries collapsed, round-trip safe),
-`slug`, `entryPath`, `entryId`, `collectionId`, `updatedAt`, `data` and an optional `schema`.
-`ListEntriesOptions` takes `extract`, `filter`, `rootPath`, `sort` and `resolveReferences` (default
-`false`, unlike `read()`'s `true`). Resolution costs one index build plus one read per distinct
-referenced entry per call, and does not apply path ACLs to the resolved targets. Available as a
-standalone function from `canopycms/server` and as a method on `CanopyContext`; see
-[README.md](README.md#listing-entries) and
+`ListEntriesItem` carries `pathSegments`, `urlPath`, `slug`, `entryPath`, `entryId`, `collectionId`,
+`updatedAt`, `data` and an optional `schema`. `ListEntriesOptions` takes `extract`, `filter`,
+`rootPath`, `sort` and `resolveReferences` (default `false`, unlike `read()`'s `true`; applies no
+path ACLs to resolved targets). A function from `canopycms/server` and a method on `CanopyContext`;
+see [README.md](README.md#listing-entries) and
 [ARCHITECTURE.md](ARCHITECTURE.md#opt-in-reference-resolution).
 
 ## Configuration Module
 
 **Location**: `packages/canopycms/src/config/`
 
-- `types.ts` — every config type, including `ReferenceFieldConfig`, `InlineGroupFieldConfig`, `DevConfig`, `ValidateEntryHook`, `DefaultPathAccess`, `basePath` and `EditorSignInProps` for `editor.SignInComponent`
+- `types.ts` — every config type, including `ReferenceFieldConfig`, `InlineGroupFieldConfig`, `DevConfig`, `ValidateEntryHook`, `DefaultPathAccess`, `EntryTypeConfig.unavailable`, `basePath` and `EditorSignInProps` for `editor.SignInComponent`
 - `schemas/config.ts` — the Zod schema for `CanopyConfig`; `mode` has no default, so omitting it fails validation
 - `schemas/field.ts` — Zod schemas for field types
 - `schemas/collection.ts` — Zod schemas for collections and entry types
 - `schemas/permissions.ts` — Zod schemas for permissions
 - `schemas/media.ts` — Zod schema for media config; each branch is `.strict()`, since the outer `.strict()` does not recurse
-- `schemas/url.ts` — `uploadTargetUrlSchema` and `assetMountUrlSchema` over `isHttpUrlOrSameOriginPath`
+- `schemas/url.ts` — `uploadTargetUrlSchema` and `previewPrefixSchema` over `isHttpUrlOrSameOriginPath`
 - `flatten.ts` — schema flattening for O(1) lookups
 - `validation.ts` — `ensureReferenceFieldsHaveScope`, `ensureNoGroupsInsideComplexFields`, `forEachReferenceField`
 - `helpers.ts` — `defineCanopyConfig`, `composeCanopyConfig`, and the `.client()` projection
@@ -448,8 +470,10 @@ Every key, its default and its adopter-facing meaning are in
 **Location**: `packages/canopycms/src/schema/`
 
 - `meta-loader.ts` — loads `.collection.json` files, extracts ContentIds from directory names, rejects a `body` field name
-- `resolver.ts` — `resolveSchema`, the high-level resolution API
-- `schema-store.ts` — `SchemaOps`: collection, entry-type and ordering CRUD, every mutator under `withSchemaLock`; `withBranchSchemaLock` for callers outside `SchemaOps`
+- `resolver.ts` — `resolveSchema`, the high-level resolution API (`unknownSchema` option)
+- `registry-fingerprint.ts` — `registryFingerprint`, a registry's content digest
+- `schema-unavailable-error.ts` — `SchemaUnavailableError`, thrown for an `unavailable` entry type
+- `schema-store.ts` — `SchemaOps`: collection, entry-type and ordering CRUD, every mutator under `withSchemaLock`; `withBranchSchemaLock` for other callers
 - `schema-store-types.ts` — types for schema store operations
 - `types.ts` — `EntrySchemaRegistry` and `SchemaResolutionResult`
 - `index.ts` — module exports
@@ -461,110 +485,152 @@ the entry schema registry. See [ARCHITECTURE.md](ARCHITECTURE.md#schema-registry
 ## Editor UI
 
 **Location**: `packages/canopycms/src/editor/` —
-[AGENTS.md](packages/canopycms/src/editor/AGENTS.md), which holds the layout, the client-bundle
-boundary and the known state.
+[AGENTS.md](packages/canopycms/src/editor/AGENTS.md) holds layout, client-bundle boundary, known state.
 
 Top-level components and helpers:
 
-- `CanopyEditor.tsx` — the provider wrapper adopters mount
+- `CanopyEditor.tsx` — provider wrapper adopters mount
 - `CanopyEditorPage.tsx` — page-level shell resolving branch and entry from the URL
 - `EditorAuthGate.tsx` — between `ApiClientProvider` and `Editor`; signed-out decided by API 401s, sign-in full-screen before mount, overlay after
 - `Editor.tsx` — the composition root
-- `EditorPanes.tsx` — pane layout
-- `EntryNavigator.tsx` — collection and entry tree, with per-collection conflict badges
-- `FormRenderer.tsx` — schema-driven form dispatch, including the `group` and string-list special cases
+- `shell/EditorShell.tsx` — the full-window grid of regions over the host page
+- `shell/PaneLayout.tsx` — the resizable preview/form split
+- `shell/ActivityRail.tsx` — the left rail, one roving Tab stop
+- `shell/SidePanelHost.tsx` — a resizable side panel, docked or over the form
+- `shell/TopBar.tsx` — the 48px top bar, wrapping below `md`
+- `EntryNavigator.tsx` — entry tree: filter, unsaved dots, read-only locks, conflict badges
+- `entry-search.ts` — label/slug match, collection grouping
+- `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
+- `FormHeader.tsx` / `form-outline.ts` — the form's sticky header and its field outline
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
 - `CommentsPanel.tsx` — comment panel
-- `GroupManager.tsx` / `PermissionManager.tsx` — admin group and permission modals
-- `preview-bridge.tsx` — editor-to-preview `postMessage` bridge; see [Preview Bridge](#preview-bridge)
+- `GroupManager.tsx` / `PermissionManager.tsx` — admin group, permission drawers
+- `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; `PreviewPane.tsx` adds the toolbar, its controls in `PreviewToolbarTools.tsx`; see [Preview Bridge](#preview-bridge)
+- `unavailable-entry-type.ts` — unavailable-entry-type wording
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
-- `editor-utils.ts` — `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)
+- `editor-utils.ts` — `buildPreviewRoute`, `buildPreviewSrc`, `buildBreadcrumbSegments`; see [Preview URL Construction](#preview-url-construction)
 - `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
-- `canopy-path.ts` — canonical `canopyPath` string form for a list of path segments
-- `client-reference-resolver.ts` — resolves reference display values through the context API client
-- `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
-- `theme.tsx` — Mantine theme helpers
+- `preview-asset-base.ts` — the preview's asset-route prefix `assetUrl` reads
+- `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
+- `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
+- `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`, `revealField`
+- `schema-label.ts` — `schemaLabel`: a field's, group's or template's label, else its humanised name
+- `undo-removal.ts` — `FieldRemoval`, `restoreRemoval`, `openThreadsWithin` — undo for a form Remove or Clear
+- `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
+- `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
+- `preview-marks.ts` — `findInexactMarks`, for `hooks/usePreviewMarks.ts`
+- `client-reference-resolver.ts` — resolves preview references at any depth, batched
+- `relative-time.ts` — `formatRelativeTime`; `components/RelativeTime.tsx` adds a tooltip
+- `theme.tsx` — theme, default control sizes
+- `branch-status.ts` — shared status label/colour map
+- `copy.ts` — fixed action verbs
+- `platform.ts` — `modKeyLabel()`, ⌘ or Ctrl
+- `slug.ts` — `slugFromTitle`; `validateEntrySlug`, the one slug validator
 - `utils/env.ts` — `getNotificationDuration`, longer under test
+- `utils/confirm-modal.ts` — `openConfirm`, confirm dialogs at `sm`
+- `utils/editor-errors.ts` — `reportEditorError` (one logging point), `formatErrorDetails`
 - `test-setup.ts` / `setup-test-dom.ts` — vitest DOM setup for editor suites
 
 Context providers, in `editor/context/`:
 
-- `SWRProvider.tsx` — `SWRConfig` wrapper for the data hooks; `EditorAuthGate` mounts it keyed by user id, Storybook's preview too
+- `SWRProvider.tsx` — `SWRConfig` wrapper for the data hooks, keyed by user id in `EditorAuthGate`
 - `ApiClientProvider` (`ApiClientContext.tsx`) — injects the API client, built with `basePath`-prefixed `baseUrl`; `useOnUnauthorized` subscribes to its 401s
 - `EditorIdentityContext.ts` — `EditorIdentityContext` / `useEditorIdentity()`, the gate's resolved identity, null outside it
 - `EditorStateContext.tsx` — loading, modal and preview state
-- `AssetContext.tsx` — asset base URL for rendered asset URLs
+- `AssetContext.tsx` — editor asset-URL prefix
 - `index.ts` — context exports
 
-Editor code takes the API client from `useOptionalApiClient()`, never `createApiClient()`, or it
-silently bypasses the provider's prefixed base.
+Take the API client from `useOptionalApiClient()`; `createApiClient()` bypasses the prefixed base.
 
 Manager hooks, in `editor/hooks/` — see
 [hooks/README.md](packages/canopycms/src/editor/hooks/README.md) for which are SWR-backed:
 
 - `useBranchManager.tsx` — branch state; adopts the server's `defaultBranch` when unpinned; overlays just-created branches
-- `useBranchActions.tsx` — create, submit, withdraw, merge; adopts the server-sanitized branch name after create
-- `useEntryManager.ts` — entry loading and saving, and `listAllEntries` cursor following
-- `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors
-- `useSchemaManager.ts` — schema mutations, returning result objects rather than booleans
+- `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm; adopts server-sanitized names
+- `create-branch-request.ts` — `requestBranchCreate`: a 90 s create deadline, settled by the branch list
+- `useEntryManager.ts` — entry loading/saving, `readEntryValue`, `adoptEntryVersion`, `listAllEntries` cursors
+- `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; `singleSaving`/`lastSaved`; verifies restored drafts; `applySubmitStamps`; `handleSaveAll` (outcomes in `save-all.ts`)
+- `useSchemaManager.ts` — schema mutations, returning result objects
 - `useCommentSystem.ts` — comment CRUD
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
-- `useEditorLayout.ts` — panel layout state
-- `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and user metadata
-- `useReferenceResolution.ts` — resolves reference IDs to display values
-- `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data before `PreviewFrame`
+- `user-metadata-batcher.ts` — `createUserMetadataBatcher`: a render's badge lookups as one `POST /users/batch`
+- `useEditorLayout.ts` — persisted layout prefs
+- `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`); SWR user metadata, `seedUserProfiles`
+- `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
+- `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
 - `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` — the three SWR hooks; keys in the README
-- `index.ts` — only the nine hooks `Editor.tsx` and `media/MediaLibraryBody.tsx` import; the rest are deep-imported
+- `index.ts` — only the nine hooks `Editor.tsx` and `media/MediaLibraryBody.tsx` import
 
 Field components, in `editor/fields/`:
 
 - `TextField.tsx`, `NumberField.tsx`, `ToggleField.tsx`, `DateTimeField.tsx`, `SelectField.tsx` — scalar inputs
-- `StringListField.tsx` / `NumberListField.tsx` — list inputs; the string one uses `TagsInput` with no comma splitting
+- `StringListField.tsx` / `NumberListField.tsx` — list inputs; the string one, `TagsInput` without comma splitting
 - `MarkdownField.tsx` — MDXEditor-backed markdown and MDX
-- `mdx-jsx-support.tsx` — JSX plugins
+- `rich-text-failures.ts` — markdown that failed rich text, reopened as source
+- `FieldCrashFallback.tsx` — a crashed field's read-only value, or markdown source
+- `mdx-jsx-support.tsx` — JSX plugins; round-trip guard
+- `markdown-fidelity-visitors.ts` — round-trip fixes
 - `CodeField.tsx` — code and Mermaid field
-- `ObjectField.tsx` — nested object field, with a Clear control for an optional filled field
-- `InlineGroupField.tsx` — renders `type: 'group'` as a bordered container, transparent to the data path
-- `BlockField.tsx` — page blocks
+- `ObjectField.tsx` — nested object; Clear when optional and filled
+- `ObjectListField.tsx` / `list-item-title.ts` — `list: true` objects; item titles
+- `ItemList.tsx` / `item-expansion.ts` — collapsible sortable rows
+- `InlineGroupField.tsx` — `type: 'group'` as a bordered container, transparent to the data path
+- `BlockField.tsx` — blocks
+- `list-item-keys.ts` — `useListItemKeys`, identity keys for object lists and `BlockField`
 - `ReferenceField.tsx` — reference picker
 - `ImageField.tsx` — structured image field, storing the raw `AssetRecord.src`
-- `MdxImageDialog.tsx` — image insert dialog for markdown
+- `MdxImageDialog.tsx` — image dialog
+- `FieldLabel.tsx` — label row with comment/action slots; `LabelledInput`
 - `FieldDescription.tsx` — `description` without Mantine's native prop
-- `entry-link/EntryLinkContext.tsx` — React context supplying `EntryLinkOption[]` to toolbar components
-- `entry-link/InsertEntryLink.tsx` — toolbar button plus searchable entry picker, inserting `[Title](entry:ID)`
+- `entry-link/EntryLinkContext.tsx` — supplies `EntryLinkOption[]` to toolbar components
+- `entry-link/InsertEntryLink.tsx` — toolbar entry picker, inserting `[Title](entry:ID)`
 
 Components, in `editor/components/`:
 
-- `EditorHeader.tsx` — save, submit and the read-only protected-branch banner
-- `EditorFooter.tsx` / `EditorSidebar.tsx` — chrome
+- `EditorHeader.tsx` — the top bar: `EntryBreadcrumb` and its entry menu, `BranchPill`, Submit/Withdraw, `SaveSplitButton` (Saving…/Saved); `SaveAllResult` is Save all's toast
+- `BranchLockBanner.tsx` — the read-only banners and `branchLockState`
+- `EditorRail.tsx` — the rail's buttons and Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
+- `QuickOpenPalette.tsx` — Mod+P quick-open palette
+- `BranchesDrawer.tsx` — Branches drawer
+- `StagedChangesDrawer.tsx` — unsaved-changes drawer shell
 - `UserBadge.tsx` — user avatar and name
-- `index.ts` — component exports
+- `BranchAccessList.tsx` — a branch card's access list
+- `ReasonedMenuItem.tsx` — a blocked menu item and why
+- `UndoToastMessage.tsx` — the undo toast for a Remove or Clear
+- `RetryToastMessage.tsx` — a failed load's toast body with Retry
+- `ValidationSummary.tsx` — pre-save issues alert with breadcrumb buttons
+- `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`
+- `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the editor crash screen
 
 Comments UI, in `editor/comments/`:
 
-- `BranchComments.tsx` / `EntryComments.tsx` — branch-level and entry-level threads
-- `InlineCommentThread.tsx` / `ThreadCarousel.tsx` — thread rendering and navigation
-- `FieldWrapper.tsx` — wraps a field so it can carry comments
+- `BranchComments.tsx` / `ThreadCarousel.tsx` — branch discussion
+- `EntryComments.tsx` / `form-comments.tsx` — entry comments; Mod+Alt+M field menu
+- `CommentThreadsPopover.tsx` / `popover-placement.ts` — comment control, popover, its placement
+- `field-comment-context.ts` — `useFieldCommentControl`: a `FieldLabel`'s own control
+- `FieldWrapper.tsx` — provides that context, tracks hover and focus
+- `InlineCommentThread.tsx` / `ThreadReplyControls.tsx` — a thread, and its Reply and Resolve
 
 Media UI, in `editor/media/`:
 
-- `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser and dropzone
-- `AssetCard.tsx` — one asset's tile
+- `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser; `useAssetLibrary.ts` loads every page
+- `AssetCard.tsx` / `AssetListRow.tsx` — one asset's tile or row
 - `CropStep.tsx` — crop UI over `react-easy-crop`
-- `crop-math.ts` — pure conversion between the crop library's `Area` and the normalized `CropRect`
-- `upload-asset.ts` — the shared presign, transport, finalize state machine every upload entry point uses
-- `useAssetUpload.ts` — the React hook wrapping that state machine for a component's upload UI
-- `xhr-upload.ts` — raw XHR POST for presigned uploads, the only browser API exposing upload progress
-- `upload-constants.ts` — client-side upload UX caps, deliberately duplicated from the server-only pipeline
+- `editor-image-src.ts` — editor image preview srcs
+- `crop-math.ts` — pure conversion between the crop library's `Area` and normalized `CropRect`
+- `upload-asset.ts` — shared presign, transport, finalize state machine behind every upload
+- `useAssetUpload.ts` — React hook over that state machine
+- `xhr-upload.ts` — raw XHR POST for presigned uploads, with progress
+- `upload-constants.ts` — client-side upload UX caps; why duplicated in its header
 
 Schema editor, in `editor/schema-editor/`: `CollectionEditor.tsx`, `EntryTypeEditor.tsx`,
-`index.ts`.
+`collection-draft.ts`, `index.ts`.
 
 Permission manager, in `editor/permission-manager/`:
 
 - `PermissionTree.tsx` / `PermissionEditor.tsx` / `PermissionLevelBadge.tsx` — the path-permission tree UI
-- `GroupSelector.tsx` — group search and select, tagging each option Internal or External
+- `GroupSelector.tsx` — group search and select, tagging options Internal or External
 - `UserSelector.tsx` — user search and select
 - `hooks/usePermissionTree.ts` / `hooks/useGroupsAndUsers.ts` — tree state and group/user data
 - `types.ts` / `utils.ts` / `constants.tsx` / `index.tsx` — types, helpers and entry point
@@ -574,17 +640,15 @@ Group manager, in `editor/group-manager/`:
 - `InternalGroupsTab.tsx` / `ExternalGroupsTab.tsx` — the two group sources
 - `GroupCard.tsx` / `GroupForm.tsx` / `MemberList.tsx` — group display and editing
 - `hooks/useGroupState.ts` / `hooks/useUserSearch.ts` / `hooks/useExternalGroupSearch.ts` — state and search
-- `types.ts` / `index.tsx` — types and entry point
+- `types.ts` / `index.tsx` — types, entry point
 
-Admin UI, in `editor/admin/` — admin-gated, and visibility is the caller's responsibility:
-`Editor.tsx` renders it only for an admin, and the component does not re-check.
+Admin UI, in `editor/admin/`, gated only by `Editor.tsx`:
 
 - `SystemHealthPanel.tsx` — Overview, Tasks and Branches tabs over the admin endpoints
-- `useSystemHealth.tsx` — loads status, tasks and branch health on open, polls every 30 seconds, exposes the action helpers
+- `useSystemHealth.tsx` — loads on open, polls every 30 s, exposes the actions
 
-Conflict indicators appear per entry (`FormRenderer`'s `conflictNotice` prop) and per collection
-(`EntryNavCollection.conflictNotice`, rendered as a badge), both computed in `Editor.tsx` by
-matching a `contentId` against `currentBranch.conflictFiles`.
+Conflict notices (`FormRenderer`'s `conflictNotice`, `EntryNavCollection.conflictNotice`) are
+computed in `Editor.tsx` from `currentBranch.conflictFiles`.
 
 Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 
@@ -597,37 +661,39 @@ Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 
 ### Preview Bridge
 
-**Location**: `packages/canopycms/src/editor/preview-bridge.tsx` (`'use client'`, exported via
-`canopycms/client`)
+**Location**: `packages/canopycms/src/editor/preview-bridge.tsx` (protocol and host-page hooks,
+exported via `canopycms/preview`) and `PreviewFrame.tsx` (editor side, via `canopycms/client`)
 
 Message types: `canopycms:draft:update`, `canopycms:preview:focus`, `canopycms:preview:highlight`,
-`canopycms:preview:ready`, `canopycms:preview:error`.
+`canopycms:preview:marks`, `canopycms:preview:ready`, `canopycms:preview:error`.
 
 - `PreviewFrame` — editor-side iframe wrapper: pins the preview origin, posts drafts and highlights, validates inbound messages
-- `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, `fieldProps()`, `reportError()`
-- `usePreviewData` / `usePreviewHighlight` / `usePreviewFocusEmitter` — the site-side primitives it wraps
+- `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, typed `fieldProps()`, `reportError()`
+- `usePreviewData` / `usePreviewHighlight` / `usePreviewFocusEmitter` — site-side primitives it wraps
 - `isTrustedEditorMessage` / `resolveMessageOrigin` — origin resolution and the inbound trust check
 
-All site-side hooks accept an optional `{ editorOrigin }`. The trust model — listeners attach only
-when framed, messages must come from the direct parent with a matching origin, and outbound posts
-always target a concrete origin — is in
+All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 [ARCHITECTURE.md](ARCHITECTURE.md#preview-bridge-trust-model).
 
 ## Git & Branch Management
 
 **Location**: `packages/canopycms/src/`
 
-- `git-manager.ts` — the `simple-git` wrapper; also `ensureGitExcludePattern`, `GitManager.repoExistsAt`, `gitChildEnv` and `addAllExceptCanopyState()`
+- `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `listBaseFiles`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache; quarantines a dir whose metadata will not load
-- `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable after creation; `buildMergedBranchUpdate`
-- `branch-metadata-file.ts` — reading `branch.json`'s file format and nothing else; a deliberate leaf module
-- `branch-workspace.ts` — `BranchWorkspaceManager`: provisions and resolves a branch's clone
+- `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
+- `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
+- `branch-metadata-error.ts` — the corrupt-metadata error, node-free
+- `branch-workspace.ts` — `BranchWorkspaceManager`: `provisionBranch` returns a `created` / `exists` `ProvisionOutcome`
+- `branch-provisioning.ts` — crash-safe provisioning: stage, publish by rename, residue classification and quarantine, `sweepProvisioningLeftovers`; see [docs/concurrency.md](docs/concurrency.md)
+- `branch-sparse.ts` — `sparseConeFor`: the content-root sparse cone for content-branch clones, recorded in `.sparse-cone.json`
+- `schema-registry-record.ts` — `recordServedSchemaRegistry`: the serving editor's schema names in `.schema-registry.json`, for the worker's schema gate
 - `branch-health.ts` — admin scan classifying every dir under a branches root healthy, corrupt-metadata or orphan
-- `branch-schema-cache.ts` — per-branch schema caching, always file-based; exports `SCHEMA_GENERATION_RESOURCE`, `SCHEMA_CACHE_FILE`; the cache lives in `.git/canopycms/` in a clone (`schemaCacheDir`)
+- `branch-schema-cache.ts` — per-branch schema caching, always file-based; `getSchema` returns `issues`; exports `SCHEMA_GENERATION_RESOURCE`, `SCHEMA_CACHE_FILE`; the cache lives in `.git/canopycms/` in a clone (`schemaCacheDir`)
 - `settings-workspace.ts` — the settings branch workspace, with a rename guard before workspace initialization
 - `settings-branch-utils.ts` — settings branch helpers
-- `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, the rate-limit retry predicates
-- `submission-attribution.ts` — sanitized submitter identity: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
+- `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, `isRefAlreadyGoneError`, the rate-limit retry predicates
+- `submission-attribution.ts` — sanitized editor identity, `describeEditors`: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
 
 Key types: `BranchContext` (branch state plus `branchRoot` / `baseRoot`), `BranchMetadata`,
 `BranchPaths`, `SyncStatus` (`synced`, `pending-sync`, `sync-failed`).
@@ -661,8 +727,9 @@ Why it is read-only in prod but editable in dev is in
 - `client-unsafe-strategy.ts` — `ProdStrategy` and `DevStrategy`, the full server-side strategies
 - `client.ts` — the client-bundle entry point, client-safe exports only
 - `deployment-name.ts` — `resolveDeploymentName`, the single resolution point for `deploymentName`
-- `deployment-name-fixtures.ts` — the shared fixture pinning the runtime and synth-time validity rules together
-- `mode-env.ts` — the single resolution point for the operating `mode`
+- `deployment-name-fixtures.ts` — the fixture pinning runtime and synth-time validity rules together
+- `mode-env.ts` — the single resolution point for `mode`
+- `editor-mode-check.ts` — editor/server mode agreement
 - `types.ts` — `ClientSafeStrategy`, `ClientUnsafeStrategy`, `RemoteUrlConfig`
 
 What each mode does, and the `deploymentName` precedence that namespaces the settings branch, are in
@@ -673,8 +740,8 @@ Resolution](ARCHITECTURE.md#deployment-name-resolution).
 
 **Location**: `packages/canopycms/src/api/github-sync.ts`
 
-`syncSubmitPr()` and `syncConvertToDraft()` pick the path: with a `githubService` they call GitHub
-immediately; without one they enqueue a task for the EC2 worker and the branch gets `syncStatus:
+`syncSubmitPr()`, `syncConvertToDraft()` and `syncDeleteRemoteBranch()` pick the path: with a `githubService` they call GitHub
+immediately; without one they enqueue a task for the worker; a submit marks the branch `syncStatus:
 'pending-sync'`. See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 
 ### Git Operations (Service Methods)
@@ -682,13 +749,13 @@ immediately; without one they enqueue a task for the EC2 worker and the branch g
 **Location**: `packages/canopycms/src/services.ts`
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
-- `submitBranch()` — the full submit workflow: checkout, status, commit all (with the submitter's trailers), push; returns `changedPaths`
+- `submitBranch()` — the submit workflow: checkout, stamp new entries, status, commit all (with editor trailers), push; returns `changedPaths`, `editors` and `stamped` (`NothingToSubmitError` when empty)
 - `commitToSettingsBranch()` — commit and push the settings branch (never a PR)
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 
 Both git-operating methods call `git.ensureAuthor()` from the configured bot name and email, and
 prefer the branch's recorded `context.branch.baseBranch` over the config value. Handlers pass
-`context` and read paths off it directly; `GitManager.add()` accepts `string | string[]`.
+`context` and read paths off it directly.
 
 ## Path Utilities Module
 
@@ -738,12 +805,14 @@ parse-versus-create-versus-cast conventions.
 **Location**: `packages/canopycms/src/validation/` —
 [AGENTS.md](packages/canopycms/src/validation/AGENTS.md)
 
-- `field-traversal.ts` — schema-aware traversal of nested data: `traverseFields`, `findFieldsByType`, the `onContainer` hook
-- `entry-validator.ts` — `validateEntryData`, `findUnknownKeys` and `normalizeReferenceValues`, shared by the editor and the write boundary
+- `field-traversal.ts` — schema-aware traversal of nested data: `traverseFields`, `findFieldsByType`, `collectReferenceIds`, the `onContainer` hook
+- `entry-validator.ts` — `validateEntryData` (`{ required }` option), `findUnknownKeys` and `normalizeReferenceValues`, shared by the editor and the write boundary
 - `reference-validator.ts` — reference field validation: ID format, existence, collection and entry-type constraints
 - `entry-type-reference-validator.ts` — `validateReferenceEntryTypes`, checks a reference's `entryTypes` against the resolved schema
 - `entry-link-validator.ts` — `validateEntryLinks`, warns on broken `entry:ID` links at save time
-- `deletion-checker.ts` — referential-integrity checking before a delete
+- `markdown-safety.ts` — `findMarkdownSafetyIssues`/`splitByStored`: refuse markdown/MDX that runs code
+- `mdx-allowlist.ts` — `resolveMdxAllowlist` for `mdxAllow`; dependency-free
+- `deletion-checker.ts` — `findReferencingEntries`, the entries a delete would orphan
 - `block-structural-keys.ts` — which keys of a block item are structure rather than content
 
 ## Entry Links
@@ -756,14 +825,12 @@ Cross-cutting feature linking between entries with `entry:CONTENT_ID` in markdow
 - `src/config/types.ts` — the `entryLinkUrl?: EntryLinkUrlResolver` callback for custom URL mapping
 - `src/content-reader.ts` — resolves links in the body at read time, default on
 - `src/api/content.ts` — validates on write, folding broken-link warnings into `validationWarnings`
-- `src/ai/generate.ts` — resolves links before AI content generation
+- `src/ai/generate.ts` — resolves links against the export set (`isLinkable`), so a link to an entry the export leaves out shows no URL
 - `src/editor/hooks/useEntryLinkResolution.ts` — client-side resolution for preview data
 - `src/editor/fields/entry-link/` — the MDXEditor toolbar button, picker modal and context
 
-Server exports: `resolveEntryUrl`, `resolveEntryLinksInText`, `extractEntryLinkIds`,
-`EntryLinkUrlResolver`. Client exports: `EntryLinkContext`, `useEntryLinkContext`,
-`EntryLinkOption`, `EntryLinkContextValue`. Missing IDs become `#` dead links, anchors are
-preserved, and code blocks are skipped. See
+Missing IDs become `#` dead links, anchors are preserved, and code blocks are skipped. Exports are
+in `server.ts` and `client.ts`. See
 [ARCHITECTURE.md](ARCHITECTURE.md#entry-links-inline-content-links).
 
 ## Utility Module
@@ -778,20 +845,25 @@ preserved, and code blocks are skipped. See
 - `logger.ts` — process-scoped logger shared by the worker and the Lambda
 - `format.ts` — content format helpers: `getFormatExtension`, `isDataOnlyFormat`
 - `atomic-write.ts` — atomic writes via temp file plus rename, for NFS and EFS
-- `content-serialize.ts` — `serializeYaml` / `serializeFrontmatter`, the comment-preserving content write path
+- `content-serialize.ts` — `serializeYaml` / `serializeFrontmatter`, source-preserving writes
+- `markdown-body-splice.ts` — `preserveMarkdownSource`, its body half
+- `yaml-source-splice.ts` — `spliceSource`, its YAML half
+- `json-source-splice.ts` — `serializeJson`, the JSON half
 - `body-field.ts` — `isBody` flag validation, including `findReservedBodyFieldName`
-- `title-field.ts` — `isTitle` flag utilities: `resolveEntryTitle`, `findInvalidTitleFields`, `findTitleFieldsInLists`
+- `title-field.ts` — `isTitle` flag utilities: `resolveEntryTitle`, `titleFieldPath` / `withTitleAtPath`, `findInvalidTitleFields`, `findTitleFieldsInLists`
 - `entry-url.ts` — `computeEntryUrl` (collection plus slug to URL) and `isIndexSlug`
 - `typed-filename.ts` — `parseTypedFilename`, the `{type}.{slug}.{id}.{ext}` grammar
 - `flatten-group-fields.ts` — `flattenGroupFields`, flattens inline groups
-- `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
+- `git.ts` — `detectHeadBranch`, `readHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
+- `base-branch.ts` — `baseBranchOf`, resolved base branch; prod throws `BaseBranchUnresolvedError`
 - `fs.ts` — `filePathExists`
 - `sanitize-href.ts` — `sanitizeHref` for content, `isHttpUrlOrSameOriginPath` for config, `neutralizeImplicitOffOrigin`
-- `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes`, `withTrailingSlash`, `matchTrailingSlash` and `readTrailingSlashEnv` (the `CANOPY_TRAILING_SLASH` build-time flag)
+- `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes`, `withTrailingSlash`, `matchTrailingSlash` and `readTrailingSlashEnv` (`CANOPY_TRAILING_SLASH` at build time)
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
-- `provisioning-lock.ts` — `acquireProvisioningLock` (patient) and `tryAcquireProvisioningLock` (zero-retry); `branchProvisioningLockName` names a branch workspace's lock
-- `content-write-lock.ts` — `withContentWriteLock`, cross-host exclusion between working-tree mutations and the worker's rebase loop; `ContentWriteLockBusyError.outcome`
+- `provisioning-lock.ts` — `acquireProvisioningLock` (patient), `tryAcquireProvisioningLock` (zero-retry), `acquireProvisioningLockWithin` (bounded wait); `branchProvisioningLockName`; `guardOnCompromised`
+- `provision-log.ts` — `ProvisionLog`: per-step start/done timing lines for one workspace provisioning, never behind `CANOPYCMS_DEBUG`
+- `content-write-lock.ts` — `withContentWriteLock`, cross-host exclusion between working-tree mutations and the worker's rebase loop; `ContentWriteLockBusyError.outcome`; `assertContentWriteLockHeld`
 
 The lock layers, the OCC guarantee boundary and the per-call resolve cache are in
 [docs/concurrency.md](docs/concurrency.md). The one-prefix-join rule is in
@@ -806,25 +878,27 @@ Read-only content serving; needs neither auth nor the editor API.
 - `handler.ts` — `createAIContentHandler()`, the GET handler for AI-ready content
 - `generate.ts` — `generateAIContent()` and the traversal-guarded `ctx.readSibling`
 - `json-to-markdown.ts` — schema-driven entry-to-markdown conversion, Prettier-stable output
+- `references.ts` — resolving, masking and linking references
 - `transform-components.ts` — `applyComponentTransforms` / `parseComponentProps`, JSX to clean markdown
 - `to-plain-text.ts` — `toPlainText`, markup-free prose for a search index; keeps a paired component's children
 - `strip-mdx.ts` — `stripMdxImports`, removes import and export statements from MDX bodies
 - `resolve-branch.ts` — `resolveBranchRoot()`, the AI handler's branch root
-- `types.ts` — `AIContentConfig`, `AIEntryMeta`, the transform hook types, and the manifest types
+- `types.ts` — `AIContentConfig`, `AIEntryMeta`, `AIReferenceValue`, transform hook and manifest types
 - `index.ts` — module exports
 
 Transform hooks on `AIContentConfig`, all keyed by entry type: `fieldTransforms`,
-`componentTransforms`, `bodyTransforms` (MD and MDX only), and `entryTransforms`, which runs once
-per entry for every format and appends its returned markdown after the body and fields. Caching: the
-process lifetime in prod, cleared per request in dev; `Cache-Control` is `no-cache` outside prod and
-`public, max-age=60` in prod. Adopter configuration is in
+`componentTransforms`, `bodyTransforms` (MD and MDX only), and `entryTransforms`, which runs per
+entry for every format and appends its returned markdown after the body and fields. Caching and
+`Cache-Control` are set in `handler.ts`. Adopter configuration is in
 [README.md](README.md#ai-content-configuration); design detail in
 [ARCHITECTURE.md](ARCHITECTURE.md#ai-content-generation).
 
 Static generation lives in `packages/canopycms/src/build/` —
 [AGENTS.md](packages/canopycms/src/build/AGENTS.md):
 
-- `generate-ai-content.ts` — `generateAIContentFiles()`, writes AI content to disk and prunes what a previous run produced
+- `generate-ai-content.ts` — `generateAIContentFiles()`, writes AI content, pruning a previous run's output
+- `asset-refs.ts` — `collectAssetRefs()` / `readAssetRefsFile`, a build's asset URLs
+- `inline-flight.ts` — `extractInlineFlight()`, rejoins a page's split RSC payload
 - `index.ts` — module exports
 
 ## HTTP Module
@@ -833,7 +907,8 @@ Static generation lives in `packages/canopycms/src/build/` —
 
 - `types.ts` — `CanopyRequest` and `CanopyResponse`
 - `router.ts` — route matching and dispatch over `buildCanopyRoutes()`
-- `handler.ts` — the request handler factory; rejects anonymous callers 401 before base-branch provisioning
+- `handler.ts` — the request handler factory; answers anonymous callers `unauthenticatedStatus` before base-branch provisioning
+- `worker-not-ready.ts` — `workerNotReadyResponse`: the 503 for worker-not-ready or failed, provisioning-busy and `SchemaUnavailableError`
 - `index.ts` — module exports
 
 ## Test Utilities
@@ -849,6 +924,9 @@ the split.
 - `api-test-helpers.ts` — mock factories: `createMockBranchContext`, `createMockUser`, `createMockServices`, `createMockApiContext`, `createMockSettingsMutation`
 - `console-spy.ts` — `mockConsole()` plus the `toHaveLogged` / `toHaveWarned` / `toHaveErrored` matchers
 - `git-helpers.ts` — `initTestRepo()`, a git repo with the CanopyCMS marker and user config
+- `https-git-server.ts` — `startHttpsGitServer()`
+- `worker-gateway.ts` — `useLocalGitHubGateway()`, `fixtureCredential()`
+- `render-errors.ts` — `silenceReportedRenderErrors()`
 - `index.ts` — exports
 
 ## Example App

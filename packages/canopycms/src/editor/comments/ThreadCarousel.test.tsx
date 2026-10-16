@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { ThreadCarousel } from './ThreadCarousel'
 import type { CommentThread } from '../../comment-store'
+import { MayHaveLandedError } from '../unanswered'
 
 afterEach(() => {
   cleanup()
@@ -101,6 +102,136 @@ describe('ThreadCarousel', () => {
       ],
     },
   ]
+
+  it('fills its panel with the scheme-aware tint, which the scroll fade ends in', () => {
+    const { container } = render(
+      <ThreadCarousel
+        threads={mockThreads}
+        contextType="branch"
+        label="Branch comments"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    )
+
+    const panel = container.querySelector<HTMLElement>('.mantine-Paper-root')
+    expect(panel?.style.background).toBe('var(--mantine-color-default-hover)')
+    const fade = container.querySelector<HTMLElement>('div[style*="linear-gradient"]')
+    expect(fade?.style.background).toContain('var(--mantine-color-default-hover)')
+  })
+
+  it("shows a failed reply's error once, in its thread", async () => {
+    const user = userEvent.setup()
+    render(
+      <ThreadCarousel
+        threads={[mockThreads[0]]}
+        contextType="branch"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn().mockRejectedValue(new Error("Couldn't add the comment. Try again."))}
+        onResolveThread={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    )
+    await user.click(screen.getByTestId('reply-thread-button'))
+    await user.type(screen.getByPlaceholderText('Write a reply…'), 'A reply')
+    await user.click(screen.getByTestId('submit-reply-button'))
+    expect(await screen.findAllByText("Couldn't add the comment. Try again.")).toHaveLength(1)
+  })
+
+  it.each([
+    ['red', new Error("Couldn't add the comment.")],
+    ['yellow', new MayHaveLandedError('Your comment may have been posted.')],
+  ])('shows a failed reply in %s by whether it may have been posted', async (colour, err) => {
+    const user = userEvent.setup()
+    render(
+      <ThreadCarousel
+        threads={[mockThreads[0]]}
+        contextType="branch"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn().mockRejectedValue(err)}
+        onResolveThread={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    )
+    await user.click(screen.getByTestId('reply-thread-button'))
+    await user.type(screen.getByPlaceholderText('Write a reply…'), 'A reply')
+    await user.click(screen.getByTestId('submit-reply-button'))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(err.message)
+    expect(alert.getAttribute('style')).toContain(colour)
+  })
+
+  it('moves focus to its heading once a thread is resolved', async () => {
+    const user = userEvent.setup()
+    render(
+      <ThreadCarousel
+        threads={[mockThreads[0]]}
+        label="Branch discussion"
+        contextType="branch"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn().mockResolvedValue(undefined)}
+      />,
+      { wrapper: Wrapper },
+    )
+    await user.click(screen.getByTestId('resolve-thread-button'))
+    await waitFor(() => expect(document.activeElement?.textContent).toMatch(/^Branch discussion/))
+  })
+
+  it('leaves focus the user moved while a resolve was in flight', async () => {
+    let finish: () => void = () => {}
+    const user = userEvent.setup()
+    render(
+      <ThreadCarousel
+        threads={[mockThreads[0]]}
+        label="Branch discussion"
+        contextType="branch"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              finish = resolve
+            }),
+        )}
+      />,
+      { wrapper: Wrapper },
+    )
+    await user.click(screen.getByTestId('resolve-thread-button'))
+    const elsewhere = document.createElement('input')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+    await act(async () => {
+      finish()
+    })
+
+    expect(document.activeElement).toBe(elsewhere)
+    elsewhere.remove()
+  })
+
+  it('labels the previous and next thread buttons', () => {
+    render(
+      <ThreadCarousel
+        threads={mockThreads}
+        contextType="field"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    )
+
+    expect(screen.getByRole('button', { name: 'Previous thread' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Next thread' })).toBeTruthy()
+  })
 
   it('renders with no threads', () => {
     const { container } = render(

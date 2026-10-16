@@ -5,7 +5,7 @@ import type { CanopyConfig } from '../config'
 
 export type OperatingMode = OM
 
-/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
+/** @internal No importer; deletion candidate in safeinsights/canopycms#725. */
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string

@@ -8,9 +8,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-user'
-import { createApiClient } from '../test-utils/api-client'
+import { createApiClient, saveSamplePost } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
-import type { BranchResponse, BranchListResponse } from '../../api/branch'
+import type { BranchListItemResponse, BranchListResponse } from '../../api/branch'
+import { getBranchMetadataFileManager, loadBranchContext } from '../../branch-metadata'
 
 describe('Role Permission Integration', () => {
   let workspace: TestWorkspace
@@ -64,7 +65,7 @@ describe('Role Permission Integration', () => {
     const adminAccessResponse = await adminClient.get('/api/canopycms/editor-branch/status')
 
     expect(adminAccessResponse.status).toBe(200)
-    const status = await adminAccessResponse.json<BranchResponse>()
+    const status = await adminAccessResponse.json<BranchListItemResponse>()
     expect(status.data?.branch.name).toBe('editor-branch')
   })
 
@@ -148,6 +149,8 @@ describe('Role Permission Integration', () => {
       title: 'Approval Test',
     })
 
+    await saveSamplePost(editorClient, 'approval-test')
+
     await editorClient.post('/api/canopycms/approval-test/submit', {
       message: 'Ready for review',
     })
@@ -158,7 +161,7 @@ describe('Role Permission Integration', () => {
     })
 
     expect(approveResponse.status).toBe(200)
-    const approveData = await approveResponse.json<BranchResponse>()
+    const approveData = await approveResponse.json<BranchListItemResponse>()
     expect(approveData.data?.branch.status).toBe('approved')
   })
 
@@ -168,6 +171,8 @@ describe('Role Permission Integration', () => {
       branch: 'self-approve-test',
       title: 'Self Approve Test',
     })
+
+    await saveSamplePost(editorClient, 'self-approve-test')
 
     await editorClient.post('/api/canopycms/self-approve-test/submit', {
       message: 'Ready',
@@ -223,6 +228,8 @@ describe('Role Permission Integration', () => {
       branch: 'changes-test',
       title: 'Changes Test',
     })
+
+    await saveSamplePost(editorClient, 'changes-test')
 
     await editorClient.post('/api/canopycms/changes-test/submit', {
       message: 'Ready',
@@ -320,6 +327,58 @@ describe('Role Permission Integration', () => {
     expect(reviewerListResponse.status).toBe(200)
     const reviewerBranches = await reviewerListResponse.json<BranchListResponse>()
     expect(reviewerBranches.data?.branches.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('refuses a locked-down branch to an editor its ACL names, on every route', async () => {
+    await editorClient.post('/api/canopycms/branches', {
+      branch: 'locked-branch',
+      title: 'Locked Branch',
+      access: { allowedUsers: ['test-editor'], allowedGroups: ['ContentEditors'] },
+    })
+    await saveSamplePost(editorClient, 'locked-branch')
+    const editorBefore = await editorClient.get('/api/canopycms/locked-branch/status')
+    expect(editorBefore.status).toBe(200)
+
+    // No API sets the lockdown, so write it into branch.json directly.
+    const context = await loadBranchContext({ branchName: 'locked-branch', mode: 'dev' })
+    if (!context) throw new Error('locked-branch was not provisioned')
+    await getBranchMetadataFileManager(context.branchRoot, context.baseRoot).save({
+      branch: { access: { managerOrAdminAllowed: true } },
+    })
+
+    const post = '/api/canopycms/locked-branch/content/posts/sample-post'
+    expect((await editorClient.get('/api/canopycms/locked-branch/status')).status).toBe(403)
+    expect((await editorClient.get(post)).status).toBe(403)
+    expect(
+      (
+        await editorClient.put(post, {
+          format: 'mdx',
+          data: { title: 'Edited', author: 'Test Editor', date: '2024-01-01', tags: [] },
+          body: 'Edited body',
+        })
+      ).status,
+    ).toBe(403)
+    expect(
+      (
+        await editorClient.post('/api/canopycms/locked-branch/comments', {
+          text: 'Still here',
+          type: 'entry',
+          entryPath: 'content/posts/sample-post',
+        })
+      ).status,
+    ).toBe(403)
+    expect((await editorClient.post('/api/canopycms/locked-branch/submit', {})).status).toBe(403)
+    const editorList = await (
+      await editorClient.get('/api/canopycms/branches')
+    ).json<BranchListResponse>()
+    expect(editorList.data?.branches.map((b) => b.name)).not.toContain('locked-branch')
+
+    expect((await reviewerClient.get(post)).status).toBe(200)
+    expect((await adminClient.get(post)).status).toBe(200)
+    const reviewerList = await (
+      await reviewerClient.get('/api/canopycms/branches')
+    ).json<BranchListResponse>()
+    expect(reviewerList.data?.branches.map((b) => b.name)).toContain('locked-branch')
   })
 
   it('allows branch creator to delete their own branch', async () => {

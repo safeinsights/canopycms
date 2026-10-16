@@ -5,7 +5,9 @@
  * deletes every comment in the file, because comments live in neither the object nor that round
  * trip. So these functions re-serialise onto the file's OWN parsed document: a node whose value
  * did not change is left untouched, and an untouched node keeps its attached comments and its
- * original quoting/block style. Only what actually changed is rewritten.
+ * original quoting/block style. Only what actually changed is rewritten, and
+ * `yaml-source-splice.ts` writes it into the file's own text, so untouched lines keep their bytes
+ * wherever it can vouch for the result.
  *
  * The file gets no authority over its own content. The reconciler makes the document's key set
  * match `data` exactly — a key the caller dropped disappears, a key the caller kept survives
@@ -15,6 +17,8 @@
  * (validation/entry-validator.ts) at the API boundary, not by a schema-blind serialiser.
  */
 
+import { isDeepStrictEqual } from 'node:util'
+
 import matter from 'gray-matter'
 import {
   isCollection,
@@ -23,7 +27,9 @@ import {
   isScalar,
   isSeq,
   parseDocument,
+  Scalar,
   stringify as yamlStringify,
+  visit,
   type Document,
   type Pair,
   type YAMLMap,
@@ -31,6 +37,44 @@ import {
 } from 'yaml'
 
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
+import { ITEM_KEY, isItemKey } from '../item-keys'
+import { createDebugLogger } from './debug'
+import { getErrorMessage } from './error'
+import { preserveMarkdownSource, type MarkdownBodyFormat } from './markdown-body-splice'
+import { snapshotDocument, spliceSource, withSourceLineEndings } from './yaml-source-splice'
+
+const log = createDebugLogger({ prefix: 'ContentSerialize' })
+
+/** State one reconcile threads through: the document, and which node replaced which. */
+interface ReconcileContext {
+  readonly doc: Document
+  /** Each node created for an existing slot, mapped to the node it replaced. */
+  readonly replaced: WeakMap<object, unknown>
+  /** Fresh scalars given the replaced scalar's style, which a re-print may have to take back. */
+  readonly restyled: Scalar[]
+  /** Strings the file's reader would not read back from plain text; written single-quoted. */
+  readonly quote?: (text: string, asKey: boolean) => boolean
+}
+
+/** A fresh node for `value`, its strings that `ctx.quote` names single-quoted. */
+function createNode(
+  ctx: ReconcileContext,
+  value: unknown,
+  asKey = false,
+): ReturnType<Document['createNode']> {
+  const node = ctx.doc.createNode(value)
+  const { quote } = ctx
+  if (quote !== undefined) {
+    visit(node, {
+      Scalar(key, scalar) {
+        if (typeof scalar.value === 'string' && quote(scalar.value, asKey || key === 'key')) {
+          scalar.type = Scalar.QUOTE_SINGLE
+        }
+      },
+    })
+  }
+  return node
+}
 
 /** The comment metadata every `yaml` node carries (see `NodeBase` in the `yaml` types). */
 interface CommentCarrier {
@@ -98,6 +142,27 @@ function carryComments(from: unknown, to: unknown): void {
 function identityKey(value: unknown): string | undefined {
   try {
     return JSON.stringify(value) ?? 'undefined'
+  } catch {
+    return undefined
+  }
+}
+
+/** A list item's usable `ITEM_KEY`, or undefined. */
+function itemKeyOf(value: unknown): string | undefined {
+  const key = isPlainRecord(value) ? value[ITEM_KEY] : undefined
+  return isItemKey(key) ? key : undefined
+}
+
+/** {@link identityKey} with every `ITEM_KEY` left out, or undefined when there were none. */
+function unkeyedIdentityKey(value: unknown): string | undefined {
+  let found = false
+  try {
+    const key = JSON.stringify(value, (name: string, v: unknown) => {
+      if (name !== ITEM_KEY) return v
+      found = true
+      return undefined
+    })
+    return found ? key : undefined
   } catch {
     return undefined
   }
@@ -203,6 +268,11 @@ function looksLikeSameItem(node: unknown, value: unknown): boolean {
   // No record evidence available on either side — fall back to position.
   if (!isPlainRecord(existing) || !isPlainRecord(value)) return true
 
+  // Two keyed list items are the same item exactly when their keys match (`item-keys.ts`).
+  const before = existing[ITEM_KEY]
+  const after = value[ITEM_KEY]
+  if (isItemKey(before) && isItemKey(after)) return before === after
+
   return sharesFieldEvidence(existing, value, 0)
 }
 
@@ -210,13 +280,13 @@ function looksLikeSameItem(node: unknown, value: unknown): boolean {
  * Reconcile one slot of the document against the value that must occupy it, returning the node to
  * put there. `existing` is the node in that slot, or null/undefined for a slot that did not exist.
  */
-function reconcileNode(doc: Document, existing: unknown, value: unknown): unknown {
+function reconcileNode(ctx: ReconcileContext, existing: unknown, value: unknown): unknown {
   if (isMap(existing) && isPlainRecord(value)) {
-    reconcileMap(doc, existing, value)
+    reconcileMap(ctx, existing, value)
     return existing
   }
   if (isSeq(existing) && Array.isArray(value)) {
-    reconcileSeq(doc, existing, value)
+    reconcileSeq(ctx, existing, value)
     return existing
   }
   // Unchanged scalar: return the node itself, untouched. This is the case that preserves comments
@@ -226,7 +296,15 @@ function reconcileNode(doc: Document, existing: unknown, value: unknown): unknow
   // Changed, or a shape change (scalar <-> collection). A fresh node rather than mutating
   // `scalar.value` in place, which would keep the old node's representation and emit `'42'` where
   // the number 42 was meant.
-  const fresh = doc.createNode(value)
+  const fresh = createNode(ctx, value)
+  if (isNode(existing)) ctx.replaced.set(fresh, existing)
+  if (isScalar(existing) && isScalar(fresh) && typeof value === 'string') {
+    const style = carriedStyle(existing, value)
+    if (style !== undefined) {
+      fresh.type = style
+      ctx.restyled.push(fresh)
+    }
+  }
   // Comments move with a changed VALUE, but not off a replaced STRUCTURE. `yaml` attaches a
   // comment written above a collection's first entry to the collection node itself, so that
   // node's comments are about its innards; carrying them onto whatever replaces the collection
@@ -238,12 +316,33 @@ function reconcileNode(doc: Document, existing: unknown, value: unknown): unknow
 }
 
 /**
+ * The style a changed string inherits from the string it replaces: its quoting, or its block
+ * style (`>-`, `|`) unless the new value has no content or leads with whitespace, which `yaml`
+ * can print lossily in a block (`"   "` reads back as `""`). Never `PLAIN`: forcing it stops `yaml` choosing a
+ * block for a multi-line value, and some (`Requirements:\nBring a laptop`) then print as
+ * unparseable YAML. An unset style is plain where plain is safe.
+ */
+function carriedStyle(existing: Scalar, value: string): Scalar.Type | undefined {
+  if (typeof existing.value !== 'string') return undefined
+  switch (existing.type) {
+    case Scalar.QUOTE_DOUBLE:
+    case Scalar.QUOTE_SINGLE:
+      return existing.type
+    case Scalar.BLOCK_FOLDED:
+    case Scalar.BLOCK_LITERAL:
+      return /\S/.test(value) && !/^\s/.test(value) ? existing.type : undefined
+    default:
+      return undefined
+  }
+}
+
+/**
  * Make a map's key set match `value` exactly. Retained pairs are reconciled in place, so their key
  * order and the comments attached to their keys survive; keys new to `value` are appended in
  * `value` order, keeping a save's diff down to the lines that actually changed.
  */
 function reconcileMap(
-  doc: Document,
+  ctx: ReconcileContext,
   map: YAMLMap<unknown, unknown>,
   value: Record<string, unknown>,
 ): void {
@@ -261,35 +360,45 @@ function reconcileMap(
     // (malformed YAML can carry two pairs with the same key; a record holds one).
     if (key === undefined || !wanted.has(key) || seen.has(key)) continue
     seen.add(key)
-    pair.value = reconcileNode(doc, pair.value, value[key])
+    pair.value = reconcileNode(ctx, pair.value, value[key])
     retained.push(pair)
   }
   map.items = retained
 
   for (const key of Object.keys(value)) {
     if (seen.has(key) || !wanted.has(key)) continue
-    map.set(doc.createNode(key), doc.createNode(value[key]))
+    map.set(createNode(ctx, key, true), createNode(ctx, value[key]))
   }
 }
 
 /**
- * Make a sequence's items match `value` exactly, aligning by VALUE first and position second.
+ * Make a sequence's items match `value` exactly, aligning by VALUE first, then by item key
+ * (`item-keys.ts`), then by position.
  *
- * A list has no item identity, so any alignment is a guess and the failure modes are not equally
- * bad: losing a comment shows up in review as a deletion, silently MOVING one onto content it does
- * not describe does not, and the comments this protects are the load-bearing kind ("do not delete
- * this block"). The rules run from most evidence to least, and stop rather than guessing:
+ * Without keys a list has no item identity, so any alignment is a guess and the failure modes are
+ * not equally bad: losing a comment shows up in review as a deletion, silently MOVING one onto
+ * content it does not describe does not, and the comments this protects are the load-bearing kind
+ * ("do not delete this block"). The rules run from most evidence to least, and stop rather than
+ * guessing:
  *
  * 1. **Exact value match** — reuse that old node whole, comments and all. This carries a comment
- *    through a pure reorder instead of stranding it on whatever moved into its index.
- * 2. **Same index, still unclaimed, and recognisably the same item** (`looksLikeSameItem`) —
+ *    through a pure reorder instead of stranding it on whatever moved into its index. On the save
+ *    that first writes keys, an item also matches the un-keyed node it was read from, reconciled
+ *    so the keys are written.
+ * 2. **Same key** — an edited keyed item is reconciled against the node holding its key, wherever
+ *    it was, so its comments move with it.
+ * 3. **Same index, still unclaimed, and recognisably the same item** (`looksLikeSameItem`) —
  *    reconcile against it: the edit-in-place case. Same-index rather than "next unclaimed old
  *    node in order", which pairs a newly-inserted item with an unrelated deleted one whenever one
  *    save both removes and adds; and evidence as well as position, because a wholesale
- *    replacement lands on the index it replaced.
- * 3. **Otherwise a fresh node, with no comments.**
+ *    replacement lands on the index it replaced. Items whose keys differ are never the same.
+ * 4. **Otherwise a fresh node, with no comments.**
  */
-function reconcileSeq(doc: Document, seq: YAMLSeq<unknown>, value: readonly unknown[]): void {
+function reconcileSeq(
+  ctx: ReconcileContext,
+  seq: YAMLSeq<unknown>,
+  value: readonly unknown[],
+): void {
   const oldItems = seq.items
 
   // Old indices by identity, in order, so equal items are consumed first-come-first-served.
@@ -303,10 +412,8 @@ function reconcileSeq(doc: Document, seq: YAMLSeq<unknown>, value: readonly unkn
   })
 
   const consumed = new Set<number>()
-  const matches = value.map((item) => {
-    const key = identityKey(item)
-    if (key === undefined) return undefined
-    const bucket = byIdentity.get(key)
+  const claim = (key: string | undefined): number | undefined => {
+    const bucket = key === undefined ? undefined : byIdentity.get(key)
     while (bucket && bucket.length > 0) {
       const index = bucket.shift()
       if (index !== undefined && !consumed.has(index)) {
@@ -315,23 +422,95 @@ function reconcileSeq(doc: Document, seq: YAMLSeq<unknown>, value: readonly unkn
       }
     }
     return undefined
+  }
+  // The save that first writes item keys (`item-keys.ts`) adds them to items the file holds
+  // without, so an item is also the same as an un-keyed one equal to it but for its keys. That
+  // node is reconciled rather than kept whole, which is what writes the keys in.
+  const reconciles = new Set<number>()
+  const matches: Array<number | undefined> = value.map((item, index) => {
+    const exact = claim(identityKey(item))
+    if (exact !== undefined) return exact
+    const unkeyed = claim(unkeyedIdentityKey(item))
+    if (unkeyed !== undefined) reconciles.add(index)
+    return unkeyed
+  })
+  // An edited keyed item is the node holding its key, wherever it moved, so its comments go with
+  // it. Claimed after every unedited item, so none of those loses its node to it.
+  const oldKeys = oldItems.map((node) => itemKeyOf(nodePlainValue(node)))
+  value.forEach((item, index) => {
+    const key = matches[index] === undefined ? itemKeyOf(item) : undefined
+    if (key === undefined) return
+    const at = oldKeys.findIndex((k, j) => k === key && !consumed.has(j))
+    if (at === -1) return
+    consumed.add(at)
+    matches[index] = at
+    reconciles.add(index)
   })
 
   seq.items = value.map((item, index) => {
     const matched = matches[index]
-    if (matched !== undefined) return oldItems[matched]
-    // `consumed` holds OLD indices claimed by rule 1, so this asks "is the node at my index still
+    if (matched !== undefined) {
+      return reconciles.has(index) ? reconcileNode(ctx, oldItems[matched], item) : oldItems[matched]
+    }
+    // `consumed` holds OLD indices claimed by rules 1 and 2, so this asks "is the node at my index still
     // unclaimed?". Each iteration owns a distinct index, so a candidate cannot be taken twice.
     const candidate = index < oldItems.length && !consumed.has(index) ? oldItems[index] : undefined
     const sameItem =
       candidate !== undefined && looksLikeSameItem(candidate, item) ? candidate : undefined
-    return reconcileNode(doc, sameItem, item)
+    return reconcileNode(ctx, sameItem, item)
   })
 }
 
-/** Apply `data` onto a parsed document, preserving every node the data did not change. */
-function applyDataToDocument(doc: Document, data: Record<string, unknown>): void {
-  doc.contents = reconcileNode(doc, doc.contents, data) as Document['contents']
+/**
+ * Re-serialise `data` onto the YAML text `raw`, or undefined when `raw` does not parse or the
+ * reconciled document cannot be printed so that it reads back as its own data.
+ *
+ * The reconciler decides WHAT changes; {@link spliceSource} then writes those changes into the
+ * source text, so untouched lines keep the author's own folding and spacing. When it cannot
+ * vouch for a splice, the result is the reconciled document's own `toString()`, which is itself
+ * kept only if it parses back to the same data: a carried style that `yaml` prints lossily is
+ * dropped and the document re-printed, and failing that the caller writes a plain stringify.
+ * The worst case is a re-folded file, or one without its comments; never different data.
+ * `rootAtColumnZero` refuses a splice whose first line is indented, for frontmatter, whose
+ * framing trims the first line's indentation.
+ */
+function reconcileYamlSource(
+  raw: string,
+  data: Record<string, unknown>,
+  {
+    rootAtColumnZero = false,
+    quote,
+  }: Pick<ReconcileContext, 'quote'> & { rootAtColumnZero?: boolean } = {},
+): string | undefined {
+  const doc: Document = parseDocument(raw)
+  if (doc.errors.length > 0) return undefined
+  const snapshot = snapshotDocument(doc)
+  const ctx: ReconcileContext = { doc, replaced: new WeakMap(), restyled: [], quote }
+  doc.contents = reconcileNode(ctx, doc.contents, data) as Document['contents']
+  let reconciled = withSourceLineEndings(doc.toString(), raw)
+  if (!readsBackAs(reconciled, doc)) {
+    for (const scalar of ctx.restyled) scalar.type = undefined
+    reconciled = withSourceLineEndings(doc.toString(), raw)
+    if (!readsBackAs(reconciled, doc)) return undefined
+  }
+
+  try {
+    const spliced = spliceSource(raw, doc, snapshot, ctx.replaced, reconciled)
+    if (spliced !== undefined && !(rootAtColumnZero && /^\s*[ \t]\S/.test(spliced))) {
+      return spliced
+    }
+    log.debug('content-serialize', 'source splice not used; writing as yaml prints it')
+  } catch (err: unknown) {
+    log.debug('content-serialize', 'source splice failed; writing as yaml prints it', {
+      error: getErrorMessage(err),
+    })
+  }
+  return reconciled
+}
+
+function readsBackAs(text: string, doc: Document): boolean {
+  const reparsed = parseDocument(text)
+  return reparsed.errors.length === 0 && isDeepStrictEqual(reparsed.toJS(), doc.toJS())
 }
 
 /**
@@ -339,14 +518,12 @@ function applyDataToDocument(doc: Document, data: Record<string, unknown>): void
  *
  * Falls back to a plain stringify — byte-identical to serialising without preservation — when
  * there is nothing to preserve (a new file) or nothing trustworthy to preserve (the bytes on disk
- * do not parse). A save must not fail because the previous content was malformed.
+ * do not parse, or the reconciled document does not read back as its own data). A save must not
+ * fail because the previous content was malformed.
  */
 export function serializeYaml(data: Record<string, unknown>, existingRaw?: string): string {
   if (existingRaw === undefined) return yamlStringify(data)
-  const doc = parseDocument(existingRaw)
-  if (doc.errors.length > 0) return yamlStringify(data)
-  applyDataToDocument(doc, data)
-  return doc.toString()
+  return reconcileYamlSource(existingRaw, data) ?? yamlStringify(data)
 }
 
 /**
@@ -374,31 +551,189 @@ function extractRawFrontmatter(raw: string): string | undefined {
   }
   const frontmatter = (parsed as { matter?: unknown }).matter
   if (typeof frontmatter !== 'string' || frontmatter.trim() === '') return undefined
-  return frontmatter
+  // gray-matter ends the frontmatter at `\n---`, so a CRLF file's keeps the closing line's `\r`.
+  return frontmatter.replace(/\r$/, '')
+}
+
+/** The body of a file as gray-matter splits it, or undefined when it cannot split it. */
+function extractBody(raw: string): string | undefined {
+  try {
+    return matter(raw, {}).content
+  } catch {
+    return undefined
+  }
 }
 
 /**
- * Serialise an md/mdx entry, carrying the comments of `existingRaw`'s frontmatter through. The
- * reconciled YAML goes back through `matter.stringify` via a custom stringify engine rather than
- * being spliced between hand-written `---` lines, so delimiters, blank lines and the trailing
- * newline stay exactly what gray-matter would have produced.
+ * Whether `data` has a value to write. Without one, gray-matter's YAML engine writes no frontmatter
+ * block (it skips `{}`); the reconcile engine can still write a comment-only block, under which a
+ * flush body is also read back intact.
  */
-export function serializeFrontmatter(
+function writesFrontmatter(data: Record<string, unknown>): boolean {
+  return Object.values(data).some((value) => value !== undefined)
+}
+
+/**
+ * The body to write: `body`'s content in `existingRaw`'s text wherever they agree
+ * (`preserveMarkdownSource`), opening with the blank line the frontmatter is followed by on disk.
+ * gray-matter leaves that blank line in the body, and the editor's body does not carry it, so it
+ * is restored here even when the splice falls back. A body under frontmatter the file did not
+ * have, or under frontmatter with no body yet, gets one blank line, Prettier's style.
+ *
+ * With no frontmatter written, the body opens the file: it loses its leading blank lines, except
+ * the one newline that stops a body starting with `---` (after any BOM, which gray-matter skips)
+ * reading back as frontmatter.
+ */
+function bodyToWrite(
   body: string,
   data: Record<string, unknown>,
-  existingRaw?: string,
+  format: MarkdownBodyFormat,
+  existingRaw: string | undefined,
 ): string {
-  if (existingRaw === undefined) return matter.stringify(body, data)
+  const priorBody = existingRaw === undefined ? undefined : extractBody(existingRaw)
+  const spliced = priorBody === undefined ? body : preserveMarkdownSource(priorBody, body, format)
+  if (!writesFrontmatter(data)) {
+    const flush = spliced.replace(/^(?:\r?\n)+/, '')
+    return /^\uFEFF?---/.test(flush) ? `\n${flush}` : flush
+  }
+  if (/^\r?\n/.test(spliced) || !/\S/.test(spliced)) return spliced
+
+  const priorKeptBody =
+    priorBody !== undefined &&
+    /\S/.test(priorBody) &&
+    existingRaw !== undefined &&
+    extractRawFrontmatter(existingRaw) !== undefined
+  const lead = priorKeptBody ? (/^(?:\r?\n)*/.exec(priorBody)?.[0] ?? '') : '\n'
+  return lead + spliced
+}
+
+/** `value` as JSON carries it, or undefined when it cannot be serialised. */
+function asJson(value: unknown): unknown {
+  const key = identityKey(value)
+  return key === undefined || key === 'undefined' ? undefined : (JSON.parse(key) as unknown)
+}
+
+/** Frontmatter data as the read path hands it over the API, or undefined when it cannot split. */
+function frontmatterAsRead(raw: string): unknown {
+  try {
+    return asJson(matter(raw, {}).data)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * `value` with every part it carries unchanged from `read` replaced by `disk`'s value for that
+ * part. The read path parses frontmatter with gray-matter's js-yaml, which reads YAML 1.1 (a bare
+ * date is a `Date`, sent back as a timestamp string; `014` is octal), and the reconciler compares
+ * against `yaml`'s YAML 1.2 reading; so a value the editor sent back as it read it would otherwise
+ * count as changed and rewrite its line.
+ */
+function withUnchangedAsOnDisk(value: unknown, read: unknown, disk: unknown): unknown {
+  const sent = identityKey(value)
+  if (sent !== undefined && sent === identityKey(read)) return disk
+  if (isPlainRecord(value) && isPlainRecord(read) && isPlainRecord(disk)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        withUnchangedAsOnDisk(child, read[key], disk[key]),
+      ]),
+    )
+  }
+  if (Array.isArray(value) && Array.isArray(read) && Array.isArray(disk)) {
+    if (read.length !== disk.length) return value
+    // An item sent as read anywhere in the list, so an insert or a reorder keeps the rest as read.
+    // On the save that first writes item keys, it is found by what it was read as without them,
+    // and keeps the keys while its unchanged values take their disk form.
+    const readKeys = read.map(identityKey)
+    const claimed = new Set<number>()
+    const claim = (key: string | undefined): number => {
+      const at = readKeys.findIndex((k, j) => k !== undefined && k === key && !claimed.has(j))
+      if (at >= 0) claimed.add(at)
+      return at
+    }
+    const readItemKeys = read.map(itemKeyOf)
+    const exact = value.map((child) => claim(identityKey(child)))
+    return value.map((child, i) => {
+      if (exact[i] >= 0) return disk[exact[i]]
+      // An edited keyed item compares against the item holding its key, wherever it was read.
+      const key = itemKeyOf(child)
+      const byKey =
+        key === undefined ? -1 : readItemKeys.findIndex((k, j) => k === key && !claimed.has(j))
+      if (byKey >= 0) {
+        claimed.add(byKey)
+        return withUnchangedAsOnDisk(child, read[byKey], disk[byKey])
+      }
+      const unkeyed = unkeyedIdentityKey(child)
+      const asRead = unkeyed === undefined ? -1 : claim(unkeyed)
+      if (asRead >= 0) return withUnchangedAsOnDisk(child, read[asRead], disk[asRead])
+      // By position only when nothing says these are different items.
+      const other = i < read.length ? readItemKeys[i] : undefined
+      const differs = key !== undefined && other !== undefined && other !== key
+      return i < read.length && !differs ? withUnchangedAsOnDisk(child, read[i], disk[i]) : child
+    })
+  }
+  return value
+}
+
+/**
+ * Whether gray-matter, the read path's reader, reads `text` written plain as anything the API
+ * would not carry as that string: as a value, `1:30` is 90 and a bare date a `Date`, while a
+ * timestamp the editor's date field writes reads as a date the API carries as the same text, and
+ * stays plain; as a key, anything but the key itself.
+ */
+function readsAsAnotherValue(text: string, asKey: boolean): boolean {
+  if (/[\r\n]/.test(text)) return false
+  // `matter.stringify` trims the frontmatter it writes, so an edge character `trim` drops is lost.
+  if (text !== text.trim()) return true
+  try {
+    const { data } = matter(`---\n${asKey ? `${text}: v` : `v: ${text}`}\n---\n`, {})
+    if (!isPlainRecord(data)) return true
+    const keys = Object.keys(data)
+    if (asKey) return keys.length !== 1 || keys[0] !== text
+    return identityKey(data.v) !== identityKey(text)
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Serialise an md/mdx entry, carrying the comments of `existingRaw`'s frontmatter and the source
+ * text of its unchanged body blocks through. The reconciled YAML goes back through
+ * `matter.stringify` via a custom stringify engine rather than being spliced between
+ * hand-written `---` lines, so delimiters and the trailing newline stay exactly what gray-matter
+ * would have produced. The result is kept only if the read path reads `data` back from it;
+ * otherwise gray-matter writes it, without the comments. A fresh string the read path would
+ * misread is quoted (`readsAsAnotherValue`), so this is left for a changed value meeting text the
+ * two parsers read differently, as 14 meets a file's `014`.
+ */
+export function serializeFrontmatter(
+  editorBody: string,
+  data: Record<string, unknown>,
+  existingRaw: string | undefined,
+  format: MarkdownBodyFormat,
+): string {
+  // An object, never the body string: `matter.stringify` re-parses a string as a whole file, so a
+  // body starting with `---` would be read as frontmatter and dropped.
+  const file = { content: bodyToWrite(editorBody, data, format, existingRaw) }
+  if (existingRaw === undefined) return matter.stringify(file, data)
 
   const existingFrontmatter = extractRawFrontmatter(existingRaw)
-  if (existingFrontmatter === undefined) return matter.stringify(body, data)
+  if (existingFrontmatter === undefined) return matter.stringify(file, data)
 
-  const doc = parseDocument(existingFrontmatter)
-  if (doc.errors.length > 0) return matter.stringify(body, data)
-  applyDataToDocument(doc, data)
-  const reconciled = doc.toString()
+  const onDisk = parseDocument(existingFrontmatter)
+  const toReconcile =
+    onDisk.errors.length === 0
+      ? withUnchangedAsOnDisk(data, frontmatterAsRead(existingRaw), onDisk.toJS())
+      : data
+  const reconciled = reconcileYamlSource(
+    existingFrontmatter,
+    isPlainRecord(toReconcile) ? toReconcile : data,
+    { rootAtColumnZero: true, quote: readsAsAnotherValue },
+  )
+  if (reconciled === undefined) return matter.stringify(file, data)
 
-  return matter.stringify(body, data, {
+  const written = matter.stringify(file, data, {
     engines: {
       yaml: {
         parse: () => ({}),
@@ -406,4 +741,10 @@ export function serializeFrontmatter(
       },
     },
   })
+  if (isDeepStrictEqual(frontmatterAsRead(written), asJson(data))) return written
+  log.debug(
+    'content-serialize',
+    'reconciled frontmatter reads back differently; writing as gray-matter prints it',
+  )
+  return matter.stringify(file, data)
 }

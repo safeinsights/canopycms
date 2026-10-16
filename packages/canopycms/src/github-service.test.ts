@@ -2,12 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   GitHubService,
   createGitHubService,
+  authorizationOf,
   createCanopyOctokit,
   shouldRetryRateLimit,
   shouldRetrySecondaryRateLimit,
+  isNoCommitsBetweenError,
 } from './github-service'
 import type { CanopyConfig } from './config'
 import { mockConsole } from './test-utils/console-spy'
+import { noCommitsBetweenError, octokitErrorFor } from './test-utils/github-errors'
 import { PR_SECTION_END, PR_SECTION_START } from './submission-attribution'
 
 describe('GitHubService', () => {
@@ -681,6 +684,105 @@ describe('GitHubService', () => {
       expect(typeof octokit.graphql).toBe('function')
     })
 
+    it('sends its rate-limit warnings where it is told, so the gateway can scrub them', async () => {
+      // A primary limit an hour away: the throttle warns, declines to wait, and the call fails.
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response(JSON.stringify({ message: 'API rate limit exceeded' }), {
+              status: 403,
+              headers: {
+                'content-type': 'application/json',
+                'x-ratelimit-remaining': '0',
+                'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600),
+              },
+            }),
+        ),
+      )
+      const warn = vi.fn()
+      try {
+        const octokit = createCanopyOctokit({ auth: 'test-token' }, { warn, error: vi.fn() })
+        await expect(octokit.repos.get({ owner: 'o', repo: 'r' })).rejects.toThrow()
+      } finally {
+        vi.unstubAllGlobals()
+      }
+
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/primary rate limit hit for GET/))
+    })
+
+    it("sends Octokit's own log where it is told, and leaves the default without a logger", () => {
+      const warn = vi.fn()
+      const error = vi.fn()
+
+      const told = createCanopyOctokit({ auth: 'test-token' }, { warn, error })
+      told.log.warn('deprecated')
+      told.log.error('failed')
+
+      expect(warn).toHaveBeenCalledWith('deprecated')
+      expect(error).toHaveBeenCalledWith('failed')
+      expect(createCanopyOctokit({ auth: 'test-token' }).log.warn).not.toBe(warn)
+    })
+
+    it("tells an observer of each request's authorization header, and still sends the request", async () => {
+      const fetchStub = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ default_branch: 'main' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      )
+      vi.stubGlobal('fetch', fetchStub)
+      const onAuthorization = vi.fn()
+      try {
+        const octokit = createCanopyOctokit({ auth: 'test-token' }, undefined, { onAuthorization })
+        const { data } = await octokit.repos.get({ owner: 'o', repo: 'r' })
+
+        expect(data.default_branch).toBe('main')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+
+      expect(onAuthorization).toHaveBeenCalledTimes(1)
+      expect(onAuthorization).toHaveBeenCalledWith('token test-token')
+      expect(fetchStub).toHaveBeenCalledTimes(1)
+    })
+
+    it('tells an observer of a token an auth strategy sets on every request', async () => {
+      const tokens = ['ghs_first', 'ghs_second']
+      const strategy = vi.fn(() =>
+        Object.assign(async () => ({ token: tokens[0] }), {
+          hook: (
+            request: (options: Record<string, unknown>) => Promise<unknown>,
+            options: { headers: Record<string, string> },
+          ) =>
+            request({
+              ...options,
+              headers: { ...options.headers, authorization: `token ${tokens.shift()}` },
+            }),
+        }),
+      )
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }),
+        ),
+      )
+      const onAuthorization = vi.fn()
+      try {
+        const octokit = createCanopyOctokit({ authStrategy: strategy, auth: {} }, undefined, {
+          onAuthorization,
+        })
+        await octokit.repos.get({ owner: 'o', repo: 'r' })
+        await octokit.repos.get({ owner: 'o', repo: 'r' })
+      } finally {
+        vi.unstubAllGlobals()
+      }
+
+      expect(onAuthorization.mock.calls).toEqual([['token ghs_first'], ['token ghs_second']])
+    })
+
     it('authenticates with the bare token when one is given', async () => {
       const octokit = createCanopyOctokit({ auth: 'test-token' })
       await expect(octokit.auth()).resolves.toMatchObject({
@@ -729,5 +831,73 @@ describe('GitHubService', () => {
       // are unaffected by the auth shape.
       expect(octokit.pulls).toBeDefined()
     })
+  })
+})
+
+describe('authorizationOf', () => {
+  it.each([
+    ['a plain object', { authorization: 'token t0', accept: 'x' }],
+    ['a plain object with another case', { Authorization: 'token t0' }],
+    ['a Headers', new Headers({ Authorization: 'token t0' })],
+    [
+      'a list of pairs',
+      [
+        ['Accept', 'x'],
+        ['authorization', 'token t0'],
+      ],
+    ],
+  ] as [string, HeadersInit][])('reads it from %s', (_label, headers) => {
+    expect(authorizationOf(headers)).toBe('token t0')
+  })
+
+  it.each([
+    ['no headers', undefined],
+    ['none carried', { accept: 'x' }],
+    ['an empty Headers', new Headers()],
+  ])('finds none in %s', (_label, headers) => {
+    expect(authorizationOf(headers as HeadersInit | undefined)).toBeUndefined()
+  })
+})
+
+describe('isNoCommitsBetweenError', () => {
+  it("matches GitHub's 422 for a head with no commits ahead of its base", async () => {
+    expect(isNoCommitsBetweenError(await noCommitsBetweenError())).toBe(true)
+  })
+
+  it('matches on the errors array when the message does not carry the reason', async () => {
+    const err = await noCommitsBetweenError()
+    err.message = 'Validation Failed'
+    expect(isNoCommitsBetweenError(err)).toBe(true)
+  })
+
+  it('matches on the message when the response carries no errors array', async () => {
+    const err = await noCommitsBetweenError()
+    Object.assign(err, { response: undefined })
+    expect(isNoCommitsBetweenError(err)).toBe(true)
+  })
+
+  it.each([
+    ['a duplicate PR', 422, 'A pull request already exists for o:feature-1.'],
+    ['an unknown base', 422, 'base: Field is invalid'],
+    ['a non-422 carrying the same text', 403, 'No commits between main and feature-1'],
+  ])('rejects %s', async (_label, status, message) => {
+    const err = await octokitErrorFor(status, {
+      message: 'Validation Failed',
+      errors: [{ resource: 'PullRequest', code: 'custom', message }],
+    })
+    expect(isNoCommitsBetweenError(err)).toBe(false)
+  })
+
+  it('rejects a 422 whose text only mentions the phrase mid-sentence', async () => {
+    const err = await octokitErrorFor(422, {
+      message: 'Validation Failed',
+      errors: [{ resource: 'PullRequest', code: 'custom', message: 'Found No commits between x' }],
+    })
+    expect(isNoCommitsBetweenError(err)).toBe(false)
+  })
+
+  it('rejects errors without an HTTP status', () => {
+    expect(isNoCommitsBetweenError(new Error('No commits between main and feature-1'))).toBe(false)
+    expect(isNoCommitsBetweenError('No commits between main and feature-1')).toBe(false)
   })
 })

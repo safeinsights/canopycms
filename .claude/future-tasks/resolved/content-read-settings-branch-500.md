@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-05, superseded by the context-read fix (load-only reads map `BranchPathError` to NOT_FOUND), by reading. A content read naming the settings branch reads as not found, not a 500
+---
 # A content read naming the settings branch answers 500, not 404
 
 **Status:** RESOLVED 2026-10-05, superseded by the context-read fix

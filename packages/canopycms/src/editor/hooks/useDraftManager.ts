@@ -1,13 +1,70 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
-import { modals } from '@mantine/modals'
+import { openConfirm } from '../utils/confirm-modal'
+import { focusReturnProps } from '../utils/focus-return'
 import equal from 'fast-deep-equal'
 import type { EditorEntry } from '../Editor'
 import type { ContentId, LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
+import type { StampedEntry } from '../../stamp-on-publish'
 import { getNotificationDuration } from '../utils/env'
 import { validateEntryFormValue, type EntryFieldError } from '../../validation/entry-validator'
-import { SaveApiError } from './useEntryManager'
+import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
+import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
+import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
+import type { ApiErrorCode } from '../../api/types'
+import { isUnanswered } from '../unanswered'
+import { withItemKeys } from '../../item-keys'
+import { RetryToastMessage } from '../components/RetryToastMessage'
+import { clearSaveAllResult, settleSaveAllEntry } from '../components/SaveAllResult'
+import {
+  classifySaveAllError,
+  invalidReason,
+  SAVE_ALL_REASONS,
+  type SaveAllFailure,
+  type SaveAllProgress,
+  type SaveAllResult,
+} from './save-all'
+
+/** @internal Exported for tests. */
+export const SAVE_TIMED_OUT_MESSAGE =
+  "Save didn't finish, and may not have gone through. Your changes are still here, so save again."
+
+/** @internal Exported for tests. Shown when a save may already have landed, until a reload. */
+export const SAVE_MAY_HAVE_LANDED_MESSAGE =
+  'Your last save may already have gone through. Before saving again, choose "Refresh from server" in the entry\'s menu, on its name; your unsaved edits will be lost.'
+
+const saveMayHaveLandedToastId = (contentId: string) => `canopy-save-may-have-landed:${contentId}`
+
+const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
+
+/** @internal Exported for tests. A save refused because the entry was deleted. */
+export const ENTRY_DELETED_MESSAGE =
+  'This entry was deleted since you opened it, so it was not saved. Your changes are still in the form until the content list next refreshes and closes it: choose "Save as new entry" to keep them.'
+
+/** @internal Exported for tests. A save refused because the entry was renamed; the editor has opened it. */
+export const ENTRY_RENAMED_MESSAGE =
+  'This entry was renamed since you opened it, so it was not saved. Your changes moved with it and are still in the form: save again to keep them.'
+
+/** @internal Exported for tests. "Save as new entry" refused because an entry, possibly the user's own earlier attempt, now holds the path. */
+export const RECREATE_TAKEN_MESSAGE =
+  "An entry with this entry's name already exists, perhaps from your own earlier attempt, so it was not saved as a new entry. Your changes are still in the form: copy what you want to keep into that entry."
+
+/** @internal Exported for tests. The save was refused as gone, and the check for a rename failed. */
+export const ENTRY_GONE_UNCHECKED_MESSAGE =
+  'This entry was deleted or renamed since you opened it, so it was not saved, and the editor could not check which. Your changes are still in the form until the content list next refreshes and closes it: copy what you want to keep.'
+
+/** @internal Exported for tests. "Save as new entry" landed, but the content list does not show it yet. */
+export const RECREATED_NOT_LISTED_MESSAGE =
+  "Saved as a new entry, but the content list doesn't show it yet. Reload the page in a moment to open it."
+
+/** @internal Exported for tests. "Save as new entry" got no answer. */
+export const RECREATE_TIMED_OUT_MESSAGE =
+  'Saving as a new entry may have gone through even though the server didn\'t answer. Choose "Save as new entry" to try again: if it went through, you\'ll be told an entry with this name already exists.'
+
+const entryGoneToastId = (contentId: string) => `canopy-entry-gone:${contentId}`
+
+const ENTRY_GONE_CODE = 'ENTRY_GONE' satisfies ApiErrorCode
 
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
 const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
@@ -97,6 +154,12 @@ export interface UseDraftManagerOptions {
   entries: EditorEntry[]
   initialValues?: Record<string, FormValue>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
+  /**
+   * Server read that records no OCC token (useEntryManager's `readEntryValue`),
+   * for checking restored drafts of unopened entries. Without it they stay
+   * unverified and count as dirty.
+   */
+  readEntryValue?: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
   /**
    * The OCC version token currently held for an entry on the branch being
@@ -106,6 +169,8 @@ export interface UseDraftManagerOptions {
    * conflict detection falls back entirely to saveEntry's token check.
    */
   getEntryVersion?: (contentId: string) => number | undefined
+  /** Holds a version the server moved an entry to itself (useEntryManager's `adoptEntryVersion`). */
+  adoptEntryVersion?: (contentId: string, version: number) => void
   setBusy: (busy: boolean) => void
   /**
    * Fired (fire-and-forget) after a successful save. Lets callers refresh
@@ -114,7 +179,29 @@ export interface UseDraftManagerOptions {
    * instead of the stale label from the last entries fetch.
    */
   onSaved?: () => void
+  /** A save was refused for field errors, which the form now shows. */
+  onSaveBlocked?: () => void
+  /**
+   * Fired when drafts are thrown away for the server's copy: Discard (one entry, or every entry
+   * when `contentId` is undefined) and Reload. Anything built on the discarded draft, such as an
+   * Undo, no longer applies.
+   */
+  onDraftsReset?: (contentId?: string) => void
+  /** Finds an entry a save reported gone under its new name (useEntryManager's `followMovedEntry`). */
+  followMovedEntry?: (entry: EditorEntry) => Promise<EditorEntry | undefined>
+  /** Creates a deleted entry again from its draft (useEntryManager's `recreateEntry`). */
+  recreateEntry?: (entry: EditorEntry, value: FormValue) => Promise<EditorEntry | undefined>
 }
+
+/** The unsaved work a branch-level action would leave behind. `labels` names the entries (it may be shorter than `count`). */
+export interface UnsavedSummary {
+  count: number
+  labels: string[]
+}
+
+const VERIFY_CONCURRENCY = 4
+/** How long `whenDraftsVerified` waits before answering with whatever is known. */
+const VERIFY_WAIT_CAP_MS = 3000
 
 export interface UseDraftManagerReturn {
   drafts: Record<string, FormValue>
@@ -127,12 +214,33 @@ export interface UseDraftManagerReturn {
   modifiedCount: number
   editedFiles: Array<{ path: LogicalPath; label: string }>
   handleSave: () => Promise<void>
-  handleDiscardDrafts: () => void
-  handleDiscardFileDraft: () => void
-  handleReload: () => Promise<void>
+  /** The entry a single Save is writing, while it is in flight. */
+  singleSaving: { branch: string; contentId: string } | null
+  /** The last Save that landed; its `seq` rises with each, and the Save button says "Saved". */
+  lastSaved: { branch: string; contentId: string; seq: number } | null
+  /**
+   * Saves every entry with unsaved changes on the branch, one at a time. Undefined when a run or
+   * a single Save is already in flight, or the branch changed or the editor unmounted meanwhile.
+   */
+  handleSaveAll: () => Promise<SaveAllResult | undefined>
+  /** Set while Save all runs. */
+  saveAllProgress: SaveAllProgress | null
+  /** Whether Save all is running now, read at the moment of a click rather than a render. */
+  isSaveAllRunning: () => boolean
+  handleDiscardDrafts: (returnFocusTo?: () => HTMLElement | null) => void
+  /** `announce` toasts the discard, for a draft the form isn't showing (a read-only branch's). */
+  handleDiscardFileDraft: (
+    returnFocusTo?: () => HTMLElement | null,
+    options?: { announce?: boolean },
+  ) => void
+  handleReload: (returnFocusTo?: () => HTMLElement | null) => Promise<void>
   isDirtyForEntry: (entryPath: string) => boolean
   isSelectedDirty: () => boolean
   isAnyDirty: () => boolean
+  /** Resolves once restored drafts have been checked against the server (or a read failed), capped so a hung read cannot block. */
+  whenDraftsVerified: () => Promise<void>
+  /** `whenDraftsVerified`, then the entries still counted dirty. */
+  resolveUnsaved: () => Promise<UnsavedSummary>
   /**
    * Per-field validation errors for the selected entry, keyed by canonical
    * canopy path (e.g. `blocks[0].title`). Populated when a save is blocked by
@@ -141,6 +249,10 @@ export interface UseDraftManagerReturn {
    * errors disappear as fields are fixed.
    */
   fieldErrors: Record<string, string>
+  /** True while the last write of drafts to localStorage failed. */
+  draftStorageFailed: boolean
+  /** Moves loaded values, tokens and drafts onto the versions a submit's stamps left. */
+  applySubmitStamps: (stamped: readonly StampedEntry[]) => void
 }
 
 /**
@@ -171,6 +283,32 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   //             preceded the entry's first load); treated as safe, matching
   //             the behavior before base versions existed.
   const draftBaseVersionsRef = useRef<Record<string, number | null>>({})
+  const [draftStorageFailed, setDraftStorageFailed] = useState(false)
+  const [lastSaved, setLastSaved] = useState<UseDraftManagerReturn['lastSaved']>(null)
+  const [singleSaving, setSingleSaving] = useState<UseDraftManagerReturn['singleSaving']>(null)
+  const [saveInFlight, setSaveInFlight] = useState(false)
+  const [saveAllProgress, setSaveAllProgress] = useState<SaveAllProgress | null>(null)
+  const saveAllRunningRef = useRef(false)
+  const mountedRef = useRef(true)
+  // Entries a Save, refresh or discard settled while Save all ran: its result no longer applies.
+  const settledDuringRunRef = useRef(new Set<string>())
+  const settleEntry = (id: string) => {
+    if (saveAllRunningRef.current) settledDuringRunRef.current.add(id)
+    settleSaveAllEntry(id)
+  }
+  const singleSaveRef = useRef(false)
+  // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN, or when the retry of
+  // a timed-out save was refused as a version conflict. That save may have landed, so re-sending
+  // the token would bounce off the user's own write; held until re-read.
+  const reloadRequiredRef = useRef<Record<string, number | undefined>>({})
+  // Entries whose timed-out save toast is up, taken down once a save, reload, discard or branch
+  // switch ends it, or a retry is refused as having landed.
+  const timedOutSavesRef = useRef(new Set<string>())
+  // Entries whose "deleted" toast is up, taken down once a save, reload, discard or branch switch
+  // ends it.
+  const goneEntriesRef = useRef(new Set<string>())
+  // Entries whose "Save as new entry" create is in flight, so a second activation sends none.
+  const recreatingRef = useRef(new Set<string>())
   // The draft ids the reconcile effect below has already accounted for. It
   // prunes on an observed present -> absent TRANSITION rather than on "not
   // currently in drafts": the restore effect stamps base versions for ids
@@ -185,6 +323,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   // Draft keys are now content IDs, not paths
   const currentId = options.currentEntry?.contentId
+  const currentIdRef = useRef(currentId)
+  currentIdRef.current = currentId
   const selectedValue = currentId ? drafts[currentId] : undefined
   const loadedValue = currentId ? loadedValues[currentId] : undefined
   const effectiveValue = selectedValue ?? loadedValue
@@ -193,38 +333,101 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     [errorState, currentId],
   )
 
-  // Number of draft entries that differ from their loaded server value.
+  // Server values read for restored drafts of unopened entries that differ from
+  // the draft. Not `loadedValues`: that map gates the entry load and OCC token.
+  const [verifiedBaselines, setVerifiedBaselines] = useState<Record<string, FormValue>>({})
+  // Ids whose verification read failed: still dirty, but no longer awaited.
+  const [unreadableIds, setUnreadableIds] = useState<ReadonlySet<string>>(() => new Set())
+  const requestedIdsRef = useRef<Set<string>>(new Set())
+  const verifyQueueRef = useRef<Array<{ entry: EditorEntry; branch: string }>>([])
+  const verifyActiveRef = useRef(0)
+  const verifyWaitersRef = useRef<Array<() => void>>([])
+
+  const entryById = useMemo(
+    () => new Map(options.entries.map((e) => [e.contentId as string, e])),
+    [options.entries],
+  )
+  // Empty while a branch switch loads, so only a non-empty list can say an entry is gone.
+  const entriesKnown = options.entries.length > 0
+
+  // The draft ids that count as unsaved work:
   //
-  // Two intentional behaviors worth noting:
+  // 1. A draft with no baseline (loaded or verified value) counts as dirty: it
+  //    cannot be proven to match the server, and counting it keeps the
+  //    branch-switch guard from silently discarding restored drafts.
+  //    Verification (below) removes the ones that turn out pristine.
   //
-  // 1. A draft without a corresponding `loadedValues` entry (e.g. a localStorage-restored
-  //    draft whose entry has not been opened in this session) is counted as dirty. We
-  //    cannot prove such a draft matches server state, so we conservatively treat it
-  //    as unsaved work — this is what keeps the branch-switch guard from silently
-  //    discarding restored drafts.
+  // 2. A draft for an entry that no longer exists can never be loaded or saved,
+  //    so it is not counted. It stays in storage.
   //
-  // 2. The comparison uses `fast-deep-equal`, a value-based deep equality
-  //    check -- not property-order sensitive the way `JSON.stringify`
-  //    comparison was. A rehydrated draft whose keys were serialized in a
-  //    different order than the server-loaded object no longer shows as
-  //    dirty when the values are semantically identical.
-  const modifiedCount = useMemo(
+  // 3. The comparison is `fast-deep-equal`, so key insertion order of a
+  //    rehydrated draft does not make it dirty.
+  const dirtyIds = useMemo(
     () =>
-      Object.keys(drafts).filter((id) => !loadedValues[id] || !equal(drafts[id], loadedValues[id]))
-        .length,
-    [drafts, loadedValues],
+      Object.keys(drafts).filter((id) => {
+        if (entriesKnown && !entryById.has(id)) return false
+        const baseline = loadedValues[id] ?? verifiedBaselines[id]
+        return baseline === undefined || !equal(drafts[id], baseline)
+      }),
+    [drafts, loadedValues, verifiedBaselines, entriesKnown, entryById],
+  )
+  const modifiedCount = dirtyIds.length
+
+  const editedFiles = useMemo(
+    () =>
+      dirtyIds
+        .map((id) => {
+          const entry = entryById.get(id)
+          return entry ? { path: entry.path, label: entry.label } : null
+        })
+        .filter((x): x is { path: LogicalPath; label: string } => x !== null),
+    [dirtyIds, entryById],
   )
 
-  const editedFiles = useMemo(() => {
-    const draftIds = Object.keys(drafts)
-    if (draftIds.length === 0) return []
-    return draftIds
-      .map((id) => {
-        const entry = options.entries.find((e) => e.contentId === id)
-        return entry ? { path: entry.path, label: entry.label } : null
-      })
-      .filter((x): x is { path: LogicalPath; label: string } => x !== null)
-  }, [drafts, options.entries])
+  // Draft ids verification can still settle.
+  const unresolvedIds = useMemo(
+    () =>
+      options.readEntryValue && entriesKnown
+        ? Object.keys(drafts).filter(
+            (id) =>
+              entryById.has(id) &&
+              loadedValues[id] === undefined &&
+              verifiedBaselines[id] === undefined &&
+              !unreadableIds.has(id),
+          )
+        : [],
+    [
+      drafts,
+      loadedValues,
+      verifiedBaselines,
+      unreadableIds,
+      entriesKnown,
+      entryById,
+      options.readEntryValue,
+    ],
+  )
+
+  // Async callbacks outlive the render that created them; these give them current values.
+  const latestRef = useRef({
+    drafts,
+    loadedValues,
+    unresolvedCount: 0,
+    modifiedCount,
+    editedFiles,
+    dirtyIds,
+    entryById,
+  })
+  latestRef.current = {
+    drafts,
+    loadedValues,
+    unresolvedCount: unresolvedIds.length,
+    modifiedCount,
+    editedFiles,
+    dirtyIds,
+    entryById,
+  }
+  const latestOptionsRef = useRef(options)
+  latestOptionsRef.current = options
 
   // Clear drafts when branch changes (before localStorage restore)
   const prevBranchRef = useRef(options.branchName)
@@ -232,14 +435,38 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     if (prevBranchRef.current && prevBranchRef.current !== options.branchName) {
       setDrafts({})
       setLoadedValues({})
+      setVerifiedBaselines({})
+      setUnreadableIds(new Set())
+      requestedIdsRef.current = new Set()
+      verifyQueueRef.current = []
       // Base versions are file mtimes, i.e. inherently per-branch -- carrying
       // them across a switch would compare one branch's version against
       // another's.
       draftBaseVersionsRef.current = {}
+      for (const id of Object.keys(reloadRequiredRef.current)) {
+        notifications.hide(saveMayHaveLandedToastId(id))
+      }
+      reloadRequiredRef.current = {}
+      // A timed-out save belongs to the branch it was sent to; content ids repeat across branches.
+      for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
+      timedOutSavesRef.current.clear()
+      for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
+      goneEntriesRef.current.clear()
+      // Its entries, and their "Open" and "Save as new entry" buttons, are the old branch's.
+      clearSaveAllResult()
       reconciledDraftIdsRef.current = new Set()
     }
     prevBranchRef.current = options.branchName
   }, [options.branchName])
+
+  // A result left up would act through this unmounted instance's callbacks.
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      clearSaveAllResult()
+    }
+  }, [])
 
   // Restore drafts from localStorage on mount or when storageKey changes
   useEffect(() => {
@@ -344,10 +571,133 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         baseVersions: draftBaseVersionsRef.current,
       }
       window.localStorage.setItem(storageKey, JSON.stringify(payload))
+      setDraftStorageFailed(false)
     } catch (err) {
       console.warn('Failed to persist drafts', err)
+      setDraftStorageFailed(true)
     }
   }, [drafts, storageKey])
+
+  // Drafts survive a reload in localStorage, so leaving is guarded only when it loses work.
+  const leaveLosesWork = saveInFlight || (draftStorageFailed && modifiedCount > 0)
+  useEffect(() => {
+    if (!leaveLosesWork || typeof window === 'undefined') return
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [leaveLosesWork])
+
+  // A pre-key draft gains the keys a read gives, so an unchanged one drops, if free of references.
+  useEffect(() => {
+    const keyed = new Map<string, FormValue>()
+    for (const [id, draft] of Object.entries(drafts)) {
+      const schema = entryById.get(id)?.schema
+      const next = schema ? withItemKeys(schema, draft, 'content') : draft
+      if (next !== draft) keyed.set(id, next)
+    }
+    if (keyed.size === 0) return
+    setDrafts((prev) => {
+      const next = { ...prev }
+      for (const [id, value] of keyed) if (prev[id] === drafts[id]) next[id] = value
+      return next
+    })
+  }, [drafts, entryById])
+
+  // A draft equal to its entry's loaded value is not an edit. Drops it so it
+  // neither counts as dirty nor lingers in storage.
+  useEffect(() => {
+    const redundant = Object.keys(drafts).filter(
+      (id) => loadedValues[id] !== undefined && equal(drafts[id], loadedValues[id]),
+    )
+    if (redundant.length === 0) return
+    setDrafts((prev) => {
+      const next = { ...prev }
+      let changed = false
+      for (const id of redundant) {
+        if (id in next && equal(next[id], loadedValues[id])) {
+          delete next[id]
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [drafts, loadedValues])
+
+  // Checks one restored draft against the server. The branch is re-read at
+  // settle time: a switch mid-read makes the result another branch's value.
+  const verifyDraft = async (job: { entry: EditorEntry; branch: string }) => {
+    const id = job.entry.contentId as string
+    const read = latestOptionsRef.current.readEntryValue
+    if (!read) return
+    // The server refuses to read an entry of an unavailable type, so it settles unread at once.
+    if (job.entry.unavailable) {
+      setUnreadableIds((prev) => new Set(prev).add(id))
+      return
+    }
+    try {
+      const server = await read(job.entry)
+      if (latestOptionsRef.current.branchName !== job.branch) return
+      const { drafts: latestDrafts, loadedValues: latestLoaded } = latestRef.current
+      // Gone, or the entry's own load has taken over as the baseline.
+      if (latestDrafts[id] === undefined || latestLoaded[id] !== undefined) return
+      if (equal(latestDrafts[id], server)) {
+        setDrafts((prev) => {
+          if (!(id in prev) || !equal(prev[id], server)) return prev
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+      } else {
+        setVerifiedBaselines((prev) => ({ ...prev, [id]: server }))
+      }
+    } catch {
+      // Stays unverified, so the draft keeps counting as dirty.
+      if (latestOptionsRef.current.branchName !== job.branch) return
+      setUnreadableIds((prev) => new Set(prev).add(id))
+    }
+  }
+
+  const pumpVerification = () => {
+    while (verifyActiveRef.current < VERIFY_CONCURRENCY && verifyQueueRef.current.length > 0) {
+      const job = verifyQueueRef.current.shift()
+      if (!job) break
+      verifyActiveRef.current++
+      void verifyDraft(job).finally(() => {
+        verifyActiveRef.current--
+        pumpVerification()
+      })
+    }
+  }
+
+  // Once per branch session, reads the server value of every restored draft
+  // whose entry has not loaded. The selected entry is left to its own load,
+  // which fills `loadedValues` and lets the effect above drop a pristine draft.
+  useEffect(() => {
+    if (!options.readEntryValue || !entriesKnown) return
+    // `drafts` lags a branch switch by a render (see draftsStorageKeyRef); reading
+    // the old branch's drafts under the new branch's name would be wrong.
+    if (draftsStorageKeyRef.current !== storageKey) return
+    const todo = unresolvedIds.filter((id) => id !== currentId && !requestedIdsRef.current.has(id))
+    if (todo.length === 0) return
+    for (const id of todo) {
+      requestedIdsRef.current.add(id)
+      const entry = entryById.get(id)
+      if (entry) verifyQueueRef.current.push({ entry, branch: options.branchName })
+    }
+    pumpVerification()
+    // pumpVerification/verifyDraft only touch refs and stable setters.
+  }, [unresolvedIds, currentId, storageKey])
+
+  // Wakes `whenDraftsVerified` callers once nothing is left to settle.
+  useEffect(() => {
+    if (unresolvedIds.length > 0) return
+    const waiters = verifyWaitersRef.current
+    verifyWaitersRef.current = []
+    for (const wake of waiters) wake()
+  }, [unresolvedIds])
 
   // Recomputes field errors as the user edits, or as the selected entry's
   // schema/format changes while it stays open, so each error clears when its
@@ -383,19 +733,124 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }, [effectiveValue, currentId, options.currentEntry?.schema, options.currentEntry?.format])
 
   /**
-   * The 409 presentation, in one place. The client-side stale-base check below
-   * and the server's own 409 response are the same situation from the user's
-   * point of view -- someone else's work is at risk -- so they must read
-   * identically, and "Reload" (now itself confirmed, see `handleReload`) is the
-   * recovery for both.
+   * The 409 presentation. Server 409s differ in cause and recovery (version
+   * moved on, branch syncing, write may have landed), so their own wording is
+   * shown; the default is the version-mismatch wording the stale-base check
+   * below shares.
    */
-  const showConflictNotification = () => {
+  const showConflictNotification = (message: string = ENTRY_CHANGED_MESSAGE) => {
     notifications.show({
-      message: 'Content was modified by another editor. Reload to see the latest changes.',
+      message,
       color: 'yellow',
       autoClose: getNotificationDuration(8000),
       withCloseButton: true,
     })
+  }
+
+  /**
+   * Stays until dismissed or the entry is reloaded: saving is held until then. Named, since it
+   * outlasts opening other entries.
+   */
+  const showSaveMayHaveLanded = (entry: EditorEntry, message = SAVE_MAY_HAVE_LANDED_MESSAGE) => {
+    notifications.hide(saveMayHaveLandedToastId(entry.contentId))
+    notifications.show({
+      id: saveMayHaveLandedToastId(entry.contentId),
+      title: `No answer saving "${entry.label}"`,
+      message: message || SAVE_MAY_HAVE_LANDED_MESSAGE,
+      color: 'yellow',
+      autoClose: false,
+      withCloseButton: true,
+    })
+  }
+
+  const hideEntryGone = (contentId: string) => {
+    if (goneEntriesRef.current.delete(contentId)) notifications.hide(entryGoneToastId(contentId))
+  }
+
+  /**
+   * Sticky: the form shows the changes only until the list next refreshes and closes it. Offers the
+   * deliberate create on the save's branch. Hidden first so a repeat is announced again.
+   */
+  const showEntryGone = (
+    entry: EditorEntry,
+    branch: string,
+    message = ENTRY_DELETED_MESSAGE,
+    offerCreate = true,
+  ) => {
+    goneEntriesRef.current.add(entry.contentId)
+    notifications.hide(entryGoneToastId(entry.contentId))
+    notifications.show({
+      id: entryGoneToastId(entry.contentId),
+      title: `"${entry.label}" not saved`,
+      message: offerCreate
+        ? createElement(RetryToastMessage, {
+            message,
+            actionLabel: 'Save as new entry',
+            onRetry: () => void recreateGoneEntry(entry, branch),
+          })
+        : message,
+      color: 'yellow',
+      autoClose: false,
+      withCloseButton: true,
+    })
+  }
+
+  /** "Save as new entry", once at a time, and only on its branch: after a switch the drafts are another branch's. */
+  const recreateGoneEntry = async (entry: EditorEntry, branch: string) => {
+    const id = entry.contentId
+    const onBranch = () => latestOptionsRef.current.branchName === branch
+    const inFlightKey = `${branch}:${id}`
+    if (recreatingRef.current.has(inFlightKey)) return
+    if (!onBranch()) {
+      notifications.hide(entryGoneToastId(id))
+      return
+    }
+    const { drafts: latestDrafts, loadedValues: latestLoaded } = latestRef.current
+    const value = latestDrafts[id] ?? latestLoaded[id]
+    const recreate = latestOptionsRef.current.recreateEntry
+    if (!value || !recreate) return
+    recreatingRef.current.add(inFlightKey)
+    hideEntryGone(id)
+    options.setBusy(true)
+    try {
+      const created = await recreate(entry, value)
+      if (!onBranch()) return
+      if (created) {
+        // The changes now live in the new entry, under a new content ID; edits made while the
+        // create was in flight follow it there.
+        setDrafts((prev) => {
+          if (!(id in prev)) return prev
+          const { [id]: latest, ...rest } = prev
+          return equal(latest, value) ? rest : { ...rest, [created.contentId]: latest }
+        })
+      }
+      if (created) settleEntry(id)
+      notifications.show({
+        message: created ? 'Saved as a new entry' : RECREATED_NOT_LISTED_MESSAGE,
+        color: 'green',
+        autoClose: getNotificationDuration(created ? 4000 : 8000),
+        withCloseButton: true,
+      })
+    } catch (err) {
+      console.error(err)
+      if (!onBranch()) return
+      if (err instanceof SaveApiError && err.status === 409) {
+        showEntryGone(entry, branch, RECREATE_TAKEN_MESSAGE)
+      } else if (isUnanswered(err)) {
+        showEntryGone(entry, branch, RECREATE_TIMED_OUT_MESSAGE)
+      } else {
+        showEntryGone(
+          entry,
+          branch,
+          err instanceof SaveApiError && err.serverMessage
+            ? `It was not saved as a new entry: ${err.serverMessage}`
+            : 'It was not saved as a new entry. Your changes are still in the form.',
+        )
+      }
+    } finally {
+      recreatingRef.current.delete(inFlightKey)
+      options.setBusy(false)
+    }
   }
 
   /**
@@ -446,13 +901,14 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         decided = true
         resolve(value)
       }
-      modals.openConfirmModal({
+      openConfirm({
         title: 'Unsaved draft from an older editor version',
         children:
           'This draft was saved by an earlier version of the editor, which did not record ' +
-          'which version of the file it was based on. Saving it will overwrite the copy ' +
+          'which version of the entry it was based on. Saving it will overwrite the copy ' +
           'currently on the server, including any changes made by someone else since. ' +
-          'Reload or Discard this file instead if you would rather not risk that.',
+          'Choose "Refresh from server" or "Discard changes" in the entry\'s menu, on its name, ' +
+          'instead if you would rather not risk that.',
         labels: { confirm: 'Save anyway', cancel: 'Cancel' },
         confirmProps: { color: 'red' },
         onConfirm: () => settle(true),
@@ -465,10 +921,23 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
 
   const handleSave = async () => {
-    if (!options.currentEntry || !effectiveValue || !currentId) return
+    // Save all may be sending this entry with the same token; the loser's 409 would be a false conflict.
+    if (saveAllRunningRef.current) return
+    const entry = options.currentEntry
+    const branch = options.branchName
+    if (!entry || !effectiveValue || !currentId) return
+
+    if (currentId in reloadRequiredRef.current) {
+      if (reloadRequiredRef.current[currentId] === options.getEntryVersion?.(currentId)) {
+        showSaveMayHaveLanded(entry)
+        return
+      }
+      delete reloadRequiredRef.current[currentId]
+      notifications.hide(saveMayHaveLandedToastId(currentId))
+    }
 
     // Conflict check first: a stale-based draft must not be schema-validated
-    // into a green "Saved" -- and nagging about field errors is noise when the
+    // into a "Saved" -- and nagging about field errors is noise when the
     // save is not going out at all.
     const baseState = draftBaseState()
     if (baseState === 'stale') {
@@ -486,14 +955,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     // Client-side pre-save validation (ED-H1): the same pure schema rules the
     // server enforces authoritatively at the write boundary. Blocks the save
-    // and surfaces per-field errors in the form instead of a green "Saved".
-    const validationErrors = validateEntryFormValue(
-      options.currentEntry.schema,
-      options.currentEntry.format,
-      effectiveValue,
-    )
+    // and surfaces per-field errors in the form instead of a "Saved".
+    const validationErrors = validateEntryFormValue(entry.schema, entry.format, effectiveValue)
     if (validationErrors.length > 0) {
       setErrorState({ entryId: currentId, errors: toFieldErrorMap(validationErrors) })
+      options.onSaveBlocked?.()
       notifications.show({
         title: 'Cannot save yet',
         message: `Fix ${validationErrors.length} validation ${validationErrors.length === 1 ? 'issue' : 'issues'} before saving`,
@@ -506,17 +972,20 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     setErrorState(null)
 
     options.setBusy(true)
+    setSaveInFlight(true)
+    setSingleSaving({ branch, contentId: currentId })
+    singleSaveRef.current = true
     try {
-      const saved = await options.saveEntry(options.currentEntry, effectiveValue)
+      const saved = await options.saveEntry(entry, effectiveValue)
+      if (latestOptionsRef.current.branchName !== branch) return
       // Drop the draft now that it has been persisted, rather than
       // overwriting it with `saved`. `effectiveValue` is `drafts[currentId]
       // ?? loadedValues[currentId]`, and `loadedValues[currentId]` is about
       // to become `saved` below, so removing the draft key is a no-op for
       // the rendered value while fixing the "phantom dirty" bug: a draft
       // that lingers forever is what made every fresh page load show Save
-      // enabled with zero real edits (see modifiedCount's doc comment above
-      // — a draft without a matching loadedValues entry is conservatively
-      // treated as dirty).
+      // enabled with zero real edits (see `dirtyIds` above: a draft with no
+      // baseline is conservatively treated as dirty).
       setDrafts((prev) => {
         if (!(currentId in prev)) return prev
         const next = { ...prev }
@@ -524,15 +993,18 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         return next
       })
       setLoadedValues((prev) => ({ ...prev, [currentId]: saved }))
-      notifications.show({
-        message: 'Saved',
-        color: 'green',
-        autoClose: getNotificationDuration(4000),
-        withCloseButton: true,
-      })
+      if (timedOutSavesRef.current.delete(currentId)) {
+        notifications.hide(saveTimedOutToastId(currentId))
+      }
+      hideEntryGone(currentId)
+      settleEntry(currentId)
+      // Said on the Save button, not in a toast.
+      setLastSaved((prev) => ({ branch, contentId: currentId, seq: (prev?.seq ?? 0) + 1 }))
       options.onSaved?.()
     } catch (err) {
       console.error(err)
+      // Content ids repeat across branches: none of what follows belongs on the next one.
+      if (latestOptionsRef.current.branchName !== branch) return
       const isConflict = err instanceof SaveApiError && err.status === 409
       // 422 = rejected by server-side schema validation or the adopter's
       // validateEntry hook; show its message and map per-field errors (e.g.
@@ -550,6 +1022,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // the moment the user is most confused, so surface the server's own
       // message instead, the same way the 422 branch already does.
       const isForbidden = err instanceof SaveApiError && err.status === 403
+      // The entry's type has no schema in the running code; the server's message says why.
+      const isUnavailable = err instanceof SaveApiError && err.code === SCHEMA_UNAVAILABLE_CODE
       if (
         err instanceof SaveApiError &&
         err.status === 422 &&
@@ -557,25 +1031,306 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         err.fieldErrors.length > 0
       ) {
         setErrorState({ entryId: currentId, errors: toFieldErrorMap(err.fieldErrors) })
+        options.onSaveBlocked?.()
       }
-      if (isConflict) {
-        showConflictNotification()
+      if (isConflict && err.code === ENTRY_GONE_CODE) {
+        // Deleted or renamed since it was read, by someone else or by a delete or rename of this
+        // user's that got no answer. A retry cannot save it, so the timed-out toast's "save
+        // again" no longer applies. A rename keeps the content ID, so the entry is looked for
+        // under its new name, where the draft follows it.
+        if (timedOutSavesRef.current.delete(currentId)) {
+          notifications.hide(saveTimedOutToastId(currentId))
+        }
+        let moved: EditorEntry | undefined
+        let checked = true
+        try {
+          moved = await options.followMovedEntry?.(entry)
+        } catch (followErr) {
+          console.error(followErr)
+          checked = false
+        }
+        // A branch switch meanwhile cleared this branch's toasts; none of these belong on the next.
+        if (latestOptionsRef.current.branchName !== branch) return
+        if (moved) {
+          hideEntryGone(currentId)
+          notifications.show({
+            title: `"${entry.label}" not saved`,
+            message: ENTRY_RENAMED_MESSAGE,
+            color: 'yellow',
+            autoClose: getNotificationDuration(8000),
+            withCloseButton: true,
+          })
+        } else if (checked) {
+          showEntryGone(entry, branch)
+        } else {
+          // Deleted or renamed, but which is unknown, so a create could duplicate a renamed entry.
+          showEntryGone(entry, branch, ENTRY_GONE_UNCHECKED_MESSAGE, false)
+        }
+      } else if (isConflict) {
+        // A version conflict on the retry of a save that went unanswered is most likely that
+        // save having landed, which a reload settles just as for WRITE_OUTCOME_UNKNOWN.
+        const ownSaveLanded =
+          err.serverMessage === ENTRY_CHANGED_MESSAGE && timedOutSavesRef.current.has(currentId)
+        if (err.code === 'WRITE_OUTCOME_UNKNOWN' || ownSaveLanded) {
+          reloadRequiredRef.current[currentId] = options.getEntryVersion?.(currentId)
+        }
+        if (ownSaveLanded) {
+          timedOutSavesRef.current.delete(currentId)
+          notifications.hide(saveTimedOutToastId(currentId))
+        }
+        if (err.code === 'WRITE_OUTCOME_UNKNOWN' || ownSaveLanded) {
+          showSaveMayHaveLanded(entry, ownSaveLanded ? undefined : err.serverMessage)
+        } else {
+          showConflictNotification(err.serverMessage || undefined)
+        }
+      } else if (isUnanswered(err)) {
+        // A save that did land moved the file's version, so the server refuses the retry as a
+        // conflict; a file since deleted or moved refuses it as gone (`ContentStore.write`).
+        timedOutSavesRef.current.add(currentId)
+        notifications.show({
+          id: saveTimedOutToastId(currentId),
+          title: `No answer saving "${entry.label}"`,
+          message: SAVE_TIMED_OUT_MESSAGE,
+          color: 'yellow',
+          autoClose: false,
+          withCloseButton: true,
+        })
       } else {
+        const explained = isValidation || isForbidden || isUnavailable
         notifications.show({
           ...(isValidation ? { title: 'Save rejected' } : {}),
           ...(isForbidden ? { title: 'Save not allowed' } : {}),
-          message: isValidation || isForbidden ? err.message : 'Save failed',
-          color: 'red',
-          autoClose: getNotificationDuration(isValidation || isForbidden ? 8000 : 6000),
+          ...(isUnavailable ? { title: 'Not saved yet' } : {}),
+          message: explained ? err.message : 'Save failed',
+          color: isUnavailable ? 'yellow' : 'red',
+          autoClose: getNotificationDuration(explained ? 8000 : 6000),
           withCloseButton: true,
         })
       }
     } finally {
+      singleSaveRef.current = false
+      setSingleSaving(null)
+      setSaveInFlight(false)
+      options.setBusy(false)
+    }
+  }
+
+  /**
+   * A save that got no answer landed if the server now holds exactly what was sent. Only that
+   * answer settles it: a differing value may be the server's normalisation of a save that did
+   * land, so it leaves the token alone and the retry's 409 decides, as for `handleSave`.
+   */
+  const settleUnansweredSave = async (entry: EditorEntry, sent: FormValue) => {
+    const { readEntryValue, loadEntry } = latestOptionsRef.current
+    try {
+      if (!readEntryValue || !equal(await readEntryValue(entry), sent)) return undefined
+      const loaded = await loadEntry(entry)
+      return equal(loaded, sent) ? loaded : undefined
+    } catch (err) {
+      console.error(err)
+      return undefined
+    }
+  }
+
+  /**
+   * One entry of Save all, through the same checks as `handleSave`: held saves, the draft's base
+   * version, schema validation, then the OCC-checked write. An entry not opened this session has
+   * no token yet, so it is loaded first, which also lets the base check see whether it moved on.
+   * Returns undefined when the draft went away or the branch changed meanwhile.
+   */
+  const saveOneOfAll = async (
+    entry: EditorEntry,
+    branch: string,
+  ): Promise<{ saved: true } | { saved: false; failure: SaveAllFailure } | undefined> => {
+    const id = entry.contentId
+    const sent = latestRef.current.drafts[id]
+    if (sent === undefined) return undefined
+    const onBranch = () => latestOptionsRef.current.branchName === branch
+    const fail = (
+      kind: SaveAllFailure['kind'],
+      reason: string,
+      extra?: Partial<Pick<SaveAllFailure, 'recreate' | 'path' | 'retryable'>>,
+    ) => ({
+      saved: false as const,
+      failure: { contentId: id, label: entry.label, path: entry.path, kind, reason, ...extra },
+    })
+    const { getEntryVersion, loadEntry, saveEntry } = latestOptionsRef.current
+
+    if (entry.unavailable) return fail('blocked', SAVE_ALL_REASONS.unavailable)
+    if (entry.canEdit === false) return fail('blocked', SAVE_ALL_REASONS.noEditAccess)
+    if (id in reloadRequiredRef.current) {
+      if (reloadRequiredRef.current[id] === getEntryVersion?.(id)) {
+        return fail('unanswered', SAVE_ALL_REASONS.earlierUnanswered)
+      }
+      delete reloadRequiredRef.current[id]
+      notifications.hide(saveMayHaveLandedToastId(id))
+    }
+    if (getEntryVersion?.(id) === undefined) {
+      try {
+        await loadEntry(entry)
+      } catch (err) {
+        console.error(err)
+        return fail('error', SAVE_ALL_REASONS.loadFailed)
+      }
+      if (!onBranch()) return undefined
+    }
+    const base = draftBaseVersionsRef.current[id]
+    if (base === null) return fail('conflict', SAVE_ALL_REASONS.unknownBase)
+    if (base !== undefined && base !== getEntryVersion?.(id)) {
+      return fail('conflict', SAVE_ALL_REASONS.staleBase)
+    }
+    const validationErrors = validateEntryFormValue(entry.schema, entry.format, sent)
+    if (validationErrors.length > 0) {
+      if (id === currentIdRef.current) {
+        setErrorState({ entryId: id, errors: toFieldErrorMap(validationErrors) })
+        latestOptionsRef.current.onSaveBlocked?.()
+      }
+      return fail('invalid', invalidReason(validationErrors.length))
+    }
+
+    const commitSaved = (saved: FormValue) => {
+      // Decided from `prev`, which holds an edit queued but not yet rendered.
+      setDrafts((prev) => {
+        if (!(id in prev)) return prev
+        if (!equal(prev[id], sent)) {
+          // Edits typed while the save was out stay a draft, based on the version just written; a
+          // new object, so that base is persisted. Idempotent, as a strict-mode rerun requires.
+          const version = latestOptionsRef.current.getEntryVersion?.(id)
+          if (version !== undefined) draftBaseVersionsRef.current[id] = version
+          return { ...prev }
+        }
+        const next = { ...prev }
+        delete next[id]
+        return next
+      })
+      setLoadedValues((prev) => ({ ...prev, [id]: saved }))
+      if (timedOutSavesRef.current.delete(id)) notifications.hide(saveTimedOutToastId(id))
+      hideEntryGone(id)
+    }
+
+    try {
+      const saved = await saveEntry(entry, sent)
+      // Another branch's state now: its loaded values and draft bases are not this write's.
+      if (!onBranch()) return undefined
+      commitSaved(saved)
+      return { saved: true }
+    } catch (err) {
+      console.error(err)
+      if (!onBranch()) return undefined
+      const outcome = classifySaveAllError(err, timedOutSavesRef.current.has(id))
+      switch (outcome.kind) {
+        case 'unanswered': {
+          const landed = await settleUnansweredSave(entry, sent)
+          if (!onBranch()) return undefined
+          if (landed) {
+            commitSaved(landed)
+            return { saved: true }
+          }
+          timedOutSavesRef.current.add(id)
+          return fail('unanswered', SAVE_ALL_REASONS.unanswered)
+        }
+        case 'landed?':
+          reloadRequiredRef.current[id] = getEntryVersion?.(id)
+          timedOutSavesRef.current.delete(id)
+          notifications.hide(saveTimedOutToastId(id))
+          return fail('unanswered', SAVE_ALL_REASONS.earlierUnanswered)
+        case 'gone': {
+          if (timedOutSavesRef.current.delete(id)) notifications.hide(saveTimedOutToastId(id))
+          let moved: EditorEntry | undefined
+          try {
+            moved = await latestOptionsRef.current.followMovedEntry?.(entry)
+          } catch (followErr) {
+            console.error(followErr)
+            return fail('conflict', SAVE_ALL_REASONS.goneUnchecked)
+          }
+          // "Open" in the result goes to where the changes moved.
+          if (moved) return fail('conflict', SAVE_ALL_REASONS.renamed, { path: moved.path })
+          return fail('conflict', SAVE_ALL_REASONS.deleted, {
+            recreate: () => void recreateGoneEntry(entry, branch),
+          })
+        }
+        default:
+          if (outcome.kind === 'invalid' && id === currentIdRef.current) {
+            const fieldErrors = err instanceof SaveApiError ? err.fieldErrors : undefined
+            if (fieldErrors?.length) {
+              setErrorState({ entryId: id, errors: toFieldErrorMap(fieldErrors) })
+              latestOptionsRef.current.onSaveBlocked?.()
+            }
+          }
+          return fail(
+            outcome.kind,
+            outcome.reason,
+            outcome.retryable ? { retryable: true } : undefined,
+          )
+      }
+    }
+  }
+
+  const handleSaveAll = async (): Promise<SaveAllResult | undefined> => {
+    // A Save in flight would race this run's write of the same entry, with the same token.
+    if (saveAllRunningRef.current || singleSaveRef.current) return undefined
+    saveAllRunningRef.current = true
+    settledDuringRunRef.current = new Set()
+    const branch = options.branchName
+    // Busy from the first moment, so Save waits through the draft check too.
+    options.setBusy(true)
+    setSaveInFlight(true)
+    setSaveAllProgress({ done: 0, total: latestRef.current.modifiedCount })
+    try {
+      // A restored draft identical to the server is not a change, so it isn't saved.
+      await whenDraftsVerified()
+      if (latestOptionsRef.current.branchName !== branch) return undefined
+      const { dirtyIds: ids, entryById: byId } = latestRef.current
+      const current = currentIdRef.current
+      const queue = [...ids]
+        .sort((a, b) => Number(b === current) - Number(a === current))
+        .flatMap((id) => {
+          const entry = byId.get(id)
+          return entry ? [entry] : []
+        })
+      const result: SaveAllResult = { branch, total: queue.length, saved: [], failed: [] }
+      if (queue.length === 0) return result
+      clearSaveAllResult()
+      setSaveAllProgress({ done: 0, total: queue.length })
+      for (const [index, entry] of queue.entries()) {
+        if (latestOptionsRef.current.branchName !== branch || !mountedRef.current) return undefined
+        const outcome = await saveOneOfAll(entry, branch)
+        if (outcome?.saved) {
+          result.saved.push({ contentId: entry.contentId, label: entry.label, path: entry.path })
+        } else if (outcome) {
+          result.failed.push(outcome.failure)
+        }
+        setSaveAllProgress({ done: index + 1, total: queue.length })
+      }
+      // Unmounted: a result would act through this gone instance's callbacks.
+      if (latestOptionsRef.current.branchName !== branch || !mountedRef.current) return undefined
+      // Discarded, refreshed or saved mid-run, so neither saved nor failed by this run.
+      const { drafts: remaining } = latestRef.current
+      const settled = settledDuringRunRef.current
+      result.failed = result.failed.filter(
+        (failure) => failure.contentId in remaining && !settled.has(failure.contentId),
+      )
+      result.total = result.saved.length + result.failed.length
+      if (result.saved.length > 0) latestOptionsRef.current.onSaved?.()
+      return result
+    } finally {
+      saveAllRunningRef.current = false
+      setSaveAllProgress(null)
+      setSaveInFlight(false)
       options.setBusy(false)
     }
   }
 
   const performDiscardDrafts = () => {
+    for (const id of timedOutSavesRef.current) notifications.hide(saveTimedOutToastId(id))
+    timedOutSavesRef.current.clear()
+    for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
+    goneEntriesRef.current.clear()
+    clearSaveAllResult()
+    if (saveAllRunningRef.current) {
+      for (const id of Object.keys(latestRef.current.drafts)) settledDuringRunRef.current.add(id)
+    }
+    options.onDraftsReset?.()
     setDrafts({})
     setErrorState(null)
     try {
@@ -597,22 +1352,33 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // is actually something to lose (modifiedCount > 0, same definition used
   // everywhere else in this hook). An all-clean discard (e.g. drafts that
   // exactly mirror loaded values) clears silently.
-  const handleDiscardDrafts = () => {
+  const handleDiscardDrafts = (returnFocusTo?: () => HTMLElement | null) => {
     if (modifiedCount === 0) {
       performDiscardDrafts()
       return
     }
-    modals.openConfirmModal({
-      title: 'Discard drafts',
-      children: `Discard drafts for ${modifiedCount} ${modifiedCount === 1 ? 'file' : 'files'}? Unsaved changes will be lost.`,
-      labels: { confirm: 'Discard', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
+    openConfirm({
+      title: 'Discard all changes',
+      children: `Discard unsaved changes for ${modifiedCount} ${modifiedCount === 1 ? 'entry' : 'entries'}? They will be lost.`,
+      labels: { confirm: 'Discard all changes', cancel: 'Cancel' },
+      confirmProps: { color: 'red', 'data-testid': 'confirm-discard-all' },
       onConfirm: performDiscardDrafts,
+      ...focusReturnProps(returnFocusTo),
     })
   }
 
-  const performDiscardFileDraft = () => {
-    if (!currentId) return
+  const performDiscardFileDraft = (announce = false) => {
+    const entry = options.currentEntry
+    if (!entry || !currentId) return
+    if (announce) {
+      notifications.show({
+        message: `Unsaved changes to "${entry.label}" discarded`,
+        color: 'green',
+      })
+    }
+    options.onDraftsReset?.(currentId)
+    hideEntryGone(currentId)
+    settleEntry(currentId)
     setErrorState(null)
     setDrafts((prev) => {
       const next = { ...prev }
@@ -635,14 +1401,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         }
       }
     } catch (err) {
-      console.warn('Failed to clear draft for file', err)
+      console.warn('Failed to clear draft for entry', err)
     }
-    notifications.show({
-      message: 'Draft cleared for file',
-      color: 'blue',
-      autoClose: getNotificationDuration(3000),
-      withCloseButton: true,
-    })
   }
 
   // Only prompt when there is a real draft that actually differs from the
@@ -650,26 +1410,42 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // comparison as `modifiedCount`). Discarding a draft that's identical to
   // the loaded value, or discarding when there's no draft at all, has
   // nothing to lose, so it clears silently.
-  const handleDiscardFileDraft = () => {
+  const handleDiscardFileDraft = (
+    returnFocusTo?: () => HTMLElement | null,
+    { announce = false }: { announce?: boolean } = {},
+  ) => {
     if (!currentId) return
     if (!isSelectedDirty()) {
-      performDiscardFileDraft()
+      performDiscardFileDraft(announce)
       return
     }
-    modals.openConfirmModal({
-      title: 'Discard draft',
-      children: 'Discard unsaved changes for this file?',
-      labels: { confirm: 'Discard', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
-      onConfirm: performDiscardFileDraft,
+    const label = options.currentEntry?.label
+    openConfirm({
+      title: label ? `Discard changes to "${label}"?` : 'Discard changes?',
+      children: 'Your unsaved changes to this entry will be lost.',
+      labels: { confirm: 'Discard changes', cancel: 'Keep editing' },
+      confirmProps: { color: 'red', 'data-testid': 'confirm-discard-entry' },
+      onConfirm: () => performDiscardFileDraft(announce),
+      ...focusReturnProps(returnFocusTo),
     })
   }
 
   const performReload = async () => {
     if (!options.currentEntry || !currentId) return
+    const branch = options.branchName
     options.setBusy(true)
     try {
       const loaded = await options.loadEntry(options.currentEntry)
+      // Content ids repeat across branches; the next branch's state is not this read's.
+      if (latestOptionsRef.current.branchName !== branch) return
+      options.onDraftsReset?.(currentId)
+      delete reloadRequiredRef.current[currentId]
+      notifications.hide(saveMayHaveLandedToastId(currentId))
+      if (timedOutSavesRef.current.delete(currentId)) {
+        notifications.hide(saveTimedOutToastId(currentId))
+      }
+      hideEntryGone(currentId)
+      settleEntry(currentId)
       setLoadedValues((prev) => ({ ...prev, [currentId]: loaded }))
       // Drop the draft rather than seeding it with `loaded`. `effectiveValue`
       // falls back to `loadedValues`, so the rendered value is identical --
@@ -683,15 +1459,26 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         return next
       })
       notifications.show({
-        message: 'Reloaded',
+        message: 'Refreshed from server',
         color: 'blue',
         autoClose: getNotificationDuration(3000),
         withCloseButton: true,
       })
     } catch (err) {
+      if (latestOptionsRef.current.branchName !== branch) return
+      if (err instanceof EntrySchemaUnavailableError) {
+        notifications.show({
+          title: 'Not available yet',
+          message: err.message,
+          color: 'yellow',
+          autoClose: getNotificationDuration(8000),
+          withCloseButton: true,
+        })
+        return
+      }
       console.error(err)
       notifications.show({
-        message: 'Reload failed',
+        message: "Couldn't refresh from the server. Your changes are still here; try again.",
         color: 'red',
         autoClose: getNotificationDuration(6000),
         withCloseButton: true,
@@ -707,20 +1494,22 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // moment their unsaved work matters most. Guarded exactly like
   // handleDiscardFileDraft: the same `isSelectedDirty()` test (nothing to lose
   // -> no prompt) and the same confirm-modal shape.
-  const handleReload = async () => {
+  const handleReload = async (returnFocusTo?: () => HTMLElement | null) => {
     if (!options.currentEntry || !currentId) return
     if (!isSelectedDirty()) {
       await performReload()
       return
     }
-    modals.openConfirmModal({
-      title: 'Reload file',
-      children: 'Reload this file from the server? Unsaved changes for this file will be lost.',
-      labels: { confirm: 'Reload', cancel: 'Cancel' },
+    openConfirm({
+      title: 'Refresh from server',
+      children:
+        "Replace this entry with the server's copy? Unsaved changes to this entry will be lost.",
+      labels: { confirm: 'Refresh', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
         void performReload()
       },
+      ...focusReturnProps(returnFocusTo),
     })
   }
 
@@ -730,7 +1519,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     const id = entry.contentId
     if (!drafts[id]) return false
-    return !loadedValues[id] || !equal(drafts[id], loadedValues[id])
+    const baseline = loadedValues[id] ?? verifiedBaselines[id]
+    return baseline === undefined || !equal(drafts[id], baseline)
   }
 
   const isSelectedDirty = (): boolean => {
@@ -739,15 +1529,78 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     return !loadedValues[currentId] || !equal(drafts[currentId], loadedValues[currentId])
   }
 
-  // Returns true if ANY draft entry differs from its loaded value.
-  //
-  // Used for branch-switch guards so unsaved work in non-selected entries is not
-  // silently discarded. Derived from `modifiedCount`, so its semantics note
-  // above also applies: localStorage-restored drafts without a loaded value
-  // count as dirty.
+  // True if ANY counted draft is dirty (see `dirtyIds`). Used for branch-level
+  // guards so unsaved work in non-selected entries is not silently discarded.
   const isAnyDirty = (): boolean => modifiedCount > 0
 
+  const whenDraftsVerified = (): Promise<void> => {
+    if (latestRef.current.unresolvedCount === 0) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const wake = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+      const timer = setTimeout(() => {
+        verifyWaitersRef.current = verifyWaitersRef.current.filter((w) => w !== wake)
+        resolve()
+      }, VERIFY_WAIT_CAP_MS)
+      verifyWaitersRef.current.push(wake)
+    })
+  }
+
+  const resolveUnsaved = async (): Promise<UnsavedSummary> => {
+    await whenDraftsVerified()
+    const { modifiedCount: count, editedFiles: files } = latestRef.current
+    return { count, labels: files.map((f) => f.label) }
+  }
+
+  // An entry's token and draft base move to the stamped version only from the version the stamp
+  // replaced: one already behind it stays behind, so the usual conflict check still catches it.
+  const applySubmitStamps = (stamped: readonly StampedEntry[]) => {
+    const { getEntryVersion, adoptEntryVersion } = latestOptionsRef.current
+    const loadedMoved: StampedEntry[] = []
+    const draftsMoved: StampedEntry[] = []
+    for (const entry of stamped) {
+      if (getEntryVersion?.(entry.contentId) === entry.previousVersion) {
+        adoptEntryVersion?.(entry.contentId, entry.version)
+        loadedMoved.push(entry)
+      }
+      if (draftBaseVersionsRef.current[entry.contentId] === entry.previousVersion) {
+        draftBaseVersionsRef.current[entry.contentId] = entry.version
+        draftsMoved.push(entry)
+      }
+    }
+    if (loadedMoved.length > 0) {
+      setLoadedValues((prev) => {
+        const next = { ...prev }
+        for (const { contentId, fields } of loadedMoved) {
+          if (prev[contentId]) next[contentId] = { ...prev[contentId], ...fields }
+        }
+        return next
+      })
+    }
+    // A new drafts object even when no value changes, so the moved base versions are persisted.
+    if (draftsMoved.length > 0) {
+      setDrafts((prev) => {
+        const next = { ...prev }
+        for (const { contentId, fields } of draftsMoved) {
+          const draft = prev[contentId]
+          if (!draft) continue
+          const filled = { ...draft }
+          for (const [name, value] of Object.entries(fields)) {
+            if (draft[name] === undefined || draft[name] === null || draft[name] === '') {
+              filled[name] = value
+            }
+          }
+          next[contentId] = filled
+        }
+        return next
+      })
+    }
+  }
+
   return {
+    applySubmitStamps,
     drafts,
     setDrafts,
     loadedValues,
@@ -758,12 +1611,20 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     modifiedCount,
     editedFiles,
     handleSave,
+    singleSaving,
+    lastSaved,
+    handleSaveAll,
+    saveAllProgress,
+    isSaveAllRunning: () => saveAllRunningRef.current,
     handleDiscardDrafts,
     handleDiscardFileDraft,
     handleReload,
     isDirtyForEntry,
     isSelectedDirty,
     isAnyDirty,
+    whenDraftsVerified,
+    resolveUnsaved,
     fieldErrors,
+    draftStorageFailed,
   }
 }

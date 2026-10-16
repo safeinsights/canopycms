@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-01, branch `fix/clerk-setactive-oac-hang`. `@clerk/nextjs`'s provider made `setActive` await a Server Action that OAC 403s, so in-app Clerk sign-in hung on the AWS deploy. `useSkipClerkSetActiveAction()` now resolves that hook at once (both 7.x `__internal_` and 6.x `__unstable__` names); the editor holds it through `useClerkAuthConfig()` and `ClerkSignIn`, and it is exported for Clerk components on an adopter's own CMS-build pages. A contract test against the real installed provider pins Clerk's behavior. Not yet observed live: see [clerk-signed-out-followups.md](../clerk-signed-out-followups.md) item 3
+---
 # Clerk sign-in hangs behind CloudFront OAC: `setActive` awaits a Server Action that 403s
 
 **RESOLVED 2026-10-01, branch `fix/clerk-setactive-oac-hang`: option 1.** The fix is still **not

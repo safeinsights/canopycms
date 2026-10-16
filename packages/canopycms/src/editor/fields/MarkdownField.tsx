@@ -1,15 +1,29 @@
 'use client'
 
-import React, { Suspense, useId, useRef, useCallback, useEffect, useState } from 'react'
+import React, { Suspense, useId, useRef, useCallback, useEffect, useReducer, useState } from 'react'
 
-import { Alert, Button, Group, Text, Textarea } from '@mantine/core'
+import { Alert, Box, Button, Text, Textarea, useComputedColorScheme } from '@mantine/core'
 
-import type { MDXEditorMethods } from '@mdxeditor/editor'
+import type { EditorSubscription, MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
+import { MARKDOWN_EXPORT_OPTIONS } from './markdown-export-options'
+import { createMarkdownFidelityPlugin } from './markdown-fidelity-visitors'
 import { MdxImageDialog } from './MdxImageDialog'
-import { useApiClient } from '../context'
+import { createMdxJsxPlugins } from './mdx-jsx-support'
+import { useApiClient, useAssetContext } from '../context'
+import { editorImageSrc } from '../media/editor-image-src'
 import { uploadAsset } from '../media/upload-asset'
+import { useFieldCommentControl } from '../comments/field-comment-context'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { FieldLabel } from './FieldLabel'
+import { watchToolbarWrap } from './toolbar-wrap'
+import { EditorErrorBoundary, type CaughtEditorError } from '../components/EditorErrorBoundary'
+import { getErrorMessage, sanitizeErrorMessage } from '../../utils/error'
+import {
+  forgetRichTextFailure,
+  recallRichTextFailure,
+  rememberRichTextFailure,
+} from './rich-text-failures'
 
 export interface MarkdownFieldProps {
   id?: string
@@ -18,44 +32,116 @@ export interface MarkdownFieldProps {
   value: string
   onChange: (value: string) => void
   dataCanopyField?: string
+  /** The HTML tags the field accepts; the toolbar offers no action writing another. Omitted: any. */
+  htmlTags?: ReadonlySet<string>
+  /** Shows the content without accepting edits, in the rich-text editor or as source. */
+  readOnly?: boolean
 }
 
-const MDXEditorLazy = React.lazy(async () => {
-  const [
-    {
-      MDXEditor,
-      headingsPlugin,
-      listsPlugin,
-      quotePlugin,
-      thematicBreakPlugin,
-      markdownShortcutPlugin,
-      linkPlugin,
-      linkDialogPlugin,
-      imagePlugin,
-      tablePlugin,
-      toolbarPlugin,
-      codeBlockPlugin,
-      codeMirrorPlugin,
-      BoldItalicUnderlineToggles,
-      BlockTypeSelect,
-      ListsToggle,
-      CreateLink,
-      InsertImage,
-      InsertTable,
-      InsertThematicBreak,
-      CodeToggle,
-      InsertCodeBlock,
-      UndoRedo,
-      Separator,
-      insertMarkdown$,
-      usePublisher,
-      useCellValues,
-      saveImage$,
-      closeImageDialog$,
-      imageDialogState$,
+/** Text formats MDXEditor exports as an HTML tag, with that tag. */
+const TAG_FORMATS = [
+  ['underline', 'u'],
+  ['subscript', 'sub'],
+  ['superscript', 'sup'],
+] as const
+
+/** @internal Exported for the round-trip corpus test, which drives exactly this editor. */
+export const MDXEditorLazy = React.lazy(async () => {
+  // MDXEditor's only code import (theme.tsx loads its CSS); see mdx-jsx-support for why.
+  const mdx = await import('@mdxeditor/editor')
+  const {
+    MDXEditor,
+    headingsPlugin,
+    listsPlugin,
+    quotePlugin,
+    thematicBreakPlugin,
+    markdownShortcutPlugin,
+    linkPlugin,
+    linkDialogPlugin,
+    imagePlugin,
+    tablePlugin,
+    toolbarPlugin,
+    codeBlockPlugin,
+    codeMirrorPlugin,
+    BoldItalicUnderlineToggles,
+    BlockTypeSelect,
+    ListsToggle,
+    CreateLink,
+    InsertImage,
+    InsertTable,
+    InsertThematicBreak,
+    CodeToggle,
+    InsertCodeBlock,
+    UndoRedo,
+    Separator,
+    insertMarkdown$,
+    usePublisher,
+    useCellValues,
+    saveImage$,
+    closeImageDialog$,
+    imageDialogState$,
+    activeEditor$,
+    $isImageNode,
+    createRootEditorSubscription$,
+    realmPlugin,
+    Cell,
+    // MDXEditor's own lexical instance: lexical keeps the active editor state per module, so
+    // a separately resolved copy would throw inside this editor's `read()`.
+    lexical: {
+      $getNodeByKey,
+      $getSelection,
+      $isRangeSelection,
+      COMMAND_PRIORITY_CRITICAL,
+      FORMAT_TEXT_COMMAND,
+      SET_TEXT_FORMAT_COMMAND,
+      mergeRegister,
     },
-    { mdxJsxPlugins },
-  ] = await Promise.all([import('@mdxeditor/editor'), import('./mdx-jsx-support')])
+  } = mdx
+  const mdxJsxPlugins = createMdxJsxPlugins(mdx)
+
+  /** The text formats whose tag the field refuses, kept current as props change. */
+  const refusedFormats$ = Cell<readonly string[]>([])
+  const refusedFormats = (htmlTags: ReadonlySet<string> | undefined) =>
+    TAG_FORMATS.filter(([, tag]) => htmlTags?.has(tag) === false).map(([format]) => format)
+
+  /**
+   * Refuses adding a format whose tag the field refuses (toolbar, Cmd+U) and lets removing one
+   * through: Lexical toggles a range off when its selection has the format, and passes a nested
+   * editor's input commands up to the root's. Content is never rewritten: a stored tag stays for
+   * the server's unchanged-field rule, and a pasted one reaches the server, which refuses it.
+   */
+  const tagFormatGuardPlugin = realmPlugin<{ htmlTags: ReadonlySet<string> | undefined }>({
+    init(realm, params) {
+      realm.pub(refusedFormats$, refusedFormats(params?.htmlTags))
+      const refused = (format: string) => realm.getValue(refusedFormats$).includes(format)
+      const guard: EditorSubscription = (editor) =>
+        mergeRegister(
+          editor.registerCommand(
+            FORMAT_TEXT_COMMAND,
+            (format, fromEditor) => {
+              if (!refused(format)) return false
+              // Lexical formats the dispatching editor's pending selection; inside the root's
+              // update, where this runs for a nested command, `$getSelection()` is the root's.
+              const selection = fromEditor.read('pending', () => $getSelection())
+              return !($isRangeSelection(selection) && selection.hasFormat(format))
+            },
+            COMMAND_PRIORITY_CRITICAL,
+          ),
+          editor.registerCommand(
+            SET_TEXT_FORMAT_COMMAND,
+            (formats) =>
+              Object.entries(formats).some(([format, on]) => on === true && refused(format)),
+            COMMAND_PRIORITY_CRITICAL,
+          ),
+        )
+      realm.pub(createRootEditorSubscription$, guard)
+    },
+    update(realm, params) {
+      realm.pub(refusedFormats$, refusedFormats(params?.htmlTags))
+    },
+  })
+
+  const markdownFidelityPlugin = createMarkdownFidelityPlugin(mdx)
 
   const EntryLinkToolbarButton: React.FC<{
     onInsert: (insert: () => void, markdown: string) => void
@@ -69,16 +155,28 @@ const MDXEditorLazy = React.lazy(async () => {
   }
 
   /**
-   * Bridges mdxeditor's realm cells (reachable only once this lazy chunk has
-   * loaded) into MdxImageDialog's plain-props interface, so that component
-   * never imports `@mdxeditor/editor` at runtime — same pattern as
-   * `EntryLinkToolbarButton` above.
+   * Bridges mdxeditor's realm cells (reachable only once this lazy chunk has loaded) into
+   * MdxImageDialog's plain-props interface, so that component never imports `@mdxeditor/editor`
+   * at runtime — same pattern as `EntryLinkToolbarButton` above.
    */
   const MdxImageDialogBridge: React.FC = () => {
-    const [state] = useCellValues(imageDialogState$)
+    const [state, editor] = useCellValues(imageDialogState$, activeEditor$)
     const saveImage = usePublisher(saveImage$)
     const closeImageDialog = usePublisher(closeImageDialog$)
-    return <MdxImageDialog state={state} onSave={saveImage} onClose={closeImageDialog} />
+    // With an `imagePreviewHandler`, MDXEditor seeds an edit dialog with the src the node was
+    // first rendered with, not its current one, so saving after a src change would revert it.
+    // Read the node's live src from the same editor `saveImage$` writes through.
+    const liveState = React.useMemo(() => {
+      if (state.type !== 'editing' || !editor) return state
+      const src = editor.getEditorState().read(() => {
+        const node = $getNodeByKey(state.nodeKey)
+        return $isImageNode(node) ? node.getSrc() : undefined
+      })
+      return src === undefined
+        ? state
+        : { ...state, initialValues: { ...state.initialValues, src } }
+    }, [state, editor])
+    return <MdxImageDialog state={liveState} onSave={saveImage} onClose={closeImageDialog} />
   }
 
   const WrappedEditor: React.FC<{
@@ -88,13 +186,48 @@ const MDXEditorLazy = React.lazy(async () => {
     onInsert: (insert: () => void, markdown: string) => void
     editorRef?: React.Ref<MDXEditorMethods>
     imageUploadHandler: (file: File) => Promise<string>
-  }> = ({ markdown, onChange, onError, onInsert, editorRef, imageUploadHandler }) => {
+    imagePreviewHandler: (src: string) => Promise<string>
+    htmlTags?: ReadonlySet<string>
+    readOnly?: boolean
+    /** Names the content area for assistive tech; MDXEditor's default is "editable markdown". */
+    contentLabel?: string
+    /** Draws the editor and its popups in MDXEditor's dark theme. */
+    dark?: boolean
+  }> = ({
+    markdown,
+    onChange,
+    onError,
+    onInsert,
+    editorRef,
+    imageUploadHandler,
+    imagePreviewHandler,
+    htmlTags,
+    readOnly,
+    contentLabel,
+    dark,
+  }) => {
+    const underline = htmlTags?.has('u') ?? true
+    const translation = (
+      key: string,
+      defaultValue: string,
+      interpolations: Record<string, unknown> = {},
+    ): string =>
+      key === 'contentArea.editableMarkdown' && contentLabel
+        ? contentLabel
+        : Object.entries(interpolations).reduce(
+            (text, [name, v]) => text.replaceAll(`{{${name}}}`, String(v)),
+            defaultValue,
+          )
     return (
       <MDXEditor
         ref={editorRef}
+        className={dark ? 'dark-theme' : undefined}
         markdown={markdown}
+        readOnly={readOnly}
+        translation={translation}
         onChange={onChange}
         onError={onError}
+        toMarkdownOptions={MARKDOWN_EXPORT_OPTIONS}
         plugins={[
           headingsPlugin(),
           listsPlugin(),
@@ -103,9 +236,17 @@ const MDXEditorLazy = React.lazy(async () => {
           markdownShortcutPlugin(),
           linkPlugin(),
           linkDialogPlugin(),
-          imagePlugin({ imageUploadHandler, ImageDialog: MdxImageDialogBridge }),
+          imagePlugin({
+            imageUploadHandler,
+            imagePreviewHandler,
+            ImageDialog: MdxImageDialogBridge,
+            // A resized image exports as `<img>`.
+            disableImageResize: htmlTags?.has('img') === false,
+          }),
           tablePlugin(),
           ...mdxJsxPlugins(),
+          markdownFidelityPlugin(),
+          tagFormatGuardPlugin({ htmlTags }),
           codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
           codeMirrorPlugin({
             codeBlockLanguages: {
@@ -123,27 +264,37 @@ const MDXEditorLazy = React.lazy(async () => {
               markdown: 'Markdown',
             },
           }),
-          toolbarPlugin({
-            toolbarContents: () => (
-              <>
-                <UndoRedo />
-                <Separator />
-                <BoldItalicUnderlineToggles />
-                <CodeToggle />
-                <Separator />
-                <BlockTypeSelect />
-                <Separator />
-                <ListsToggle />
-                <Separator />
-                <CreateLink />
-                <EntryLinkToolbarButton onInsert={onInsert} />
-                <InsertImage />
-                <InsertTable />
-                <InsertThematicBreak />
-                <InsertCodeBlock />
-              </>
-            ),
-          }),
+          // MDXEditor's readOnly blocks only the toolbar's pointer events; its buttons still take the
+          // keyboard, and their commands edit the document.
+          // It reads plugins once, so the editor's key remounts it when `readOnly` changes.
+          ...(readOnly
+            ? []
+            : [
+                toolbarPlugin({
+                  toolbarClassName: 'canopy-mdx-toolbar',
+                  toolbarContents: () => (
+                    <>
+                      <UndoRedo />
+                      <Separator />
+                      <BoldItalicUnderlineToggles
+                        options={underline ? undefined : ['Bold', 'Italic']}
+                      />
+                      <CodeToggle />
+                      <Separator />
+                      <BlockTypeSelect />
+                      <Separator />
+                      <ListsToggle />
+                      <Separator />
+                      <CreateLink />
+                      <EntryLinkToolbarButton onInsert={onInsert} />
+                      <InsertImage />
+                      <InsertTable />
+                      <InsertThematicBreak />
+                      <InsertCodeBlock />
+                    </>
+                  ),
+                }),
+              ]),
         ]}
         contentEditableClassName="canopy-mdx-content"
       />
@@ -154,19 +305,32 @@ const MDXEditorLazy = React.lazy(async () => {
 })
 
 const editorWrapperStyle: React.CSSProperties = {
-  background: '#fff',
-  border: '1px solid var(--mantine-color-gray-4, #ced4da)',
+  background: 'var(--mantine-color-body)',
+  border: '1px solid var(--canopy-input-border)',
   borderRadius: 'var(--mantine-radius-sm, 4px)',
   overflow: 'hidden',
 }
 
 /**
  * Mantine's global CSS reset strips styles from semantic HTML elements.
- * Restore them inside the MDXEditor content area so formatting is visible.
+ * Restore them inside the MDXEditor content area so formatting is visible. The toolbar wraps
+ * rather than scrolling sideways (`toolbar-wrap.ts` hides a separator left at a row's edge).
+ * MDXEditor's dark theme leaves its page background white, so editor and popups take tokens; in
+ * dark mode its drop shadow vanishes over a subtle panel, so popups take a dropdown's border.
+ * Its popups portal into `<body>` at z-index 2, under the editor shell; they take the layer between
+ * the shell and Mantine's drawers and modals, so a drawer or modal still covers them.
  */
 const EditorContentStyles: React.FC = () => (
   <style>{`
     .canopy-mdx-content { min-height: 120px; padding: 8px 12px; }
+    .mdxeditor .canopy-mdx-toolbar { flex-wrap: wrap; overflow-x: visible; }
+    .mdxeditor { --basePageBg: var(--mantine-color-body); }
+    .mdxeditor-popup-container { --basePageBg: var(--canopy-surface-subtle); }
+    body > .mdxeditor-popup-container { z-index: calc(var(--mantine-z-index-modal) - 1); }
+    [data-mantine-color-scheme='dark'] .mdxeditor-popup-container :is([data-radix-popper-content-wrapper] > *, [role='dialog']) {
+      border: 1px solid var(--mantine-color-default-border);
+    }
+    .canopy-mdx-toolbar [data-placeholder] > span:first-child { color: var(--mantine-color-placeholder); }
     .canopy-mdx-content ul { list-style-type: disc; padding-left: 1.5em; margin: 0.5em 0; }
     .canopy-mdx-content ol { list-style-type: decimal; padding-left: 1.5em; margin: 0.5em 0; }
     .canopy-mdx-content ul ul { list-style-type: circle; }
@@ -179,17 +343,17 @@ const EditorContentStyles: React.FC = () => (
     .canopy-mdx-content h5 { font-size: 0.83em; font-weight: 600; margin: 1.67em 0; }
     .canopy-mdx-content h6 { font-size: 0.67em; font-weight: 600; margin: 2.33em 0; }
     .canopy-mdx-content blockquote {
-      border-left: 3px solid var(--mantine-color-gray-4, #ced4da);
+      border-left: 3px solid var(--mantine-color-default-border);
       padding-left: 1em;
       margin: 0.5em 0;
-      color: var(--mantine-color-gray-7, #495057);
+      color: inherit;
     }
-    .canopy-mdx-content hr { border: none; border-top: 1px solid var(--mantine-color-gray-4, #ced4da); margin: 1em 0; }
+    .canopy-mdx-content hr { border: none; border-top: 1px solid var(--mantine-color-default-border); margin: 1em 0; }
     .canopy-mdx-content p { margin: 0.75em 0; }
-    .canopy-mdx-content a { color: var(--mantine-color-blue-6, #228be6); text-decoration: underline; }
+    .canopy-mdx-content a { color: var(--mantine-color-anchor); text-decoration: underline; }
     .canopy-mdx-content img { max-width: 100%; height: auto; }
     .canopy-mdx-content .canopy-mdx-jsx {
-      border: 1px dashed var(--mantine-color-gray-4, #ced4da);
+      border: 1px dashed var(--mantine-color-default-border);
       border-radius: 4px;
       padding: 2px 8px;
       margin: 0.5em 0;
@@ -198,18 +362,14 @@ const EditorContentStyles: React.FC = () => (
     .canopy-mdx-content .canopy-mdx-jsx-tag {
       font-family: var(--mantine-font-family-monospace, monospace);
       font-size: 0.8em;
-      color: var(--mantine-color-gray-6, #868e96);
+      color: var(--mantine-color-dimmed);
     }
   `}</style>
 )
 
-const FallbackTextarea: React.FC<Pick<MarkdownFieldProps, 'value' | 'onChange'>> = ({
-  value,
-  onChange,
-}) => (
+const FallbackTextarea: React.FC<Pick<MarkdownFieldProps, 'value'>> = ({ value }) => (
   <Textarea
     value={value}
-    onChange={(e) => onChange(e.currentTarget.value)}
     placeholder="Loading markdown editor..."
     autosize
     minRows={6}
@@ -218,14 +378,42 @@ const FallbackTextarea: React.FC<Pick<MarkdownFieldProps, 'value' | 'onChange'>>
   />
 )
 
-/**
- * `source` is a textarea over the value, chosen by the user (`reason: null`) or
- * forced because MDXEditor rejected the value and would emit no edits to it.
- */
-type EditorMode =
-  | { kind: 'rich' }
-  | { kind: 'source'; reason: null }
-  | { kind: 'source'; reason: string; failedValue: string }
+/** The textarea over a markdown value; `failure` is why the rich-text editor could not open it. */
+export const MarkdownSourceEditor: React.FC<{
+  label?: string
+  value: string
+  onChange: (value: string) => void
+  failure?: string
+  readOnly?: boolean
+}> = ({ label, value, onChange, failure, readOnly = false }) => (
+  <>
+    {failure !== undefined && (
+      <Alert color="yellow" variant="light" mb="xs" data-testid="markdown-source-fallback">
+        <Text size="sm">
+          {readOnly
+            ? "This content couldn't be opened in the visual editor, so it is shown as text."
+            : "This content couldn't be opened in the visual editor. You can still edit the text and save."}
+        </Text>
+        <Text size="xs" c="dimmed" mt={4}>
+          {failure}
+        </Text>
+      </Alert>
+    )}
+    <Textarea
+      value={value}
+      readOnly={readOnly}
+      onChange={(e) => {
+        if (!readOnly) onChange(e.currentTarget.value)
+      }}
+      aria-label={label ? `${label} (source)` : 'Markdown source'}
+      data-testid="markdown-source-editor"
+      autosize
+      minRows={10}
+      size="sm"
+      styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
+    />
+  </>
+)
 
 export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   id,
@@ -234,17 +422,44 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   value,
   onChange,
   dataCanopyField,
+  htmlTags,
+  readOnly = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
+  const commentControl = useFieldCommentControl(dataCanopyField)
   const editorRef = useRef<MDXEditorMethods>(null)
   const lastExternalValue = useRef(value)
   const lastRejectedSource = useRef<string | null>(null)
   const pendingInsert = useRef<string | null>(null)
   const apiClient = useApiClient()
-  const [mode, setMode] = useState<EditorMode>({ kind: 'rich' })
+  const [sourceChosen, setSourceChosen] = useState(false)
+  // Text this field's author edited in the fallback, which stays in source with the reason.
+  const [editedFallback, setEditedFallback] = useState<{ value: string; reason: string } | null>(
+    null,
+  )
+  const [, rerender] = useReducer((n: number) => n + 1, 0)
   const [rejectedInsert, setRejectedInsert] = useState<string | null>(null)
   const [editorGeneration, setEditorGeneration] = useState(0)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const dark = useComputedColorScheme('light') === 'dark'
+
+  useEffect(() => {
+    const root = rootRef.current
+    return root ? watchToolbarWrap(root, '.canopy-mdx-toolbar') : undefined
+  }, [])
+
+  // A read-only content area stays reachable by keyboard, like the read-only inputs beside it.
+  // Lexical drops it from the tab order once it is not editable, and mounts it after this runs.
+  useEffect(() => {
+    const root = rootRef.current
+    if (!readOnly || !root) return
+    const focusable = () => root.querySelector('.canopy-mdx-content')?.setAttribute('tabindex', '0')
+    focusable()
+    const observer = new MutationObserver(focusable)
+    observer.observe(root, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [readOnly])
 
   // Drives both MDXEditor's drag/drop/paste upload and the custom image
   // dialog's Upload tab via the same presign/finalize-or-proxied pipeline
@@ -258,6 +473,13 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     [apiClient],
   )
 
+  // MDXEditor displays each body image at whatever this resolves; the markdown keeps its src.
+  const { baseUrl: assetBaseUrl } = useAssetContext()
+  const imagePreviewHandler = useCallback(
+    async (src: string) => editorImageSrc(src, assetBaseUrl),
+    [assetBaseUrl],
+  )
+
   // Sync external value changes into the editor, recording them even while none
   // is mounted, so a later return to an earlier value is still a change.
   useEffect(() => {
@@ -268,11 +490,12 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
 
   const emitChange = useCallback(
     (newValue: string) => {
+      if (readOnly) return
       lastExternalValue.current = newValue
       setRejectedInsert(null)
       onChange(newValue)
     },
-    [onChange],
+    [onChange, readOnly],
   )
 
   // Dropped: MDXEditor's re-serialization of the document it was mounted with
@@ -298,6 +521,14 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     }
   }, [])
 
+  // A value the rich-text editor failed on opens as source, whether MDXEditor rejected it or
+  // crashed rendering it; rich-text-failures.ts holds the record for the session. Text edited
+  // from there stays in source in this field only, so it marks no other field.
+  const failure =
+    recallRichTextFailure(value) ??
+    (editedFallback?.value === value ? editedFallback.reason : undefined)
+  const showSource = sourceChosen || failure !== undefined
+
   // MDXEditor can report the error while rendering (it imports as it is
   // created), hence the microtask. Any rejection outside an insert is the
   // document, this render's `value`: MDXEditor is created from it, and gets
@@ -314,79 +545,76 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
           setRejectedInsert(error)
           setEditorGeneration((n) => n + 1)
         } else {
-          setMode({ kind: 'source', reason: error, failedValue: value })
+          rememberRichTextFailure(value, error)
+          rerender()
         }
       })
     },
     [value],
   )
 
-  // Edits in the fallback stay in it: the edited text is no more likely to load.
-  const handleSourceChange = useCallback(
-    (newValue: string) => {
-      setMode((current) =>
-        current.kind === 'source' && current.reason !== null
-          ? { ...current, failedValue: newValue }
-          : current,
-      )
-      emitChange(newValue)
+  const handleEditorCrash = useCallback(
+    ({ error }: CaughtEditorError) => {
+      rememberRichTextFailure(value, sanitizeErrorMessage(getErrorMessage(error)))
+      rerender()
     },
-    [emitChange],
+    [value],
   )
 
-  // A fallback holds only for the value MDXEditor rejected.
-  const showSource = mode.kind === 'source' && (mode.reason === null || mode.failedValue === value)
+  // Edits in the fallback stay in it: the edited text is no more likely to load.
+  const handleSourceChange = (newValue: string) => {
+    if (failure !== undefined) setEditedFallback({ value: newValue, reason: failure })
+    emitChange(newValue)
+  }
+
+  const toggleMode = () => {
+    if (!showSource) {
+      setSourceChosen(true)
+      return
+    }
+    // Asking for rich text tries the editor again on a value it failed on.
+    forgetRichTextFailure(value)
+    setEditedFallback(null)
+    setSourceChosen(false)
+    rerender()
+  }
 
   return (
     <div
+      ref={rootRef}
       id={inputId}
       data-canopy-field={dataCanopyField}
       className="canopy-markdown-field"
       {...groupDescriptionProps(inputId, description)}
     >
-      <Group justify="space-between" align="flex-end" mb={4} wrap="nowrap">
-        {label ? (
-          <Text size="sm" fw={500}>
-            {label}
-          </Text>
-        ) : (
-          <span />
-        )}
-        <Button
-          variant="subtle"
-          size="compact-xs"
-          data-testid="markdown-mode-toggle"
-          onClick={() => setMode(showSource ? { kind: 'rich' } : { kind: 'source', reason: null })}
-        >
-          {showSource ? 'Rich text' : 'Edit source'}
-        </Button>
-      </Group>
+      <Box mb={4}>
+        <FieldLabel
+          label={label}
+          commentControl={commentControl}
+          actions={
+            !readOnly && (
+              <Button
+                variant="subtle"
+                size="compact-xs"
+                data-testid="markdown-mode-toggle"
+                onClick={toggleMode}
+              >
+                {showSource ? 'Rich text' : 'Edit source'}
+              </Button>
+            )
+          }
+        />
+      </Box>
       <FieldDescription baseId={inputId} description={description} />
       <EditorContentStyles />
       {showSource ? (
-        <>
-          {mode.kind === 'source' && mode.reason !== null && (
-            <Alert color="yellow" variant="light" mb="xs" data-testid="markdown-source-fallback">
-              <Text size="sm">
-                The rich-text editor can&apos;t show this content, so it is open as source. Your
-                edits here are saved as usual.
-              </Text>
-              <Text size="xs" c="dimmed" mt={4}>
-                {mode.reason}
-              </Text>
-            </Alert>
-          )}
-          <Textarea
-            value={value}
-            onChange={(e) => handleSourceChange(e.currentTarget.value)}
-            aria-label={label ? `${label} (source)` : 'Markdown source'}
-            data-testid="markdown-source-editor"
-            autosize
-            minRows={10}
-            size="sm"
-            styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
-          />
-        </>
+        <MarkdownSourceEditor
+          label={label}
+          value={value}
+          onChange={handleSourceChange}
+          failure={failure}
+          readOnly={readOnly}
+        />
       ) : (
         <div style={editorWrapperStyle}>
           {rejectedInsert !== null && (
@@ -406,17 +634,28 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
               </Text>
             </Alert>
           )}
-          <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>
-            <MDXEditorLazy
-              key={editorGeneration}
-              markdown={value}
-              onChange={handleEditorChange}
-              onError={handleEditorError}
-              onInsert={handleInsert}
-              editorRef={editorRef}
-              imageUploadHandler={imageUploadHandler}
-            />
-          </Suspense>
+          <EditorErrorBoundary
+            context={{ boundary: 'rich-text', fieldPath: dataCanopyField }}
+            fallback={() => null}
+            onCaught={handleEditorCrash}
+          >
+            <Suspense fallback={<FallbackTextarea value={value} />}>
+              <MDXEditorLazy
+                key={`${editorGeneration}-${readOnly}`}
+                markdown={value}
+                onChange={handleEditorChange}
+                onError={handleEditorError}
+                onInsert={handleInsert}
+                editorRef={editorRef}
+                imageUploadHandler={imageUploadHandler}
+                imagePreviewHandler={imagePreviewHandler}
+                htmlTags={htmlTags}
+                readOnly={readOnly}
+                contentLabel={label}
+                dark={dark}
+              />
+            </Suspense>
+          </EditorErrorBoundary>
         </div>
       )}
     </div>

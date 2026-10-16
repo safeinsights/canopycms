@@ -27,6 +27,7 @@ import type { ApiContext, ApiRequest } from './types'
 import { CONTENT_ROUTES } from './content'
 import { REFERENCE_OPTIONS_ROUTES } from './reference-options'
 import { RESOLVE_REFERENCES_ROUTES } from './resolve-references'
+import { mockConsole } from '../test-utils/console-spy'
 
 const personSchema = [
   { name: 'heading', type: 'string' as const, isTitle: true },
@@ -388,6 +389,55 @@ describe('reference resolution applies path ACLs to the referenced entry', () =>
     it('returns the full value to a reader the rule admits', async () => {
       const res = await resolve(['insiders'])
       expect(res.data?.resolved[agent]).toStrictEqual(fullAgent())
+    })
+  })
+
+  describe('a target deleted after the reference was saved', () => {
+    const missingAlice = () => ({ id: alice, unavailable: true, reason: 'missing' })
+    let consoleSpy: ReturnType<typeof mockConsole>
+
+    beforeEach(async () => {
+      const people = (await fs.readdir(path.join(root, 'content'))).find((dir) =>
+        dir.startsWith('people.'),
+      )
+      await fs.unlink(path.join(root, 'content', people!, `person.alice.${alice}.json`))
+      consoleSpy = mockConsole()
+    })
+    afterEach(() => consoleSpy.restore())
+
+    it('reads as a MissingReference carrying the id, at every site', async () => {
+      const { data } = await readHome(['insiders'])
+      expect(data.related).toEqual([missingAlice(), fullAgent()])
+      expect((data.meta as Record<string, unknown>).owner).toEqual(missingAlice())
+    })
+
+    it('keeps the stored id when an editor saves what they read, with a warning', async () => {
+      const read = await readHome(['insiders'])
+      const res = await CONTENT_ROUTES.write.handler(
+        createCtx(),
+        { user: user(['insiders']) },
+        { branch: BRANCH, path: unsafeAsLogicalPath('content/pages/home') },
+        { format: 'json', data: read.data, expectedVersion: read.version },
+      )
+      expect(res.status).toBe(200)
+      expect(res.data?.validationWarnings?.map((w) => w.fieldPath)).toEqual([
+        'related',
+        'meta.owner',
+      ])
+
+      const stored = JSON.parse(await fs.readFile(homeFile, 'utf8'))
+      expect(stored.related).toEqual([alice, agent])
+      expect(stored.meta.owner).toBe(alice)
+    })
+
+    it('returns the same MissingReference from the live-preview resolve endpoint', async () => {
+      const res = await RESOLVE_REFERENCES_ROUTES.post.handler(
+        createCtx(),
+        { user: user(['insiders']) },
+        { branch: BRANCH },
+        { ids: [alice] },
+      )
+      expect(res.data?.resolved[alice]).toStrictEqual(missingAlice())
     })
   })
 

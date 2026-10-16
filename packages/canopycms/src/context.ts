@@ -55,6 +55,8 @@ import {
   type ListEntriesItem,
 } from './content-listing'
 import { createDebugLogger } from './utils/debug'
+import { baseBranchOf } from './utils/base-branch'
+import { CONTEXT_USER_ID } from './system-users'
 
 const log = createDebugLogger({ prefix: 'Context' })
 
@@ -269,12 +271,12 @@ export function createCanopyContext(options: CanopyContextOptions) {
     // defaultActiveBranch is explicit). Same contract as the HTTP API handler —
     // switching branches mid-session updates what getCanopy() serves.
     await services.refreshActiveBranch()
+    await services.resolvePendingBaseBranch()
     const user = await getUser()
 
     // Read once, so every read and listing in this request agrees on it even if
     // a concurrent request's refreshActiveBranch() replaces services.config.
-    const activeBranch =
-      services.config.defaultActiveBranch ?? services.config.defaultBaseBranch ?? 'main'
+    const activeBranch = services.config.defaultActiveBranch ?? baseBranchOf(services.config)
 
     // No ACL enforcement at build time, on static deployments, or for the
     // synthetic admin. For the last this is load-bearing, not an optimization:
@@ -320,7 +322,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
           config: services.config,
           branchName: activeBranch,
           mode: services.config.mode,
-          createdBy: 'canopycms-context',
+          createdBy: CONTEXT_USER_ID,
           remoteUrl: services.config.defaultRemoteUrl,
         })
       }

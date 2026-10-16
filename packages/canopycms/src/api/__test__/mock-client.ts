@@ -8,15 +8,15 @@ import type { CanopyApiClient } from '../client'
 import type { ApiResponse } from '../types'
 import { createLogicalPath, createPhysicalPath } from '../../paths'
 import type { ContentId } from '../../paths'
-import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, BranchResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
-import type { BranchMergeResponse } from '../branch-status'
+import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
+import type { BranchMergeResponse, SubmitBranchResponse } from '../branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from '../content'
 import type { ReferenceOptionsResponse } from '../reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from '../resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from '../entries'
 import type { AssetDeleteResponse, AssetsListResponse, FinalizeAssetBody, FinalizeAssetResponse, PresignAssetBody, PresignAssetResponse } from '../assets'
-import type { GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from '../permissions'
+import type { BatchGetUserMetadataBody, BatchGetUserMetadataResponse, GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from '../permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from '../groups'
 import type { UserInfoResponse } from '../user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from '../schema'
@@ -42,7 +42,7 @@ export type MockApiClient = {
 export function createMockApiClient(): MockApiClient {
   return {
   branches: {
-    list: vi.fn().mockResolvedValue(mockSuccess({"branches":[]})),
+    list: vi.fn().mockResolvedValue(mockSuccess({"branches":[],"users":[]})),
     create: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
     delete: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
     updateAccess: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
@@ -58,7 +58,7 @@ export function createMockApiClient(): MockApiClient {
   },
 
   comments: {
-    list: vi.fn().mockResolvedValue(mockSuccess({"threads":[]})),
+    list: vi.fn().mockResolvedValue(mockSuccess({"threads":[],"users":[]})),
     add: vi.fn().mockResolvedValue(mockSuccess({"threadId":"mock-thread-id","commentId":"mock-comment-id"})),
     resolve: vi.fn().mockResolvedValue(mockSuccess({"resolved":true})),
   },
@@ -91,6 +91,7 @@ export function createMockApiClient(): MockApiClient {
     searchUsers: vi.fn().mockResolvedValue(mockSuccess({"users":[]})),
     listGroups: vi.fn().mockResolvedValue(mockSuccess({"groups":[]})),
     getUserMetadata: vi.fn().mockResolvedValue(mockSuccess({"user":null})),
+    batchGetUserMetadata: vi.fn().mockResolvedValue(mockSuccess({"users":[]})),
   },
 
   groups: {
@@ -121,7 +122,7 @@ export function createMockApiClient(): MockApiClient {
     purgeBranchDir: vi.fn().mockResolvedValue(mockSuccess({"trashedAs":".trash-example-branch-20240101T000000Z"})),
     repairBranchDir: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"example-branch","status":"editing","access":{},"createdBy":"admin","createdAt":"2024-01-01T00:00:00.000Z","updatedAt":"2024-01-01T00:00:00.000Z"},"archivedAs":"branch.json.corrupt-20240101T000000Z","reset":{"status":"editing","access":{},"createdBy":"admin"}})),
     repairContentDuplicates: vi.fn().mockResolvedValue(mockSuccess({"resolved":[{"id":"a1b2c3d4e5f6","keptPath":"content/posts/dune.a1b2c3d4e5f6.json","archivedAs":[".duplicate-content-id.20240101T000000Z.post.dune-old.a1b2c3d4e5f6.json"]}]})),
-    status: vi.fn().mockResolvedValue(mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null,"build":{"canopycmsVersion":"0.0.0"},"assetStore":{"configured":false}})),
+    status: vi.fn().mockResolvedValue(mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null,"build":{"canopycmsVersion":"0.0.0"},"assetStore":{"configured":false},"imageProcessing":{"available":true}})),
     listTasks: vi.fn().mockResolvedValue(mockSuccess({"tasks":[]})),
     retryTask: vi.fn().mockResolvedValue(mockSuccess({"newTaskId":"00000000-0000-0000-0000-000000000000"})),
     deleteTask: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
@@ -146,7 +147,7 @@ export function mockForbidden(): ApiResponse<never> {
 }
 
 export function mockBranchListResponse(): BranchListResponse {
-  return mockSuccess({"branches":[]})
+  return mockSuccess({"branches":[],"users":[]})
 }
 
 export function mockBranchListItemResponse(): BranchListItemResponse {
@@ -157,16 +158,16 @@ export function mockBranchDeleteResponse(): BranchDeleteResponse {
   return mockSuccess({"deleted":true})
 }
 
-export function mockBranchResponse(): BranchResponse {
-  return mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})
-}
-
 export function mockBranchMergeResponse(): BranchMergeResponse {
   return mockSuccess({"branch":{"name":"test-branch","status":"archived"}})
 }
 
+export function mockSubmitBranchResponse(): SubmitBranchResponse {
+  return mockSuccess({"branch":{"name":"test-branch","status":"submitted","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})
+}
+
 export function mockCommentsResponse(): CommentsResponse {
-  return mockSuccess({"threads":[]})
+  return mockSuccess({"threads":[],"users":[]})
 }
 
 export function mockAddCommentResponse(): AddCommentResponse {
@@ -239,6 +240,10 @@ export function mockListGroupsResponse(): ListGroupsResponse {
 
 export function mockGetUserMetadataResponse(): GetUserMetadataResponse {
   return mockSuccess({"user":null})
+}
+
+export function mockBatchGetUserMetadataResponse(): BatchGetUserMetadataResponse {
+  return mockSuccess({"users":[]})
 }
 
 export function mockInternalGroupsResponse(): InternalGroupsResponse {
@@ -314,7 +319,7 @@ export function mockRepairContentDuplicatesResponse(): RepairContentDuplicatesRe
 }
 
 export function mockAdminStatusResponse(): AdminStatusResponse {
-  return mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null,"build":{"canopycmsVersion":"0.0.0"},"assetStore":{"configured":false}})
+  return mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null,"build":{"canopycmsVersion":"0.0.0"},"assetStore":{"configured":false},"imageProcessing":{"available":true}})
 }
 
 export function mockAdminTasksResponse(): AdminTasksResponse {

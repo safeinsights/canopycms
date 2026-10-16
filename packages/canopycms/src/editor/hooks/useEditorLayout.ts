@@ -1,44 +1,203 @@
-import { useEffect, useRef, useState } from 'react'
-import type { PaneLayout } from '../EditorPanes'
+import { useCallback } from 'react'
+import { useLocalStorage, useMounted } from '@mantine/hooks'
+import {
+  DEFAULT_SIDE_SPLIT_PERCENT,
+  DEFAULT_STACKED_SPLIT_PERCENT,
+  SPLIT_PERCENT_MAX,
+  SPLIT_PERCENT_MIN,
+  type PaneArrangement,
+} from '../shell/PaneLayout'
+import { isPlainRecord } from '../../validation/field-traversal'
 
-export interface UseEditorLayoutReturn {
-  layout: PaneLayout
-  setLayout: (layout: PaneLayout) => void
+/** @internal The preview toolbar's width choice; see `preview-scale.ts`. */
+export type PreviewWidth = 'fit' | 'desktop' | 'tablet' | 'mobile'
+
+const PREVIEW_WIDTHS: readonly PreviewWidth[] = ['fit', 'desktop', 'tablet', 'mobile']
+const PANE_LAYOUTS: readonly PaneArrangement[] = ['side', 'stacked']
+
+export const CONTENT_PANEL_WIDTH_MIN = 240
+export const CONTENT_PANEL_WIDTH_MAX = 400
+
+/** The persisted layout preferences: one JSON object under one storage key. */
+interface EditorLayoutPrefs {
+  /** Unset until the user picks one, so it follows `defaultLayout`; JSON drops it while unset. */
+  layout?: PaneArrangement
   highlightEnabled: boolean
-  setHighlightEnabled: (enabled: boolean) => void
-  headerRef: React.RefObject<HTMLDivElement>
-  headerHeight: number
+  sideSplitPercent: number
+  stackedSplitPercent: number
+  previewWidth: PreviewWidth
+  contentPanelOpen: boolean
+  contentPanelWidth: number
 }
 
 /**
- * Custom hook for managing Editor layout state and measurements.
+ * @internal Exported for tests. Module-level so its identity is stable: Mantine memoises its
+ * storage reader on the default value.
  */
-export function useEditorLayout(): UseEditorLayoutReturn {
-  const [layout, setLayout] = useState<PaneLayout>('side')
-  const [highlightEnabled, setHighlightEnabled] = useState(false)
-  const [headerHeight, setHeaderHeight] = useState<number>(80)
-  const headerRef = useRef<HTMLDivElement | null>(null)
+export const DEFAULT_EDITOR_LAYOUT_PREFS: EditorLayoutPrefs = {
+  highlightEnabled: false,
+  sideSplitPercent: DEFAULT_SIDE_SPLIT_PERCENT,
+  stackedSplitPercent: DEFAULT_STACKED_SPLIT_PERCENT,
+  previewWidth: 'fit',
+  contentPanelOpen: false,
+  contentPanelWidth: 280,
+}
 
-  useEffect(() => {
-    if (!headerRef.current) return
+/** One key per deployment prefix, so two editors on one origin keep separate preferences. */
+export const editorLayoutStorageKey = (basePath?: string): string =>
+  `canopycms:editor-layout:${basePath || '/'}`
 
-    const node = headerRef.current
-    const updateHeight = () => setHeaderHeight(node.getBoundingClientRect().height || 80)
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value))
 
-    updateHeight()
+const clampSplitPercent = (percent: number): number =>
+  clamp(percent, SPLIT_PERCENT_MIN, SPLIT_PERCENT_MAX)
 
-    const observer = new ResizeObserver(updateHeight)
-    observer.observe(node)
+const clampContentPanelWidth = (width: number): number =>
+  clamp(width, CONTENT_PANEL_WIDTH_MIN, CONTENT_PANEL_WIDTH_MAX)
 
-    return () => observer.disconnect()
-  }, [])
+const oneOf = <T extends string>(options: readonly T[], value: unknown, fallback: T): T =>
+  options.find((option) => option === value) ?? fallback
+
+const boolOr = (value: unknown, fallback: boolean): boolean =>
+  typeof value === 'boolean' ? value : fallback
+
+const numberOr = (value: unknown, fallback: number, normalise: (n: number) => number): number =>
+  typeof value === 'number' && Number.isFinite(value) ? normalise(value) : fallback
+
+/**
+ * @internal Exported for tests. Reads stored preferences, validating each field on its own: an invalid or missing field takes
+ * its default and the valid ones are kept. Mantine does not guard `deserialize`, so this never
+ * throws, whatever is under the key.
+ */
+export function parseEditorLayoutPrefs(raw: string | undefined): EditorLayoutPrefs {
+  const defaults = DEFAULT_EDITOR_LAYOUT_PREFS
+  if (!raw) return defaults
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return defaults
+  }
+  if (!isPlainRecord(parsed)) return defaults
 
   return {
-    layout,
+    layout: PANE_LAYOUTS.find((layout) => layout === parsed.layout),
+    highlightEnabled: boolOr(parsed.highlightEnabled, defaults.highlightEnabled),
+    sideSplitPercent: numberOr(
+      parsed.sideSplitPercent,
+      defaults.sideSplitPercent,
+      clampSplitPercent,
+    ),
+    stackedSplitPercent: numberOr(
+      parsed.stackedSplitPercent,
+      defaults.stackedSplitPercent,
+      clampSplitPercent,
+    ),
+    previewWidth: oneOf(PREVIEW_WIDTHS, parsed.previewWidth, defaults.previewWidth),
+    contentPanelOpen: boolOr(parsed.contentPanelOpen, defaults.contentPanelOpen),
+    contentPanelWidth: numberOr(
+      parsed.contentPanelWidth,
+      defaults.contentPanelWidth,
+      clampContentPanelWidth,
+    ),
+  }
+}
+
+export interface UseEditorLayoutOptions {
+  /** Where the preferences persist; defaults to `editorLayoutStorageKey()`. */
+  storageKey?: string
+  /** The layout until the user picks one; defaults to side by side. */
+  defaultLayout?: PaneArrangement
+}
+
+export interface UseEditorLayoutReturn {
+  /** The stored preferences have been read; until then every value is its default. */
+  loaded: boolean
+  layout: PaneArrangement
+  setLayout: (layout: PaneArrangement) => void
+  highlightEnabled: boolean
+  setHighlightEnabled: (enabled: boolean) => void
+  sideSplitPercent: number
+  stackedSplitPercent: number
+  /** Stores the clamped primary-pane size for one layout; a non-finite percent is ignored. */
+  setSplitPercent: (layout: PaneArrangement, percent: number) => void
+  previewWidth: PreviewWidth
+  setPreviewWidth: (width: PreviewWidth) => void
+  contentPanelOpen: boolean
+  setContentPanelOpen: (open: boolean) => void
+  contentPanelWidth: number
+  setContentPanelWidth: (width: number) => void
+}
+
+/**
+ * Editor layout preferences, persisted to localStorage (read after mount, so SSR renders the
+ * defaults; a throwing storage keeps them in memory).
+ */
+export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayoutReturn {
+  const [prefs, setPrefs] = useLocalStorage<EditorLayoutPrefs>({
+    key: options?.storageKey ?? editorLayoutStorageKey(),
+    defaultValue: DEFAULT_EDITOR_LAYOUT_PREFS,
+    deserialize: parseEditorLayoutPrefs,
+    // Each tab keeps its own layout; a change elsewhere reaches only tabs opened later.
+    sync: false,
+  })
+  // Mounted in the same effect pass as the storage read above, and after it, so the render that
+  // first sees `loaded` also sees the stored values.
+  const loaded = useMounted()
+
+  const setLayout = useCallback(
+    (layout: PaneArrangement) => setPrefs((prev) => ({ ...prev, layout })),
+    [setPrefs],
+  )
+  const setHighlightEnabled = useCallback(
+    (highlightEnabled: boolean) => setPrefs((prev) => ({ ...prev, highlightEnabled })),
+    [setPrefs],
+  )
+  const setSplitPercent = useCallback(
+    (layout: PaneArrangement, percent: number) => {
+      if (!Number.isFinite(percent)) return
+      const clamped = clampSplitPercent(percent)
+      setPrefs((prev) =>
+        layout === 'side'
+          ? { ...prev, sideSplitPercent: clamped }
+          : { ...prev, stackedSplitPercent: clamped },
+      )
+    },
+    [setPrefs],
+  )
+  const setPreviewWidth = useCallback(
+    (previewWidth: PreviewWidth) => setPrefs((prev) => ({ ...prev, previewWidth })),
+    [setPrefs],
+  )
+  const setContentPanelOpen = useCallback(
+    (contentPanelOpen: boolean) => setPrefs((prev) => ({ ...prev, contentPanelOpen })),
+    [setPrefs],
+  )
+  const setContentPanelWidth = useCallback(
+    (width: number) => {
+      if (!Number.isFinite(width)) return
+      const contentPanelWidth = clampContentPanelWidth(width)
+      setPrefs((prev) => ({ ...prev, contentPanelWidth }))
+    },
+    [setPrefs],
+  )
+
+  return {
+    loaded,
+    layout: prefs.layout ?? options?.defaultLayout ?? 'side',
     setLayout,
-    highlightEnabled,
+    highlightEnabled: prefs.highlightEnabled,
     setHighlightEnabled,
-    headerRef,
-    headerHeight,
+    sideSplitPercent: prefs.sideSplitPercent,
+    stackedSplitPercent: prefs.stackedSplitPercent,
+    setSplitPercent,
+    previewWidth: prefs.previewWidth,
+    setPreviewWidth,
+    contentPanelOpen: prefs.contentPanelOpen,
+    setContentPanelOpen,
+    contentPanelWidth: prefs.contentPanelWidth,
+    setContentPanelWidth,
   }
 }

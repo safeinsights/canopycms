@@ -15,7 +15,7 @@
  * TS2353. `handler.test.ts` is clean only because `@aws-sdk/client-s3@3.1092.0`
  * happens to have landed on 4.16.1 too; that is the lockfile's luck, not a
  * property of the idiom. The duplicate is a pre-existing repo condition, filed
- * as .claude/future-tasks/smithy-types-duplicate-resolution.md rather than
+ * as safeinsights/canopycms#848 rather than
  * fixed from a PR about secret handling.
  *
  * So: mock the module boundary instead, and keep the REAL

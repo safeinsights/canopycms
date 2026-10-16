@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (verified 2026-07-24) — `withCanopy()` adds React aliases to the consumer's copy, `react`/`react-dom` are peerDependencies, README documents the `file:`-reference failure mode. Reopen only if a Turbopack-alias crash recurs.
+---
 # Problem: Dual React instances when consuming canopycms via `file:` references
 
 Status: **RESOLVED (verified 2026-07-24)** — the proposed fix shipped: `withCanopy()`

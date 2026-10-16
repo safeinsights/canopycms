@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-12, `ccc06398`) — the five OPEN-table rows whose target file had moved to `resolved/` (`dual-build-ci`, `editor-async-patterns`, `swr`, `program-a-release-path`, `program-b-canopy-hardening`) were corrected, so the open tables again list open work only and none of those links are dead. Retired 2026-08-13 by the backlog-hygiene pass, which also adopted the file's own suggested one-liner as a real guard: `pnpm lint:tasks` (`scripts/check-future-tasks.mjs`) runs in CI and pre-commit and enforces all three checks the file asked for — link targets resolved relative to each linking file's own directory, open rows that point into `resolved/`, and orphans in both directions (file with no row, row with no file). The same pass fixed 14 dead links the new guard surfaced, only two of which were known
+---
 # `index.md` open tables still list five tasks that live in `resolved/`
 
 Found 2026-08-12 while resolving an `index.md` merge conflict on PR #186.

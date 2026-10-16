@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { init, initDeployAws, workerRunOnce } from './init'
 import { CDK_DEPENDENCIES } from './project-detect'
 import { mockConsole } from '../test-utils/console-spy'
@@ -541,17 +542,49 @@ describe('canopycms init-deploy aws', () => {
     expect(dockerfile).not.toContain('ENV CANOPY_MODE=prod')
   })
 
-  it('Dockerfile.cms takes the browser half of the operating mode as a build arg', async () => {
-    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
-
-    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+  describe('Dockerfile.cms: the browser half of the operating mode', () => {
     // The editor page is a client component that imports canopycms.config.ts,
     // so the browser's copy of `mode` is inlined at build time and can only
-    // come from a NEXT_PUBLIC_* build arg -- never from the Lambda's
-    // environment. Defaulted to dev so a plain `docker build` is unchanged;
-    // the generated stack passes prod.
-    expect(dockerfile).toContain('ARG NEXT_PUBLIC_CANOPY_MODE=dev')
-    expect(dockerfile).toContain('ENV NEXT_PUBLIC_CANOPY_MODE=$NEXT_PUBLIC_CANOPY_MODE')
+    // come from a NEXT_PUBLIC_* build arg -- never from the Lambda's environment.
+    async function readDockerfile(): Promise<string> {
+      await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+      return fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    }
+
+    /** The template's own RUN check, joined as Docker joins `\` continuations, run under `sh`. */
+    function runModeCheck(dockerfile: string, value: string): number | null {
+      const lines = dockerfile.split('\n')
+      const start = lines.findIndex((line) =>
+        line.startsWith('RUN case "$NEXT_PUBLIC_CANOPY_MODE"'),
+      )
+      expect(start, 'the RUN step that checks NEXT_PUBLIC_CANOPY_MODE').toBeGreaterThan(-1)
+      const script: string[] = []
+      for (const line of lines.slice(start)) {
+        script.push(line.replace(/\\$/, ''))
+        if (!line.endsWith('\\')) break
+      }
+      const result = spawnSync('sh', ['-c', script.join('').replace(/^RUN /, '')], {
+        env: { PATH: process.env.PATH, NEXT_PUBLIC_CANOPY_MODE: value },
+        encoding: 'utf-8',
+      })
+      return result.status
+    }
+
+    it('defaults to prod, the mode the deployed CMS server runs in', async () => {
+      const dockerfile = await readDockerfile()
+      expect(dockerfile).toMatch(/^ARG NEXT_PUBLIC_CANOPY_MODE=prod$/m)
+      expect(dockerfile).toContain('ENV NEXT_PUBLIC_CANOPY_MODE=$NEXT_PUBLIC_CANOPY_MODE')
+    })
+
+    it('fails the build unless the value is exactly prod or dev', async () => {
+      const dockerfile = await readDockerfile()
+      expect(runModeCheck(dockerfile, 'prod')).toBe(0)
+      expect(runModeCheck(dockerfile, 'dev')).toBe(0)
+      // `--build-arg NEXT_PUBLIC_CANOPY_MODE=` would fall back to the config's dev literal.
+      expect(runModeCheck(dockerfile, '')).toBe(1)
+      expect(runModeCheck(dockerfile, 'production')).toBe(1)
+      expect(runModeCheck(dockerfile, 'prod ')).toBe(1)
+    })
   })
 
   it('the generated CDK stack passes NEXT_PUBLIC_CANOPY_MODE=prod as a build arg', async () => {

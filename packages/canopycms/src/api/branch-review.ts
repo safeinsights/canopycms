@@ -10,7 +10,7 @@ import { syncConvertToDraft } from './github-sync'
 const requestChangesHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
-  _req: ApiRequest,
+  req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
@@ -31,19 +31,19 @@ const requestChangesHandler = async (
     branch: { name: branchContext.branch.name, status: 'editing' },
   })
 
-  // TODO: Optionally record comment in .canopycms/comments.json when comment system is implemented
+  // TODO: Optionally record comment in .canopy-meta/comments.json when comment system is implemented
 
   return {
     ok: true,
     status: 200,
-    data: { branch: toBranchListItem(ctx.services.config, updated.branch) },
+    data: { branch: toBranchListItem(ctx.services.config, updated.branch, req.user) },
   }
 }
 
 const approveBranchHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
-  _req: ApiRequest,
+  req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
@@ -67,7 +67,7 @@ const approveBranchHandler = async (
   return {
     ok: true,
     status: 200,
-    data: { branch: toBranchListItem(ctx.services.config, updated.branch) },
+    data: { branch: toBranchListItem(ctx.services.config, updated.branch, req.user) },
   }
 }
 

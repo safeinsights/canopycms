@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import matter from 'gray-matter'
-import { stringify as yamlStringify } from 'yaml'
+import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 
 import { serializeFrontmatter, serializeYaml } from './content-serialize'
 
@@ -507,17 +507,22 @@ Body text here.
   const MD_DATA = { draft: false, title: 'Hello', tags: ['guides', 'release'] }
 
   it('is byte-identical to gray-matter when there is no existing file', () => {
-    expect(serializeFrontmatter('\nBody text here.\n', MD_DATA)).toBe(
+    expect(serializeFrontmatter('\nBody text here.\n', MD_DATA, undefined, 'md')).toBe(
       matter.stringify('\nBody text here.\n', MD_DATA),
     )
   })
 
   it('round-trips unchanged frontmatter with every comment intact', () => {
-    expect(serializeFrontmatter('\nBody text here.\n', MD_DATA, MD)).toBe(MD)
+    expect(serializeFrontmatter('\nBody text here.\n', MD_DATA, MD, 'md')).toBe(MD)
   })
 
   it('keeps frontmatter comments when a field and the body both change', () => {
-    const out = serializeFrontmatter('\nRewritten body.\n', { ...MD_DATA, title: 'Goodbye' }, MD)
+    const out = serializeFrontmatter(
+      '\nRewritten body.\n',
+      { ...MD_DATA, title: 'Goodbye' },
+      MD,
+      'md',
+    )
     expect(out).toContain('# Post metadata. Keep `draft` first')
     expect(out).toContain('# Order matters: the first tag is the primary category.')
     expect(out).toContain('title: Goodbye # displayed in the card')
@@ -529,13 +534,13 @@ Body text here.
 
   it('falls back to gray-matter when the frontmatter on disk does not parse', () => {
     const malformed = '---\na: [1, 2\nb: 3\n---\n\nBody.\n'
-    expect(serializeFrontmatter('\nBody.\n', MD_DATA, malformed)).toBe(
+    expect(serializeFrontmatter('\nBody.\n', MD_DATA, malformed, 'md')).toBe(
       matter.stringify('\nBody.\n', MD_DATA),
     )
   })
 
   it('falls back to gray-matter for a file with no frontmatter at all', () => {
-    expect(serializeFrontmatter('\nBody.\n', MD_DATA, 'Just a body, no delimiters.\n')).toBe(
+    expect(serializeFrontmatter('\nBody.\n', MD_DATA, 'Just a body, no delimiters.\n', 'md')).toBe(
       matter.stringify('\nBody.\n', MD_DATA),
     )
   })
@@ -545,10 +550,905 @@ Body text here.
     // content-keyed cache, and the object it returns on a cache HIT has lost `.matter`. Splitting
     // through that path preserved comments on the first save of a file and silently dropped them
     // on every save after — including across different entries that happen to share bytes.
-    const first = serializeFrontmatter('\nOne.\n', MD_DATA, MD)
-    const second = serializeFrontmatter('\nTwo.\n', MD_DATA, MD)
+    const first = serializeFrontmatter('\nOne.\n', MD_DATA, MD, 'md')
+    const second = serializeFrontmatter('\nTwo.\n', MD_DATA, MD, 'md')
     expect(first).toContain('# Order matters: the first tag is the primary category.')
     expect(second).toContain('# Order matters: the first tag is the primary category.')
     expect(second).toContain('# Post metadata. Keep `draft` first')
+  })
+})
+
+/**
+ * The read path parses frontmatter with gray-matter, whose js-yaml reads YAML 1.1: a bare date is
+ * a `Date` (carried over JSON as a timestamp string) and `014` is octal. The editor sends every
+ * field back as it read it.
+ */
+describe('serializeFrontmatter compares values as the read path parsed them', () => {
+  const DATED = `---
+title: Launch # shown in the card
+date: 2024-01-15
+updated: 2024-01-15T10:30:00Z
+mode: 014
+history:
+  - 2023-12-01
+  - drafted
+meta:
+  published: 2024-03-01
+---
+
+Body.
+`
+  const asRead = (raw: string) =>
+    JSON.parse(JSON.stringify(matter(raw, {}).data)) as Record<string, unknown>
+
+  it('writes the file byte for byte when no value changed', () => {
+    expect(asRead(DATED).date).toBe('2024-01-15T00:00:00.000Z')
+    expect(serializeFrontmatter('\nBody.\n', asRead(DATED), DATED, 'md')).toBe(DATED)
+  })
+
+  it('treats a server-side Date like the timestamp the API would carry', () => {
+    const data = { ...matter(DATED, {}).data }
+    expect(data.date).toBeInstanceOf(Date)
+    expect(serializeFrontmatter('\nBody.\n', data, DATED, 'md')).toBe(DATED)
+  })
+
+  it('writes a date the editor changed, and only that line', () => {
+    const data = { ...asRead(DATED), date: '2024-02-20T00:00:00.000Z' }
+    const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+    expect(out).toBe(DATED.replace('date: 2024-01-15\n', 'date: 2024-02-20T00:00:00.000Z\n'))
+    expect(asRead(out)).toEqual(data)
+  })
+
+  it('writes changed dates inside a list and a nested map, leaving their neighbours', () => {
+    const read = asRead(DATED)
+    const data = {
+      ...read,
+      history: ['2023-11-30T00:00:00.000Z', 'drafted'],
+      meta: { published: '2024-04-01T00:00:00.000Z' },
+    }
+    const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+    expect(out).toContain('title: Launch # shown in the card\ndate: 2024-01-15\n')
+    expect(out).toContain('mode: 014\n')
+    expect(asRead(out)).toEqual(data)
+  })
+
+  it('writes a value changed to what the yaml library, not the read path, reads on disk', () => {
+    // `yaml` reads `014` as 14 and js-yaml as 12; the editor's 14 is a change.
+    const data = { ...asRead(DATED), mode: 14 }
+    expect(asRead(serializeFrontmatter('\nBody.\n', data, DATED, 'md'))).toEqual(data)
+  })
+
+  it('keeps comments and unchanged lines in a CRLF file', () => {
+    const crlf = DATED.replace(/\n/g, '\r\n')
+    const out = serializeFrontmatter('\r\nBody.\r\n', asRead(crlf), crlf, 'md')
+    expect(out).toContain('title: Launch # shown in the card\r\ndate: 2024-01-15\r\n')
+    expect(out).toContain('  published: 2024-03-01')
+    expect(asRead(out)).toEqual(asRead(crlf))
+  })
+
+  it.each(['1:30', '12:30:00', '1_000', '0b101', '2024-05-01', '014'])(
+    'quotes a changed string the read path would read as another type (%s), keeping the rest',
+    (text) => {
+      const data = { ...asRead(DATED), title: text }
+      const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+      expect(asRead(out)).toEqual(data)
+      expect(out).toContain(`title: '${text}' # shown in the card\ndate: 2024-01-15\n`)
+    },
+  )
+
+  it.each(['2024-01-01T10:00:00.', '2024-01-01T10:00:00+35', '!Important notice', '%x'])(
+    'quotes %s as js-yaml reads it, keeping comments and printing no warning',
+    (text) => {
+      const warn = vi.spyOn(process, 'emitWarning').mockImplementation(() => {})
+      try {
+        const data = { ...asRead(DATED), title: text }
+        const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+        expect(asRead(out)).toEqual(data)
+        expect(out).toContain(' # shown in the card\ndate: 2024-01-15\n')
+        expect(warn).not.toHaveBeenCalled()
+      } finally {
+        warn.mockRestore()
+      }
+    },
+  )
+
+  it.each(['a ', 'x\uFEFF'])('quotes %j on the last line, which gray-matter would trim', (text) => {
+    const raw = '---\ntitle: Launch # c\n---\n\nBody.\n'
+    const data = { title: 'Launch', extra: text }
+    const out = serializeFrontmatter('\nBody.\n', data, raw, 'md')
+    expect(asRead(out)).toEqual(data)
+    expect(out).toContain('title: Launch # c\n')
+  })
+
+  it('quotes a new key js-yaml would read as a date, keeping comments', () => {
+    const data = { ...asRead(DATED), '2024-01-01T10:00:00.000Z': 'launch' }
+    const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+    expect(asRead(out)).toEqual(data)
+    expect(out).toContain('title: Launch # shown in the card\n')
+  })
+
+  it('keeps unchanged list items as written when an item is inserted before them', () => {
+    const blocks = `---
+blocks:
+  # keep this hero
+  - kind: hero
+    when: 2024-01-15
+  - kind: cta
+    when: 2024-02-15
+---
+
+Body.
+`
+    const read = asRead(blocks)
+    const data = { blocks: [{ kind: 'banner' }, ...(read.blocks as unknown[])] }
+    const out = serializeFrontmatter('\nBody.\n', data, blocks, 'md')
+    expect(out).toContain(
+      '  # keep this hero\n  - kind: banner\n  - kind: hero\n    when: 2024-01-15\n',
+    )
+    expect(out).toContain('    when: 2024-02-15\n')
+    expect(asRead(out)).toEqual(data)
+  })
+
+  it('writes a date-like string as a string', () => {
+    const data = { ...asRead(DATED), version: '2024-05-01' }
+    expect(asRead(serializeFrontmatter('\nBody.\n', data, DATED, 'md'))).toEqual(data)
+  })
+})
+
+/**
+ * Hand-written the way an author's editor leaves a file: folded and plain scalars wrapped at
+ * uneven widths (some past 80 columns, some well short), comments at several levels, and a
+ * CanopyCMS-style block list of `{ template, value }` items.
+ */
+const HAND_FOLDED = `# Synthetic landing page used by the source-preservation tests.
+# Folded by hand at uneven widths, the way an author's editor leaves it.
+
+title: Field notes from the observatory
+description: >-
+  A long folded description that the author wrapped by hand at a width
+  well past eighty columns, because their editor was configured that way and nobody minded it.
+summary: >-
+  Short lines
+  here.
+tagline: This plain scalar is long enough that the yaml library would fold it at eighty columns if it were re-emitted
+quoted: "A double-quoted scalar that is also long enough to be folded by the library when it is re-emitted"
+# Literal block, kept as-is.
+notice: |
+  Line one of a literal block.
+  Line two, which is longer than the others and keeps going past the usual eighty-column limit.
+
+hero:
+  # Hero copy is reviewed by the comms team.
+  heading: Look up
+  body: >-
+    Nested folded text wrapped narrowly
+    at about forty
+    columns.
+sections:
+  # Blocks render in this order.
+  - template: callout
+    value:
+      tone: info # one of info | warn
+      text: >-
+        The first callout explains something at length, folded by hand at a width somewhat
+        wider than the default.
+
+  # Keep this block: the footer links to it.
+  - template: gallery
+    value:
+      caption: A narrow caption
+        that the author wrapped early.
+      images:
+        - src: /a.png
+          alt: First
+        - src: /b.png
+          alt: Second
+  - template: callout
+    value:
+      tone: warn
+      text: Plain text on one line.
+# Trailing file comment.
+`
+
+const FIRST_CALLOUT = `  - template: callout
+    value:
+      tone: info # one of info | warn
+      text: >-
+        The first callout explains something at length, folded by hand at a width somewhat
+        wider than the default.
+`
+const GALLERY = `
+  # Keep this block: the footer links to it.
+  - template: gallery
+    value:
+      caption: A narrow caption
+        that the author wrapped early.
+      images:
+        - src: /a.png
+          alt: First
+        - src: /b.png
+          alt: Second
+`
+
+/** Replace the one occurrence of `from`; a fixture typo fails loudly instead of matching nothing. */
+function replaceOnce(source: string, from: string, to: string): string {
+  const at = source.indexOf(from)
+  expect(at, `fixture text not found: ${JSON.stringify(from)}`).toBeGreaterThanOrEqual(0)
+  expect(source.indexOf(from, at + 1), `fixture text not unique: ${JSON.stringify(from)}`).toBe(-1)
+  return source.slice(0, at) + to + source.slice(at + from.length)
+}
+
+interface HandFoldedData {
+  description: string
+  summary: string
+  notice: string
+  title: string | number
+  hero: { heading?: string; body: string }
+  sections: Array<{ template?: string; value: Record<string, unknown> }>
+  [key: string]: unknown
+}
+
+function handFoldedData(): HandFoldedData {
+  return yamlParse(HAND_FOLDED) as HandFoldedData
+}
+
+describe('serializeYaml keeps the source text of everything it did not change', () => {
+  it('returns the file byte-for-byte on a save that changes nothing', () => {
+    expect(serializeYaml(handFoldedData(), HAND_FOLDED)).toBe(HAND_FOLDED)
+  })
+
+  it('changes only the edited value, which keeps its `>-` style', () => {
+    const data = handFoldedData()
+    data.description = 'An edited description.'
+    const expected = replaceOnce(
+      HAND_FOLDED,
+      `  A long folded description that the author wrapped by hand at a width
+  well past eighty columns, because their editor was configured that way and nobody minded it.
+`,
+      '  An edited description.\n',
+    )
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(expected)
+  })
+
+  it('keeps a `|` literal a literal when it is edited', () => {
+    const data = handFoldedData()
+    data.notice = 'First line.\nSecond line.\n'
+    const out = serializeYaml(data, HAND_FOLDED)
+    expect(out).toContain('notice: |\n  First line.\n  Second line.\n\nhero:')
+    expect(yamlParse(out)).toEqual(data)
+  })
+
+  it('edits a value deep inside a nested block list without touching its neighbours', () => {
+    const data = handFoldedData()
+    ;(data.sections[1].value.images as Array<{ alt: string }>)[0].alt = 'Primary'
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(HAND_FOLDED, 'alt: First', 'alt: Primary'),
+    )
+  })
+
+  it('removes a dropped key and only its lines', () => {
+    const data = handFoldedData()
+    delete data.hero.heading
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(HAND_FOLDED, '  heading: Look up\n', ''),
+    )
+  })
+
+  it('removes a dropped multi-line value with all of its lines', () => {
+    const { summary: _summary, ...data } = handFoldedData()
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(HAND_FOLDED, 'summary: >-\n  Short lines\n  here.\n', ''),
+    )
+  })
+
+  it('appends an added key and leaves every existing line alone', () => {
+    const data = { ...handFoldedData(), added: 'new value' }
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(
+        HAND_FOLDED,
+        '# Trailing file comment.\n',
+        'added: new value\n# Trailing file comment.\n',
+      ),
+    )
+  })
+
+  it('removes a list item together with the comment written above it', () => {
+    const data = handFoldedData()
+    data.sections.splice(1, 1)
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(replaceOnce(HAND_FOLDED, GALLERY, ''))
+  })
+
+  it('removes the first list item and keeps the comment that heads the list', () => {
+    const data = handFoldedData()
+    data.sections.splice(0, 1)
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(replaceOnce(HAND_FOLDED, FIRST_CALLOUT, ''))
+  })
+
+  it('reorders list items by moving their source text, comments and folding included', () => {
+    const data = handFoldedData()
+    data.sections = [data.sections[1], data.sections[0], data.sections[2]]
+    // The gallery's chunk carries its blank line and comment along with it.
+    const expected = replaceOnce(
+      replaceOnce(HAND_FOLDED, FIRST_CALLOUT, ''),
+      GALLERY,
+      `${GALLERY}${FIRST_CALLOUT}`,
+    )
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(expected)
+  })
+
+  it('inserts a new list item between untouched ones', () => {
+    const data = handFoldedData()
+    data.sections.splice(1, 0, { template: 'hero', value: { heading: 'New' } })
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(
+        HAND_FOLDED,
+        FIRST_CALLOUT,
+        `${FIRST_CALLOUT}  - template: hero\n    value:\n      heading: New\n`,
+      ),
+    )
+  })
+
+  it('drops the key that shares the `- ` line and keeps the rest of that item as written', () => {
+    const data = handFoldedData()
+    delete data.sections[0].template
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(
+        HAND_FOLDED,
+        '  - template: callout\n    value:\n      tone: info',
+        '  - value:\n      tone: info',
+      ),
+    )
+  })
+
+  it('keeps CRLF line endings, and touches only the edited line', () => {
+    const crlf = HAND_FOLDED.replace(/\n/g, '\r\n')
+    const data = handFoldedData()
+    data.title = 'Edited title'
+    expect(serializeYaml(handFoldedData(), crlf)).toBe(crlf)
+    expect(serializeYaml(data, crlf)).toBe(
+      replaceOnce(crlf, 'title: Field notes from the observatory', 'title: Edited title'),
+    )
+  })
+
+  it('writes a new CRLF list item with CRLF line endings', () => {
+    const crlf = HAND_FOLDED.replace(/\n/g, '\r\n')
+    const data = handFoldedData()
+    data.sections.push({ template: 'hero', value: { heading: 'New' } })
+    const out = serializeYaml(data, crlf)
+    expect(out).toBe(
+      replaceOnce(
+        crlf,
+        '      text: Plain text on one line.\r\n',
+        '      text: Plain text on one line.\r\n  - template: hero\r\n    value:\r\n      heading: New\r\n',
+      ),
+    )
+  })
+
+  it('writes a re-rendered value under a multi-line CRLF comment without stray carriage returns', () => {
+    const crlf = 'a: 1\r\n  # t1\r\n  # t2\r\nb: 2\r\n'
+    const out = serializeYaml({ a: 2, b: 2 }, crlf)
+    expect(out).toBe(replaceOnce(crlf, 'a: 1', 'a: 2'))
+    expect(serializeYaml({ a: 2, b: 2 }, out)).toBe(out)
+  })
+
+  it("writes a whole-file fallback with the CRLF file's own line endings", () => {
+    const crlf = 'x: &a 1\r\ny: *a\r\n# c1\r\n# c2\r\nz: >-\r\n  hand\r\n  folded\r\n'
+    const data = { x: 1, y: 1, z: 'edited' }
+    const out = serializeYaml(data, crlf)
+    expect(yamlParse(out)).toEqual(data)
+    expect(out).toContain('\r\n')
+    expect(out).not.toMatch(/\r(?!\n)|(?<!\r)\n/)
+  })
+
+  it("drops the comment above the root map's first key with that key, as the reconciler does", () => {
+    const raw = '# about a\na: 1\n# about b\nb: 2\nzz: >-\n  hand\n  folded\n'
+    expect(serializeYaml({ b: 2, zz: 'hand folded' }, raw)).toBe(
+      replaceOnce(raw, '# about a\na: 1\n', ''),
+    )
+  })
+
+  it('finishes a save that drops a commented first key from a file starting with a blank line', () => {
+    expect(serializeYaml({ b: 2 }, '\n# about a\na: 1\nb: 2\n')).toBe('b: 2\n')
+  })
+
+  it('keeps a comment split by a lone carriage return as two comment lines', () => {
+    const out = serializeYaml({ a: 1, b: 3 }, '# c\rmore\na: 1\nb: 2\n')
+    expect(yamlParse(out)).toEqual({ a: 1, b: 3 })
+    expect(out).toContain('# c\n#more\n')
+  })
+
+  it('falls back to a whole re-serialisation, with correct data, for a file using anchors', () => {
+    const anchored = `base: &shared
+  x: 1
+copy: *shared
+long: >-
+  folded by hand at
+  an odd width
+other: keep
+`
+    const out = serializeYaml(
+      { base: { x: 1 }, copy: { x: 1 }, long: 'folded by hand at an odd width', other: 'edited' },
+      anchored,
+    )
+    expect(yamlParse(out)).toEqual({
+      base: { x: 1 },
+      copy: { x: 1 },
+      long: 'folded by hand at an odd width',
+      other: 'edited',
+    })
+    // The untouched `long` value was re-folded: the fallback, not the source splice, wrote it.
+    expect(out).toContain('long: >-\n  folded by hand at an odd width\n')
+  })
+
+  it('falls back, with correct data, for a layout it does not splice (an explicit `?` key)', () => {
+    const explicit = '? a\n: 1\nb: >-\n  hand\n  folded\n'
+    const out = serializeYaml({ a: 1, b: 'edited' }, explicit)
+    expect(yamlParse(out)).toEqual({ a: 1, b: 'edited' })
+  })
+})
+
+describe('serializeYaml never trades data for style', () => {
+  it('writes a plain value that becomes multi-line as YAML that parses back to it', () => {
+    for (const summary of ['Requirements:\nBring a laptop', '?\nwhy', '-\nlist-like', 'a: b\nc']) {
+      const out = serializeYaml({ title: 'T', summary }, 'title: T\nsummary: A short summary\n')
+      expect(yamlParse(out)).toEqual({ title: 'T', summary })
+    }
+  })
+
+  it('drops a block style the new value cannot keep, rather than changing the value', () => {
+    const raw = 'desc: >-\n  Some text\nnote: |\n  literal\nb: 1\n'
+    const values = [
+      '   ',
+      ' \t',
+      '',
+      ' Leading space and a long sentence that runs well past eighty columns of width here.',
+    ]
+    for (const value of values) {
+      const data = { desc: value, note: value, b: 1 }
+      expect(yamlParse(serializeYaml(data, raw))).toEqual(data)
+    }
+  })
+})
+
+describe('serializeYaml keeps comments with the items yaml gives them to', () => {
+  it('indents an outdented comment under its owner once the item below it is removed', () => {
+    // yaml reads `# Keep this CTA` as hero's: its run reaches into hero's map. Left at the item
+    // column it would head faq, so it is drawn under hero, where `toString()` puts it; every
+    // other line stays as written.
+    const raw = `sections:
+  - template: hero
+    title: Hero
+    # TODO: add image
+  # Keep this CTA, legal requires it
+  - template: cta
+    label: Go
+
+  # The FAQ block. Do not delete.
+  - template: faq
+    q: Why
+`
+    const data = yamlParse(raw) as { sections: unknown[] }
+    data.sections.splice(1, 1)
+    expect(serializeYaml(data, raw)).toBe(
+      replaceOnce(
+        raw,
+        '  # Keep this CTA, legal requires it\n  - template: cta\n    label: Go\n',
+        '    # Keep this CTA, legal requires it\n',
+      ),
+    )
+  })
+
+  it('does not let an outdented comment head a block inserted after its owner', () => {
+    const raw = `sections:
+  - template: hero
+    value:
+      title: Hero
+      # note about hero
+  # Keep this CTA, legal
+  - template: cta
+    value:
+      label: Go
+`
+    const data = yamlParse(raw) as { sections: unknown[] }
+    data.sections.splice(1, 0, { template: 'x', value: { a: 1 } })
+    expect(serializeYaml(data, raw)).toBe(
+      replaceOnce(
+        raw,
+        '  # Keep this CTA, legal\n',
+        '      # Keep this CTA, legal\n  - template: x\n    value:\n      a: 1\n',
+      ),
+    )
+  })
+
+  it('does not let an outdented comment head the key after a deleted one', () => {
+    const raw = 'hero:\n  title: x\n  # deep tail\n# about cta\ncta:\n  label: y\nfoot: z\n'
+    expect(serializeYaml({ hero: { title: 'x' }, foot: 'z' }, raw)).toBe(
+      'hero:\n  title: x\n  # deep tail\n  # about cta\nfoot: z\n',
+    )
+  })
+
+  it('leaves a zero-indented list as written when a key is appended after it', () => {
+    // `# about c` is c's leading comment: no line of the run reaches into the item above.
+    const raw = 'mark: >-\n  folded by\n  hand\nitems:\n- a: 1\n  b: 2\n# about c\n- c: 3\n'
+    const data = { ...(yamlParse(raw) as Record<string, unknown>), extra: 1 }
+    expect(serializeYaml(data, raw)).toBe(`${raw}extra: 1\n`)
+  })
+
+  it('leaves a comment run alone when more of the item follows it', () => {
+    // Only the run that ENDS the item can head its neighbour; `# about other` is other's.
+    const raw =
+      'hero:\n  sub:\n    deep: 1\n    # pinned mid\n  # about other\n  other: 2\nfoot: z\n'
+    expect(serializeYaml({ hero: { sub: { deep: 1 }, other: 2 } }, raw)).toBe(
+      replaceOnce(raw, 'foot: z\n', ''),
+    )
+  })
+
+  it('stays local when the value holding a pinned comment run is dropped with its neighbour', () => {
+    const raw =
+      'mark: >-\n  folded by\n  hand\nhero:\n  title: x\n  sub:\n    deep: 1\n    # deep tail\n# about cta\ncta:\n  label: y\nfoot: z\n'
+    expect(serializeYaml({ mark: 'folded by hand', hero: { title: 'x' }, foot: 'z' }, raw)).toBe(
+      'mark: >-\n  folded by\n  hand\nhero:\n  title: x\nfoot: z\n',
+    )
+  })
+
+  it("indents a pinned comment run to its deepest line, not to the item's last deeper line", () => {
+    const raw = `mark: >-
+  folded by
+  hand
+sections:
+  - template: hero
+    value:
+      title: Hero
+  # Keep this CTA
+    # note at 4
+  - template: cta
+    label: Go
+  - template: faq
+    q: Why
+`
+    const data = yamlParse(raw) as { sections: unknown[] }
+    data.sections.splice(1, 1)
+    expect(serializeYaml(data, raw)).toBe(
+      replaceOnce(
+        raw,
+        '  # Keep this CTA\n    # note at 4\n  - template: cta\n    label: Go\n',
+        '    # Keep this CTA\n    # note at 4\n',
+      ),
+    )
+  })
+
+  it("indents a pinned comment that sits between the dash and the item's keys", () => {
+    const raw = `sections:
+  - template: hero
+    value:
+      title: Hero
+      # note about hero
+   # Keep this CTA
+  - template: cta
+    label: Go
+`
+    const data = yamlParse(raw) as { sections: unknown[] }
+    data.sections.splice(1, 0, { template: 'x' })
+    expect(serializeYaml(data, raw)).toBe(
+      replaceOnce(raw, '   # Keep this CTA\n', '      # Keep this CTA\n  - template: x\n'),
+    )
+  })
+
+  it("keeps a list local when a block's nested value ends in a comment", () => {
+    const raw = `sections:
+  - template: hero
+    value:
+      title: Hero
+      # note about hero
+  - template: cta
+    value:
+      body: >-
+        hand folded text
+        that is short
+  - template: faq
+    value:
+      q: Why
+`
+    const data = yamlParse(raw) as { sections: Array<{ value: Record<string, unknown> }> }
+    data.sections[2].value.q = 'How'
+    expect(serializeYaml(data, raw)).toBe(replaceOnce(raw, 'q: Why', 'q: How'))
+  })
+})
+
+describe('serializeFrontmatter keeps the source text of everything it did not change', () => {
+  const POST = `---\n${HAND_FOLDED}---\n\nBody text.\n`
+
+  it('returns the file byte-for-byte on a save that changes nothing', () => {
+    expect(serializeFrontmatter('\nBody text.\n', handFoldedData(), POST, 'md')).toBe(POST)
+  })
+
+  it('finishes a save that drops the first key when a comment sits above it', () => {
+    const post = '---\n# about title\ntitle: A\nb: 1\n---\nbody\n'
+    expect(serializeFrontmatter('body\n', { b: 1 }, post, 'md')).toBe('---\nb: 1\n---\nbody\n')
+  })
+
+  it('keeps frontmatter readable when its keys are indented', () => {
+    const indented = '---\n  title: A\n  b: 1\n---\nbody\n'
+    for (const data of [
+      { title: 'A', b: 1 },
+      { title: 'B', b: 1 },
+    ]) {
+      const out = serializeFrontmatter('body\n', data, indented, 'md')
+      expect(matter(out, {}).data).toEqual(data)
+    }
+  })
+
+  it('changes only the edited value, which keeps its `>-` style', () => {
+    const data = handFoldedData()
+    data.hero.body = 'Edited body.'
+    expect(serializeFrontmatter('\nBody text.\n', data, POST, 'md')).toBe(
+      replaceOnce(
+        POST,
+        '    Nested folded text wrapped narrowly\n    at about forty\n    columns.\n',
+        '    Edited body.\n',
+      ),
+    )
+  })
+})
+
+describe('serializeYaml follows a comment with a keyed list item', () => {
+  // The first item carries no comment: one above it belongs to the list, not to the item.
+  const keyed = `items:
+  - _key: ka
+    name: a
+    role: x
+  # about B -- do not delete
+  - _key: kb
+    name: b
+    role: y
+  # about C
+  - _key: kc
+    name: c
+    role: z
+`
+  const A = { _key: 'ka', name: 'a', role: 'x' }
+  const B = { _key: 'kb', name: 'b', role: 'y' }
+  const C = { _key: 'kc', name: 'c', role: 'z' }
+  const at = (out: string, text: string) => {
+    const index = out.indexOf(text)
+    // Presence first: an absent text gives -1, which would satisfy a position check.
+    expect(index).toBeGreaterThanOrEqual(0)
+    return index
+  }
+
+  it('moves each comment with its item when the list is reordered', () => {
+    const out = serializeYaml({ items: [C, A, B] }, keyed)
+
+    expect(at(out, '# about C')).toBeLessThan(at(out, '_key: kc'))
+    expect(at(out, '_key: kc')).toBeLessThan(at(out, '_key: ka'))
+    expect(at(out, '_key: ka')).toBeLessThan(at(out, '# about B -- do not delete'))
+    expect(at(out, '# about B -- do not delete')).toBeLessThan(at(out, '_key: kb'))
+  })
+
+  it('keeps the comment on an item edited in place, its key unchanged', () => {
+    const out = serializeYaml({ items: [A, { ...B, name: 'b, edited' }, C] }, keyed)
+
+    expect(at(out, '_key: ka')).toBeLessThan(at(out, '# about B -- do not delete'))
+    expect(at(out, '# about B -- do not delete')).toBeLessThan(at(out, 'name: b, edited'))
+    expect(at(out, 'name: b, edited')).toBeLessThan(at(out, '# about C'))
+  })
+
+  it('does not move the comment onto a different item that shifts into a removed item slot', () => {
+    // D shares `role: y` with B, the field evidence that would pair them if the keys did not
+    // decide: B is removed, and D lands on the index B held.
+    const D = { _key: 'kd', name: 'd', role: 'y' }
+
+    const out = serializeYaml({ items: [A, D, C] }, keyed)
+
+    expect(at(out, 'name: d')).toBeGreaterThan(at(out, '_key: ka'))
+    expect(out).not.toContain('do not delete')
+    expect(at(out, '# about C')).toBeGreaterThan(at(out, 'name: d'))
+    expect(at(out, '# about C')).toBeLessThan(at(out, '_key: kc'))
+  })
+
+  // The first save of a file that has no keys yet writes them all at once; an item still matches
+  // its un-keyed self, so a comment moves with it.
+  it('keeps the comment when the first save writes keys and reorders the list', () => {
+    const unkeyed = `items:
+  - name: a
+    role: x
+  # about B -- do not delete
+  - name: b
+    role: y
+`
+    const out = serializeYaml(
+      {
+        items: [
+          { _key: 'kb', name: 'b', role: 'y' },
+          { _key: 'ka', name: 'a', role: 'x' },
+        ],
+      },
+      unkeyed,
+    )
+
+    expect(out).toContain('# about B -- do not delete')
+    expect(yamlParse(out)).toEqual({
+      items: [
+        { _key: 'kb', name: 'b', role: 'y' },
+        { _key: 'ka', name: 'a', role: 'x' },
+      ],
+    })
+  })
+
+  it('keeps the comment when the first save writes keys without moving anything', () => {
+    const unkeyed = `items:
+  - name: a
+    role: x
+  # about B -- do not delete
+  - name: b
+    role: y
+`
+    const out = serializeYaml(
+      {
+        items: [
+          { name: 'a', role: 'x', _key: 'ka' },
+          { name: 'b', role: 'y', _key: 'kb' },
+        ],
+      },
+      unkeyed,
+    )
+
+    expect(out).toContain('# about B -- do not delete')
+    expect(out.indexOf('do not delete')).toBeLessThan(out.indexOf('name: b'))
+    expect(out.indexOf('do not delete')).toBeGreaterThan(out.indexOf('_key: ka'))
+  })
+
+  it('writes the keys of items that match their un-keyed selves', () => {
+    const unkeyed = `items:
+  - name: a
+  - name: b
+`
+    const data = {
+      items: [
+        { name: 'a', _key: 'ka' },
+        { name: 'b', _key: 'kb' },
+      ],
+    }
+    expect(yamlParse(serializeYaml(data, unkeyed))).toEqual(data)
+  })
+
+  it('writes the key of the copy left when the original is removed, not the original', () => {
+    // Duplicate, then Remove the original: the copy matches the original's un-keyed node.
+    const unkeyed = `team:
+  # about Ada
+  - name: Ada
+`
+    const data = { team: [{ name: 'Ada', _key: 'copy' }] }
+    const out = serializeYaml(data, unkeyed)
+    expect(yamlParse(out)).toEqual(data)
+    expect(out).toContain('# about Ada')
+  })
+
+  describe('the first keyed save of frontmatter that moves date-bearing items', () => {
+    const md = `---
+events:
+  # about A -- keep
+  - name: A
+    date: 2024-01-01
+  # about B -- keep
+  - name: B
+    date: 2024-02-01
+---
+
+Body.
+`
+    // As the API carries them: js-yaml reads a bare date as a Date, sent back as a timestamp.
+    const a = { name: 'A', date: '2024-01-01T00:00:00.000Z' }
+    const b = { name: 'B', date: '2024-02-01T00:00:00.000Z' }
+    const keyed = <T extends object>(item: T, key: string) => ({ ...item, _key: key })
+    const withoutKeyLines = (text: string) => text.replace(/\n *_key: k[ab]/g, '')
+
+    it.each([
+      ['reordered', [b, a]],
+      ['with the first item removed', [b]],
+    ])('writes what an un-keyed save would, plus the keys, when %s', (_, events) => {
+      const unkeyedOut = serializeFrontmatter('\nBody.\n', { events }, md, 'md')
+      const keyedEvents = events.map((e) => keyed(e, e === a ? 'ka' : 'kb'))
+      const out = serializeFrontmatter('\nBody.\n', { events: keyedEvents }, md, 'md')
+
+      expect(out).toContain('# about B -- keep')
+      expect(out).toContain('date: 2024-02-01\n')
+      expect(out).not.toContain('T00:00:00.000Z')
+      expect(withoutKeyLines(out)).toBe(unkeyedOut)
+      expect(matter(out).data.events.map((e: { _key: string }) => e._key)).toEqual(
+        keyedEvents.map((e) => e._key),
+      )
+    })
+  })
+
+  describe('a keyed frontmatter list whose neighbours share a bare date', () => {
+    const md = `---
+# page title
+title: Events
+date: 2024-03-03
+items:
+  - title: A
+    when: 2024-01-01
+    _key: ka
+  # about B
+  - title: B
+    when: 2024-01-01
+    _key: kb
+---
+
+Body.
+`
+    // As the API carries them: js-yaml reads a bare date as a Date, sent back as a timestamp.
+    const read = (title: string, key: string) => ({
+      title,
+      when: '2024-01-01T00:00:00.000Z',
+      _key: key,
+    })
+    const page = (items: unknown[]) => ({
+      title: 'Events',
+      date: '2024-03-03T00:00:00.000Z',
+      items,
+    })
+
+    it.each([
+      ['an item is removed and the next edited', [read('B, edited', 'kb')], 'B, edited'],
+      ['the items swap and one is edited', [read('B, edited', 'kb'), read('A', 'ka')], 'B, edited'],
+      ['a new item is inserted first', [read('N', 'kn'), read('A', 'ka'), read('B', 'kb')], 'A'],
+    ])('keeps the comments and the dates as written when %s', (_, items, kept) => {
+      const out = serializeFrontmatter('\nBody.\n', page(items), md, 'md')
+      expect(out).toContain('# page title')
+      expect(out).toContain('# about B')
+      expect(out).toContain('date: 2024-03-03\n')
+      // An item read before keeps its date as written, never a quoted or ISO rewrite.
+      expect(out).toContain(`title: ${kept}\n    when: 2024-01-01\n`)
+      expect(out).not.toMatch(/when: ['"]/)
+    })
+  })
+
+  it("moves an edited keyed item's comment with it, in a YAML file", () => {
+    const yaml = `items:
+  - name: a
+    _key: ka
+  # about B
+  - name: b
+    _key: kb
+`
+    const out = serializeYaml(
+      {
+        items: [
+          { name: 'b, edited', _key: 'kb' },
+          { name: 'a', _key: 'ka' },
+        ],
+      },
+      yaml,
+    )
+    expect(out.indexOf('# about B')).toBeLessThan(out.indexOf('b, edited'))
+    expect(out.indexOf('b, edited')).toBeLessThan(out.indexOf('name: a'))
+  })
+
+  it('keeps frontmatter comments on the first save that writes keys', () => {
+    const md = `---
+# keep: owned by legal
+title: Hello # inline note
+team:
+  # about Ada -- do not delete
+  - name: Ada
+  - name: Bo
+---
+
+Body.
+`
+    const data = {
+      title: 'Hello again',
+      team: [
+        { name: 'Ada', _key: 'ka' },
+        { name: 'Bo', _key: 'kb' },
+      ],
+    }
+    const out = serializeFrontmatter('\nBody.\n', data, md, 'md')
+    expect(out).toContain('# keep: owned by legal')
+    expect(out).toContain('# inline note')
+    expect(out).toContain('# about Ada -- do not delete')
+    expect(matter(out).data).toEqual(data)
   })
 })

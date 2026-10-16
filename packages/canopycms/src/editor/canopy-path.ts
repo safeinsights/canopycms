@@ -1,10 +1,19 @@
+/**
+ * The one spelling of a field path, `blocks[0].title`, for the form's fields, the preview's
+ * marks and comment threads. A digits-only segment is always a list index (`[0]` or `.0`):
+ * schemas refuse field names `isPathFieldName` rejects, since no path could spell them.
+ */
+
 export type CanopyPathSegment = string | number
+
+export const isPathFieldName = (name: string): boolean =>
+  name.length > 0 && !/^\d+$/.test(name) && !/[.[\]]/.test(name)
 
 /**
  * Convert a list of path segments into the canonical CanopyCMS path string.
  * Arrays are rendered with bracket notation (e.g., blocks[0].title).
  */
-export const formatCanopyPath = (segments: CanopyPathSegment[]): string => {
+export const formatCanopyPath = (segments: readonly CanopyPathSegment[]): string => {
   return segments.reduce<string>((acc, segment, index) => {
     if (typeof segment === 'number') {
       return `${acc}[${segment}]`
@@ -26,7 +35,6 @@ export const parseCanopyPath = (path: string): CanopyPathSegment[] => {
   while ((match = matcher.exec(path)) !== null) {
     if (match[1]) {
       const raw = match[1]
-      // Allow dotted numeric segments (e.g., blocks.0.title)
       if (/^\d+$/.test(raw)) {
         segments.push(Number(raw))
       } else {
@@ -40,13 +48,6 @@ export const parseCanopyPath = (path: string): CanopyPathSegment[] => {
   return segments
 }
 
-/**
- * Normalize any supported path input (string or segments) into the
- * canonical bracketed representation.
- */
-export const normalizeCanopyPath = (input: string | CanopyPathSegment[]): string => {
-  if (Array.isArray(input)) {
-    return formatCanopyPath(input)
-  }
-  return formatCanopyPath(parseCanopyPath(input))
-}
+/** The canonical string for a path; segments are re-parsed, so `['a', '0']` is `a[0]`. */
+export const normalizeCanopyPath = (input: string | readonly CanopyPathSegment[]): string =>
+  formatCanopyPath(parseCanopyPath(typeof input === 'string' ? input : formatCanopyPath(input)))

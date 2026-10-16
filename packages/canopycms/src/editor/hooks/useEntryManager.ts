@@ -1,16 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import type { WriteContentBody } from '../../api/content'
+import type { ApiErrorCode } from '../../api/types'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
 import { buildWritePayload, normalizeContentPayload } from '../editor-utils'
 import { isDataOnlyFormat } from '../../utils/format'
+import { withTitleAtPath } from '../../utils/title-field'
 import { getErrorMessage } from '../../utils/error'
 import type { EntryFieldError } from '../../validation/entry-validator'
 import { useApiClient } from '../context'
+import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
+import { RetryToastMessage } from '../components/RetryToastMessage'
+import { isGatewayFailure, isUnanswered, MayHaveLandedError, UnansweredError } from '../unanswered'
+
+const ENTRIES_LOAD_FAILED_TOAST_ID = 'canopy-entries-load-failed'
 
 // Re-exported so existing imports of `listAllEntries` from this module keep
 // working -- the implementation lives in useEntriesData.ts alongside the
@@ -27,11 +34,24 @@ export { listAllEntries } from './useEntriesData'
 export class SaveApiError extends Error {
   constructor(
     public readonly status: number,
-    serverMessage?: string,
+    /** The server's (or saveEntry's own) explanation, if any; `message` falls back to the status. */
+    public readonly serverMessage?: string,
     public readonly fieldErrors?: EntryFieldError[],
+    public readonly code?: ApiErrorCode,
   ) {
     super(serverMessage || `Save failed: ${status}`)
     this.name = 'SaveApiError'
+  }
+}
+
+/**
+ * Thrown by a read for editing when the API answers `SCHEMA_UNAVAILABLE`: the entry's type
+ * names a schema the running code lacks, so the entry cannot be opened until that changes.
+ */
+export class EntrySchemaUnavailableError extends Error {
+  constructor(serverMessage?: string) {
+    super(serverMessage || 'Entry type unavailable')
+    this.name = 'EntrySchemaUnavailableError'
   }
 }
 
@@ -47,6 +67,8 @@ export interface UseEntryManagerOptions {
 export interface UseEntryManagerReturn {
   selectedPath: string
   setSelectedPath: (path: string) => void
+  /** Leaves no entry open, as after deleting the open one, instead of opening the first. */
+  closeEntry: () => void
   entries: EditorEntry[]
   setEntries: (entries: EditorEntry[]) => void
   collections: EditorCollection[]
@@ -60,12 +82,20 @@ export interface UseEntryManagerReturn {
   availableSchemas: string[]
   /** True while the first entry load for the current branch is in flight (initial load, per branch). */
   entriesInitializing: boolean
+  /** The branch's last entries fetch failed; its "Could not load content" toast offers Retry. */
+  entriesLoadFailed: boolean
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
   refreshEntries: (branch?: string) => Promise<EditorEntry[]>
+  /** `refreshEntries`, resolving to the collections it read too. */
+  refreshContent: (
+    branch?: string,
+  ) => Promise<{ entries: EditorEntry[]; collections: EditorCollection[] }>
   handleCreateEntry: (collectionPath: LogicalPath, entryTypeName?: string) => Promise<void>
   renameEntry: (path: string, newSlug: string) => Promise<void>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
+  /** Reads an entry's server value without recording the OCC token that `loadEntry` records. */
+  readEntryValue: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
   /**
    * The OCC version token currently held for `contentId` ON THE BRANCH BEING
@@ -81,6 +111,20 @@ export interface UseEntryManagerReturn {
    * server's conflict check and revert whoever wrote that newer version).
    */
   getEntryVersion: (contentId: string) => number | undefined
+  /** Holds `version` as the token for `contentId`, for a change the server made itself. */
+  adoptEntryVersion: (contentId: string, version: number) => void
+  /**
+   * Opens an entry a save reported gone (`ENTRY_GONE`) at its new path, found by content ID,
+   * which a rename keeps. Undefined if deleted; the list is then not refreshed, which would close
+   * the form holding its unsaved changes.
+   */
+  followMovedEntry: (entry: EditorEntry) => Promise<EditorEntry | undefined>
+  /**
+   * Creates `entry` again at its path from `value` (`expectedVersion: null`, so refused if the
+   * path is taken) and opens the new entry. An unanswered create counts as created when the list
+   * then shows it. Undefined when the list does not show it yet, or the branch changed.
+   */
+  recreateEntry: (entry: EditorEntry, value: FormValue) => Promise<EditorEntry | undefined>
   collectionByPath: Map<LogicalPath, EditorCollection>
   // Entry create modal state
   createModalOpen: boolean
@@ -94,7 +138,8 @@ export interface UseEntryManagerReturn {
    * server's authoritative 409 guard.
    */
   createModalExistingSlugs: Set<string>
-  handleCreateModalSubmit: (slug: string, entryTypeName: string) => Promise<void>
+  /** `title` is written to the entry type's `titleField`, so the new entry opens already titled. */
+  handleCreateModalSubmit: (slug: string, entryTypeName: string, title?: string) => Promise<void>
   closeCreateModal: () => void
 }
 
@@ -117,6 +162,13 @@ interface BranchView {
 const EMPTY_ENTRIES: EditorEntry[] = []
 const EMPTY_COLLECTIONS: EditorCollection[] = []
 const EMPTY_SCHEMAS: string[] = []
+
+/**
+ * The URL's `entry`: a path; `''` for no entry and the navigator open (the crash screen's escape
+ * from an entry that crashes the editor); null opens the first entry.
+ */
+const readUrlEntry = (): string | null =>
+  typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('entry')
 
 /**
  * Custom hook for managing editor entries (CRUD operations).
@@ -164,7 +216,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   // Initialize with prop value or empty (URL sync happens in effect after mount)
   const [selectedPath, setSelectedPath] = useState<string>(options.initialSelectedId ?? '')
-  const [navigatorOpen, setNavigatorOpen] = useState(false)
+  const selectedPathRef = useRef(selectedPath)
+  selectedPathRef.current = selectedPath
+  // Counts selections through the returned setter, not this hook's own fallbacks.
+  const selectionsByCallerRef = useRef(0)
+  const [navigatorOpen, setNavigatorOpen] = useState(() => readUrlEntry() === '')
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
   // OCC version tokens — captured on load, sent on save. Keyed by
@@ -241,11 +297,22 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const [createModalCreating, setCreateModalCreating] = useState(false)
 
   // Store the URL entry param on mount (before any effects change the URL)
-  const initialUrlEntry = useRef<string | null>(null)
-  if (typeof window !== 'undefined' && initialUrlEntry.current === null) {
-    const params = new URLSearchParams(window.location.search)
-    initialUrlEntry.current = params.get('entry')
+  const initialUrlEntry = useRef<string | null | undefined>(undefined)
+  if (initialUrlEntry.current === undefined) {
+    initialUrlEntry.current = readUrlEntry()
   }
+  // Set by the URL's empty `entry` or by `closeEntry`; honoured until an entry is selected or the
+  // branch changes, after which a lost selection opens the first again.
+  const noEntryRequested = useRef(initialUrlEntry.current === '')
+  const selectEntryPath = useCallback((path: string) => {
+    selectionsByCallerRef.current += 1
+    setSelectedPath(path)
+  }, [])
+  // No entry open, as the URL's empty `entry` asks, where a lost selection opens the first.
+  const closeEntry = useCallback(() => {
+    noEntryRequested.current = true
+    selectEntryPath('')
+  }, [selectEntryPath])
 
   const collectionByPath = useMemo(() => {
     const map = new Map<LogicalPath, EditorCollection>()
@@ -279,34 +346,52 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     )
   }, [entriesState, createModalCollection])
 
-  const loadEntry = async (entry: EditorEntry) => {
+  // The read both entry paths share; returns the raw payload so `loadEntry` can take its version.
+  const readEntryPayload = async (entry: EditorEntry, requestBranch: string) => {
     if (!entry.collectionPath) {
       throw new Error('Entry missing collectionPath')
     }
-    // Pin the branch this request targets: if the user switches branches
-    // while the read is in flight, the token must be recorded under the
-    // branch that actually served it, not the current one.
-    const requestBranch = options.branchName
     // Build path from collectionPath and slug (if it's a collection entry)
     const path = entry.slug ? `${entry.collectionPath}/${entry.slug}` : entry.collectionPath
     const result = await apiClient.content.read({
       branch: requestBranch,
       path,
     })
-    if (!result.ok)
+    if (!result.ok) {
+      if (result.code === SCHEMA_UNAVAILABLE_CODE)
+        throw new EntrySchemaUnavailableError(result.error)
       throw new Error(`Load failed: ${result.status}${result.error ? ` — ${result.error}` : ''}`)
-    // Capture OCC version token for next save
-    if (entry.contentId && typeof result.data?.version === 'number') {
-      entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), result.data.version)
     }
-    return normalizeContentPayload(result.data)
+    return result.data
   }
+
+  const loadEntry = async (entry: EditorEntry) => {
+    // Pin the branch this request targets: if the user switches branches
+    // while the read is in flight, the token must be recorded under the
+    // branch that actually served it, not the current one.
+    const requestBranch = options.branchName
+    const data = await readEntryPayload(entry, requestBranch)
+    // Capture OCC version token for next save
+    if (entry.contentId && typeof data?.version === 'number') {
+      entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), data.version)
+    }
+    return normalizeContentPayload(data)
+  }
+
+  // The same read as `loadEntry`, minus the token capture. A value read this way can be
+  // compared against but never saved against: only `loadEntry` makes an entry saveable.
+  const readEntryValue = async (entry: EditorEntry) =>
+    normalizeContentPayload(await readEntryPayload(entry, options.branchName))
 
   // Read side of the same branch-qualified token map `saveEntry` writes/reads.
   // Deliberately keyed off the CURRENT branch (not a pinned one): callers use
   // it to reason about the entry they are looking at right now.
   const getEntryVersion = (contentId: string): number | undefined =>
     entryVersionsRef.current.get(versionKey(options.branchName, contentId))
+
+  const adoptEntryVersion = (contentId: string, version: number): void => {
+    entryVersionsRef.current.set(versionKey(options.branchName, contentId), version)
+  }
 
   const saveEntry = async (entry: EditorEntry, value: FormValue) => {
     if (!entry.collectionPath) {
@@ -331,8 +416,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (expectedVersion === undefined) {
       throw new SaveApiError(
         409,
-        'This entry has not been loaded from the server, so the save cannot be checked ' +
-          "against other editors' changes. Reload it and try again.",
+        "This entry hasn't finished loading, so it can't be saved yet. Reload it and try again (your unsaved edits will be lost).",
       )
     }
     const writeBody: WriteContentBody = {
@@ -340,7 +424,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       expectedVersion,
     }
     const result = await apiClient.content.write(writeParams, writeBody)
-    if (!result.ok) throw new SaveApiError(result.status, result.error, result.fieldErrors)
+    if (isGatewayFailure(result)) throw new UnansweredError()
+    if (!result.ok)
+      throw new SaveApiError(result.status, result.error, result.fieldErrors, result.code)
     // Update stored version token from write response
     if (typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), result.data.version)
@@ -373,6 +459,83 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     return normalizeContentPayload(result.data)
   }
 
+  // The branch's entries as the server lists them now, without replacing the list on screen.
+  const listEntriesUncommitted = async (branch: string): Promise<EditorEntry[]> =>
+    (
+      await fetchEntriesAndSchema(apiClient, branch, {
+        resolvePreviewSrc: options.resolvePreviewSrc,
+      })
+    ).entries
+
+  // Commits a fresh list and opens what `pick` finds (returned either way), unless the user was
+  // off `fromPath` or chose another entry or branch since. Not judged after the refresh, which
+  // moves the selection off a vanished `fromPath` on its own.
+  const refreshAndOpen = async (
+    branch: string,
+    fromPath: string,
+    pick: (e: EditorEntry) => boolean,
+  ): Promise<EditorEntry | undefined> => {
+    const stillOnIt = selectedPathRef.current === fromPath
+    const selections = selectionsByCallerRef.current
+    const found = (await refreshEntries(branch)).find(pick)
+    if (!found || branch !== currentBranchRef.current) return undefined
+    if (stillOnIt && selections === selectionsByCallerRef.current) setSelectedPath(found.path)
+    return found
+  }
+
+  const followMovedEntry = async (entry: EditorEntry): Promise<EditorEntry | undefined> => {
+    const branch = options.branchName
+    const movedHere = (e: EditorEntry) => e.contentId === entry.contentId && e.path !== entry.path
+    if (!(await listEntriesUncommitted(branch)).some(movedHere)) return undefined
+    return refreshAndOpen(branch, entry.path, movedHere)
+  }
+
+  // After a create that landed, a failed refresh is "not listed yet", never a failed create.
+  const openCreated = (branch: string, fromPath: string, pick: (e: EditorEntry) => boolean) =>
+    refreshAndOpen(branch, fromPath, pick).catch((err: unknown) => {
+      console.error(err)
+      return undefined
+    })
+
+  const recreateEntry = async (
+    entry: EditorEntry,
+    value: FormValue,
+  ): Promise<EditorEntry | undefined> => {
+    if (!entry.collectionPath) {
+      throw new Error('Entry missing collectionPath')
+    }
+    const branch = options.branchName
+    const path = entry.slug ? `${entry.collectionPath}/${entry.slug}` : entry.collectionPath
+    const writeParams: { branch: string; path: string; entryType?: string } = { branch, path }
+    if (entry.entryType) writeParams.entryType = entry.entryType
+    // The new entry, not the gone one a lagging list may still show at that path.
+    const createdHere = (e: EditorEntry) => e.path === entry.path && e.contentId !== entry.contentId
+    let result: Awaited<ReturnType<typeof apiClient.content.write>>
+    try {
+      result = await apiClient.content.write(writeParams, {
+        ...(buildWritePayload(entry, value) as unknown as WriteContentBody),
+        expectedVersion: null,
+      })
+      if (isGatewayFailure(result)) throw new UnansweredError()
+    } catch (err) {
+      // An unanswered create may have landed: if the list now has a new entry at the path, it did.
+      if (!isUnanswered(err)) throw err
+      const listed = await listEntriesUncommitted(branch).catch(() => [])
+      if (!listed.some(createdHere)) throw err
+      const landed = await openCreated(branch, entry.path, createdHere)
+      // No answer, so no version: read it, as a draft moved onto the entry needs it as its base.
+      if (landed) await loadEntry(landed).catch(console.error)
+      return landed
+    }
+    if (!result.ok)
+      throw new SaveApiError(result.status, result.error, result.fieldErrors, result.code)
+    const created = await openCreated(branch, entry.path, createdHere)
+    if (created && typeof result.data?.version === 'number') {
+      entryVersionsRef.current.set(versionKey(branch, created.contentId), result.data.version)
+    }
+    return created
+  }
+
   // Explicit reload: always issues a fresh, independent fetch (never
   // deduped/coalesced against an in-flight automatic load) so callers that
   // just mutated content (save, create, rename, schema change) are
@@ -380,8 +543,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // refreshSeqRef doc comment above; also warms the SWR cache for `branch`
   // so a later automatic re-fetch of the same key (e.g. switching away and
   // back) can reuse it instead of refetching.
-  const refreshEntries = async (branch: string = options.branchName): Promise<EditorEntry[]> => {
-    if (!branch) return []
+  const refreshContent = async (
+    branch: string = options.branchName,
+  ): Promise<{ entries: EditorEntry[]; collections: EditorCollection[] }> => {
+    if (!branch) return { entries: [], collections: [] }
     const seq = claimRefreshSeq(branch)
     const fetched = await fetchEntriesAndSchema(apiClient, branch, {
       resolvePreviewSrc: options.resolvePreviewSrc,
@@ -399,8 +564,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         setView({ branch, ...fetched })
       }
     }
-    return fetched.entries
+    return fetched
   }
+
+  const refreshEntries = async (branch: string = options.branchName): Promise<EditorEntry[]> =>
+    (await refreshContent(branch)).entries
 
   const handleCreateEntry = async (collectionPath: LogicalPath, _?: string) => {
     const col = collectionByPath.get(collectionPath)
@@ -413,7 +581,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     setCreateModalOpen(true)
   }
 
-  const handleCreateModalSubmit = async (slug: string, entryTypeName: string) => {
+  const handleCreateModalSubmit = async (slug: string, entryTypeName: string, title?: string) => {
     if (!createModalCollection) return
 
     setCreateModalCreating(true)
@@ -429,9 +597,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       // already exist yet". The client always sends create intent here,
       // never a blind update, so a same-slug create cannot silently
       // overwrite existing content.
+      const data =
+        title && selectedType?.titleField ? withTitleAtPath(selectedType.titleField, title) : {}
       const payload = isDataOnlyFormat(format)
-        ? { format: format as 'json' | 'yaml', data: {}, expectedVersion: null }
-        : { format, data: {}, body: '', expectedVersion: null }
+        ? { format: format as 'json' | 'yaml', data, expectedVersion: null }
+        : { format, data, body: '', expectedVersion: null }
 
       // Use collection path (e.g., "content/posts") not name (e.g., "posts")
       const path = `${createModalCollection.path}/${slug}`
@@ -444,6 +614,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         payload as unknown as WriteContentBody,
       )
 
+      if (isGatewayFailure(result)) throw new UnansweredError()
       if (!result.ok) {
         const errorMsg = 'error' in result ? result.error : `Create failed: ${result.status}`
         throw new Error(errorMsg)
@@ -473,6 +644,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       console.error(err)
       const errorMessage = err instanceof Error ? err.message : 'Create failed'
       setCreateModalError(errorMessage)
+      // An unanswered create may have landed; the content tree then shows it.
+      if (isUnanswered(err)) void refreshEntries().catch(console.error)
     } finally {
       setCreateModalCreating(false)
     }
@@ -486,6 +659,31 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   }
 
   const renameEntry = async (path: string, newSlug: string): Promise<void> => {
+    const renaming = entriesState.find((e) => e.path === path)
+    const contentId = renaming?.contentId
+    const label = renaming?.label ?? path
+    // As `refreshAndOpen`: the new path opens only if the user is still on the entry and branch.
+    const branch = options.branchName
+    const stillOnIt = selectedPathRef.current === path
+    const selections = selectionsByCallerRef.current
+    // The rename landed whatever the refresh does. The new path is selected only once the list
+    // holds it: before that, the selection check would find it missing and open the first entry.
+    const landed = async (newPath: string | undefined) => {
+      const listed = await refreshEntries().catch((err: unknown) => {
+        console.error(err)
+        return null
+      })
+      if (
+        newPath &&
+        listed?.some((e) => e.path === newPath) &&
+        stillOnIt &&
+        selections === selectionsByCallerRef.current &&
+        branch === currentBranchRef.current
+      ) {
+        setSelectedPath(newPath)
+      }
+      notifications.show({ message: 'Entry renamed', color: 'green' })
+    }
     options.setBusy(true)
     try {
       const result = await apiClient.content.renameEntry(
@@ -495,27 +693,27 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         },
         { newSlug },
       )
+      if (isGatewayFailure(result)) throw new UnansweredError()
       if (!result.ok) {
         const errorMsg = 'error' in result ? result.error : `Rename failed: ${result.status}`
         throw new Error(errorMsg)
       }
-
-      // Update the selected path if the renamed entry is currently selected
-      if (selectedPath === path && result.data) {
-        setSelectedPath(result.data.newPath)
-      }
-
-      // Refresh entries to get updated paths
-      await refreshEntries()
-      notifications.show({
-        message: 'Entry renamed successfully',
-        color: 'green',
-      })
+      await landed(result.data?.newPath)
     } catch (err) {
       console.error(err)
-      const errorMessage = err instanceof Error ? err.message : 'Rename failed'
-      notifications.show({ message: errorMessage, color: 'red' })
-      throw err
+      if (!isUnanswered(err)) throw err
+      // Re-listed by content ID, under the new slug it landed. Still at the old path proves
+      // nothing: past the client's deadline the server may still be working.
+      const listed = await listEntriesUncommitted(options.branchName).catch(() => null)
+      const now = contentId ? listed?.find((e) => e.contentId === contentId) : undefined
+      if (now && now.path !== path && now.slug === newSlug) {
+        await landed(now.path)
+        return
+      }
+      void refreshEntries().catch(console.error)
+      throw new MayHaveLandedError(
+        `Renaming "${label}" may have gone through even though the server didn't answer. Check the "Content" panel before trying again.`,
+      )
     } finally {
       options.setBusy(false)
     }
@@ -531,6 +729,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (isInitialMount.current) {
       isInitialMount.current = false
     } else {
+      noEntryRequested.current = false
       setSelectedPath('')
       // Bound version-map growth across switches. Correctness no longer
       // depends on this clear: tokens are keyed by `${branch}:${contentId}`
@@ -633,21 +832,35 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const notifiedErrorBranchRef = useRef<string | null>(null)
   useEffect(() => {
     if (!entriesError || !options.branchName) {
+      if (notifiedErrorBranchRef.current !== null) notifications.hide(ENTRIES_LOAD_FAILED_TOAST_ID)
       notifiedErrorBranchRef.current = null
       return
     }
     if (notifiedErrorBranchRef.current === options.branchName) return
-    notifiedErrorBranchRef.current = options.branchName
+    const branch = options.branchName
+    notifiedErrorBranchRef.current = branch
     console.error(entriesError)
+    // A shown toast with this id ignores `show`, so another branch's would keep its Retry.
+    notifications.hide(ENTRIES_LOAD_FAILED_TOAST_ID)
     notifications.show({
+      id: ENTRIES_LOAD_FAILED_TOAST_ID,
       title: 'Could not load content',
-      message: getErrorMessage(entriesError),
+      message: createElement(RetryToastMessage, {
+        message: getErrorMessage(entriesError),
+        onRetry: () => {
+          notifications.hide(ENTRIES_LOAD_FAILED_TOAST_ID)
+          notifiedErrorBranchRef.current = null
+          void globalMutate(entriesKey(branch))
+        },
+      }),
       color: 'red',
+      autoClose: false,
     })
   }, [entriesError, options.branchName])
 
   // Validate selected entry when entries change
   useEffect(() => {
+    if (selectedPath) noEntryRequested.current = false
     // Skip validation if entries haven't loaded yet
     if (entriesState.length === 0) return
 
@@ -664,6 +877,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     // If the selected entry exists, keep it
     if (entriesState.find((e) => e.path === selectedPath)) return
 
+    if (selectedPath === '' && noEntryRequested.current) return
+
     // Fall back to first entry
     setSelectedPath(entriesState[0]?.path ?? '')
   }, [entriesState, selectedPath])
@@ -676,6 +891,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const url = new URL(window.location.href)
     if (selectedPath) {
       url.searchParams.set('entry', selectedPath)
+    } else if (noEntryRequested.current) {
+      // Kept, so a reload still opens no entry.
+      url.searchParams.set('entry', '')
     } else {
       url.searchParams.delete('entry')
     }
@@ -684,21 +902,28 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   return {
     selectedPath,
-    setSelectedPath,
+    setSelectedPath: selectEntryPath,
+    closeEntry,
     entries: entriesState,
     setEntries,
     collections: collectionsState,
     currentEntry,
     availableSchemas,
     entriesInitializing,
+    entriesLoadFailed: Boolean(options.branchName) && Boolean(entriesError),
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,
+    refreshContent,
     handleCreateEntry,
     renameEntry,
     loadEntry,
+    readEntryValue,
     saveEntry,
     getEntryVersion,
+    adoptEntryVersion,
+    followMovedEntry,
+    recreateEntry,
     collectionByPath: collectionByPath,
     createModalOpen,
     createModalCollection,

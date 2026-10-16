@@ -1,3 +1,7 @@
+---
+summary: >-
+  Editor Async Patterns: Cancellation & Stale Response Prevention
+---
 # Editor Async Patterns: Cancellation & Stale Response Prevention
 
 > **Do together with [swr.md](swr.md)** — one combined work item (decided

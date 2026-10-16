@@ -13,11 +13,14 @@ import {
 import { RESOLVED_REFERENCE_KEYS, RESTRICTED_REFERENCE_MARKER } from './entry-schema'
 import { flattenGroupFields } from './utils/flatten-group-fields'
 import {
+  ensureFieldNamesSpellInPaths,
   ensureSelectFieldsHaveOptions,
   ensureReferenceFieldsHaveScope,
   ensureItemTitleFieldsExist,
   ensureNoFlattenedFieldNameCollisions,
   ensureNoGroupsInsideComplexFields,
+  ensureMarkdownFieldOptions,
+  ensureStampOnPublishPlacement,
 } from './config/validation'
 
 /** Look up a field's type by dotted path (e.g., "meta.order").
@@ -54,9 +57,9 @@ function findFieldType(fields: readonly FieldConfig[], dottedPath: string): stri
  * array; more than one `isTitle` per schema, or one on a non-string field or inside a list;
  * more than one `isBody`, or one on a field that is not markdown/mdx or is named one of
  * `RESOLVED_REFERENCE_KEYS`; a top-level or inline-group field named `unavailable`. This is also the one
- * place the shared field-shape checks run: select fields must have options,
- * reference fields must have `collections` or `entryTypes`, no inline groups
- * inside object/block fields, no field-name collisions after group flattening.
+ * place the shared field-shape checks run: field names a path can spell, select fields must have options,
+ * reference fields must have `collections` or `entryTypes`, no inline groups inside object/block fields,
+ * no field-name collisions after group flattening, valid `mdxAllow`, `stampOnPublish` placement.
  *
  * @example
  * ```typescript
@@ -126,10 +129,13 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
         `Entry schema registry entry "${key}": field "${RESTRICTED_REFERENCE_MARKER}" is reserved — a resolved reference carries "${RESTRICTED_REFERENCE_MARKER}: true" only when the reader may not read its target, so a field with that name cannot be delivered on a reference to this entry type. Rename the field.`,
       )
     }
+    ensureFieldNamesSpellInPaths(schema)
     ensureSelectFieldsHaveOptions(schema)
     ensureReferenceFieldsHaveScope(schema)
     ensureItemTitleFieldsExist(schema)
     ensureNoGroupsInsideComplexFields(schema)
+    ensureMarkdownFieldOptions(schema)
+    ensureStampOnPublishPlacement(schema, `Entry schema registry entry "${key}"`)
     ensureNoFlattenedFieldNameCollisions(schema, `entry schema "${key}"`)
   }
 

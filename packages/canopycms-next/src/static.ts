@@ -7,7 +7,6 @@ import {
   isIndexSlug,
   isNoindexEntry,
   resolveSeoUrl,
-  type CanopyBuildContext,
   type CollectStaticPathsOptions,
   type ExtractSeoFieldsOptions,
   type RoutableEntry,
@@ -64,7 +63,7 @@ export interface GenerateContentStaticParamsOptions extends CollectStaticPathsOp
  * `[[...slug]]`, otherwise exclude it via `options.filter` (e.g. `(e) => e.segments.length > 0`).
  */
 export async function collectStaticParams(
-  buildCtx: Pick<CanopyBuildContext, 'listEntries'>,
+  buildCtx: Parameters<typeof collectStaticPaths>[0],
   options: GenerateContentStaticParamsOptions = {},
 ): Promise<Array<Record<string, string | string[]>>> {
   const { paramName = 'slug', shape = 'catch-all', basePath, ...collectOptions } = options
@@ -238,7 +237,7 @@ export interface GenerateContentSitemapOptions {
  * export default () => contentSitemap({ siteUrl: 'https://example.com', trailingSlash: true })
  */
 export async function generateContentSitemap(
-  buildCtx: Pick<CanopyBuildContext, 'listEntries'>,
+  buildCtx: Parameters<typeof collectRoutableEntries>[0],
   options: GenerateContentSitemapOptions,
 ): Promise<MetadataRoute.Sitemap> {
   const { siteUrl, trailingSlash, rootPath, seo, exclude, lastModified, priority, pathFor } =

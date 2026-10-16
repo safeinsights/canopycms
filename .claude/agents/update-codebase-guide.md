@@ -126,7 +126,7 @@ H2 section; `--report` alone prints the per-file table).
 - Rewrite a paragraph whose behavior changed in place; never leave an older version
   beside it.
 - No dates, PR numbers, or descriptions of past behavior. Those belong in commit messages
-  and `.claude/future-tasks/`.
+  and issues.
 - Never restate a rule that a code comment carries; the comment is authoritative, so
   point at it.
 - A table whose cells hold prose becomes a list with one line per item, so prettier

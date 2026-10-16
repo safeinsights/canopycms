@@ -290,6 +290,10 @@ describe('groups API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(502)
       expect(result.error).toContain('network unreachable')
+      // The bot authors settings commits, so the trailer, not the author, names the actor.
+      expect(mockContext.services.commitToSettingsBranch).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Update internal groups\n\nEdited-by: admin-1' }),
+      )
       expect(consoleSpy).toHaveWarned('committed but not pushed')
       consoleSpy.restore()
     })
@@ -975,6 +979,7 @@ describe('groups API', () => {
       expect(result.error).toBe(
         'Groups were modified by another user. Please reload and try again.',
       )
+      expect(result.code).toBe('SETTINGS_CHANGED')
       expect(settingsMutation.getPayload()).toBeNull()
     })
 
@@ -1093,6 +1098,7 @@ describe('groups API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(409)
       expect(result.error).toBe('Settings are busy, please try again.')
+      expect(result.code).toBeUndefined()
     })
   })
 })

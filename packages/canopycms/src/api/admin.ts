@@ -22,10 +22,13 @@ import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { BuildIdentity, WorkerStatusReport } from '../types'
 import type { OperatingMode } from '../operating-mode'
+import type { SchemaIssue } from '../schema/types'
 import { defineEndpoint } from './route-builder'
 import { getErrorMessage, isNotFoundError, redactCredentials } from '../utils/error'
 import { getBuildIdentity } from '../build-identity'
+import { loadSharp } from '../assets/sharp-loader'
 import { ADMIN_BRANCH_HEALTH_ROUTES } from './admin-branch-health'
+import { baseBranchOf } from '../utils/base-branch'
 // generate-client.ts resolves a route's response/body type module purely
 // from its `namespace` field (see typeNameToModule/namespaceToModule in
 // scripts/generate-client.ts) -- it has no way to know these four types
@@ -122,6 +125,27 @@ async function readSettingsWorkspaceError(ctx: ApiContext): Promise<string | und
   }
 }
 
+/**
+ * What the base branch's schema leaves out under this process's registry (see
+ * `BranchSchemaCache`). Empty when the probe cannot resolve it: that failure reaches the
+ * editor through every schema-guarded route anyway.
+ */
+async function readBaseSchemaIssues(ctx: ApiContext): Promise<SchemaIssue[]> {
+  try {
+    const { config, branchSchemaCache, entrySchemaRegistry } = ctx.services
+    const base = await ctx.getBranchContext(baseBranchOf(config))
+    if (!base) return []
+    const { issues } = await branchSchemaCache.getSchema(
+      base.branchRoot,
+      entrySchemaRegistry,
+      config.contentRoot || 'content',
+    )
+    return issues
+  } catch {
+    return []
+  }
+}
+
 /** Age (ms) of the oldest file in pending/, or undefined if empty/missing. */
 async function getOldestPendingAgeMs(taskDir: string): Promise<number | undefined> {
   const pendingDir = path.join(taskDir, 'pending')
@@ -162,10 +186,18 @@ export interface AdminStatusData {
    * /admin.
    */
   settingsWorkspaceError?: string
+  /** What the base branch's schema leaves out under this process's code; absent when nothing. */
+  schemaIssues?: SchemaIssue[]
   /** Build of the API process answering this request. */
   build: BuildIdentity
   /** Whether `media` is configured; without it every upload returns 501. */
   assetStore: { configured: boolean }
+  /**
+   * Whether THIS API process can load sharp. When false, any editor image not yet stored (a new
+   * crop, thumbnail or preview size, transformed on demand here) fails, and raster uploads are
+   * accepted without decode validation. Speaks only for the process that answers the request.
+   */
+  imageProcessing: { available: boolean; error?: string }
 }
 
 /** Response type for GET /admin/status */
@@ -224,6 +256,16 @@ const deleteTaskParamsSchema = z.object({
 })
 export type DeleteTaskParams = z.infer<typeof deleteTaskParamsSchema>
 
+/** Loads sharp in this process; a failure is reported, never thrown. */
+async function probeImageProcessing(): Promise<AdminStatusData['imageProcessing']> {
+  try {
+    await loadSharp()
+    return { available: true }
+  } catch (err) {
+    return { available: false, error: getErrorMessage(err) }
+  }
+}
+
 const getAdminStatusHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -238,12 +280,16 @@ const getAdminStatusHandler = async (
       worker,
       { workerStatus, statusReadError },
       settingsWorkspaceError,
+      imageProcessing,
+      schemaIssues,
     ] = await Promise.all([
       getQueueStats(taskDir),
       getOldestPendingAgeMs(taskDir),
       classifyWorkerLiveness(taskDir),
       readWorkerStatus(taskDir),
       readSettingsWorkspaceError(ctx),
+      probeImageProcessing(),
+      readBaseSchemaIssues(ctx),
     ])
 
     return {
@@ -260,8 +306,10 @@ const getAdminStatusHandler = async (
         workerStatus,
         ...(statusReadError ? { statusReadError } : {}),
         ...(settingsWorkspaceError ? { settingsWorkspaceError } : {}),
+        ...(schemaIssues.length > 0 ? { schemaIssues } : {}),
         build: getBuildIdentity(),
         assetStore: { configured: !!ctx.assetStore },
+        imageProcessing,
       },
     }
   } catch (err) {
@@ -394,6 +442,7 @@ const getAdminStatus = defineEndpoint({
     workerStatus: null,
     build: { canopycmsVersion: '0.0.0' },
     assetStore: { configured: false },
+    imageProcessing: { available: true },
   },
   guards: ['admin'] as const,
   handler: getAdminStatusHandler,

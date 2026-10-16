@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — entry load no longer skipped when a draft exists (always fetch + overlay), draft cleared on save, discards confirmed (claude/ux-review-fixes, e43b7a6); optional "viewing a draft" visual indicator not implemented
+---
 # Stale localStorage Draft Prevents Content Load
 
 A stale draft in localStorage can permanently prevent the editor from loading fresh content from the API, leaving the Body field (and potentially other fields) empty with no indication to the user.

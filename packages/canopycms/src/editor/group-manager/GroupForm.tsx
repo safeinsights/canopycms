@@ -22,14 +22,14 @@ export const GroupForm: React.FC<GroupFormProps> = ({
   onClose,
 }) => {
   return (
-    <Modal opened={isOpen} onClose={onClose} title={editingGroup ? 'Edit Group' : 'Create Group'}>
+    <Modal opened={isOpen} onClose={onClose} title={editingGroup ? 'Edit group' : 'Create group'}>
       <Stack gap="md">
         {editingGroup && (
           <div>
             <Text size="sm" fw={500} mb={4}>
               ID (system-generated)
             </Text>
-            <Paper p="xs" withBorder bg="gray.0">
+            <Paper p="xs" withBorder bg="var(--canopy-surface-subtle)">
               <Text size="sm" ff="monospace" c="dimmed">
                 {editingGroup.id}
               </Text>
@@ -37,8 +37,8 @@ export const GroupForm: React.FC<GroupFormProps> = ({
           </div>
         )}
         <TextInput
-          label="Group Name"
-          placeholder="e.g., Content Editors"
+          label="Group name"
+          placeholder="e.g. Content editors"
           value={formData.name}
           onChange={(e) => onFormChange({ name: e.target.value })}
           required
@@ -51,10 +51,12 @@ export const GroupForm: React.FC<GroupFormProps> = ({
           rows={3}
         />
         <Group justify="flex-end" gap="sm">
-          <Button variant="subtle" onClick={onClose}>
+          <Button size="sm" variant="subtle" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={onSave}>{editingGroup ? 'Save' : 'Create'}</Button>
+          <Button size="sm" onClick={onSave}>
+            {editingGroup ? 'Apply' : 'Add'}
+          </Button>
         </Group>
       </Stack>
     </Modal>

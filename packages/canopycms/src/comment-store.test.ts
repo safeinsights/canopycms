@@ -312,6 +312,22 @@ describe('CommentStore', () => {
     expect(data2.version).toBe(2)
   })
 
+  it('adds a reply to an existing thread and never creates a missing one', async () => {
+    const { threadId } = await store.addComment({ userId: 'u1', text: 'first', type: 'branch' })
+
+    const reply = await store.addReply({ userId: 'u2', text: 'second', threadId })
+    expect(reply?.threadId).toBe(threadId)
+    expect((await store.getThread(threadId))?.comments.map((c) => c.text)).toEqual([
+      'first',
+      'second',
+    ])
+
+    for (const missing of ['no-such-thread', '__proto__', 'constructor']) {
+      expect(await store.addReply({ userId: 'u2', text: 'x', threadId: missing })).toBeNull()
+    }
+    expect(await store.listThreads()).toHaveLength(1)
+  })
+
   describe('concurrency', () => {
     it('handles concurrent addComment calls from different store instances', async () => {
       const store1 = new CommentStore(tmpDir, { settleMs: 0 })

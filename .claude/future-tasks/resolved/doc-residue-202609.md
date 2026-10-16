@@ -1,3 +1,8 @@
+---
+adopters: NEITHER
+summary: >-
+  RESOLVED 2026-09-14 in the bookkeeping PR (#350) of [baseline-quality-202609.md](baseline-quality-202609.md), from its round-1 review. `docs/concurrency.md`'s remaining history phrasing is restated as rules; root `AGENTS.md` gains `http/` and `task-queue/` rows and a pointer to DEVELOPING's budget section; `task-queue/README.md` says the worker recovers orphaned tasks at boot and every poll
+---
 # [P3] Doc residue left after the baseline-quality epic
 
 **Status:** RESOLVED 2026-09-14 in the bookkeeping PR (#350) of

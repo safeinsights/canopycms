@@ -9,7 +9,6 @@ export default defineCanopyConfig({
   gitBotAuthorEmail: 'test@example.com',
   editor: {
     title: 'Test Editor',
-    subtitle: 'For E2E testing',
     theme: {
       colors: {
         brand: '#4f46e5',
@@ -17,7 +16,12 @@ export default defineCanopyConfig({
         neutral: '#0f172a',
       },
     },
-    // `app/page.tsx` serves the home singleton at `/`; settings has no page.
-    previewBase: { 'content/home': '/', 'content/settings': false },
+    // `app/page.tsx` serves the home singleton at `/` through `useCanopyPreview`; posts preview on
+    // the `createPreviewPage` route; settings has no page.
+    previewBase: {
+      'content/home': '/',
+      'content/posts': '/preview/posts',
+      'content/settings': false,
+    },
   },
 })

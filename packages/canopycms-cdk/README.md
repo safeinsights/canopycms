@@ -2,6 +2,8 @@
 
 AWS CDK constructs and EC2 worker for deploying CanopyCMS.
 
+What changed in each release, for all five CanopyCMS packages, is in `node_modules/canopycms/CHANGELOG.md`.
+
 ## What's Included
 
 ### CDK Constructs
@@ -9,10 +11,11 @@ AWS CDK constructs and EC2 worker for deploying CanopyCMS.
 **`CanopyCmsService`** — Core infrastructure (required):
 
 - VPC (2 AZs, public + private subnets, no NAT Gateway)
-- EFS filesystem with `/workspace` access point
+- EFS filesystem with `/workspace` access point, TLS and IAM required, backed up daily (`efsBackup`)
 - Lambda function (Docker image, EFS mount, private subnet, no internet)
 - Lambda Function URL (for CloudFront origin)
-- EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount)
+- EC2 Worker (on-demand t4g.nano in ASG, spot opt-in, public subnet, EFS mount, drained before replacement, replaced weekly, [hardened](../../docs/deploying-to-aws.md#the-worker-instance))
+- `workerCode: { source: 'parameter' }`: lets CI roll the worker with a parameter-only change set; see [Rolling the worker from CI](../../docs/deploying-to-aws.md#rolling-the-worker-from-ci)
 - Security groups and IAM roles (least-privilege)
 - `attachTo(distribution)`: adds the editor's `/edit`, `/edit/*` and `/api/canopycms/*` behaviors (and, optionally, the CMS build's `assetPrefix` and the preview route) to a CloudFront distribution you already own
 
@@ -28,11 +31,12 @@ Use `CanopyCmsDistribution` when the CMS gets its own domain. To serve the edito
 
 ### EC2 Worker
 
-The `worker/` directory contains the EC2 worker entrypoint for AWS deployments. It:
+The `worker/` directory contains the EC2 instance's entrypoint for AWS deployments, run as two services:
 
-- Reads secrets from AWS Secrets Manager
-- Wires up the Clerk-specific auth cache refresher
-- Starts the `CmsWorker` daemon from `canopycms` core
+- the worker, with no network and no secret, starts the `CmsWorker` daemon from `canopycms` core and writes the Clerk auth cache;
+- the GitHub gateway (`index.js gateway`) reads the secrets from AWS Secrets Manager and does everything the worker needs from GitHub, Clerk and AWS.
+
+`worker/` also holds the three systemd units and `gateway.env.example`, for an install without the construct ([Installing the units by hand](../../docs/deploying-to-aws.md#installing-the-units-by-hand)).
 
 The `CmsWorker` class itself lives in `canopycms/worker/cms-worker` and is cloud-agnostic. This package re-exports it for convenience.
 
@@ -65,22 +69,25 @@ const cmsDist = new CanopyCmsDistribution(this, 'CmsDist', {
 ```
 CloudFront → Lambda Function URL → Lambda (VPC, no internet)
                                         ↕ EFS
-                                   EC2 Worker (internet) → GitHub
+                                   EC2 worker (no network)
+                                        ↕ unix socket
+                                   GitHub gateway (internet) → GitHub
 ```
 
-Lambda handles all CMS operations using local EFS storage. The EC2 worker handles internet-requiring operations (GitHub push/PR, auth cache refresh). They communicate via the shared EFS filesystem.
+Lambda handles all CMS operations using local EFS storage. The EC2 worker handles the operations that need GitHub or Clerk (GitHub push/PR, auth cache refresh), through the GitHub gateway beside it on the instance, which holds every secret and cannot see EFS. The Lambda and the worker communicate via the shared EFS filesystem.
 
 See [ARCHITECTURE.md](../../ARCHITECTURE.md#deployment-architecture) for details.
 
 ## Cost
 
-| Resource                      | Monthly Cost    |
-| ----------------------------- | --------------- |
-| EC2 t4g.nano spot (ASG 1/1/1) | ~$1.50          |
-| Lambda (editors only)         | ~$1-5           |
-| EFS (small repo)              | ~$1             |
-| CloudFront (low traffic)      | ~$1             |
-| **Total**                     | **~$5-9/month** |
+| Resource                           | Monthly Cost     |
+| ---------------------------------- | ---------------- |
+| EC2 t4g.nano on-demand (ASG 1/1/1) | ~$3              |
+| Lambda (editors only)              | ~$1-5            |
+| EFS (small repo)                   | ~$1              |
+| EFS backup (~$0.05/GB-month)       | cents            |
+| CloudFront (low traffic)           | ~$1              |
+| **Total**                          | **~$6-10/month** |
 
 ## What Adopters Provide
 

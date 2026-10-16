@@ -1,36 +1,30 @@
 import { type Page, type Locator, expect } from '@playwright/test'
+import { EditorPage } from './editor-page'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 
 /**
  * Page objects for the Group Manager and Permission Manager drawers
- * (Settings gear -> "Manage Groups" / "Manage Permissions").
+ * (Settings gear -> "Manage groups" / "Manage permissions").
  *
- * Unlike the media/admin surfaces, neither module carries `data-testid`
- * attributes on its interactive elements (see EditorSidebar.tsx,
- * group-manager/**, permission-manager/**) — every locator here goes
- * through `getByRole` / visible text, matching what a screen-reader user
- * would rely on. Selectors were confirmed against the component source,
- * not guessed:
- *  - Settings menu: `aria-label="Settings"` action icon; items are Mantine
- *    `Menu.Item`s (role="menuitem") with the exact labels below
- *    (EditorSidebar.tsx).
+ * The Settings entry point goes through `EditorPage.openSettingsItem`
+ * (testid-based, shared with the other Settings surfaces). Inside the
+ * drawers neither module carries `data-testid` attributes on its
+ * interactive elements (see group-manager/**, permission-manager/**) —
+ * every locator there goes through `getByRole` / visible text, matching
+ * what a screen-reader user would rely on. Selectors were confirmed
+ * against the component source, not guessed:
  *  - Both drawers are plain Mantine `<Drawer title={...}>` (not the
  *    compound Drawer.Root API used by the entry navigator), so the
- *    dialog's accessible name is the concatenation of the bold title and
- *    the dimmed description underneath it (Editor.tsx) — `getByRole`'s
- *    default substring match on just "Groups" / "Permissions" is
- *    deliberate, not a shortcut.
+ *    dialog's accessible name is the concatenation of the bold title, the
+ *    "Unsaved changes" badge while dirty, and the dimmed description
+ *    (components/StagedChangesDrawer.tsx) — `getByRole`'s default
+ *    substring match on just "Groups" / "Permissions" is deliberate, not a
+ *    shortcut.
  *  - GroupForm's modal fields are real `<label>`-associated Mantine
- *    TextInput/Textarea ("Group Name" / "Description") — `getByLabel`.
+ *    TextInput/Textarea ("Group name" / "Description") — `getByLabel`.
  *  - PermissionEditor's group-search input is a raw `<input
  *    aria-label="Search groups">` (GroupSelector.tsx).
  */
-
-const SETTINGS_BUTTON_NAME = 'Settings'
-
-async function openSettingsMenu(page: Page): Promise<void> {
-  await page.getByRole('button', { name: SETTINGS_BUTTON_NAME }).click()
-}
 
 export class GroupManagerPage {
   readonly page: Page
@@ -43,10 +37,9 @@ export class GroupManagerPage {
     this.drawer = page.getByRole('dialog', { name: 'Groups' })
   }
 
-  /** Open via Settings -> "Manage Groups" and wait for the drawer. */
+  /** Open via Settings -> "Manage groups" and wait for the drawer. */
   async open(): Promise<void> {
-    await openSettingsMenu(this.page)
-    await this.page.getByRole('menuitem', { name: 'Manage Groups' }).click()
+    await new EditorPage(this.page).openSettingsItem('Groups')
     await expect(this.drawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
@@ -56,38 +49,50 @@ export class GroupManagerPage {
   }
 
   get createGroupButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Create Group' })
+    return this.drawer.getByRole('button', { name: 'Create group' })
   }
 
   get saveButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Save Groups' })
+    return this.drawer.getByRole('button', { name: 'Save groups' })
   }
 
   get discardButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Discard Changes' })
+    return this.drawer.getByRole('button', { name: 'Discard changes' })
   }
 
-  /** The (unique) group name text within the drawer's Internal Groups list. */
+  /** The (unique) group name text within the drawer's Internal groups list. */
   groupEntry(name: string): Locator {
     return this.drawer.getByText(name, { exact: true })
   }
 
+  /** The internal-group card whose name is `name`: the nearest Paper around it (the drawer is a Paper too). */
+  groupCard(name: string): Locator {
+    return this.groupEntry(name).locator(
+      'xpath=ancestor::*[contains(@class, "mantine-Paper-root")][1]',
+    )
+  }
+
+  /** The "Discard unsaved changes?" confirm: closing a dirty drawer opens it, as does its save bar's "Discard changes". */
+  get discardConfirm(): Locator {
+    return this.page.getByRole('dialog', { name: 'Discard unsaved changes?' })
+  }
+
   /**
-   * Fill and submit the "Create Group" modal. Leaves the modal closed and
+   * Fill and submit the "Create group" modal. Leaves the modal closed and
    * the new group listed (but NOT yet saved to the server) in the Internal
    * Groups tab.
    */
   async createGroup(name: string, description: string): Promise<void> {
     await this.createGroupButton.click()
-    const modal = this.page.getByRole('dialog', { name: 'Create Group' })
+    const modal = this.page.getByRole('dialog', { name: 'Create group' })
     await expect(modal).toBeVisible({ timeout: SHORT_TIMEOUT })
-    await modal.getByLabel('Group Name').fill(name)
+    await modal.getByLabel('Group name').fill(name)
     await modal.getByLabel('Description').fill(description)
-    await modal.getByRole('button', { name: 'Create', exact: true }).click()
+    await modal.getByRole('button', { name: 'Add', exact: true }).click()
     await expect(modal).toBeHidden({ timeout: SHORT_TIMEOUT })
   }
 
-  /** Click "Save Groups" and wait for the PUT to resolve (settings writes commit+push through a lock). */
+  /** Click "Save groups" and wait for the PUT to resolve (settings writes commit+push through a lock). */
   async saveAndVerify(): Promise<void> {
     await Promise.all([
       this.page.waitForResponse(
@@ -114,10 +119,9 @@ export class PermissionManagerPage {
     this.drawer = page.getByRole('dialog', { name: 'Permissions' })
   }
 
-  /** Open via Settings -> "Manage Permissions" and wait for the drawer. */
+  /** Open via Settings -> "Manage permissions" and wait for the drawer. */
   async open(): Promise<void> {
-    await openSettingsMenu(this.page)
-    await this.page.getByRole('menuitem', { name: 'Manage Permissions' }).click()
+    await new EditorPage(this.page).openSettingsItem('Permissions')
     await expect(this.drawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
@@ -132,7 +136,7 @@ export class PermissionManagerPage {
   }
 
   /**
-   * Every tree node's PermissionEditor panel (tabs, "Add Groups" button,
+   * Every tree node's PermissionEditor panel (tabs, "Add groups" button,
    * etc.) is ALWAYS present in the DOM, not just the selected node's —
    * PermissionTree.tsx wraps each in `<Collapse in={isSelected}>` but never
    * unmounts it ("content stays in DOM for test accessibility", per its own
@@ -145,7 +149,7 @@ export class PermissionManagerPage {
    * `.first()` is the correct fix, not a shortcut: `activeLevel` and the
    * group/user-search UI state (`useGroupsAndUsers`) are held ONCE in
    * PermissionManager and passed down identically to every node's
-   * PermissionEditor, so clicking either copy of "Edit" or "Add Groups"
+   * PermissionEditor, so clicking either copy of "Edit" or "Add groups"
    * flips the same shared state. Which node's permission actually gets
    * mutated is governed entirely by `selectedNode` (set via `selectNode`
    * above) — the group-search results list itself is a REAL conditional
@@ -158,20 +162,20 @@ export class PermissionManagerPage {
   }
 
   get addGroupsButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Add Groups' }).first()
+    return this.drawer.getByRole('button', { name: 'Add groups' }).first()
   }
 
   get saveButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Save Permissions' })
+    return this.drawer.getByRole('button', { name: 'Save permissions' })
   }
 
   get discardButton(): Locator {
-    return this.drawer.getByRole('button', { name: 'Discard Changes' })
+    return this.drawer.getByRole('button', { name: 'Discard changes' })
   }
 
   /**
    * Assign a group (by its display label, e.g. "Team A") to the currently
-   * selected node at the given level, via the "Add Groups" search panel.
+   * selected node at the given level, via the "Add groups" search panel.
    * Caller must have already selected a node.
    */
   async assignGroup(groupLabel: string, level: PermissionLevelName): Promise<void> {
@@ -181,7 +185,7 @@ export class PermissionManagerPage {
     await this.drawer.getByText(groupLabel, { exact: true }).click()
   }
 
-  /** Click "Save Permissions" and wait for the PUT to resolve. */
+  /** Click "Save permissions" and wait for the PUT to resolve. */
   async saveAndVerify(): Promise<void> {
     await Promise.all([
       this.page.waitForResponse(

@@ -219,6 +219,13 @@ export async function generateAIContentFiles(
   } else {
     const schemaCache = new BranchSchemaCache(config.mode)
     const cached = await schemaCache.getSchema(branchRoot, entrySchemaRegistry, contentRootName)
+    // A branch workspace resolves degraded (see BranchSchemaCache); a build command fails instead.
+    if (cached.issues.length > 0) {
+      throw new Error(
+        `AI content generation: the schema in ${branchRoot} does not match this code's entry ` +
+          `schema registry:\n${cached.issues.map((issue) => `  - ${issue.message}`).join('\n')}`,
+      )
+    }
     flatSchema = cached.flatSchema
   }
 

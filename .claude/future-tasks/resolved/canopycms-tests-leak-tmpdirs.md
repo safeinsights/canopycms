@@ -1,3 +1,8 @@
+---
+adopters: NEITHER
+summary: >-
+  Done 2026-10-02. One `packages/canopycms` run stranded 373 temp directories (28 prefixes); ~49,500 had accumulated. Fixed by ownership, not per-file cleanup: the `ownedTmpdirSetup` globalSetup (`vitest.tmpdir.ts`) points TMPDIR at a per-run root for every package and deletes it in teardown; dead runs' roots are swept by pid liveness, shared with the CDK suite. `owned-tmpdir.test.ts` guards it. A full run now adds zero entries
+---
 # [P2] `canopycms` test files `mkdtemp` without cleanup, leaking temp directories
 
 ## Resolution (2026-10-02)

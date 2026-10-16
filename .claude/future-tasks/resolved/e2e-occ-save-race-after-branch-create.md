@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-25) — full-suite e2e runs intermittently failed a save right after branch create/switch with a 409 "Content was modified by another editor", never reproducing in isolation. The original server-side hypothesis (something touching branch-clone mtimes post-provisioning) was wrong: `useEntryManager`'s OCC version map (`entryVersionsRef`) was keyed by `contentId` alone, but the token is a file mtime and therefore per-branch, so a late-resolving load response from the *previous* branch repopulated the map after the branch-change effect cleared it and the next save sent the old branch's mtime. Proven by a Playwright trace showing `expectedVersion` equal to main's `home.json` mtime. Fixed by keying the map `${branch}:${contentId}` and pinning the request's branch in the `loadEntry`/`saveEntry` closures; the branch-change `clear()` stays as growth bounding only. Row added 2026-08-13 — the file was resolved without ever being indexed
+---
 # Intermittent OCC 409 when saving immediately after branch create/switch
 
 **Priority:** P1 → **RESOLVED 2026-07-25** (root cause found by Playwright trace; fixed in `useEntryManager.ts`)

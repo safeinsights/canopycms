@@ -30,6 +30,7 @@
  * leaving two unsynchronized writers -- the unlocked behaviour, so still a strict improvement.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import path from 'node:path'
 
 import { getErrorMessage, isNodeError } from './error'
@@ -56,7 +57,7 @@ const CONTENT_WRITE_LOCK_NAME = 'content-write.lock'
  * `next dev` and build-time provisioning across worker processes. The case to watch is a write
  * whose in-lock path triggers a full `idIndex()` rescan of a large tree over EFS, which can exceed
  * this budget and start 409ing unrelated saves. Making it configurable is tracked in
- * .claude/future-tasks/content-write-lock-tuning-and-granularity.md.
+ * safeinsights/canopycms#640.
  */
 export const DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS = 2000
 
@@ -72,7 +73,7 @@ export const DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS = 2000
  */
 export class ContentWriteLockBusyError extends Error {
   constructor(
-    message = 'This branch is busy (syncing with the base branch, or another save is in flight); the change was not saved. Try again in a moment.',
+    message = 'This branch is busy syncing or saving another change, so your change was not saved. Try again in a moment.',
     /**
      * `'not-run'`: the lock was never acquired, so nothing happened. `'unknown'`: the work ran
      * but the lock was lost during it (see {@link withContentWriteLock}).
@@ -112,6 +113,7 @@ export function tryAcquireContentWriteLock(
     CONTENT_WRITE_LOCK_NAME,
     onCompromised,
     CONTENT_WRITE_LOCK_STALE_MS,
+    false,
   )
 }
 
@@ -145,6 +147,18 @@ async function acquireContentWriteLock(
   }
 }
 
+/** The branch roots whose content-write lock the current async call chain holds. */
+const heldRoots = new AsyncLocalStorage<ReadonlySet<string>>()
+
+/**
+ * Throw unless the calling async chain runs inside {@link withContentWriteLock} for `branchRoot`:
+ * the check for code that writes under a lock its caller took.
+ */
+export function assertContentWriteLockHeld(branchRoot: string): void {
+  if (heldRoots.getStore()?.has(path.resolve(branchRoot))) return
+  throw new Error(`The content-write lock for ${branchRoot} is not held by this call`)
+}
+
 /** Run `fn` holding the branch's content-write lock, releasing in a `finally` so a throw cannot
  * strand it. */
 export async function withContentWriteLock<T>(
@@ -166,7 +180,9 @@ export async function withContentWriteLock<T>(
   })
   let result: T
   try {
-    result = await fn()
+    const held = new Set(heldRoots.getStore())
+    held.add(path.resolve(branchRoot))
+    result = await heldRoots.run(held, fn)
   } finally {
     await release()
   }
@@ -174,9 +190,10 @@ export async function withContentWriteLock<T>(
     // Deliberately NOT the default "was not saved" message: `fn()` completed, so the write is on
     // disk and only the proof of exclusivity is lost. "Reload, then decide" rather than "retry",
     // which would resend a now-stale expectedVersion and bounce off the caller's own landed write
-    // as a phantom editor collision.
+    // as a phantom editor collision. The API marks this case `WRITE_OUTCOME_UNKNOWN` so the
+    // editor can hold further saves of the entry until it is re-read.
     throw new ContentWriteLockBusyError(
-      'This branch was being synced while your change was written, so the change may or may not have been recorded. Reload the entry to see the current state before saving again.',
+      "We couldn't confirm your change was saved because the branch was syncing at the same time. Reload to check before saving again (your unsaved edits will be lost).",
       'unknown',
     )
   }

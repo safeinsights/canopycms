@@ -91,7 +91,6 @@ async function createPublishSetup(tmpDir: string, branchName: string): Promise<P
   const branchGit = simpleGit({ baseDir: branchPath, unsafe: { allowUnsafeEditor: true } })
   await branchGit.addConfig('user.name', 'Test Bot')
   await branchGit.addConfig('user.email', 'test@canopycms.test')
-  await branchGit.addConfig('core.editor', 'true')
   const excludeFile = path.join(branchPath, '.git', 'info', 'exclude')
   await fs.mkdir(path.dirname(excludeFile), { recursive: true })
   await fs.appendFile(excludeFile, '\n.canopy-meta/\n')

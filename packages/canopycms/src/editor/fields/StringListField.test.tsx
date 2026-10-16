@@ -6,15 +6,19 @@ import { CanopyCMSProvider } from '../theme'
 import { StringListField } from './StringListField'
 
 // Controlled harness mirroring how FormRenderer drives the field.
-const Harness: React.FC<{ initial?: string[]; onChange?: (v: string[]) => void }> = ({
-  initial = [],
-  onChange,
-}) => {
+const Harness: React.FC<{
+  initial?: string[]
+  onChange?: (v: string[]) => void
+  description?: string
+  readOnly?: boolean
+}> = ({ initial = [], onChange, description, readOnly }) => {
   const [value, setValue] = useState<string[]>(initial)
   return (
     <CanopyCMSProvider>
       <StringListField
         label="Tags"
+        description={description}
+        readOnly={readOnly}
         value={value}
         onChange={(next) => {
           setValue(next)
@@ -27,6 +31,14 @@ const Harness: React.FC<{ initial?: string[]; onChange?: (v: string[]) => void }
 }
 
 afterEach(cleanup)
+
+/** The text the input is described by, which is where Mantine puts a field's description. */
+const describedBy = (): string | undefined => {
+  const input = document.querySelector('input[data-canopy-field="tags"]')
+  const ids = input?.getAttribute('aria-describedby')?.split(' ') ?? []
+  const texts = ids.map((id) => document.getElementById(id)?.textContent).filter(Boolean)
+  return texts.length > 0 ? texts.join(' ') : undefined
+}
 
 describe('StringListField', () => {
   it('renders existing items as pills and tags the input with data-canopy-field', () => {
@@ -67,5 +79,47 @@ describe('StringListField', () => {
     fireEvent.change(input, { target: { value: 'alpha' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(changes.at(-1)).toEqual(['alpha', 'New York, NY', 'alpha'])
+  })
+
+  describe('the Enter hint', () => {
+    it('is the whole description of an editable list that has none', () => {
+      render(<Harness />)
+      expect(describedBy()).toBe('Press Enter to add.')
+    })
+
+    it('follows the field description, in one line, when the list is editable', () => {
+      render(<Harness description="Used for search." />)
+      expect(describedBy()).toBe('Used for search. Press Enter to add.')
+    })
+
+    it.each([
+      ['Used for search', 'Used for search. Press Enter to add.'],
+      ['Used for search.', 'Used for search. Press Enter to add.'],
+      ['Really, tags!', 'Really, tags! Press Enter to add.'],
+      ['Which tags?', 'Which tags? Press Enter to add.'],
+      ['  Used for search  ', 'Used for search. Press Enter to add.'],
+      ['', 'Press Enter to add.'],
+      ['   ', 'Press Enter to add.'],
+    ])('after the description %j reads %j', (description, expected) => {
+      render(<Harness description={description} />)
+      expect(describedBy()).toBe(expected)
+    })
+
+    it('leaves a read-only description exactly as given, with no full stop added', () => {
+      render(<Harness description="Used for search" readOnly />)
+      expect(describedBy()).toBe('Used for search')
+    })
+
+    it('is absent from a read-only list that has a description', () => {
+      render(<Harness description="Used for search." readOnly />)
+      expect(describedBy()).toBe('Used for search.')
+      expect(screen.queryByText(/press enter/i)).toBeNull()
+    })
+
+    it('is absent from a read-only list that has no description', () => {
+      render(<Harness readOnly />)
+      expect(describedBy()).toBeUndefined()
+      expect(screen.queryByText(/press enter/i)).toBeNull()
+    })
   })
 })

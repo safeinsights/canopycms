@@ -10,8 +10,11 @@ import {
   BranchMetadataCorruptError,
   getBranchMetadataFileManager,
   buildMergedBranchUpdate,
+  recordBranchEditor,
   type BranchMetadataFile,
 } from './branch-metadata'
+import { ANONYMOUS_USER } from './user'
+import { mockConsole } from './test-utils'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branchmeta-'))
 
@@ -368,6 +371,204 @@ describe('BranchMetadataFileManager', () => {
     })
   })
 
+  describe('a branch.json that fails the read-boundary schema', () => {
+    it.each([
+      ['invalid JSON', '{ this is not json'],
+      [
+        'no status',
+        JSON.stringify({ schemaVersion: 1, version: 2, branch: { name: 'feature/x', access: {} } }),
+      ],
+      ['no branch object', JSON.stringify({ schemaVersion: 1, version: 2, committed: true })],
+    ])('save() refuses to merge defaults over %s, writing nothing', async (_label, raw) => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const filePath = path.join(root, '.canopy-meta', 'branch.json')
+      await fs.mkdir(path.dirname(filePath), { recursive: true })
+      await fs.writeFile(filePath, raw, 'utf8')
+      const onlyIf = vi.fn(() => true)
+
+      await expect(
+        createMeta(root, registryDir).saveIf({ branch: { conflictStatus: 'clean' } }, onlyIf),
+      ).rejects.toThrow(BranchMetadataCorruptError)
+
+      expect(onlyIf).not.toHaveBeenCalled()
+      expect(await fs.readFile(filePath, 'utf8')).toBe(raw)
+    })
+
+    it('keeps fields it does not know through a load -> save round trip', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const filePath = path.join(root, '.canopy-meta', 'branch.json')
+      await fs.mkdir(path.dirname(filePath), { recursive: true })
+      await fs.writeFile(
+        filePath,
+        JSON.stringify({
+          schemaVersion: 1,
+          version: 1,
+          futureEnvelopeField: { a: 1 },
+          branch: {
+            name: 'feature/x',
+            status: 'editing',
+            access: { allowedUsers: ['u1'], futureAclField: true },
+            createdBy: 'u1',
+            createdAt: '2026-10-01T00:00:00.000Z',
+            updatedAt: '2026-10-01T00:00:00.000Z',
+            futureBranchField: 'kept',
+          },
+        }),
+      )
+
+      await createMeta(root, registryDir).save({ branch: { title: 'Renamed' } })
+
+      const raw = JSON.parse(await fs.readFile(filePath, 'utf8')) as Record<string, unknown>
+      expect(raw).toMatchObject({
+        version: 2,
+        futureEnvelopeField: { a: 1 },
+        branch: {
+          title: 'Renamed',
+          futureBranchField: 'kept',
+          access: { allowedUsers: ['u1'], futureAclField: true },
+        },
+      })
+    })
+  })
+
+  describe('saveIf', () => {
+    it('writes when the predicate accepts the metadata on disk', async () => {
+      const root = await tmpDir()
+      await createMeta(root, root).save({ branch: { name: 'b', status: 'submitted' } })
+
+      const saved = await createMeta(root, root).saveIf(
+        { branch: { name: 'b', status: 'editing' } },
+        (existing) => existing?.branch.status === 'submitted',
+      )
+
+      expect(saved?.branch.status).toBe('editing')
+      expect((await BranchMetadataFileManager.loadOnly(root))?.branch.status).toBe('editing')
+    })
+
+    it('writes nothing and resolves null when the predicate refuses', async () => {
+      const root = await tmpDir()
+      const first = await createMeta(root, root).save({ branch: { name: 'b', status: 'approved' } })
+
+      const saved = await createMeta(root, root).saveIf(
+        { branch: { name: 'b', status: 'editing' } },
+        (existing) => existing?.branch.status === 'submitted',
+      )
+
+      expect(saved).toBeNull()
+      const onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect(onDisk?.branch.status).toBe('approved')
+      expect(onDisk?.version).toBe(first.version)
+    })
+
+    it('judges the latest write, including one made through another manager', async () => {
+      const root = await tmpDir()
+      const meta = createMeta(root, root)
+      await meta.save({ branch: { name: 'b', status: 'submitted' } })
+      await createMeta(root, root).save({ branch: { name: 'b', pullRequestNumber: 3 } })
+
+      const seen: Array<number | undefined> = []
+      await meta.saveIf({ branch: { name: 'b', status: 'editing' } }, (existing) => {
+        seen.push(existing?.branch.pullRequestNumber)
+        return existing?.branch.pullRequestNumber === undefined
+      })
+
+      expect(seen).toEqual([3])
+      expect((await BranchMetadataFileManager.loadOnly(root))?.branch.status).toBe('submitted')
+    })
+  })
+
+  describe('recorded editors', () => {
+    const editingBranch = async (root: string) =>
+      createMeta(root, root).save({ branch: { name: 'b', status: 'editing' } })
+
+    it('adds a user to editors and uncommittedEditors, keeping updatedAt', async () => {
+      const root = await tmpDir()
+      const created = await editingBranch(root)
+
+      await createMeta(root, root).recordEditor('u1')
+      await createMeta(root, root).recordEditor('u2')
+
+      const onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect(onDisk?.branch.editors).toEqual(['u1', 'u2'])
+      expect(onDisk?.branch.uncommittedEditors).toEqual(['u1', 'u2'])
+      expect(onDisk?.branch.updatedAt).toBe(created.branch.updatedAt)
+    })
+
+    it('writes nothing for a user already recorded', async () => {
+      const root = await tmpDir()
+      await editingBranch(root)
+      await createMeta(root, root).recordEditor('u1')
+      const before = await BranchMetadataFileManager.loadOnly(root)
+      const meta = createMeta(root, root)
+      const update = vi.spyOn(meta, 'update')
+
+      await meta.recordEditor('u1')
+
+      // The lock-free read decides, so a repeat save takes no lock.
+      expect(update).not.toHaveBeenCalled()
+      expect((await BranchMetadataFileManager.loadOnly(root))?.version).toBe(before?.version)
+    })
+
+    it('loses no editor when many save at once', async () => {
+      const root = await tmpDir()
+      await editingBranch(root)
+      const users = Array.from({ length: 8 }, (_, i) => `u${i}`)
+
+      await Promise.all(users.map((u) => createMeta(root, root).recordEditor(u)))
+
+      const onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect([...(onDisk?.branch.editors ?? [])].sort()).toEqual(users)
+      expect([...(onDisk?.branch.uncommittedEditors ?? [])].sort()).toEqual(users)
+    })
+
+    it('never creates branch.json', async () => {
+      const root = await tmpDir()
+
+      await createMeta(root, root).recordEditor('u1')
+
+      expect(await BranchMetadataFileManager.loadOnly(root)).toBeNull()
+    })
+
+    it('markEditorsCommitted removes only the committed ids, and keeps editors', async () => {
+      const root = await tmpDir()
+      await editingBranch(root)
+      for (const u of ['u1', 'u2', 'u3']) await createMeta(root, root).recordEditor(u)
+
+      await createMeta(root, root).markEditorsCommitted(['u1', 'u3'])
+      let onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect(onDisk?.branch.uncommittedEditors).toEqual(['u2'])
+      expect(onDisk?.branch.editors).toEqual(['u1', 'u2', 'u3'])
+
+      await createMeta(root, root).markEditorsCommitted(['u2'])
+      onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect(onDisk?.branch.uncommittedEditors).toBeUndefined()
+
+      // Committed, a user is recorded as uncommitted again by their next save.
+      await createMeta(root, root).recordEditor('u1')
+      onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect(onDisk?.branch.uncommittedEditors).toEqual(['u1'])
+      expect(onDisk?.branch.editors).toEqual(['u1', 'u2', 'u3'])
+    })
+
+    it('recordBranchEditor skips anonymous users and logs, never throws, on a failure', async () => {
+      const root = await tmpDir()
+      await editingBranch(root)
+      await recordBranchEditor({ branchRoot: root, baseRoot: root }, ANONYMOUS_USER)
+      expect((await BranchMetadataFileManager.loadOnly(root))?.branch.editors).toBeUndefined()
+
+      await fs.writeFile(path.join(root, '.canopy-meta', 'branch.json'), '{ corrupt', 'utf8')
+      const consoleSpy = mockConsole()
+      await recordBranchEditor(
+        { branchRoot: root, baseRoot: root },
+        { type: 'authenticated', userId: 'u1', groups: [] },
+      )
+      expect(consoleSpy).toHaveWarned('Could not record an editor')
+      consoleSpy.restore()
+    })
+  })
+
   describe('buildMergedBranchUpdate', () => {
     it('produces archived/merged metadata with an ISO mergedAt and the branch name preserved', () => {
       const now = new Date('2026-01-01T12:00:00.000Z')
@@ -378,6 +579,8 @@ describe('BranchMetadataFileManager', () => {
         status: 'archived',
         pullRequestState: 'merged',
         mergedAt: '2026-01-01T12:00:00.000Z',
+        conflictStatus: 'clean',
+        conflictFiles: [],
       })
     })
 
@@ -435,11 +638,9 @@ describe('BranchMetadataFileManager', () => {
       expect(metaDirExists).toBe(false)
     })
 
-    it('creation flow still works: branch-workspace provisions the clone directory before save() runs', async () => {
-      // ensureBranchRoot() (branch-workspace.ts) does fs.mkdir(branchRoot,
-      // {recursive: true}) before ever calling metadata.save() -- mirror
-      // that ordering directly against the manager to confirm the new
-      // pre-check doesn't break brand-new branch creation.
+    it('creates branch.json in an existing directory that has none', async () => {
+      // Admin repair-metadata archives a corrupt branch.json and then save()s
+      // defaults into the same directory; the pre-check must let that through.
       const root = path.join(await tmpDir(), 'not-yet-created-branch')
       const registryDir = await tmpDir()
       await fs.mkdir(root, { recursive: true })

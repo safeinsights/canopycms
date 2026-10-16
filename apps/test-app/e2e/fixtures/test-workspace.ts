@@ -504,6 +504,35 @@ export async function listBranchesViaAPI(baseUrl: string, userId: string): Promi
 }
 
 /**
+ * Save a change to the home entry on a branch via API, so the branch has something to submit:
+ * submit refuses a branch whose saved content matches its base.
+ */
+export async function saveHomeChangeViaAPI(
+  baseUrl: string,
+  branchName: string,
+  userId: string,
+): Promise<void> {
+  const url = `${baseUrl}/api/canopycms/${branchName}/content/home`
+  const read = await fetch(url, { headers: { 'X-Test-User': userId } })
+  if (!read.ok) throw new Error(`saveHomeChangeViaAPI: read ${read.status} ${await read.text()}`)
+  const current = (await read.json()) as {
+    data: { data: Record<string, unknown>; version?: number }
+  }
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-Test-User': userId },
+    body: JSON.stringify({
+      format: 'json',
+      data: { ...current.data.data, tagline: `Edited on ${branchName}` },
+      expectedVersion: current.data.version ?? null,
+    }),
+  })
+  if (!response.ok) {
+    throw new Error(`saveHomeChangeViaAPI: ${response.status} ${await response.text()}`)
+  }
+}
+
+/**
  * Submit a branch for review (creates PR) via API.
  * @param baseUrl - Base URL of the test app
  * @param branchName - Name of the branch to submit

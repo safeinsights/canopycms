@@ -1,0 +1,21 @@
+{
+  "changelog": false,
+  "commit": false,
+  "fixed": [
+    ["canopycms", "canopycms-next", "canopycms-auth-clerk", "canopycms-auth-dev", "canopycms-cdk"]
+  ],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [],
+  "privatePackages": { "version": false, "tag": false },
+  "format": false,
+  "changedFilePatterns": [
+    "**",
+    "!**/*.test.ts",
+    "!**/*.test.tsx",
+    "!**/__fixtures__/**",
+    "!**/AGENTS.md"
+  ]
+}

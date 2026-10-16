@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-24, PR #145) — EC2 worker stdout/stderr ships to a dedicated CloudWatch log group by default via the amazon-cloudwatch-agent (journald is agent-unreadable, so the systemd unit moved to file output); predictable log group name + 90-day default retention (both overridable), IAM grant scoped to CreateLogStream/PutLogEvents on that one group, on-instance logrotate, and failure-isolation ordering (agent setup can't block the worker). Spun out lambda-log-retention.md and worker-log-timestamps.md as follow-ups.
+---
 # Worker CloudWatch log shipping (REQUIRED for a real deploy)
 
 ## Status: RESOLVED (2026-07-24, PR #145; sandbox-verified pre-merge)

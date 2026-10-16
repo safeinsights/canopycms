@@ -7,12 +7,16 @@
  */
 
 import { CanopyConfigSchema } from './schemas/config'
+import { mdxAllowlistSchema } from './schemas/field'
+import { isMarkdownField, markdownFieldOptionsError } from '../validation/mdx-allowlist'
 import { normalizePathValue } from './flatten'
 // Leaf module, NOT the `operating-mode` barrel: the barrel re-exports the
 // client-unsafe strategy (node:fs/node:path) and this file is reachable from
 // `canopycms/client` (the generated editor page imports the adopter's config).
 import { resolveOperatingMode } from '../operating-mode/mode-env'
-import type { CanopyConfig } from './types'
+import { isPathFieldName } from '../editor/canopy-path'
+import { ITEM_KEY } from '../item-keys'
+import type { CanopyConfig, FieldConfig } from './types'
 
 /**
  * Recursively check that all select fields have options defined.
@@ -35,6 +39,37 @@ export const ensureSelectFieldsHaveOptions = (fields: unknown): void => {
     if (f?.type === 'block' && Array.isArray(f.templates)) {
       for (const template of f.templates as Array<{ fields?: unknown }>) {
         ensureSelectFieldsHaveOptions(template.fields)
+      }
+    }
+  }
+}
+
+/**
+ * Check that every data field's name can be spelled as a field path segment (`isPathFieldName`):
+ * the form, the preview's marks, validation errors and comment threads all name a field by its
+ * path. An inline group's own name is not part of any path, so only its children are checked.
+ * `ITEM_KEY` is reserved too, since every list item and block carries it.
+ */
+export const ensureFieldNamesSpellInPaths = (fields: unknown): void => {
+  if (!Array.isArray(fields)) return
+  for (const field of fields) {
+    const f = field as Record<string, unknown>
+    if (f?.type !== 'group' && typeof f?.name === 'string' && !isPathFieldName(f.name)) {
+      throw new Error(
+        `Field "${f.name}": field names can't be empty, all digits, or contain '.', '[' or ']'; they're used in field paths`,
+      )
+    }
+    if (f?.type !== 'group' && f?.name === ITEM_KEY) {
+      throw new Error(
+        `Field "${ITEM_KEY}": the name is reserved for the key CanopyCMS gives each list item and block. Rename the field, and the key in your content files with it.`,
+      )
+    }
+    if (f?.type === 'group' || f?.type === 'object') {
+      ensureFieldNamesSpellInPaths(f.fields)
+    }
+    if (f?.type === 'block' && Array.isArray(f.templates)) {
+      for (const template of f.templates as Array<{ fields?: unknown }>) {
+        ensureFieldNamesSpellInPaths(template.fields)
       }
     }
   }
@@ -87,9 +122,11 @@ export const forEachReferenceField = (
 }
 
 /**
- * Check that every `itemTitleField` sits on a `list: true` object and names a direct child
- * of type `string` or `number`, the only values the card heading shows as typed (a reference
- * would show its raw id, a select its stored value). Throws an error when it does not.
+ * Check that every `itemLabel` is non-blank text and, like every `itemTitleField`, sits on a
+ * `list: true` object, and that every `itemTitleField` names a direct child of type `string` or
+ * `number`, the only values the card heading shows as typed (a reference would show its raw id, a
+ * select its stored value). Throws an error when it does not. Entry schemas reach the editor
+ * through these checks, not the zod field schema.
  */
 export const ensureItemTitleFieldsExist = (fields: unknown): void => {
   if (!Array.isArray(fields)) return
@@ -97,6 +134,15 @@ export const ensureItemTitleFieldsExist = (fields: unknown): void => {
     const f = field as Record<string, unknown>
     if (f?.type === 'object') {
       const children = Array.isArray(f.fields) ? (f.fields as Array<Record<string, unknown>>) : []
+      if (f.itemLabel !== undefined) {
+        const label = `Object field "${(f.name as string) ?? 'unknown'}" has itemLabel`
+        if (f.list !== true) {
+          throw new Error(`${label}, but itemLabel applies only to list: true objects`)
+        }
+        if (typeof f.itemLabel !== 'string' || f.itemLabel.trim() === '') {
+          throw new Error(`${label}, which must be non-blank text`)
+        }
+      }
       if (f.itemTitleField !== undefined) {
         const label = `Object field "${(f.name as string) ?? 'unknown'}" has itemTitleField "${String(f.itemTitleField)}"`
         if (f.list !== true) {
@@ -225,6 +271,77 @@ export const ensureNoGroupsInsideComplexFields = (fields: unknown): void => {
   }
 
   checkFields(Array.isArray(fields) ? fields : undefined)
+}
+
+/**
+ * Check that `stampOnPublish` sits only on an entry's own top-level `datetime` field (an inline
+ * group's members count, since groups carry no data) that is neither `list: true` nor
+ * `required: true`. The submit that stamps sets one top-level value, and a required field can
+ * never be saved empty, so it would never be stamped. Throws on the first problem.
+ */
+export const ensureStampOnPublishPlacement = (
+  fields: unknown,
+  scopeLabel = 'entry schema',
+): void => {
+  const refuse = (f: Record<string, unknown>, why: string): never => {
+    throw new Error(
+      `${scopeLabel}: field "${(f.name as string) ?? 'unknown'}" has stampOnPublish, ${why}`,
+    )
+  }
+  const check = (scopeFields: unknown, nestedIn: string | undefined): void => {
+    if (!Array.isArray(scopeFields)) return
+    for (const field of scopeFields) {
+      const f = field as Record<string, unknown>
+      if (f?.stampOnPublish !== undefined && typeof f.stampOnPublish !== 'boolean') {
+        refuse(f, 'which must be true or false')
+      }
+      if (f?.stampOnPublish === true) {
+        if (nestedIn) refuse(f, `but it is inside ${nestedIn}; only a top-level field is stamped`)
+        if (f.type !== 'datetime') refuse(f, `but it is type "${String(f.type)}", not "datetime"`)
+        if (f.list === true) refuse(f, 'but it is list: true; only a single date is stamped')
+        if (f.required === true) {
+          refuse(f, 'but it is required: true, so it can never be saved empty to be stamped')
+        }
+      }
+      if (f?.type === 'group') check(f.fields, nestedIn)
+      if (f?.type === 'object') check(f.fields, `object field "${String(f.name)}"`)
+      if (f?.type === 'block' && Array.isArray(f.templates)) {
+        for (const template of f.templates as Array<{ fields?: unknown }>) {
+          check(template.fields, `block field "${String(f.name)}"`)
+        }
+      }
+    }
+  }
+  check(fields, undefined)
+}
+
+/**
+ * Check every markdown and mdx field's `mdxAllow` against its schema and its `renderAs`,
+ * `mdxAllow` and `executable` against each other. Throws on the first problem.
+ */
+export const ensureMarkdownFieldOptions = (fields: readonly FieldConfig[]): void => {
+  for (const field of fields) {
+    if (isMarkdownField(field)) {
+      if (field.mdxAllow !== undefined) {
+        const parsed = mdxAllowlistSchema.safeParse(field.mdxAllow)
+        if (!parsed.success) {
+          const [first] = parsed.error.issues
+          const where = first?.path.join('.') ?? ''
+          throw new Error(
+            `Field "${field.name}": mdxAllow${where === '' ? '' : `.${where}`} ${first?.message ?? 'is invalid'}`,
+          )
+        }
+      }
+      const message = markdownFieldOptionsError(field)
+      if (message !== undefined) throw new Error(message)
+    }
+    if (field.type === 'group' || field.type === 'object') {
+      if ('fields' in field && Array.isArray(field.fields)) ensureMarkdownFieldOptions(field.fields)
+    }
+    if (field.type === 'block' && 'templates' in field && Array.isArray(field.templates)) {
+      for (const template of field.templates) ensureMarkdownFieldOptions(template.fields)
+    }
+  }
 }
 
 /**

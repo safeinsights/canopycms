@@ -2,37 +2,47 @@
 // Factual guard for the agent-facing documentation layer: backticked repo
 // paths must exist, relative markdown links must resolve, and our own
 // package import specifiers must resolve against the real `exports` map.
-// Also enforces a per-file word budget and a history-marker cap (see
-// docs-budgets.json and HISTORY_MARKER_RE below). SCOPE is narrower than
+// Also enforces a per-file word budget and a history-marker cap, or for a
+// changelog a per-entry cap (see docs-budgets.json, HISTORY_MARKER_RE and
+// isChangelogBudget below). SCOPE is narrower than
 // "every markdown file" -- only where a path functions as an INSTRUCTION;
-// see EXCLUDED below. Dependency-free apart from git itself.
+// see EXCLUDED below. Needs git, and mdast-util-from-markdown (a root
+// devDependency) to parse the changelog for its entry cap.
 //
 // Usage: node scripts/check-docs.mjs [file...]
 //        node scripts/check-docs.mjs --write-baseline [--margin=N] [--allow-raise]
+//        node scripts/check-docs.mjs --write-baseline --only <file> [--only <file>...] --allow-raise
+//        node scripts/check-docs.mjs --self-test
 //        node scripts/check-docs.mjs --report | --sections | --list-long-items
 
-import { readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, existsSync, statSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
+import { fromMarkdown } from 'mdast-util-from-markdown'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const rel = (p) => relative(repoRoot, p)
 
 /**
  * Markdown that is a dated snapshot or a prose backlog, not an instruction:
- * docs/reviews/ cites files as they were, which is accurate history rather
- * than drift, and future-tasks/ and BACKLOG.md cite files that don't exist
- * yet (planned work) or live in sibling repos -- future-tasks/ has its own
- * checker (check-future-tasks.mjs) for the links that ARE navigable.
+ * docs/reviews/ and the frozen future-tasks/ archive cite files as they were,
+ * which is accurate history rather than drift, and BACKLOG.md cites files that
+ * don't exist yet (planned work) or live in sibling repos.
  */
 const EXCLUDED = [
   'docs/reviews',
   '.claude/future-tasks',
   'node_modules',
   '.git',
+  // Other sessions' checkouts (git-ignored), each a full copy of the repo.
+  '.claude/worktrees',
+  // `pnpm tasks:sync`'s mirror of GitHub issue bodies (git-ignored).
+  '.claude/backlog-cache',
   'dist',
   'BACKLOG.md',
+  // Sample site content for the editor round-trip test; its links are site URLs.
+  'packages/canopycms/src/editor/fields/__fixtures__',
 ]
 
 /**
@@ -110,6 +120,8 @@ function gitIgnored(paths) {
 
 function isExcluded(absPath) {
   const r = rel(absPath)
+  // `tasks:sync` stages the cache beside it, as `.claude/backlog-cache.tmp-<pid>`.
+  if (r.startsWith('.claude/backlog-cache.tmp-')) return true
   return EXCLUDED.some((d) => r === d || r.startsWith(d + '/'))
 }
 
@@ -155,6 +167,7 @@ function candidateRepoPath(token) {
 const BUDGET_ROOT_FILES = [
   'AGENTS.md',
   'ARCHITECTURE.md',
+  'CHANGELOG.md',
   'DEVELOPING.md',
   'README.md',
   'CODEBASE_GUIDE.md',
@@ -294,45 +307,247 @@ function loadBudgets() {
   return parsed.files ?? {}
 }
 
-const BASELINE_COMMENT =
-  'Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: words and maxSectionWords are written as actual plus the margin, historyMarkers as the actual count, and a write that would raise any existing number is refused without --allow-raise. historyMarkers: null means that file is a dated changelog whose markers are not checked; the null is kept across rewrites.'
+/**
+ * A changelog entry (`historyMarkers: null` plus `maxEntryWords`) caps each `###`
+ * entry under `## Unreleased` instead of the whole file and its sections: a
+ * changelog grows with every change until a release consolidates it, so only
+ * the size of one entry is something its author controls.
+ */
+function isChangelogBudget(budget) {
+  return budget.historyMarkers === null
+}
+
+/** Why a budget entry has the wrong shape, or null; a missing key would silently skip its check. */
+function budgetShapeError(budget) {
+  if (typeof budget !== 'object' || budget === null || Array.isArray(budget)) {
+    return 'must be an object'
+  }
+  const isCount = (v) => Number.isInteger(v) && v >= 0
+  const keys = Object.keys(budget).sort().join(',')
+  if (isChangelogBudget(budget)) {
+    if (keys === 'historyMarkers,maxEntryWords' && isCount(budget.maxEntryWords)) return null
+    return 'a changelog entry (historyMarkers: null) takes exactly historyMarkers and maxEntryWords, a whole number'
+  }
+  if (
+    keys === 'historyMarkers,maxSectionWords,words' &&
+    isCount(budget.historyMarkers) &&
+    isCount(budget.maxSectionWords) &&
+    isCount(budget.words)
+  ) {
+    return null
+  }
+  return 'takes exactly historyMarkers, maxSectionWords and words, each a whole number'
+}
+
+/** Raw HTML with its comments removed; `<!-->` and `<!--->` are complete empty comments. */
+function withoutHtmlComments(html) {
+  let kept = ''
+  let rest = html
+  for (;;) {
+    const open = rest.indexOf('<!--')
+    if (open === -1) return kept + rest
+    kept += rest.slice(0, open) + ' '
+    const close = rest.indexOf('-->', open + 2)
+    if (close === -1) return kept
+    rest = rest.slice(close + 3)
+  }
+}
+
+/** The prose of an mdast subtree: code is not prose, and neither is an HTML comment. */
+function proseText(node) {
+  if (node.type === 'code' || node.type === 'inlineCode') return ''
+  if (node.type === 'html') return withoutHtmlComments(node.value)
+  if (typeof node.value === 'string') return node.value
+  return (node.children ?? []).map(proseText).join(' ')
+}
 
 /**
- * Writes scripts/docs-budgets.json from the current actuals of every in-scope
- * file. Refuses to raise a number that is already in the file unless
- * `allowRaise` is set, so a branch cannot go green by rewriting its own budget.
+ * Measures each `###` entry under a changelog's `## Unreleased` section and
+ * returns those whose words, heading included, exceed `cap`. It also returns
+ * whether the section exists, since without it nothing is capped, and every
+ * other H1 or H2 before `## Released`, since one would end the section early.
+ * The file is parsed as CommonMark, so only a real top-level heading opens an
+ * entry or a section, and code and HTML comments (the entry template) are not
+ * counted. An entry runs to the next heading of level 3 or higher. Entries
+ * under `## Released` are exempt: release consolidation is where the file
+ * shrinks.
  */
-function writeBaseline(margin, allowRaise) {
-  const existing = loadBudgets()
-  const withMargin = (n) => Math.ceil(n * (1 + margin / 100))
-  const out = { $comment: BASELINE_COMMENT, files: {} }
-  const raises = []
-  for (const f of findDocsBudgetFiles()) {
-    const m = computeMetrics(f)
-    const prior = existing[f]
-    const entry = {
-      historyMarkers: prior?.historyMarkers === null ? null : m.historyMarkers,
-      maxSectionWords: withMargin(m.maxSectionWords),
-      words: withMargin(m.words),
+function measureChangelog(content, cap) {
+  // micromark skips a byte-order mark, so its offsets index the text without one.
+  const text = content.replace(/^\uFEFF/, '')
+  const entries = []
+  const strayHeadings = []
+  let hasUnreleased = false
+  let inUnreleased = false
+  let current = null
+  for (const node of fromMarkdown(text).children) {
+    if (node.type === 'heading' && node.depth <= 2) {
+      const name = proseText(node).trim()
+      // Only `## Released` closes the section, so a paragraph that turns into a
+      // setext heading over a `---` cannot silently uncap the entries after it.
+      if (inUnreleased && !(node.depth === 2 && name === 'Released')) {
+        strayHeadings.push({ heading: name.replace(/\s+/g, ' '), lineNo: node.position.start.line })
+        current = null
+        continue
+      }
+      inUnreleased = node.depth === 2 && name === 'Unreleased'
+      hasUnreleased ||= inUnreleased
+      current = null
+      continue
     }
+    if (!inUnreleased) continue
+    if (node.type === 'heading' && node.depth === 3) {
+      const first = node.children[0]
+      const last = node.children.at(-1)
+      const heading = first ? text.slice(first.position.start.offset, last.position.end.offset) : ''
+      current = { heading, lineNo: node.position.start.line, words: 0 }
+      entries.push(current)
+    }
+    if (current) current.words += countWords(proseText(node))
+  }
+  return { hasUnreleased, strayHeadings, over: entries.filter((e) => e.words > cap) }
+}
+
+/** A changeset's YAML frontmatter, with @changesets/parse's delimiters, anchored at the start of the file. */
+const CHANGESET_FRONTMATTER_RE = /^\s*---[^]*?\r?\n\s*---(?=\s*(?:\n|$))/
+/** Files in `.changeset/` that are not changesets, as @changesets/read skips them: README in any case, the agent files by exact case. */
+const NOT_A_CHANGESET_RE =
+  /^(?:[Rr][Ee][Aa][Dd][Mm][Ee]\.[Mm][Dd]|AGENTS\.md|CLAUDE\.md|GEMINI\.md|\..*)$/
+
+/**
+ * A changeset's body is one changelog entry, so it gets the changelog's entry cap.
+ * A body without a `###` title (a part of an unreleased entry) is measured as one entry.
+ */
+function changesetOverCap(content, cap) {
+  const body = content.replace(/^\uFEFF/, '').replace(CHANGESET_FRONTMATTER_RE, '')
+  const titled = fromMarkdown(body).children.some((n) => n.type === 'heading' && n.depth === 3)
+  return measureChangelog(`## Unreleased\n\n${titled ? '' : '### (part)\n\n'}${body}`, cap).over
+}
+
+/**
+ * Headroom an `--only` raise adds over the measured count: 2%, at least 10 and
+ * at most 40 words, so a large doc's raise never hands it hundreds of free words.
+ */
+const ONLY_RAISE_MARGIN_PCT = 2
+const ONLY_RAISE_MIN_WORDS = 10
+const ONLY_RAISE_MAX_WORDS = 40
+
+function withRaiseMargin(n) {
+  const pct = Math.ceil((n * ONLY_RAISE_MARGIN_PCT) / 100)
+  return n + Math.max(ONLY_RAISE_MIN_WORDS, Math.min(pct, ONLY_RAISE_MAX_WORDS))
+}
+
+/**
+ * The budget file a `--write-baseline` run would write, and the raises it makes.
+ * `measure(file)` returns that file's metrics.
+ *
+ * Without `only`, every in-scope file is rewritten from actuals plus `margin`
+ * percent. With `only`, every other entry is copied unchanged, and the named
+ * files change only the numbers they have outgrown, each raised to the
+ * measured count plus `withRaiseMargin`'s headroom (history markers to the
+ * exact count), so the next small edit is not refused at zero slack. A
+ * changelog entry is kept as it is in both modes: its `maxEntryWords` is
+ * edited by hand. A raise is any number written above the one already there,
+ * and `refused` is set when there is one without `allowRaise`.
+ */
+function planBaseline({ existing, files, measure, margin, only, allowRaise }) {
+  const withMargin = (n) => Math.ceil(n * (1 + margin / 100))
+  const raises = []
+  const errors = []
+  const noteRaises = (f, prior, entry) => {
     for (const key of Object.keys(entry)) {
       if (prior && typeof prior[key] === 'number' && entry[key] > prior[key]) {
         raises.push(`${f}: ${key} ${prior[key]} -> ${entry[key]}`)
       }
     }
-    out.files[f] = entry
   }
-  if (raises.length > 0 && !allowRaise) {
-    console.error(
-      `❌ refusing to raise ${raises.length} budget number(s); pass --allow-raise to do it on purpose:`,
+
+  if (only) {
+    const out = { ...existing }
+    for (const f of only) {
+      const prior = existing[f]
+      if (!files.includes(f)) {
+        errors.push(`${f}: not in the budget scope`)
+        continue
+      }
+      if (prior && isChangelogBudget(prior)) {
+        errors.push(`${f}: a changelog's maxEntryWords is edited by hand in docs-budgets.json`)
+        continue
+      }
+      const m = measure(f)
+      const raiseTo = (key, actual, pad) =>
+        !prior || typeof prior[key] !== 'number' || actual > prior[key] ? pad(actual) : prior[key]
+      const entry = {
+        historyMarkers: raiseTo('historyMarkers', m.historyMarkers, (n) => n),
+        maxSectionWords: raiseTo('maxSectionWords', m.maxSectionWords, withRaiseMargin),
+        words: raiseTo('words', m.words, withRaiseMargin),
+      }
+      noteRaises(f, prior, entry)
+      out[f] = entry
+    }
+    const sorted = Object.fromEntries(
+      Object.keys(out)
+        .sort()
+        .map((f) => [f, out[f]]),
     )
-    for (const r of raises) console.error(`    ${r}`)
+    return { files: sorted, raises, errors, refused: raises.length > 0 && !allowRaise }
+  }
+
+  const out = {}
+  for (const f of files) {
+    const prior = existing[f]
+    if (prior && isChangelogBudget(prior)) {
+      out[f] = prior
+      continue
+    }
+    const m = measure(f)
+    const entry = {
+      historyMarkers: m.historyMarkers,
+      maxSectionWords: withMargin(m.maxSectionWords),
+      words: withMargin(m.words),
+    }
+    noteRaises(f, prior, entry)
+    out[f] = entry
+  }
+  return { files: out, raises, errors, refused: raises.length > 0 && !allowRaise }
+}
+
+const BASELINE_COMMENT =
+  'Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: words and maxSectionWords are written as actual plus the margin, historyMarkers as the actual count, and a write that would raise any existing number is refused without --allow-raise. Raise one file with `--write-baseline --only <file> --allow-raise`: it leaves every other entry alone and raises only the numbers that file has outgrown: word counts to the count plus 2% (at least 10 and at most 40 words), historyMarkers to the count. historyMarkers: null with maxEntryWords marks a dated changelog: its markers, total and sections are not checked, each ### entry under ## Unreleased is capped at maxEntryWords, and the entry is kept as written across rewrites.'
+
+/**
+ * Writes scripts/docs-budgets.json from `planBaseline`. Refuses to raise a
+ * number that is already in the file unless `allowRaise` is set, so a branch
+ * cannot go green by rewriting its own budget.
+ */
+function writeBaseline(margin, allowRaise, only) {
+  const plan = planBaseline({
+    existing: loadBudgets(),
+    files: findDocsBudgetFiles(),
+    measure: computeMetrics,
+    margin,
+    only,
+    allowRaise,
+  })
+  if (plan.errors.length > 0) {
+    for (const e of plan.errors) console.error(`❌ ${e}`)
     process.exit(1)
   }
-  writeFileSync(budgetsPath, JSON.stringify(out, null, 2) + '\n')
-  const files = Object.keys(out.files)
+  if (plan.refused) {
+    console.error(
+      `❌ refusing to raise ${plan.raises.length} budget number(s); pass --allow-raise to do it on purpose:`,
+    )
+    for (const r of plan.raises) console.error(`    ${r}`)
+    process.exit(1)
+  }
+  writeFileSync(
+    budgetsPath,
+    JSON.stringify({ $comment: BASELINE_COMMENT, files: plan.files }, null, 2) + '\n',
+  )
+  const scope = only ? only.join(', ') : `${Object.keys(plan.files).length} file(s)`
+  const how = only ? 'raise margin 2%, 10 to 40 words' : `margin ${margin}%`
   console.log(
-    `✅ wrote word budgets for ${files.length} file(s) to ${rel(budgetsPath)} (margin ${margin}%${raises.length > 0 ? `, ${raises.length} raised` : ''})`,
+    `✅ wrote word budgets for ${scope} to ${rel(budgetsPath)} (${how}${plan.raises.length > 0 ? `, ${plan.raises.length} raised` : ''})`,
   )
 }
 
@@ -447,29 +662,414 @@ function findLongTableCells(records, filePath) {
   return out
 }
 
-// CLI flags: --write-baseline, --report and --sections short-circuit the checks.
+/**
+ * Checks the changelog entry cap and `planBaseline` against in-memory inputs,
+ * run as the first step of `pnpm lint:docs` so it executes in CI.
+ */
+function selfTest() {
+  const failures = []
+  const expect = (label, ok) => {
+    if (!ok) failures.push(`  ${label}`)
+  }
 
-const argv = process.argv.slice(2)
-const flagWriteBaseline = argv.includes('--write-baseline')
-const flagReport = argv.includes('--report')
-const flagSections = argv.includes('--sections')
-const flagListLongItems = argv.includes('--list-long-items')
-const flagAllowRaise = argv.includes('--allow-raise')
-const marginArg = argv.find((a) => a.startsWith('--margin='))
-const margin = marginArg ? Number(marginArg.slice('--margin='.length)) : 0
-const namedFiles = argv.filter((a) => !a.startsWith('--'))
+  const words = (n) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ')
+  const changelog = [
+    '# Guide',
+    '## Unreleased',
+    words(50),
+    '### Short entry',
+    words(10),
+    '### Long entry',
+    words(20),
+    '```',
+    words(100),
+    '```',
+    '<!--',
+    '### Template entry',
+    words(100),
+    '-->',
+    '## Released',
+    '### 0.0.1',
+    '#### Old long entry',
+    words(100),
+  ].join('\n')
+  const { hasUnreleased, over } = measureChangelog(changelog, 15)
+  expect('entry cap: the Unreleased section is found', hasUnreleased)
+  expect(
+    `entry cap: only "Long entry" (22 words, heading included) is over, got ${JSON.stringify(over)}`,
+    over.length === 1 &&
+      over[0].heading === 'Long entry' &&
+      over[0].words === 22 &&
+      over[0].lineNo === 6,
+  )
+  expect(
+    'entry cap: an entry exactly at the cap passes',
+    measureChangelog(changelog, 22).over.length === 0,
+  )
+  const overOf = (lines) => measureChangelog(lines.join('\n'), 15).over
+  expect(
+    'entry cap: prose after a one-line HTML comment is counted',
+    overOf(['## Unreleased', '### A', `<!-- note --> ${words(20)}`]).length === 1,
+  )
+  expect(
+    'entry cap: prose after a comment closes is counted',
+    overOf(['## Unreleased', '### A', '<!--', `x --> ${words(20)}`]).length === 1,
+  )
+  expect(
+    'entry cap: an indented heading with closing hashes opens an entry',
+    overOf(['  ## Unreleased ##', '### A', words(20), '   ### B ###', words(5)])
+      .map((e) => e.heading)
+      .join() === 'A',
+  )
+  for (const quoted of [
+    'Wrap it in `<!--` and close it.',
+    'An arrow <!-- in prose.',
+    '<!--> An empty comment.',
+    '<!---> An empty comment.',
+  ]) {
+    expect(
+      `entry cap: "${quoted}" hides no later entry`,
+      overOf(['## Unreleased', '### A', quoted, '### B', words(20)]).length === 1,
+    )
+  }
+  expect(
+    'entry cap: a quoted <!-- does not pair with a later -->',
+    overOf(['## Unreleased', '### A', `\`<!--\` ${words(20)} <!-- c -->`]).length === 1,
+  )
+  for (const shape of [
+    ['`x` <!-- note'],
+    ['<!-- use `-->` to close'],
+    ['````md', '```', '````'],
+    ['```', '~~~', '```'],
+    ['<!-- a --> <!-- b -->'],
+    ['<details>', '## Released', '</details>'],
+  ]) {
+    expect(
+      `entry cap: ${JSON.stringify(shape)} hides no later entry`,
+      overOf(['## Unreleased', '### A', ...shape, '', '### B', words(20)]).some(
+        (e) => e.heading === 'B',
+      ),
+    )
+  }
+  expect(
+    'entry cap: a setext heading inside Unreleased is reported, and later entries still capped',
+    (() => {
+      const m = measureChangelog(
+        ['## Unreleased', '### A', 'para', 'two', '---', '### B', words(20)].join('\n'),
+        15,
+      )
+      return (
+        m.strayHeadings[0]?.lineNo === 3 &&
+        m.strayHeadings[0]?.heading === 'para two' &&
+        m.over.some((e) => e.heading === 'B')
+      )
+    })(),
+  )
+  expect(
+    'entry cap: an H1 named Released does not close the section',
+    (() => {
+      const m = measureChangelog(
+        ['## Unreleased', '### A', '# Released', '### B', words(20)].join('\n'),
+        15,
+      )
+      return m.strayHeadings.length === 1 && m.over.some((e) => e.heading === 'B')
+    })(),
+  )
+  expect(
+    'entry cap: a byte-order mark keeps the heading text',
+    measureChangelog(`\uFEFF## Unreleased\n### B\n${words(20)}`, 15).over[0]?.heading === 'B',
+  )
+  expect(
+    'entry cap: inline code in an entry is not counted',
+    overOf(['## Unreleased', '### A', words(10), '`' + words(20) + '`']).length === 0,
+  )
+  expect(
+    'entry cap: list items are counted as separate words',
+    overOf(['## Unreleased', '### A', ...Array.from({ length: 20 }, (_, i) => `- w${i}`)])
+      .length === 1,
+  )
+  expect(
+    'entry cap: words between comments in an HTML block stay separate',
+    overOf(['## Unreleased', '### A', '<!-- c -->' + words(20).split(' ').join('<!-- c -->')])
+      .length === 1,
+  )
+  expect(
+    'entry cap: words in an unclosed comment are not counted',
+    overOf(['## Unreleased', '### A', `<!-- a --> <!-- ${words(20)}`]).length === 0,
+  )
+  for (const empty of ['<!-->', '<!--->']) {
+    expect(
+      `entry cap: prose after an empty ${empty} comment is counted`,
+      overOf(['## Unreleased', '### A', `${empty} ${words(20)}`]).length === 1,
+    )
+  }
+  expect(
+    'entry cap: an H1 inside Unreleased is reported and stops the entry',
+    (() => {
+      const m = measureChangelog(
+        ['## Unreleased', '### A', words(5), '# Other', words(20)].join('\n'),
+        15,
+      )
+      return m.strayHeadings.length === 1 && m.over.length === 0
+    })(),
+  )
+  expect(
+    'entry cap: a ### inside a comment opens no entry',
+    overOf(['## Unreleased', '### A', words(10), '<!--', '### T', '-->', words(10)])
+      .map((e) => e.heading)
+      .join() === 'A',
+  )
+  expect(
+    'entry cap: a comment after the Unreleased heading still names the section',
+    measureChangelog('## Unreleased <!-- keep entries short -->\n### A', 15).hasUnreleased,
+  )
+  expect(
+    'entry cap: a fence line inside a comment does not hide its close',
+    overOf(['## Unreleased', '<!--', '```', '-->', '### B', words(20)]).length === 1,
+  )
+  expect(
+    'entry cap: a heading quoting code keeps its text',
+    overOf(['## Unreleased', '### The `x` flag', words(20)])[0]?.heading === 'The `x` flag',
+  )
+  expect(
+    'entry cap: a file without ## Unreleased reports it',
+    !measureChangelog(['## [Unreleased]', '### A', words(20)].join('\n'), 15).hasUnreleased,
+  )
 
-if (flagWriteBaseline && (flagReport || flagSections)) {
-  console.error('❌ --write-baseline cannot be combined with --report or --sections')
+  const changeset = (body) => `---\n"canopycms": minor\n---\n\n${body}`
+  expect(
+    'changeset cap: an entry over the cap is reported and one at it is not',
+    changesetOverCap(changeset(`### A\n\n${words(20)}`), 15)[0]?.heading === 'A' &&
+      changesetOverCap(changeset(`### A\n\n${words(14)}`), 15).length === 0,
+  )
+  expect(
+    'changeset cap: a part without a title is measured as one entry, after the frontmatter',
+    changesetOverCap(changeset(`<!-- migration\nextends: x\n-->\n\n${words(20)}`), 15).length === 1,
+  )
+  expect(
+    'changeset cap: README and dotfiles are not changesets',
+    NOT_A_CHANGESET_RE.test('README.md') &&
+      NOT_A_CHANGESET_RE.test('readme.MD') &&
+      NOT_A_CHANGESET_RE.test('.keep') &&
+      !NOT_A_CHANGESET_RE.test('agents.md') &&
+      !NOT_A_CHANGESET_RE.test('worker-state-dir.md'),
+  )
+
+  expect(
+    'shape: a changelog entry is valid',
+    budgetShapeError({ historyMarkers: null, maxEntryWords: 5 }) === null,
+  )
+  expect(
+    'shape: a changelog entry keeping words is refused',
+    budgetShapeError({ historyMarkers: null, maxEntryWords: 5, words: 9 }) !== null,
+  )
+  expect('shape: a null entry is refused', budgetShapeError(null) !== null)
+  expect(
+    'shape: a negative or fractional number is refused',
+    budgetShapeError({ historyMarkers: 0, maxSectionWords: -1, words: 9 }) !== null &&
+      budgetShapeError({ historyMarkers: null, maxEntryWords: 2.5 }) !== null,
+  )
+  expect(
+    'shape: an extra key is refused',
+    budgetShapeError({ historyMarkers: 0, maxSectionWords: 9, words: 9, maxEntryWords: 5 }) !==
+      null,
+  )
+  expect(
+    'shape: a ratchet entry is valid',
+    budgetShapeError({ historyMarkers: 0, maxSectionWords: 9, words: 9 }) === null,
+  )
+  expect(
+    'shape: a ratchet entry missing words is refused',
+    budgetShapeError({ historyMarkers: 0, maxSectionWords: 9 }) !== null,
+  )
+
+  const existing = {
+    'a.md': { historyMarkers: 0, maxSectionWords: 400, words: 1000 },
+    'b.md': { historyMarkers: 0, maxSectionWords: 50, words: 90 },
+    'log.md': { historyMarkers: null, maxEntryWords: 200 },
+  }
+  const metrics = {
+    'a.md': { historyMarkers: 1, maxSectionWords: 300, words: 1500 },
+    'b.md': { historyMarkers: 0, maxSectionWords: 10, words: 20 },
+    'log.md': { historyMarkers: 7, maxSectionWords: 9000, words: 9000 },
+  }
+  const base = { existing, files: Object.keys(metrics), measure: (f) => metrics[f], margin: 0 }
+
+  const onlyA = planBaseline({ ...base, only: ['a.md'] })
+  expect('--only: other entries are copied unchanged', onlyA.files['b.md'] === existing['b.md'])
+  expect(
+    '--only: a changelog entry is copied unchanged',
+    onlyA.files['log.md'] === existing['log.md'],
+  )
+  expect(
+    `--only: a raise adds 2% (1500 -> 1530), got ${onlyA.files['a.md'].words}`,
+    onlyA.files['a.md'].words === 1530,
+  )
+  expect(
+    `--only: a number not outgrown stays put, got ${onlyA.files['a.md'].maxSectionWords}`,
+    onlyA.files['a.md'].maxSectionWords === 400,
+  )
+  expect(
+    '--only: history markers rise to the exact count',
+    onlyA.files['a.md'].historyMarkers === 1,
+  )
+  expect(
+    `--only: both raises are reported, got ${JSON.stringify(onlyA.raises)}`,
+    onlyA.raises.length === 2,
+  )
+  expect('--only: a raise without --allow-raise is refused', onlyA.refused)
+  expect(
+    '--only: a raise with --allow-raise is not refused',
+    !planBaseline({ ...base, only: ['a.md'], allowRaise: true }).refused,
+  )
+
+  const smallMetrics = {
+    ...metrics,
+    'b.md': { historyMarkers: 0, maxSectionWords: 60, words: 100 },
+  }
+  const onlyB = planBaseline({ ...base, measure: (f) => smallMetrics[f], only: ['b.md'] })
+  expect(
+    `--only: the margin is at least 10 words (100 -> 110), got ${onlyB.files['b.md'].words}`,
+    onlyB.files['b.md'].words === 110 && onlyB.files['b.md'].maxSectionWords === 70,
+  )
+
+  const bigMetrics = {
+    ...metrics,
+    'b.md': { historyMarkers: 0, maxSectionWords: 10, words: 13034 },
+  }
+  const onlyBig = planBaseline({ ...base, measure: (f) => bigMetrics[f], only: ['b.md'] })
+  expect(
+    `--only: the margin is at most 40 words (13034 -> 13074), got ${onlyBig.files['b.md'].words}`,
+    onlyBig.files['b.md'].words === 13074,
+  )
+
+  expect(
+    '--only: naming a changelog is an error',
+    planBaseline({ ...base, only: ['log.md'] }).errors.length === 1,
+  )
+  expect(
+    '--only: naming an out-of-scope file is an error',
+    planBaseline({ ...base, only: ['nope.md'] }).errors.length === 1,
+  )
+
+  const full = planBaseline(base)
+  expect(
+    'full write: a changelog entry is kept as written',
+    full.files['log.md'] === existing['log.md'],
+  )
+  expect(
+    'full write: an outgrown number is a raise',
+    full.raises.some((r) => r.startsWith('a.md: words')),
+  )
+  expect('full write: a shrunk file is lowered to its actuals', full.files['b.md'].words === 20)
+
+  const parsed = parseArgs(['--write-baseline', '--only=a.md', '--only', 'b.md', '--allow-raise'])
+  expect(
+    `args: both --only spellings are read, got ${JSON.stringify(parsed.onlyFiles)}`,
+    parsed.onlyFiles?.join() === 'a.md,b.md',
+  )
+  expect('args: an unknown flag is refused', parseArgs(['--write-baseline', '--onl=a.md']).error)
+  expect(
+    'args: --write-baseline refuses a positional file',
+    parseArgs(['--write-baseline', '--only', 'a.md', 'b.md']).error,
+  )
+  expect('args: a bare -- is ignored', parseArgs(['--', '--report']).flags?.has('--report'))
+  expect('args: --only needs --write-baseline', parseArgs(['--only', 'a.md']).error)
+  expect(
+    'args: --only refuses --margin',
+    parseArgs(['--write-baseline', '--only', 'a.md', '--margin=3']).error,
+  )
+  expect(
+    'args: --report still takes files',
+    parseArgs(['--report', 'a.md']).namedFiles?.[0] === 'a.md',
+  )
+
+  if (failures.length > 0) {
+    console.error('check-docs self-test FAILED:')
+    console.error(failures.join('\n'))
+    process.exit(1)
+  }
+  console.log('check-docs self-test passed.')
+}
+
+// CLI flags: --self-test, --write-baseline, --report and --sections short-circuit the checks.
+
+const KNOWN_FLAGS = new Set([
+  '--self-test',
+  '--write-baseline',
+  '--report',
+  '--sections',
+  '--list-long-items',
+  '--allow-raise',
+])
+
+/**
+ * Parses the command line, or returns `{ error }`. Every flag is checked, so a
+ * mistyped one can never fall through to a full `--write-baseline`.
+ */
+function parseArgs(argv) {
+  const flags = new Set()
+  const onlyFiles = []
+  const namedFiles = []
+  let marginArg = null
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === '--') continue // pnpm passes `pnpm lint:docs -- --report` through verbatim
+    if (a === '--only' || a.startsWith('--only=')) {
+      const value = a === '--only' ? argv[++i] : a.slice('--only='.length)
+      if (!value || value.startsWith('--')) {
+        return { error: '--only takes a file path, e.g. --only docs/concurrency.md' }
+      }
+      onlyFiles.push(value)
+    } else if (a.startsWith('--margin=')) {
+      marginArg = a.slice('--margin='.length)
+    } else if (KNOWN_FLAGS.has(a)) {
+      flags.add(a)
+    } else if (a.startsWith('--')) {
+      return { error: `unknown flag ${a}` }
+    } else {
+      namedFiles.push(a)
+    }
+  }
+  const margin = marginArg === null ? 0 : Number(marginArg)
+  if (flags.has('--write-baseline') && (flags.has('--report') || flags.has('--sections'))) {
+    return { error: '--write-baseline cannot be combined with --report or --sections' }
+  }
+  if (flags.has('--write-baseline') && namedFiles.length > 0) {
+    return {
+      error: `--write-baseline names files with --only, not as arguments: ${namedFiles.join(' ')}`,
+    }
+  }
+  if (onlyFiles.length > 0 && (!flags.has('--write-baseline') || marginArg !== null)) {
+    return {
+      error: '--only goes with --write-baseline, and sets its own margin instead of --margin',
+    }
+  }
+  if (marginArg === '' || !Number.isFinite(margin) || margin < 0) {
+    return { error: '--margin must be a non-negative percentage, e.g. --margin=3' }
+  }
+  return { flags, onlyFiles, namedFiles, margin }
+}
+
+const args = parseArgs(process.argv.slice(2))
+if (args.error) {
+  console.error(`❌ ${args.error}`)
   process.exit(1)
 }
-if (!Number.isFinite(margin) || margin < 0) {
-  console.error('❌ --margin must be a non-negative percentage, e.g. --margin=3')
-  process.exit(1)
-}
+const { onlyFiles, namedFiles, margin } = args
+const flagSelfTest = args.flags.has('--self-test')
+const flagWriteBaseline = args.flags.has('--write-baseline')
+const flagReport = args.flags.has('--report')
+const flagSections = args.flags.has('--sections')
+const flagListLongItems = args.flags.has('--list-long-items')
+const flagAllowRaise = args.flags.has('--allow-raise')
 
+if (flagSelfTest) {
+  selfTest()
+  process.exit(0)
+}
 if (flagWriteBaseline) {
-  writeBaseline(margin, flagAllowRaise)
+  writeBaseline(margin, flagAllowRaise, onlyFiles.length > 0 ? onlyFiles : null)
   process.exit(0)
 }
 
@@ -573,10 +1173,65 @@ for (const f of Object.keys(budgets)) {
   }
 }
 
-// Checks 5-7: word, section-word and history-marker ceilings.
+// Checks 5-7: word, section-word and history-marker ceilings, or a changelog's entry cap.
 for (const f of inScopeFiles) {
+  if (!(f in budgets)) continue // already reported by check 4 above
   const budget = budgets[f]
-  if (!budget) continue // already reported by check 4 above
+
+  const shapeError = budgetShapeError(budget)
+  if (shapeError) {
+    problems.push({ kind: 'malformed doc budget', file: f, line: null, message: shapeError })
+    continue
+  }
+
+  if (isChangelogBudget(budget)) {
+    const content = readFileSync(join(repoRoot, f), 'utf8')
+    const changelog = measureChangelog(content, budget.maxEntryWords)
+    if (!changelog.hasUnreleased) {
+      problems.push({
+        kind: 'changelog has no ## Unreleased section',
+        file: f,
+        line: null,
+        message:
+          'maxEntryWords caps the ### entries under `## Unreleased`; without that heading nothing is checked',
+      })
+    }
+    for (const stray of changelog.strayHeadings) {
+      problems.push({
+        kind: 'changelog heading inside ## Unreleased',
+        file: f,
+        line: stray.lineNo,
+        message: `"${stray.heading}" -- only \`## Released\` may end \`## Unreleased\`; if this is a paragraph directly above \`---\`, add a blank line between them`,
+      })
+    }
+    for (const entry of changelog.over) {
+      problems.push({
+        kind: 'changelog entry over word cap',
+        file: f,
+        line: entry.lineNo,
+        message: `"${entry.heading}" has ${entry.words} words, cap ${budget.maxEntryWords}`,
+      })
+    }
+    if (f === 'CHANGELOG.md' && existsSync(join(repoRoot, '.changeset'))) {
+      for (const name of readdirSync(join(repoRoot, '.changeset'))) {
+        if (!name.endsWith('.md') || NOT_A_CHANGESET_RE.test(name)) continue
+        if (!statSync(join(repoRoot, '.changeset', name)).isFile()) continue // migration-notes --check refuses it
+        const file = `.changeset/${name}`
+        for (const entry of changesetOverCap(
+          readFileSync(join(repoRoot, file), 'utf8'),
+          budget.maxEntryWords,
+        )) {
+          problems.push({
+            kind: 'changelog entry over word cap',
+            file,
+            line: null,
+            message: `"${entry.heading}" has ${entry.words} words, cap ${budget.maxEntryWords}`,
+          })
+        }
+      }
+    }
+    continue
+  }
 
   const metrics = computeMetrics(f)
 
@@ -590,16 +1245,6 @@ for (const f of inScopeFiles) {
   }
 
   for (const [name, count] of metrics.sectionWords) {
-    // A changelog's `## Released` section is append-only: every release that has
-    // ever shipped lives under it, so its word count only ever rises and a ceiling
-    // on it measures nothing an author can act on -- it would fail the build on the
-    // routine promotion of entries out of `## Unreleased`, which is the one thing
-    // this document most needs people to keep doing. The ceiling still applies to
-    // every other section of the file, `## Unreleased` included, which is where
-    // unbounded growth is a real signal. `historyMarkers: null` is the existing
-    // marker for "this file is a dated changelog"; this reuses it rather than
-    // introducing a second opt-out.
-    if (budget.historyMarkers === null && name === 'Released') continue
     if (count > budget.maxSectionWords) {
       problems.push({
         kind: 'doc section over ceiling',
@@ -610,7 +1255,7 @@ for (const f of inScopeFiles) {
     }
   }
 
-  if (budget.historyMarkers !== null && metrics.historyMarkers > budget.historyMarkers) {
+  if (metrics.historyMarkers > budget.historyMarkers) {
     problems.push({
       kind: 'doc history markers over budget',
       file: f,
@@ -645,16 +1290,16 @@ for (const item of longItems) {
   })
 }
 
-// Check 9: every release this branch contains has a section in the migration guide.
+// Check 9: every release this branch contains has a section in the changelog.
 //
-// Entries are written under `## Unreleased` and promoted by hand, so a release that
-// ships without anyone touching the file leaves its entries filed as unreleased. Three
+// A release must move the `## Unreleased` entries under its own `### <version>`; a release that
+// ships without that leaves its entries filed as unreleased. Three
 // releases accumulated that way once (0.0.64 through 0.0.66, ~1,150 lines), which tells
 // an adopter that everything they are already running has not shipped yet — neutralising
 // the "Now deletable" lists the document calls its own point.
 //
 // Tag reachability is the signal: if `vX.Y.Z` is an ancestor of HEAD, this branch
-// contains that release and the guide on this branch should account for it.
+// contains that release and the changelog on this branch should account for it.
 //
 // This check is INERT ON A SHALLOW CLONE, which is what CI checks out — no history, no
 // tags, nothing to compare. That is deliberate rather than overlooked: lint-staged runs
@@ -662,7 +1307,7 @@ for (const item of longItems) {
 // present, so the check fires at the moment someone edits this file. CI is the backstop
 // for everything else here, not for this one.
 {
-  const guide = 'docs/adopter-migration.md'
+  const guide = 'CHANGELOG.md'
   const guidePath = join(repoRoot, guide)
   let shallow = true
   let tags = []
@@ -708,7 +1353,7 @@ for (const item of longItems) {
       if (named.has(v)) continue
       if (floor && cmp(v, floor) <= 0) continue
       problems.push({
-        kind: 'released version has no section in the migration guide',
+        kind: 'released version has no section in the changelog',
         file: guide,
         line: null,
         message: `\`${v}\` is tagged and reachable from HEAD -- add a \`### ${v}\` section under \`## Released\` and move its entries out of \`## Unreleased\`, demoting each from \`###\` to \`####\``,

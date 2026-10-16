@@ -6,6 +6,32 @@
  */
 
 import type { FieldConfig } from '../config'
+import type { MissingReference, ResolvedReferenceMeta } from '../entry-schema'
+import type { SeoFieldLocation } from '../static/seo'
+
+/** A reference whose target this export shows: the target's own data plus where it lives. */
+export type AIResolvedReference = Record<string, unknown> &
+  ResolvedReferenceMeta & { unavailable?: undefined }
+
+/**
+ * A reference whose target exists but is not in this export (left out by `exclude`, or its own
+ * markdown failed to render). Carries the id and nothing of the target, so no title of it can
+ * reach the output.
+ */
+export type AIExcludedReference = { id: string; unavailable: true; reason: 'excluded' }
+
+/**
+ * A reference whose target this export does not show: a `MissingReference` when the id names no
+ * readable entry, an {@link AIExcludedReference} when the export leaves the target out.
+ */
+export type AIUnavailableReference = MissingReference | AIExcludedReference
+
+/**
+ * What a `reference` field holds in {@link AIEntryMeta.data} (an array of these for
+ * `list: true`), at any depth, in place of the stored id; a cleared reference stays `''`. Branch
+ * on `unavailable` before reading anything but `id`.
+ */
+export type AIReferenceValue = AIResolvedReference | AIUnavailableReference
 
 /**
  * Metadata about an entry, provided to filter/predicate functions.
@@ -19,7 +45,11 @@ export interface AIEntryMeta {
   collectionName: string
   entryType: string
   format: string
-  /** The entry's parsed data (frontmatter for MD/MDX, full data for JSON) */
+  /**
+   * The entry's parsed data (frontmatter for MD/MDX, full data for JSON), with every `reference`
+   * field holding an {@link AIReferenceValue} rather than the stored id. `exclude.where` sees a
+   * target the export leaves out in full; everything after it sees that target as unavailable.
+   */
   data: Record<string, unknown>
 }
 
@@ -33,6 +63,12 @@ export interface ExcludeConfig {
   entryTypes?: string[]
   /** Custom predicate — return true to exclude the entry */
   where?: (entry: AIEntryMeta) => boolean
+  /**
+   * Leave out entries marked `noindex`, read through `isNoindexEntry` at
+   * {@link AIContentConfig.seo}, the predicate the sitemap and robots metadata use. Default
+   * `true`; `false` exports them.
+   */
+  noindex?: boolean
 }
 
 /**
@@ -63,7 +99,8 @@ export interface BundleConfig {
 
 /**
  * Per-field markdown override function.
- * Return a markdown string to replace the default conversion for this field.
+ * Return a markdown string to replace the default conversion for this field. A `reference`
+ * field's value is an {@link AIReferenceValue}, or an array of them.
  */
 export type FieldTransformFn = (value: unknown, fieldConfig: FieldConfig) => string
 
@@ -157,7 +194,8 @@ export interface EntryTransformContext {
 }
 
 /**
- * Per-entry-type transform. Runs once per entry at generation time (may be async). Return a
+ * Per-entry-type transform. Runs once per entry at generation time (may be async), and again if
+ * an entry it references fails to render and is masked out of its data. Return a
  * markdown string to APPEND after the entry's body/fields, or `undefined` to append nothing.
  * Append-only by design — `entryToMarkdown` remains the sole owner of base serialization.
  *
@@ -185,12 +223,57 @@ export type EntryTransformFn = (
  */
 export type EntryTransforms = Record<string, EntryTransformFn>
 
+/** What {@link AIReferenceLinkFn} knows about a target beyond its data. */
+export interface AIReferenceLinkContext {
+  /**
+   * The target's MD/MDX body as stored, `undefined` for a data-only entry. It only informs this
+   * decision: none of it reaches the entries that link to the target.
+   */
+  body: string | undefined
+  /**
+   * The URL the export links by default: `entryLinkUrl`'s result when the site sets one, else
+   * the target's `urlPath`; `undefined` when neither gives one.
+   */
+  defaultUrl: string | undefined
+}
+
+/**
+ * Where a link to an exported entry points, for every reference to it and every body `entry:`
+ * link to it. Return a URL to link there instead of `context.defaultUrl`, `false` when the target
+ * has no page (the title renders as plain text, with no page or markdown-version link), or
+ * `undefined` to keep the default. Called once per target per run, never for a missing target or
+ * one the exclusions leave out; a throw or any other return is logged and treated as `false`.
+ *
+ * @example
+ * ```ts
+ * // A person has a page only when their bio (the body) has prose
+ * referenceLink: (target, { body }) =>
+ *   target.collection === 'content/people' && !body?.trim() ? false : undefined
+ * ```
+ */
+export type AIReferenceLinkFn = (
+  target: AIResolvedReference,
+  context: AIReferenceLinkContext,
+) => Promise<string | false | undefined> | string | false | undefined
+
 /**
  * Main AI content configuration. Shared by route handler and build utility.
  */
 export interface AIContentConfig {
+  /**
+   * Site-relative URL path the generated files are served under, without the deployment
+   * `basePath`, as page links are. A reference links its target's markdown copy beneath it.
+   * Default `/ai`: where `canopycms init` mounts the route, and where `generate-ai-content`'s
+   * default `--output public/ai` is served. Set it when you serve the files elsewhere.
+   */
+  mountPath?: string
   /** Opt-out exclusions — content to skip */
   exclude?: ExcludeConfig
+  /**
+   * Where entries keep their SEO fields, when not the flat defaults. Drives the `noindex` read,
+   * so pass the same object as `createNextCanopyContext({ seo })`, or the two can disagree.
+   */
+  seo?: SeoFieldLocation
   /** Custom bundles — filtered content subsets */
   bundles?: BundleConfig[]
   /** Per-entry-type, per-field markdown overrides */
@@ -201,6 +284,8 @@ export interface AIContentConfig {
   bodyTransforms?: BodyTransforms
   /** Per-entry-type transforms that append markdown (e.g. folding in a colocated sibling artifact) */
   entryTransforms?: EntryTransforms
+  /** Override or suppress the page link of a referenced or `entry:`-linked target */
+  referenceLink?: AIReferenceLinkFn
 }
 
 /**

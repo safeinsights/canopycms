@@ -13,6 +13,7 @@
 import {
   Alert,
   Badge,
+  Box,
   Button,
   Code,
   Group,
@@ -28,9 +29,13 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
+  VisuallyHidden,
 } from '@mantine/core'
+import { useId, type ReactNode } from 'react'
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
-import { modals } from '@mantine/modals'
+import { openConfirm } from '../utils/confirm-modal'
+import { focusReturnProps } from '../utils/focus-return'
+import { formatRelativeTime } from '../relative-time'
 import {
   useSystemHealth,
   type UseSystemHealthReturn,
@@ -38,10 +43,13 @@ import {
   type DeletableTaskStatus,
 } from './useSystemHealth'
 import type { WorkerLiveness } from '../../api/admin'
+import type { DuplicateContentId } from '../../content-id-index'
 import type { OperatingMode } from '../../operating-mode'
 import type { Task, CorruptTaskFile } from '../../task-queue'
-import type { BranchHealthEntry } from '../../branch-health'
-import type { BaseRefreshReport } from '../../types'
+import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
+import type { BaseRefreshReport, BaseSchemaHold } from '../../types'
+import { escapeForLog } from '../../utils/escape-text'
+import { branchStatusPresentation } from '../branch-status'
 
 // ============================================================================
 // Small pure helpers
@@ -80,21 +88,54 @@ function formatAgeMs(ms: number): string {
  */
 function purgeGateFor(entry: BranchHealthEntry): { disabled: boolean; tooltip?: string } {
   if (entry.isBaseBranch) {
-    return { disabled: true, tooltip: 'The base branch can never be purged' }
+    return { disabled: true, tooltip: 'The base branch can never be purged.' }
   }
   const lockFresh =
     !!entry.provisioningLock && entry.provisioningLock.ageMs < PROVISIONING_LOCK_FRESH_MS
   if (entry.kind === 'orphan') {
     const tooYoung = (entry.ageMs ?? 0) < ORPHAN_YOUTH_THRESHOLD_MS
     const disabled = lockFresh || tooYoung
-    return { disabled, tooltip: disabled ? 'May be a clone in progress' : undefined }
+    return {
+      disabled,
+      tooltip: disabled
+        ? 'This may be a clone in progress. Try again in a few minutes.'
+        : undefined,
+    }
   }
   return {
     disabled: lockFresh,
     tooltip: lockFresh
-      ? 'Provisioning, or the worker syncing this branch, may be in progress'
+      ? 'Provisioning, or the worker syncing this branch, may be in progress. Try again in a few minutes.'
       : undefined,
   }
+}
+
+/** Purge stays focusable while gated (`aria-disabled`), so its reason opens on focus and touch. */
+function PurgeButton({
+  entry,
+  gate,
+  onPurge,
+}: {
+  entry: BranchHealthEntry
+  gate: { disabled: boolean; tooltip?: string }
+  onPurge: (dirName: string) => void
+}) {
+  return (
+    <Tooltip label={gate.tooltip} disabled={!gate.disabled}>
+      <Button
+        variant="light"
+        color="red"
+        data-disabled={gate.disabled ? true : undefined}
+        aria-disabled={gate.disabled ? true : undefined}
+        data-testid={`purge-dir-${entry.dirName}`}
+        onClick={() => {
+          if (!gate.disabled) onPurge(entry.dirName)
+        }}
+      >
+        Purge
+      </Button>
+    </Tooltip>
+  )
 }
 
 function workerLivenessBadge(
@@ -125,6 +166,83 @@ const BASE_REFRESH_LABELS: Record<BaseRefreshReport['outcome'], string> = {
 }
 
 /**
+ * The worker holding the base branch for an editor deploy, or the cycle it stopped waiting.
+ * The rule and its bound live in worker/schema-gate.ts.
+ */
+function BaseHoldAlert({ hold }: { hold: BaseSchemaHold }) {
+  const names = hold.missingSchemas.map((name, i) => (
+    <span key={name}>
+      {i > 0 && ', '}
+      <Code>{name}</Code>
+    </span>
+  ))
+  const editor = hold.editorBuild.sourceRevision ? (
+    <>
+      the running editor (built from <Code>{hold.editorBuild.sourceRevision.slice(0, 12)}</Code>)
+    </>
+  ) : (
+    'the running editor'
+  )
+  return (
+    <Alert
+      color={hold.expired ? 'orange' : 'blue'}
+      icon={<IconAlertTriangle size={16} />}
+      title={hold.expired ? 'Stopped waiting for the editor deploy' : 'Waiting for editor deploy'}
+      data-testid="base-hold-alert"
+    >
+      <Text size="sm">
+        Newly merged content names {names}, which {editor} does not define.{' '}
+        {hold.expired
+          ? 'The worker updated the base branch anyway; content types using them are unavailable until an editor image defining them is deployed.'
+          : 'The worker keeps the base branch at its current version until an editor image defining them handles a request.'}
+      </Text>
+      <Text size="xs" c="dimmed" mt={4}>
+        Held since {hold.since} · {hold.files.join(', ')}
+        {hold.fileCount > hold.files.length && ` and ${hold.fileCount - hold.files.length} more`}
+      </Text>
+    </Alert>
+  )
+}
+
+/**
+ * Branches the worker left diverged from GitHub because this deployment's copy holds editor work
+ * (worker/git-sync.ts's `reconcileTrackedBranches`). A copy holding none is moved to GitHub's tip
+ * and never listed. Names come from GitHub and are attacker-chosen, so each is shown escaped.
+ */
+function DivergedBranchesAlert({ names }: { names: readonly string[] }) {
+  return (
+    <Alert
+      color="orange"
+      icon={<IconAlertTriangle size={16} />}
+      title={`${plural(names.length, 'branch')} diverged from GitHub`}
+      data-testid="diverged-branches-alert"
+    >
+      <Stack gap={4}>
+        <Text size="sm">
+          This deployment&apos;s copy of each branch below holds editor work that conflicts with the
+          branch on GitHub, usually because the GitHub branch was rebased or force-pushed, or
+          because another CanopyCMS deployment sharing this repository uses the same branch name.
+          Neither copy has been changed, and publishing the branch fails until they agree.
+        </Text>
+        <Text size="sm">
+          A developer decides which version to keep. To keep GitHub&apos;s, first push it to a new
+          branch name on GitHub, because &quot;Delete branch&quot; in the editor also deletes a
+          published branch on GitHub; then delete this branch in the editor (withdraw it from review
+          first if it is in review). The editor&apos;s changes cannot be copied to another branch:
+          to keep them, leave this branch as it is, or re-enter them by hand in a new branch. For
+          the base branch or a settings branch, ask a developer to check what changed on GitHub.
+        </Text>
+        <Group gap={4}>
+          {names.map((name) => (
+            <Code key={name}>{escapeForLog(name)}</Code>
+          ))}
+        </Group>
+      </Stack>
+    </Alert>
+  )
+}
+
+/**
  * Why the base branch needs an operator, or null when its last refresh needs
  * nothing. Shared by the overview and the base row's warning tooltip.
  */
@@ -144,14 +262,6 @@ function baseRefreshWarning(report: BaseRefreshReport | undefined): string | nul
     )
   }
   return lines.length > 0 ? lines.join('\n') : null
-}
-
-// Mirrors BranchManager.tsx's statusColorMap -- kept local (not exported
-// there) rather than shared, same tiny lookup either way.
-const branchStatusColorMap: Record<string, string> = {
-  editing: 'brand',
-  submitted: 'green',
-  approved: 'teal',
 }
 
 const TASK_STATUS_OPTIONS: { label: string; value: AdminTaskStatus }[] = [
@@ -185,19 +295,87 @@ const MARK_MERGED_CONFIRM_TEXT =
 const REPAIR_CONFIRM_TEXT =
   "Recreates metadata with defaults: status becomes 'editing', you become the creator, branch ACLs are reset. The corrupt file is archived alongside for forensics."
 
+const DUPLICATE_REPAIR_CONFIRM_TEXT =
+  'These files share a content ID, so the editor uses only the one marked Keep. Archiving renames each other file to a hidden name in the same folder. Nothing is deleted.'
+
+const DUPLICATE_REPAIR_EDITOR_NOTE =
+  'This changes files on the branch, and adds you as one of its editors.'
+
+/**
+ * Why a healthy row's duplicate-ID state is unknown. `null` is a row the last
+ * scan did not include.
+ */
+function duplicateUncheckedReason(scan: DuplicateIdScan | null): string {
+  if (scan?.state === 'unknown' && scan.reason === 'failed') {
+    return 'The duplicate ID check failed on this branch.'
+  }
+  if (scan?.state === 'unknown') {
+    return 'The duplicate ID check ran out of time before reaching this branch.'
+  }
+  return 'This branch was added after the last duplicate ID check.'
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : word.endsWith('h') ? 'es' : 's'}`
+}
+
+/**
+ * One line for the whole Branches tab, so a scan that did not finish never
+ * reads as a clean one: rows without a badge are clean only when this says so.
+ */
+function duplicateScanSummary(
+  health: Pick<
+    UseSystemHealthReturn,
+    'duplicateIdScan' | 'duplicateIdScanLoading' | 'duplicateIdScanError'
+  >,
+  healthyDirNames: string[],
+): { text: string; color: string } {
+  const { duplicateIdScan: scan, duplicateIdScanLoading, duplicateIdScanError } = health
+  if (duplicateIdScanLoading && !scan) {
+    return { text: 'Checking for duplicate content IDs…', color: 'dimmed' }
+  }
+  if (duplicateIdScanError) {
+    return {
+      text: `Could not check for duplicate content IDs: ${duplicateIdScanError}`,
+      color: 'orange',
+    }
+  }
+  if (!scan) return { text: 'Duplicate content IDs not checked yet.', color: 'orange' }
+
+  let found = 0
+  let unchecked = 0
+  for (const dirName of healthyDirNames) {
+    const state = scan.byDir[dirName]?.state
+    if (state === 'found') found++
+    else if (state !== 'none') unchecked++
+  }
+  const parts: string[] = []
+  if (found > 0) parts.push(`Duplicate content IDs found on ${plural(found, 'branch')}.`)
+  if (unchecked > 0) parts.push(`Could not check ${plural(unchecked, 'branch')}.`)
+  if (parts.length === 0) return { text: 'No duplicate content IDs found.', color: 'dimmed' }
+  return { text: parts.join(' '), color: 'orange' }
+}
+
 const PURGE_CONFIRM_TEXT =
   'The directory is moved to a hidden trash name and kept for 30 days, then deleted. Any git work inside was never pushed and will be lost when the trash is swept.'
 
 export interface SystemHealthPanelProps {
   opened: boolean
   onClose: () => void
+  returnFocusTo?: () => HTMLElement | null
 }
 
-export function SystemHealthPanel({ opened, onClose }: SystemHealthPanelProps) {
+export function SystemHealthPanel({ opened, onClose, returnFocusTo }: SystemHealthPanelProps) {
   const health = useSystemHealth({ isOpen: opened })
 
   return (
-    <Modal opened={opened} onClose={onClose} title="System health" size="xl">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="System health"
+      size="xl"
+      {...focusReturnProps(returnFocusTo)}
+    >
       <Tabs defaultValue="overview">
         <Tabs.List>
           <Tabs.Tab value="overview">Overview</Tabs.Tab>
@@ -238,7 +416,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         <Text size="sm" c="dimmed">
           No status available.
         </Text>
-        <Button size="xs" variant="light" onClick={() => refresh()}>
+        <Button variant="light" onClick={() => refresh()}>
           Refresh
         </Button>
       </Stack>
@@ -253,6 +431,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
   // Absent for a worker that predates the field, which is not evidence of skew;
   // nor is a stale or absent worker's leftover status file, which names no running build.
   const workerVersion = status.workerStatus?.workerVersion || undefined
+  const lastShutdown = status.workerStatus?.lastShutdown
   const versionSkew =
     status.worker.state === 'alive' &&
     workerVersion !== undefined &&
@@ -278,10 +457,18 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
       </Group>
 
       {isRecentFatalError && lastFatalError && (
-        <Alert color="red" icon={<IconAlertCircle size={16} />} title="Worker crash detected">
+        <Alert
+          color="red"
+          icon={<IconAlertCircle size={16} />}
+          title={
+            lastFatalError.phase === 'startup'
+              ? 'The worker failed to start'
+              : 'The worker stopped while running'
+          }
+        >
           <Text size="sm">{lastFatalError.message}</Text>
           <Text size="xs" c="dimmed" mt={4}>
-            at {lastFatalError.at} ({lastFatalError.phase})
+            at {lastFatalError.at}
           </Text>
         </Alert>
       )}
@@ -296,10 +483,40 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         </Alert>
       )}
 
+      {status.schemaIssues && status.schemaIssues.length > 0 && (
+        <Alert
+          color="yellow"
+          icon={<IconAlertTriangle size={16} />}
+          title="Content types this editor version doesn't know"
+          data-testid="schema-issues-alert"
+        >
+          <Stack gap={4}>
+            {status.schemaIssues.map((issue) => (
+              <Text size="sm" key={`${issue.kind}:${issue.message}`}>
+                {issue.kind === 'unknown-schema' ? (
+                  <>
+                    <Code>{issue.metaFile}</Code> names <Code>{issue.schemaRef}</Code>, so entry
+                    type <Code>{issue.entryType}</Code> is unavailable
+                  </>
+                ) : (
+                  issue.message
+                )}
+              </Text>
+            ))}
+          </Stack>
+        </Alert>
+      )}
+
+      {status.workerStatus?.baseHold && <BaseHoldAlert hold={status.workerStatus.baseHold} />}
+
       {status.statusReadError && (
         <Text size="xs" c="orange">
           Warning: could not read worker status ({status.statusReadError})
         </Text>
+      )}
+
+      {lastGitSync?.tracked && lastGitSync.tracked.diverged.length > 0 && (
+        <DivergedBranchesAlert names={lastGitSync.tracked.diverged} />
       )}
 
       {status.workerStatus?.lastGitSyncError && (
@@ -325,7 +542,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         </Alert>
       )}
 
-      <Paper withBorder p="sm" radius="md">
+      <Paper withBorder p="sm">
         <Text size="sm" fw={600}>
           Build
         </Text>
@@ -345,14 +562,46 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         <Text size="xs" c="dimmed" data-testid="build-worker-version">
           Worker version: {workerVersion ? `canopycms ${workerVersion}` : 'unknown'}
         </Text>
+        {lastShutdown && (
+          <Text
+            size="xs"
+            c={lastShutdown.outcome === 'drained' ? 'dimmed' : 'orange'}
+            data-testid="build-last-shutdown"
+          >
+            Last worker shutdown: {lastShutdown.reason} at {lastShutdown.at}
+            {lastShutdown.outcome === 'deadline' &&
+              ` · drain deadline hit, aborted ${lastShutdown.abandoned?.join(', ') ?? 'in-flight work'}`}
+            {lastShutdown.outcome === 'drained' &&
+              lastShutdown.drainMs !== undefined &&
+              ` · drained in ${(lastShutdown.drainMs / 1000).toFixed(1)}s`}
+            {lastShutdown.outcome === 'not-drained' && ' (a crash or a forced stop)'}
+          </Text>
+        )}
+        {lastFatalError?.phase === 'startup' && (
+          <Text size="xs" c="orange" data-testid="build-failed-start">
+            Last start failed at {lastFatalError.at}
+          </Text>
+        )}
         <Text size="xs" c="dimmed" data-testid="build-media">
           Media storage:{' '}
           {status.assetStore.configured ? 'configured' : 'not configured — uploads are disabled'}
         </Text>
+        <Text
+          size="xs"
+          c={status.imageProcessing.available ? 'dimmed' : 'orange'}
+          data-testid="build-image-processing"
+        >
+          Image processing:{' '}
+          {status.imageProcessing.available
+            ? 'available'
+            : `unavailable — new editor image sizes and crops fail, and uploads skip decode validation${
+                status.imageProcessing.error ? ` (${status.imageProcessing.error})` : ''
+              }`}
+        </Text>
       </Paper>
 
       {lastGitSync && (
-        <Paper withBorder p="sm" radius="md">
+        <Paper withBorder p="sm">
           <Text size="sm" fw={600}>
             Last git sync
           </Text>
@@ -389,7 +638,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
             >
               <Stack gap={4} mt={4}>
                 {lastGitSync.failed.map((f) => (
-                  <Text size="xs" c="red" key={f.branch}>
+                  <Text size="xs" c="var(--canopy-danger-text)" key={f.branch}>
                     {f.branch}: {f.error}
                   </Text>
                 ))}
@@ -401,7 +650,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
 
       <SimpleGrid cols={5} spacing="xs">
         {(['pending', 'processing', 'completed', 'failed', 'corrupt'] as const).map((key) => (
-          <Paper key={key} withBorder p="xs" radius="md" ta="center">
+          <Paper key={key} withBorder p="xs" ta="center">
             <Text size="xs" c="dimmed" tt="capitalize">
               {key}
             </Text>
@@ -409,7 +658,9 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
               size="lg"
               fw={700}
               c={
-                (key === 'failed' || key === 'corrupt') && status.queue[key] > 0 ? 'red' : undefined
+                (key === 'failed' || key === 'corrupt') && status.queue[key] > 0
+                  ? 'var(--canopy-danger-text)'
+                  : undefined
               }
             >
               {status.queue[key]}
@@ -427,7 +678,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         <Text size="xs" c="dimmed">
           Generated at {status.generatedAt}
         </Text>
-        <Button size="xs" variant="light" onClick={() => refresh()} loading={statusLoading}>
+        <Button variant="light" onClick={() => refresh()} loading={statusLoading}>
           Refresh
         </Button>
       </Group>
@@ -447,7 +698,7 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
   const canDelete = taskStatus === 'pending' || taskStatus === 'failed' || taskStatus === 'corrupt'
 
   const handleRetryClick = (task: Task) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Retry task',
       children: <Text size="sm">{RETRY_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Retry', cancel: 'Cancel' },
@@ -457,7 +708,7 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
   }
 
   const handleDeleteClick = (status: DeletableTaskStatus, fileName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Delete task file',
       children: <Text size="sm">{deleteConfirmText(status)}</Text>,
       labels: { confirm: 'Delete', cancel: 'Cancel' },
@@ -528,7 +779,6 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
                       </Table.Td>
                       <Table.Td>
                         <Button
-                          size="xs"
                           variant="light"
                           color="red"
                           data-testid={`delete-task-${file.fileName}`}
@@ -564,7 +814,6 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
                         <Group gap="xs">
                           {taskStatus === 'failed' && (
                             <Button
-                              size="xs"
                               variant="light"
                               data-testid={`retry-task-${task.id}`}
                               onClick={() => handleRetryClick(task)}
@@ -574,7 +823,6 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
                           )}
                           {canDelete && (
                             <Button
-                              size="xs"
                               variant="light"
                               color="red"
                               data-testid={`delete-task-${task.id}`}
@@ -606,7 +854,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   const baseWarning = baseRefreshWarning(health.status?.workerStatus?.lastGitSync?.baseRefresh)
 
   const handleMarkMergedClick = (branchName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Mark branch as merged',
       children: <Text size="sm">{MARK_MERGED_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Mark merged', cancel: 'Cancel' },
@@ -616,7 +864,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   }
 
   const handleRepairClick = (dirName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Repair metadata',
       children: <Text size="sm">{REPAIR_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Repair', cancel: 'Cancel' },
@@ -626,7 +874,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   }
 
   const handlePurgeClick = (dirName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Purge directory',
       children: <Text size="sm">{PURGE_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Purge', cancel: 'Cancel' },
@@ -634,6 +882,22 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
       onConfirm: () => health.purgeDir(dirName),
     })
   }
+
+  // Its own dialog, reachable only from the duplicate badge, whose confirm
+  // calls only the duplicate repair: Purge sits on neighbouring rows and
+  // trashes a whole branch directory.
+  const handleDuplicateIdsClick = (dirName: string, duplicates: DuplicateContentId[]) => {
+    openConfirm({
+      title: 'Fix duplicate content IDs',
+      children: <DuplicateRepairDetails dirName={dirName} duplicates={duplicates} />,
+      labels: { confirm: 'Archive duplicates', cancel: 'Cancel' },
+      confirmProps: { color: 'orange' },
+      onConfirm: () => health.repairDuplicateIds(dirName),
+    })
+  }
+
+  const healthyDirNames = entries.filter((e) => e.kind === 'healthy').map((e) => e.dirName)
+  const duplicateSummary = duplicateScanSummary(health, healthyDirNames)
 
   if (branchHealthLoading && entries.length === 0) {
     return (
@@ -655,49 +919,166 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   }
 
   return (
-    <Table.ScrollContainer minWidth={700}>
-      <Table>
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>Name</Table.Th>
-            <Table.Th>Status</Table.Th>
-            <Table.Th>PR</Table.Th>
-            <Table.Th>Sync</Table.Th>
-            <Table.Th>Warnings</Table.Th>
-            <Table.Th>Updated</Table.Th>
-            <Table.Th>Actions</Table.Th>
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {entries.map((entry) => (
-            <BranchHealthRow
-              key={entry.dirName}
-              entry={entry}
-              baseWarning={entry.isBaseBranch ? baseWarning : null}
-              onMarkMerged={handleMarkMergedClick}
-              onRepair={handleRepairClick}
-              onPurge={handlePurgeClick}
-            />
+    <Stack gap="xs">
+      <Group justify="space-between" align="center" wrap="nowrap">
+        <Text size="xs" c={duplicateSummary.color} data-testid="duplicate-id-summary">
+          {duplicateSummary.text}
+        </Text>
+        <Button
+          size="compact-xs"
+          variant="subtle"
+          loading={health.duplicateIdScanLoading}
+          onClick={() => health.checkDuplicateIds()}
+        >
+          Check again
+        </Button>
+      </Group>
+      <Table.ScrollContainer minWidth={700}>
+        <Table>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Name</Table.Th>
+              <Table.Th>Status</Table.Th>
+              <Table.Th>PR</Table.Th>
+              <Table.Th>Sync</Table.Th>
+              <Table.Th>Warnings</Table.Th>
+              <Table.Th>Updated</Table.Th>
+              <Table.Th>Actions</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {entries.map((entry) => (
+              <BranchHealthRow
+                key={entry.dirName}
+                entry={entry}
+                baseWarning={entry.isBaseBranch ? baseWarning : null}
+                duplicateIdScan={
+                  health.duplicateIdScan
+                    ? (health.duplicateIdScan.byDir[entry.dirName] ?? null)
+                    : undefined
+                }
+                onMarkMerged={handleMarkMergedClick}
+                onRepair={handleRepairClick}
+                onPurge={handlePurgeClick}
+                onDuplicateIds={handleDuplicateIdsClick}
+              />
+            ))}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
+    </Stack>
+  )
+}
+
+function DuplicateRepairDetails({
+  dirName,
+  duplicates,
+}: {
+  dirName: string
+  duplicates: DuplicateContentId[]
+}) {
+  return (
+    <Stack gap="sm">
+      <Text size="sm">
+        Branch <Code>{dirName}</Code>
+      </Text>
+      <Text size="sm">{DUPLICATE_REPAIR_CONFIRM_TEXT}</Text>
+      {duplicates.map((d) => (
+        <Paper key={d.id} withBorder p="xs" radius="sm" data-testid={`duplicate-id-${d.id}`}>
+          <Text size="xs" fw={600}>
+            Content ID <Code>{d.id}</Code>
+          </Text>
+          <Text size="xs">
+            Keep: <Code>{d.keptPath}</Code>
+          </Text>
+          {d.droppedPaths.map((p) => (
+            <Text size="xs" key={p}>
+              Archive: <Code>{p}</Code>
+            </Text>
           ))}
-        </Table.Tbody>
-      </Table>
-    </Table.ScrollContainer>
+        </Paper>
+      ))}
+      <Text size="xs" c="dimmed">
+        {DUPLICATE_REPAIR_EDITOR_NOTE}
+      </Text>
+    </Stack>
+  )
+}
+
+/** "2d ago, 1/1/2026, 9:00:00 AM": inside a tooltip, so the absolute date sits beside it. */
+const firstFailed = (iso: string): string => {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? iso : `${formatRelativeTime(iso)}, ${date.toLocaleString()}`
+}
+
+/**
+ * A detail that only a Tooltip would show: hidden text for assistive tech, plus a Tooltip that
+ * opens on hover, focus and touch. The trigger is a focusable span, not a button: it does nothing
+ * when pressed, so it must not be announced as one. A trigger with no text of its own, such as an
+ * icon, takes its name from `name`.
+ */
+function TooltipDetail({
+  detail,
+  name,
+  maw = 320,
+  preLine = false,
+  children,
+}: {
+  detail: string
+  name?: string
+  maw?: number
+  preLine?: boolean
+  children: ReactNode
+}) {
+  const detailId = useId()
+  return (
+    <>
+      <Tooltip
+        // A sighted user sees only the icon, so the tooltip names it too.
+        label={name ? `${name}: ${detail}` : detail}
+        multiline
+        maw={maw}
+        style={preLine ? { whiteSpace: 'pre-line' } : undefined}
+        events={{ hover: true, focus: true, touch: true }}
+      >
+        <Box
+          component="span"
+          tabIndex={0}
+          role={name ? 'img' : undefined}
+          aria-label={name}
+          aria-describedby={detailId}
+          className="mantine-focus-auto"
+        >
+          {children}
+        </Box>
+      </Tooltip>
+      <VisuallyHidden id={detailId}>{detail}</VisuallyHidden>
+    </>
   )
 }
 
 function BranchHealthRow({
   entry,
   baseWarning,
+  duplicateIdScan,
   onMarkMerged,
   onRepair,
   onPurge,
+  onDuplicateIds,
 }: {
   entry: BranchHealthEntry
   /** The base branch's last refresh problem, from worker status; null on other rows. */
   baseWarning: string | null
+  /**
+   * This row's result from the last duplicate-ID scan: `undefined` when there
+   * is no scan result (none yet, or the last request failed; the tab summary
+   * says which), `null` when the scan did not include this row.
+   */
+  duplicateIdScan: DuplicateIdScan | null | undefined
   onMarkMerged: (branchName: string) => void
   onRepair: (dirName: string) => void
   onPurge: (dirName: string) => void
+  onDuplicateIds: (dirName: string, duplicates: DuplicateContentId[]) => void
 }) {
   if (entry.kind === 'healthy' && entry.branch) {
     const b = entry.branch
@@ -718,14 +1099,14 @@ function BranchHealthRow({
             <Text size="sm">{entry.dirName}</Text>
             {entry.isBaseBranch && (
               <Badge size="xs" color="gray" variant="outline">
-                base
+                Base
               </Badge>
             )}
           </Group>
         </Table.Td>
         <Table.Td>
-          <Badge color={branchStatusColorMap[b.status] ?? 'neutral'} variant="light">
-            {b.status}
+          <Badge color={branchStatusPresentation(b.status)?.color ?? 'neutral'} variant="light">
+            {branchStatusPresentation(b.status)?.label}
           </Badge>
         </Table.Td>
         <Table.Td>
@@ -750,22 +1131,20 @@ function BranchHealthRow({
         </Table.Td>
         <Table.Td>
           {b.syncStatus === 'sync-failed' ? (
-            <Tooltip
-              label={
+            <TooltipDetail
+              detail={
                 b.syncFailureReason
-                  ? `${b.syncFailureReason} — retry from the Tasks tab`
-                  : 'GitHub sync failed — retry from the Tasks tab'
+                  ? `${b.syncFailureReason} — retry from the "Tasks" tab`
+                  : 'GitHub sync failed — retry from the "Tasks" tab'
               }
-              multiline
-              maw={320}
             >
               <Badge color="red" variant="light">
-                sync-failed
+                Sync failed
               </Badge>
-            </Tooltip>
+            </TooltipDetail>
           ) : b.syncStatus === 'pending-sync' ? (
             <Badge color="gray" variant="light">
-              pending-sync
+              Pending sync
             </Badge>
           ) : null}
         </Table.Td>
@@ -777,10 +1156,9 @@ function BranchHealthRow({
               </Badge>
             )}
             {showRebaseFailure && b.rebaseFailure && (
-              <Tooltip
-                label={`${b.rebaseFailure.message} (failing since ${b.rebaseFailure.firstAt})`}
-                multiline
-                maw={320}
+              <TooltipDetail
+                name="Rebase failing"
+                detail={`${b.rebaseFailure.message} (first failed ${firstFailed(b.rebaseFailure.firstAt)})`}
               >
                 <ThemeIcon
                   color="yellow"
@@ -791,10 +1169,15 @@ function BranchHealthRow({
                 >
                   <IconAlertTriangle size={12} />
                 </ThemeIcon>
-              </Tooltip>
+              </TooltipDetail>
             )}
             {baseWarning && (
-              <Tooltip label={baseWarning} multiline maw={420} style={{ whiteSpace: 'pre-line' }}>
+              <TooltipDetail
+                name="Base branch refresh failing"
+                detail={baseWarning}
+                maw={420}
+                preLine
+              >
                 <ThemeIcon
                   color="yellow"
                   variant="light"
@@ -804,36 +1187,36 @@ function BranchHealthRow({
                 >
                   <IconAlertTriangle size={12} />
                 </ThemeIcon>
-              </Tooltip>
+              </TooltipDetail>
             )}
-            {/*
-              Diagnosis only, deliberately no button: a duplicate-hitting editor
-              sees a 409 saying an admin must resolve it, with no way to see
-              which branch was affected without this. The repair endpoint
-              exists, but putting its trigger here would sit it beside Purge
-              (which trashes the whole branch directory) — a misroute this row
-              cannot afford. Action UI tracked in
-              .claude/future-tasks/duplicate-content-id-repair-ui.md.
-            */}
-            {!!entry.duplicateContentIds?.length && (
-              <Tooltip
-                label={entry.duplicateContentIds
-                  .map((d) => `${d.id}: kept ${d.keptPath}; also on ${d.droppedPaths.join(', ')}`)
-                  .join('\n')}
-                multiline
-                maw={420}
-                style={{ whiteSpace: 'pre-line' }}
-              >
+            {duplicateIdScan?.state === 'found' && (
+              <Tooltip label="Review and fix">
                 <Badge
+                  component="button"
+                  type="button"
                   color="orange"
                   variant="light"
+                  style={{ cursor: 'pointer' }}
                   data-testid={`duplicate-content-ids-${entry.dirName}`}
+                  onClick={() => onDuplicateIds(entry.dirName, duplicateIdScan.duplicates)}
                 >
-                  {entry.duplicateContentIds.length} duplicate ID
-                  {entry.duplicateContentIds.length === 1 ? '' : 's'}
+                  {plural(duplicateIdScan.duplicates.length, 'duplicate ID')}
                 </Badge>
               </Tooltip>
             )}
+            {duplicateIdScan !== undefined &&
+              duplicateIdScan?.state !== 'found' &&
+              duplicateIdScan?.state !== 'none' && (
+                <Tooltip label={duplicateUncheckedReason(duplicateIdScan)} multiline maw={320}>
+                  <Badge
+                    color="gray"
+                    variant="outline"
+                    data-testid={`duplicate-ids-unchecked-${entry.dirName}`}
+                  >
+                    IDs not checked
+                  </Badge>
+                </Tooltip>
+              )}
           </Group>
         </Table.Td>
         <Table.Td>
@@ -844,7 +1227,6 @@ function BranchHealthRow({
         <Table.Td>
           {canMarkMerged && (
             <Button
-              size="xs"
               variant="light"
               data-testid={`mark-merged-${b.name}`}
               onClick={() => onMarkMerged(b.name)}
@@ -864,12 +1246,12 @@ function BranchHealthRow({
         <Table.Td>{entry.dirName}</Table.Td>
         <Table.Td>
           <Badge color="red" variant="light">
-            corrupt metadata
+            Corrupt metadata
           </Badge>
         </Table.Td>
         <Table.Td colSpan={3}>
           <Tooltip label={entry.parseError} multiline maw={400}>
-            <Text size="xs" c="red">
+            <Text size="xs" c="var(--canopy-danger-text)">
               {truncate(entry.parseError ?? 'Unknown parse error', 60)}
             </Text>
           </Tooltip>
@@ -882,27 +1264,13 @@ function BranchHealthRow({
         <Table.Td>
           <Group gap="xs" wrap="nowrap">
             <Button
-              size="xs"
               variant="light"
               data-testid={`repair-dir-${entry.dirName}`}
               onClick={() => onRepair(entry.dirName)}
             >
               Repair
             </Button>
-            <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
-              <span>
-                <Button
-                  size="xs"
-                  variant="light"
-                  color="red"
-                  disabled={purgeGate.disabled}
-                  data-testid={`purge-dir-${entry.dirName}`}
-                  onClick={() => onPurge(entry.dirName)}
-                >
-                  Purge
-                </Button>
-              </span>
-            </Tooltip>
+            <PurgeButton entry={entry} gate={purgeGate} onPurge={onPurge} />
           </Group>
         </Table.Td>
       </Table.Tr>
@@ -917,7 +1285,7 @@ function BranchHealthRow({
       <Table.Td>{entry.dirName}</Table.Td>
       <Table.Td>
         <Badge color="gray" variant="outline">
-          orphan
+          Orphan
         </Badge>
       </Table.Td>
       <Table.Td colSpan={3}>
@@ -932,20 +1300,7 @@ function BranchHealthRow({
         </Text>
       </Table.Td>
       <Table.Td>
-        <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
-          <span>
-            <Button
-              size="xs"
-              variant="light"
-              color="red"
-              disabled={purgeGate.disabled}
-              data-testid={`purge-dir-${entry.dirName}`}
-              onClick={() => onPurge(entry.dirName)}
-            >
-              Purge
-            </Button>
-          </span>
-        </Tooltip>
+        <PurgeButton entry={entry} gate={purgeGate} onPurge={onPurge} />
       </Table.Td>
     </Table.Tr>
   )

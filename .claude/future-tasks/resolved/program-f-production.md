@@ -1,3 +1,7 @@
+---
+summary: >-
+  RETIRED 2026-10-05, resolved by events: its ordering premise no longer holds; multi-account `official` mode and a shared static-site CDK are unscheduled.
+---
 # Program F — Production, and the second site
 
 **Closed 2026-10-05, resolved by events:** its ordering premise (the docs site first, then the second site) no longer holds; multi-account `official` mode and a shared static-site CDK are unscheduled and would be filed as new tasks if needed.
@@ -41,10 +45,10 @@ accounts from `iac/lib/definitions.ts`:
 
 | Role | Account |
 | ---- | ------- |
-| build | `767397792557` (Security) |
-| preview / dev | `872515273917` (Dev) |
-| staging | `867344442985` (Staging) |
-| production | `533267019973` (Production) |
+| build | Security |
+| preview / dev | Dev |
+| staging | Staging |
+| production | Production |
 
 Domain `safeinsights.org`, docs at the `docs` subdomain.
 

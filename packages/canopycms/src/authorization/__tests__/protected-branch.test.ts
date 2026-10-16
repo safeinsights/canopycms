@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { getBranchProtection, getBranchWriteProtection } from '../protected-branch'
 import type { BranchStatus } from '../../types'
+import { BaseBranchUnresolvedError } from '../../utils/base-branch'
 
 describe('getBranchProtection', () => {
   it('flags the base branch as protected+submitBlocked+readOnly in prod', () => {
@@ -19,9 +20,15 @@ describe('getBranchProtection', () => {
     expect(result).toEqual({ isProtected: false, submitBlocked: false, readOnly: false })
   })
 
-  it('falls back to "main" when defaultBaseBranch is unset', () => {
-    const result = getBranchProtection({ mode: 'prod', defaultBaseBranch: undefined }, 'main')
-    expect(result).toEqual({ isProtected: true, submitBlocked: true, readOnly: true })
+  it('falls back to "main" in dev when defaultBaseBranch is unset', () => {
+    const result = getBranchProtection({ mode: 'dev', defaultBaseBranch: undefined }, 'main')
+    expect(result).toEqual({ isProtected: true, submitBlocked: true, readOnly: false })
+  })
+
+  it('refuses an unresolved prod base branch rather than protecting "main"', () => {
+    expect(() =>
+      getBranchProtection({ mode: 'prod', defaultBaseBranch: undefined }, 'main'),
+    ).toThrow(BaseBranchUnresolvedError)
   })
 
   it('protects a non-main base branch (master)', () => {
@@ -122,7 +129,10 @@ describe('getBranchProtection', () => {
 
   it('does not expose writeBlocked -- that decision needs a status', () => {
     // Guards against a caller reading a `writeBlocked` that was never computed.
-    expect('writeBlocked' in getBranchProtection({ mode: 'prod' }, 'feature-x')).toBe(false)
+    expect(
+      'writeBlocked' in
+        getBranchProtection({ mode: 'prod', defaultBaseBranch: 'main' }, 'feature-x'),
+    ).toBe(false)
   })
 })
 
@@ -149,12 +159,11 @@ describe('getBranchWriteProtection', () => {
     },
   )
 
-  // Fail-closed contract. branch.json is read with a bare cast and no schema
-  // validation (branch-metadata.ts), so a hand-repaired or partially-written
-  // file reaches this predicate with no status -- and corrupt branch metadata
-  // is a condition this codebase already handles elsewhere (quarantine /
-  // branch-health). A branch whose review state is unknown must NOT be
-  // writable: allowing the write is the one outcome we can never take back.
+  // Fail-closed contract. A branch.json with no status is refused as corrupt
+  // at its read boundary (branch-metadata-file.ts), but a status can still
+  // arrive unset from a context built elsewhere. A branch whose review state is
+  // unknown must NOT be writable: allowing the write is the one outcome we can
+  // never take back.
   it('blocks writes when the status is missing at runtime', () => {
     const result = getBranchWriteProtection(
       prod,

@@ -1,3 +1,8 @@
+---
+adopters: MKT
+summary: >-
+  RESOLVED (2026-08-21, branch `fix/content-comment-preservation`, epic `adopter-request-intake`) — the editor silently deleted every comment in a content file on save, because `ContentStore` re-serialised a fresh plain object over it. Fixed by re-serialising onto the file's OWN parsed document (`utils/content-serialize.ts`), so unchanged nodes keep their comments; md/mdx frontmatter is covered too, not left as a documented limitation. Every fallback (new file, unparseable bytes) emits the exact pre-fix bytes, so creates are unchanged. Two things the analysis did not predict: sequences must align **by value, not position**, or a reorder leaves each comment describing whatever now sits at that index; and gray-matter's process-global cache returns an object with `.matter` MISSING on a hit, which made this a preserve-on-first-save, drop-on-every-save-after bug until the split started passing an options object. The #29 interaction resolved as **the writer never decides** — the key set matches the payload exactly, and whether a surviving key should be there is answered one layer up by `findUnknownKeys`
+---
 # Editor saves silently delete every comment in a content file
 
 **Status: RESOLVED** 2026-08-21 on branch `fix/content-comment-preservation`, epic

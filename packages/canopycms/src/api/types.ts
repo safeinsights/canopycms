@@ -49,4 +49,30 @@ export interface ApiResponse<TData = unknown> {
    * surface each error next to its form field.
    */
   fieldErrors?: Array<{ fieldPath: string; message: string }>
+  /** A machine-readable reason for some failures; see {@link ApiErrorCode}. */
+  code?: ApiErrorCode
 }
+
+/**
+ * `SCHEMA_UNAVAILABLE`: the entry's type names an entry schema the running code lacks (a 503,
+ * see `SchemaUnavailableError`). `WORKER_FAILED`: the CMS worker recorded that its latest start
+ * failed, so a retry will not help until an admin fixes it (a 503 with no `Retry-After`).
+ * `WRITE_OUTCOME_UNKNOWN`: an entry save ran but lost its branch lock mid-write, so it may have
+ * landed (a 409); the version the caller holds may be stale, so it must re-read before retrying.
+ * `ENTRY_GONE`: an entry update found no file, because the entry was deleted or moved since the
+ * caller read it (a 409); it was not saved, and only a create can bring the entry back.
+ * `EDITOR_MODE_MISMATCH`: the editor bundle was built for the other operating mode than the
+ * server runs (a 412, see operating-mode/editor-mode-check.ts); only a rebuild fixes it.
+ * `SETTINGS_CHANGED`: a groups or permissions save named a version the file has moved on from (a
+ * 409, see `SettingsVersionConflictError`); nothing was saved, and a reload shows the other edit.
+ * The other settings 409, a busy file lock, carries no code. `BRANCH_SYNCING`: an entry save was
+ * refused because the branch is mid-rebase (a 409); nothing was saved, and a retry soon can pass.
+ */
+export type ApiErrorCode =
+  | 'SCHEMA_UNAVAILABLE'
+  | 'WORKER_FAILED'
+  | 'WRITE_OUTCOME_UNKNOWN'
+  | 'ENTRY_GONE'
+  | 'EDITOR_MODE_MISMATCH'
+  | 'SETTINGS_CHANGED'
+  | 'BRANCH_SYNCING'

@@ -11,15 +11,11 @@ import type { PermissionPath } from '../authorization/types'
 import type { EntryLinkUrlResolver } from '../entry-link-resolver'
 import type { CropRect } from '../assets/transform-directives'
 
-export const primitiveFieldTypes = [
-  'string',
-  'number',
-  'boolean',
-  'datetime',
-  'markdown',
-  'mdx',
-  'code',
-] as const
+const scalarFieldTypes = ['string', 'number', 'boolean', 'datetime', 'code'] as const
+
+export const markdownFieldTypes = ['markdown', 'mdx'] as const
+
+export const primitiveFieldTypes = [...scalarFieldTypes, ...markdownFieldTypes] as const
 
 // 'image' is not a primitive: it has a structured value (ImageFieldValue) and
 // its own per-type config (ImageFieldConfig, below), so it gets a dedicated
@@ -74,7 +70,57 @@ interface BaseFieldConfig {
 }
 
 interface PrimitiveFieldConfig extends BaseFieldConfig {
-  type: PrimitiveFieldType
+  type: (typeof scalarFieldTypes)[number]
+  /**
+   * On a top-level, optional, single `datetime` field: Canopy's first submit of an entry new to
+   * the base branch sets the field, while it is empty, to the submit's time
+   * (`stamp-on-publish.ts`). `ensureStampOnPublishPlacement` (`validation.ts`) refuses it
+   * anywhere else.
+   */
+  stampOnPublish?: boolean
+}
+
+/** Content that would run code as it renders is refused at save; see `validation/markdown-safety.ts`. */
+export interface MarkdownFieldConfig extends BaseFieldConfig {
+  type: (typeof markdownFieldTypes)[number]
+  /** Accept code, making every editor of this field a code author for whoever renders it. */
+  executable?: boolean
+  /** On a `markdown` field the site compiles as MDX: check it as MDX. */
+  renderAs?: 'mdx'
+  /** Narrow what this field accepts as MDX, key by key over the site's `mdxAllow`. */
+  mdxAllow?: MdxAllowlist
+}
+
+/**
+ * A prop's allowed values. `true`: any value the base policy accepts, a bare attribute (`<X open>`,
+ * the value `true`) and `{…}` values included. `'string'`: only a quoted string, `title="…"`; a
+ * bare attribute and every `{…}` refused. The object form adds `maxLength`, in characters (code
+ * points). A list: those values only; `[true, false]` is a boolean (bare, `{true}`, `{false}`).
+ */
+export type MdxPropAllow =
+  | true
+  | 'string'
+  | { type: 'string'; maxLength?: number }
+  | Array<string | number | boolean>
+
+export interface MdxComponentAllow {
+  /** Allowed props by name. Omitted: any prop. `{}`: none. */
+  props?: Record<string, MdxPropAllow>
+}
+
+/**
+ * What an MDX body may hold, narrowing the base policy (`validation/mdx-allowlist.ts`). An omitted
+ * key keeps the base policy's choice.
+ */
+export interface MdxAllowlist {
+  /** Allowed components by name. Omitted: any plainly named component. `{}`: none. */
+  components?: Record<string, MdxComponentAllow>
+  /** Allowed HTML tags, from the base policy's safe set. Omitted: that whole set. `[]`: none. */
+  htmlTags?: string[]
+  /** `false` refuses every `{…}`, comments and plain values included. Default `true`. */
+  expressions?: boolean
+  /** `false` refuses `<>…</>`. Default `true`. */
+  fragments?: boolean
 }
 
 export interface SelectFieldConfig extends BaseFieldConfig {
@@ -164,9 +210,16 @@ export interface ObjectFieldConfig extends BaseFieldConfig {
   fields: FieldConfig[]
   /**
    * On a `list: true` object, a direct `string` or `number` child whose value titles each
-   * item's card; a blank or non-finite value falls back to "<label> #N".
+   * item's card; a blank or non-finite value falls back to the item's first non-blank `string`
+   * field, then "Item N".
    */
   itemTitleField?: string
+  /**
+   * On a `list: true` object, what one item is called, as it reads mid-sentence ("team member"):
+   * the add button reads "Add team member" and an untitled item "Team member 3". Without it,
+   * "Add item" and "Item 3". `ensureItemTitleFieldsExist` (`validation.ts`) checks it.
+   */
+  itemLabel?: string
 }
 
 /**
@@ -194,6 +247,7 @@ export type CustomFieldConfig = BaseFieldConfig & {
 
 export type FieldConfig =
   | PrimitiveFieldConfig
+  | MarkdownFieldConfig
   | SelectFieldConfig
   | ReferenceFieldConfig
   | ImageFieldConfig
@@ -205,17 +259,16 @@ export type FieldConfig =
 // Kept in sync with the discriminated `mediaSchema` in config/schemas/media.ts — only
 // implemented adapters get a literal branch here (see BACKLOG.md "Asset adapters").
 export type MediaConfig =
-  | { adapter: 'local'; publicBaseUrl?: string; directory?: string }
+  | { adapter: 'local'; directory?: string }
   | {
       adapter: 's3'
       bucket: string
       region: string
-      publicBaseUrl?: string
       /** POST target for presigned direct uploads; see mediaSchema's s3 branch. */
       uploadUrl?: string
       maxUploadBytes?: number
     }
-  | { adapter: 'lfs'; publicBaseUrl?: string }
+  | { adapter: 'lfs' }
 
 /**
  * Field definitions for one entry type — the array of FieldConfig that
@@ -243,6 +296,24 @@ export type EntryTypeConfig = {
   readonly description?: string
   readonly default?: boolean // Is this the default type for "Add" button?
   readonly maxItems?: number // Limit instances (e.g., 1 = only one entry allowed)
+  /**
+   * Set when this entry type could not be resolved, and `schema` is then empty. Only a
+   * branch workspace's schema carries it (see `BranchSchemaCache`); reading, writing,
+   * creating, renaming or deleting an entry of this type is refused.
+   */
+  readonly unavailable?: EntryTypeUnavailable
+}
+
+/**
+ * Why an entry type has no schema: its `.collection.json` names an entry schema the running
+ * code's registry does not define, as when content synced ahead of the image that adds it.
+ */
+export type EntryTypeUnavailable = {
+  readonly reason: 'unknown-schema'
+  /** The registry key the meta file names. */
+  readonly schemaRef: string
+  /** The meta file naming it, relative to the content root. */
+  readonly metaFile: string
 }
 
 /**
@@ -268,7 +339,7 @@ export type CollectionConfig = {
  * Contains top-level collections and entries (typed content at the root level).
  */
 export type RootCollectionConfig = {
-  /** Optional label for the root collection (e.g., "All Files", "Content") */
+  /** Optional label for the root collection (e.g., "All content", "Content") */
   readonly label?: string
   /** Entry types at the root level */
   readonly entries?: readonly EntryTypeConfig[]
@@ -301,7 +372,6 @@ export interface EditorSignInProps {
 
 export interface CanopyEditorConfig {
   title?: string
-  subtitle?: string
   theme?: unknown
   /**
    * Preview-pane routes for sites whose routes don't mirror their content tree; otherwise an entry
@@ -383,12 +453,15 @@ export interface EntryValidationIssue {
   fieldPath?: string
 }
 
-/** Input passed to the `validateEntry` hook on every editor save. */
+/** Input passed to the `validateEntry` hook on every content save, from the editor or not. */
 export interface ValidateEntryInput {
   /** Logical entry path including the content root (e.g. 'content/posts/hello-world'). */
   entryPath: string
   branch: string
-  /** Entry type name when the editor specifies one (collections with multiple entry types). */
+  /**
+   * The entry type the save is validated and written as: an existing entry's on-disk type, else
+   * the requested one, else the collection's default. Absent only when the collection has none.
+   */
   entryType?: string
   format: 'md' | 'mdx' | 'json' | 'yaml'
   data: Record<string, unknown>
@@ -433,12 +506,18 @@ export interface CanopyConfig {
   sourceRoot?: SourceRoot
   /** Deployment prefix the host app is served under — see {@link CanopyConfigInput.basePath}. */
   basePath?: string
+  /** HTTP status of an unauthenticated API response — see {@link CanopyConfigInput.unauthenticatedStatus}. */
+  unauthenticatedStatus?: 401 | 419
+  /** What a production build does on a dangling reference — see {@link CanopyConfigInput.danglingReferences}. */
+  danglingReferences?: 'error' | 'warn'
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links — see {@link CanopyConfigInput.entryLinkUrl}. */
   entryLinkUrl?: EntryLinkUrlResolver
   /** Save-time validation hook — see {@link CanopyConfigInput.validateEntry}. */
   validateEntry?: ValidateEntryHook
+  /** Site default for every field checked as MDX — see {@link CanopyConfigInput.mdxAllow}. */
+  mdxAllow?: MdxAllowlist
   /** Dev-mode-only behavior — see {@link CanopyConfigInput.dev}. */
   dev?: DevConfig
 }
@@ -457,7 +536,10 @@ export interface CanopyConfigInput {
   defaultRemoteUrl?: string
   gitBotAuthorName: string
   gitBotAuthorEmail: string
-  /** Add `Edited-by: Name (user id)` for the submitter to submit commits. Default true. */
+  /**
+   * Add `Edited-by: Name (user id)` to submit commits, for the submitter and each user who saved
+   * since the last submit commit, and to settings commits for the user making the change. Default true.
+   */
   gitEditedByTrailers?: boolean
   /** Also add `Co-authored-by: Name <email>`. Default false: emails in public history are public. */
   gitCoAuthoredByTrailers?: boolean
@@ -499,12 +581,33 @@ export interface CanopyConfigInput {
    * silently filter out every entry (zero static params, a build that goes green with no pages).
    */
   basePath?: string
+  /**
+   * HTTP status of an API response to a request with no accepted session. Default 401.
+   *
+   * Set 419 when the site's own pages sit behind HTTP Basic auth on the same origin as the
+   * editor. Chrome, holding a Basic credential entered at the site root, sends it with the
+   * editor's API requests and drops it when one answers 401; the next gated request, such as a
+   * preview image, then waits on a Basic prompt. 419 rather than 403
+   * because a CloudFront custom error response cannot match 419, and one mapping 403 to an error
+   * page would replace the body below.
+   *
+   * The body says `status: 401` either way, and that is what the editor detects sign-out from.
+   */
+  unauthenticatedStatus?: 401 | 419
+  /**
+   * What a production build does when a reference names no entry. Default `'error'`: the build
+   * fails, listing each entry, field path and missing id, since the page would otherwise ship
+   * without what the reference supplied. `'warn'` prints the list, capped at 20, and lets the build pass.
+   */
+  danglingReferences?: 'error' | 'warn'
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links. Overrides the default URL computation. */
   entryLinkUrl?: EntryLinkUrlResolver
   /** Save-time validation hook. 'error' issues reject the save; 'warning' issues are returned with it. */
   validateEntry?: ValidateEntryHook
+  /** What every field checked as MDX accepts; a field's own `mdxAllow` replaces it key by key. */
+  mdxAllow?: MdxAllowlist
   /** Dev-mode-only behavior (content-sync divergence detection). Ignored when mode !== 'dev'. */
   dev?: DevConfig
 }
@@ -548,6 +651,8 @@ export type FlatSchemaItem =
       schemaRef?: string
       default?: boolean
       maxItems?: number
+      /** See {@link EntryTypeConfig.unavailable}. */
+      unavailable?: EntryTypeUnavailable
     }
 
 /**
@@ -564,16 +669,9 @@ export type CanopyClientConfig = Pick<
   | 'mode'
   | 'entryLinkUrl'
   | 'basePath'
+  | 'mdxAllow'
 > & {
   flatSchema: FlatSchemaItem[]
-  /**
-   * `media.publicBaseUrl`, when configured - the only part of `media` safe/
-   * useful to expose client-side (the editor may be served from a different
-   * origin than the site; the rest of `MediaConfig` - bucket, region, etc -
-   * has no business in a browser bundle). Threaded through to `Editor`'s
-   * `assetBaseUrl` prop. Undefined means root-relative asset URLs.
-   */
-  assetBaseUrl?: string
 }
 
 // Client-only fields that can be provided as overrides (e.g., from auth providers)

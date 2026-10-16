@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-12) — `workerLog`/`workerLogWarn`/`workerLogError` in `packages/canopycms/src/worker/log.ts` prefix every line with ISO-8601 UTC plus a level tag (stdout and stderr share one file, so severity was otherwise unrecoverable); all 64 `cms-worker.ts` call sites and the AWS entrypoint's 5 converted. The CloudWatch agent config now sets `timestamp_format` + `timezone: UTC` (CloudWatch shows worker-emitted time, not ingestion time) and `multi_line_start_pattern` (stack traces stay one event). INVARIANT: every writer to worker.log must use the helpers — an unprefixed line is folded into the previous event, which is why the entrypoint imports them via a re-export off the existing `canopycms/worker/cms-worker` rather than a new package entrypoint
+---
 # Worker log lines carry no real timestamps in CloudWatch
 
 > **RESOLVED 2026-08-12** — `packages/canopycms/src/worker/log.ts` exports

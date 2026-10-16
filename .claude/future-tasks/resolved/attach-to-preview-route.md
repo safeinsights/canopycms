@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-05, branch `feat/cdk-attach-preview-prefix`. `CanopyCmsService.attachTo` takes `previewPrefix` and routes `<prefix>` and `<prefix>/*` to the Lambda with the editor-route options, validated like `editorAssetPrefix` and covered by the synth shadow check
+---
 # `attachTo` does not route the static-export preview route
 
 ## Priority: P2 [BOTH]

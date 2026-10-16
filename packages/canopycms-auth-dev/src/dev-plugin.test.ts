@@ -227,6 +227,22 @@ describe('DevAuthPlugin', () => {
     })
   })
 
+  describe('getUsersMetadata', () => {
+    it('returns the known users and omits unknown ids', async () => {
+      const plugin = new DevAuthPlugin({})
+      const users = await plugin.getUsersMetadata(['unknown', 'dev_user1_2nK8mP4xL9'])
+
+      expect(users).toEqual([
+        {
+          id: 'dev_user1_2nK8mP4xL9',
+          name: 'User One',
+          email: 'user1@localhost.dev',
+          avatarUrl: undefined,
+        },
+      ])
+    })
+  })
+
   describe('getGroupMetadata', () => {
     it('returns group metadata for valid group', async () => {
       const plugin = new DevAuthPlugin({})

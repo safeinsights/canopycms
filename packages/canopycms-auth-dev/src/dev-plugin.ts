@@ -95,6 +95,13 @@ export class DevAuthPlugin implements AuthPlugin {
     }
   }
 
+  async getUsersMetadata(userIds: CanopyUserId[]): Promise<UserSearchResult[]> {
+    const wanted = new Set(userIds)
+    return this.users
+      .filter((u) => wanted.has(u.userId))
+      .map((u) => ({ id: u.userId, name: u.name, email: u.email, avatarUrl: u.avatarUrl }))
+  }
+
   async getGroupMetadata(groupId: CanopyGroupId): Promise<GroupMetadata | null> {
     const group = this.groups.find((g) => g.id === groupId)
     if (!group) return null

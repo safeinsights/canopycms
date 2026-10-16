@@ -1,5 +1,6 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { notifications } from '@mantine/notifications'
 import { useGroupManager } from './useGroupManager'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, setupMockConsole, createApiClientWrapper } from './__test__/test-utils'
@@ -175,6 +176,38 @@ describe('useGroupManager', () => {
     })
 
     await expect(result.current.handleSaveGroups([])).rejects.toThrow('Save failed')
+  })
+
+  it('shows a version conflict in yellow and a busy file in red', async () => {
+    mockClient.groups.updateInternal
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: 'Groups were modified by another user. Please reload and try again.',
+        code: 'SETTINGS_CHANGED',
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: 'Settings are busy, please try again.',
+      })
+    const show = vi.mocked(notifications.show)
+    show.mockClear()
+
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
+
+    await expect(result.current.handleSaveGroups([])).rejects.toThrow(
+      'Groups were modified by another user. Please reload and try again.',
+    )
+    expect(show).toHaveBeenLastCalledWith({
+      message: 'Groups were modified by another user. Please reload and try again.',
+      color: 'yellow',
+    })
+    await expect(result.current.handleSaveGroups([])).rejects.toThrow('Settings are busy')
+    expect(show).toHaveBeenLastCalledWith({
+      message: 'Settings are busy, please try again.',
+      color: 'red',
+    })
   })
 
   it('surfaces a version-conflict (409) message from the server', async () => {

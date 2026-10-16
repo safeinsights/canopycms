@@ -1,3 +1,7 @@
+---
+summary: >-
+  Plan: Reduce Duplicate API Requests with SWR
+---
 # Plan: Reduce Duplicate API Requests with SWR
 
 **Status**: Deferred

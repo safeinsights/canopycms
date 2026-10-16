@@ -18,13 +18,19 @@ import { createDebugLogger } from '../utils/debug'
 import { resolveEntryTitle } from '../utils/title-field'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema, queryBooleanSchema } from './validators'
-import { MAX_ENTRIES_PER_PAGE, DEFAULT_ENTRIES_LIMIT } from './entries-constants'
+import {
+  MAX_ENTRIES_PER_PAGE,
+  DEFAULT_ENTRIES_LIMIT,
+  ENTRY_CHANGED_MESSAGE,
+} from './entries-constants'
 import { SchemaOps, SchemaStoreBusyError } from '../schema/schema-store'
 import {
   listCollectionEntries as listCollectionEntriesShared,
+  listEntries as listContentEntries,
   sortByOrder,
   type CollectionListItem,
 } from '../content-listing'
+import { findReferencingEntries, type ReferenceScanEntry } from '../validation/deletion-checker'
 import type { ContentAccessChecker } from '../authorization'
 
 // Re-export pagination constants from the dependency-free module so they remain
@@ -35,7 +41,7 @@ const log = createDebugLogger({ prefix: 'EntriesAPI' })
 /**
  * Summary of an entry type for client display.
  * Simplified from EntryTypeConfig - doesn't include full field definitions.
- * @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md.
+ * @internal No importer; deletion candidate in safeinsights/canopycms#725.
  */
 export interface EntryTypeSummary {
   name: string
@@ -60,7 +66,7 @@ export interface CollectionItem {
   canEdit?: boolean
 }
 
-/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
+/** @internal No importer; deletion candidate in safeinsights/canopycms#725. */
 export interface ListEntriesParams {
   branch: string
   collection?: LogicalPath
@@ -70,8 +76,16 @@ export interface ListEntriesParams {
   recursive?: boolean
 }
 
+/** Whether the caller may add an entry to a listed collection. */
+export interface CollectionAccess {
+  logicalPath: LogicalPath
+  canAddEntry: boolean
+}
+
 export interface ListEntriesResponse {
   entries: CollectionItem[]
+  /** One per listed collection, on every page. */
+  collectionAccess?: CollectionAccess[]
   pagination: {
     cursor?: string
     hasMore: boolean
@@ -231,12 +245,21 @@ const listEntriesHandler = async (
   const recursive = params.recursive ?? false
 
   let entries: CollectionItem[] = []
+  let collectionAccess: CollectionAccess[] = []
 
   try {
     // Build the access checker once per request: permissions (and, in modes with a
     // separate settings branch, the settings workspace) are loaded a single time and
     // reused for every entry, instead of re-loading per entry inside the loop.
     const checkAccess = await ctx.services.createContentAccessChecker(branchContext, root, req.user)
+    // A new entry's slug is unknown, so the probe is one no slug can be: a rule for the whole
+    // collection decides, never one for a particular entry. The create itself is checked again.
+    collectionAccess = targetCollections
+      .filter((item) => item.type === 'collection')
+      .map((item) => ({
+        logicalPath: item.logicalPath,
+        canAddEntry: checkAccess(`${item.logicalPath}/*` as LogicalPath, 'edit').allowed,
+      }))
 
     if (recursive && targetPath) {
       // Recursive mode: list entries from target collection and all its children
@@ -277,6 +300,7 @@ const listEntriesHandler = async (
     status: 200,
     data: {
       entries: paged,
+      collectionAccess,
       pagination: {
         cursor: nextCursor,
         hasMore: Boolean(nextCursor),
@@ -310,10 +334,34 @@ export const listEntries = defineEndpoint({
   handler: listEntriesHandler,
 })
 
+/** A readable entry that references the entry a delete targets. */
+interface ReferencingEntrySummary {
+  entryPath: LogicalPath
+  contentId: ContentId
+  title: string
+  /** Reference fields holding the target's id, e.g. `author` or `blocks[0].cta.target`. */
+  fields: string[]
+  /** Where its strings, the md/mdx body included, link to the target with `entry:<id>`. */
+  links: string[]
+}
+
+/** Who references an entry, as far as the requesting user may know. */
+export interface EntryReferencedBy {
+  entries: ReferencingEntrySummary[]
+  /** Referencing entries the user may not read: counted, never described. */
+  hiddenCount: number
+}
+
 /** Response type for deleting an entry */
 export type DeleteEntryResponse = ApiResponse<{
   deleted: boolean
   contentId?: string
+  /**
+   * Set, with status 409 and `deleted: false`, when other entries reference this one and the
+   * request did not pass `confirmReferenced`. Its presence is what tells this 409 apart from
+   * an edit conflict. Re-sending with `confirmReferenced=true` deletes anyway.
+   */
+  referencedBy?: EntryReferencedBy
   /**
    * Set when the entry deleted successfully but the collection's order array couldn't be updated
    * afterward (C6: best-effort hygiene after the delete, so its failure must not present as a
@@ -326,10 +374,100 @@ export type DeleteEntryResponse = ApiResponse<{
 const deleteEntryParamsSchema = z.object({
   branch: branchNameSchema,
   entryPath: logicalPathSchema, // Format: collectionPath/slug
+  /** Delete even though other entries reference this one (query param). */
+  confirmReferenced: queryBooleanSchema.optional(),
 })
 
+/** What `findReferencedBy` scans and then summarizes. */
+type ReferenceScanSource = ReferenceScanEntry & {
+  slug: Slug
+  collectionPath: LogicalPath
+  entryType: string
+}
+
+/** Every entry of an `unavailable` entry type on the branch. */
+const listUnavailableEntries = async (
+  branchRoot: string,
+  flatSchema: FlatSchemaItem[],
+): Promise<CollectionListItem[]> => {
+  const collections = flatSchema.filter(
+    (item) => item.type === 'collection' && item.entries?.some((e) => e.unavailable),
+  )
+  const listed = await Promise.all(
+    collections.map((collection) => listCollectionEntriesShared(branchRoot, collection)),
+  )
+  return listed.flat().filter((item) => {
+    const collection = collections.find((c) => c.logicalPath === item.collectionPath)
+    return (
+      collection?.type === 'collection' &&
+      collection.entries?.some((e) => e.name === item.entryType && e.unavailable)
+    )
+  })
+}
+
 /**
- * Delete an entry and update the collection's order array.
+ * Every entry on the branch that references `contentId`, split by whether `user` may read it.
+ * A full raw scan of the branch's content: references are stored only on the referencing
+ * side, so there is no index to ask. Null when nothing references it.
+ */
+const findReferencedBy = async (
+  branchContext: BranchContextWithSchema,
+  ctx: ApiContext,
+  req: ApiRequest,
+  contentId: ContentId,
+): Promise<EntryReferencedBy | null> => {
+  const { branchRoot, flatSchema } = branchContext
+  const listed = await listContentEntries(
+    branchRoot,
+    flatSchema,
+    ctx.services.config.contentRoot || 'content',
+  )
+  // listEntries leaves out entries of an unavailable type; scanned raw, they still count.
+  const unavailable = await listUnavailableEntries(branchRoot, flatSchema)
+  const entries: ReferenceScanSource[] = [
+    ...listed,
+    ...unavailable.map((item) => ({
+      entryPath: item.logicalPath,
+      entryId: item.contentId,
+      slug: item.slug,
+      collectionPath: item.collectionPath,
+      entryType: item.entryType,
+      data: item.data,
+      schemaUnavailable: true,
+    })),
+  ]
+  const referencing = findReferencingEntries(entries, contentId)
+  if (referencing.length === 0) return null
+
+  const canAccess = await ctx.services.createContentAccessChecker(
+    branchContext,
+    branchRoot,
+    req.user,
+  )
+  const visible: ReferencingEntrySummary[] = []
+  for (const { entry, fields, links } of referencing) {
+    if (!canAccess(entry.entryPath, 'read').allowed) continue
+    const collection = flatSchema.find(
+      (item) => item.type === 'collection' && item.logicalPath === entry.collectionPath,
+    )
+    const entryType =
+      collection?.type === 'collection'
+        ? collection.entries?.find((e) => e.name === entry.entryType)
+        : undefined
+    visible.push({
+      entryPath: entry.entryPath,
+      contentId: entry.entryId,
+      title: extractTitle(entry.data, entryType, entry.slug),
+      fields,
+      links,
+    })
+  }
+  return { entries: visible, hiddenCount: referencing.length - visible.length }
+}
+
+/**
+ * Delete an entry and update the collection's order array. An entry other entries reference
+ * is deleted only with `confirmReferenced`; without it the response is a 409 naming them.
  * DELETE /:branch/entries/...entryPath
  * Note: Uses catch-all to support paths with slashes (e.g., content/posts/hello-world)
  */
@@ -429,11 +567,42 @@ const deleteEntryHandler = async (
     }
   }
 
+  // Before the reference scan, whose 409 would otherwise answer first; mapped to a 503.
+  await contentStore.assertEntryAvailable(collectionLogicalPath, entrySlug)
+
   let orderCleanupWarning: string | undefined
 
   try {
     // Get the entry's content ID before deleting (for order update)
     const contentId = await contentStore.getIdForEntry(collectionLogicalPath, entrySlug)
+
+    // Advisory: a reference saved between this scan and the delete below still dangles.
+    if (contentId && !params.confirmReferenced) {
+      let referencedBy: EntryReferencedBy | null
+      try {
+        referencedBy = await findReferencedBy(branchContext, ctx, req, contentId)
+      } catch (err) {
+        // Outside the catch below, which would report a file vanishing mid-scan as this entry.
+        log.warn('delete-entry', 'Reference scan failed', {
+          entryPath,
+          error: getErrorMessage(err),
+        })
+        return {
+          ok: false,
+          status: 500,
+          error: 'Could not check which entries reference this one; try again',
+        }
+      }
+      if (referencedBy) {
+        const count = referencedBy.entries.length + referencedBy.hiddenCount
+        return {
+          ok: false,
+          status: 409,
+          error: `Entry is referenced by ${count} other ${count === 1 ? 'entry' : 'entries'}`,
+          data: { deleted: false, contentId, referencedBy },
+        }
+      }
+    }
 
     await contentStore.delete(collectionLogicalPath, entrySlug)
 
@@ -487,10 +656,7 @@ const deleteEntryHandler = async (
       return {
         ok: false,
         status: 409,
-        error:
-          err instanceof BranchSyncingError
-            ? err.message
-            : 'Content conflict: entry was modified by another editor',
+        error: err instanceof BranchSyncingError ? err.message : ENTRY_CHANGED_MESSAGE,
       }
     }
     return {

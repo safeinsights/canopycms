@@ -1,5 +1,14 @@
-import type { FlatSchemaItem } from '../config'
+import type { FieldConfig, FlatSchemaItem } from '../config'
+import { titleFieldPath } from '../utils/title-field'
 import type { EditorCollection, EditorEntryType } from './Editor'
+
+/** The `titleField` an entry type contributes: absent for an unavailable type, which has no schema. */
+const titleFieldFor = (
+  schema: readonly FieldConfig[] | undefined,
+): Pick<EditorEntryType, 'titleField'> => {
+  const titleField = titleFieldPath(schema ?? [])
+  return titleField ? { titleField } : {}
+}
 
 /**
  * Build hierarchical editor collections from the flattened schema.
@@ -23,6 +32,14 @@ export const buildEditorCollections = (flatSchema: FlatSchemaItem[]): EditorColl
     childrenByParent.get(key)!.push(item)
   }
 
+  // A collection's own `entries` carry no schema on the wire; the entry-type items hold the
+  // hydrated one.
+  const schemaByEntryType = new Map<string, readonly FieldConfig[]>()
+  for (const item of flat) {
+    if (item.type === 'entry-type')
+      schemaByEntryType.set(`${item.parentPath}\0${item.name}`, item.schema)
+  }
+
   // Build tree recursively using the grouped map
   const buildTree = (parentPath?: string): EditorCollection[] => {
     const children = childrenByParent.get(parentPath) || []
@@ -38,6 +55,9 @@ export const buildEditorCollections = (flatSchema: FlatSchemaItem[]): EditorColl
           format: et.format,
           default: et.default,
           maxItems: et.maxItems,
+          ...(et.unavailable
+            ? { unavailable: et.unavailable }
+            : titleFieldFor(schemaByEntryType.get(`${item.logicalPath}\0${et.name}`) ?? et.schema)),
         }))
         results.push({
           path: item.logicalPath,

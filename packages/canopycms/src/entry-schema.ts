@@ -152,6 +152,57 @@ export function buildRestrictedReference(
 }
 
 /**
+ * What a reference resolves to when its id names no readable entry: a deleted target, an id a
+ * merge or hand edit left behind, or one naming a collection. It carries the id and nothing else,
+ * so a save of the referring entry writes the id back rather than erasing it, and a renderer can
+ * say which entry is missing. The production build fails on one (`static/index.ts`,
+ * `assertNoDanglingReferences`).
+ */
+export type MissingReference = {
+  id: string
+  unavailable: true
+  reason: 'missing'
+}
+
+/** Assemble a {@link MissingReference}. */
+export function buildMissingReference(id: string): MissingReference {
+  return { id, unavailable: true, reason: 'missing' }
+}
+
+/**
+ * Every reference value that is not the target's data. Narrow on `unavailable`, then on `reason`:
+ * only a `'restricted'` one carries a title and URL.
+ */
+export type UnavailableReference = RestrictedReference | MissingReference
+
+/**
+ * The resolved-target member of a reference field's value type `T`: the object members that
+ * are not marked `unavailable`. When `T` has none (`unknown`, or `string | null` for a reference
+ * without `resolvedSchema`), any resolved reference.
+ */
+export type ResolvedReferenceOf<T> = unknown extends T
+  ? AnyResolvedReference
+  : [Exclude<Extract<T, object>, { unavailable: true }>] extends [never]
+    ? AnyResolvedReference
+    : Exclude<Extract<T, object>, { unavailable: true }>
+
+type AnyResolvedReference = Record<string, unknown> & ResolvedReferenceMeta
+
+/**
+ * Whether a reference field's value is its resolved target, narrowing it to that target's type.
+ *
+ * True for a record carrying a string `id` and not marked `unavailable`. False for everything
+ * else a reference can hold: `null` or `undefined` (empty, or in live preview, still resolving),
+ * a bare id string (a reference that was not resolved), and a reference marked `unavailable` (a
+ * target the reader may not see, or one that no longer exists).
+ */
+export function isResolvedReference<T>(value: T): value is T & ResolvedReferenceOf<T> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as { id?: unknown; [RESTRICTED_REFERENCE_MARKER]?: unknown }
+  return typeof record.id === 'string' && record[RESTRICTED_REFERENCE_MARKER] !== true
+}
+
+/**
  * Recursively flatten inline groups (type: 'group') out of a field tuple: they contribute
  * no key to the content shape, so their children merge into the parent level and
  * InferContentShape sees only data-carrying fields.
@@ -216,8 +267,16 @@ type SelectValue<F extends InferableField> = F extends {
     : SelectOptionValue<O[number]>
   : string
 
+/**
+ * The key a list item or block carries (`ITEM_KEY` in item-keys.ts), spelled out as `ImageValue`
+ * is. Every canopy read returns it; optional so data built by hand, such as a write, needn't.
+ */
+type ItemKeyed = { _key?: string }
+
 type ObjectValue<F extends InferableField & { fields: readonly InferableField[] }> =
-  F['list'] extends true ? Array<InferContentShape<F['fields']>> : InferContentShape<F['fields']>
+  F['list'] extends true
+    ? Array<InferContentShape<F['fields']> & ItemKeyed>
+    : InferContentShape<F['fields']>
 
 /**
  * Distributes over each member of a block-templates union to produce a discriminated union. The
@@ -228,7 +287,10 @@ type DistributeBlockTemplate<T> = T extends {
   name: infer N
   fields: infer Fields
 }
-  ? { template: N & string; value: InferContentShape<Extract<Fields, readonly InferableField[]>> }
+  ? {
+      template: N & string
+      value: InferContentShape<Extract<Fields, readonly InferableField[]>>
+    } & ItemKeyed
   : never
 
 type BlockValue<
@@ -272,7 +334,7 @@ type FieldValue<F extends InferableField> = F extends {
             F,
             | (InferContentShape<Extract<S, readonly InferableField[]>> &
                 ResolvedReferenceMeta & { unavailable?: undefined })
-            | RestrictedReference
+            | UnavailableReference
             | null
           >
         : F extends { type: 'reference' }

@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — `"prepack": "pnpm run build"` added to canopycms, canopycms-next, canopycms-auth-clerk, canopycms-auth-dev (PR #143, 2026-07-24), mirroring canopycms-cdk's PR #128 guard. Verified prepack fires under both `pnpm pack` and `npm pack` with `dist/` deleted; CI publish workflow unchanged (its explicit build now double-builds harmlessly, same as cdk).
+---
 # `canopycms` (and siblings) need a `prepack` build guard like `canopycms-cdk` got
 
 **RESOLVED 2026-07-24** (PR #143): `"prepack": "pnpm run build"`

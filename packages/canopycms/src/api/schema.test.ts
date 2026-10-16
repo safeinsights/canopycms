@@ -94,6 +94,7 @@ describe('Schema API', () => {
         entrySchemaRegistry: mockEntrySchemaRegistry,
         checkBranchAccess: vi.fn().mockReturnValue({ allowed: true }),
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true }),
+        recordBranchEditor: vi.fn().mockResolvedValue(undefined),
       },
     } as unknown as ApiContext
 

@@ -256,6 +256,7 @@ const updateInternalGroupsHandler = async (
       branchRoot: context.branchRoot,
       fileName: 'groups.json',
       message: 'Update internal groups',
+      actor: req.user,
       mode,
     })
 
@@ -270,7 +271,7 @@ const updateInternalGroupsHandler = async (
     return { ok: true, status: 200, data: {} }
   } catch (error) {
     if (error instanceof SettingsVersionConflictError) {
-      return { ok: false, status: 409, error: error.message }
+      return { ok: false, status: 409, error: error.message, code: 'SETTINGS_CHANGED' }
     }
     if (error instanceof SettingsFileConflictError) {
       return { ok: false, status: 409, error: 'Settings are busy, please try again.' }

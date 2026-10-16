@@ -15,6 +15,7 @@ import {
   gitChildEnv,
   gitNetworkChildEnv,
   GITHUB_TRACKING_REF_PREFIX,
+  REMOTE_GIT_CONFIG,
 } from './git-manager'
 import { generateId } from './id'
 import { initTestRepo, openBareRepo } from './test-utils'
@@ -54,6 +55,71 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     const remoteGit = openBareRepo(remotePath)
     const branches = await remoteGit.branch()
     expect(branches.all).toContain('main')
+  })
+
+  it('writes the bare-remote config on a new remote and on an existing one', async () => {
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(tmpDir, 'test.txt'), 'hello', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial commit')
+    const configOf = async (remotePath: string, key: string): Promise<string> =>
+      (
+        await simpleGit()
+          .raw(['--git-dir', remotePath, 'config', '--get', key])
+          .catch(() => '')
+      ).trim()
+
+    const fresh = path.join(tmpDir, 'fresh.git')
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath: fresh,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+    })
+    for (const [key, value] of REMOTE_GIT_CONFIG) expect(await configOf(fresh, key)).toBe(value)
+
+    // A remote created before the config existed already has the branch: it is configured anyway.
+    const existing = path.join(tmpDir, 'existing.git')
+    await simpleGit().raw(['clone', '-q', '--bare', tmpDir, existing])
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath: existing,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+    })
+    for (const [key, value] of REMOTE_GIT_CONFIG) expect(await configOf(existing, key)).toBe(value)
+  })
+
+  it('repacks an existing remote that has gathered more than six packs', async () => {
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(tmpDir, 'test.txt'), 'hello', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial commit')
+    const remotePath = path.join(tmpDir, 'remote.git')
+    const ensure = () =>
+      GitManager.ensureLocalSimulatedRemote({ remotePath, sourcePath: tmpDir, baseBranch: 'main' })
+    const packs = async () =>
+      (await fs.readdir(path.join(remotePath, 'objects', 'pack'))).filter((f) =>
+        f.endsWith('.pack'),
+      ).length
+    await ensure()
+    await fs.mkdir(path.join(tmpDir, 'work'))
+    const work = await initTestRepo(path.join(tmpDir, 'work'))
+    await work.addRemote('origin', remotePath)
+    await work.fetch('origin', 'main')
+    await work.raw(['checkout', '-q', '-B', 'main', 'origin/main'])
+    for (let i = 0; i < 8; i++) {
+      await fs.writeFile(path.join(tmpDir, 'work', `f${i}.txt`), String(i), 'utf8')
+      await work.add(['.'])
+      await work.commit(`c${i}`)
+      await work.push('origin', 'main')
+    }
+    expect(await packs()).toBeGreaterThan(6)
+
+    await ensure()
+
+    expect(await packs()).toBe(1)
+    expect((await openBareRepo(remotePath).raw(['rev-list', '--count', 'main'])).trim()).toBe('9')
   })
 
   it('is idempotent - does not recreate if remote already exists', async () => {
@@ -770,6 +836,36 @@ describe('GitManager.resolveRemoteUrl', () => {
     }
   })
 
+  // Root reads through any mode bits, so the EACCES case has nothing to prove there.
+  it.skipIf(process.getuid?.() === 0)(
+    'throws, rather than waiting on the worker, when remote.git cannot be stat-ed',
+    async () => {
+      const workspaceRoot = path.join(tmpDir, 'unreadable-workspace')
+      await fs.mkdir(workspaceRoot, { recursive: true })
+      await fs.chmod(workspaceRoot, 0o000)
+
+      const origWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+      process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+      try {
+        const err = await GitManager.resolveRemoteUrl({ mode: 'prod', baseBranch: 'main' }).catch(
+          (e: unknown) => e,
+        )
+        expect(err).toBeInstanceOf(Error)
+        expect(err).not.toBeInstanceOf(RemoteNotReadyError)
+        expect((err as Error).message).toContain(
+          `cannot read the git remote at ${path.join(workspaceRoot, 'remote.git')}`,
+        )
+      } finally {
+        await fs.chmod(workspaceRoot, 0o755)
+        if (origWorkspace !== undefined) process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
+        else delete process.env.CANOPYCMS_WORKSPACE_ROOT
+        clearStrategyCache()
+      }
+    },
+  )
+
   it('initializeWorkspace throws RemoteNotReadyError in prod mode until the worker creates remote.git', async () => {
     const workspaceRoot = path.join(tmpDir, 'booting-workspace')
     await fs.mkdir(workspaceRoot, { recursive: true })
@@ -1431,6 +1527,80 @@ describe('GitManager.hasUnpushedCommits', () => {
     const aheadSha = await commitFile('c.txt', 'c')
     await localGit.raw(['update-ref', 'refs/heads/-dash', aheadSha])
     expect(await manager.hasUnpushedCommits('-dash')).toBe(true)
+  })
+})
+
+describe('GitManager.listBaseFiles', () => {
+  let tmpDir: string
+  let localPath: string
+  let localGit: ReturnType<typeof simpleGit>
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-git-test-'))
+    const remotePath = path.join(tmpDir, 'remote.git')
+    await fs.mkdir(remotePath, { recursive: true })
+    await openBareRepo(remotePath).init(true)
+    localPath = path.join(tmpDir, 'local')
+    await fs.mkdir(localPath, { recursive: true })
+    localGit = await initTestRepo(localPath)
+    await localGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
+    for (const file of ['--', 'top.txt', 'content/a.md', 'content/sub/b.md', 'contentx/c.md']) {
+      await fs.mkdir(path.dirname(path.join(localPath, file)), { recursive: true })
+      await fs.writeFile(path.join(localPath, file), file, 'utf8')
+    }
+    await localGit.raw(['add', '--', '.'])
+    await localGit.commit('base')
+    await localGit.addRemote('origin', remotePath)
+    await localGit.push('origin', 'main')
+    // A working-tree change the base does not have, so only the fetched tip is read.
+    await fs.writeFile(path.join(localPath, 'content', 'local.md'), 'local', 'utf8')
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it("lists the base tip's files under a directory, and nothing beside it", async () => {
+    const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
+    expect((await manager.listBaseFiles('content')).sort()).toEqual([
+      'content/a.md',
+      'content/sub/b.md',
+    ])
+    expect((await manager.listBaseFiles()).sort()).toEqual(
+      ['--', 'content/a.md', 'content/sub/b.md', 'contentx/c.md', 'top.txt'].sort(),
+    )
+  })
+
+  it('also lists what the fork point held, for a file the base deleted since', async () => {
+    await localGit.checkoutLocalBranch('feature')
+    await localGit.checkout('main')
+    await localGit.raw(['rm', '-q', '--', 'content/a.md'])
+    await fs.writeFile(path.join(localPath, 'content', 'added.md'), 'added', 'utf8')
+    await localGit.raw(['add', '--', 'content/added.md'])
+    await localGit.commit('base moves on')
+    await localGit.push('origin', 'main')
+    await localGit.checkout('feature')
+    const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
+
+    expect((await manager.listBaseFiles('content')).sort()).toEqual([
+      'content/a.md',
+      'content/added.md',
+      'content/sub/b.md',
+    ])
+  })
+
+  it('lists only the tip when HEAD shares no history with the base', async () => {
+    await localGit.raw(['checkout', '-q', '--orphan', 'unrelated'])
+    await localGit.raw(['rm', '-rq', '--cached', '--', '.'])
+    await fs.writeFile(path.join(localPath, 'content', 'own.md'), 'own', 'utf8')
+    await localGit.raw(['add', '--', 'content/own.md'])
+    await localGit.commit('unrelated root')
+    const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
+
+    expect((await manager.listBaseFiles('content')).sort()).toEqual([
+      'content/a.md',
+      'content/sub/b.md',
+    ])
   })
 })
 

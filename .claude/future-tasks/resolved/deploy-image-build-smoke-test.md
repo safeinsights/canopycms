@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-09-12, branch `ci/standalone-image-smoke`, base `int-202609-cms-image` ([cms-image-build-epic.md](cms-image-build-epic.md) PR 5). The new `standalone-image` CI job runs `scripts/smoke/standalone-image.mjs`: pnpm and npm on `ubuntu-latest`, pnpm on `ubuntu-24.04-arm`, path-gated like `dual-build`. A Next 16.1.7 app outside the workspace installs `pnpm pack` tarballs and runs `init` + `init-deploy aws`, and the generated image is built, booted and sent real requests: build-time and request-time reads on a non-`main` base branch, three not-found shapes, upload → finalize → WebP transform, and the externalized sharp loading its own libvips. Red against the pre-fix builder (`base branch 'release-base' does not exist locally` while prerendering `/sitemap.xml`) and against PR 3's include removed (5 of 14 checks, 4 `ERR_DLOPEN_FAILED`). The Yarn question moved to [yarn-support-decision.md](../yarn-support-decision.md)
+---
 # No test ever builds the CMS Docker image
 
 Filed 2026-08-12, from `fix/deploy-template-cdk-app` (the CDK-app scaffolding

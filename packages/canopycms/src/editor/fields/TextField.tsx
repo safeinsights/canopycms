@@ -2,6 +2,8 @@ import React, { useId } from 'react'
 
 import { TextInput } from '@mantine/core'
 
+import { LabelledInput } from './FieldLabel'
+
 export interface TextFieldProps {
   id?: string
   label?: string
@@ -9,6 +11,8 @@ export interface TextFieldProps {
   value: string
   onChange: (value: string) => void
   dataCanopyField?: string
+  /** Shows the value without accepting edits. */
+  readOnly?: boolean
 }
 
 export const TextField: React.FC<TextFieldProps> = ({
@@ -18,19 +22,24 @@ export const TextField: React.FC<TextFieldProps> = ({
   value,
   onChange,
   dataCanopyField,
+  readOnly = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
 
   return (
-    <TextInput
-      id={inputId}
-      label={label}
-      description={description}
-      value={value}
-      size="sm"
-      onChange={(e) => onChange(e.currentTarget.value)}
-      data-canopy-field={dataCanopyField}
-    />
+    <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
+      <TextInput
+        id={inputId}
+        description={description}
+        value={value}
+        size="sm"
+        readOnly={readOnly}
+        onChange={(e) => {
+          if (!readOnly) onChange(e.currentTarget.value)
+        }}
+        data-canopy-field={dataCanopyField}
+      />
+    </LabelledInput>
   )
 }

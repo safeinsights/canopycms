@@ -11,6 +11,14 @@
   },
   "private": false,
   "type": "module",
+  "sideEffects": [
+    "./src/cli/cli.ts",
+    "./dist/cli/cli.js",
+    "./src/editor/theme.tsx",
+    "./dist/editor/theme.js",
+    "./src/test-utils/console-spy.ts",
+    "./src/test-utils/quiet-provision-log.ts"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -19,6 +27,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
+    "./preview": "./src/preview.ts",
     "./server": "./src/server.ts",
     "./auth": "./src/auth/index.ts",
     "./auth/cache": "./src/auth/cache.ts",
@@ -32,7 +41,8 @@
     "./test-utils": "./src/test-utils/index.ts"
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
     "exports": {
@@ -45,6 +55,11 @@
         "types": "./dist/client.d.ts",
         "import": "./dist/client.js",
         "require": "./dist/client.js"
+      },
+      "./preview": {
+        "types": "./dist/preview.d.ts",
+        "import": "./dist/preview.js",
+        "require": "./dist/preview.js"
       },
       "./server": {
         "types": "./dist/server.d.ts",
@@ -110,6 +125,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "generate:client": "npx tsx scripts/generate-client.ts",
+    "generate:aws-example": "tsx scripts/generate-aws-example.ts",
     "storybook": "storybook dev -p 6006 -c .storybook",
     "storybook:build": "storybook build -c .storybook"
   },
@@ -117,8 +133,9 @@
     "node": ">=22.12.0"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/client-s3": "^3.1092.0",
     "@aws-sdk/s3-presigned-post": "^3.600.0",
+    "@aws-sdk/s3-request-presigner": "^3.600.0",
     "@clack/prompts": "^1.1.0",
     "@codemirror/language": "^6.0.0",
     "@dnd-kit/core": "^6.3.1",
@@ -128,11 +145,12 @@
     "@lezer/highlight": "^1.0.0",
     "@mantine/colors-generator": "^7.14.2",
     "@mantine/core": "^7.14.2",
+    "@mantine/dates": "7.17.8",
     "@mantine/dropzone": "7.17.8",
     "@mantine/hooks": "^7.14.2",
     "@mantine/modals": "^7.14.2",
     "@mantine/notifications": "^7.14.2",
-    "@mdxeditor/editor": "^3.52.4",
+    "@mdxeditor/editor": "^4.3.2",
     "@octokit/auth-token": "^4.0.0",
     "@octokit/plugin-throttling": "^8.2.0",
     "@octokit/rest": "^20.0.2",
@@ -140,18 +158,28 @@
     "chokidar": "^4.0.3",
     "chroma-js": "^3.2.0",
     "content-disposition": "^2.0.1",
+    "dataloader": "^2.2.3",
+    "dayjs": "1.11.21",
     "fast-deep-equal": "^3.1.3",
     "file-type": "^21.3.2",
     "gray-matter": "^4.0.3",
     "image-size": "^2.0.2",
     "jiti": "^2.6.1",
+    "jsonc-parser": "^3.3.1",
+    "lru-cache": "^10.4.3",
+    "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-gfm": "^3.1.0",
+    "mdast-util-mdx": "^3.0.0",
+    "micromark-extension-gfm": "^3.0.0",
+    "micromark-extension-mdxjs": "^3.0.0",
     "minimatch": "^9.0.7",
     "minimist": "^1.2.8",
     "pathe": "^1.1.2",
     "picocolors": "^1.1.1",
     "proper-lockfile": "^4.1.2",
     "react-easy-crop": "^6.2.2",
-    "react-split-pane": "^0.1.92",
+    "react-remove-scroll": "^2.7.2",
+    "react-resizable-panels": "4.14.1",
     "sanitize-html": "^2.17.5",
     "sharp": "^0.35.3",
     "short-uuid": "^6.0.3",
@@ -165,8 +193,8 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
-    "@smithy/util-stream": "^3.0.0 || ^4.0.0",
     "@playwright/test": "^1.57.0",
+    "@smithy/util-stream": "^3.0.0 || ^4.0.0",
     "@storybook/addon-essentials": "^8.1.11",
     "@storybook/react": "^8.1.11",
     "@storybook/react-vite": "^8.1.11",
@@ -179,9 +207,9 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/sanitize-html": "^2.16.1",
-    "aws-sdk-client-mock": "^4.0.0",
     "@vitejs/plugin-react": "^5.1.0",
     "autoprefixer": "^10.4.20",
+    "aws-sdk-client-mock": "^4.0.0",
     "esbuild": "^0.25.0",
     "jsdom": "^24.1.3",
     "postcss": "^8.5.10",
@@ -189,6 +217,7 @@
     "react-dom": "^18.3.1",
     "storybook": "^8.6.17",
     "tsx": "^4.19.0",
+    "typescript": "^5.6.3",
     "vite": "^6.4.2",
     "vitest": "^4.1.0"
   }

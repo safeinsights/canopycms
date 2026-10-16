@@ -31,6 +31,12 @@ export type {
   AIManifestBundle,
   AIEntry,
   AIEntryMeta,
+  AIExcludedReference,
+  AIReferenceLinkContext,
+  AIReferenceLinkFn,
+  AIReferenceValue,
+  AIResolvedReference,
+  AIUnavailableReference,
 } from './types'
 export type { AIContentHandlerOptions } from './handler'
 export type { GenerateOptions, GenerateResult } from './generate'
