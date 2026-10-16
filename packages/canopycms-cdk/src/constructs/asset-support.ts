@@ -1427,9 +1427,12 @@ export class AssetSupport extends Construct {
    * calls for:
    *
    * - put on `asset-staging/` (presigned POST + proxied `writeStaging`)
-   * - get on `asset-staging/` + `asset-originals/` + `asset-meta/` + `asset-hidden/` + `assets/`
+   * - get on `asset-staging/` + `asset-originals/` + `asset-meta/` + `assets/`
    * - put on `asset-originals/` + `asset-meta/` + `asset-hidden/` + `assets/`
    * - delete on `asset-staging/` + `asset-hidden/` (restoring a file removed from the library)
+   *
+   * Hidden markers are only listed, written and deleted, never read; the bucket-wide
+   * `s3:ListBucket` the read grants carry covers their listing.
    *
    * No delete on `asset-meta/`: meta is never deleted, since every transform not yet stored is
    * computed from it.
@@ -1440,7 +1443,6 @@ export class AssetSupport extends Construct {
     this.bucket.grantRead(grantee, `${PREFIXES.staging}/*`)
     this.bucket.grantRead(grantee, `${PREFIXES.originals}/*`)
     this.bucket.grantRead(grantee, `${PREFIXES.meta}/*`)
-    this.bucket.grantRead(grantee, `${PREFIXES.hidden}/*`)
     this.bucket.grantRead(grantee, `${PREFIXES.public}/*`)
 
     this.bucket.grantPut(grantee, `${PREFIXES.originals}/*`)

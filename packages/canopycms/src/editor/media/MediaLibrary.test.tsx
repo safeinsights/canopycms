@@ -1611,7 +1611,7 @@ describe('MediaLibraryBody', () => {
       expect(text).toContain(
         'Entries that already use it keep working, including published and earlier versions of the site.',
       )
-      expect(text).toContain('To restore it, turn on “Show removed files”.')
+      expect(text).toContain('To restore it, turn on “Show removed files”, or upload it again.')
       expect(text).not.toMatch(/delete/i)
     })
 
@@ -1811,7 +1811,7 @@ describe('MediaLibraryBody', () => {
       expect(alert.textContent).toBe("Couldn't remove cat.png from the library. Try again.")
     })
 
-    it('hides the message of a refusal too', async () => {
+    it('says why when the server refuses, instead of offering a retry', async () => {
       asUploader()
       mockClient.assets.hide.mockResolvedValueOnce({
         ok: false,
@@ -1823,7 +1823,9 @@ describe('MediaLibraryBody', () => {
       fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
 
       const alert = await screen.findByTestId('media-library-action-error')
-      expect(alert.textContent).toBe("Couldn't remove cat.png from the library. Try again.")
+      expect(alert.textContent).toBe(
+        "Couldn't remove cat.png from the library. You can only remove files you uploaded.",
+      )
     })
 
     it('hides the message of a request that threw', async () => {

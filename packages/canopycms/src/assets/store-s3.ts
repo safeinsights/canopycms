@@ -451,8 +451,9 @@ export class S3AssetStore implements AssetStore {
   }
 
   /**
-   * Lists before deleting: a DELETE of an absent key writes a delete marker on a versioned bucket,
-   * and a listing, unlike a HEAD, needs no permission on the hidden prefix, so finalize can call
+   * Lists before deleting: a DELETE of an absent key writes a delete marker on a versioned bucket.
+   * The listing needs only `s3:ListBucket` covering `asset-hidden/` (a bucket-wide grant does; a
+   * policy scoping it by prefix must name this one), no object permission, so finalize can call
    * this on every re-upload under a role that has never hidden a file.
    */
   async unhideAsset(hash32: string): Promise<boolean> {

@@ -13,6 +13,7 @@ export const EDITOR_ACTIONS = {
   switchBranch: 'Switch branch',
   newBranch: 'New branch',
   remove: 'Remove',
+  restore: 'Restore',
   clear: 'Clear',
   openEntry: 'Open entry',
 } as const

@@ -34,6 +34,7 @@ import {
 
 import type { AssetRecord } from '../../api'
 import { getErrorMessage } from '../../utils/error'
+import { isNonApiResponse } from '../../api/client'
 // Import directly from helpers (not the authorization barrel) to keep server-only
 // authorization code out of this client bundle - matches BranchManager's convention.
 import { isAdmin } from '../../authorization/helpers'
@@ -236,10 +237,14 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     setActionError(rejections[0]?.errors[0]?.message ?? 'The file was rejected.')
   }
 
-  /** Runs a remove or restore; `failure` words its error, and the raw server message is for admins. */
+  /**
+   * Runs a remove or restore; `failure` words its error, and the raw server message is for admins.
+   * A non-admin's 403 is the ownership refusal, so it says so (`refusal`) rather than to retry.
+   */
   const changeVisibility = async (
-    request: () => Promise<{ ok: boolean; error?: string }>,
+    request: () => Promise<{ ok: boolean; status: number; error?: string }>,
     failure: string,
+    refusal: string,
     onDone: () => void,
   ) => {
     setActionError(null)
@@ -248,7 +253,11 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     try {
       const result = await request()
       if (!result.ok) {
-        fail(result.error)
+        if (result.status === 403 && !admin && !isNonApiResponse(result)) {
+          setActionError(`${failure} ${refusal}`)
+        } else {
+          fail(result.error)
+        }
         return
       }
       onDone()
@@ -261,6 +270,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     changeVisibility(
       () => client.assets.hide({ key: asset.hash32 }),
       `Couldn't remove ${asset.filename} from the library.`,
+      'You can only remove files you uploaded.',
       () => {
         if (showRemoved) library.replace({ ...asset, hidden: true })
         else library.remove(asset.hash32)
@@ -272,6 +282,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     changeVisibility(
       () => client.assets.restore({ key: asset.hash32 }),
       `Couldn't restore ${asset.filename} to the library.`,
+      'You can only restore files you uploaded.',
       () => {
         library.replace(withoutHidden(asset))
         announce(`Restored ${asset.filename} to library`)
@@ -291,7 +302,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
           </Text>
           <Text size="sm">
             {admin
-              ? 'To restore it, turn on “Show removed files”.'
+              ? 'To restore it, turn on “Show removed files”, or upload it again.'
               : 'To restore it, upload it again or ask an admin.'}
           </Text>
         </Stack>

@@ -6,6 +6,7 @@ import sharp from 'sharp'
 import { describe, expect, it, vi } from 'vitest'
 
 import { finalizeAsset, finalizeStagedUpload } from './finalize'
+import { resetCanopyLogger, setCanopyLogger } from '../utils/logger'
 import { LocalAssetStore } from './store-local'
 import type { AssetMeta, AssetStore } from './types'
 
@@ -73,6 +74,33 @@ describe('finalizeAsset', () => {
     expect(store.putOriginal).not.toHaveBeenCalled()
     expect(store.putPublicObject).not.toHaveBeenCalled()
     expect(store.putMetaIfAbsent).not.toHaveBeenCalled()
+  })
+
+  it('still returns the existing file when putting it back in the library fails', async () => {
+    const existing: AssetMeta = {
+      hash32: 'y'.repeat(32),
+      filename: 'first.png',
+      slug: 'first',
+      ext: 'png',
+      mime: 'image/png',
+      size: 5,
+      kind: 'raster',
+      uploadedAt: '2026-01-01T00:00:00.000Z',
+    }
+    const store = makeStore({
+      getMeta: vi.fn().mockResolvedValue(existing),
+      unhideAsset: vi.fn().mockRejectedValue(new Error('AccessDenied')),
+    })
+    const warn = vi.fn()
+    setCanopyLogger({ log: vi.fn(), warn, error: vi.fn() })
+    try {
+      const result = await finalizeAsset(store, { data: await pngBytes(), filename: 'again.png' })
+
+      expect(result).toEqual({ ok: true, meta: existing })
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('AccessDenied'))
+    } finally {
+      resetCanopyLogger()
+    }
   })
 
   it('puts a file removed from the library back when its bytes are uploaded again', async () => {

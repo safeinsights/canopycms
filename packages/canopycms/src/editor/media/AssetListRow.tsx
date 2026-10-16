@@ -6,6 +6,7 @@ import { ActionIcon, Badge, Group, Text, Tooltip, UnstyledButton } from '@mantin
 import { IconEyeOff, IconFileTypePdf, IconPhotoOff, IconRestore } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
+import { EDITOR_ACTIONS } from '../copy'
 import { formatRelativeTime } from '../relative-time'
 import { editorImageSrc } from './editor-image-src'
 import { formatBytes } from './format-bytes'
@@ -130,11 +131,11 @@ export const AssetListRow: React.FC<AssetListRowProps> = ({
 
   const action = removed
     ? onRestore && (
-        <Tooltip label="Restore to library">
+        <Tooltip label={`${EDITOR_ACTIONS.restore} to library`}>
           <ActionIcon
             variant="subtle"
             color="gray"
-            aria-label={`Restore ${asset.filename} to library`}
+            aria-label={`${EDITOR_ACTIONS.restore} ${asset.filename} to library`}
             data-testid={`asset-row-restore-${asset.hash32}`}
             onClick={() => onRestore(asset)}
           >

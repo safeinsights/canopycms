@@ -1665,7 +1665,6 @@ export class CanopyCmsService extends Construct {
       props.assetBucket.grantRead(this.lambdaFunction, `${prefixes.staging}/*`)
       props.assetBucket.grantRead(this.lambdaFunction, `${prefixes.originals}/*`)
       props.assetBucket.grantRead(this.lambdaFunction, `${prefixes.meta}/*`)
-      props.assetBucket.grantRead(this.lambdaFunction, `${prefixes.hidden}/*`)
       props.assetBucket.grantRead(this.lambdaFunction, `${prefixes.public}/*`)
       props.assetBucket.grantPut(this.lambdaFunction, `${prefixes.originals}/*`)
       props.assetBucket.grantPut(this.lambdaFunction, `${prefixes.meta}/*`)

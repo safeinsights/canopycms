@@ -1231,17 +1231,22 @@ describe('CanopyCmsService B1: the Lambda can actually reach S3', () => {
     ]) {
       expect(resourcePatterns).toContain(prefix)
     }
-    const deleteResources = statements
-      .filter((s) => {
-        const action = (s as { Action?: unknown }).Action
-        return [action].flat().some((a) => typeof a === 'string' && a.startsWith('s3:DeleteObject'))
-      })
-      .map((s) => JSON.stringify((s as { Resource?: unknown }).Resource))
-      .join('\n')
+    const resourcesFor = (actionPrefix: string) =>
+      statements
+        .filter((s) => {
+          const action = (s as { Action?: unknown }).Action
+          return [action].flat().some((a) => typeof a === 'string' && a.startsWith(actionPrefix))
+        })
+        .map((s) => JSON.stringify((s as { Resource?: unknown }).Resource))
+        .join('\n')
+    const deleteResources = resourcesFor('s3:DeleteObject')
     expect(deleteResources).toContain('asset-staging/*')
     expect(deleteResources).toContain('asset-hidden/*')
     // Meta is never deleted: every transform not yet stored is computed from it.
     expect(deleteResources).not.toContain('asset-meta/')
+    expect(resourcesFor('s3:PutObject')).toContain('asset-hidden/*')
+    // Hidden markers are listed, written and deleted, never read.
+    expect(resourcesFor('s3:GetObject')).not.toContain('asset-hidden/')
   })
 
   it('does not grant any asset bucket access when assetBucket is omitted', () => {

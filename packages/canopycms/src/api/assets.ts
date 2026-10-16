@@ -562,6 +562,20 @@ const restoreAsset = defineEndpoint({
 })
 
 /**
+ * DELETE /assets answers 410 instead of falling through to `DELETE /:branch` as a branch named
+ * "assets". Hand-built like `assetRawRoute`, so the client generator emits no method for it.
+ */
+const deleteAssetGone: RouteDefinition = {
+  method: 'DELETE',
+  pattern: ['assets'],
+  handler: async (): Promise<ApiResponse<never>> => ({
+    ok: false,
+    status: 410,
+    error: 'DELETE /assets is gone: remove a file from the library with POST /assets/hide',
+  }),
+}
+
+/**
  * Exported routes for router registration and client codegen.
  */
 export const ASSET_ROUTES = {
@@ -571,6 +585,7 @@ export const ASSET_ROUTES = {
   list: listAssets,
   hide: hideAsset,
   restore: restoreAsset,
+  deleteGone: deleteAssetGone,
 } as const
 
 /**

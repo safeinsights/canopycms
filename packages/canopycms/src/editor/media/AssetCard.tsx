@@ -6,6 +6,7 @@ import { ActionIcon, Badge, Card, Text, Tooltip } from '@mantine/core'
 import { IconEyeOff, IconFileTypePdf, IconPhotoOff, IconRestore } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
+import { EDITOR_ACTIONS } from '../copy'
 import { formatRelativeTime } from '../relative-time'
 import { editorImageSrc } from './editor-image-src'
 import { CARD_THUMBNAIL_HEIGHT } from './media-library-view'
@@ -100,12 +101,12 @@ export const AssetCard: React.FC<AssetCardProps> = ({
         </Tooltip>
       )}
       {removed && onRestore && (
-        <Tooltip label="Restore to library">
+        <Tooltip label={`${EDITOR_ACTIONS.restore} to library`}>
           <ActionIcon
             variant="default"
             radius="xl"
             style={overlayActionStyle}
-            aria-label={`Restore ${asset.filename} to library`}
+            aria-label={`${EDITOR_ACTIONS.restore} ${asset.filename} to library`}
             data-testid={`asset-card-restore-${asset.hash32}`}
             onClick={(event) => {
               event.stopPropagation()

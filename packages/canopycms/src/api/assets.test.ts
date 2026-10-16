@@ -538,6 +538,17 @@ describe.each([
   })
 })
 
+describe('DELETE /assets', () => {
+  it('answers 410, pointing to POST /assets/hide', async () => {
+    const res = await ASSET_ROUTES.deleteGone.handler()
+    expect(res).toEqual({
+      ok: false,
+      status: 410,
+      error: 'DELETE /assets is gone: remove a file from the library with POST /assets/hide',
+    })
+  })
+})
+
 describe('removing a file from the library, end to end (real LocalAssetStore)', () => {
   let tmpDir: string
   let store: LocalAssetStore
