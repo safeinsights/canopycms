@@ -228,5 +228,7 @@ describe('ensureBaseImages', () => {
     mod.ensureBaseImages(dockerfile, { tar, ...d })
     expect(d.pulled()).toEqual([NODE, NODE, TOOL])
     expect(d.sleep.mock.calls).toEqual([[mod.PULL_RETRY_DELAYS_S[0] * 1000]])
+    // Through the console, so a test's console spy holds it rather than the run's output.
+    expect(consoleSpy.all().log).toContain(REFUSED)
   })
 })

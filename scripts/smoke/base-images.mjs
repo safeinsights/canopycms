@@ -67,7 +67,7 @@ function docker(args, { capture = true } = {}) {
 function dockerPull(ref, run) {
   log(`$ docker pull ${ref}`)
   const result = run(['pull', ref])
-  process.stdout.write(result.output)
+  if (result.output) console.log(result.output.trimEnd())
   return result
 }
 
