@@ -153,25 +153,34 @@ describe('ensureBaseImages', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  /** A docker whose store holds `present`; `load` adds `inTar` when `loads` is true. */
-  const fakeDocker = (present: string[], { inTar = [] as string[], loads = true } = {}) => {
+  /**
+   * A docker whose store holds `present`; `load` adds `inTar` when `loads` is true, and each pull
+   * answers with the next of `pulls`, then succeeds. Any other argument shape throws.
+   */
+  const fakeDocker = (
+    present: string[],
+    { inTar = [] as string[], loads = true, pulls = [] as PullResult[] } = {},
+  ) => {
     const store = new Set(present)
     const run = vi.fn((args: string[]): PullResult => {
-      const command = args[0]
       const ref = args[args.length - 1]
-      if (command === 'load') {
+      const shape = args.slice(0, -1).join(' ')
+      if (shape === 'load -i' && ref === tar) {
         if (loads) inTar.forEach((image) => store.add(image))
         return { status: loads ? 0 : 1, output: '' }
       }
-      if (command === 'image') return { status: store.has(ref) ? 0 : 1, output: '' }
-      if (command === 'pull') {
-        store.add(ref)
-        return { status: 0, output: '' }
+      if (shape === 'image inspect --format {{.Id}}') {
+        return { status: store.has(ref) ? 0 : 1, output: '' }
+      }
+      if (shape === 'pull') {
+        const result = pulls.shift() ?? { status: 0, output: '' }
+        if (result.status === 0) store.add(ref)
+        return result
       }
       throw new Error(`unexpected docker ${args.join(' ')}`)
     })
     const pulled = () => run.mock.calls.filter(([args]) => args[0] === 'pull').map(([a]) => a[1])
-    return { run, pulled, sleep: () => {} }
+    return { run, pulled, sleep: vi.fn((_ms: number) => {}) }
   }
 
   it('pulls nothing when the tar holds every base', () => {
@@ -205,5 +214,19 @@ describe('ensureBaseImages', () => {
     mod.ensureBaseImages(dockerfile, { tar, refresh: true, ...d })
     expect(d.run.mock.calls.some(([args]) => args[0] === 'load')).toBe(false)
     expect(d.pulled()).toEqual([NODE, TOOL])
+  })
+
+  it('stops at the first pull that fails for any reason but a refusal', () => {
+    const d = fakeDocker([], { pulls: [{ status: 1, output: 'manifest unknown' }] })
+    expect(() => mod.ensureBaseImages(dockerfile, { tar, ...d })).toThrow(/docker pull/)
+    expect(d.pulled()).toEqual([NODE])
+    expect(d.sleep).not.toHaveBeenCalled()
+  })
+
+  it('waits through the injected sleep when a pull is refused', () => {
+    const d = fakeDocker([], { pulls: [{ status: 1, output: REFUSED }] })
+    mod.ensureBaseImages(dockerfile, { tar, ...d })
+    expect(d.pulled()).toEqual([NODE, NODE, TOOL])
+    expect(d.sleep.mock.calls).toEqual([[mod.PULL_RETRY_DELAYS_S[0] * 1000]])
   })
 })

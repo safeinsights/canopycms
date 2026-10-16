@@ -3,12 +3,13 @@ name: Seed CMS base images
 # Saves the CMS image's base images to the Actions cache, for ci.yml's "Standalone CMS Image" job
 # to load instead of pulling them anonymously from public.ecr.aws, which refuses a runner whose
 # shared IP has used its quota (scripts/smoke/base-images.mjs). Only a run on main fills a cache
-# every pull request can restore, and that job never saves. Weekly, so CI builds on bases at most
-# about a week old; dispatch it to refresh them sooner or to replace a failed run. Each run saves
-# under its own key, since an entry cannot be overwritten; ci.yml restores by the week prefix.
+# every pull request can restore, and that job never saves. Daily, because the repository's cache
+# is full and evicts whatever has gone unread for hours; dispatch it to refresh sooner or to replace
+# a failed run. Each run saves under its own key, since an entry cannot be overwritten, and ci.yml
+# restores the newest from this ISO week or last.
 on:
   schedule:
-    - cron: '23 5 * * 1'
+    - cron: '23 5 * * *'
   workflow_dispatch:
 
 permissions:
