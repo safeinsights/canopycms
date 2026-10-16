@@ -306,7 +306,7 @@ describe('CommentsPanel', () => {
   it('explains what Jump does in a dimmed line at the top, and keeps the title short', () => {
     renderPanel()
 
-    const intro = screen.getByText('Jump opens the comment next to its field.')
+    const intro = screen.getByText('Jump shows each comment where it was left.')
     expect(intro.style.color).toBe('var(--mantine-color-dimmed)')
     const dialog = screen.getByRole('dialog', { name: 'Comments' })
     expect(dialog.querySelector('.mantine-Drawer-header')?.textContent).toBe('Comments')

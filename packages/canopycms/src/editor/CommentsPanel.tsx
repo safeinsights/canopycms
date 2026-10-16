@@ -232,7 +232,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     >
       <Stack gap="md" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
         <Text size="xs" c="dimmed">
-          Jump opens the comment next to its field.
+          Jump shows each comment where it was left.
         </Text>
         <CloseRefusedNotice refused={closeRefused} />
         <Paper withBorder p="md">
