@@ -1,6 +1,7 @@
 /**
- * The content panel: docked beside the panes in a wide side-by-side layout, otherwise an overlay on
- * the form pane; its open state and width persist, and a URL asking for no entry opens it. Also
+ * The content panel: docked in a wide window, beside the panes side by side and beside the form row
+ * stacked, otherwise an overlay on the form pane; its open state and width persist, and a URL
+ * asking for no entry opens it. Also
  * how a maximized preview gives way to what needs the form, Save all without an entry list, and
  * the browser tab's title.
  */
@@ -273,13 +274,13 @@ describe('content panel', () => {
   })
 
   it.each([
-    ['a narrow window', false, 'side'],
-    ['the stacked layout', true, 'stacked'],
+    ['a narrow side-by-side window', 'side'],
+    ['a narrow stacked window', 'stacked'],
   ])(
     'in %s, lays over the form pane only, and closes on select and on Escape',
-    async (_where, wide, layout) => {
+    async (_where, layout) => {
       storeLayout({ layout })
-      await setup(wide)
+      await setup(false)
       expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
       const formPane = panel()?.parentElement?.querySelector('[data-testid="form-pane"]')
       expect(formPane?.hasAttribute('inert')).toBe(true)
@@ -339,13 +340,43 @@ describe('content panel', () => {
     expect(panel()).not.toBeNull()
   })
 
-  it('docks an open overlay open when the layout turns side by side', async () => {
+  it('docks beside the form row only in a wide stacked window, the preview keeping its row', async () => {
     storeLayout({ layout: 'stacked' })
     await setup(true)
-    expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
+    expect(panel()?.closest('[data-testid="form-aside"]')).not.toBeNull()
+    expect(document.querySelector('[data-canopy-region="panel"]')?.childElementCount).toBe(0)
+    const previewRow = screen.getByTestId('preview-pane').closest('[data-panel]')
+    expect(previewRow?.contains(panel())).toBe(false)
+    expect(screen.getByTestId('form-pane').hasAttribute('inert')).toBe(false)
+
+    fireEvent.click(await row('second'))
+    await waitFor(() =>
+      expect(screen.getByTestId('file-dropdown-button').textContent).toContain('second'),
+    )
+    escapeFromPanel()
+    expect(panel()).not.toBeNull()
+  })
+
+  it('stays docked, open and at its width as the layout changes', async () => {
+    await setup(true)
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize content panel' }), {
+      key: 'ArrowRight',
+    })
+    act(() => layoutButton().focus())
 
     fireEvent.click(layoutButton())
-    await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('docked'))
+    await waitFor(() => expect(splitOrientation()).toBe('horizontal'))
+    expect(panel()?.closest('[data-testid="form-aside"]')).not.toBeNull()
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
+    expect(panel()?.style.width).toBe('296px')
+    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(layoutButton())
+
+    fireEvent.click(layoutButton())
+    await waitFor(() => expect(splitOrientation()).toBe('vertical'))
+    expect(panel()?.closest('[data-canopy-region="panel"]')).not.toBeNull()
+    expect(panel()?.style.width).toBe('296px')
   })
 
   it('does not bring a closed docked panel back as an overlay', async () => {
@@ -362,19 +393,18 @@ describe('content panel', () => {
     expect(panel()).toBeNull()
   })
 
-  it('keeps a URL-opened overlay open when the stored layout is stacked', async () => {
+  it('docks a URL-opened panel open when the stored layout is stacked', async () => {
     storeLayout({ layout: 'stacked' })
     window.history.replaceState({}, '', '/?entry=')
     stubWindowWidth(true)
     stubApi()
     renderEditor()
     await loaded()
-    expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
+    expect(panel()?.closest('[data-testid="form-aside"]')).not.toBeNull()
   })
 
   it('returns focus to the "All content" crumb when the overlay it opened closes', async () => {
-    storeLayout({ layout: 'stacked' })
-    stubWindowWidth(true)
+    stubWindowWidth(false)
     stubApi()
     renderEditor()
     const crumb = screen.getAllByTestId('breadcrumb-segment')[0]
@@ -389,8 +419,7 @@ describe('content panel', () => {
   })
 
   it('uncovers the form when the preview asks to focus one of its fields', async () => {
-    storeLayout({ layout: 'stacked' })
-    await setup(true)
+    await setup(false)
     const formPane = screen.getByTestId('form-pane')
     expect(formPane.hasAttribute('inert')).toBe(true)
 
@@ -408,8 +437,7 @@ describe('content panel', () => {
   })
 
   it('leaves Mod+Alt+M to a form the overlay covers', async () => {
-    storeLayout({ layout: 'stacked' })
-    stubWindowWidth(true)
+    stubWindowWidth(false)
     stubApi()
     renderEditor()
     await screen.findByTestId('form-comments-menu-button')
@@ -436,8 +464,7 @@ describe('content panel', () => {
   })
 
   it('closes the overlay when the rail opens the first entry', async () => {
-    storeLayout({ layout: 'stacked' })
-    await setup(true)
+    await setup(false)
     fireEvent.click(screen.getByTestId('rail-home-button'))
     await waitFor(() => expect(panel()).toBeNull())
     expect(screen.getByTestId('form-pane').hasAttribute('inert')).toBe(false)
@@ -544,8 +571,7 @@ describe('maximized preview', () => {
   })
 
   it('restores when the content overlay opens over the form', async () => {
-    storeLayout({ layout: 'stacked' })
-    stubWindowWidth(true)
+    stubWindowWidth(false)
     stubApi()
     renderEditor()
     await maximize()
@@ -556,21 +582,23 @@ describe('maximized preview', () => {
   })
 
   it('closes the content overlay when the preview maximizes, and keeps a docked one', async () => {
-    storeLayout({ layout: 'stacked' })
-    await setup(true)
+    await setup(false)
     expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
 
     await maximize()
-    expect(panel()).toBeNull()
+    await waitFor(() => expect(panel()).toBeNull())
     expect(toggle().getAttribute('aria-expanded')).toBe('false')
 
-    cleanup()
-    window.localStorage.clear()
-    await setup(true)
-    expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
-    await maximize()
-    expect(panel()).not.toBeNull()
-    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    for (const layout of ['side', 'stacked']) {
+      cleanup()
+      window.localStorage.clear()
+      storeLayout({ layout })
+      await setup(true)
+      expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
+      await maximize()
+      expect(panel()?.closest('[inert]')).toBeNull()
+      expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    }
   })
 
   it('shows the form while a maximized entry loads, and when its load fails', async () => {
@@ -616,8 +644,7 @@ describe('maximized preview', () => {
   })
 
   it('gives the content overlay its focus when it opens over a maximized preview', async () => {
-    storeLayout({ layout: 'stacked' })
-    stubWindowWidth(true)
+    stubWindowWidth(false)
     stubApi()
     renderEditor()
     await maximize()

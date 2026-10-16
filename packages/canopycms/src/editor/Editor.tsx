@@ -372,8 +372,9 @@ const EditorContent: React.FC<EditorProps> = ({
     storageKey: editorLayoutStorageKey(basePath),
     defaultLayout: wideWindow ? 'side' : 'stacked',
   })
-  // In the stacked layout the content panel lays over the form only, so the preview stays in view.
-  const contentPanelDocked = layout === 'side' && wideWindow
+  // A wide window docks the content panel: beside the panes side by side, and beside the form row
+  // only when stacked, so the preview keeps its full width. A narrow one lays it over the form.
+  const contentPanelDocked = wideWindow
 
   // Comments state (shared between useCommentSystem and useBranchManager)
   const [commentsForBranchSummaries, setCommentsForBranchSummaries] = useState<CommentThread[]>([])
@@ -1995,10 +1996,11 @@ const EditorContent: React.FC<EditorProps> = ({
               onLogoutClick={onLogoutClick}
             />
           }
-          panel={contentPanelDocked ? contentPanel : undefined}
+          panel={contentPanelDocked && layout === 'side' ? contentPanel : undefined}
           main={
             <Box h="100%">
               <PaneLayout
+                formAside={contentPanelDocked && layout === 'stacked' ? contentPanel : undefined}
                 formOverlay={contentPanelDocked ? undefined : contentPanel}
                 formInert={contentOverlayShown}
                 previewMaximized={previewShownMaximized}

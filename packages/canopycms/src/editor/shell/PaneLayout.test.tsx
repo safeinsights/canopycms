@@ -2,12 +2,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import React from 'react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { DIVIDER_COLOR, DIVIDER_WIDTH_PX } from './EditorShell'
 import {
   PaneLayout,
   SPLIT_PERCENT_MAX,
   SPLIT_PERCENT_MIN,
   type PaneLayoutProps,
 } from './PaneLayout'
+import { SidePanelHost } from './SidePanelHost'
 import { CanopyCMSProvider } from '../theme'
 
 const originalRect = HTMLElement.prototype.getBoundingClientRect
@@ -191,5 +193,59 @@ describe('PaneLayout', () => {
     expect(screen.getByTestId('preview-pane').style.position).toBe('')
     expect(formPanel.hasAttribute('inert')).toBe(false)
     expect(separator().hasAttribute('inert')).toBe(false)
+  })
+
+  describe('formAside', () => {
+    const contentPanel = (
+      <SidePanelHost
+        title="Content"
+        mode="docked"
+        opened
+        width={280}
+        minWidth={240}
+        maxWidth={400}
+        onWidthChange={() => {}}
+        onClose={() => {}}
+      >
+        <button type="button">In the tree</button>
+      </SidePanelHost>
+    )
+    const aside = () => screen.getByTestId('form-aside')
+
+    it('docks beside the form in its row, leaving the preview its full row', () => {
+      renderPanes({ arrangement: 'stacked', formAside: contentPanel })
+      const formRow = screen.getByTestId('form-pane').closest('[data-panel]') as HTMLElement
+      expect(formRow.contains(aside())).toBe(true)
+      expect(previewShare().contains(aside())).toBe(false)
+      expect(aside().nextElementSibling?.contains(screen.getByTestId('form-pane'))).toBe(true)
+      expect(screen.getByTestId('form-pane').closest('[inert]')).toBeNull()
+    })
+
+    it("stays beside a maximized preview, the layout's full height, and out of its inert", () => {
+      const { rerenderPanes } = renderPanes({ arrangement: 'stacked', formAside: contentPanel })
+      expect(aside().style.position).toBe('')
+
+      rerenderPanes({ arrangement: 'stacked', formAside: contentPanel, previewMaximized: true })
+      expect(aside().style.position).toBe('absolute')
+      expect(aside().closest('[inert]')).toBeNull()
+      expect(screen.getByRole('button', { name: 'In the tree' }).closest('[inert]')).toBeNull()
+      // The stubbed layout measures every element 1000px wide.
+      expect(screen.getByTestId('preview-pane').style.insetInlineStart).toBe('1000px')
+      // Its insets size it: a set width would run it past the layout's end.
+      expect(screen.getByTestId('preview-pane').style.width).toBe('')
+      expect(screen.getByTestId('form-pane').closest('[inert]')).not.toBeNull()
+    })
+
+    it("draws its separator as the panel's, at the shared divider width", () => {
+      renderPanes({ arrangement: 'stacked', formAside: contentPanel })
+      const panes = getComputedStyle(separator())
+      const panel = getComputedStyle(
+        screen.getByRole('separator', { name: 'Resize content panel' }),
+      )
+      expect(panes.minHeight).toBe(`${DIVIDER_WIDTH_PX}px`)
+      expect(panel.width).toBe(`${DIVIDER_WIDTH_PX}px`)
+      expect(panes.getPropertyValue('background')).toBe(DIVIDER_COLOR)
+      expect(panel.getPropertyValue('background')).toBe(DIVIDER_COLOR)
+    })
   })
 })

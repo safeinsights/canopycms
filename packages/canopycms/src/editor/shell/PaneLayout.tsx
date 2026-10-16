@@ -1,8 +1,9 @@
 'use client'
 
-import React, { useEffect, useLayoutEffect, useRef } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { Box } from '@mantine/core'
 import { Group, Panel, Separator, useGroupRef, type Layout } from 'react-resizable-panels'
+import { DIVIDER_COLOR, DIVIDER_TARGET_PX, DIVIDER_WIDTH_PX } from './EditorShell'
 
 /** Preview beside the form, or above it. */
 export type PaneArrangement = 'side' | 'stacked'
@@ -19,19 +20,18 @@ const FORM = 'canopy-form'
 const PREVIEW_LIMITS = { minSize: `${SPLIT_PERCENT_MIN}%`, maxSize: `${SPLIT_PERCENT_MAX}%` }
 const FORM_MIN_PX = 160
 
+// The pointer target is the group's `resizeTargetMinimumSize`, wider than the bar it draws.
 const SEPARATOR_STYLES = `
 .canopy-pane-separator {
-  min-width: 8px;
-  min-height: 8px;
-  background: var(--canopy-surface-muted);
-  box-shadow: inset 0 0 0 1px var(--canopy-input-border);
+  min-width: ${DIVIDER_WIDTH_PX}px;
+  min-height: ${DIVIDER_WIDTH_PX}px;
+  background: ${DIVIDER_COLOR};
 }
 .canopy-pane-separator:is([data-separator='hover'], [data-separator='active']) {
   background: var(--canopy-focus-ring);
 }
 .canopy-pane-separator:focus-visible {
   outline: 2px solid var(--canopy-focus-ring);
-  outline-offset: -2px;
 }
 `
 
@@ -47,6 +47,11 @@ export interface PaneLayoutProps {
   form?: React.ReactNode
   /** Laid over the form pane, outside its scrolling: the side panel in overlay mode. */
   formOverlay?: React.ReactNode
+  /**
+   * Docked at the form pane's inline start, pushing the form aside: the side panel docked in the
+   * stacked arrangement, where the preview above keeps its full width.
+   */
+  formAside?: React.ReactNode
   /** Takes the form out of focus and the pointer's reach while an open `formOverlay` hides it. */
   formInert?: boolean
   /** Lays the preview over the whole layout, form and separator inert, without remounting it. */
@@ -66,6 +71,7 @@ export function PaneLayout({
   preview,
   form,
   formOverlay,
+  formAside,
   formInert = false,
   previewMaximized = false,
   onSeparatorDrag,
@@ -75,6 +81,8 @@ export function PaneLayout({
   const previewRef = useRef<HTMLDivElement>(null)
   const formRef = useRef<HTMLDivElement>(null)
   const formPanelRef = useRef<HTMLDivElement>(null)
+  const [aside, setAside] = useState<HTMLDivElement | null>(null)
+  const [asideWidth, setAsideWidth] = useState(0)
   const percent = arrangement === 'side' ? sideSplitPercent : stackedSplitPercent
 
   // Stored sizes load after mount, and the group must never remount: that would reload the preview.
@@ -93,6 +101,16 @@ export function PaneLayout({
     formPanelRef.current?.toggleAttribute('inert', previewMaximized)
     separatorRef.current?.toggleAttribute('inert', previewMaximized)
   }, [formInert, previewMaximized])
+
+  // Where a maximized preview starts, beside a lifted `formAside`.
+  useLayoutEffect(() => {
+    if (!aside) return
+    const measure = () => setAsideWidth(aside.getBoundingClientRect().width)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(aside)
+    return () => observer.disconnect()
+  }, [aside])
 
   const onSeparatorDragRef = useRef(onSeparatorDrag)
   useEffect(() => {
@@ -123,12 +141,18 @@ export function PaneLayout({
   }, [groupRef])
 
   const side = arrangement === 'side'
+  // A maximized preview leaves a docked `formAside` beside it, now the layout's full height, as
+  // the shell's own panel column stays beside it in the side arrangement.
+  const maximizedStyle: CSSProperties = formAside
+    ? { insetBlock: 0, insetInlineEnd: 0, insetInlineStart: asideWidth }
+    : { inset: 0 }
   return (
     <>
       <style>{SEPARATOR_STYLES}</style>
       <Group
         groupRef={groupRef}
         orientation={side ? 'horizontal' : 'vertical'}
+        resizeTargetMinimumSize={DIVIDER_TARGET_PX}
         defaultLayout={splitLayout(percent)}
         // The hidden separator would otherwise still take drags over a maximized preview: the
         // library hit-tests separators by their rectangles, which `inert` leaves in place.
@@ -154,12 +178,11 @@ export function PaneLayout({
             ref={previewRef}
             data-testid="preview-pane"
             data-maximized={previewMaximized || undefined}
-            h="100%"
-            w="100%"
+            // Sized in `style`, not by props: Mantine's style props would override the insets.
             style={
               previewMaximized
-                ? { overflow: 'auto', position: 'absolute', inset: 0, zIndex: 1 }
-                : { overflow: 'auto' }
+                ? { overflow: 'auto', position: 'absolute', zIndex: 1, ...maximizedStyle }
+                : { overflow: 'auto', width: '100%', height: '100%' }
             }
           >
             {preview}
@@ -171,32 +194,49 @@ export function PaneLayout({
           className="canopy-pane-separator"
         />
         <Panel id={FORM} minSize={FORM_MIN_PX}>
-          <Box
-            ref={formPanelRef}
-            pos="relative"
-            h="100%"
-            w="100%"
-            // `formOverlay` stacks within this pane, so a maximized preview always covers it.
-            style={{ isolation: 'isolate' }}
-          >
+          {/* Unpositioned, as the panels are, so a lifted `formAside` places itself in the group. */}
+          <Box h="100%" w="100%" display="flex">
+            {formAside && (
+              <Box
+                ref={setAside}
+                data-testid="form-aside"
+                data-lifted={previewMaximized || undefined}
+                style={
+                  previewMaximized
+                    ? { position: 'absolute', insetBlock: 0, insetInlineStart: 0, zIndex: 1 }
+                    : { flex: 'none', height: '100%' }
+                }
+              >
+                {formAside}
+              </Box>
+            )}
             <Box
-              ref={formRef}
-              data-testid="form-pane"
+              ref={formPanelRef}
+              pos="relative"
               h="100%"
-              w="100%"
-              style={{
-                // FormHeader reads this to span the padding.
-                '--canopy-form-pane-padding': '20px',
-                padding: 'var(--canopy-form-pane-padding)',
-                overflow: 'auto',
-                backgroundColor: 'var(--canopy-surface-muted)',
-                // Keeps the form's sticky header under `formOverlay`.
-                isolation: 'isolate',
-              }}
+              miw={0}
+              // `formOverlay` stacks within this pane, so a maximized preview always covers it.
+              style={{ flex: 1, isolation: 'isolate' }}
             >
-              {form}
+              <Box
+                ref={formRef}
+                data-testid="form-pane"
+                h="100%"
+                w="100%"
+                style={{
+                  // FormHeader reads this to span the padding.
+                  '--canopy-form-pane-padding': '20px',
+                  padding: 'var(--canopy-form-pane-padding)',
+                  overflow: 'auto',
+                  backgroundColor: 'var(--canopy-surface-muted)',
+                  // Keeps the form's sticky header under `formOverlay`.
+                  isolation: 'isolate',
+                }}
+              >
+                {form}
+              </Box>
+              {formOverlay}
             </Box>
-            {formOverlay}
           </Box>
         </Panel>
       </Group>
