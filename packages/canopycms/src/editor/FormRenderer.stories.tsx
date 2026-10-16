@@ -225,9 +225,16 @@ export const AfterClear: Story = {
   ...Default,
   play: async () => {
     document.querySelector<HTMLButtonElement>('button[aria-label="Actions for SEO"]')?.click()
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    const items = document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')
-    ;[...items].find((item) => item.textContent === 'Clear "SEO"')?.click()
+    // The menu renders over the next frames; give up after about a second.
+    for (let frame = 0; frame < 60; frame++) {
+      const items = document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')
+      const clear = [...items].find((item) => item.textContent === 'Clear "SEO"')
+      if (clear) {
+        clear.click()
+        return
+      }
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+    }
   },
 }
 

@@ -265,7 +265,8 @@ describe('Clear on an optional object', () => {
     await clearSeo()
 
     const note = 'Its comment thread moved to "Comment on this entry".'
-    expect(within(seoGroup()).getByText(note)).toBeTruthy()
+    // Shown, but read only once: by the status region.
+    expect(within(seoGroup()).getByText(note).getAttribute('aria-hidden')).toBe('true')
     const announced = within(seoGroup()).getByText(`Cleared "SEO". ${note}`)
     expect(announced.getAttribute('role')).toBe('status')
   })
@@ -282,5 +283,197 @@ describe('Clear on an optional object', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
     expect(shown().seo).toEqual(savedSeo)
     expect(within(seoGroup()).queryByRole('button', { name: 'Actions for SEO' })).toBeNull()
+  })
+})
+
+/** A form over `initial` that keeps its own edits, for objects inside list items and blocks. */
+const NestedHarness: React.FC<{ fields: FieldConfig[]; initial: FormValue }> = ({
+  fields: nestedFields,
+  initial,
+}) => {
+  const [value, setValue] = useState(initial)
+  const [Wrapper] = useState(() => createApiClientWrapper(mockClient))
+  return (
+    <CanopyCMSProvider>
+      <Wrapper>
+        <pre data-testid="value">{JSON.stringify(value)}</pre>
+        <FormRenderer fields={nestedFields} value={value} onChange={setValue} />
+      </Wrapper>
+    </CanopyCMSProvider>
+  )
+}
+
+/** The object group at a canopy path. */
+const objectAt = (canopyPath: string): HTMLElement => {
+  const group = document.querySelector<HTMLElement>(
+    `[role="group"][data-canopy-field="${canopyPath}"]`,
+  )
+  expect(group).not.toBeNull()
+  return group!
+}
+const clearAt = async (canopyPath: string, label: string) => {
+  fireEvent.click(
+    within(objectAt(canopyPath)).getByRole('button', { name: `Actions for ${label}` }),
+  )
+  fireEvent.click(await screen.findByRole('menuitem', { name: `Clear "${label}"` }))
+}
+/** Every "Undo clear", in collapsed rows too, so an absence can't pass for being hidden. */
+const undoClears = (label: string) =>
+  screen.queryAllByRole('button', { name: `Undo clear "${label}"`, hidden: true })
+const rowAction = async (row: number, action: 'Remove' | 'Move down') => {
+  fireEvent.click(within(screen.getAllByTestId('item-row')[row]).getByTestId('item-row-menu'))
+  fireEvent.click(await screen.findByRole('menuitem', { name: action }))
+}
+
+describe('Clear on an object inside a list item or block', () => {
+  const teamFields: FieldConfig[] = [
+    {
+      name: 'team',
+      type: 'object',
+      label: 'Team',
+      list: true,
+      itemTitleField: 'name',
+      fields: [
+        { name: 'name', type: 'string', label: 'Name' },
+        {
+          name: 'contact',
+          type: 'object',
+          label: 'Contact',
+          fields: [{ name: 'email', type: 'string', label: 'Email' }],
+        },
+      ],
+    },
+  ]
+  const team = () => ({
+    team: [
+      { _key: 'ka', name: 'Ann' },
+      { _key: 'kb', name: 'Ben', contact: { email: 'ben@example.test' } },
+      { _key: 'kc', name: 'Cam' },
+    ],
+  })
+
+  const sectionFields: FieldConfig[] = [
+    {
+      name: 'sections',
+      type: 'block',
+      label: 'Sections',
+      templates: [
+        {
+          name: 'hero',
+          label: 'Hero',
+          fields: [
+            { name: 'heading', type: 'string', label: 'Heading' },
+            {
+              name: 'cta',
+              type: 'object',
+              label: 'CTA',
+              fields: [{ name: 'text', type: 'string', label: 'Text' }],
+            },
+          ],
+        },
+      ],
+    },
+  ]
+  const sections = () => ({
+    sections: [
+      { _key: 'k1', template: 'hero', value: { heading: 'One', cta: { text: 'Go' } } },
+      { _key: 'k2', template: 'hero', value: { heading: 'Two' } },
+    ],
+  })
+
+  it('withdraws the Undo once an item before it is removed, never restoring into the next', async () => {
+    render(<NestedHarness fields={teamFields} initial={team()} />)
+    await clearAt('team[1].contact', 'Contact')
+    expect(undoClears('Contact')).toHaveLength(1)
+
+    await rowAction(0, 'Remove')
+
+    // Cam, with no contact, now holds the index Ben's contact was cleared at.
+    expect(shown().team).toEqual([
+      { _key: 'kb', name: 'Ben' },
+      { _key: 'kc', name: 'Cam' },
+    ])
+    expect(undoClears('Contact')).toHaveLength(0)
+  })
+
+  it('withdraws the Undo once its block moves, never restoring into the block now there', async () => {
+    render(<NestedHarness fields={sectionFields} initial={sections()} />)
+    await clearAt('sections[0].cta', 'CTA')
+    expect(undoClears('CTA')).toHaveLength(1)
+
+    await rowAction(0, 'Move down')
+
+    expect(shown().sections).toEqual([
+      { _key: 'k2', template: 'hero', value: { heading: 'Two' } },
+      { _key: 'k1', template: 'hero', value: { heading: 'One' } },
+    ])
+    expect(undoClears('CTA')).toHaveLength(0)
+  })
+
+  it('keeps the Undo while another block is edited, and restores into its own block', async () => {
+    render(<NestedHarness fields={sectionFields} initial={sections()} />)
+    await clearAt('sections[0].cta', 'CTA')
+
+    const headings = screen.getAllByRole('textbox', { name: 'Heading' })
+    fireEvent.change(headings[1], { target: { value: 'Two, edited' } })
+    expect(undoClears('CTA')).toHaveLength(1)
+
+    act(() => fireEvent.click(undoClears('CTA')[0]))
+
+    expect(shown().sections).toEqual([
+      { _key: 'k1', template: 'hero', value: { heading: 'One', cta: { text: 'Go' } } },
+      { _key: 'k2', template: 'hero', value: { heading: 'Two, edited' } },
+    ])
+  })
+
+  it('keeps the Undo while another list item is edited', async () => {
+    render(<NestedHarness fields={teamFields} initial={team()} />)
+    await clearAt('team[1].contact', 'Contact')
+
+    fireEvent.change(screen.getAllByRole('textbox', { name: 'Name' })[2], {
+      target: { value: 'Cameron' },
+    })
+
+    expect(shown().team).toEqual([
+      { _key: 'ka', name: 'Ann' },
+      { _key: 'kb', name: 'Ben' },
+      { _key: 'kc', name: 'Cameron' },
+    ])
+    expect(undoClears('Contact')).toHaveLength(1)
+  })
+})
+
+describe('the Clear status region', () => {
+  it('is mounted only on an object that can be cleared', () => {
+    render(
+      <NestedHarness
+        fields={[
+          {
+            name: 'seo',
+            type: 'object',
+            label: 'SEO',
+            fields: [{ name: 'summary', type: 'string', label: 'Summary' }],
+          },
+          {
+            name: 'meta',
+            type: 'object',
+            label: 'Meta',
+            required: true,
+            fields: [{ name: 'note', type: 'string', label: 'Note' }],
+          },
+          {
+            name: 'rows',
+            type: 'object',
+            label: 'Rows',
+            list: true,
+            fields: [{ name: 'cell', type: 'string', label: 'Cell' }],
+          },
+        ]}
+        initial={{ seo: { summary: 'S' }, meta: { note: 'N' }, rows: [{ _key: 'r1', cell: 'C' }] }}
+      />,
+    )
+    const regions = document.querySelectorAll('.mantine-VisuallyHidden-root[role="status"]')
+    expect(regions).toHaveLength(1)
+    expect(objectAt('seo').contains(regions[0])).toBe(true)
   })
 })

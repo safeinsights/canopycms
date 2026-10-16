@@ -52,7 +52,9 @@ const quoted = (label: string | undefined) => (label ? ` "${label}"` : '')
 /**
  * An object field's group of fields. Its Clear is an Undo-instead-of-confirm removal
  * (docs/ux-guidelines.md, Destructive actions) whose Undo stays in the label row, where the clear
- * happened, until the caller drops `onUndoClear`: never on a timer, which fails WCAG 2.2.1.
+ * happened, with no timer, until the caller drops `onUndoClear`. FormRenderer drops it once the
+ * object is filled in again, another item takes the index of a list item or block holding it,
+ * another entry or branch opens, or the entry is saved or its draft discarded.
  */
 export const ObjectField: React.FC<ObjectFieldProps> = ({
   label,
@@ -143,14 +145,18 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
           commentControl={commentControl}
           actions={actions}
         />
+        {/* The status region below says it, so it is not read twice. */}
         {onUndoClear && clearNote && (
-          <Text size="xs" c="dimmed">
+          <Text size="xs" c="dimmed" aria-hidden>
             {clearNote}
           </Text>
         )}
-        <VisuallyHidden role="status">
-          {onUndoClear ? `Cleared${quoted(label)}.${clearNote ? ` ${clearNote}` : ''}` : ''}
-        </VisuallyHidden>
+        {/* Mounted before the clear, so the clear is announced, and only where one can happen. */}
+        {(onClear || onUndoClear) && (
+          <VisuallyHidden role="status">
+            {onUndoClear ? `Cleared${quoted(label)}.${clearNote ? ` ${clearNote}` : ''}` : ''}
+          </VisuallyHidden>
+        )}
         <Stack gap="sm">
           {fields.map((field) => {
             const fieldPath = [...path, field.name]

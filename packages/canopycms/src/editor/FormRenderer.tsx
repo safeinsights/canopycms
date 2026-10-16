@@ -53,6 +53,7 @@ import { FormHeader } from './FormHeader'
 import { buildFormOutline, hasCollapsibleList } from './form-outline'
 import { findFieldTarget, focusFieldTarget } from './field-target'
 import {
+  canRestoreRemoval,
   movedThreadsNote,
   openThreadsWithin,
   removalAnchors,
@@ -290,9 +291,10 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     }
   const [formComments] = useState(createFormComments)
 
-  // An object's Undo clear lasts until it can't put the object back as it was: the object, or a
-  // list around it, has been edited (filling it in again included). It also ends with the entry,
-  // the branch, a save or a discard. No timer: a timed control fails WCAG 2.2.1.
+  // An object's Undo clear lasts while it can put the object back where it was: until the object
+  // is filled in again, or another item takes the index of a list item or block holding it. It
+  // also ends with the entry, the branch, a save or a discard. It has no timer: it stays in the
+  // form for as long as the object is left unedited.
   const [cleared, setCleared] = useState<ClearedObjects>({
     scope: boundaryResetKey,
     savedValue,
@@ -302,7 +304,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   const clearsLive = cleared.scope === clearScope && cleared.savedValue === savedValue
   const offeredClears = Object.fromEntries(
     Object.entries(clearsLive ? cleared.byPath : {}).filter(([, clear]) =>
-      restoreRemoval(fields, value, clear.removal),
+      canRestoreRemoval(fields, value, clear.removal),
     ),
   )
   if (Object.keys(offeredClears).length !== Object.keys(cleared.byPath).length) {

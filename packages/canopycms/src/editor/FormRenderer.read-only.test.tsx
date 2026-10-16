@@ -362,7 +362,7 @@ describe('FormRenderer readOnly', () => {
     expect(screen.getByText('Nothing added.')).toBeTruthy()
   })
 
-  it('object: an optional object with a value offers no Clear', () => {
+  it('object: an optional object with a value has no "…" menu, so no Clear', () => {
     renderReadOnly(
       [
         {
@@ -374,7 +374,7 @@ describe('FormRenderer readOnly', () => {
       ],
       { seo: { title: 'x' } },
     )
-    expect(screen.queryByRole('button', { name: /^Clear\b/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Actions for SEO' })).toBeNull()
     expectLocked(screen.getByRole('textbox', { name: 'SEO title' }))
   })
 

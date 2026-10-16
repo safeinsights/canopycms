@@ -212,7 +212,30 @@ describe('restoreRemoval', () => {
       expect(restoreRemoval(fields, saved, removal)).toBeDefined()
     })
 
-    it('puts nothing back once a sibling block has changed', () => {
+    it('anchors a keyed block by its key: an edit to another block keeps it', () => {
+      const [g1, g2] = [
+        { ...gallery('x'), _key: 'g1' },
+        { ...gallery('y'), _key: 'g2' },
+      ]
+      const removal = removeFirstCaption({ blocks: [g1, g2] })
+      expect(removal.anchors).toEqual([{ index: 0, key: 'g1' }])
+      const g1After = { ...g1, value: { items: [] } }
+      const g2Edited = { ...gallery('y edited'), _key: 'g2' }
+      expect(restoreRemoval(fields, { blocks: [g1After, g2Edited] }, removal)).toBeDefined()
+    })
+
+    it('puts nothing into the keyed block now at the index, after a move or a removal', () => {
+      const [g1, g2] = [
+        { ...gallery('x'), _key: 'g1' },
+        { ...gallery('y'), _key: 'g2' },
+      ]
+      const removal = removeFirstCaption({ blocks: [g1, g2] })
+      const g1After = { ...g1, value: { items: [] } }
+      expect(restoreRemoval(fields, { blocks: [g2, g1After] }, removal)).toBeUndefined()
+      expect(restoreRemoval(fields, { blocks: [g2] }, removal)).toBeUndefined()
+    })
+
+    it('puts nothing back once a sibling block has changed, when the blocks have no keys', () => {
       const [g1, g2] = [gallery('x'), gallery('y')]
       const removal = removeFirstCaption({ blocks: [g1, g2] })
       const g2Edited = gallery('y edited')
