@@ -137,7 +137,6 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
       opened={opened}
       onClose={onClose}
       title="Groups"
-      description="Manage groups and organizations"
       size={600}
       isDirty={isDirty}
       isSaving={isSaving}

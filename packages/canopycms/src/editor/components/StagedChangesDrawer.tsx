@@ -11,8 +11,6 @@ export interface StagedChangesDrawerProps {
   /** Closes the drawer. Called directly when clean, only after a confirmed discard when dirty, and never while saving. */
   onClose: () => void
   title: string
-  /** Not shown: the header carries only the title. Callers should stop passing it. */
-  description?: string
   size: number
   isDirty: boolean
   isSaving: boolean

@@ -89,11 +89,10 @@ describe('StagedChangesDrawer', () => {
   })
 
   describe('header', () => {
-    it('holds the title and Close button only, even when given a description', () => {
-      renderDrawer({ description: 'Manage groups' })
+    it('holds the title and Close button only', () => {
+      renderDrawer()
       const dialog = screen.getByRole('dialog', { name: 'Groups' })
       expect(dialog.querySelector('.mantine-Drawer-header')?.textContent).toBe('Groups')
-      expect(screen.queryByText('Manage groups')).toBeNull()
       expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
     })
 
