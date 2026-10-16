@@ -43,8 +43,8 @@ export interface ThreadCarouselProps {
   currentUserId: string
   /** Whether the user may resolve any thread; a thread's own author always may resolve it. */
   canResolve: boolean
-  /** Handler to add a new comment (creates new thread or adds to existing) */
-  onAddComment: (text: string, threadId?: string) => Promise<void>
+  /** Handler to reply to a thread; new threads start in the Comments drawer. */
+  onAddComment: (text: string, threadId: string) => Promise<void>
   /** Handler to resolve a thread */
   onResolveThread: (threadId: string) => Promise<void>
   /** Thread ID to highlight and scroll to */

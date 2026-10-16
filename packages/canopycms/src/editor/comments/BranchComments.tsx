@@ -43,7 +43,7 @@ export const BranchComments: React.FC<BranchCommentsProps> = ({
 }) => {
   const branchThreads = useMemo(() => comments.filter((t) => t.type === 'branch'), [comments])
 
-  const handleAddComment = async (text: string, threadId?: string) => {
+  const handleAddComment = async (text: string, threadId: string) => {
     await onAddComment(text, 'branch', undefined, undefined, threadId)
   }
 
