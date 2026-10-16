@@ -16,5 +16,5 @@ export const EDITOR_ACTIONS = {
   clear: 'Clear',
   openEntry: 'Open entry',
   changeUrl: 'Change URL',
-  changeFileName: 'Change file name',
+  changeSlug: 'Change slug',
 } as const

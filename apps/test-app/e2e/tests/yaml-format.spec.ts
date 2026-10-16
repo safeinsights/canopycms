@@ -14,12 +14,12 @@ import { STANDARD_TIMEOUT } from '../fixtures/timeouts'
 const SETTINGS_CONTENT_PATH = 'settings.settings.sEtTiNgS5678.yaml'
 
 /**
- * E2E tests for YAML content format support and the isTitle field flag.
+ * E2E tests for YAML content format support, and for how entries are named in the navigator.
  *
- * The settings entry type uses YAML format and has isTitle: true on siteName,
- * so it also exercises the isTitle navigator display feature.
+ * The settings entry type uses YAML format and has isTitle: true on siteName, but it is a
+ * single-entry type, so the navigator names it by its type label. A post is named by its title.
  */
-test.describe('YAML Format and isTitle Flag', () => {
+test.describe('YAML format and entry names', () => {
   let editorPage: EditorPage
 
   test.beforeEach(async ({ page }) => {
@@ -150,7 +150,7 @@ test.describe('YAML Format and isTitle Flag', () => {
     })
   })
 
-  test('isTitle on a multi-entry type: a post is named by its title, which follows a saved edit', async ({
+  test('a multi-entry type: a post is named by its title, which follows a saved edit', async ({
     page,
   }) => {
     const stamp = Date.now()

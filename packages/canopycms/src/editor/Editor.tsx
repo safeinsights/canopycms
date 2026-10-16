@@ -2327,7 +2327,11 @@ const EditorContent: React.FC<EditorProps> = ({
                 <RenameEntryModal
                   isOpen={renameModalOpen}
                   entryLabel={renamingEntry.label}
-                  nameSource={entryNameSource(activeCollections, renamingEntry)}
+                  nameSource={entryNameSource(
+                    activeCollections,
+                    renamingEntry,
+                    entryValue(renamingEntry),
+                  )}
                   hasPage={!!renamingEntry.previewSrc}
                   currentSlug={renamingEntry.slug || ''}
                   onSave={handleRenameSubmit}

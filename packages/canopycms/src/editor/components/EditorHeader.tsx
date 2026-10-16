@@ -204,7 +204,7 @@ export function EditorHeader({
           onDiscard={onFileDiscardDraft}
           // A path rule's refusal hides them, as the content tree hides that entry's "…" menu.
           onRename={entryReadOnly ? undefined : onEntryRename}
-          // An entry with a page has a preview `src`; one without changes only its file name.
+          // An entry with a page has a preview `src`; one without changes only its slug.
           entryNoPage={!!currentEntry && !currentEntry.previewSrc}
           onDelete={entryReadOnly ? undefined : onEntryDelete}
           refreshBlockedReason={branchName ? undefined : 'Open a branch first.'}

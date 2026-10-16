@@ -75,7 +75,7 @@ export interface EntryNavItem {
   status?: string
   /** The entry's file is gone: its second line is error text. */
   missing?: boolean
-  /** The entry has no page on the site, so its menu changes its file name rather than its URL. */
+  /** The entry has no page on the site, so its menu changes its slug rather than its URL. */
   noPage?: boolean
   collectionPath?: LogicalPath
   contentId?: ContentId // 12-char embedded ID for ordering
@@ -1003,7 +1003,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                       }}
                       data-testid="rename-entry-menu-item"
                     >
-                      {entryNoPage ? EDITOR_ACTIONS.changeFileName : EDITOR_ACTIONS.changeUrl}…
+                      {entryNoPage ? EDITOR_ACTIONS.changeSlug : EDITOR_ACTIONS.changeUrl}…
                     </Menu.Item>
                   )}
                   {onReorderEntry && contentId && parentCollectionPath && (

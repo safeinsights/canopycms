@@ -154,6 +154,7 @@ export const DrawerWidth: Story = {
                     path: unsafeAsLogicalPath('content/guides/retired'),
                     label: 'Retired guide',
                     status: 'Missing',
+                    missing: true,
                     contentId: unsafeAsContentId('guide0000003'),
                   },
                 ],

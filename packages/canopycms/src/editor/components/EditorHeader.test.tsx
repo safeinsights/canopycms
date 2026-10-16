@@ -356,10 +356,10 @@ describe('EditorHeader - breadcrumb', () => {
     expect(onFileReload).toHaveBeenCalled()
   })
 
-  it('offers "Change file name…" for an entry with no page', async () => {
+  it('offers "Change slug…" for an entry with no page', async () => {
     renderHeader({ currentEntry: { ...currentEntry, previewSrc: undefined } })
     await userEvent.click(screen.getByTestId('file-dropdown-button'))
-    expect((await screen.findByTestId('entry-menu-rename')).textContent).toBe('Change file name…')
+    expect((await screen.findByTestId('entry-menu-rename')).textContent).toBe('Change slug…')
   })
 
   it.each([

@@ -1647,9 +1647,9 @@ describe('entryNameSource', () => {
   })
 
   it("is a labelled singleton's type, even when it has a title field", () => {
-    expect(entryNameSource(collections, at('settings', titled))).toEqual({
+    expect(entryNameSource(collections, at('settings', titled))).toEqual({ from: 'type' })
+    expect(entryNameSource(collections, at('settings', titled), { siteName: 'Example' })).toEqual({
       from: 'type',
-      typeLabel: 'Site settings',
     })
   })
 
@@ -1661,11 +1661,44 @@ describe('entryNameSource', () => {
   })
 
   it("is the type's label for an untitled entry of a labelled type, else the slug", () => {
-    expect(entryNameSource(collections, at('page', untitled))).toEqual({
-      from: 'type',
-      typeLabel: 'Page',
-    })
+    expect(entryNameSource(collections, at('page', untitled))).toEqual({ from: 'type' })
     expect(entryNameSource(collections, at('note', untitled))).toEqual({ from: 'slug' })
+  })
+
+  it('reads past an empty title value to the type, then the slug, as the server does', () => {
+    expect(entryNameSource(collections, at('page', titled), { siteName: 'Example' })).toEqual({
+      from: 'title',
+      fieldLabel: 'Site name',
+    })
+    expect(entryNameSource(collections, at('page', titled), { siteName: '' })).toEqual({
+      from: 'type',
+    })
+    expect(entryNameSource(collections, at('note', titled), { siteName: '' })).toEqual({
+      from: 'slug',
+    })
+    // `title ?? name`: an empty title is not passed over for the name.
+    expect(entryNameSource(collections, at('note', untitled), { title: '', name: 'N' })).toEqual({
+      from: 'slug',
+    })
+  })
+
+  it('takes a string title or name value whatever its field type, as the server does', () => {
+    const markdownTitle: FieldConfig[] = [{ name: 'title', type: 'markdown', label: 'Headline' }]
+    expect(entryNameSource(collections, at('note', markdownTitle), { title: 'Hi' })).toEqual({
+      from: 'title',
+      fieldLabel: 'Headline',
+    })
+    expect(entryNameSource(collections, at('note', untitled), { name: 'Ada' })).toEqual({
+      from: 'title',
+    })
+    expect(entryNameSource(collections, at('note', untitled), { title: 3 })).toEqual({
+      from: 'slug',
+    })
+    // Without the value, a `title` field of any type is taken to name the entry.
+    expect(entryNameSource(collections, at('note', markdownTitle))).toEqual({
+      from: 'title',
+      fieldLabel: 'Headline',
+    })
   })
 })
 

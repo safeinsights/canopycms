@@ -58,7 +58,20 @@ const stubApi = ({
   failingSlug,
   failingEntries,
   listed = [hello, second],
-}: { failingSlug?: string; failingEntries?: boolean; listed?: EditorEntry[] } = {}) => {
+  postType = {},
+  missingSlugs = [],
+  loadedTitle = 'Loaded title',
+}: {
+  failingSlug?: string
+  failingEntries?: boolean
+  listed?: EditorEntry[]
+  /** Extra settings for the post entry type, such as `maxItems: 1` to make it a singleton. */
+  postType?: { label?: string; maxItems?: number }
+  /** Slugs listed with `exists: false`. */
+  missingSlugs?: string[]
+  /** The title every post loads with. */
+  loadedTitle?: string
+} = {}) => {
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
@@ -97,7 +110,7 @@ const stubApi = ({
                 logicalPath: 'content/posts',
                 name: 'posts',
                 label: 'Posts',
-                entries: [{ name: 'post', format: 'json', schema }],
+                entries: [{ name: 'post', format: 'json', schema, ...postType }],
               },
               {
                 type: 'entry-type',
@@ -106,6 +119,7 @@ const stubApi = ({
                 parentPath: 'content/posts',
                 format: 'json',
                 schemaRef: 'postSchema',
+                ...postType,
               },
             ],
             entrySchemas: { postSchema: schema },
@@ -137,7 +151,7 @@ const stubApi = ({
               format: e.format,
               entryType: 'post',
               physicalPath: `/content/posts.abc123XYZ789/post.${e.slug}.${e.contentId}.json`,
-              exists: true,
+              exists: !missingSlugs.includes(e.slug ?? ''),
             })),
             pagination: { hasMore: false, limit: 50 },
           }),
@@ -147,7 +161,7 @@ const stubApi = ({
         return Promise.resolve(new Response('{}', { status: 500 }))
       }
       if (url.includes('/content/content/posts/')) {
-        return Promise.resolve(okJson({ title: 'Loaded title', version: 100 }))
+        return Promise.resolve(okJson({ title: loadedTitle, version: 100 }))
       }
       return Promise.resolve(okJson({}))
     }),
@@ -485,7 +499,7 @@ describe('content panel', () => {
 
   it.each([
     ['with a page, "Change URL"', undefined, 'Change URL'],
-    ['with none, "Change file name"', { 'content/posts': false as const }, 'Change file name'],
+    ['with none, "Change slug"', { 'content/posts': false as const }, 'Change slug'],
   ])(
     'names the entry menu item and dialog by what changes: %s',
     async (_case, previewBaseByCollection, action) => {
@@ -501,6 +515,66 @@ describe('content panel', () => {
       expect(dialog.textContent).toContain('which comes from its “Title” field')
     },
   )
+
+  it.each([
+    ['with a page, "Change URL"', undefined, 'Change URL'],
+    ['with none, "Change slug"', { 'content/posts': false as const }, 'Change slug'],
+  ])(
+    'names the content tree row menu item and its dialog by what changes: %s',
+    async (_case, previewBaseByCollection, action) => {
+      stubWindowWidth(true)
+      stubApi()
+      renderEditor({ previewBaseByCollection })
+      await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+      fireEvent.click(toggle())
+      fireEvent.click(await screen.findByTestId('entry-menu-second'))
+      const item = await screen.findByTestId('rename-entry-menu-item')
+      expect(item.textContent).toBe(`${action}…`)
+      fireEvent.click(item)
+      const dialog = await screen.findByRole('dialog', { name: action })
+      // Not open, so its value is not at hand: its schema's title field names it.
+      expect(dialog.textContent).toContain('which comes from its “Title” field')
+    },
+  )
+
+  it("reads the open entry's value: an empty title leaves its name to its slug", async () => {
+    stubWindowWidth(true)
+    stubApi({ loadedTitle: '' })
+    renderEditor()
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: /^Title/ })).toHaveProperty('value', ''),
+    )
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('entry-menu-rename'))
+    const dialog = await screen.findByRole('dialog', { name: 'Change URL' })
+    expect(dialog.textContent).toContain('with no title, its name follows the URL')
+  })
+
+  it('shows a missing entry as Missing, in error text, in the content tree', async () => {
+    stubWindowWidth(true)
+    stubApi({ missingSlugs: ['second'] })
+    renderEditor()
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+    fireEvent.click(toggle())
+    const row = await screen.findByTestId('entry-nav-item-second')
+    const type = row.querySelector('[data-testid="entry-nav-type"]')
+    expect(type?.textContent).toBe('Missing')
+    expect(type?.querySelector('p')?.getAttribute('style')).toContain('--canopy-danger-text')
+  })
+
+  it('finds a type-named entry in the content tree filter by its title', async () => {
+    stubWindowWidth(true)
+    // Its title shares no text with its slug or its type label.
+    const welcome = { ...hello, label: 'Welcome aboard' }
+    stubApi({ listed: [welcome], postType: { label: 'Featured', maxItems: 1 } })
+    renderEditor({ entries: [welcome] })
+    await waitFor(() => expect(document.title).toBe('Featured · Test Editor'))
+    fireEvent.click(toggle())
+    fireEvent.change(await screen.findByTestId('entry-nav-filter'), { target: { value: 'aboard' } })
+    expect(screen.queryByTestId('entry-nav-filter-empty')).toBeNull()
+    expect(screen.getByTestId('entry-nav-item-featured')).toBeTruthy()
+  })
 
   it("names each entry's type and route under it in quick open", async () => {
     stubWindowWidth(true)

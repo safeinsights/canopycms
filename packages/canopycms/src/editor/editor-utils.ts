@@ -334,35 +334,63 @@ export const entryStatusLabel = (
 }
 
 /**
- * Where an entry's name comes from, which "Change URL" explains: its type's label for a labelled
- * singleton, or for an entry with no title field whose type has a label (the title chain's
- * `entryTypeLabel` step); its title field; else its slug, read as words.
+ * Where an entry's name comes from, which "Change URL" explains. The title chain is the server's
+ * (`resolveEntryTitle`): a non-empty title-field value, else a non-empty string `title` or `name`
+ * value whatever its field's type, else the type's label, else the slug. A labelled singleton is
+ * named by its type whatever its title. `fieldLabel` is absent when no field of that name is in the
+ * schema.
  */
 export type EntryNameSource =
-  | { from: 'type'; typeLabel: string }
-  | { from: 'title'; fieldLabel: string }
+  | { from: 'type' }
+  | { from: 'title'; fieldLabel?: string }
   | { from: 'slug' }
 
+/**
+ * `data` is the entry's value where it is at hand; without it, a schema with a title field, or a
+ * `title` or `name` field, is taken to name the entry from it.
+ */
 export const entryNameSource = (
   collections: EditorCollection[] | undefined,
   entry: Pick<EditorEntry, 'collectionPath' | 'entryType' | 'schema'>,
+  data?: Record<string, unknown>,
 ): EntryNameSource => {
   const type = findEntryType(collections, entry)
-  const singleton = type && singletonLabel(type)
-  if (singleton) return { from: 'type', typeLabel: singleton }
-  const fieldLabel = titleFieldLabel(entry.schema)
-  if (fieldLabel) return { from: 'title', fieldLabel }
-  if (type?.label) return { from: 'type', typeLabel: type.label }
+  if (type && singletonLabel(type)) return { from: 'type' }
+  const titlePath = titleFieldPath(entry.schema)
+  if (data) {
+    const plain = data.title ?? data.name
+    const plainName = isNonEmptyString(plain) ? (data.title != null ? 'title' : 'name') : undefined
+    if (titlePath && isNonEmptyString(valueAt(data, titlePath))) {
+      return { from: 'title', fieldLabel: pathLabel(entry.schema, titlePath) }
+    }
+    if (plainName) return { from: 'title', fieldLabel: pathLabel(entry.schema, [plainName]) }
+  } else {
+    if (titlePath) return { from: 'title', fieldLabel: pathLabel(entry.schema, titlePath) }
+    const named = ['title', 'name'].find((name) => findField(entry.schema, name))
+    if (named) return { from: 'title', fieldLabel: pathLabel(entry.schema, [named]) }
+  }
+  if (type?.label) return { from: 'type' }
   return { from: 'slug' }
 }
 
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value !== ''
+
+/** The value at a data `path`, through nested objects. */
+const valueAt = (data: Record<string, unknown>, path: readonly string[]): unknown =>
+  path.reduce<unknown>(
+    (value, key) =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>)[key]
+        : undefined,
+    data,
+  )
+
 /**
- * The label of the field an entry of this schema takes its title from (`titleFieldPath`), with
- * its enclosing objects' labels before it ("Hero › Heading"); undefined when it has none.
+ * The label of the field at a data `path`, with its enclosing objects' labels before it
+ * ("Hero › Heading"); undefined when the schema has no such field.
  */
-const titleFieldLabel = (schema: EntrySchema): string | undefined => {
-  const path = titleFieldPath(schema)
-  if (!path) return undefined
+const pathLabel = (schema: EntrySchema, path: readonly string[]): string | undefined => {
   const labels: string[] = []
   let fields: readonly FieldConfig[] | undefined = schema
   for (const name of path) {

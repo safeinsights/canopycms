@@ -1,10 +1,10 @@
 'use client'
 
 /**
- * "Change URL", or "Change file name" for an entry with no page: changes an entry's slug, the
- * middle segment of its file name, which sets its URL. Whether its name changes with it depends on
- * where the name comes from (`entryNameSource`). The content ID is preserved, so drafts and
- * references remain intact.
+ * "Change URL", or "Change slug" for an entry with no page: changes an entry's slug, the middle
+ * segment of its file name, which sets its URL. Whether its name changes with it depends on where
+ * the name comes from (`entryNameSource`). The content ID is preserved, so drafts and references
+ * remain intact.
  */
 
 import { useState } from 'react'
@@ -18,14 +18,12 @@ import type { EntryNameSource } from '../editor-utils'
 
 /** What the dialog says it changes, and whether the entry's name changes with it. */
 const nameHelp = (entryLabel: string, source: EntryNameSource | undefined, hasPage: boolean) => {
-  const changes = `This changes the ${hasPage ? 'URL and file name' : 'file name'} of “${entryLabel}”`
-  if (source?.from === 'type') {
-    return `${changes}, not its name, which comes from its type, “${source.typeLabel}”.`
-  }
+  const changes = `This changes the ${hasPage ? 'URL' : 'slug'} of “${entryLabel}”`
+  if (source?.from === 'type') return `${changes}, not its name, which is its type's.`
   if (source?.from === 'slug') {
-    return `${changes}, and its name with it: with no title field, its name follows the ${hasPage ? 'URL' : 'file name'}.`
+    return `${changes}, and its name with it: with no title, its name follows the ${hasPage ? 'URL' : 'slug'}.`
   }
-  const field = source ? `“${source.fieldLabel}” field` : 'title field'
+  const field = source?.fieldLabel ? `“${source.fieldLabel}” field` : 'title field'
   return `${changes}, not its name, which comes from its ${field}. Edit that field in the form to change the name.`
 }
 
@@ -36,7 +34,7 @@ export interface RenameEntryModalProps {
   entryLabel: string
   /** Where the entry's name comes from (`entryNameSource`); a title field when absent. */
   nameSource?: EntryNameSource
-  /** The entry has a page on the site; without one, the dialog changes only its file name. */
+  /** The entry has a page on the site; without one, the dialog changes only its slug. */
   hasPage?: boolean
   /** Current slug value */
   currentSlug: string
@@ -103,7 +101,7 @@ export function RenameEntryModal({
   }
 
   const slugPath = previewPath?.(newSlug || 'your-slug')
-  const action = hasPage ? EDITOR_ACTIONS.changeUrl : EDITOR_ACTIONS.changeFileName
+  const action = hasPage ? EDITOR_ACTIONS.changeUrl : EDITOR_ACTIONS.changeSlug
 
   return (
     <Modal
