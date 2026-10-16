@@ -19,7 +19,7 @@ jobs:
   seed:
     name: Seed (${{ matrix.runner }})
     # A dispatch on another branch would save into that branch's scope, which the pull requests
-    # into it restore ahead of main's.
+    # into that branch also restore.
     if: github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15

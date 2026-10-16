@@ -14,7 +14,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
-/** A refusal for quota or rate, the only pull failure retried, after each delay in seconds. */
+// The registry's refusal, the only pull failure retried, after each delay in seconds. A rate
+// refusal clears that fast; a data-quota refusal, the one CI meets, rarely does.
 export const PULL_REFUSED = /\btoomanyrequests\b/
 export const PULL_RETRY_DELAYS_S = [20, 60]
 

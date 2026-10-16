@@ -1338,7 +1338,7 @@ Flags: `--pm pnpm|npm`, `--next <version>` (default 16.1.7), `--pnpm-version` (d
 
 **Pitfall:** a fixture that bundles sharp instead of externalizing it fails the "externalized" check on purpose. That is the guard working, not a fixture bug.
 
-CI runs it as `standalone-image`, matrixed over pnpm and npm on `ubuntu-latest` and pnpm on `ubuntu-24.04-arm` (the Lambda's default architecture). It is gated by `dorny/paths-filter` like `dual-build` — the job always reports, only the expensive build and boot steps are skipped — on every source and packaging input of the three packages, the lockfile, the root `package.json`, `.nvmrc`, and the script and workflow themselves. `ci.yml` carries the list and why it is that wide. Its base images come from an Actions cache that [cms-base-images.yml](.github/workflows/cms-base-images.yml) fills weekly on `main`, because public.ecr.aws refuses anonymous pulls from runners whose shared IP used its quota; see `scripts/smoke/base-images.mjs`.
+CI runs it as `standalone-image`, matrixed over pnpm and npm on `ubuntu-latest` and pnpm on `ubuntu-24.04-arm` (the Lambda's default architecture). It is gated by `dorny/paths-filter` like `dual-build` — the job always reports, only the expensive build and boot steps are skipped — on every source and packaging input of the three packages, the lockfile, the root `package.json`, `.nvmrc`, and the script and workflow themselves. `ci.yml` carries the list and why it is that wide. Its base images come from an Actions cache that [cms-base-images.yml](.github/workflows/cms-base-images.yml) fills daily on `main`, because public.ecr.aws refuses anonymous pulls from runners whose shared IP used its quota; see `scripts/smoke/base-images.mjs`.
 
 ### Backlog: GitHub Issues
 
