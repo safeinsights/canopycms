@@ -3,7 +3,7 @@
 import React from 'react'
 import { Drawer, Group, type DrawerRootProps } from '@mantine/core'
 
-export interface OverlayHeaderProps {
+interface OverlayHeaderProps {
   title: React.ReactNode
   /** Sits beside the title and is part of its accessible name, such as a status badge. */
   adornment?: React.ReactNode
@@ -18,7 +18,7 @@ export interface OverlayHeaderProps {
  * 1px bottom rule. It is the drawer's own `Drawer.Header`, so the title labels the dialog and the
  * header stays pinned while the body scrolls.
  */
-export const OverlayHeader: React.FC<OverlayHeaderProps> = ({
+const OverlayHeader: React.FC<OverlayHeaderProps> = ({
   title,
   adornment,
   titleRef,
