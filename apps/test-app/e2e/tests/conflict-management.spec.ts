@@ -62,7 +62,7 @@ test.describe('Conflict Management', () => {
     // 3. Edit the Home Page entry on the branch
     await test.step('edit Home Page on branch', async () => {
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.fillTextField('title', 'Branch Edit Title')
       await editorPage.saveAndVerify()
     })

@@ -23,7 +23,7 @@ test.describe('Draft Behavior', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
     })
 
     await test.step('verify initial state — save button disabled (no changes)', async () => {
@@ -56,7 +56,7 @@ test.describe('Draft Behavior', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
     })
 
     const draftTitle = `Draft-${Date.now()}`

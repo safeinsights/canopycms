@@ -7,16 +7,30 @@ import type {
 import equal from 'fast-deep-equal'
 
 import type { CommentThread } from '../comment-store'
+import { ITEM_KEY, isItemKey } from '../item-keys'
 import { isPlainRecord } from '../validation/field-traversal'
 import { normalizeCanopyPath, parseCanopyPath, type CanopyPathSegment } from './canopy-path'
 
 /**
  * One list a removal sits inside (a block list, or an object list holding the removed item's
- * list): the index of the item enclosing the removal, and every other item.
+ * list): the index of the item enclosing the removal, and that item's `ITEM_KEY`, which an edit
+ * or a move keeps. An item with no usable key is anchored by every other item's content instead.
  */
-export interface RemovalAnchor {
+export type RemovalAnchor = { index: number } & (
+  | { key: string; siblings?: never }
+  | { key?: never; siblings: unknown[] }
+)
+
+/** An enclosing list as it is: the list itself and the index the path takes through it. */
+interface EnclosingList {
+  list: unknown[]
   index: number
-  siblings: unknown[]
+}
+
+const itemKeyAt = (list: readonly unknown[], index: number): string | undefined => {
+  const item = list[index]
+  const key = isPlainRecord(item) ? item[ITEM_KEY] : undefined
+  return isItemKey(key) ? key : undefined
 }
 
 /**
@@ -38,11 +52,10 @@ export type FieldRemoval = (
 ) & {
   /**
    * The enclosing lists as they were before the removal (`removalAnchors`). Undo puts nothing
-   * back once one has changed, so an item never lands in whichever block now holds its index.
+   * back once another item holds an enclosing index, so an item never lands in whichever block
+   * now holds it; an edit to any item keeps a keyed anchor.
    */
   anchors?: RemovalAnchor[]
-  /** `clear` for an optional object's Clear, which its toast calls clearing, not removing. */
-  action?: 'remove' | 'clear'
 }
 
 const findField = (fields: readonly FieldConfig[], name: string): FieldConfig | undefined => {
@@ -65,13 +78,12 @@ const resolvePath = (
   fields: readonly FieldConfig[],
   value: unknown,
   path: readonly CanopyPathSegment[],
-): { path: CanopyPathSegment[]; anchors: RemovalAnchor[] } | undefined => {
+): { path: CanopyPathSegment[]; lists: EnclosingList[] } | undefined => {
   let scope = fields
   let node = value
   const out: CanopyPathSegment[] = []
-  const anchors: RemovalAnchor[] = []
-  const anchor = (list: unknown[], index: number) =>
-    anchors.push({ index, siblings: list.filter((_, i) => i !== index) })
+  const lists: EnclosingList[] = []
+  const anchor = (list: unknown[], index: number) => lists.push({ list, index })
   let i = 0
   while (i < path.length) {
     const name = path[i]
@@ -80,7 +92,7 @@ const resolvePath = (
     out.push(name)
     node = isPlainRecord(node) ? node[name] : undefined
     i += 1
-    if (i === path.length) return { path: out, anchors }
+    if (i === path.length) return { path: out, lists }
     const index = path[i]
     if (field.type === 'block') {
       const block = typeof index === 'number' && Array.isArray(node) ? node[index] : undefined
@@ -106,7 +118,7 @@ const resolvePath = (
       return undefined
     }
   }
-  return { path: out, anchors }
+  return { path: out, lists }
 }
 
 const getAt = (root: unknown, path: readonly CanopyPathSegment[]): unknown =>
@@ -136,16 +148,20 @@ const removalPath = (removal: FieldRemoval): CanopyPathSegment[] =>
 
 const anchorsHold = (
   then: readonly RemovalAnchor[] | undefined,
-  now: readonly RemovalAnchor[],
+  now: readonly EnclosingList[],
 ): boolean =>
   then === undefined ||
   (then.length === now.length &&
-    then.every(
-      (anchor, i) =>
-        anchor.index === now[i].index &&
-        // By content as stored, so the server's copy of the same items still holds.
-        sameContent(anchor.siblings, now[i].siblings),
-    ))
+    then.every((anchor, i) => {
+      const { list, index } = now[i]
+      if (anchor.index !== index) return false
+      if (anchor.key !== undefined) return itemKeyAt(list, index) === anchor.key
+      // By content as stored, so the server's copy of the same items still holds.
+      return sameContent(
+        anchor.siblings,
+        list.filter((_, j) => j !== index),
+      )
+    }))
 
 /**
  * The canopy path `restoreRemoval` puts a removal back at: a list item returns to its old index,
@@ -168,22 +184,22 @@ export function removalAnchors(
   value: Record<string, unknown>,
   removal: FieldRemoval,
 ): RemovalAnchor[] | undefined {
-  return resolvePath(fields, value, removalPath(removal))?.anchors
+  return resolvePath(fields, value, removalPath(removal))?.lists.map(({ list, index }) => {
+    const key = itemKeyAt(list, index)
+    return key !== undefined
+      ? { index, key }
+      : { index, siblings: list.filter((_, j) => j !== index) }
+  })
 }
 
-/**
- * `value` with a removal put back, or undefined when it can't be: the list or field is gone, an
- * enclosing list has changed, the item is already there, or the image field has been filled.
- * Edits made after the removal are kept, because it changes only the one list or field, in the
- * value as it is now.
- */
-export function restoreRemoval(
+/** Where and what `restoreRemoval` writes, or undefined when it can't; see there. */
+const planRestore = (
   fields: readonly FieldConfig[],
   value: Record<string, unknown>,
   removal: FieldRemoval,
-): Record<string, unknown> | undefined {
+): { path: CanopyPathSegment[]; next: unknown } | undefined => {
   const resolved = resolvePath(fields, value, removalPath(removal))
-  if (!resolved || !anchorsHold(removal.anchors, resolved.anchors)) return undefined
+  if (!resolved || !anchorsHold(removal.anchors, resolved.lists)) return undefined
   const { path } = resolved
   // An enclosing object cleared since would come back holding only this.
   if (!isPlainRecord(path.length > 1 ? getAt(value, path.slice(0, -1)) : value)) return undefined
@@ -202,9 +218,37 @@ export function restoreRemoval(
     if (current !== undefined && current !== null) return undefined
     next = removal.value
   }
-  const restored = setAt(value, path, next)
+  return { path, next }
+}
+
+/** Whether `restoreRemoval` would put the removal back, without building the restored value. */
+export const canRestoreRemoval = (
+  fields: readonly FieldConfig[],
+  value: Record<string, unknown>,
+  removal: FieldRemoval,
+): boolean => planRestore(fields, value, removal) !== undefined
+
+/**
+ * `value` with a removal put back, or undefined when it can't be: the list or field is gone,
+ * another item holds an enclosing index, the item is already there, or the image field or object
+ * has been filled. Edits made after the removal are kept, because it changes only the one list or
+ * field, in the value as it is now.
+ */
+export function restoreRemoval(
+  fields: readonly FieldConfig[],
+  value: Record<string, unknown>,
+  removal: FieldRemoval,
+): Record<string, unknown> | undefined {
+  const plan = planRestore(fields, value, removal)
+  const restored = plan ? setAt(value, plan.path, plan.next) : undefined
   return isPlainRecord(restored) ? restored : undefined
 }
+
+/** Where a removal's moved threads went, said with its Undo; undefined when none moved. */
+export const movedThreadsNote = (count: number): string | undefined =>
+  count > 0
+    ? `Its ${count === 1 ? 'comment thread' : `${count} comment threads`} moved to "Comment on this entry".`
+    : undefined
 
 /**
  * How many open field threads a removal at `path` moves to the entry: those inside it keyed to an

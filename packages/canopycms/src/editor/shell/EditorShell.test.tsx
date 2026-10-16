@@ -4,7 +4,8 @@ import { createPortal } from 'react-dom'
 import { Modal } from '@mantine/core'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { EditorShell } from './EditorShell'
+import { EditorShell, SHELL_REGION_BORDER } from './EditorShell'
+import { BranchLockBanner } from '../components/BranchLockBanner'
 import { CanopyCMSProvider } from '../theme'
 
 const foreignRoots: HTMLElement[] = []
@@ -163,5 +164,34 @@ describe('EditorShell', () => {
     expect(shell().querySelector('header')).toBeNull()
     expect(shell().querySelector('aside')).toBeNull()
     expect(screen.getByRole('main').textContent).toBe('Main')
+  })
+
+  it('draws a line under the banner region only while a banner shows', async () => {
+    const withBanner = (branchReadOnly: boolean) => (
+      <CanopyCMSProvider>
+        <EditorShell
+          banner={
+            <BranchLockBanner
+              branchName="main"
+              branchStatus="editing"
+              branchReadOnly={branchReadOnly}
+              onBranchManagerOpen={() => {}}
+            />
+          }
+          main={<p>Main</p>}
+        />
+      </CanopyCMSProvider>
+    )
+    const { rerender } = render(withBanner(false))
+    await waitFor(() => expect(shell()).not.toBeNull())
+    const line = () =>
+      getComputedStyle(
+        shell().querySelector('[data-canopy-region="banner"]') as HTMLElement,
+      ).getPropertyValue('border-block-end')
+    expect(line()).toBe('')
+
+    rerender(withBanner(true))
+    expect(screen.getByTestId('protected-branch-banner')).toBeDefined()
+    expect(line()).toBe(SHELL_REGION_BORDER)
   })
 })

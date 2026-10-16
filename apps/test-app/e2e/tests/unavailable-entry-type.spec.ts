@@ -70,7 +70,7 @@ test.describe('Unavailable entry type', () => {
 
     await test.step('a healthy entry still opens into its form', async () => {
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await expect(page.getByTestId('unavailable-entry-notice')).toHaveCount(0)
       await expect(editorPage.formPane.locator('[data-canopy-field]').first()).toBeVisible()
     })

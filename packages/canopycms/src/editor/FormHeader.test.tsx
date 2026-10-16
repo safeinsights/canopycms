@@ -7,6 +7,8 @@ import type { FieldConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
 import { FormHeader, type OutlineNode } from './FormHeader'
+import { PreviewPane } from './PreviewPane'
+import { PANE_HEADER_HEIGHT } from './pane-header'
 import { CanopyCMSProvider } from './theme'
 
 afterEach(() => cleanup())
@@ -91,14 +93,16 @@ const input = (path: string): HTMLInputElement => {
 }
 
 describe('FormHeader', () => {
-  it('shows the title and the type badge', () => {
+  it('shows the type badge, and names the entry to assistive tech only', () => {
     render(
       <CanopyCMSProvider>
         <FormHeader title="About us" typeLabel="Page" outline={[]} onSelect={vi.fn()} />
       </CanopyCMSProvider>,
     )
     const header = screen.getByTestId('form-header')
-    expect(within(header).getByText('About us')).toBeTruthy()
+    const title = within(header).getByText('About us')
+    expect(title).toBe(screen.getByTestId('form-header-title'))
+    expect(title.className).toContain('mantine-VisuallyHidden-root')
     expect(header.querySelector('.mantine-Badge-root')?.textContent).toBe('Page')
   })
 
@@ -111,6 +115,20 @@ describe('FormHeader', () => {
     const header = screen.getByTestId('form-header')
     expect(within(header).getByText('About us')).toBeTruthy()
     expect(header.querySelector('.mantine-Badge-root')).toBeNull()
+  })
+
+  it('is as tall as the preview toolbar beside it', () => {
+    render(
+      <CanopyCMSProvider>
+        <PreviewPane src="/about" data={{}} previewWidth="fit" onPreviewWidthChange={vi.fn()} />
+        <FormHeader title="About us" outline={[]} onSelect={vi.fn()} />
+      </CanopyCMSProvider>,
+    )
+    expect(screen.getByTestId('form-header').style.minHeight).toBe(`${PANE_HEADER_HEIGHT}px`)
+    // The preview pane's 1px top border sits above its toolbar.
+    expect(screen.getByTestId('preview-toolbar').style.minHeight).toBe(
+      `${PANE_HEADER_HEIGHT - 1}px`,
+    )
   })
 
   describe('outline tree', () => {
@@ -713,14 +731,13 @@ describe('FormHeader icon buttons', () => {
 })
 
 describe('FormHeader badge', () => {
-  it('gives way before the title in a narrow pane: it may shrink, twice as fast, below its content', () => {
+  it('gives way before the controls in a narrow pane: it may shrink below its content', () => {
     render(
       <CanopyCMSProvider>
         <FormHeader title="T" typeLabel="Landing page" outline={[]} onSelect={vi.fn()} />
       </CanopyCMSProvider>,
     )
     const badge = document.querySelector<HTMLElement>('.mantine-Badge-root')!
-    expect(badge.style.flexShrink).toBe('2')
     expect(badge.style.minWidth).toMatch(/^0(px)?$/)
   })
 })

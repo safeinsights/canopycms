@@ -680,34 +680,30 @@ describe('Undo after Remove', () => {
 })
 
 describe('Clear and its Undo', () => {
-  const undoToast = () => {
-    const call = vi
-      .mocked(notifications.show)
-      .mock.calls.find(([options]) => String(options.id ?? '').startsWith('canopy-undo-'))
-    expect(call).toBeDefined()
-    return call![0]
+  const clearSeo = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for SEO' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Clear "SEO"' }))
+    await waitFor(() => expect(persistedDraft(hello.contentId)).toBeDefined())
+    expect(persistedDraft(hello.contentId)?.seo).toBeUndefined()
   }
+  const undoClear = () => screen.queryByRole('button', { name: 'Undo clear "SEO"' })
+  const undoToasts = () =>
+    vi
+      .mocked(notifications.show)
+      .mock.calls.filter(([options]) => String(options.id ?? '').startsWith('canopy-undo-'))
 
-  it('puts the object back and moves focus into it', async () => {
+  it('offers Undo in the form, not a toast, and puts the object back focused', async () => {
     stubApi([])
     renderEditor()
     await loaded()
 
-    const seo = screen.getByRole('group', { name: 'SEO' })
-    const clear = screen.getByRole('button', { name: 'Clear "SEO"' })
-    act(() => clear.focus())
-    fireEvent.click(clear)
-    await waitFor(() => expect(persistedDraft(hello.contentId)).toBeDefined())
-    expect(persistedDraft(hello.contentId)?.seo).toBeUndefined()
-    // The button goes with the value, so focus stays on the object rather than the page.
-    expect(screen.queryByRole('button', { name: 'Clear "SEO"' })).toBeNull()
-    expect(document.activeElement).toBe(seo)
+    await clearSeo()
+    expect(undoToasts()).toEqual([])
+    const undo = undoClear()
+    expect(undo).not.toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(undo))
 
-    const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
-    expect(message.getByText('Cleared "SEO"')).toBeTruthy()
-    const undo = message.getByRole('button', { name: 'Undo clearing "SEO"' })
-    act(() => undo.focus())
-    act(() => fireEvent.click(undo))
+    act(() => fireEvent.click(undo!))
 
     await waitFor(() =>
       expect(persistedDraft(hello.contentId)?.seo).toEqual({ summary: 'Saved summary' }),
@@ -715,29 +711,20 @@ describe('Clear and its Undo', () => {
     const summary = screen.getByRole('textbox', { name: 'Summary' })
     await waitFor(() => expect(document.activeElement).toBe(summary))
     expect((summary as HTMLInputElement).value).toBe('Saved summary')
+    expect(undoClear()).toBeNull()
   })
 
-  it('puts nothing back once the object has been filled in again', async () => {
+  it('ends when the entry is saved', async () => {
     stubApi([])
     renderEditor()
     await loaded()
+    await clearSeo()
+    expect(undoClear()).not.toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear "SEO"' }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Summary' }), {
-      target: { value: 'Typed after' },
-    })
-    await waitFor(() =>
-      expect(persistedDraft(hello.contentId)?.seo).toEqual({ summary: 'Typed after' }),
-    )
+    fireEvent.click(screen.getByTestId('save-button'))
 
-    const message = render(<MantineProvider>{undoToast().message}</MantineProvider>)
-    act(() => fireEvent.click(message.getByRole('button', { name: 'Undo clearing "SEO"' })))
-
-    expect(notifications.show).toHaveBeenLastCalledWith({
-      message: `Couldn't undo clearing "SEO": that part of the entry has changed. Fill it in again if you still need it.`,
-      color: 'yellow',
-    })
-    expect(persistedDraft(hello.contentId)?.seo).toEqual({ summary: 'Typed after' })
+    await waitFor(() => expect(undoClear()).toBeNull())
+    expect(screen.queryByRole('button', { name: 'Actions for SEO' })).toBeNull()
   })
 })
 

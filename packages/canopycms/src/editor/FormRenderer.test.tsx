@@ -837,7 +837,7 @@ describe('FormRenderer', () => {
 
     it('has no Clear affordance while the field is absent (nothing to clear)', () => {
       render(<StatefulForm fields={objectFields} initialValue={{}} />)
-      expect(screen.queryByRole('button', { name: /^Clear\b/ })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Actions for Meta' })).toBeNull()
     })
 
     it('a filled-then-cleared required child is recoverable via Clear, resetting to undefined (not {})', async () => {
@@ -851,8 +851,8 @@ describe('FormRenderer', () => {
       let state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
       expect(state.meta).toEqual({ label: 'x' })
 
-      // The object now has a value, so the Clear affordance appears.
-      const clearButton = screen.getByRole('button', { name: /^Clear\b/ })
+      // The object now has a value, so its "…" menu, which holds Clear, appears.
+      const actions = screen.getByRole('button', { name: 'Actions for Meta' })
 
       // Change their mind and empty the child back out. The object is still
       // "present" ({ label: '' }), so entry-validator's required-child check
@@ -869,7 +869,8 @@ describe('FormRenderer', () => {
       // Clear recovers by resetting the whole object field to undefined,
       // never to {} (which would still carry the required-but-empty child
       // straight back into validation).
-      await user.click(clearButton)
+      await user.click(actions)
+      await user.click(await screen.findByRole('menuitem', { name: 'Clear "Meta"' }))
       state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
       expect(state.meta).toBeUndefined()
       expect(validateEntryData(objectFields, state)).toEqual([])
@@ -925,7 +926,7 @@ describe('FormRenderer', () => {
         },
       ]
       render(<StatefulForm fields={requiredFields} initialValue={{ meta: { label: 'x' } }} />)
-      expect(screen.queryByRole('button', { name: /^Clear\b/ })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Actions for Meta' })).toBeNull()
     })
 
     it('gets its own comment affordance, and a nested child keeps its own (regression guard)', () => {
@@ -1294,7 +1295,7 @@ describe('FormRenderer', () => {
       )
       expect(document.querySelector('[id$="-description"]')).toBeNull()
       expect(document.querySelector('[aria-describedby]')).toBeNull()
-      // Still a named group, which Clear hands focus to.
+      // Still a named group, which names the object to assistive tech.
       expect(screen.getByRole('group', { name: 'Meta' })).toBeTruthy()
     })
 

@@ -23,7 +23,7 @@ test.describe('Comments', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       // Close navigator so form pane is interactive
       await editorPage.closeContentNavigator()
     })

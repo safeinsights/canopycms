@@ -274,8 +274,10 @@ const renderEditor = (initialSelectedId: string) =>
     />,
   )
 
+/** Opens the content panel from the rail, unless it is open already. */
 const openNavigator = async () => {
-  fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
+  const toggle = screen.getByTestId('content-panel-toggle')
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
   await waitFor(() => expect(screen.getByTestId('entry-nav-item-widgets')).toBeDefined())
 }
 
@@ -356,7 +358,7 @@ describe('Editor: an entry of an unavailable type', () => {
     fireEvent.click(screen.getByTestId('entry-nav-item-posts'))
     fireEvent.click(await screen.findByTestId('entry-nav-item-hello'))
     await waitFor(() => expect(screen.queryByTestId('unavailable-entry-notice')).toBeNull())
-    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
+    await openNavigator()
     fireEvent.click(await screen.findByTestId('entry-nav-item-first'))
     await screen.findByTestId('unavailable-entry-notice')
 
@@ -396,7 +398,7 @@ describe('Editor: an entry of an unavailable type', () => {
     })
 
     widgetResponse = () => okJson({ ok: true, status: 200, data: { size: 'large', version: 1 } })
-    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
+    await openNavigator()
     fireEvent.click(await screen.findByTestId('entry-nav-item-first'))
 
     await waitFor(() => {

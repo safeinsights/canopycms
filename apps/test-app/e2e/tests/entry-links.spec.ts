@@ -1,5 +1,5 @@
 import { BASE_URL } from '../fixtures/base-url'
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import {
@@ -17,6 +17,10 @@ import { STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
  * They appear in the MDXEditor toolbar and insert markdown of the form:
  *   [Entry Label](entry:CONTENT_ID)
  */
+/** The home entry's option, listed by its single-entry type's label; its slug shows beneath. */
+const homeOption = (page: Page) =>
+  page.getByRole('option').filter({ has: page.getByText('Home', { exact: true }) })
+
 test.describe('Entry Links in MDX Editor', () => {
   let editorPage: EditorPage
 
@@ -83,8 +87,8 @@ test.describe('Entry Links in MDX Editor', () => {
       const searchInput = page.locator('[data-testid="entry-link-search"]')
       await searchInput.click()
 
-      // Home Page is always present
-      await expect(page.locator('[role="option"]', { hasText: 'Home Page' })).toBeVisible({
+      // Home is always present
+      await expect(homeOption(page)).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
       // Both posts should appear with their saved titles
@@ -122,15 +126,15 @@ test.describe('Entry Links in MDX Editor', () => {
         timeout: STANDARD_TIMEOUT,
       })
 
-      // Home Page should not be visible after filtering
-      await expect(page.locator('[role="option"]', { hasText: 'Home Page' })).not.toBeVisible()
+      // Home should not be visible after filtering
+      await expect(homeOption(page)).not.toBeVisible()
     })
 
     await test.step('clear search restores all entries', async () => {
       const searchInput = page.locator('[data-testid="entry-link-search"]')
       await searchInput.clear()
 
-      await expect(page.locator('[role="option"]', { hasText: 'Home Page' })).toBeVisible({
+      await expect(homeOption(page)).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
     })
@@ -176,10 +180,10 @@ test.describe('Entry Links in MDX Editor', () => {
         timeout: STANDARD_TIMEOUT,
       })
 
-      // Open the dropdown and select Home Page
+      // Open the dropdown and select Home
       const searchInput = page.locator('[data-testid="entry-link-search"]')
       await searchInput.click()
-      const option = page.locator('[role="option"]', { hasText: 'Home Page' })
+      const option = homeOption(page)
       await option.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
       await option.click()
     })
@@ -193,6 +197,7 @@ test.describe('Entry Links in MDX Editor', () => {
     await test.step('verify link appears in editor', async () => {
       const bodyEditor = editorPage.richTextField('Body')
       // The inserted link should render as a link in the WYSIWYG editor
+      // The link text is the entry's title, not the type label the picker lists it by.
       await expect(bodyEditor).toContainText('Home Page', { timeout: STANDARD_TIMEOUT })
     })
 

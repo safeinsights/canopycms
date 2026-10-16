@@ -1,8 +1,10 @@
 'use client'
 
 /**
- * Allows changing the slug (middle segment) of an entry filename.
- * The content ID is preserved, so drafts and references remain intact.
+ * "Change URL", or "Change slug" for an entry with no page: changes an entry's slug, the middle
+ * segment of its file name, which sets its URL. Whether its name changes with it depends on where
+ * the name comes from (`entryNameSource`). The content ID is preserved, so drafts and references
+ * remain intact.
  */
 
 import { useState } from 'react'
@@ -11,12 +13,29 @@ import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 
 import { validateEntrySlug } from '../slug'
 import { focusReturnProps } from '../utils/focus-return'
+import { EDITOR_ACTIONS } from '../copy'
+import type { EntryNameSource } from '../editor-utils'
+
+/** What the dialog says it changes, and whether the entry's name changes with it. */
+const nameHelp = (entryLabel: string, source: EntryNameSource | undefined, hasPage: boolean) => {
+  const changes = `This changes the ${hasPage ? 'URL' : 'slug'} of “${entryLabel}”`
+  if (source?.from === 'type') return `${changes}, not its name, which is its type's.`
+  if (source?.from === 'slug') {
+    return `${changes}, and its name with it: with no title, its name follows the ${hasPage ? 'URL' : 'slug'}.`
+  }
+  const field = source?.fieldLabel ? `“${source.fieldLabel}” field` : 'title field'
+  return `${changes}, not its name, which comes from its ${field}. Edit that field in the form to change the name.`
+}
 
 export interface RenameEntryModalProps {
   /** Whether the modal is open */
   isOpen: boolean
   /** Current entry label for display */
   entryLabel: string
+  /** Where the entry's name comes from (`entryNameSource`); a title field when absent. */
+  nameSource?: EntryNameSource
+  /** The entry has a page on the site; without one, the dialog changes only its slug. */
+  hasPage?: boolean
   /** Current slug value */
   currentSlug: string
   /** Called when save is clicked */
@@ -40,6 +59,8 @@ export interface RenameEntryModalProps {
 export function RenameEntryModal({
   isOpen,
   entryLabel,
+  nameSource,
+  hasPage = true,
   currentSlug,
   onSave,
   onClose,
@@ -80,12 +101,13 @@ export function RenameEntryModal({
   }
 
   const slugPath = previewPath?.(newSlug || 'your-slug')
+  const action = hasPage ? EDITOR_ACTIONS.changeUrl : EDITOR_ACTIONS.changeSlug
 
   return (
     <Modal
       opened={isOpen}
       onClose={onClose}
-      title={<Text fw={600}>Rename entry</Text>}
+      title={<Text fw={600}>{action}</Text>}
       size="md"
       closeOnClickOutside={!isSaving}
       closeOnEscape={!isSaving}
@@ -105,8 +127,8 @@ export function RenameEntryModal({
             )
           )}
 
-          <Text size="sm" c="dimmed">
-            Renaming “{entryLabel}”
+          <Text size="sm" c="dimmed" data-testid="change-url-help">
+            {nameHelp(entryLabel, nameSource, hasPage)}
           </Text>
 
           <TextInput
@@ -138,7 +160,7 @@ export function RenameEntryModal({
               disabled={newSlug === currentSlug}
               data-testid="rename-entry-submit"
             >
-              Rename
+              {action}
             </Button>
           </Group>
         </Stack>

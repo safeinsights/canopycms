@@ -4,6 +4,7 @@ import {
   ASSET_PREFIXES,
   createKeyBuilders,
   hashBytes,
+  hiddenKey,
   metaKey,
   originalKey,
   originalPrefix,
@@ -127,14 +128,16 @@ describe('key builders', () => {
     expect(originalPrefix('abc123')).toBe('asset-originals/abc123.')
     expect(stagingKey('uuid-1')).toBe('asset-staging/uuid-1')
     expect(metaKey('abc123')).toBe('asset-meta/abc123.json')
+    expect(hiddenKey('abc123')).toBe('asset-hidden/abc123.json')
     expect(publicKey('abc123', 'my-slug', 'svg')).toBe('assets/abc123/my-slug.svg')
   })
 
-  it('exposes exactly the five documented prefixes as constants', () => {
+  it('exposes exactly the six documented prefixes as constants', () => {
     expect(ASSET_PREFIXES).toEqual({
       originals: 'asset-originals',
       staging: 'asset-staging',
       meta: 'asset-meta',
+      hidden: 'asset-hidden',
       public: 'assets',
       transform: 'assets/t',
     })
@@ -145,6 +148,7 @@ describe('key builders', () => {
       originals: 'custom-originals',
       staging: 'custom-staging',
       meta: 'custom-meta',
+      hidden: 'custom-hidden',
       public: 'custom-assets',
       transform: 'custom-assets/t',
     })
@@ -152,6 +156,8 @@ describe('key builders', () => {
     expect(custom.stagingKey('u')).toBe('custom-staging/u')
     expect(custom.metaKey('h')).toBe('custom-meta/h.json')
     expect(custom.metaPrefix()).toBe('custom-meta/')
+    expect(custom.hiddenKey('h')).toBe('custom-hidden/h.json')
+    expect(custom.hiddenPrefix()).toBe('custom-hidden/')
     expect(custom.publicKey('h', 's', 'svg')).toBe('custom-assets/h/s.svg')
   })
 })

@@ -186,7 +186,6 @@ const PermissionManagerDrawer: React.FC<PermissionManagerProps & { onExited: () 
       opened={opened}
       onClose={onClose}
       title="Permissions"
-      description="Manage content access by path (read, edit, review)"
       size={700}
       isDirty={isDirty}
       isSaving={isSaving}

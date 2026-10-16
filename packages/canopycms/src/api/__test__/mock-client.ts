@@ -15,7 +15,7 @@ import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResp
 import type { ReferenceOptionsResponse } from '../reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from '../resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from '../entries'
-import type { AssetDeleteResponse, AssetsListResponse, FinalizeAssetBody, FinalizeAssetResponse, PresignAssetBody, PresignAssetResponse } from '../assets'
+import type { AssetKeyBody, AssetVisibilityResponse, AssetsListResponse, FinalizeAssetBody, FinalizeAssetResponse, PresignAssetBody, PresignAssetResponse } from '../assets'
 import type { BatchGetUserMetadataBody, BatchGetUserMetadataResponse, GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from '../permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from '../groups'
 import type { UserInfoResponse } from '../user'
@@ -82,7 +82,8 @@ export function createMockApiClient(): MockApiClient {
     finalize: vi.fn().mockResolvedValue(mockSuccess({"asset":{"hash32":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","filename":"sample.png","slug":"sample","ext":"png","mime":"image/png","size":1024,"width":100,"height":100,"kind":"raster","uploadedAt":"2024-01-01T00:00:00.000Z","src":"/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sample.png"}})),
     uploadProxied: vi.fn().mockResolvedValue(mockSuccess({"asset":{"hash32":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","filename":"sample.png","slug":"sample","ext":"png","mime":"image/png","size":1024,"width":100,"height":100,"kind":"raster","uploadedAt":"2024-01-01T00:00:00.000Z","src":"/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sample.png"}})),
     list: vi.fn().mockResolvedValue(mockSuccess({"assets":[]})),
-    delete: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
+    hide: vi.fn().mockResolvedValue(mockSuccess({"hidden":true})),
+    restore: vi.fn().mockResolvedValue(mockSuccess({"hidden":false})),
   },
 
   permissions: {
@@ -222,8 +223,8 @@ export function mockAssetsListResponse(): AssetsListResponse {
   return mockSuccess({"assets":[]})
 }
 
-export function mockAssetDeleteResponse(): AssetDeleteResponse {
-  return mockSuccess({"deleted":true})
+export function mockAssetVisibilityResponse(): AssetVisibilityResponse {
+  return mockSuccess({"hidden":true})
 }
 
 export function mockPermissionsResponse(): PermissionsResponse {

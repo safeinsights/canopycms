@@ -5,4 +5,6 @@
 export interface PreviewRouteProps {
   /** The signed-in asset route, which `usePreviewAssetBaseGate` sets before the view renders. */
   previewAssetBase?: string
+  /** The route has a `layout`, so the view tells the editor it can show the site's header and footer. */
+  previewSiteChrome?: boolean
 }

@@ -52,7 +52,14 @@ import { FormExpansionContext, type FormExpansionCommand } from './fields/form-e
 import { FormHeader } from './FormHeader'
 import { buildFormOutline, hasCollapsibleList } from './form-outline'
 import { findFieldTarget, focusFieldTarget } from './field-target'
-import type { FieldRemoval } from './undo-removal'
+import {
+  canRestoreRemoval,
+  movedThreadsNote,
+  openThreadsWithin,
+  removalAnchors,
+  restoreRemoval,
+  type FieldRemoval,
+} from './undo-removal'
 import { schemaLabel } from './schema-label'
 
 export type FormValue = Record<string, unknown>
@@ -95,6 +102,20 @@ const normalizeOptions = (
 }
 
 const fieldKey = (path: Array<string | number>): string => formatCanopyPath(path)
+
+/** An optional object's Clear, kept so its label row can offer Undo. */
+interface ClearedObject {
+  removal: FieldRemoval
+  /** Where its comment threads went, when any moved to the entry. */
+  note?: string
+}
+
+/** The cleared objects offering Undo, by canopy path, and the form they were cleared in. */
+interface ClearedObjects {
+  scope: string
+  savedValue: FormValue | undefined
+  byPath: Record<string, ClearedObject>
+}
 
 const noop = (): void => {}
 
@@ -201,8 +222,13 @@ export interface FormRendererProps {
   format?: ContentFormat
   /** Shows the value without accepting edits. Comments stay open. */
   readOnly?: boolean
-  /** Told of each list item, block or image Remove takes out, or object Clear resets, for Undo. */
+  /** Told of each list item, block or image Remove takes out, for Undo. */
   onRemoved?: (removal: FieldRemoval) => void
+  /**
+   * The entry's saved copy, which `value` is while there is no draft. A new one (a save, a reload)
+   * or showing it unchanged (a discard) ends every object's Undo clear.
+   */
+  savedValue?: FormValue
   /** Resolves comment authors to names in field and entry threads; without it they show as ids. */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /**
@@ -237,6 +263,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   format,
   readOnly = false,
   onRemoved,
+  savedValue,
   onGetUserMetadata,
   header,
   notice,
@@ -263,6 +290,59 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       )
     }
   const [formComments] = useState(createFormComments)
+
+  // An object's Undo clear lasts while it can put the object back where it was (checked by
+  // `canRestoreRemoval`), and ends with the entry, the branch, a save or a discard. It has no
+  // timer: it stays in the form for as long as the object is left unedited.
+  const [cleared, setCleared] = useState<ClearedObjects>({
+    scope: boundaryResetKey,
+    savedValue,
+    byPath: {},
+  })
+  const clearScope = !readOnly && value !== savedValue ? boundaryResetKey : undefined
+  const clearsLive = cleared.scope === clearScope && cleared.savedValue === savedValue
+  const offeredClears = Object.fromEntries(
+    Object.entries(clearsLive ? cleared.byPath : {}).filter(([, clear]) =>
+      canRestoreRemoval(fields, value, clear.removal),
+    ),
+  )
+  if (Object.keys(offeredClears).length !== Object.keys(cleared.byPath).length) {
+    setCleared({ scope: boundaryResetKey, savedValue, byPath: offeredClears })
+  }
+  const clearObject = (
+    path: Array<string | number>,
+    previous: unknown,
+    label: string,
+    update: (v: unknown) => void,
+  ) => {
+    const removal: FieldRemoval = { kind: 'value', path, value: previous, label: `"${label}"` }
+    // Taken from the value this render shows, which the clear has not reached yet.
+    const anchors = removalAnchors(fields, value, removal)
+    // Open threads keyed to items inside it leave their fields for the entry's thread list.
+    const moved = currentEntryPath ? openThreadsWithin(comments, currentEntryPath, path) : 0
+    update(undefined)
+    setCleared((prev) => ({
+      scope: boundaryResetKey,
+      savedValue,
+      byPath: {
+        ...(prev.scope === boundaryResetKey && prev.savedValue === savedValue ? prev.byPath : {}),
+        [normalizeCanopyPath(path)]: {
+          removal: { ...removal, anchors },
+          note: movedThreadsNote(moved),
+        },
+      },
+    }))
+  }
+  // Puts the object back into the value as it is now, so edits made elsewhere since are kept.
+  const undoClear = (canopyPath: string) => {
+    const clear = offeredClears[canopyPath]
+    const restored = clear ? restoreRemoval(fields, value, clear.removal) : undefined
+    setCleared((prev) => {
+      const { [canopyPath]: _undone, ...rest } = prev.byPath
+      return { ...prev, byPath: rest }
+    })
+    if (restored) emit(restored)
+  }
   // The field last focused on one entry is never offered on the next.
   useEffect(() => formComments.noteFocus(undefined), [formComments, boundaryResetKey])
 
@@ -659,11 +739,12 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         }
 
         // A non-list object has no list item to remove, so its only way back to `undefined` is
-        // the Clear button (`onRemove`): shown only for an optional field that has a value.
-        // Reset to `undefined`, never `{}`, which `isEmptyForRequired` (entry-validator.ts) reads
-        // as present. The label is "Clear" (docs/ux-guidelines.md, Vocabulary), and it offers Undo.
+        // Clear (`onClear`): offered only for an optional field that has a value. Reset to
+        // `undefined`, never `{}`, which `isEmptyForRequired` (entry-validator.ts) reads as
+        // present. The label is "Clear" (docs/ux-guidelines.md, Vocabulary), and it offers Undo.
         const hasValue = currentValue !== undefined && currentValue !== null
         const canClear = !readOnly && objectField.required !== true && hasValue
+        const clear = offeredClears[canopyPath]
 
         return wrapWithComments(
           <ObjectField
@@ -674,20 +755,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             fields={objectField.fields}
             value={currentValue as Record<string, unknown> | undefined}
             onChange={(next) => update(next)}
-            onRemove={
-              canClear
-                ? () => {
-                    update(undefined)
-                    onRemoved?.({
-                      kind: 'value',
-                      path,
-                      value: currentValue,
-                      label: `"${label}"`,
-                      action: 'clear',
-                    })
-                  }
-                : undefined
-            }
+            onClear={canClear ? () => clearObject(path, currentValue, label, update) : undefined}
+            onUndoClear={clear ? () => undoClear(canopyPath) : undefined}
+            clearNote={clear?.note}
             renderField={renderField}
             path={path}
             dataCanopyField={normalizeCanopyPath(path)}

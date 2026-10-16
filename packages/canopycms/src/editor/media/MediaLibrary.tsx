@@ -2,11 +2,12 @@
 
 import React from 'react'
 
-import { Drawer, Modal, Text, Title } from '@mantine/core'
+import { Modal } from '@mantine/core'
 
 import type { AssetRecord } from '../../api'
 import { MediaLibraryBody } from './MediaLibraryBody'
 import { focusReturnProps } from '../utils/focus-return'
+import { OverlayDrawer } from '../shell/OverlayHeader'
 
 export interface MediaLibraryProps {
   opened: boolean
@@ -50,19 +51,11 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({
   }
 
   return (
-    <Drawer
+    <OverlayDrawer
       opened={opened}
       onClose={onClose}
       position="right"
-      title={
-        <div>
-          <Title order={4}>Media library</Title>
-          <Text size="xs" c="dimmed">
-            Upload and manage images and PDFs
-          </Text>
-        </div>
-      }
-      padding="md"
+      title="Media library"
       size={700}
       // The body fills the drawer and the library's own ScrollArea scrolls, so the toolbar stays put
       // and the list's IntersectionObserver sees a real clipping viewport.
@@ -70,11 +63,10 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({
         content: { display: 'flex', flexDirection: 'column' },
         body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' },
       }}
-      overlayProps={{ blur: 2 }}
       data-testid="media-library-manage"
       {...focusReturnProps(returnFocusTo)}
     >
       <MediaLibraryBody opened={opened} mode="manage" />
-    </Drawer>
+    </OverlayDrawer>
   )
 }

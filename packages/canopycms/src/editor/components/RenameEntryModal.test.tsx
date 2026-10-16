@@ -31,13 +31,53 @@ const renderModal = (extra: Partial<React.ComponentProps<typeof RenameEntryModal
 }
 
 describe('RenameEntryModal', () => {
-  it('names the entry being renamed and starts from its current slug', async () => {
+  it('is titled "Change URL" and starts from the current slug', async () => {
     renderModal()
 
-    expect(screen.getByText('Rename entry')).toBeTruthy()
-    expect(screen.getByText('Renaming “Hello World”')).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Change URL' })).toBeTruthy()
+    expect(submitButton().textContent).toBe('Change URL')
     expect(slugInput().value).toBe('hello-world')
     await waitFor(() => expect(document.activeElement).toBe(slugInput()))
+  })
+
+  const help = () => screen.getByTestId('change-url-help').textContent
+
+  it("says the entry's name comes from its title field, which it names when it can", () => {
+    renderModal({ nameSource: { from: 'title', fieldLabel: 'Hero › Heading' } })
+    expect(help()).toBe(
+      'This changes the URL of “Hello World”, not its name, which comes from its “Hero › Heading” field. Edit that field in the form to change the name.',
+    )
+
+    cleanup()
+    renderModal({ nameSource: { from: 'title' } })
+    expect(help()).toContain('not its name, which comes from its title field.')
+  })
+
+  it("says a type-named entry's name is its type's, without repeating it", () => {
+    renderModal({ entryLabel: 'Site settings', nameSource: { from: 'type' } })
+    expect(help()).toBe(
+      "This changes the URL of “Site settings”, not its name, which is its type's.",
+    )
+  })
+
+  it('says an untitled entry is renamed with its URL, or with its slug when it has no page', () => {
+    renderModal({ nameSource: { from: 'slug' } })
+    expect(help()).toBe(
+      'This changes the URL of “Hello World”, and its name with it: with no title, its name follows the URL.',
+    )
+
+    cleanup()
+    renderModal({ nameSource: { from: 'slug' }, hasPage: false })
+    expect(help()).toBe(
+      'This changes the slug of “Hello World”, and its name with it: with no title, its name follows the slug.',
+    )
+  })
+
+  it('is "Change slug" for an entry with no page', () => {
+    renderModal({ hasPage: false })
+    expect(screen.getByRole('dialog', { name: 'Change slug' })).toBeTruthy()
+    expect(submitButton().textContent).toBe('Change slug')
+    expect(help()).toContain('This changes the slug of “Hello World”, not its name')
   })
 
   it.each([
@@ -55,7 +95,7 @@ describe('RenameEntryModal', () => {
     expect(alert.getAttribute('style')).toContain(colour)
   })
 
-  it('does not offer Rename until the slug changes', () => {
+  it('does not offer Change URL until the slug changes', () => {
     renderModal()
 
     expect(submitButton().disabled).toBe(true)
@@ -115,7 +155,7 @@ describe('RenameEntryModal', () => {
     expect(screen.queryByText('An entry with this slug already exists')).toBeNull()
   })
 
-  it('saves the new slug with the Rename button', async () => {
+  it('saves the new slug with the Change URL button', async () => {
     const user = userEvent.setup()
     const { onSave } = renderModal()
 

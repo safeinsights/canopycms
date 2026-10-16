@@ -197,7 +197,7 @@ const loaded = async () => {
 
 const editTitle = async () => {
   await userEvent.type(titleInput(), ' edited')
-  await waitFor(() => expect(screen.getByTestId('unsaved-indicator')).toBeTruthy())
+  await waitFor(() => expect(screen.getByTestId('entry-unsaved-dot')).toBeTruthy())
 }
 
 const focusEl = (el: HTMLElement) => {
@@ -299,7 +299,7 @@ describe('Refresh from server (file menu)', () => {
   })
 })
 
-describe('Rename… and Delete entry (file menu)', () => {
+describe('Change URL… and Delete entry (file menu)', () => {
   it('opens the rename dialog for the open entry, and returns focus to the file menu button', async () => {
     stubApi()
     renderEditor()
@@ -333,7 +333,7 @@ describe('Rename… and Delete entry (file menu)', () => {
     await waitFor(() => expect(document.activeElement).toBe(fileTrigger()))
   })
 
-  it('deletes the open entry once confirmed, leaving none open, and focuses "All content"', async () => {
+  it("deletes the open entry once confirmed, leaving none open, and focuses the rail's Content button", async () => {
     stubApi()
     renderEditor()
     await loaded()
@@ -346,14 +346,14 @@ describe('Rename… and Delete entry (file menu)', () => {
     await waitFor(() => expect(fileTrigger().textContent).toBe('No entry open'))
     // Its last render, the entry already gone from the list, still names it.
     expect(modal.textContent).toContain('Delete "Hello"?')
-    const allContent = screen.getAllByTestId('breadcrumb-segment')[0]
-    await waitFor(() => expect(document.activeElement).toBe(allContent))
+    const contentButton = screen.getByTestId('content-panel-toggle')
+    await waitFor(() => expect(document.activeElement).toBe(contentButton))
   })
 
   it('blocks both on a locked branch, saying why, and opens neither', async () => {
     stubApi({ locked: true })
     renderEditor()
-    await waitFor(() => expect(screen.getByTestId('read-only-chip')).toBeTruthy())
+    await waitFor(() => expect(screen.getByTestId('status-locked-banner')).toBeTruthy())
 
     await userEvent.click(fileTrigger())
     for (const id of ['entry-menu-rename', 'entry-menu-delete']) {
@@ -386,12 +386,10 @@ describe('Switch branch… (branch menu)', () => {
       await loaded()
 
       await activateByKeyboard(branchTrigger(), byTestId('manage-branches-menu-item'))
-      await screen.findByText('Manage access, status, and lifecycle')
+      await screen.findByRole('heading', { name: 'Branches' })
       await close()
 
-      await waitFor(() =>
-        expect(screen.queryByText('Manage access, status, and lifecycle')).toBeNull(),
-      )
+      await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
       await waitFor(() => expect(document.activeElement).toBe(branchTrigger()))
     },
   )
@@ -406,12 +404,10 @@ describe('Switch branch… (branch menu)', () => {
 
     focusEl(opener)
     await userEvent.keyboard('{Enter}')
-    await screen.findByText('Manage access, status, and lifecycle')
+    await screen.findByRole('heading', { name: 'Branches' })
     await userEvent.keyboard('{Escape}')
 
-    await waitFor(() =>
-      expect(screen.queryByText('Manage access, status, and lifecycle')).toBeNull(),
-    )
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(opener))
   })
 
@@ -445,20 +441,16 @@ describe('Switch branch… (branch menu)', () => {
 
     focusEl(bannerOpener)
     await userEvent.keyboard('{Enter}')
-    await screen.findByText('Manage access, status, and lifecycle')
+    await screen.findByRole('heading', { name: 'Branches' })
     await userEvent.keyboard('{Escape}')
-    await waitFor(() =>
-      expect(screen.queryByText('Manage access, status, and lifecycle')).toBeNull(),
-    )
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
 
     await userEvent.click(screen.getByTestId('comments-button'))
-    await userEvent.click(await screen.findByRole('button', { name: 'Open branch discussion' }))
-    await screen.findByText('Manage access, status, and lifecycle')
+    await userEvent.click(await screen.findByRole('button', { name: /^Open branch discussion/ }))
+    await screen.findByRole('heading', { name: 'Branches' })
     await userEvent.keyboard('{Escape}')
 
-    await waitFor(() =>
-      expect(screen.queryByText('Manage access, status, and lifecycle')).toBeNull(),
-    )
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(branchTrigger()))
   })
 })
@@ -499,7 +491,7 @@ describe('Focus once a menu has closed', () => {
     await loaded()
 
     await activateByKeyboard(branchTrigger(), byTestId('manage-branches-menu-item'))
-    await screen.findByText('Manage access, status, and lifecycle')
+    await screen.findByRole('heading', { name: 'Branches' })
     await waitFor(() => expect(screen.queryByTestId('branch-menu')).toBeNull())
     await settled()
 

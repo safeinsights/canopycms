@@ -99,7 +99,8 @@ const makeAssetStore = (): AssetStore => ({
   putMetaIfAbsent: async () => 'created',
   getMeta: async () => null,
   listMeta: async () => ({ items: [sampleMeta] }),
-  deleteMeta: async () => {},
+  hideAsset: async () => 'created',
+  unhideAsset: async () => false,
 })
 
 const ctxWith = (assetStore: AssetStore | undefined): ApiContext => ({
@@ -122,12 +123,11 @@ describe('asset api params schemas', () => {
     }
   })
 
-  it('validates delete key as a 32-char lowercase hex string (400 on anything else)', () => {
-    const bad = ASSET_ROUTES.delete.validate({ params: { key: 'not-a-hash.png' } })
-    expect(bad.ok).toBe(false)
-
-    const good = ASSET_ROUTES.delete.validate({ params: { key: 'a'.repeat(32) } })
-    expect(good.ok).toBe(true)
+  it('validates the hide and restore key as a 32-char lowercase hex string (400 on anything else)', () => {
+    for (const route of [ASSET_ROUTES.hide, ASSET_ROUTES.restore]) {
+      expect(route.validate({ body: { key: 'not-a-hash.png' } }).ok).toBe(false)
+      expect(route.validate({ body: { key: 'a'.repeat(32) } }).ok).toBe(true)
+    }
   })
 })
 
@@ -408,8 +408,8 @@ describe('list', () => {
     expect(res.data?.assets[0].src).toBeTruthy()
   })
 
-  it('forwards cursor/limit params to the store', async () => {
-    let receivedInput: { cursor?: string; limit?: number } | undefined
+  it('forwards cursor/limit params to the store, leaving hidden files out by default', async () => {
+    let receivedInput: { cursor?: string; limit?: number; includeHidden?: boolean } | undefined
     const store: AssetStore = {
       ...makeAssetStore(),
       listMeta: async (input) => {
@@ -418,97 +418,202 @@ describe('list', () => {
       },
     }
     await ASSET_ROUTES.list.handler(ctxWith(store), authedReq(), { cursor: 'xyz', limit: 5 })
-    expect(receivedInput).toEqual({ cursor: 'xyz', limit: 5 })
+    expect(receivedInput).toEqual({ cursor: 'xyz', limit: 5, includeHidden: false })
+  })
+
+  it('lets an admin include hidden files, each marked hidden', async () => {
+    let receivedInput: { includeHidden?: boolean } | undefined
+    const store: AssetStore = {
+      ...makeAssetStore(),
+      listMeta: async (input) => {
+        receivedInput = input
+        return { items: [{ ...sampleMeta, hidden: true }] }
+      },
+    }
+    const res = await ASSET_ROUTES.list.handler(ctxWith(store), adminReq(), {
+      includeHidden: 'true',
+    })
+    expect(receivedInput?.includeHidden).toBe(true)
+    expect(res.data?.assets[0].hidden).toBe(true)
+  })
+
+  it('refuses (403) a non-admin who asks for hidden files, without listing', async () => {
+    const listMeta = vi.fn(async () => ({ items: [] }))
+    const store: AssetStore = { ...makeAssetStore(), listMeta }
+    const res = await ASSET_ROUTES.list.handler(ctxWith(store), authedReq(), {
+      includeHidden: 'true',
+    })
+    expect(res.status).toBe(403)
+    expect(listMeta).not.toHaveBeenCalled()
   })
 })
 
-describe('delete', () => {
+const adminReq = (userId = 'u1') =>
+  authedReq({ user: { type: 'authenticated', userId, groups: [RESERVED_GROUPS.ADMINS] } })
+
+describe.each([
+  { route: 'hide', verb: 'remove' },
+  { route: 'restore', verb: 'restore' },
+] as const)('$route: who may $verb a file', ({ route, verb }) => {
   const key = 'a'.repeat(32)
+  const call = (store: AssetStore, req: ApiRequest) =>
+    ASSET_ROUTES[route].handler(ctxWith(store), req, { key })
 
-  it('returns 403 for non-privileged users', async () => {
-    const res = await ASSET_ROUTES.delete.handler(ctxWith(makeAssetStore()), authedReq(), { key })
-    expect(res.ok).toBe(false)
-    expect(res.status).toBe(403)
-  })
+  /** Store whose getMeta returns sampleMeta with the given uploader (or nothing), recording writes. */
+  const storeOwnedBy = (uploadedBy: string | undefined | null) => {
+    const hideAsset = vi.fn(async () => 'created' as const)
+    const unhideAsset = vi.fn(async () => true)
+    const store: AssetStore = {
+      ...makeAssetStore(),
+      getMeta: async () =>
+        uploadedBy === null ? null : { ...sampleMeta, ...(uploadedBy && { uploadedBy }) },
+      hideAsset,
+      unhideAsset,
+    }
+    const written = () => hideAsset.mock.calls.length + unhideAsset.mock.calls.length
+    return { store, hideAsset, unhideAsset, written }
+  }
 
-  it('returns 403 for reviewers who did not upload the asset', async () => {
-    const req = authedReq({
-      user: { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.REVIEWERS] },
-    })
-    const res = await ASSET_ROUTES.delete.handler(ctxWith(makeAssetStore()), req, { key })
-    expect(res.ok).toBe(false)
-    expect(res.status).toBe(403)
-  })
-
-  /** Store whose getMeta returns sampleMeta with the given uploader. */
-  const storeOwnedBy = (uploadedBy: string | undefined, onDelete?: (h: string) => void) => ({
-    ...makeAssetStore(),
-    getMeta: async () => ({ ...sampleMeta, ...(uploadedBy && { uploadedBy }) }),
-    deleteMeta: async (hash32: string) => {
-      onDelete?.(hash32)
-    },
-  })
-
-  it('allows a non-admin to delete an asset they uploaded', async () => {
-    let deletedHash32: string | undefined
-    const store = storeOwnedBy('u1', (h) => {
-      deletedHash32 = h
-    })
-    // authedReq()'s default user is u1, matching the asset's uploadedBy.
-    const res = await ASSET_ROUTES.delete.handler(ctxWith(store), authedReq(), { key })
+  it('lets the uploader act on their own file', async () => {
+    const { store, hideAsset, unhideAsset } = storeOwnedBy('u1')
+    const res = await call(store, authedReq())
     expect(res.ok).toBe(true)
-    expect(deletedHash32).toBe(key)
+    expect(res.data).toEqual({ hidden: route === 'hide' })
+    if (route === 'hide') {
+      expect(hideAsset).toHaveBeenCalledWith(key, {
+        hiddenAt: expect.any(String),
+        hiddenBy: 'u1',
+      })
+    } else {
+      expect(unhideAsset).toHaveBeenCalledWith(key)
+    }
   })
 
-  it("returns 403 when a non-admin targets another user's asset, and does not delete", async () => {
-    let deleteCalled = false
-    const store = storeOwnedBy('someone-else', () => {
-      deleteCalled = true
-    })
-    const res = await ASSET_ROUTES.delete.handler(ctxWith(store), authedReq(), { key })
-    expect(res.ok).toBe(false)
-    expect(res.status).toBe(403)
-    expect(deleteCalled).toBe(false)
+  it('lets an admin act on a file someone else uploaded', async () => {
+    const { store, written } = storeOwnedBy('someone-else')
+    const res = await call(store, adminReq())
+    expect(res.ok).toBe(true)
+    expect(written()).toBe(1)
+  })
+
+  it("refuses (403) a non-admin on another user's file, a reviewer included, writing nothing", async () => {
+    for (const groups of [[], [RESERVED_GROUPS.REVIEWERS]]) {
+      const { store, written } = storeOwnedBy('someone-else')
+      const res = await call(
+        store,
+        authedReq({ user: { type: 'authenticated', userId: 'u1', groups } }),
+      )
+      expect(res.status).toBe(403)
+      expect(res.error).toBe(`You can only ${verb} files you uploaded`)
+      expect(written()).toBe(0)
+    }
   })
 
   it('falls back to admin-only when the asset records no uploadedBy (must not default open)', async () => {
-    let deleteCalled = false
-    const store = storeOwnedBy(undefined, () => {
-      deleteCalled = true
-    })
-    const res = await ASSET_ROUTES.delete.handler(ctxWith(store), authedReq(), { key })
-    expect(res.ok).toBe(false)
+    const { store, written } = storeOwnedBy(undefined)
+    const res = await call(store, authedReq())
     expect(res.status).toBe(403)
-    expect(deleteCalled).toBe(false)
+    expect(written()).toBe(0)
   })
 
-  it('lets an admin delete an asset uploaded by someone else', async () => {
-    let deletedHash32: string | undefined
-    const store = storeOwnedBy('someone-else', (h) => {
-      deletedHash32 = h
-    })
-    const req = authedReq({
-      user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] },
-    })
-    const res = await ASSET_ROUTES.delete.handler(ctxWith(store), req, { key })
-    expect(res.ok).toBe(true)
-    expect(deletedHash32).toBe(key)
+  it('answers a non-admin the same 403 for a missing file as for an unowned one', async () => {
+    const missing = storeOwnedBy(null)
+    const unowned = storeOwnedBy('someone-else')
+    const missingRes = await call(missing.store, authedReq())
+    const unownedRes = await call(unowned.store, authedReq())
+    expect(missingRes).toEqual(unownedRes)
+    expect(missing.written()).toBe(0)
   })
 
-  it('allows admins to delete, forwarding the key as the hash32 to deleteMeta', async () => {
-    let deletedHash32: string | undefined
-    const store: AssetStore = {
-      ...makeAssetStore(),
-      deleteMeta: async (hash32) => {
-        deletedHash32 = hash32
-      },
-    }
-    const req = authedReq({
-      user: { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.ADMINS] },
+  it('answers an admin 404 for a missing file, writing no marker', async () => {
+    const { store, written } = storeOwnedBy(null)
+    const res = await call(store, adminReq())
+    expect(res.status).toBe(404)
+    expect(written()).toBe(0)
+  })
+
+  it('returns 501 when asset store missing', async () => {
+    const res = await ASSET_ROUTES[route].handler(ctxWith(undefined), authedReq(), { key })
+    expect(res.status).toBe(501)
+  })
+})
+
+describe('DELETE /assets', () => {
+  it('answers 410, pointing to POST /assets/hide', async () => {
+    const res = await ASSET_ROUTES.deleteGone.handler()
+    expect(res).toEqual({
+      ok: false,
+      status: 410,
+      error: 'DELETE /assets is gone: remove a file from the library with POST /assets/hide',
     })
-    const res = await ASSET_ROUTES.delete.handler(ctxWith(store), req, { key })
-    expect(res.ok).toBe(true)
-    expect(deletedHash32).toBe(key)
+  })
+})
+
+describe('removing a file from the library, end to end (real LocalAssetStore)', () => {
+  let tmpDir: string
+  let store: LocalAssetStore
+  let hash32: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-assets-hide-test-'))
+    store = new LocalAssetStore({ root: tmpDir })
+    const stagingKey = 'asset-staging/dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+    await store.writeStaging(stagingKey, await rasterPngBytes(), 'image/png')
+    const res = await ASSET_ROUTES.finalize.handler(ctxWith(store), authedReq(), {
+      stagingKey,
+      filename: 'photo.png',
+    })
+    if (!res.ok || !res.data) throw new Error('finalize failed')
+    hash32 = res.data.asset.hash32
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const listed = async (req: ApiRequest, includeHidden?: 'true') =>
+    (await ASSET_ROUTES.list.handler(ctxWith(store), req, includeHidden ? { includeHidden } : {}))
+      .data?.assets
+
+  it('keeps the meta and every transform working, and lists the file only for an admin who asks', async () => {
+    const hidden = await ASSET_ROUTES.hide.handler(ctxWith(store), authedReq(), { key: hash32 })
+    expect(hidden.ok).toBe(true)
+
+    expect(await store.getMeta(hash32)).toMatchObject({ filename: 'photo.png' })
+    // A width never requested before: computing it needs the meta.
+    const transformed = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/w=2/${hash32}/photo.png`,
+    })
+    expect(transformed).toMatchObject({ kind: 'binary', status: 200 })
+
+    expect(await listed(authedReq())).toEqual([])
+    expect(await listed(adminReq(), 'true')).toEqual([
+      expect.objectContaining({ hash32, hidden: true }),
+    ])
+  })
+
+  it('puts the file back on restore', async () => {
+    await ASSET_ROUTES.hide.handler(ctxWith(store), authedReq(), { key: hash32 })
+    const restored = await ASSET_ROUTES.restore.handler(ctxWith(store), authedReq(), {
+      key: hash32,
+    })
+    expect(restored.data).toEqual({ hidden: false })
+    const assets = await listed(authedReq())
+    expect(assets?.map((asset) => asset.hash32)).toEqual([hash32])
+    expect(assets?.[0].hidden).toBeUndefined()
+  })
+
+  it('puts the file back when anyone uploads the same bytes again', async () => {
+    await ASSET_ROUTES.hide.handler(ctxWith(store), authedReq(), { key: hash32 })
+    const stagingKey = 'asset-staging/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+    await store.writeStaging(stagingKey, await rasterPngBytes(), 'image/png')
+    const again = await ASSET_ROUTES.finalize.handler(
+      ctxWith(store),
+      authedReq({ user: { type: 'authenticated', userId: 'u2', groups: [] } }),
+      { stagingKey, filename: 'copy.png' },
+    )
+    expect(again.data?.asset).toMatchObject({ hash32, filename: 'photo.png' })
+    expect((await listed(authedReq()))?.map((asset) => asset.hash32)).toEqual([hash32])
   })
 })
 

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react'
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 
 import { Alert } from '@mantine/core'
 
@@ -60,6 +60,7 @@ const Pane = ({
   showMarkDiagnostics,
   initialMaximized = false,
   resizing,
+  loading,
 }: {
   initialWidth: PreviewWidth
   script?: string
@@ -75,12 +76,20 @@ const Pane = ({
   showMarkDiagnostics?: boolean
   initialMaximized?: boolean
   resizing?: boolean
+  /** `next`: the page loads, then the next entry's data stays pending; `first`: nothing loaded yet. */
+  loading?: 'first' | 'next'
 }) => {
   // A blob: URL carries this page's origin, so the frame treats it as a same-origin preview.
   const [src] = useState(() => URL.createObjectURL(new Blob([page(script)], { type: 'text/html' })))
   const [previewWidth, setPreviewWidth] = useState(initialWidth)
   const [highlight, setHighlight] = useState(initialHighlight)
   const [maximized, setMaximized] = useState(initialMaximized)
+  const [pending, setPending] = useState(loading === 'first')
+  useEffect(() => {
+    if (loading !== 'next') return
+    const timer = setTimeout(() => setPending(true), 1000)
+    return () => clearTimeout(timer)
+  }, [loading])
   const toolProps = tools
     ? {
         highlightEnabled: highlight,
@@ -97,11 +106,12 @@ const Pane = ({
   return (
     <div style={{ width: paneWidth, height: '100vh' }}>
       <PreviewPane
-        src={src}
-        path={path}
+        src={pending ? '/preview/posts/next?branch=feature-a' : src}
+        path={pending ? '/preview/posts/next?branch=feature-a' : path}
+        pending={pending}
         notice={notice}
         onPreviewError={onPreviewError}
-        data={{ title: 'Draft title from the form' }}
+        data={pending ? undefined : { title: 'Draft title from the form' }}
         previewWidth={previewWidth}
         onPreviewWidthChange={setPreviewWidth}
         {...toolProps}
@@ -212,4 +222,14 @@ export const WithToolsNarrowPane: Story = {
       showMarkDiagnostics
     />
   ),
+}
+
+/** The next entry's data is loading: the last page stays, dimmed, under the toolbar. */
+export const LoadingNextEntry: Story = {
+  render: () => <Pane initialWidth="fit" tools loading="next" />,
+}
+
+/** No page framed yet: a skeleton holds the viewport under the toolbar. */
+export const LoadingFirstEntry: Story = {
+  render: () => <Pane initialWidth="fit" tools loading="first" />,
 }

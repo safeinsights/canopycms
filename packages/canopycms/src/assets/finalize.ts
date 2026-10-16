@@ -7,6 +7,8 @@
 import { runFinalizePipeline, type FinalizeInput, type FinalizeRejection } from './pipeline'
 import { ASSET_PREFIXES } from './keys'
 import type { AssetMeta, AssetStore } from './types'
+import { getErrorMessage } from '../utils/error'
+import { canopyLogWarn } from '../utils/logger'
 
 /**
  * A client-supplied staging key must be exactly `asset-staging/{uuid}` — the
@@ -48,7 +50,20 @@ export async function finalizeAsset(
   const { meta, data, publicObject } = result
 
   const existing = await store.getMeta(meta.hash32)
-  if (existing) return { ok: true, meta: existing }
+  if (existing) {
+    // Uploading a file removed from the library puts it back. Hiding is a de-list, not access
+    // control: whoever uploads the bytes has the file, and a picker selecting an upload the
+    // library never shows would be a dead end. A failed un-hide only leaves the file out of the
+    // listing, so the upload still succeeds.
+    try {
+      await store.unhideAsset(meta.hash32)
+    } catch (err: unknown) {
+      canopyLogWarn(
+        `[canopycms] could not restore removed asset ${meta.hash32} to the library on re-upload: ${getErrorMessage(err)}`,
+      )
+    }
+    return { ok: true, meta: existing }
+  }
 
   // Either put may find its key taken (`already-exists`): by an earlier attempt that stopped
   // before the meta commit, or by a concurrent identical upload. The object kept there is this

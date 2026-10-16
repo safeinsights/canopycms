@@ -7,7 +7,7 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT } from '../fixtures/timeouts'
 
 /**
  * E2E tests for finding an entry: the navigator's filter box and the Mod+P quick-open palette.
- * The seeded entries are "Home Page" and "Test Site".
+ * The seeded entries are the single-entry types "Home" and "Settings", named by their types.
  */
 test.describe('Navigator search', () => {
   let editorPage: EditorPage
@@ -26,17 +26,17 @@ test.describe('Navigator search', () => {
     page,
   }) => {
     await editorPage.openContentNavigator()
-    await expect(editorPage.navigatorItem('Test Site')).toBeVisible({ timeout: STANDARD_TIMEOUT })
+    await expect(editorPage.navigatorItem('Settings')).toBeVisible({ timeout: STANDARD_TIMEOUT })
 
     await editorPage.filterNavigator('home')
 
-    await expect(editorPage.navigatorItem('Home Page')).toBeVisible({ timeout: SHORT_TIMEOUT })
-    await expect(editorPage.navigatorItem('Test Site')).toHaveCount(0)
+    await expect(editorPage.navigatorItem('Home')).toBeVisible({ timeout: SHORT_TIMEOUT })
+    await expect(editorPage.navigatorItem('Settings')).toHaveCount(0)
 
     await page.keyboard.press('Escape')
 
     await expect(page.locator('[data-testid="entry-nav-filter"]')).toHaveValue('')
-    await expect(editorPage.navigatorItem('Test Site')).toBeVisible({ timeout: SHORT_TIMEOUT })
+    await expect(editorPage.navigatorItem('Settings')).toBeVisible({ timeout: SHORT_TIMEOUT })
     // The first Escape cleared the filter; the panel is still open.
     await expect(editorPage.contentNavigator).toBeVisible()
   })
@@ -45,16 +45,16 @@ test.describe('Navigator search', () => {
     page,
   }) => {
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
     await editorPage.closeContentNavigator()
 
     await test.step('focus a text field in the form', async () => {
       await editorPage.getFieldInput('title').click()
     })
 
-    await editorPage.quickOpen('Test Site')
+    await editorPage.quickOpen('Settings')
 
-    await expect(editorPage.currentEntryLabel()).toContainText('Test Site', {
+    await expect(editorPage.currentEntryLabel()).toContainText('Settings', {
       timeout: STANDARD_TIMEOUT,
     })
     await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
@@ -99,19 +99,22 @@ test.describe('Navigator search', () => {
 
     test('the panel lays over the form only, leaving the preview in view', async () => {
       await editorPage.openContentNavigator()
-      const panel = await editorPage.contentNavigator.boundingBox()
-      const preview = await editorPage.previewPane.boundingBox()
-      const form = await editorPage.formPane.boundingBox()
-      if (!panel || !preview || !form) throw new Error('a region is not visible')
-      expect(panel.x).toBeGreaterThanOrEqual(form.x - 1)
-      expect(panel.x + panel.width).toBeLessThanOrEqual(form.x + form.width + 1)
+      // How far the panel reaches past either side of the form, read afresh on each poll: it
+      // slides in from the form's inline start.
+      const overhang = async () => {
+        const panel = await editorPage.contentNavigator.boundingBox()
+        const form = await editorPage.formPane.boundingBox()
+        if (!panel || !form) throw new Error('a region is not visible')
+        return Math.max(form.x - panel.x, panel.x + panel.width - (form.x + form.width))
+      }
+      await expect.poll(overhang, { timeout: SHORT_TIMEOUT }).toBeLessThanOrEqual(1)
     })
 
     test('closing the palette opened from a breadcrumb-opened panel returns focus to that breadcrumb and keeps it there', async ({
       page,
     }) => {
-      await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      // A post has a collection crumb; the root entries have none.
+      await editorPage.createPost('crumb-post', 'Crumb Post')
       await editorPage.openContentNavigatorFromBreadcrumb()
       const breadcrumb = page.getByTestId('breadcrumb-segment').first()
 
@@ -139,13 +142,13 @@ test.describe('Navigator search', () => {
       await expect(input).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
 
-      await input.fill('Test Site')
+      await input.fill('Settings')
       await expect(page.getByTestId('quick-open-option').first()).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
       await input.press('Enter')
 
-      await expect(editorPage.currentEntryLabel()).toContainText('Test Site', {
+      await expect(editorPage.currentEntryLabel()).toContainText('Settings', {
         timeout: STANDARD_TIMEOUT,
       })
       await expect(editorPage.contentPanelToggle).toBeFocused({ timeout: SHORT_TIMEOUT })

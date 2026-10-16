@@ -2,6 +2,7 @@ import React from 'react'
 import { notFound } from 'next/navigation'
 import type { HomeContent } from './schemas'
 import { HomePreview } from './components/HomeView'
+import { SiteChrome } from './components/SiteChrome'
 import { listEntries, readByUrlPath } from './lib/canopy'
 import { loadHomeExtras } from './lib/home-extras'
 
@@ -23,7 +24,11 @@ const Page = async () => {
 
   if (!result) return notFound()
 
-  return <HomePreview initialData={result.data} extras={await loadHomeExtras(listEntries)} />
+  return (
+    <SiteChrome>
+      <HomePreview initialData={result.data} extras={await loadHomeExtras(listEntries)} />
+    </SiteChrome>
+  )
 }
 
 export default Page
