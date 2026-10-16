@@ -118,6 +118,7 @@ import { MediaLibrary } from './media/MediaLibrary'
 import {
   removalAnchors,
   restoreRemoval,
+  movedThreadsNote,
   openThreadsWithin,
   restoredFieldPath,
   type FieldRemoval,
@@ -662,7 +663,8 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // Undo for a form Remove: a toast whose Undo puts the item back into the entry's draft as it
   // is then, through a functional update, so edits made since are kept. It acts only on the
-  // branch and entry it was raised for, and its toast closes when either changes.
+  // branch and entry it was raised for, and its toast closes when either changes. An object's
+  // Clear offers its Undo in the form instead (FormRenderer), which a save ends via `savedValue`.
   const loadedValuesRef = useRef(loadedValues)
   loadedValuesRef.current = loadedValues
   const draftsRef = useRef(drafts)
@@ -687,7 +689,6 @@ const EditorContent: React.FC<EditorProps> = ({
       ...removal,
       anchors: displayValue ? removalAnchors(fields, displayValue, removal) : undefined,
     }
-    const doing = removal.action === 'clear' ? 'clearing' : 'removing'
     // Open threads keyed inside what was removed leave their fields for the entry's thread list.
     const movedThreads = currentEntry
       ? openThreadsWithin(
@@ -708,7 +709,7 @@ const EditorContent: React.FC<EditorProps> = ({
       undoToastsRef.current.delete(id)
       if (!open) {
         notifications.show({
-          message: `Too late to undo ${doing} ${removal.label}.`,
+          message: `Too late to undo removing ${removal.label}.`,
           color: 'yellow',
         })
         return
@@ -723,7 +724,7 @@ const EditorContent: React.FC<EditorProps> = ({
       const now = draftsRef.current[contentId] ?? loadedValuesRef.current[contentId]
       if (!now || !restoreRemoval(fields, now, anchored)) {
         notifications.show({
-          message: `Couldn't undo ${doing} ${removal.label}: that part of the entry has changed. ${removal.action === 'clear' ? 'Fill it in again' : 'Add it again'} if you still need it.`,
+          message: `Couldn't undo removing ${removal.label}: that part of the entry has changed. Add it again if you still need it.`,
           color: 'yellow',
         })
         return
@@ -747,12 +748,7 @@ const EditorContent: React.FC<EditorProps> = ({
       message: (
         <UndoToastMessage
           label={removal.label}
-          action={removal.action}
-          note={
-            movedThreads > 0
-              ? `Its ${movedThreads === 1 ? 'comment thread' : `${movedThreads} comment threads`} moved to "Comment on this entry".`
-              : undefined
-          }
+          note={movedThreadsNote(movedThreads)}
           onUndo={undo}
           onHold={() => notifications.update({ ...toast, autoClose: false })}
           onRelease={() => notifications.update(toast)}
@@ -2060,6 +2056,7 @@ const EditorContent: React.FC<EditorProps> = ({
                           value={displayValue}
                           readOnly={contentReadOnly}
                           onRemoved={handleFieldRemoved}
+                          savedValue={loadedValue}
                           commentBlockedReason={commentBlockedReason}
                           removedItemFieldLabel={commentFieldLabel}
                           onGetUserMetadata={getCommentUserMetadata}
