@@ -39,3 +39,16 @@ export function branchStatusPresentation(
   if (isKnownStatus(status)) return BRANCH_STATUS_PRESENTATION[status]
   return { label: status, color: 'gray', variant: 'light' }
 }
+
+/**
+ * The status the top bar shows: only one that tells the user something, so not 'editing', the
+ * state every branch starts in. The Branches drawer shows every status through
+ * `branchStatusPresentation`.
+ */
+export function branchBarStatusPresentation(
+  status: string | undefined,
+  isProtected = false,
+): BranchStatusPresentation | undefined {
+  if (!isProtected && status === 'editing') return undefined
+  return branchStatusPresentation(status, isProtected)
+}

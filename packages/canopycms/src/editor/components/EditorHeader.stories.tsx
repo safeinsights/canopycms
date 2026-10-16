@@ -75,7 +75,7 @@ export const InReview: Story = {
   },
 }
 
-/** The protected base branch: the "Read-only" chip, no Submit, Save blocked with its reason. */
+/** The protected base branch: "Protected" status, no Submit, Save blocked with its reason. */
 export const ReadOnly: Story = {
   args: {
     branchName: 'main',
@@ -99,7 +99,7 @@ export const Narrow: Story = {
   args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
 }
 
-/** Below `lg` the unsaved indicator is an icon, its text in its Tooltip and accessible name. */
+/** On a phone the bar adds only the entry's dot and the pill's count for unsaved changes. */
 export const NarrowUnsaved: Story = {
   parameters: phone,
 }
@@ -124,7 +124,7 @@ export const SaveAllInProgress: Story = {
   args: { busy: true, saveAllProgress: { done: 1, total: 3 } },
 }
 
-/** The browser refused to store drafts, so leaving the page would lose them. */
+/** The browser refused to store drafts: a warning joins the bar, an icon below `lg`. */
 export const UnsavedNotKept: Story = {
   args: { draftStorageFailed: true },
 }

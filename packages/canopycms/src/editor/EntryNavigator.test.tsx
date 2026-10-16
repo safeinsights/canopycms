@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { EntryNavigator, type EntryNavCollection, type EntryNavItem } from './EntryNavigator'
 import { CanopyCMSProvider } from './theme'
+import { UnsavedMark } from './components/UnsavedMark'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 
 // Setup browser APIs
@@ -1326,6 +1327,13 @@ describe('EntryNavigator', () => {
         name: 'Unsaved changes',
       })
       expect(entryDot.getAttribute('data-testid')).toBe('unsaved-dot')
+      // The same mark, so the same colour, as the top bar's.
+      const reference = within(
+        render(<UnsavedMark data-testid="reference-mark" />, { wrapper: CanopyCMSProvider })
+          .container,
+      ).getByTestId('reference-mark')
+      expect(reference.getAttribute('style')).toContain('--canopy-focus-ring')
+      expect(entryDot.getAttribute('style')).toBe(reference.getAttribute('style'))
       const collectionDot = within(screen.getByTestId('entry-nav-item-posts')).getByRole('img', {
         name: 'Contains unsaved changes',
       })

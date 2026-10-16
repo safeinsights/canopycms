@@ -8,13 +8,14 @@ import type { LogicalPath } from '../../paths/types'
 import { EDITOR_ACTIONS } from '../copy'
 import { DestructiveMenuItem } from './DestructiveMenuItem'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
+import { UnsavedMark } from './UnsavedMark'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface BranchPillProps {
   branchName: string
   /** The editor is busy; with no branch name yet, that is the branch list loading. */
   loading: boolean
-  /** The status label ("Editing", "In review", "Protected"), when the mode shows one. */
+  /** The status label ("In review", "Protected"), set only for a status worth a place in the bar. */
   status?: { label: string; testId: string; value: string }
   /** How many entries on the branch have unsaved changes, counting any the list can't name yet. */
   unsavedCount: number
@@ -31,9 +32,10 @@ export interface BranchPillProps {
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
 /**
- * The branch's name, status and unsaved count. Its menu holds the branch actions and lists the
- * unsaved entries, each opening that entry. Below `sm` it is the branch icon and the count, its
- * name then in its Tooltip, accessible name and menu label: the row's actions must not clip.
+ * The branch's name, status and unsaved count: the unsaved mark and a number. Its menu holds the
+ * branch actions and lists the unsaved entries, each opening that entry. Below `sm` it is the
+ * branch icon and the count, its name then in its Tooltip, accessible name and menu label: the
+ * row's actions must not clip.
  */
 export function BranchPill({
   branchName,
@@ -91,26 +93,20 @@ export function BranchPill({
               </Text>
             )}
             {unsaved > 0 && (
-              <Text
-                span
-                size="xs"
-                fw={600}
-                px={6}
-                style={{
-                  flexShrink: 0,
-                  borderRadius: 'var(--mantine-radius-xl)',
-                  background: 'var(--canopy-count-bg)',
-                }}
+              <Box
+                component="span"
+                display="inline-flex"
+                style={{ alignItems: 'center', gap: 4, flexShrink: 0 }}
                 data-testid="branch-unsaved-count"
               >
-                {unsaved}
-                <Box component="span" visibleFrom="sm">
-                  {' unsaved'}
-                </Box>
-                <VisuallyHidden component="span" hiddenFrom="sm">
-                  {' unsaved'}
+                <UnsavedMark aria-hidden="true" />
+                <Text span size="xs" fw={600} aria-hidden="true">
+                  {unsaved}
+                </Text>
+                <VisuallyHidden component="span">
+                  {`, ${plural(unsaved, 'entry', 'entries')} with unsaved changes`}
                 </VisuallyHidden>
-              </Text>
+              </Box>
             )}
           </Button>
         </Menu.Target>

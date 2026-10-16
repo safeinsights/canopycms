@@ -8,6 +8,7 @@ import type { BreadcrumbSegment } from '../editor-utils'
 import { EDITOR_ACTIONS } from '../copy'
 import { DestructiveMenuItem } from './DestructiveMenuItem'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
+import { UnsavedMark } from './UnsavedMark'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EntryBreadcrumbProps {
@@ -17,7 +18,7 @@ export interface EntryBreadcrumbProps {
   entryLabel: string | undefined
   /** The open entry has unsaved changes. */
   entryDirty: boolean
-  /** Why the open entry or its branch is read-only; set, the "Read-only" chip shows. */
+  /** Why the open entry is read-only; set, the "Read-only" chip shows. */
   readOnlyReason?: string
   onCollection: (collectionPath: string) => void
   onRefresh: () => void
@@ -198,18 +199,7 @@ export function EntryBreadcrumb({
                       {crumbText(entryLabel, entryLabelRef)}
                       {entryDirty && (
                         <>
-                          <Box
-                            component="span"
-                            aria-hidden="true"
-                            w={8}
-                            h={8}
-                            style={{
-                              borderRadius: '50%',
-                              flexShrink: 0,
-                              background: 'var(--mantine-color-text)',
-                            }}
-                            data-testid="entry-unsaved-dot"
-                          />
+                          <UnsavedMark aria-hidden="true" data-testid="entry-unsaved-dot" />
                           <VisuallyHidden component="span">, unsaved changes</VisuallyHidden>
                         </>
                       )}

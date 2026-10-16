@@ -8,7 +8,7 @@ import type { BreadcrumbSegment } from '../editor-utils'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { clientOperatingStrategy } from '../../operating-mode/client'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
-import { branchStatusPresentation } from '../branch-status'
+import { branchBarStatusPresentation } from '../branch-status'
 import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
@@ -149,6 +149,9 @@ export function EditorHeader({
     branchWriteBlocked,
   })
 
+  // The same condition under which BranchLockBanner renders.
+  const bannerShowing = branchReadOnly || statusLocked
+
   // Why the branch takes no writes, with the way forward; shared by Save, Save all and the chip.
   const branchLockReason = branchReadOnly
     ? 'The base branch is read-only. Create a branch to make changes.'
@@ -173,7 +176,7 @@ export function EditorHeader({
         ? 'Open an entry to save it.'
         : (entryLockReason ?? (!hasUnsavedChanges ? 'No changes to save.' : '')))
 
-  const presentation = branchStatusPresentation(branchStatus, branchIsProtected)
+  const presentation = branchBarStatusPresentation(branchStatus, branchIsProtected)
   const status =
     !branchLoading &&
     clientOperatingStrategy(operatingMode ?? 'prod').supportsStatusBadge() &&
@@ -192,11 +195,13 @@ export function EditorHeader({
           segments={breadcrumbSegments}
           entryLabel={currentEntry ? (currentEntry.label ?? currentEntry.slug) : undefined}
           entryDirty={hasUnsavedChanges}
+          // BranchLockBanner already says why a locked branch is read-only; the chip is for an
+          // entry alone being read-only on a branch that takes writes.
           readOnlyReason={
-            branchLoading
+            branchLoading || bannerShowing
               ? undefined
               : currentEntry || branchName
-                ? (branchLockReason ?? entryLockReason)
+                ? entryLockReason
                 : undefined
           }
           onCollection={onCollectionOpen}

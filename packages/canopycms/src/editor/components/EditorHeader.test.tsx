@@ -3,6 +3,7 @@ import { act, render, screen, cleanup, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
 import { BranchLockBanner } from './BranchLockBanner'
+import { UnsavedMark } from './UnsavedMark'
 import { CanopyCMSProvider } from '../theme'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { EditorEntry } from '../Editor'
@@ -231,8 +232,16 @@ describe('EditorHeader - branch pill unsaved count', () => {
       ],
       onEntrySelect,
     })
-    // " unsaved" shows from `sm`; below it the pill is icon-only and the word is visually hidden.
-    expect(screen.getByTestId('branch-unsaved-count').textContent).toBe('2 unsaved unsaved')
+    // The mark and the number show; the words are for assistive tech.
+    const count = screen.getByTestId('branch-unsaved-count')
+    expect(within(count).getByText('2').getAttribute('aria-hidden')).toBe('true')
+    expect(count.querySelector('[aria-hidden="true"]:empty')).toBeTruthy()
+    expect(within(count).getByText(/2 entries with unsaved changes/)).toBeTruthy()
+    // Content names the pill, so the count is part of it; "unsaved" is no longer visible text.
+    expect(screen.getByTestId('branch-dropdown-button').textContent).toContain(
+      '2 entries with unsaved changes',
+    )
+    expect(screen.queryByText('2 unsaved')).toBeNull()
 
     await userEvent.click(screen.getByTestId('branch-dropdown-button'))
     expect((await screen.findByTestId('discard-all-drafts-menu-item')).textContent).toBe(
@@ -240,6 +249,27 @@ describe('EditorHeader - branch pill unsaved count', () => {
     )
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Post B' }))
     expect(onEntrySelect).toHaveBeenCalledWith('posts/b')
+  })
+
+  it('names a single entry in the singular', () => {
+    renderHeader({ modifiedCount: 1, editedFiles: [] })
+    expect(
+      within(screen.getByTestId('branch-unsaved-count')).getByText(/^, 1 entry with unsaved/),
+    ).toBeTruthy()
+  })
+
+  it('draws the count and the breadcrumb dot as the same mark as the tree', () => {
+    renderHeader({ modifiedCount: 1, hasUnsavedChanges: true })
+    const reference = within(
+      render(<UnsavedMark data-testid="reference-mark" />, { wrapper: Wrapper }).container,
+    ).getByTestId('reference-mark')
+    const style = reference.getAttribute('style')
+    expect(style).toContain('--canopy-focus-ring')
+    const pillDot = screen
+      .getByTestId('branch-unsaved-count')
+      .querySelector('[aria-hidden="true"]:empty')
+    expect(pillDot?.getAttribute('style')).toBe(style)
+    expect(screen.getByTestId('entry-unsaved-dot').getAttribute('style')).toBe(style)
   })
 
   it('shows no count with nothing unsaved', () => {
@@ -263,7 +293,7 @@ describe('EditorHeader - branch menu with no edits', () => {
     expect(empty.textContent).toBe('No unsaved changes on this branch.')
     expect(empty.getAttribute('role')).toBeNull()
     expect(empty.hasAttribute('aria-disabled')).toBe(false)
-    expect(screen.queryByText('0 unsaved')).toBeNull()
+    expect(screen.queryByText(/with unsaved changes/)).toBeNull()
 
     screen.getByTestId('manage-branches-menu-item').focus()
     await userEvent.keyboard('{ArrowDown}{ArrowDown}')
@@ -437,11 +467,29 @@ describe('EditorHeader - read-only chip', () => {
     cleanup()
   })
 
-  it('shows on a locked branch, its reason in its accessible text', () => {
+  it('is hidden while the banner already says the branch is locked', () => {
     renderHeader({ branchStatus: 'submitted', branchWriteBlocked: true })
-    expect(screen.getByTestId('read-only-chip').textContent).toBe(
-      'Read-only. This branch is in review. Withdraw it to make changes.',
-    )
+    expect(screen.getByTestId('status-locked-banner')).toBeTruthy()
+    expect(screen.queryByTestId('read-only-chip')).toBeNull()
+  })
+
+  it('is hidden under the protected-branch banner too', () => {
+    renderHeader({ branchReadOnly: true, branchIsProtected: true })
+    expect(screen.getByTestId('protected-branch-banner')).toBeTruthy()
+    expect(screen.queryByTestId('read-only-chip')).toBeNull()
+  })
+
+  it('is hidden under the banner even when the entry is read-only too', () => {
+    renderHeader({ entryReadOnly: true, branchStatus: 'approved', branchWriteBlocked: true })
+    expect(screen.getByTestId('status-locked-banner')).toBeTruthy()
+    expect(screen.queryByTestId('read-only-chip')).toBeNull()
+  })
+
+  it('stays for an entry alone being read-only on a branch that takes writes', () => {
+    renderHeader({ entryReadOnly: true })
+    expect(screen.queryByTestId('status-locked-banner')).toBeNull()
+    expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
+    expect(screen.getByTestId('read-only-chip')).toBeTruthy()
   })
 
   it('shows for an entry a path rule refuses this user', () => {
@@ -462,11 +510,18 @@ describe('EditorHeader - status badge', () => {
     cleanup()
   })
 
-  it('labels an editing branch "Editing"', () => {
+  it('shows no status for the default editing state', () => {
     renderHeader({ branchStatus: 'editing' })
-    const badge = screen.getByTestId('header-status-badge-editing')
-    expect(badge.textContent).toBe('Editing')
-    expect(badge.getAttribute('data-status')).toBe('editing')
+    expect(screen.queryByTestId('header-status-badge-editing')).toBeNull()
+    expect(screen.getByTestId('branch-dropdown-button').textContent).not.toContain('Editing')
+  })
+
+  it.each([
+    ['approved', 'Approved'],
+    ['archived', 'Archived'],
+  ] as const)('labels a %s branch "%s"', (status, label) => {
+    renderHeader({ branchStatus: status, branchWriteBlocked: true })
+    expect(screen.getByTestId(`header-status-badge-${status}`).textContent).toBe(label)
   })
 
   it('labels a submitted branch "In review"', () => {
@@ -491,25 +546,59 @@ describe('EditorHeader - status badge', () => {
   })
 })
 
-describe('EditorHeader - unsaved indicator', () => {
-  it('says unsaved changes are kept on this device', () => {
-    renderHeader({ hasUnsavedChanges: true })
-    // The text shows from `lg`, the icon below it; each form carries the text for assistive tech.
-    const indicator = screen.getByTestId('unsaved-indicator')
-    expect(indicator.textContent).toBe('Unsaved · kept on this deviceUnsaved · kept on this device')
-    expect(indicator.querySelector('svg')).toBeTruthy()
+describe('EditorHeader - unsaved changes kept on this device', () => {
+  afterEach(() => {
+    cleanup()
   })
 
-  it('says they are not kept when storing drafts failed', () => {
+  const KEPT = 'Unsaved changes are kept on this device until you save.'
+
+  it("keeps the bar free of device text, and says it in Save's description", () => {
+    renderHeader({ hasUnsavedChanges: true })
+    expect(screen.queryByTestId('unsaved-indicator')).toBeNull()
+    for (const region of screen.getAllByRole('status')) {
+      expect(region.textContent).not.toContain('kept on this device')
+    }
+    const save = screen.getByTestId('save-button')
+    const description = document.getElementById(save.getAttribute('aria-describedby') ?? '')
+    expect(description?.textContent).toBe(KEPT)
+  })
+
+  it("shows it in Save's Tooltip on focus, for keyboard users", async () => {
+    renderHeader({ hasUnsavedChanges: true })
+    act(() => screen.getByTestId('save-button').focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe(KEPT)
+  })
+
+  it('says nothing about the device with nothing unsaved', () => {
+    renderHeader({ hasUnsavedChanges: false })
+    expect(screen.getByTestId('save-button').hasAttribute('aria-describedby')).toBe(false)
+    expect(document.body.textContent).not.toContain('kept on this device')
+  })
+
+  it('leaves a blocked Save to its reason', async () => {
+    renderHeader({ hasUnsavedChanges: true, branchStatus: 'submitted', branchWriteBlocked: true })
+    const save = screen.getByTestId('save-button')
+    expect(save.hasAttribute('aria-describedby')).toBe(false)
+    act(() => save.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toContain('This branch is in review.')
+  })
+
+  it('keeps a warning in the bar when storing drafts failed', () => {
     renderHeader({ hasUnsavedChanges: true, draftStorageFailed: true })
     const indicator = screen.getByTestId('unsaved-indicator')
     expect(indicator.textContent).toContain('Unsaved · not kept on this device')
     // The tooltip's consequence is mouse-only, so the status text carries it too.
     expect(indicator.textContent).toContain("Save before you leave or reload, or they'll be lost.")
+    expect(indicator.querySelector('svg')).toBeTruthy()
+    expect(indicator.getAttribute('style')).toContain('var(--canopy-danger-text)')
+    // Nothing is kept, so Save does not claim it.
+    expect(screen.getByTestId('save-button').hasAttribute('aria-describedby')).toBe(false)
+    expect(document.body.textContent).not.toContain(KEPT)
   })
 
-  it('is absent with nothing unsaved', () => {
-    renderHeader({ hasUnsavedChanges: false })
+  it('shows no warning with nothing unsaved', () => {
+    renderHeader({ hasUnsavedChanges: false, draftStorageFailed: true })
     expect(screen.queryByTestId('unsaved-indicator')).toBeNull()
   })
 })
