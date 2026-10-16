@@ -144,11 +144,11 @@ export const AssetListRow: React.FC<AssetListRowProps> = ({
         </Tooltip>
       )
     : onRemove && (
-        <Tooltip label="Remove from library">
+        <Tooltip label={`${EDITOR_ACTIONS.remove} from library`}>
           <ActionIcon
             variant="subtle"
             color="gray"
-            aria-label={`Remove ${asset.filename} from library`}
+            aria-label={`${EDITOR_ACTIONS.remove} ${asset.filename} from library`}
             data-testid={`asset-row-remove-${asset.hash32}`}
             onClick={() => onRemove(asset)}
           >

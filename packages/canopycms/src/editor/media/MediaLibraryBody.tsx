@@ -239,12 +239,13 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
 
   /**
    * Runs a remove or restore; `failure` words its error, and the raw server message is for admins.
-   * A non-admin's 403 is the ownership refusal, so it says so (`refusal`) rather than to retry.
+   * A non-admin's 403 from the API is the ownership refusal, so it says so (`refusal`) rather than
+   * to retry. Restore shows only to admins, so it has none.
    */
   const changeVisibility = async (
     request: () => Promise<{ ok: boolean; status: number; error?: string }>,
     failure: string,
-    refusal: string,
+    refusal: string | null,
     onDone: () => void,
   ) => {
     setActionError(null)
@@ -253,7 +254,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     try {
       const result = await request()
       if (!result.ok) {
-        if (result.status === 403 && !admin && !isNonApiResponse(result)) {
+        if (refusal && result.status === 403 && !admin && !isNonApiResponse(result)) {
           setActionError(`${failure} ${refusal}`)
         } else {
           fail(result.error)
@@ -270,7 +271,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     changeVisibility(
       () => client.assets.hide({ key: asset.hash32 }),
       `Couldn't remove ${asset.filename} from the library.`,
-      'You can only remove files you uploaded.',
+      'You can only remove files you uploaded. Ask an admin to remove it.',
       () => {
         if (showRemoved) library.replace({ ...asset, hidden: true })
         else library.remove(asset.hash32)
@@ -282,7 +283,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     changeVisibility(
       () => client.assets.restore({ key: asset.hash32 }),
       `Couldn't restore ${asset.filename} to the library.`,
-      'You can only restore files you uploaded.',
+      null,
       () => {
         library.replace(withoutHidden(asset))
         announce(`Restored ${asset.filename} to library`)

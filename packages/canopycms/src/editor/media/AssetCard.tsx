@@ -84,12 +84,12 @@ export const AssetCard: React.FC<AssetCardProps> = ({
       aria-label={onSelect ? `Select ${asset.filename}` : undefined}
     >
       {!removed && onRemove && (
-        <Tooltip label="Remove from library">
+        <Tooltip label={`${EDITOR_ACTIONS.remove} from library`}>
           <ActionIcon
             variant="default"
             radius="xl"
             style={overlayActionStyle}
-            aria-label={`Remove ${asset.filename} from library`}
+            aria-label={`${EDITOR_ACTIONS.remove} ${asset.filename} from library`}
             data-testid={`asset-card-remove-${asset.hash32}`}
             onClick={(event) => {
               event.stopPropagation()

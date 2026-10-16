@@ -11,6 +11,7 @@ import { MediaLibrary } from './MediaLibrary'
 import { MediaLibraryBody } from './MediaLibraryBody'
 import type { AssetRecord } from '../../api'
 import { ApiTimeoutError, REQUEST_TIMED_OUT_MESSAGE } from '../../api/request-deadline'
+import { CanopyApiClient } from '../../api/client'
 import { mockConsole } from '../../test-utils/console-spy'
 import { MEDIA_LIBRARY_PREFS_KEY } from './media-library-prefs'
 import { uploadAsset } from './upload-asset'
@@ -1824,8 +1825,26 @@ describe('MediaLibraryBody', () => {
 
       const alert = await screen.findByTestId('media-library-action-error')
       expect(alert.textContent).toBe(
-        "Couldn't remove cat.png from the library. You can only remove files you uploaded.",
+        "Couldn't remove cat.png from the library. You can only remove files you uploaded. Ask an admin to remove it.",
       )
+    })
+
+    it("offers a retry for a proxy's 403 page, which says nothing about ownership", async () => {
+      asUploader()
+      const proxy403 = await new CanopyApiClient({
+        fetch: vi.fn().mockResolvedValue({
+          ok: false,
+          status: 403,
+          json: () => Promise.reject(new SyntaxError('<html>')),
+        }),
+      }).assets.hide({ key: catAsset.hash32 })
+      mockClient.assets.hide.mockResolvedValueOnce(proxy403)
+
+      renderBody()
+      fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
+
+      const alert = await screen.findByTestId('media-library-action-error')
+      expect(alert.textContent).toBe("Couldn't remove cat.png from the library. Try again.")
     })
 
     it('hides the message of a request that threw', async () => {
