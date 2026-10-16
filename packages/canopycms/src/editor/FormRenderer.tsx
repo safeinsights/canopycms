@@ -291,10 +291,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     }
   const [formComments] = useState(createFormComments)
 
-  // An object's Undo clear lasts while it can put the object back where it was: until the object
-  // is filled in again, or another item takes the index of a list item or block holding it. It
-  // also ends with the entry, the branch, a save or a discard. It has no timer: it stays in the
-  // form for as long as the object is left unedited.
+  // An object's Undo clear lasts while it can put the object back where it was (checked by
+  // `canRestoreRemoval`), and ends with the entry, the branch, a save or a discard. It has no
+  // timer: it stays in the form for as long as the object is left unedited.
   const [cleared, setCleared] = useState<ClearedObjects>({
     scope: boundaryResetKey,
     savedValue,

@@ -52,9 +52,9 @@ const quoted = (label: string | undefined) => (label ? ` "${label}"` : '')
 /**
  * An object field's group of fields. Its Clear is an Undo-instead-of-confirm removal
  * (docs/ux-guidelines.md, Destructive actions) whose Undo stays in the label row, where the clear
- * happened, with no timer, until the caller drops `onUndoClear`. FormRenderer drops it once the
- * object is filled in again, another item takes the index of a list item or block holding it,
- * another entry or branch opens, or the entry is saved or its draft discarded.
+ * happened, with no timer, until the caller drops `onUndoClear`. FormRenderer drops it once it
+ * can no longer put the object back where it was, another entry or branch opens, or the entry is
+ * saved or its draft discarded.
  */
 export const ObjectField: React.FC<ObjectFieldProps> = ({
   label,
