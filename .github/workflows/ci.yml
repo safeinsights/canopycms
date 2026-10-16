@@ -743,12 +743,30 @@ jobs:
       - uses: ./.github/actions/setup
         if: steps.filter.outputs.relevant == 'true'
 
+      # The base images, saved on main by cms-base-images.yml, which computes the same key. Restore
+      # only: a save here would land in this PR's own cache scope, which no other run reads.
+      # restore-keys falls back to the newest older tar; scripts/smoke/base-images.mjs pulls any
+      # base the Dockerfile names that the tar lacks.
+      - name: Base-image cache key
+        id: base-images
+        if: steps.filter.outputs.relevant == 'true'
+        run: echo "key=cms-base-images-${RUNNER_OS}-${RUNNER_ARCH}-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the base images
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/cms-base-images
+          key: ${{ steps.base-images.outputs.key }}
+          restore-keys: cms-base-images-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Build, boot and check the CMS image
         if: steps.filter.outputs.relevant == 'true'
         run: >-
           node scripts/smoke/standalone-image.mjs
           --pm ${{ matrix.pm }}
           --work-dir "${{ runner.temp }}/standalone-image-smoke"
+          --base-images "${{ runner.temp }}/cms-base-images/base-images.tar"
 
       # The step log keeps only the last 200 lines of the container's output; this keeps all of it.
       - name: Upload the container log

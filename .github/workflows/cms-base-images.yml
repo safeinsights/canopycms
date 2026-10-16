@@ -1,0 +1,49 @@
+name: Seed CMS base images
+
+# Saves the CMS image's base images to the Actions cache, for ci.yml's "Standalone CMS Image" job
+# to load instead of pulling them anonymously from public.ecr.aws, which refuses a runner whose
+# shared IP has used its quota (scripts/smoke/base-images.mjs). Only a run on main fills a cache
+# every pull request can restore, and that job never saves. Weekly, so CI builds on bases at most
+# about a week old; dispatch it when a scheduled run failed. ci.yml computes the same key.
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    name: Seed (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The runners ci.yml's standalone-image legs run on, one per architecture.
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Base-image cache key
+        id: base-images
+        run: echo "key=cms-base-images-${RUNNER_OS}-${RUNNER_ARCH}-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      # Pulls and saves only; nothing is built.
+      - name: Pull the base images
+        run: >-
+          node scripts/smoke/base-images.mjs
+          --dockerfile packages/canopycms/src/cli/template-files/Dockerfile.cms.template
+          --save "${{ runner.temp }}/cms-base-images/base-images.tar"
+
+      - name: Save the base images
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/cms-base-images
+          key: ${{ steps.base-images.outputs.key }}
