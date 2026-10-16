@@ -468,6 +468,28 @@ describe('PreviewPane', () => {
       expect(iframe()).not.toBe(first)
       expect(iframe().getAttribute('src')).toBe(`${nextSrc}&chrome=1`)
     })
+
+    it('holds the page a reload framed, not the one before it', async () => {
+      const { rerender } = render(pane({}), { wrapper: Wrapper })
+      await userEvent.click(screen.getByRole('button', { name: 'Reload preview' }))
+      const reloaded = iframe()
+      rerender(pane({ src: nextSrc, data: undefined, pending: true }))
+      expect(iframe()).toBe(reloaded)
+    })
+
+    it('applies a reload made while its own data reloads exactly once', async () => {
+      const { rerender } = render(pane({}), { wrapper: Wrapper })
+      const first = iframe()
+      rerender(pane({ data: undefined, pending: true }))
+      await userEvent.click(screen.getByRole('button', { name: 'Reload preview' }))
+      expect(iframe()).toBe(first)
+
+      rerender(pane({ data: { title: 'Hello again' } }))
+      const reloaded = iframe()
+      expect(reloaded).not.toBe(first)
+      rerender(pane({ data: { title: 'Hello edited' } }))
+      expect(iframe()).toBe(reloaded)
+    })
   })
 
   describe('the site header and footer', () => {
@@ -552,18 +574,25 @@ describe('PreviewPane', () => {
         return id ? document.getElementById(id)?.textContent : undefined
       }
 
-      it('shows the page without them, keeps the toggle and says why, when on from the start', () => {
+      const frameSrc = () => document.querySelector('iframe')?.getAttribute('src')
+      const cue = () => screen.queryByText('Header and footer unavailable')
+
+      it('frames the page without them, keeps the toggle and says why, when on from the start', () => {
         vi.useFakeTimers()
         const onSiteChromeChange = vi.fn()
         render(pane({ siteChrome: true, onSiteChromeChange }), { wrapper: Wrapper })
-        expect(document.querySelector('iframe')?.getAttribute('src')).toBe(chromeSrc)
+        expect(frameSrc()).toBe(chromeSrc)
         expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
-        expect(note()).toBeUndefined()
 
         timeOut()
-        expect(document.querySelector('iframe')?.getAttribute('src')).toBe(src)
+        expect(frameSrc()).toBe(src)
         expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
-        expect(note()).toMatch(/couldn't show its header and footer/)
+        // Not blamed on the header and footer until the page without them connects.
+        expect(note()).toBeUndefined()
+        expect(cue()).toBeNull()
+        sayReady(true)
+        expect(note()).toMatch(/couldn't show its header and footer, so the preview shows pages/)
+        expect(cue()).not.toBeNull()
         expect(
           screen
             .getByRole('link', { name: 'Open saved version in a new tab' })
@@ -578,13 +607,37 @@ describe('PreviewPane', () => {
         const { rerender } = render(pane({}), { wrapper: Wrapper })
         sayReady(true)
         rerender(pane({ siteChrome: true }))
-        expect(document.querySelector('iframe')?.getAttribute('src')).toBe(chromeSrc)
+        expect(frameSrc()).toBe(chromeSrc)
 
         timeOut()
-        expect(document.querySelector('iframe')?.getAttribute('src')).toBe(src)
+        expect(frameSrc()).toBe(src)
         sayReady(true)
         expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
         expect(note()).toMatch(/couldn't show its header and footer/)
+      })
+
+      it('frames every later entry without them at once', () => {
+        vi.useFakeTimers()
+        const nextSrc = '/preview/posts/world?branch=feature-a'
+        const { rerender } = render(pane({ siteChrome: true }), { wrapper: Wrapper })
+        timeOut()
+        sayReady(true)
+        rerender(pane({ siteChrome: true, src: nextSrc, data: undefined, pending: true }))
+        rerender(pane({ siteChrome: true, src: nextSrc, data: { title: 'World draft' } }))
+        expect(frameSrc()).toBe(nextSrc)
+        expect(cue()).not.toBeNull()
+      })
+
+      it('blames nothing when the page without them does not connect either', () => {
+        vi.useFakeTimers()
+        render(pane({ siteChrome: true }), { wrapper: Wrapper })
+        timeOut()
+        expect(frameSrc()).toBe(src)
+        timeOut()
+        expect(frameSrc()).toBe(src)
+        expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
+        expect(note()).toBeUndefined()
+        expect(cue()).toBeNull()
       })
 
       it('tries them again when turned off and on', () => {
@@ -594,7 +647,17 @@ describe('PreviewPane', () => {
         fireEvent.click(toggle() as HTMLElement)
         rerender(pane({ siteChrome: false }))
         rerender(pane({ siteChrome: true }))
-        expect(document.querySelector('iframe')?.getAttribute('src')).toBe(chromeSrc)
+        expect(frameSrc()).toBe(chromeSrc)
+      })
+
+      it('tries them again on Reload', () => {
+        vi.useFakeTimers()
+        render(pane({ siteChrome: true }), { wrapper: Wrapper })
+        timeOut()
+        sayReady(true)
+        fireEvent.click(screen.getByRole('button', { name: 'Reload preview' }))
+        expect(frameSrc()).toBe(chromeSrc)
+        expect(cue()).toBeNull()
       })
     })
   })

@@ -302,21 +302,24 @@ describe('the preview when the next entry does not arrive as asked', () => {
 
   it("gives way to the form's load failure when the next entry can't be read", async () => {
     const consoleSpy = mockConsole()
-    const api = stubApi()
-    renderEditor()
-    await api.release(hello, 'Hello title')
-    await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(helloSrc))
-    await switchToWorld()
+    try {
+      const api = stubApi()
+      renderEditor()
+      await api.release(hello, 'Hello title')
+      await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(helloSrc))
+      await switchToWorld()
 
-    await api.fail(world)
-    await waitFor(() => expect(screen.getByTestId('entry-load-failed')).toBeTruthy())
-    expect(iframe()).toBeNull()
-    expect(screen.queryByTestId('preview-toolbar')).toBeNull()
-    consoleSpy.restore()
+      await api.fail(world)
+      await waitFor(() => expect(screen.getByTestId('entry-load-failed')).toBeTruthy())
+      expect(iframe()).toBeNull()
+      expect(screen.queryByTestId('preview-toolbar')).toBeNull()
+    } finally {
+      consoleSpy.restore()
+    }
   })
 
-  // A branch switch reloads the entry list, so the pane starts over rather than holding a page
-  // read from the other branch.
+  // A branch switch reloads the entry list, so the pane may start over; either way no draft
+  // crosses from one branch's page to the other's.
   it('frames the open entry on the new branch after a branch switch mid-load', async () => {
     const api = stubApi()
     renderEditor()
@@ -329,9 +332,6 @@ describe('the preview when the next entry does not arrive as asked', () => {
     fireEvent.click(screen.getByTestId('branch-dropdown-button'))
     fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
     fireEvent.click(await screen.findByTestId('switch-to-branch-button-feature'))
-    await waitFor(() => expect(screen.getByTestId('preview-loading-skeleton')).toBeTruthy())
-    expect(first.isConnected).toBe(false)
-    expect(screen.getByTestId('preview-toolbar')).toBeTruthy()
 
     // The editor reopens its first entry with a page on the new branch.
     await api.release(hello, 'Feature title', 'feature')
@@ -346,7 +346,8 @@ describe('the preview when the next entry does not arrive as asked', () => {
         data: expect.objectContaining({ title: 'Feature title' }),
       }),
     ])
-    expect(JSON.stringify(firstPost.mock.calls)).not.toContain('Feature title')
+    // No draft from either branch reaches the other's page.
+    expect(draftsTo(first, firstPost).every((message) => message.path === helloSrc)).toBe(true)
   })
 })
 

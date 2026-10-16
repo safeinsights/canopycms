@@ -191,24 +191,26 @@ export const PreviewPane = ({
     }
     hadNotice.current = Boolean(notice)
   }, [notice])
+  // Pages asked for the header and footer stopped connecting, such as when the site's layout
+  // throws: for the rest of the session pages are framed without them, so drafts still show.
+  // `trying` until a page without them connects, which confirms the header and footer were the
+  // cause; a site that never connects at all is not blamed on them. The toggle and Reload retry.
+  const [chromeFallback, setChromeFallback] = useState<'off' | 'trying' | 'confirmed'>('off')
   // Reloading remounts the frame for a fresh handshake. It drops a reported error too: a page
   // that reports draft errors reports it again once the reloaded page renders the draft.
   const [reloads, setReloads] = useState(0)
   const reload = () => {
     setReloads((count) => count + 1)
+    setChromeFallback('off')
     frameProps.onPreviewError?.(null)
   }
 
   // Whether the page framed last said it renders the site's header and footer. Kept across
   // pages, so the toggle stays put while the next page connects.
   const [chromeSupported, setChromeSupported] = useState(false)
-  // The page whose `chrome=1` URL never connected, such as one whose layout throws: it is framed
-  // without them, so its draft still shows.
-  const [chromeFailedPage, setChromeFailedPage] = useState<string | null>(null)
   const chromeSrc = siteChromeSrc(src, mount)
-  const chromeFailed = siteChrome && chromeFailedPage === src
   // Also what "Open saved version" opens, so it shows what the frame shows.
-  const liveSrc = siteChrome && chromeSrc && !chromeFailed ? chromeSrc : src
+  const liveSrc = siteChrome && chromeSrc && chromeFallback === 'off' ? chromeSrc : src
   // The frame changes page only once the open entry's data is in, so one render hands the new
   // page its own draft: no draft is ever posted to the page of another entry. A reload or the
   // toggle waits for that page too, since the held page has no draft to render.
@@ -226,8 +228,11 @@ export const PreviewPane = ({
   const frame = pending ? framed : live
   const onSiteChrome = (support: SiteChromeSupport) => {
     setChromeSupported(support === 'supported')
-    if (support === 'unanswered' && frame && frame.src !== frame.page) {
-      setChromeFailedPage(frame.page)
+    if (!frame) return
+    const withChrome = frame.src !== frame.page
+    if (support === 'unanswered' && withChrome) setChromeFallback('trying')
+    if (support !== 'unanswered' && !withChrome) {
+      setChromeFallback((current) => (current === 'trying' ? 'confirmed' : current))
     }
   }
   // Shown while on even without support, so a page that never connects can still turn it off.
@@ -348,9 +353,9 @@ export const PreviewPane = ({
             {showChromeToggle && onSiteChromeChange && (
               <SiteChromeToggle
                 enabled={siteChrome}
-                failed={chromeFailed}
+                failed={chromeFallback === 'confirmed'}
                 onToggle={() => {
-                  setChromeFailedPage(null)
+                  setChromeFallback('off')
                   onSiteChromeChange(!siteChrome)
                 }}
               />
