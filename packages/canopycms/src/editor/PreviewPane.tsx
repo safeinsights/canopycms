@@ -8,6 +8,7 @@ import {
   Box,
   Group,
   Select,
+  Skeleton,
   Text,
   Tooltip,
   UnstyledButton,
@@ -17,12 +18,17 @@ import { useClipboard, useElementSize, useWindowEvent } from '@mantine/hooks'
 import { IconCheck, IconExternalLink, IconRefresh } from '@tabler/icons-react'
 
 import type { PreviewWidth } from './hooks/useEditorLayout'
-import { PreviewFrame, type PreviewMarks } from './PreviewFrame'
+import { PreviewFrame, type PreviewMarks, type SiteChromeSupport } from './PreviewFrame'
 import type { InexactMark } from './preview-marks'
-import { HighlightToggle, MaximizeToggle, UnmappedMarksChip } from './PreviewToolbarTools'
+import {
+  HighlightToggle,
+  MaximizeToggle,
+  SiteChromeToggle,
+  UnmappedMarksChip,
+} from './PreviewToolbarTools'
 import type { PaneArrangement } from './shell/PaneLayout'
 import { PANE_HEADER_HEIGHT } from './pane-header'
-import { displayPreviewPath, type PreviewMount } from './preview-path'
+import { displayPreviewPath, siteChromeSrc, type PreviewMount } from './preview-path'
 import {
   computePreviewViewport,
   formatPreviewWidthReadout,
@@ -51,9 +57,16 @@ const RELOAD_LABEL = 'Reload preview'
 const OPEN_SAVED_LABEL = 'Open saved version in a new tab'
 
 export interface PreviewPaneProps {
+  /** The open entry's page. */
   src: string
   /** The page's path for the bridge and the toolbar; defaults to `src`. */
   path?: string
+  /**
+   * The open entry's data is still loading, so `data` is not its draft yet. The page framed last
+   * stays in view, dimmed, until it arrives; with none framed yet, the viewport holds a skeleton.
+   * The toolbar already names the open entry.
+   */
+  pending?: boolean
   /** Where the preview routes are mounted; the toolbar's path leaves out the `previewPrefix`. */
   mount?: PreviewMount
   data?: unknown
@@ -81,6 +94,24 @@ export interface PreviewPaneProps {
   onMaximizedChange?: (maximized: boolean) => void
   /** A drag of the preview/form divider is under way: the preview shows its size over itself. */
   resizing?: boolean
+  /** The site's header and footer are asked for, by `chrome=1` on a `previewPrefix` page. */
+  siteChrome?: boolean
+  /**
+   * With it, the toolbar offers the site header and footer toggle once the page says it can show
+   * them, and whenever `siteChrome` is on, so it can always be turned off.
+   */
+  onSiteChromeChange?: (siteChrome: boolean) => void
+}
+
+/** What the viewport frames: the open entry's page, or the one before it while that loads. */
+interface FramedPage {
+  /** The page, as the editor names it. */
+  page: string
+  /** The URL framed: `page`, with `chrome=1` while the site's header and footer are on. */
+  src: string
+  path: string
+  /** Counts reloads, so a reload remounts the frame. */
+  key: number
 }
 
 /**
@@ -91,6 +122,7 @@ export interface PreviewPaneProps {
 export const PreviewPane = ({
   src,
   path = src,
+  pending = false,
   mount,
   previewWidth,
   onPreviewWidthChange,
@@ -103,6 +135,11 @@ export const PreviewPane = ({
   maximized = false,
   onMaximizedChange,
   resizing = false,
+  siteChrome = false,
+  onSiteChromeChange,
+  data,
+  isLoading,
+  onMarks,
   ...frameProps
 }: PreviewPaneProps) => {
   const { ref: viewportRef, width, height } = useElementSize()
@@ -154,13 +191,54 @@ export const PreviewPane = ({
     }
     hadNotice.current = Boolean(notice)
   }, [notice])
+  // Pages asked for the header and footer stopped connecting, such as when the site's layout
+  // throws: for the rest of the session pages are framed without them, so drafts still show.
+  // `trying` until a page without them connects, which confirms the header and footer were the
+  // cause; a site that never connects at all is not blamed on them. The toggle and Reload retry.
+  const [chromeFallback, setChromeFallback] = useState<'off' | 'trying' | 'confirmed'>('off')
   // Reloading remounts the frame for a fresh handshake. It drops a reported error too: a page
   // that reports draft errors reports it again once the reloaded page renders the draft.
   const [reloads, setReloads] = useState(0)
   const reload = () => {
     setReloads((count) => count + 1)
+    setChromeFallback('off')
     frameProps.onPreviewError?.(null)
   }
+
+  // Whether the page framed last said it renders the site's header and footer. Kept across
+  // pages, so the toggle stays put while the next page connects.
+  const [chromeSupported, setChromeSupported] = useState(false)
+  const chromeSrc = siteChromeSrc(src, mount)
+  // Also what "Open saved version" opens, so it shows what the frame shows.
+  const liveSrc = siteChrome && chromeSrc && chromeFallback === 'off' ? chromeSrc : src
+  // The frame changes page only once the open entry's data is in, so one render hands the new
+  // page its own draft: no draft is ever posted to the page of another entry. A reload or the
+  // toggle waits for that page too, since the held page has no draft to render.
+  const live: FramedPage = { page: src, src: liveSrc, path, key: reloads }
+  const [framed, setFramed] = useState<FramedPage | null>(pending ? null : live)
+  if (
+    !pending &&
+    (framed?.src !== live.src ||
+      framed.page !== src ||
+      framed.path !== path ||
+      framed.key !== reloads)
+  ) {
+    setFramed(live)
+  }
+  const frame = pending ? framed : live
+  const onSiteChrome = (support: SiteChromeSupport) => {
+    setChromeSupported(support === 'supported')
+    if (!frame) return
+    const withChrome = frame.src !== frame.page
+    if (support === 'unanswered' && withChrome) setChromeFallback('trying')
+    if (support !== 'unanswered' && !withChrome) {
+      setChromeFallback((current) => (current === 'trying' ? 'confirmed' : current))
+    }
+  }
+  // Shown while on even without support, so a page that never connects can still turn it off.
+  const showChromeToggle = Boolean(
+    onSiteChromeChange && chromeSrc && (chromeSupported || siteChrome),
+  )
 
   const shownPath = displayPreviewPath(path, mount)
   const viewport = computePreviewViewport(previewWidth, width, height)
@@ -268,8 +346,20 @@ export const PreviewPane = ({
             {formatPreviewWidthReadout(viewport)}
           </Text>
         )}
-        {(onHighlightToggle || (showMarkDiagnostics && inexactMarks.length > 0)) && (
+        {(onHighlightToggle ||
+          showChromeToggle ||
+          (showMarkDiagnostics && inexactMarks.length > 0)) && (
           <Group gap={6} wrap="nowrap">
+            {showChromeToggle && onSiteChromeChange && (
+              <SiteChromeToggle
+                enabled={siteChrome}
+                failed={chromeFallback === 'confirmed'}
+                onToggle={() => {
+                  setChromeFallback('off')
+                  onSiteChromeChange(!siteChrome)
+                }}
+              />
+            )}
             {onHighlightToggle && (
               <HighlightToggle
                 enabled={Boolean(frameProps.highlightEnabled)}
@@ -304,7 +394,7 @@ export const PreviewPane = ({
           <Tooltip label={OPEN_SAVED_LABEL}>
             <ActionIcon
               component="a"
-              href={src}
+              href={liveSrc}
               target="_blank"
               rel="noopener noreferrer"
               variant="subtle"
@@ -318,23 +408,36 @@ export const PreviewPane = ({
       </Group>
       {notice}
       <Box ref={viewportRef} pos="relative" style={{ flex: '1 1 auto', minHeight: 0 }}>
-        <PreviewFrame
-          key={reloads}
-          src={src}
-          path={path}
-          {...frameProps}
-          onReload={() => {
-            // Retry goes with the frame it sits in; the toolbar's reload offers the same action.
-            reload()
-            reloadButtonRef.current?.focus()
-          }}
-          iframeStyle={iframeStyle}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            background: previewWidth === 'fit' ? undefined : 'var(--canopy-surface-muted)',
-          }}
-        />
+        {frame ? (
+          <PreviewFrame
+            key={frame.key}
+            src={frame.src}
+            path={frame.path}
+            {...frameProps}
+            // A held page gets no draft and its reports go nowhere: it belongs to another entry.
+            data={pending ? undefined : data}
+            isLoading={pending ? undefined : isLoading}
+            onMarks={pending ? undefined : onMarks}
+            onPreviewError={pending ? undefined : frameProps.onPreviewError}
+            busy={pending}
+            onSiteChrome={onSiteChrome}
+            onReload={() => {
+              // Retry goes with the frame it sits in; the toolbar's reload offers the same action.
+              reload()
+              reloadButtonRef.current?.focus()
+            }}
+            iframeStyle={iframeStyle}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: previewWidth === 'fit' ? undefined : 'var(--canopy-surface-muted)',
+            }}
+          />
+        ) : (
+          <Box aria-busy="true" pos="absolute" inset={0} data-testid="preview-loading-skeleton">
+            <Skeleton h="100%" radius={0} />
+          </Box>
+        )}
         {resizing && width > 0 && (
           <Box
             aria-hidden

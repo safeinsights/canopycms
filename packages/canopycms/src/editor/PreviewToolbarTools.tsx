@@ -14,7 +14,12 @@ import {
   UnstyledButton,
   VisuallyHidden,
 } from '@mantine/core'
-import { IconArrowsMaximize, IconArrowsMinimize, IconMarquee } from '@tabler/icons-react'
+import {
+  IconArrowsMaximize,
+  IconArrowsMinimize,
+  IconLayoutNavbar,
+  IconMarquee,
+} from '@tabler/icons-react'
 
 import type { InexactMark } from './preview-marks'
 
@@ -54,6 +59,49 @@ export function HighlightToggle({ enabled, onToggle, marksNothing = false }: Hig
           <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
             Nothing to highlight
             <VisuallyHidden id={noteId}>{NOTHING_MARKED_NOTE}</VisuallyHidden>
+          </Text>
+        </Tooltip>
+      )}
+    </Group>
+  )
+}
+
+const SITE_CHROME_LABEL = 'Show site header and footer'
+const SITE_CHROME_FAILED_NOTE =
+  "The site couldn't show its header and footer, so the preview shows pages without them. Turn this off and on, or reload the preview, to try again."
+
+export interface SiteChromeToggleProps {
+  enabled: boolean
+  onToggle: () => void
+  /** On, but pages with the header and footer don't connect while pages without them do. */
+  failed?: boolean
+}
+
+/** Shows and hides the site's header and footer; says so when the site couldn't show them. */
+export function SiteChromeToggle({ enabled, onToggle, failed = false }: SiteChromeToggleProps) {
+  const noteId = useId()
+  const showNote = enabled && failed
+  return (
+    <Group gap={4} wrap="nowrap">
+      <Tooltip label={SITE_CHROME_LABEL}>
+        <ActionIcon
+          variant={enabled ? 'filled' : 'subtle'}
+          color={enabled ? 'brand' : 'gray'}
+          size="md"
+          aria-pressed={enabled}
+          aria-label={SITE_CHROME_LABEL}
+          aria-describedby={showNote ? noteId : undefined}
+          data-testid="toggle-site-chrome-button"
+          onClick={onToggle}
+        >
+          <IconLayoutNavbar size={16} />
+        </ActionIcon>
+      </Tooltip>
+      {showNote && (
+        <Tooltip label={SITE_CHROME_FAILED_NOTE} multiline w={260}>
+          <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+            Header and footer unavailable
+            <VisuallyHidden id={noteId}>{SITE_CHROME_FAILED_NOTE}</VisuallyHidden>
           </Text>
         </Tooltip>
       )}

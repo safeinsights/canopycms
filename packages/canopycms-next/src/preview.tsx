@@ -40,8 +40,13 @@ export function withCanopyPreview<T, X = undefined>(
 ): (props: CanopyPreviewProps<T, X>) => ReactElement {
   return function CanopyPreview(props: CanopyPreviewProps<T, X>) {
     const { initialData, editorOrigin, extras } = props
-    const { previewAssetBase } = props as CanopyPreviewProps<T, X> & PreviewRouteProps
-    const preview = useCanopyPreview<T>({ initialData, editorOrigin })
+    const { previewAssetBase, previewSiteChrome } = props as CanopyPreviewProps<T, X> &
+      PreviewRouteProps
+    const preview = useCanopyPreview<T>({
+      initialData,
+      editorOrigin,
+      siteChrome: previewSiteChrome,
+    })
     // On `createPreviewPage`'s route the view renders only once the gate has set the asset
     // prefix; see `usePreviewAssetBaseGate`.
     const open = usePreviewAssetBaseGate(previewAssetBase)

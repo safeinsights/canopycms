@@ -102,6 +102,7 @@ describe('useEditorLayout persistence', () => {
     expect(result.current.sideSplitPercent).toBe(52)
     expect(result.current.stackedSplitPercent).toBe(58)
     expect(result.current.previewWidth).toBe('fit')
+    expect(result.current.siteChrome).toBe(false)
     expect(result.current.contentPanelOpen).toBe(false)
     expect(result.current.contentPanelWidth).toBe(280)
   })
@@ -115,6 +116,7 @@ describe('useEditorLayout persistence', () => {
         sideSplitPercent: 40,
         stackedSplitPercent: 70,
         previewWidth: 'tablet',
+        siteChrome: true,
         contentPanelOpen: true,
         contentPanelWidth: 300,
       }),
@@ -127,6 +129,7 @@ describe('useEditorLayout persistence', () => {
     expect(result.current.sideSplitPercent).toBe(40)
     expect(result.current.stackedSplitPercent).toBe(70)
     expect(result.current.previewWidth).toBe('tablet')
+    expect(result.current.siteChrome).toBe(true)
     expect(result.current.contentPanelOpen).toBe(true)
     expect(result.current.contentPanelWidth).toBe(300)
   })
@@ -146,6 +149,7 @@ describe('useEditorLayout persistence', () => {
     expect(stored()?.stackedSplitPercent).toBe(66)
 
     act(() => result.current.setPreviewWidth('mobile'))
+    act(() => result.current.setSiteChrome(true))
     act(() => result.current.setContentPanelOpen(true))
     act(() => result.current.setContentPanelWidth(320))
 
@@ -155,11 +159,13 @@ describe('useEditorLayout persistence', () => {
       sideSplitPercent: 33,
       stackedSplitPercent: 66,
       previewWidth: 'mobile',
+      siteChrome: true,
       contentPanelOpen: true,
       contentPanelWidth: 320,
     })
     expect(result.current.sideSplitPercent).toBe(33)
     expect(result.current.previewWidth).toBe('mobile')
+    expect(result.current.siteChrome).toBe(true)
   })
 
   it('clamps split percents and the content-panel width, and ignores non-finite values', () => {
@@ -303,6 +309,7 @@ describe('parseEditorLayoutPrefs', () => {
           sideSplitPercent: 500,
           stackedSplitPercent: null,
           previewWidth: 'huge',
+          siteChrome: 'yes',
           contentPanelOpen: true,
           contentPanelWidth: 10,
         }),
@@ -313,6 +320,7 @@ describe('parseEditorLayoutPrefs', () => {
       sideSplitPercent: 85,
       stackedSplitPercent: 58,
       previewWidth: 'fit',
+      siteChrome: false,
       contentPanelOpen: true,
       contentPanelWidth: 240,
     })
