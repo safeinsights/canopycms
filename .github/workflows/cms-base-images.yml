@@ -4,7 +4,8 @@ name: Seed CMS base images
 # to load instead of pulling them anonymously from public.ecr.aws, which refuses a runner whose
 # shared IP has used its quota (scripts/smoke/base-images.mjs). Only a run on main fills a cache
 # every pull request can restore, and that job never saves. Weekly, so CI builds on bases at most
-# about a week old; dispatch it when a scheduled run failed. ci.yml computes the same key.
+# about a week old; dispatch it to refresh them sooner or to replace a failed run. Each run saves
+# under its own key, since an entry cannot be overwritten; ci.yml restores by the week prefix.
 on:
   schedule:
     - cron: '23 5 * * 1'
@@ -16,7 +17,11 @@ permissions:
 jobs:
   seed:
     name: Seed (${{ matrix.runner }})
+    # A dispatch on another branch would save into that branch's scope, which the pull requests
+    # into it restore ahead of main's.
+    if: github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -33,7 +38,9 @@ jobs:
 
       - name: Base-image cache key
         id: base-images
-        run: echo "key=cms-base-images-${RUNNER_OS}-${RUNNER_ARCH}-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+        run: >-
+          echo "key=cms-base-images-${RUNNER_OS}-${RUNNER_ARCH}-$(date -u +%G-W%V)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          >> "$GITHUB_OUTPUT"
 
       # Pulls and saves only; nothing is built.
       - name: Pull the base images

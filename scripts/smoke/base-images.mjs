@@ -18,12 +18,12 @@ import { parseArgs } from 'node:util'
 export const PULL_REFUSED = /\btoomanyrequests\b/
 export const PULL_RETRY_DELAYS_S = [20, 60]
 
-/** Each image a `FROM` or `--from=` names, once, skipping `scratch` and earlier stages. */
+/** Each image a `FROM` or `--from=` names, once, skipping `scratch` and stages by name or index. */
 export function baseImageRefs(dockerfile) {
   const stages = new Set(['scratch'])
   const refs = []
   const add = (ref) => {
-    if (stages.has(ref.toLowerCase()) || refs.includes(ref)) return
+    if (/^\d+$/.test(ref) || stages.has(ref.toLowerCase()) || refs.includes(ref)) return
     if (ref.includes('$'))
       throw new Error(`cannot pre-pull a base image named by a variable: ${ref}`)
     refs.push(ref)
@@ -64,9 +64,9 @@ function docker(args, { capture = true } = {}) {
   return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` }
 }
 
-function dockerPull(ref) {
-  console.log(`[base-images] $ docker pull ${ref}`)
-  const result = docker(['pull', ref])
+function dockerPull(ref, run) {
+  log(`$ docker pull ${ref}`)
+  const result = run(['pull', ref])
   process.stdout.write(result.output)
   return result
 }
@@ -81,20 +81,24 @@ function log(message) {
 
 /**
  * Loads `tar` if it exists, then pulls each base the store lacks, so a tar saved for an older
- * Dockerfile is safe to load. `refresh` pulls every base instead.
+ * Dockerfile is safe to load. `refresh` pulls every base instead. `run` runs a docker command.
  */
-export function ensureBaseImages(dockerfilePath, { tar, refresh = false } = {}) {
+export function ensureBaseImages(
+  dockerfilePath,
+  { tar, refresh = false, run = docker, sleep = sleepSync } = {},
+) {
   const refs = baseImageRefs(readFileSync(dockerfilePath, 'utf8'))
   if (tar && !refresh && existsSync(tar)) {
     log(`$ docker load -i ${tar}`)
-    const loaded = docker(['load', '-i', tar], { capture: false })
+    const loaded = run(['load', '-i', tar], { capture: false })
     if (loaded.status !== 0) log(`could not load ${tar}; pulling the bases instead`)
   }
   const missing = refresh
     ? refs
-    : refs.filter((ref) => docker(['image', 'inspect', '--format', '{{.Id}}', ref]).status !== 0)
+    : refs.filter((ref) => run(['image', 'inspect', '--format', '{{.Id}}', ref]).status !== 0)
   log(`bases: ${refs.join(', ')}; pulling: ${missing.length > 0 ? missing.join(', ') : 'none'}`)
-  for (const ref of missing) pullWithRetry(ref, { pull: dockerPull, sleep: sleepSync, log })
+  const pull = (ref) => dockerPull(ref, run)
+  for (const ref of missing) pullWithRetry(ref, { pull, sleep, log })
   return refs
 }
 
