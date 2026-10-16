@@ -482,8 +482,8 @@ const EditorContent: React.FC<EditorProps> = ({
   }
 
   // An open overlay docks open, as the URL's ask for no entry does at load; `navigatorOpen` is only
-  // the overlay's, so a docked panel never resurfaces as one. Waits for the stored layout, whose
-  // arrival could otherwise dock an overlay the stacked layout keeps.
+  // the overlay's, so a docked panel never resurfaces as one. Waits for the stored preferences, so
+  // the open state it sets lands on them, not on the defaults they replace.
   useEffect(() => {
     if (layoutLoaded && contentPanelDocked && navigatorOpen) {
       setContentPanelOpen(true)
