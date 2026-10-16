@@ -373,8 +373,9 @@ const EditorContent: React.FC<EditorProps> = ({
     storageKey: editorLayoutStorageKey(basePath),
     defaultLayout: wideWindow ? 'side' : 'stacked',
   })
-  // In the stacked layout the content panel lays over the form only, so the preview stays in view.
-  const contentPanelDocked = layout === 'side' && wideWindow
+  // A wide window docks the content panel: beside the panes side by side, and beside the form row
+  // only when stacked, so the preview keeps its full width. A narrow one lays it over the form.
+  const contentPanelDocked = wideWindow
 
   // Comments state (shared between useCommentSystem and useBranchManager)
   const [commentsForBranchSummaries, setCommentsForBranchSummaries] = useState<CommentThread[]>([])
@@ -482,8 +483,8 @@ const EditorContent: React.FC<EditorProps> = ({
   }
 
   // An open overlay docks open, as the URL's ask for no entry does at load; `navigatorOpen` is only
-  // the overlay's, so a docked panel never resurfaces as one. Waits for the stored layout, whose
-  // arrival could otherwise dock an overlay the stacked layout keeps.
+  // the overlay's, so a docked panel never resurfaces as one. Waits for the stored preferences, so
+  // the open state it sets lands on them, not on the defaults they replace.
   useEffect(() => {
     if (layoutLoaded && contentPanelDocked && navigatorOpen) {
       setContentPanelOpen(true)
@@ -1458,7 +1459,8 @@ const EditorContent: React.FC<EditorProps> = ({
   const [contentPanelFocusRequest, setContentPanelFocusRequest] = useState(0)
   const openNavigator = () => {
     navigatorOpenerRef.current = rememberOpener()
-    // In the same commit as the overlay mounts, so its focus request meets no inert form panel.
+    // In the commit that opens the overlay, so the form panel is no longer inert when the overlay
+    // mounts, then or a frame later as its slide starts, and serves its focus request.
     if (!contentPanelDocked) setPreviewMaximized(false)
     setContentPanelShown(true)
     setContentPanelFocusRequest((request) => request + 1)
@@ -1991,10 +1993,11 @@ const EditorContent: React.FC<EditorProps> = ({
               onLogoutClick={onLogoutClick}
             />
           }
-          panel={contentPanelDocked ? contentPanel : undefined}
+          panel={contentPanelDocked && layout === 'side' ? contentPanel : undefined}
           main={
             <Box h="100%">
               <PaneLayout
+                formAside={contentPanelDocked && layout === 'stacked' ? contentPanel : undefined}
                 formOverlay={contentPanelDocked ? undefined : contentPanel}
                 formInert={contentOverlayShown}
                 previewMaximized={previewShownMaximized}

@@ -2,6 +2,7 @@
 
 import React, { type ReactNode } from 'react'
 import { Box, Group } from '@mantine/core'
+import { SHELL_REGION_BORDER } from './EditorShell'
 
 const TOP_BAR_HEIGHT = 48
 
@@ -26,7 +27,7 @@ export function TopBar({ leading, trailing }: TopBarProps) {
       py={6}
       mih={TOP_BAR_HEIGHT}
       style={{
-        borderBottom: '1px solid var(--canopy-input-border)',
+        borderBottom: SHELL_REGION_BORDER,
         background: 'var(--mantine-color-body)',
       }}
     >

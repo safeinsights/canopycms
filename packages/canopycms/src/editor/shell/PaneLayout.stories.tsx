@@ -1,10 +1,21 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { useMemo, useState } from 'react'
 
-import { Badge, Box, Group, Paper, SegmentedControl, Stack, Text, Title } from '@mantine/core'
+import {
+  Badge,
+  Box,
+  Group,
+  Paper,
+  SegmentedControl,
+  Stack,
+  Switch,
+  Text,
+  Title,
+} from '@mantine/core'
 
 import type { FieldConfig } from '../../config'
 import { PaneLayout, type PaneArrangement } from './PaneLayout'
+import { SidePanelHost } from './SidePanelHost'
 import { FormRenderer, type FormValue } from '../FormRenderer'
 
 const meta: Meta<typeof PaneLayout> = {
@@ -281,4 +292,64 @@ export const PreviewMaximized: Story = {
       />
     </Box>
   ),
+}
+
+/**
+ * Stacked, with the content panel docked beside the form row: the preview keeps its full width.
+ * Maximized, the preview fills the rest of the layout beside the panel.
+ */
+export const StackedWithDockedPanel: Story = {
+  render: () => {
+    const [width, setWidth] = useState(280)
+    const [maximized, setMaximized] = useState(false)
+    return (
+      <Stack gap="sm" style={{ height: '90vh' }}>
+        <Switch
+          label="Maximize preview"
+          checked={maximized}
+          onChange={(event) => setMaximized(event.currentTarget.checked)}
+        />
+        <Box style={{ flex: 1, minHeight: 0 }}>
+          <PaneLayout
+            arrangement="stacked"
+            previewMaximized={maximized}
+            preview={
+              <Box p="lg" bg="var(--canopy-surface-subtle)" h="100%">
+                <PostPreview post={initialPost} authorName={authors[0]?.name} />
+              </Box>
+            }
+            formAside={
+              <SidePanelHost
+                title="Content"
+                mode="docked"
+                opened
+                width={width}
+                minWidth={240}
+                maxWidth={400}
+                onWidthChange={setWidth}
+                onClose={() => {}}
+              >
+                <Stack gap={4} p="md">
+                  {['Home', 'About us', 'Posts', 'Hello World'].map((label) => (
+                    <Text key={label} size="sm">
+                      {label}
+                    </Text>
+                  ))}
+                </Stack>
+              </SidePanelHost>
+            }
+            form={
+              <Box p="lg">
+                <FormRenderer
+                  fields={postSchema}
+                  value={initialPost as unknown as FormValue}
+                  onChange={() => {}}
+                />
+              </Box>
+            }
+          />
+        </Box>
+      </Stack>
+    )
+  },
 }
