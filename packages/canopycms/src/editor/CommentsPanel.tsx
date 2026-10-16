@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useId, useRef, useState } from 'react'
+import React, { useId, useRef, useState } from 'react'
 import {
   Badge,
   Button,
@@ -16,6 +16,7 @@ import {
 } from '@mantine/core'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
+import { IconChevronRight } from '@tabler/icons-react'
 import { UserBadge } from './components/UserBadge'
 import { userIdLabel } from './user-display'
 import { OverlayDrawer } from './shell/OverlayHeader'
@@ -67,49 +68,7 @@ export interface CommentsPanelProps {
   fieldLabel?: (thread: CommentThread) => string | undefined
 }
 
-/**
- * A jump button that stays focusable while a write is in flight (`aria-disabled`, not `disabled`),
- * so its reason opens on keyboard focus and touch as well as hover.
- */
-const JumpButton: React.FC<{
-  blocked: boolean
-  onClick: () => void
-  children: React.ReactNode
-}> = ({ blocked, onClick, children }) => (
-  <Tooltip
-    label="Your change is still saving. Try again once it finishes."
-    disabled={!blocked}
-    multiline
-    maw={280}
-  >
-    <Button
-      variant="light"
-      onClick={() => {
-        if (!blocked) onClick()
-      }}
-      data-disabled={blocked ? true : undefined}
-      aria-disabled={blocked ? true : undefined}
-    >
-      {children}
-    </Button>
-  </Tooltip>
-)
-
 const THREAD_KIND_LABELS = { field: 'Field', entry: 'Entry', branch: 'Branch' } as const
-
-// A card's click jumps, except from these, which act or select on their own.
-const CARD_CONTROLS =
-  'a, button, input, textarea, select, label, summary, [role="button"], [contenteditable]'
-
-/** The thread card a click landed on, unless it landed on a control or ended a text selection. */
-function plainCardClick(event: MouseEvent): HTMLElement | null {
-  if (event.defaultPrevented || !(event.target instanceof Element)) return null
-  const card = event.target.closest<HTMLElement>('[data-thread-id]')
-  if (!card) return null
-  const control = event.target.closest(CARD_CONTROLS)
-  if (control && card.contains(control)) return null
-  return window.getSelection()?.toString() ? null : card
-}
 
 interface JumpTarget {
   label: string
@@ -155,7 +114,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   // A resolved thread's card leaves the list with the focused button, so focus lands here.
   const threadCountRef = useRef<HTMLParagraphElement>(null)
   // With resolved threads shown, the card stays and its heading takes the focus instead.
-  const headingRefs = useRef(new Map<string, HTMLParagraphElement>())
+  const headingRefs = useRef(new Map<string, HTMLElement>())
   const idPrefix = useId()
   const headingId = (threadId: string) => `${idPrefix}-heading-${threadId}`
 
@@ -176,12 +135,18 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     }
   }
 
-  const threadHeading = (thread: CommentThread): string => {
-    const kind = THREAD_KIND_LABELS[thread.type]
-    if (!thread.entryPath) return kind
+  // "Entry › Field", or undefined for a thread on the branch itself.
+  const threadPath = (thread: CommentThread): string | undefined => {
+    if (!thread.entryPath) return undefined
     const entry = entryLabel?.(thread.entryPath) ?? thread.entryPath
     const field = thread.canopyPath ? (fieldLabel?.(thread) ?? thread.canopyPath) : undefined
-    return `${kind} · ${field ? `${entry} › ${field}` : entry}`
+    return field ? `${entry} › ${field}` : entry
+  }
+
+  const threadHeading = (thread: CommentThread): string => {
+    const kind = THREAD_KIND_LABELS[thread.type]
+    const path = threadPath(thread)
+    return path ? `${kind} · ${path}` : kind
   }
 
   const jumpTarget = (thread: CommentThread): JumpTarget | null => {
@@ -205,21 +170,18 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     return null
   }
 
-  // A click on a card's body is the same jump as its button. It is a listener on the list, not a
-  // handler on each article: the button is the keyboard and assistive-tech route, so the article
-  // stays a plain landmark and the click only adds a larger target for the pointer.
-  const [list, setList] = useState<HTMLElement | null>(null)
-  useEffect(() => {
-    if (!list) return
-    const onClick = (event: MouseEvent) => {
-      const card = plainCardClick(event)
-      const thread = comments.find((t) => t.id === card?.dataset.threadId)
-      const target = thread && jumpTarget(thread)
-      if (target && inFlight === 0) jump(target.go)
-    }
-    list.addEventListener('click', onClick)
-    return () => list.removeEventListener('click', onClick)
-  })
+  const setHeadingRef = (threadId: string, node: HTMLElement | null) => {
+    if (node) headingRefs.current.set(threadId, node)
+    else headingRefs.current.delete(threadId)
+  }
+
+  // The heading's text names the article; the removed-item badge beside it is outside it.
+  const headingText = (thread: CommentThread) => (
+    <span id={headingId(thread.id)} data-testid="comment-thread-heading">
+      {threadHeading(thread)}
+      {thread.onRemovedItem && <VisuallyHidden>, {ON_REMOVED_ITEM.toLowerCase()}</VisuallyHidden>}
+    </span>
+  )
 
   return (
     <OverlayDrawer
@@ -232,7 +194,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     >
       <Stack gap="md" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
         <Text size="xs" c="dimmed">
-          Jump shows each comment where it was left.
+          Select a comment&apos;s heading to see it where it was left.
         </Text>
         <CloseRefusedNotice refused={closeRefused} />
         <Paper withBorder p="md">
@@ -282,7 +244,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
               {showResolved ? 'No comments yet' : 'No unresolved comments'}
             </Text>
           ) : (
-            <Stack gap="md" ref={setList}>
+            <Stack gap="md">
               {filteredThreads.map((thread) => {
                 const target = jumpTarget(thread)
                 return (
@@ -294,28 +256,61 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                     aria-labelledby={headingId(thread.id)}
                     bg={thread.resolved ? 'var(--mantine-color-default-hover)' : undefined}
                     data-testid="comment-thread"
-                    data-thread-id={thread.id}
-                    style={target ? { cursor: 'pointer' } : undefined}
                   >
                     <Stack gap="xs">
                       <Group gap="xs">
-                        <Text
-                          id={headingId(thread.id)}
-                          ref={(node: HTMLParagraphElement | null) => {
-                            if (node) headingRefs.current.set(thread.id, node)
-                            else headingRefs.current.delete(thread.id)
-                          }}
-                          size="xs"
-                          fw={600}
-                          tabIndex={-1}
-                          data-testid="comment-thread-heading"
-                        >
-                          {threadHeading(thread)}
-                          {/* The badge beside it is outside the heading, which names the article. */}
-                          {thread.onRemovedItem && (
-                            <VisuallyHidden>, {ON_REMOVED_ITEM.toLowerCase()}</VisuallyHidden>
-                          )}
-                        </Text>
+                        {target ? (
+                          // The heading is the jump control, the one tab stop on the card. It
+                          // stays focusable while a write is in flight (`aria-disabled`, not
+                          // `disabled`), so its reason opens on keyboard focus and touch as well
+                          // as hover.
+                          <Tooltip
+                            label="Your change is still saving. Try again once it finishes."
+                            disabled={inFlight === 0}
+                            multiline
+                            maw={280}
+                          >
+                            <Button
+                              ref={(node: HTMLButtonElement | null) =>
+                                setHeadingRef(thread.id, node)
+                              }
+                              variant="subtle"
+                              color="neutral"
+                              h="auto"
+                              px={6}
+                              py={2}
+                              mx={-6}
+                              rightSection={<IconChevronRight size={14} aria-hidden />}
+                              aria-label={
+                                threadPath(thread)
+                                  ? `${target.label}: ${threadPath(thread)}`
+                                  : target.label
+                              }
+                              aria-disabled={inFlight > 0 ? true : undefined}
+                              data-disabled={inFlight > 0 ? true : undefined}
+                              styles={{
+                                root: { cursor: inFlight > 0 ? 'default' : 'pointer' },
+                                label: { whiteSpace: 'normal', textAlign: 'start' },
+                              }}
+                              onClick={() => {
+                                if (inFlight === 0) jump(target.go)
+                              }}
+                            >
+                              {headingText(thread)}
+                            </Button>
+                          </Tooltip>
+                        ) : (
+                          <Text
+                            ref={(node: HTMLParagraphElement | null) =>
+                              setHeadingRef(thread.id, node)
+                            }
+                            size="xs"
+                            fw={600}
+                            tabIndex={-1}
+                          >
+                            {headingText(thread)}
+                          </Text>
+                        )}
                         {thread.resolved && (
                           <Badge size="xs" color="green" variant="light">
                             Resolved
@@ -332,14 +327,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                           </Badge>
                         )}
                       </Group>
-
-                      {target && (
-                        <Group gap="xs">
-                          <JumpButton blocked={inFlight > 0} onClick={() => jump(target.go)}>
-                            {target.label}
-                          </JumpButton>
-                        </Group>
-                      )}
 
                       {thread.comments.map((comment, idx) => (
                         <div key={comment.id}>

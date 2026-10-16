@@ -115,8 +115,8 @@ describe('CommentsPanel', () => {
     render(<Harness />, { wrapper: Wrapper })
     const opener = screen.getByRole('button', { name: 'Open comments' })
     await user.click(opener)
-    await user.click(await screen.findByRole('button', { name: 'Jump to field' }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Jump to field' })).toBeNull())
+    await user.click(await screen.findByRole('button', { name: /^Jump to field/ }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Jump to field/ })).toBeNull())
     await act(() => new Promise((resolve) => setTimeout(resolve, 60)))
     expect(document.activeElement).not.toBe(opener)
   })
@@ -198,15 +198,15 @@ describe('CommentsPanel', () => {
       expect(within(card('on-item')).getByTestId('comment-thread-heading').textContent).not.toMatch(
         /removed/,
       )
-      expect(within(card('removed')).getByRole('button', { name: 'Jump to entry' })).toBeTruthy()
-      expect(within(card('removed')).queryByRole('button', { name: 'Jump to field' })).toBeNull()
+      expect(within(card('removed')).getByRole('button', { name: /^Jump to entry/ })).toBeTruthy()
+      expect(within(card('removed')).queryByRole('button', { name: /^Jump to field/ })).toBeNull()
 
       // The thread on its item is the other way round.
       expect(within(card('on-item')).queryByText('On a removed item')).toBeNull()
-      expect(within(card('on-item')).getByRole('button', { name: 'Jump to field' })).toBeTruthy()
-      expect(within(card('on-item')).queryByRole('button', { name: 'Jump to entry' })).toBeNull()
+      expect(within(card('on-item')).getByRole('button', { name: /^Jump to field/ })).toBeTruthy()
+      expect(within(card('on-item')).queryByRole('button', { name: /^Jump to entry/ })).toBeNull()
 
-      await user.click(within(card('removed')).getByRole('button', { name: 'Jump to entry' }))
+      await user.click(within(card('removed')).getByRole('button', { name: /^Jump to entry/ }))
       expect(onJumpToEntry).toHaveBeenCalledWith('posts/hello', 'removed')
       expect(onJumpToField).not.toHaveBeenCalled()
     })
@@ -221,18 +221,22 @@ describe('CommentsPanel', () => {
 
       expect(within(card('removed')).getByText('On a removed item')).toBeTruthy()
       expect(within(card('removed')).getByText('Resolved')).toBeTruthy()
-      expect(within(card('removed')).queryByRole('button', { name: 'Jump to field' })).toBeNull()
+      expect(within(card('removed')).queryByRole('button', { name: /^Jump to field/ })).toBeNull()
     })
   })
 
-  describe('jumping from a thread card', () => {
-    it('jumps as its Jump button does when the card body is clicked', async () => {
+  describe('jumping from a thread heading', () => {
+    it('jumps to the field from its heading, naming the jump and the field', async () => {
       const onJumpToField = vi.fn()
       const onClose = vi.fn()
       const user = userEvent.setup()
       renderPanel({ comments: [fieldThread('a')], onJumpToField, onClose })
 
-      await user.click(screen.getByText('Comment in a'))
+      const heading = within(card('a')).getByRole('button', {
+        name: 'Jump to field: posts/hello › blocks[0].title',
+      })
+      expect(heading.textContent).toBe('Field · posts/hello › blocks[0].title')
+      await user.click(heading)
       expect(onJumpToField).toHaveBeenCalledWith('posts/hello', 'blocks[0].title', 'a')
       expect(onClose).toHaveBeenCalledTimes(1)
     })
@@ -247,72 +251,72 @@ describe('CommentsPanel', () => {
         onJumpToBranch,
       })
 
-      await user.click(screen.getByText('Comment in e'))
+      await user.click(
+        within(card('e')).getByRole('button', { name: 'Jump to entry: posts/hello' }),
+      )
       expect(onJumpToEntry).toHaveBeenCalledWith('posts/hello', 'e')
-      await user.click(screen.getByText('A branch-level comment'))
+      await user.click(screen.getByRole('button', { name: 'Open branch discussion' }))
       expect(onJumpToBranch).toHaveBeenCalledWith('thread-branch-1')
     })
 
-    it('does not jump from the reply and resolve controls or a text selection', async () => {
+    it('does not jump from a click in the card body, an alert, or a double-click selection', async () => {
       const onJumpToField = vi.fn()
       const user = userEvent.setup()
       renderPanel({ comments: [fieldThread('a')], onJumpToField })
 
+      await user.click(screen.getByText('Comment in a'))
+      await user.dblClick(screen.getByText('Comment in a'))
       await user.click(within(card('a')).getByTestId('reply-thread-button'))
-      await user.click(screen.getByLabelText('Reply to this thread'))
       await user.type(screen.getByLabelText('Reply to this thread'), 'Draft')
       await user.click(within(card('a')).getByTestId('resolve-thread-button'))
       expect(onJumpToField).not.toHaveBeenCalled()
-
-      const selection = vi.spyOn(window, 'getSelection').mockReturnValue({
-        toString: () => 'Comment',
-      } as unknown as Selection)
-      await user.click(screen.getByText('Comment in a'))
-      selection.mockRestore()
-      expect(onJumpToField).not.toHaveBeenCalled()
     })
 
-    it('ignores a card click while a write is in flight', async () => {
-      const onAddComment = vi.fn(() => new Promise<void>(() => {}))
+    it("keeps a failed reply's alert on screen when it is clicked", async () => {
       const onJumpToField = vi.fn()
       const user = userEvent.setup()
-      renderPanel({ comments: [fieldThread('a')], onAddComment, onJumpToField })
+      renderPanel({
+        comments: [fieldThread('a')],
+        onJumpToField,
+        onAddComment: vi.fn().mockRejectedValue(new Error("Couldn't add the comment.")),
+      })
 
       await user.click(within(card('a')).getByTestId('reply-thread-button'))
-      await user.type(screen.getByLabelText('Reply to this thread'), 'Wait')
-      await user.click(screen.getByTestId('submit-reply-button'))
-      await user.click(screen.getByText('Comment in a'))
+      await user.type(within(card('a')).getByRole('textbox'), 'Keep this')
+      await user.click(within(card('a')).getByTestId('submit-reply-button'))
+      await user.click(await within(card('a')).findByText("Couldn't add the comment."))
+
       expect(onJumpToField).not.toHaveBeenCalled()
+      expect(within(card('a')).getByText("Couldn't add the comment.")).toBeTruthy()
     })
 
-    it('leaves a card with no jump target alone', async () => {
-      const onClose = vi.fn()
-      const user = userEvent.setup()
-      renderPanel({ comments: [fieldThread('a')], onClose })
-
-      await user.click(screen.getByText('Comment in a'))
-      expect(onClose).not.toHaveBeenCalled()
-    })
-
-    it('keeps the Jump button the only extra tab stop on a card', () => {
+    it("is the card's only extra tab stop, with no handler on the card itself", () => {
       renderPanel({ comments: [fieldThread('a')], onJumpToField: vi.fn() })
 
       expect(card('a').getAttribute('tabindex')).toBeNull()
-      expect(card('a').getAttribute('role')).toBe(null)
-      expect(within(card('a')).getByRole('button', { name: 'Jump to field' })).toBeTruthy()
+      expect(card('a').getAttribute('role')).toBeNull()
+      expect(within(card('a')).getAllByRole('button', { name: /Jump to/ })).toHaveLength(1)
+      expect(within(card('a')).queryByRole('button', { name: 'Jump to field' })).toBeNull()
     })
-  })
 
-  it('explains what Jump does in a dimmed line at the top, and keeps the title short', () => {
-    renderPanel()
+    it('stays a plain heading, not a button, when the thread has no jump target', () => {
+      renderPanel({ comments: [fieldThread('a')] })
 
-    const intro = screen.getByText('Jump shows each comment where it was left.')
-    expect(intro.style.color).toBe('var(--mantine-color-dimmed)')
-    const dialog = screen.getByRole('dialog', { name: 'Comments' })
-    expect(dialog.querySelector('.mantine-Drawer-header')?.textContent).toBe('Comments')
-    expect(dialog.querySelector('.mantine-Drawer-body')?.firstElementChild?.firstElementChild).toBe(
-      intro,
-    )
+      expect(within(card('a')).queryByRole('button', { name: /Jump to/ })).toBeNull()
+      expect(within(card('a')).getByTestId('comment-thread-heading').closest('button')).toBeNull()
+    })
+
+    it('says in a dimmed line at the top how to see a comment, and keeps the title short', () => {
+      renderPanel()
+
+      const intro = screen.getByText("Select a comment's heading to see it where it was left.")
+      expect(intro.style.color).toBe('var(--mantine-color-dimmed)')
+      const dialog = screen.getByRole('dialog', { name: 'Comments' })
+      expect(dialog.querySelector('.mantine-Drawer-header')?.textContent).toBe('Comments')
+      expect(
+        dialog.querySelector('.mantine-Drawer-body')?.firstElementChild?.firstElementChild,
+      ).toBe(intro)
+    })
   })
 
   describe('top composer', () => {
@@ -543,7 +547,25 @@ describe('CommentsPanel', () => {
 
       await waitFor(() =>
         expect(document.activeElement).toBe(
-          within(card('a')).getByTestId('comment-thread-heading'),
+          within(card('a')).getByTestId('comment-thread-heading').parentElement,
+        ),
+      )
+    })
+
+    it('moves focus to the heading button of a resolved thread that can jump', async () => {
+      const onResolveThread = vi.fn().mockResolvedValue(undefined)
+      renderPanel({
+        comments: [fieldThread('a'), fieldThread('b')],
+        onResolveThread,
+        onJumpToField: vi.fn(),
+      })
+      await userEvent.click(screen.getByLabelText('Show resolved'))
+
+      await userEvent.click(within(card('a')).getByTestId('resolve-thread-button'))
+
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          within(card('a')).getByRole('button', { name: /^Jump to field/ }),
         ),
       )
     })
@@ -599,7 +621,7 @@ describe('CommentsPanel', () => {
       expect(screen.getByRole('status').textContent).toBe(CLOSE_WAITS_FOR_WRITE)
       expect(
         within(card('a'))
-          .getByRole('button', { name: 'Jump to field' })
+          .getByRole('button', { name: /^Jump to field/ })
           .getAttribute('aria-disabled'),
       ).toBe('true')
 
@@ -655,8 +677,10 @@ describe('CommentsPanel', () => {
       await userEvent.type(screen.getByLabelText('Reply to this thread'), 'Wait for me')
       await userEvent.click(screen.getByTestId('submit-reply-button'))
 
-      const jump = within(card('a')).getByRole('button', { name: 'Jump to field' })
+      const jump = within(card('a')).getByRole('button', { name: /^Jump to field/ })
       expect((jump as HTMLButtonElement).disabled).toBe(false)
+      expect(jump.getAttribute('aria-disabled')).toBe('true')
+      expect(jump.style.cursor).toBe('default')
       expect(screen.queryByText(/still saving/)).toBeNull()
       act(() => jump.focus())
       expect(
@@ -671,6 +695,7 @@ describe('CommentsPanel', () => {
         finish()
       })
       await waitFor(() => expect(jump.getAttribute('aria-disabled')).toBeNull())
+      expect(jump.style.cursor).toBe('pointer')
       await userEvent.click(jump)
       expect(onJumpToField).toHaveBeenCalledTimes(1)
     })
