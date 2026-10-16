@@ -85,6 +85,17 @@ export const isTrustedEditorMessage = (event: MessageEvent, editorOrigin?: strin
   return event.origin === expected && event.source === window.parent
 }
 
+/**
+ * Preview → editor, once the page listens for drafts: the editor answers with the current draft.
+ * `siteChrome` says the page renders the site's header and footer when its URL carries
+ * `chrome=1`, so the editor offers the toggle that adds it.
+ */
+export interface PreviewReadyMessage {
+  type: typeof CANOPY_PREVIEW_READY
+  path: string
+  siteChrome?: boolean
+}
+
 export interface PreviewFocusMessage {
   type: typeof CANOPY_PREVIEW_FOCUS
   entryPath: string
@@ -137,11 +148,19 @@ export const useCanopyPreview = <T,>(opts: {
   initialData: T
   /** Editor origin to trust for preview messages. Defaults to this page's own origin. */
   editorOrigin?: string
+  /**
+   * This page renders the site's header and footer when its URL carries `chrome=1`, so the editor
+   * offers a toggle for them; see `PreviewReadyMessage`.
+   */
+  siteChrome?: boolean
 }) => {
   const resolvedPath = resolvePreviewPath(opts.path)
   const editorOrigin = opts.editorOrigin
   const bridgeOpts = { editorOrigin }
-  const { data, isLoading } = usePreviewData<T>(resolvedPath, opts.initialData, bridgeOpts)
+  const { data, isLoading } = usePreviewData<T>(resolvedPath, opts.initialData, {
+    editorOrigin,
+    siteChrome: opts.siteChrome,
+  })
   const highlightEnabled = usePreviewHighlight(bridgeOpts)
   usePreviewFocusEmitter(resolvedPath, bridgeOpts)
 
@@ -178,12 +197,13 @@ export const useCanopyPreview = <T,>(opts: {
 export const usePreviewData = <T,>(
   path: string,
   initialData: T,
-  opts?: { editorOrigin?: string },
+  opts?: { editorOrigin?: string; siteChrome?: boolean },
 ): { data: T; isLoading: PreviewLoadingState<T> } => {
   const [data, setData] = useState<T>(initialData)
   // Every key of the loading state is optional, so an empty object is a valid one.
   const [isLoading, setIsLoading] = useState<PreviewLoadingState<T>>({} as PreviewLoadingState<T>)
   const editorOrigin = opts?.editorOrigin
+  const siteChrome = opts?.siteChrome === true
 
   useEffect(() => {
     // Only listen when actually framed by an editor; a standalone page (including
@@ -207,10 +227,15 @@ export const usePreviewData = <T,>(
     // so the first postMessage from the parent may arrive before this listener is set up.
     const target = resolveMessageOrigin(editorOrigin)
     if (!isOpaqueOrigin(target)) {
-      window.parent.postMessage({ type: CANOPY_PREVIEW_READY, path }, target)
+      const ready: PreviewReadyMessage = {
+        type: CANOPY_PREVIEW_READY,
+        path,
+        ...(siteChrome ? { siteChrome } : {}),
+      }
+      window.parent.postMessage(ready, target)
     }
     return () => window.removeEventListener('message', handler)
-  }, [path, editorOrigin])
+  }, [path, editorOrigin, siteChrome])
 
   return { data, isLoading }
 }

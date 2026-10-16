@@ -26,6 +26,8 @@ interface EditorLayoutPrefs {
   sideSplitPercent: number
   stackedSplitPercent: number
   previewWidth: PreviewWidth
+  /** The preview asks for the site's header and footer; see `siteChromeSrc`. */
+  siteChrome: boolean
   contentPanelOpen: boolean
   contentPanelWidth: number
 }
@@ -39,6 +41,7 @@ export const DEFAULT_EDITOR_LAYOUT_PREFS: EditorLayoutPrefs = {
   sideSplitPercent: DEFAULT_SIDE_SPLIT_PERCENT,
   stackedSplitPercent: DEFAULT_STACKED_SPLIT_PERCENT,
   previewWidth: 'fit',
+  siteChrome: false,
   contentPanelOpen: false,
   contentPanelWidth: 280,
 }
@@ -96,6 +99,7 @@ export function parseEditorLayoutPrefs(raw: string | undefined): EditorLayoutPre
       clampSplitPercent,
     ),
     previewWidth: oneOf(PREVIEW_WIDTHS, parsed.previewWidth, defaults.previewWidth),
+    siteChrome: boolOr(parsed.siteChrome, defaults.siteChrome),
     contentPanelOpen: boolOr(parsed.contentPanelOpen, defaults.contentPanelOpen),
     contentPanelWidth: numberOr(
       parsed.contentPanelWidth,
@@ -125,6 +129,8 @@ export interface UseEditorLayoutReturn {
   setSplitPercent: (layout: PaneArrangement, percent: number) => void
   previewWidth: PreviewWidth
   setPreviewWidth: (width: PreviewWidth) => void
+  siteChrome: boolean
+  setSiteChrome: (siteChrome: boolean) => void
   contentPanelOpen: boolean
   setContentPanelOpen: (open: boolean) => void
   contentPanelWidth: number
@@ -171,6 +177,10 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
     (previewWidth: PreviewWidth) => setPrefs((prev) => ({ ...prev, previewWidth })),
     [setPrefs],
   )
+  const setSiteChrome = useCallback(
+    (siteChrome: boolean) => setPrefs((prev) => ({ ...prev, siteChrome })),
+    [setPrefs],
+  )
   const setContentPanelOpen = useCallback(
     (contentPanelOpen: boolean) => setPrefs((prev) => ({ ...prev, contentPanelOpen })),
     [setPrefs],
@@ -195,6 +205,8 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
     setSplitPercent,
     previewWidth: prefs.previewWidth,
     setPreviewWidth,
+    siteChrome: prefs.siteChrome,
+    setSiteChrome,
     contentPanelOpen: prefs.contentPanelOpen,
     setContentPanelOpen,
     contentPanelWidth: prefs.contentPanelWidth,
