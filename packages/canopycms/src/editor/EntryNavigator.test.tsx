@@ -526,7 +526,14 @@ describe('EntryNavigator', () => {
 
     it('shows Missing in error text in place of the type', () => {
       renderEntryNavigator({
-        items: [{ path: unsafeAsLogicalPath('posts/gone'), label: 'Gone', status: 'Missing' }],
+        items: [
+          {
+            path: unsafeAsLogicalPath('posts/gone'),
+            label: 'Gone',
+            status: 'Missing',
+            missing: true,
+          },
+        ],
       })
 
       const type = typeLine(screen.getByTestId('entry-nav-item-gone'))!
@@ -890,6 +897,25 @@ describe('EntryNavigator', () => {
 
       expect(isShown('entry-nav-item-launch-day')).toBe(true)
       expect(isShown('entry-nav-item-getting-started')).toBe(false)
+    })
+
+    it('matches a type-named entry by its title', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        items: [
+          {
+            path: unsafeAsLogicalPath('content/site'),
+            label: 'Site settings',
+            title: 'Example site',
+          },
+          { path: unsafeAsLogicalPath('content/about'), label: 'About' },
+        ],
+      })
+
+      await user.type(filterInput(), 'example')
+
+      expect(isShown('entry-nav-item-site-settings')).toBe(true)
+      expect(isShown('entry-nav-item-about')).toBe(false)
     })
 
     it('matches an entry by slug when the title does not contain the text', async () => {
@@ -1427,6 +1453,19 @@ describe('EntryNavigator', () => {
       expect(dividers()).toHaveLength(1)
       expect(precedes(down, dividers()[0])).toBe(true)
       expect(precedes(dividers()[0], del)).toBe(true)
+    })
+
+    it('offers "Change file name…" for an entry with no page', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        items: [{ path: lp('content/settings'), label: 'Settings', noPage: true }],
+        onRenameEntry: vi.fn(),
+      })
+
+      await user.click(screen.getByTestId('entry-menu-settings'))
+      expect((await screen.findByTestId('rename-entry-menu-item')).textContent).toBe(
+        'Change file name…',
+      )
     })
 
     it('has no divider in an entry menu that only deletes', async () => {

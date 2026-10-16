@@ -1,8 +1,9 @@
 'use client'
 
 /**
- * "Change URL": changes an entry's slug, the middle segment of its file name, which sets its URL.
- * Its name stays, since it comes from its title field. The content ID is preserved, so drafts and
+ * "Change URL", or "Change file name" for an entry with no page: changes an entry's slug, the
+ * middle segment of its file name, which sets its URL. Whether its name changes with it depends on
+ * where the name comes from (`entryNameSource`). The content ID is preserved, so drafts and
  * references remain intact.
  */
 
@@ -13,14 +14,30 @@ import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { validateEntrySlug } from '../slug'
 import { focusReturnProps } from '../utils/focus-return'
 import { EDITOR_ACTIONS } from '../copy'
+import type { EntryNameSource } from '../editor-utils'
+
+/** What the dialog says it changes, and whether the entry's name changes with it. */
+const nameHelp = (entryLabel: string, source: EntryNameSource | undefined, hasPage: boolean) => {
+  const changes = `This changes the ${hasPage ? 'URL and file name' : 'file name'} of “${entryLabel}”`
+  if (source?.from === 'type') {
+    return `${changes}, not its name, which comes from its type, “${source.typeLabel}”.`
+  }
+  if (source?.from === 'slug') {
+    return `${changes}, and its name with it: with no title field, its name follows the ${hasPage ? 'URL' : 'file name'}.`
+  }
+  const field = source ? `“${source.fieldLabel}” field` : 'title field'
+  return `${changes}, not its name, which comes from its ${field}. Edit that field in the form to change the name.`
+}
 
 export interface RenameEntryModalProps {
   /** Whether the modal is open */
   isOpen: boolean
   /** Current entry label for display */
   entryLabel: string
-  /** The label of the field the entry's name comes from (`titleFieldLabel`), if it has one. */
-  titleFieldLabel?: string
+  /** Where the entry's name comes from (`entryNameSource`); a title field when absent. */
+  nameSource?: EntryNameSource
+  /** The entry has a page on the site; without one, the dialog changes only its file name. */
+  hasPage?: boolean
   /** Current slug value */
   currentSlug: string
   /** Called when save is clicked */
@@ -44,7 +61,8 @@ export interface RenameEntryModalProps {
 export function RenameEntryModal({
   isOpen,
   entryLabel,
-  titleFieldLabel,
+  nameSource,
+  hasPage = true,
   currentSlug,
   onSave,
   onClose,
@@ -85,12 +103,13 @@ export function RenameEntryModal({
   }
 
   const slugPath = previewPath?.(newSlug || 'your-slug')
+  const action = hasPage ? EDITOR_ACTIONS.changeUrl : EDITOR_ACTIONS.changeFileName
 
   return (
     <Modal
       opened={isOpen}
       onClose={onClose}
-      title={<Text fw={600}>{EDITOR_ACTIONS.changeUrl}</Text>}
+      title={<Text fw={600}>{action}</Text>}
       size="md"
       closeOnClickOutside={!isSaving}
       closeOnEscape={!isSaving}
@@ -111,9 +130,7 @@ export function RenameEntryModal({
           )}
 
           <Text size="sm" c="dimmed" data-testid="change-url-help">
-            This changes the URL and file name of “{entryLabel}”, not its name, which comes from its{' '}
-            {titleFieldLabel ? `“${titleFieldLabel}” field` : 'title field'}. Edit that field in the
-            form to change the name.
+            {nameHelp(entryLabel, nameSource, hasPage)}
           </Text>
 
           <TextInput
@@ -145,7 +162,7 @@ export function RenameEntryModal({
               disabled={newSlug === currentSlug}
               data-testid="rename-entry-submit"
             >
-              {EDITOR_ACTIONS.changeUrl}
+              {action}
             </Button>
           </Group>
         </Stack>

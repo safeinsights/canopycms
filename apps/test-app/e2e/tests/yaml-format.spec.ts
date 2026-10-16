@@ -150,6 +150,31 @@ test.describe('YAML Format and isTitle Flag', () => {
     })
   })
 
+  test('isTitle on a multi-entry type: a post is named by its title, which follows a saved edit', async ({
+    page,
+  }) => {
+    const stamp = Date.now()
+    await test.step('create a titled post', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.createPost(`titled-${stamp}`, `Titled Post ${stamp}`)
+    })
+
+    await test.step('retitle it, and the navigator follows after reload', async () => {
+      await editorPage.fillTextField('title', `Retitled Post ${stamp}`)
+      await editorPage.saveAndVerify()
+      await page.reload()
+      await editorPage.waitForReady()
+      await editorPage.openContentNavigator()
+      const posts = editorPage.navigatorItem('Posts')
+      if (!(await editorPage.isCollectionExpanded('Posts'))) await posts.click()
+      await expect(editorPage.navigatorItem(`Retitled Post ${stamp}`)).toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
+      await expect(editorPage.navigatorItem(`Titled Post ${stamp}`)).toHaveCount(0)
+    })
+  })
+
   test('new YAML entry can be found by content prefix', async () => {
     await test.step('verify seeded settings file exists in main branch', async () => {
       const filename = await findContentFile('settings.settings.')

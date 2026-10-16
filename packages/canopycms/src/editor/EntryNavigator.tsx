@@ -37,7 +37,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react'
 
-import { calculatePathToEntry, MISSING_ENTRY_LABEL } from './editor-utils'
+import { calculatePathToEntry } from './editor-utils'
 import { matchesEntryQuery } from './entry-search'
 import { EDITOR_ACTIONS } from './copy'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
@@ -67,10 +67,16 @@ const AddRefusedRow: React.FC = () => (
 export interface EntryNavItem {
   path: LogicalPath
   label: string
+  /** The entry's title, matched by the filter where the label is a singleton's type label. */
+  title?: string
   /** Matched by the filter; the last segment of `path` when absent. */
   slug?: string
-  /** The row's second line: the entry's type, or `MISSING_ENTRY_LABEL` (`entryStatusLabel`). */
+  /** The row's second line: the entry's type, or "Missing" (`entryStatusLabel`). */
   status?: string
+  /** The entry's file is gone: its second line is error text. */
+  missing?: boolean
+  /** The entry has no page on the site, so its menu changes its file name rather than its URL. */
+  noPage?: boolean
   collectionPath?: LogicalPath
   contentId?: ContentId // 12-char embedded ID for ordering
   /** True when this entry's file conflicted during rebase */
@@ -176,7 +182,8 @@ const filterTree = (nodes: TreeNodeData[], query: string): TreeNodeData[] => {
   for (const node of nodes) {
     const label = String(node.label ?? '')
     if (node.nodeProps?.isEntry) {
-      if (matchesEntryQuery({ label, slug: node.nodeProps.slug as string | undefined }, query)) {
+      const { slug, title } = node.nodeProps as { slug?: string; title?: string }
+      if (matchesEntryQuery({ label, title, slug }, query)) {
         kept.push(node)
       }
     } else if (matchesEntryQuery({ label }, query)) {
@@ -201,7 +208,11 @@ const firstEntryPath = (nodes: TreeNodeData[], query: string): string | undefine
   walk(nodes)
   const match = entries.find((node) =>
     matchesEntryQuery(
-      { label: String(node.label ?? ''), slug: node.nodeProps?.slug as string | undefined },
+      {
+        label: String(node.label ?? ''),
+        title: node.nodeProps?.title as string | undefined,
+        slug: node.nodeProps?.slug as string | undefined,
+      },
       query,
     ),
   )
@@ -346,6 +357,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       label: entry.label,
       nodeProps: {
         status: entry.status,
+        title: entry.title,
+        missing: entry.missing,
+        noPage: entry.noPage,
         isEntry: true,
         entryPath: entry.path,
         slug: entry.slug ?? lastSegment(entry.path),
@@ -368,6 +382,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             label: entry?.label ?? col.label,
             nodeProps: {
               status: entry?.status,
+              title: entry?.title,
+              missing: entry?.missing,
+              noPage: entry?.noPage,
               isEntry: true,
               entryPath: entry?.path,
               collectionPath: col.path,
@@ -486,6 +503,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       label: item.label,
       nodeProps: {
         status: item.status,
+        title: item.title,
+        missing: item.missing,
+        noPage: item.noPage,
         isEntry: true,
         entryPath: item.path,
         slug: item.slug ?? lastSegment(item.path),
@@ -711,6 +731,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     level,
   }: RenderTreeNodePayload) => {
     const status = node.nodeProps?.status as string | undefined
+    const entryMissing = !!(node.nodeProps?.missing as boolean | undefined)
+    const entryNoPage = !!(node.nodeProps?.noPage as boolean | undefined)
     // Collection-level mutation callbacks are nulled when readOnly, same as
     // the entry-level ones above -- this removes the collection menu button
     // entirely (hasCollectionMenu below) rather than leaving it enabled.
@@ -857,7 +879,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                     label={status}
                     size="xs"
                     // A missing file is an error, in error text, not a dimmed type.
-                    c={status === MISSING_ENTRY_LABEL ? 'var(--canopy-danger-text)' : 'dimmed'}
+                    c={entryMissing ? 'var(--canopy-danger-text)' : 'dimmed'}
                   />
                 </Box>
               )}
@@ -981,7 +1003,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                       }}
                       data-testid="rename-entry-menu-item"
                     >
-                      {EDITOR_ACTIONS.changeUrl}…
+                      {entryNoPage ? EDITOR_ACTIONS.changeFileName : EDITOR_ACTIONS.changeUrl}…
                     </Menu.Item>
                   )}
                   {onReorderEntry && contentId && parentCollectionPath && (

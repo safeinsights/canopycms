@@ -40,7 +40,13 @@ const ENTRIES: QuickOpenEntry[] = [
     typeLabel: 'News item',
   },
   { path: 'content/home', label: 'Home', slug: 'index', collectionPath: 'content', route: '/' },
-  { path: 'content/settings', label: 'Site settings', slug: 'site', collectionPath: 'content' },
+  {
+    path: 'content/settings',
+    label: 'Site settings',
+    title: 'Example site',
+    slug: 'site',
+    collectionPath: 'content',
+  },
 ]
 const labelFor = (path: string) =>
   ({ 'content/guides': 'Guides', 'content/news': 'News' })[path] ?? undefined
@@ -278,6 +284,11 @@ describe('QuickOpenPalette', () => {
     await user.clear(input())
     await user.type(input(), 'access-rules')
     expect(optionLabels()).toEqual(['Data access'])
+
+    // A type-named entry is found by its title too.
+    await user.clear(input())
+    await user.type(input(), 'example')
+    expect(optionLabels()).toEqual(['Site settings'])
   })
 
   it('says so when nothing matches', async () => {

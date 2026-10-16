@@ -40,17 +40,47 @@ describe('RenameEntryModal', () => {
     await waitFor(() => expect(document.activeElement).toBe(slugInput()))
   })
 
+  const help = () => screen.getByTestId('change-url-help').textContent
+
   it("says the entry's name comes from its title field, which it names when it can", () => {
-    renderModal({ titleFieldLabel: 'Hero › Heading' })
-    expect(screen.getByTestId('change-url-help').textContent).toBe(
+    renderModal({ nameSource: { from: 'title', fieldLabel: 'Hero › Heading' } })
+    expect(help()).toBe(
       'This changes the URL and file name of “Hello World”, not its name, which comes from its “Hero › Heading” field. Edit that field in the form to change the name.',
     )
 
     cleanup()
     renderModal()
-    expect(screen.getByTestId('change-url-help').textContent).toContain(
-      'not its name, which comes from its title field.',
+    expect(help()).toContain('not its name, which comes from its title field.')
+  })
+
+  it("says a type-named entry's name is its type's", () => {
+    renderModal({
+      entryLabel: 'Site settings',
+      nameSource: { from: 'type', typeLabel: 'Site settings' },
+    })
+    expect(help()).toBe(
+      'This changes the URL and file name of “Site settings”, not its name, which comes from its type, “Site settings”.',
     )
+  })
+
+  it('says an untitled entry is renamed with its URL, or with its file name when it has no page', () => {
+    renderModal({ nameSource: { from: 'slug' } })
+    expect(help()).toBe(
+      'This changes the URL and file name of “Hello World”, and its name with it: with no title field, its name follows the URL.',
+    )
+
+    cleanup()
+    renderModal({ nameSource: { from: 'slug' }, hasPage: false })
+    expect(help()).toBe(
+      'This changes the file name of “Hello World”, and its name with it: with no title field, its name follows the file name.',
+    )
+  })
+
+  it('is "Change file name" for an entry with no page', () => {
+    renderModal({ hasPage: false })
+    expect(screen.getByRole('dialog', { name: 'Change file name' })).toBeTruthy()
+    expect(submitButton().textContent).toBe('Change file name')
+    expect(help()).toContain('This changes the file name of “Hello World”, not its name')
   })
 
   it.each([

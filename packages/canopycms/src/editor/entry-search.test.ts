@@ -25,6 +25,13 @@ describe('matchesEntryQuery', () => {
     expect(matchesEntryQuery({ label: 'Welcome' }, '  xyz ')).toBe(false)
   })
 
+  it("matches the title when it differs from the label, as a singleton's does", () => {
+    expect(matchesEntryQuery({ label: 'Site settings', title: 'Example site' }, 'example')).toBe(
+      true,
+    )
+    expect(matchesEntryQuery({ label: 'Site settings' }, 'example')).toBe(false)
+  })
+
   it('does not match an entry with no slug on slug text', () => {
     expect(matchesEntryQuery({ label: 'Welcome' }, 'undefined')).toBe(false)
   })

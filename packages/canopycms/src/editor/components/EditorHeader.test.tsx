@@ -17,6 +17,7 @@ const currentEntry: EditorEntry = {
   contentId: unsafeAsContentId('abc123def456'),
   label: 'Hello',
   schema: [],
+  previewSrc: '/posts/hello',
 }
 
 const defaultProps: EditorHeaderProps = {
@@ -355,6 +356,12 @@ describe('EditorHeader - breadcrumb', () => {
     expect(onFileReload).toHaveBeenCalled()
   })
 
+  it('offers "Change file name…" for an entry with no page', async () => {
+    renderHeader({ currentEntry: { ...currentEntry, previewSrc: undefined } })
+    await userEvent.click(screen.getByTestId('file-dropdown-button'))
+    expect((await screen.findByTestId('entry-menu-rename')).textContent).toBe('Change file name…')
+  })
+
   it.each([
     ['Change URL…', 'onEntryRename'],
     ['Delete entry', 'onEntryDelete'],
@@ -514,16 +521,14 @@ describe('EditorHeader - modified-file menus only select', () => {
 
   const editedFiles = [{ path: unsafeAsLogicalPath('posts/draft'), label: 'Draft post' }]
 
-  it('opens the entry from the branch menu without opening a collection', async () => {
+  it('opens the entry from the branch menu', async () => {
     const onEntrySelect = vi.fn()
-    const onCollectionOpen = vi.fn()
-    renderHeader({ editedFiles, modifiedCount: 1, onEntrySelect, onCollectionOpen })
+    renderHeader({ editedFiles, modifiedCount: 1, onEntrySelect })
 
     await userEvent.click(screen.getByTestId('branch-dropdown-button'))
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Draft post' }))
 
     expect(onEntrySelect).toHaveBeenCalledWith('posts/draft')
-    expect(onCollectionOpen).not.toHaveBeenCalled()
   })
 })
 

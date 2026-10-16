@@ -248,6 +248,7 @@ export const buildEntriesFromListResponse = ({
       path: entry.logicalPath,
       contentId: entry.contentId,
       label: typeName || entry.title || entry.slug || entry.collectionName || entry.collectionPath,
+      ...(entry.title && { title: entry.title }),
       status: entry.exists === false ? 'missing' : (entry.entryType ?? 'entry'),
       schema: schema,
       previewSrc: resolvePreviewSrc(entry),
@@ -319,27 +320,47 @@ export const entryTypeLine = (
   return type && singletonLabel(type) ? undefined : entryTypeLabel(collections, entry)
 }
 
-/** The content tree's second line for an entry whose file is gone. */
-export const MISSING_ENTRY_LABEL = 'Missing'
-
 /**
- * An entry's second line in the content tree: `MISSING_ENTRY_LABEL` when its file is gone, else
- * its `entryTypeLine`, else its status read as words.
+ * An entry's second line in the content tree: "Missing" when its file is gone, else its
+ * `entryTypeLine`, else its status read as words.
  */
 export const entryStatusLabel = (
   collections: EditorCollection[] | undefined,
   entry: Pick<EditorEntry, 'status' | 'collectionPath' | 'entryType'>,
 ): string | undefined => {
-  if (entry.status === 'missing') return MISSING_ENTRY_LABEL
+  if (entry.status === 'missing') return 'Missing'
   if (entry.entryType) return entryTypeLine(collections, entry)
   return entry.status && humanizeName(entry.status)
+}
+
+/**
+ * Where an entry's name comes from, which "Change URL" explains: its type's label for a labelled
+ * singleton, or for an entry with no title field whose type has a label (the title chain's
+ * `entryTypeLabel` step); its title field; else its slug, read as words.
+ */
+export type EntryNameSource =
+  | { from: 'type'; typeLabel: string }
+  | { from: 'title'; fieldLabel: string }
+  | { from: 'slug' }
+
+export const entryNameSource = (
+  collections: EditorCollection[] | undefined,
+  entry: Pick<EditorEntry, 'collectionPath' | 'entryType' | 'schema'>,
+): EntryNameSource => {
+  const type = findEntryType(collections, entry)
+  const singleton = type && singletonLabel(type)
+  if (singleton) return { from: 'type', typeLabel: singleton }
+  const fieldLabel = titleFieldLabel(entry.schema)
+  if (fieldLabel) return { from: 'title', fieldLabel }
+  if (type?.label) return { from: 'type', typeLabel: type.label }
+  return { from: 'slug' }
 }
 
 /**
  * The label of the field an entry of this schema takes its title from (`titleFieldPath`), with
  * its enclosing objects' labels before it ("Hero › Heading"); undefined when it has none.
  */
-export const titleFieldLabel = (schema: EntrySchema): string | undefined => {
+const titleFieldLabel = (schema: EntrySchema): string | undefined => {
   const path = titleFieldPath(schema)
   if (!path) return undefined
   const labels: string[] = []

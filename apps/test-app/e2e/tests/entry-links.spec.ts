@@ -17,7 +17,7 @@ import { STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
  * They appear in the MDXEditor toolbar and insert markdown of the form:
  *   [Entry Label](entry:CONTENT_ID)
  */
-/** The home entry's option, named by its single-entry type; its slug shows beneath. */
+/** The home entry's option, listed by its single-entry type's label; its slug shows beneath. */
 const homeOption = (page: Page) =>
   page.getByRole('option').filter({ has: page.getByText('Home', { exact: true }) })
 
@@ -197,7 +197,8 @@ test.describe('Entry Links in MDX Editor', () => {
     await test.step('verify link appears in editor', async () => {
       const bodyEditor = editorPage.richTextField('Body')
       // The inserted link should render as a link in the WYSIWYG editor
-      await expect(bodyEditor).toContainText('Home', { timeout: STANDARD_TIMEOUT })
+      // The link text is the entry's title, not the type label the picker lists it by.
+      await expect(bodyEditor).toContainText('Home Page', { timeout: STANDARD_TIMEOUT })
     })
 
     await test.step('save and verify link persists on disk', async () => {
@@ -211,7 +212,7 @@ test.describe('Entry Links in MDX Editor', () => {
       const raw = await readRawContentFile(relPath!)
       const data = JSON.parse(raw) as { body?: string }
       // The body should contain an entry link in the form [Label](entry:ID)
-      expect(data.body).toMatch(/\[Home\]\(entry:[^)]+\)/)
+      expect(data.body).toMatch(/\[Home Page\]\(entry:[^)]+\)/)
     })
   })
 })

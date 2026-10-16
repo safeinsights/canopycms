@@ -59,7 +59,7 @@ import {
   entryTypeLabel,
   entryTypeLine,
   buildBreadcrumbSegments,
-  titleFieldLabel,
+  entryNameSource,
 } from './editor-utils'
 import {
   useEditorLayout,
@@ -138,7 +138,10 @@ import { MayHaveLandedError } from './unanswered'
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
   contentId: ContentId // 12-char content ID (required - used for draft keying)
+  /** What the editor calls the entry: its title, or a labelled singleton's type label. */
   label: string
+  /** The entry's title, kept where `label` is a singleton's type label: link text and search use it. */
+  title?: string
   status?: string
   schema: EntrySchema
   previewSrc?: string
@@ -1383,8 +1386,11 @@ const EditorContent: React.FC<EditorProps> = ({
       list.push({
         path: entry.path,
         label: entry.label,
+        title: entry.title,
         slug: entry.slug,
         status: entryStatusLabel(activeCollections, entry),
+        missing: entry.status === 'missing' || undefined,
+        noPage: !entry.previewSrc || undefined,
         contentId: entry.contentId,
         readOnly: entry.canEdit === false || undefined,
         conflictNotice: !!(
@@ -1596,6 +1602,7 @@ const EditorContent: React.FC<EditorProps> = ({
         (e): EntryLinkOption => ({
           contentId: e.contentId,
           label: e.label,
+          title: e.title,
           slug: e.slug,
           collectionPath: e.collectionPath,
           collectionName: e.collectionName,
@@ -1611,6 +1618,7 @@ const EditorContent: React.FC<EditorProps> = ({
       entriesState.map((e) => ({
         path: e.path,
         label: e.label,
+        title: e.title,
         slug: e.slug,
         collectionPath: e.collectionPath,
         collectionName: e.collectionName,
@@ -1863,8 +1871,11 @@ const EditorContent: React.FC<EditorProps> = ({
               : entriesState.map((e) => ({
                   path: e.path,
                   label: e.label,
+                  title: e.title,
                   slug: e.slug,
                   status: entryStatusLabel(activeCollections, e),
+                  missing: e.status === 'missing' || undefined,
+                  noPage: !e.previewSrc || undefined,
                   readOnly: e.canEdit === false || undefined,
                 }))
           }
@@ -2316,7 +2327,8 @@ const EditorContent: React.FC<EditorProps> = ({
                 <RenameEntryModal
                   isOpen={renameModalOpen}
                   entryLabel={renamingEntry.label}
-                  titleFieldLabel={titleFieldLabel(renamingEntry.schema)}
+                  nameSource={entryNameSource(activeCollections, renamingEntry)}
+                  hasPage={!!renamingEntry.previewSrc}
                   currentSlug={renamingEntry.slug || ''}
                   onSave={handleRenameSubmit}
                   // `renamingEntry` stays until the next rename, so the dialog plays its exit and

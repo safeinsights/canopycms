@@ -32,6 +32,8 @@ const MAX_OPTIONS = 50
 export interface QuickOpenEntry {
   path: string
   label: string
+  /** The entry's title, matched by the search where the label is a singleton's type label. */
+  title?: string
   slug?: string
   collectionPath?: string
   collectionName?: string

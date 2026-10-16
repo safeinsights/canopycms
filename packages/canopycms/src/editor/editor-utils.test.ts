@@ -16,7 +16,7 @@ import {
   calculatePathToEntry,
   entryTypeLine,
   resolveHomeEntry,
-  titleFieldLabel,
+  entryNameSource,
 } from './editor-utils'
 import type { EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
@@ -1570,17 +1570,19 @@ describe('singleton entries', () => {
     title: `Title of ${slug}`,
     exists: true,
   })
-  const labels = buildEntriesFromListResponse({
+  const built = buildEntriesFromListResponse({
     response: {
       entries: [listed('site', 'settings'), listed('footer', 'footer'), listed('about', 'page')],
       pagination: { hasMore: false, limit: 50 },
     },
     resolvePreviewSrc: () => undefined,
     flatSchema,
-  }).map((e) => e.label)
+  })
+  const labels = built.map((e) => e.label)
 
-  it("are labelled by their type's label, not their title", () => {
+  it("are labelled by their type's label, not their title, which they keep", () => {
     expect(labels[0]).toBe('Site settings')
+    expect(built[0].title).toBe('Title of site')
   })
 
   it('keep their title when their type has no label, as other entries do', () => {
@@ -1620,7 +1622,60 @@ describe('singleton entries', () => {
   })
 })
 
-describe('titleFieldLabel', () => {
+describe('entryNameSource', () => {
+  const collections: EditorCollection[] = [
+    {
+      path: unsafeAsLogicalPath('content'),
+      name: 'content',
+      type: 'collection',
+      format: 'json',
+      entryTypes: [
+        { name: 'settings', label: 'Site settings', format: 'json', maxItems: 1 },
+        { name: 'page', label: 'Page', format: 'json' },
+        { name: 'note', format: 'json' },
+      ],
+    },
+  ]
+  const titled: FieldConfig[] = [
+    { name: 'siteName', type: 'string', label: 'Site name', isTitle: true },
+  ]
+  const untitled: FieldConfig[] = [{ name: 'body', type: 'mdx' }]
+  const at = (entryType: string, schema: FieldConfig[]) => ({
+    collectionPath: unsafeAsLogicalPath('content'),
+    entryType,
+    schema,
+  })
+
+  it("is a labelled singleton's type, even when it has a title field", () => {
+    expect(entryNameSource(collections, at('settings', titled))).toEqual({
+      from: 'type',
+      typeLabel: 'Site settings',
+    })
+  })
+
+  it('is the title field, by its label, for any other entry that has one', () => {
+    expect(entryNameSource(collections, at('page', titled))).toEqual({
+      from: 'title',
+      fieldLabel: 'Site name',
+    })
+  })
+
+  it("is the type's label for an untitled entry of a labelled type, else the slug", () => {
+    expect(entryNameSource(collections, at('page', untitled))).toEqual({
+      from: 'type',
+      typeLabel: 'Page',
+    })
+    expect(entryNameSource(collections, at('note', untitled))).toEqual({ from: 'slug' })
+  })
+})
+
+/** The title field's label, as `entryNameSource` names it. */
+const titleFieldLabel = (schema: FieldConfig[]): string | undefined => {
+  const source = entryNameSource(undefined, { schema })
+  return source.from === 'title' ? source.fieldLabel : undefined
+}
+
+describe('the title field label', () => {
   it("is the title field's label, else its name as words", () => {
     expect(
       titleFieldLabel([{ name: 'heading', type: 'string', label: 'Page heading', isTitle: true }]),

@@ -483,6 +483,25 @@ describe('content panel', () => {
     expect(new URL(window.location.href).searchParams.get('entry')).toBe(index.path)
   })
 
+  it.each([
+    ['with a page, "Change URL"', undefined, 'Change URL'],
+    ['with none, "Change file name"', { 'content/posts': false as const }, 'Change file name'],
+  ])(
+    'names the entry menu item and dialog by what changes: %s',
+    async (_case, previewBaseByCollection, action) => {
+      stubWindowWidth(true)
+      stubApi()
+      renderEditor({ previewBaseByCollection })
+      await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+      fireEvent.click(screen.getByTestId('file-dropdown-button'))
+      const item = await screen.findByTestId('entry-menu-rename')
+      expect(item.textContent).toBe(`${action}…`)
+      fireEvent.click(item)
+      const dialog = await screen.findByRole('dialog', { name: action })
+      expect(dialog.textContent).toContain('which comes from its “Title” field')
+    },
+  )
+
   it("names each entry's type and route under it in quick open", async () => {
     stubWindowWidth(true)
     stubApi()

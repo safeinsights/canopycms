@@ -24,6 +24,8 @@ export interface EntryBreadcrumbProps {
   onDiscard: () => void
   /** With `onDelete`, offers "Change URL…" and "Delete entry"; absent where a path rule refuses them. */
   onRename?: () => void
+  /** The entry has no page on the site, so "Change URL…" reads "Change file name…". */
+  entryNoPage?: boolean
   onDelete?: () => void
   refreshBlockedReason?: string
   discardBlockedReason?: string
@@ -119,6 +121,7 @@ export function EntryBreadcrumb({
   onRefresh,
   onDiscard,
   onRename,
+  entryNoPage = false,
   onDelete,
   refreshBlockedReason,
   discardBlockedReason,
@@ -236,7 +239,7 @@ export function EntryBreadcrumb({
                         blockedReason={changeBlockedReason}
                         data-testid="entry-menu-rename"
                       >
-                        {EDITOR_ACTIONS.changeUrl}…
+                        {entryNoPage ? EDITOR_ACTIONS.changeFileName : EDITOR_ACTIONS.changeUrl}…
                       </ReasonedMenuItem>
                       <DestructiveMenuItem
                         onClick={onDelete}

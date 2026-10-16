@@ -2,7 +2,7 @@ import { defineEntrySchema, defineInlineFieldGroup } from 'canopycms'
 import { createEntrySchemaRegistry } from 'canopycms/server'
 
 export const postSchema = defineEntrySchema([
-  { name: 'title', type: 'string', label: 'Title' },
+  { name: 'title', type: 'string', label: 'Title', isTitle: true },
   { name: 'author', type: 'string', label: 'Author' },
   { name: 'date', type: 'string', label: 'Date' },
   { name: 'tags', type: 'string', list: true, label: 'Tags' },
