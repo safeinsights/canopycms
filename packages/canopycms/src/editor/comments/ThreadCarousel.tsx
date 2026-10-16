@@ -1,17 +1,12 @@
 'use client'
 
 import React, { useState, useMemo, useEffect, useRef } from 'react'
-import { ActionIcon, Button, Group, Paper, Stack, Text, Textarea, Tooltip } from '@mantine/core'
+import { ActionIcon, Group, Paper, Stack, Text, Tooltip } from '@mantine/core'
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { InlineCommentThread } from './InlineCommentThread'
 import { useTrackedWrites } from './use-tracked-writes'
-import {
-  CommentWriteAlert,
-  toCommentWriteFailure,
-  type CommentWriteFailure,
-} from './CommentWriteAlert'
 
 /**
  * ## Purpose
@@ -52,16 +47,10 @@ export interface ThreadCarouselProps {
   onAddComment: (text: string, threadId?: string) => Promise<void>
   /** Handler to resolve a thread */
   onResolveThread: (threadId: string) => Promise<void>
-  /** Auto-focus and expand (from preview click) */
-  autoFocus?: boolean
-  /** Auto-open new thread box */
-  autoOpenNewThread?: boolean
   /** Thread ID to highlight and scroll to */
   highlightThreadId?: string
   /** Optional function to fetch user metadata for displaying user badges */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
-  /** Called when the user cancels the new-thread box (e.g. so a wrapper can collapse an empty carousel) */
-  onCancelNewThread?: () => void
 }
 export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   threads,
@@ -71,20 +60,13 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   canResolve,
   onAddComment,
   onResolveThread,
-  autoFocus,
-  autoOpenNewThread,
   highlightThreadId,
   onGetUserMetadata,
-  onCancelNewThread,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [showNewThreadBox, setShowNewThreadBox] = useState(false)
-  const [newThreadText, setNewThreadText] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [carouselHeight, setCarouselHeight] = useState(400)
   const [isResizing, setIsResizing] = useState(false)
   const [highlightedThreadId, setHighlightedThreadId] = useState<string | undefined>(undefined)
-  const [error, setError] = useState<CommentWriteFailure | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const resizeStartY = useRef<number>(0)
   const resizeStartHeight = useRef<number>(0)
@@ -101,18 +83,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   )
 
   useEffect(() => {
-    if (autoFocus && sortedThreads.length > 0) {
-      const firstUnresolved = sortedThreads.find((t) => !t.resolved)
-      if (firstUnresolved) {
-        const index = sortedThreads.findIndex((t) => t.id === firstUnresolved.id)
-        setCurrentIndex(index)
-        scrollToIndex(index)
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollToIndex is stable
-  }, [autoFocus, sortedThreads])
-
-  useEffect(() => {
     if (highlightThreadId && sortedThreads.length > 0) {
       const threadIndex = sortedThreads.findIndex((t) => t.id === highlightThreadId)
       if (threadIndex !== -1) {
@@ -127,12 +97,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollToIndex is stable
   }, [highlightThreadId, sortedThreads])
-
-  useEffect(() => {
-    if (autoOpenNewThread) {
-      setShowNewThreadBox(true)
-    }
-  }, [autoOpenNewThread])
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -204,22 +168,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   // A resolved thread's controls unmount with the focused button, so focus lands here.
   const labelRef = useRef<HTMLParagraphElement>(null)
 
-  const handleCreateNewThread = async () => {
-    if (!newThreadText.trim()) return
-
-    setIsSubmitting(true)
-    setError(null)
-    try {
-      await addComment(newThreadText)
-      setNewThreadText('')
-      setShowNewThreadBox(false)
-    } catch (err) {
-      setError(toCommentWriteFailure(err))
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   const unresolvedCount = sortedThreads.filter((t) => !t.resolved).length
 
   return (
@@ -264,58 +212,10 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                     <IconChevronRight size={16} aria-hidden />
                   </ActionIcon>
                 </Tooltip>
-                <div
-                  style={{
-                    width: 1,
-                    height: 16,
-                    background: 'var(--mantine-color-default-border)',
-                  }}
-                />
               </>
             )}
-
-            <Button variant="light" onClick={() => setShowNewThreadBox(!showNewThreadBox)}>
-              + New
-            </Button>
           </Group>
         </Group>
-
-        {error && <CommentWriteAlert failure={error} onClose={() => setError(null)} />}
-
-        {showNewThreadBox && (
-          <Paper withBorder p="sm" bg="var(--mantine-color-body)">
-            <Stack gap="xs">
-              <Textarea
-                placeholder="Start a new thread..."
-                value={newThreadText}
-                onChange={(e) => setNewThreadText(e.target.value)}
-                minRows={2}
-                disabled={isSubmitting}
-                autoFocus
-                data-testid="new-thread-textarea"
-              />
-              <Group gap="xs">
-                <Button
-                  onClick={handleCreateNewThread}
-                  loading={isSubmitting}
-                  disabled={!newThreadText.trim()}
-                  data-testid="create-thread-button"
-                >
-                  Create Thread
-                </Button>
-                <Button
-                  variant="subtle"
-                  onClick={() => {
-                    setShowNewThreadBox(false)
-                    onCancelNewThread?.()
-                  }}
-                >
-                  Cancel
-                </Button>
-              </Group>
-            </Stack>
-          </Paper>
-        )}
 
         {sortedThreads.length > 0 && (
           <div
@@ -432,12 +332,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
               />
             </div>
           </div>
-        )}
-
-        {sortedThreads.length === 0 && !showNewThreadBox && (
-          <Text size="xs" c="dimmed" ta="center" py="xs">
-            No comments yet. Click &quot;+ New&quot; to start a thread.
-          </Text>
         )}
       </Stack>
     </Paper>
