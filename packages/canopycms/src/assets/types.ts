@@ -21,6 +21,15 @@ export interface AssetMeta {
   uploadedAt: string // ISO 8601
 }
 
+/** A listed asset; `hidden` is set only on a listing that includes hidden files. */
+export type ListedAssetMeta = AssetMeta & { hidden?: true }
+
+/** The body of a hidden marker. Only the marker's presence hides a file; this records who and when. */
+export interface HiddenAssetMarker {
+  hiddenAt: string // ISO 8601
+  hiddenBy?: string
+}
+
 export type StagedUploadTarget =
   | {
       mode: 'direct'
@@ -96,11 +105,26 @@ export interface AssetStore {
   listPublicObjectKeys?(prefix: string): AsyncIterable<string>
   /** A short-lived URL a browser can GET `key` from directly, or `null` if absent. S3 only. */
   presignPublicObjectRead?(key: string): Promise<string | null>
+  /**
+   * Meta is create-only and never deleted: every transform not yet stored, at upload, release or
+   * after a lazy output expires, is computed from it, and content anywhere may still name the file.
+   */
   putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<CreateOnlyResult>
   getMeta(hash32: string): Promise<AssetMeta | null>
+  /**
+   * A page of meta, without hidden files unless `includeHidden`, which marks each hidden one
+   * `hidden: true`. A page may hold fewer than `limit` items while `nextCursor` is still set.
+   */
   listMeta(input?: {
     cursor?: string
     limit?: number
-  }): Promise<{ items: AssetMeta[]; nextCursor?: string }>
-  deleteMeta(hash32: string): Promise<void>
+    includeHidden?: boolean
+  }): Promise<{ items: ListedAssetMeta[]; nextCursor?: string }>
+  /**
+   * Hide a file from `listMeta`: a create-only marker beside its meta, which stays, so every URL
+   * and transform keeps working. `already-exists` when it was hidden already.
+   */
+  hideAsset(hash32: string, marker: HiddenAssetMarker): Promise<CreateOnlyResult>
+  /** Remove the hidden marker; `false` when there was none. Needs no permission on a store that has never hidden a file. */
+  unhideAsset(hash32: string): Promise<boolean>
 }

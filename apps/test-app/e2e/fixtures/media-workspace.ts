@@ -26,6 +26,7 @@ const ASSET_SUBDIRS = [
   ASSET_PREFIXES.originals,
   ASSET_PREFIXES.staging,
   ASSET_PREFIXES.meta,
+  ASSET_PREFIXES.hidden,
   ASSET_PREFIXES.public,
 ] as const
 

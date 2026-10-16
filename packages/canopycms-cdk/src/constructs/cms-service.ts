@@ -1658,6 +1658,7 @@ export class CanopyCmsService extends Construct {
         staging: 'asset-staging',
         originals: 'asset-originals',
         meta: 'asset-meta',
+        hidden: 'asset-hidden',
         public: 'assets',
       }
       props.assetBucket.grantPut(this.lambdaFunction, `${prefixes.staging}/*`)
@@ -1667,9 +1668,10 @@ export class CanopyCmsService extends Construct {
       props.assetBucket.grantRead(this.lambdaFunction, `${prefixes.public}/*`)
       props.assetBucket.grantPut(this.lambdaFunction, `${prefixes.originals}/*`)
       props.assetBucket.grantPut(this.lambdaFunction, `${prefixes.meta}/*`)
+      props.assetBucket.grantPut(this.lambdaFunction, `${prefixes.hidden}/*`)
       props.assetBucket.grantPut(this.lambdaFunction, `${prefixes.public}/*`)
       props.assetBucket.grantDelete(this.lambdaFunction, `${prefixes.staging}/*`)
-      props.assetBucket.grantDelete(this.lambdaFunction, `${prefixes.meta}/*`)
+      props.assetBucket.grantDelete(this.lambdaFunction, `${prefixes.hidden}/*`)
     }
 
     const workerSg = new ec2.SecurityGroup(this, 'WorkerSg', {

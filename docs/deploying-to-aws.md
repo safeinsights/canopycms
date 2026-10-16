@@ -1511,10 +1511,15 @@ const allow = (name: string, actions: string[], resources: string[]) =>
 
 // CanopyCmsService's `assetBucket` grants (cms-service.ts).
 const cms = `canopy-cms-${tier}`
+// Meta is never deleted; removing a file from the library writes asset-hidden/{hash32}.json.
 allow(cms, ['s3:GetObject'], objects('asset-staging', 'asset-originals', 'asset-meta', 'assets'))
-allow(cms, ['s3:PutObject'], objects('asset-staging', 'asset-originals', 'asset-meta', 'assets'))
-allow(cms, ['s3:DeleteObject'], objects('asset-staging', 'asset-meta'))
-allow(cms, ['s3:ListBucket'], [bucket.bucketArn]) // the media library lists asset-meta/
+allow(
+  cms,
+  ['s3:PutObject'],
+  objects('asset-staging', 'asset-originals', 'asset-meta', 'asset-hidden', 'assets'),
+)
+allow(cms, ['s3:DeleteObject'], objects('asset-staging', 'asset-hidden'))
+allow(cms, ['s3:ListBucket'], [bucket.bucketArn]) // the media library lists asset-meta/ and asset-hidden/
 
 // With lazyPublicTransforms, AssetSupport's transformRole. Without ListBucket an
 // unknown hash is a 500 rather than a 404.

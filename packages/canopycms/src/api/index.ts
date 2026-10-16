@@ -30,7 +30,8 @@ export type {
   PresignAssetBody,
   FinalizeAssetResponse,
   FinalizeAssetBody,
-  AssetDeleteResponse,
+  AssetKeyBody,
+  AssetVisibilityResponse,
 } from './assets'
 export type {
   InternalGroupsResponse,

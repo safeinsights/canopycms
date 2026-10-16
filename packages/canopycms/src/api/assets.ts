@@ -4,7 +4,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import type { RouteDefinition } from '../http/router'
 import type { CanopyBinaryResponse } from '../http/types'
-import type { AssetMeta, AssetStore, StagedUploadTarget } from '../assets/types'
+import type { AssetStore, ListedAssetMeta, StagedUploadTarget } from '../assets/types'
 import { ASSET_PREFIXES } from '../assets/keys'
 import { ALLOWED_UPLOAD_CONTENT_TYPES } from '../assets/pipeline'
 import { finalizeStagedUpload } from '../assets/finalize'
@@ -14,9 +14,9 @@ import { storeTransform, TRANSFORM_CACHE_CONTROL } from '../assets/materialize'
 import { isAdmin } from '../authorization/helpers'
 
 /** An asset's persisted meta plus its computed, root-relative public URL. */
-export type AssetRecord = AssetMeta & { src: string }
+export type AssetRecord = ListedAssetMeta & { src: string }
 
-function toAssetRecord(meta: AssetMeta): AssetRecord {
+function toAssetRecord(meta: ListedAssetMeta): AssetRecord {
   return { ...meta, src: assetSrc(meta) }
 }
 
@@ -43,8 +43,8 @@ export type PresignAssetResponse = ApiResponse<{ upload: StagedUploadTarget }>
 /** Response type for finalizing (or proxy-uploading) an asset */
 export type FinalizeAssetResponse = ApiResponse<{ asset: AssetRecord }>
 
-/** Response type for deleting an asset */
-export type AssetDeleteResponse = ApiResponse<{ deleted: boolean }>
+/** Response type for removing a file from the library or restoring it: whether it is now hidden */
+export type AssetVisibilityResponse = ApiResponse<{ hidden: boolean }>
 
 const filenameSchema = z.string().min(1).max(255)
 
@@ -70,6 +70,8 @@ export type FinalizeAssetBody = z.infer<typeof finalizeAssetBodySchema>
 const listAssetsParamsSchema = z.object({
   cursor: z.string().optional(),
   limit: z.coerce.number().int().positive().max(100).optional(),
+  /** Admin only: also list files removed from the library, each marked `hidden: true`. */
+  includeHidden: z.enum(['true', 'false']).optional(),
 })
 type ListAssetsParams = z.infer<typeof listAssetsParamsSchema>
 
@@ -78,8 +80,8 @@ const hash32Schema = z
   .string()
   .regex(/^[a-f0-9]{32}$/, 'key must be a 32-character lowercase hex string')
 
-const deleteAssetParamsSchema = z.object({ key: hash32Schema })
-type DeleteAssetParams = z.infer<typeof deleteAssetParamsSchema>
+const assetKeyBodySchema = z.object({ key: hash32Schema })
+export type AssetKeyBody = z.infer<typeof assetKeyBodySchema>
 
 /**
  * Presign a direct (or proxied) upload target. Any authenticated user - there
@@ -116,7 +118,8 @@ const presignAssetHandler = async (
 /**
  * Finalize a staged upload: read the staged bytes, run the finalize pipeline
  * (sniff/hash/dims/sanitize), write originals + meta, and return the result.
- * Any authenticated user (same rationale as presign).
+ * Any authenticated user (same rationale as presign). Uploading a file that was
+ * removed from the library puts it back; `finalizeAsset` says why.
  */
 const finalizeAssetHandler = async (
   ctx: ApiContext,
@@ -240,59 +243,103 @@ const uploadProxiedHandler = async (
 /**
  * List assets - any authenticated user can list assets (key enumeration is
  * accepted: unlisted != private, see .claude/future-tasks/resolved/assets-media-system.md).
+ * Files removed from the library are left out; only an admin may ask for them too.
  */
 const listAssetsHandler = async (
   ctx: ApiContext,
-  _req: ApiRequest,
+  req: ApiRequest,
   params: ListAssetsParams,
 ): Promise<AssetsListResponse> => {
   if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
 
+  const includeHidden = params.includeHidden === 'true'
+  if (includeHidden && !isAdmin(req.user.groups)) {
+    return { ok: false, status: 403, error: 'Only admins can list removed files' }
+  }
+
   const { items, nextCursor } = await ctx.assetStore.listMeta({
     cursor: params.cursor,
     limit: params.limit,
+    includeHidden,
   })
   return { ok: true, status: 200, data: { assets: items.map(toAssetRecord), nextCursor } }
 }
 
 /**
- * Delete asset - an Admin may delete any asset; anyone else may delete only an asset whose
- * recorded `uploadedBy` is them. `key` (hash32) is pre-validated by `deleteAssetParamsSchema`.
- * Deletes the meta sidecar only - blobs are immortal until a future GC worker task (see
- * .claude/future-tasks/resolved/assets-media-system.md).
+ * Who may remove a file from the library or restore it: an admin may act on any file; anyone else
+ * only on a file whose recorded `uploadedBy` is them. `null` when the caller may act.
  *
- * The ownership check lives here, not in a declarative guard, because it needs the asset's meta,
- * which guards can't read. Two fail-closed choices:
+ * The check lives here, not in a declarative guard, because it needs the asset's meta, which
+ * guards can't read. Two fail-closed choices:
  * - Meta with no `uploadedBy` (the field is optional) is admin-only — defaulting to "anyone may
- *   delete" would open every legacy asset to everyone.
+ *   act" would open every legacy asset to everyone.
  * - A missing asset returns the same 403 as an unowned one for non-admins, so the endpoint isn't
- *   an existence oracle over a content-addressed keyspace.
+ *   an existence oracle over a content-addressed keyspace. An admin, who can list every file,
+ *   gets a 404, so no marker is ever written for a file that does not exist.
  *
  * `uploadedBy` records the FIRST uploader only: finalizeAsset dedups on content hash, so a second
- * person uploading an identical file gains no delete rights over it — benign (a 403 where they
- * expected success, never the reverse; see
- * safeinsights/canopycms#572).
+ * person uploading an identical file gains no rights over it — benign (a 403 where they expected
+ * success, never the reverse; see safeinsights/canopycms#572).
  *
  * Coupled to the blob-GC follow-up in safeinsights/canopycms#575: this permission is safe because
- * delete is a de-list, not a destroy — nothing another branch references breaks. If GC ever makes
- * delete destroy the blob, this needs a reference check too.
+ * removal hides a file and destroys nothing, so nothing any branch or build references breaks. If
+ * GC ever deletes blobs, it needs a reference check of its own.
  */
-const deleteAssetHandler = async (
+async function visibilityRefusal(
+  store: AssetStore,
+  req: ApiRequest,
+  key: string,
+  verb: 'remove' | 'restore',
+): Promise<ApiResponse<never> | null> {
+  const meta = await store.getMeta(key)
+  if (isAdmin(req.user.groups)) {
+    return meta ? null : { ok: false, status: 404, error: 'File not found' }
+  }
+  if (!meta?.uploadedBy || meta.uploadedBy !== req.user.userId) {
+    return { ok: false, status: 403, error: `You can only ${verb} files you uploaded` }
+  }
+  return null
+}
+
+/**
+ * Remove a file from the library: write its hidden marker and leave its meta, originals and
+ * public objects alone, so every URL and every transform, stored or not yet computed, keeps
+ * working for content on any branch and in any build. `visibilityRefusal` says who may.
+ *
+ * The marker is create-only, so a second remove finds it and changes nothing. Remove, restore
+ * and a re-upload's un-hide touch only the marker, and nothing but the library listing reads it:
+ * the worst interleaving of two of them lists or omits one file until the next action.
+ */
+const hideAssetHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
-  params: DeleteAssetParams,
-): Promise<AssetDeleteResponse> => {
+  body: AssetKeyBody,
+): Promise<AssetVisibilityResponse> => {
   if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
 
-  if (!isAdmin(req.user.groups)) {
-    const meta = await ctx.assetStore.getMeta(params.key)
-    if (!meta?.uploadedBy || meta.uploadedBy !== req.user.userId) {
-      return { ok: false, status: 403, error: 'You can only delete assets you uploaded' }
-    }
-  }
+  const refusal = await visibilityRefusal(ctx.assetStore, req, body.key, 'remove')
+  if (refusal) return refusal
 
-  await ctx.assetStore.deleteMeta(params.key)
-  return { ok: true, status: 200, data: { deleted: true } }
+  await ctx.assetStore.hideAsset(body.key, {
+    hiddenAt: new Date().toISOString(),
+    hiddenBy: req.user.userId,
+  })
+  return { ok: true, status: 200, data: { hidden: true } }
+}
+
+/** Put a removed file back in the library by deleting its hidden marker; see `hideAssetHandler`. */
+const restoreAssetHandler = async (
+  ctx: ApiContext,
+  req: ApiRequest,
+  body: AssetKeyBody,
+): Promise<AssetVisibilityResponse> => {
+  if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
+
+  const refusal = await visibilityRefusal(ctx.assetStore, req, body.key, 'restore')
+  if (refusal) return refusal
+
+  await ctx.assetStore.unhideAsset(body.key)
+  return { ok: true, status: 200, data: { hidden: false } }
 }
 
 /**
@@ -488,20 +535,45 @@ const listAssets = defineEndpoint({
   handler: listAssetsHandler,
 })
 
-/**
- * DELETE /assets?key={hash32}
- */
-const deleteAsset = defineEndpoint({
+const hideAsset = defineEndpoint({
   namespace: 'assets',
-  name: 'delete',
-  method: 'DELETE',
-  path: '/assets',
-  params: deleteAssetParamsSchema,
-  responseType: 'AssetDeleteResponse',
-  response: {} as AssetDeleteResponse,
-  defaultMockData: { deleted: true },
-  handler: deleteAssetHandler,
+  name: 'hide',
+  method: 'POST',
+  path: '/assets/hide',
+  body: assetKeyBodySchema,
+  bodyType: 'AssetKeyBody',
+  responseType: 'AssetVisibilityResponse',
+  response: {} as AssetVisibilityResponse,
+  defaultMockData: { hidden: true },
+  handler: hideAssetHandler,
 })
+
+const restoreAsset = defineEndpoint({
+  namespace: 'assets',
+  name: 'restore',
+  method: 'POST',
+  path: '/assets/restore',
+  body: assetKeyBodySchema,
+  bodyType: 'AssetKeyBody',
+  responseType: 'AssetVisibilityResponse',
+  response: {} as AssetVisibilityResponse,
+  defaultMockData: { hidden: false },
+  handler: restoreAssetHandler,
+})
+
+/**
+ * DELETE /assets answers 410 instead of falling through to `DELETE /:branch` as a branch named
+ * "assets". Hand-built like `assetRawRoute`, so the client generator emits no method for it.
+ */
+const deleteAssetGone: RouteDefinition = {
+  method: 'DELETE',
+  pattern: ['assets'],
+  handler: async (): Promise<ApiResponse<never>> => ({
+    ok: false,
+    status: 410,
+    error: 'DELETE /assets is gone: remove a file from the library with POST /assets/hide',
+  }),
+}
 
 /**
  * Exported routes for router registration and client codegen.
@@ -511,7 +583,9 @@ export const ASSET_ROUTES = {
   finalize: finalizeAsset,
   uploadProxied,
   list: listAssets,
-  delete: deleteAsset,
+  hide: hideAsset,
+  restore: restoreAsset,
+  deleteGone: deleteAssetGone,
 } as const
 
 /**
