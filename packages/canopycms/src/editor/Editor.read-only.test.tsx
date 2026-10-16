@@ -229,7 +229,7 @@ describe('Editor on a read-only branch', () => {
 
     expect(persistedDrafts()).not.toHaveProperty(CONTENT_ID)
     expect(input.value).toBe('Loaded title')
-    expect(screen.queryByTestId('unsaved-indicator')).toBeNull()
+    expect(screen.queryByTestId('entry-unsaved-dot')).toBeNull()
   })
 
   it('drops whatever the form emits, so a field that ignores readOnly still writes no draft', async () => {

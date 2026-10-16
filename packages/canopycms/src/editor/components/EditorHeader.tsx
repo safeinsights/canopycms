@@ -8,11 +8,11 @@ import type { BreadcrumbSegment } from '../editor-utils'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { clientOperatingStrategy } from '../../operating-mode/client'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
-import { branchStatusPresentation } from '../branch-status'
+import { branchBarStatusPresentation } from '../branch-status'
 import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
-import { branchLockState } from './BranchLockBanner'
+import { branchLockBannerShown, branchLockState } from './BranchLockBanner'
 import { BranchPill } from './BranchPill'
 import { EntryBreadcrumb } from './EntryBreadcrumb'
 import { SaveSplitButton } from './SaveSplitButton'
@@ -143,24 +143,24 @@ export function EditorHeader({
   branchWriteBlocked = false,
   branchLoading = false,
 }: EditorHeaderProps) {
-  const { statusLocked, branchDataUnavailable } = branchLockState({
-    branchStatus,
-    branchReadOnly,
-    branchWriteBlocked,
-  })
+  const lock = { branchStatus, branchReadOnly, branchWriteBlocked }
+  const { statusLocked, branchDataUnavailable } = branchLockState(lock)
 
-  // Why the branch takes no writes, with the way forward; shared by Save, Save all and the chip.
-  const branchLockReason = branchReadOnly
-    ? 'The base branch is read-only. Create a branch to make changes.'
-    : branchDataUnavailable
-      ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
-      : statusLocked
-        ? branchStatus === 'submitted'
-          ? 'This branch is in review. Withdraw it to make changes.'
-          : branchStatus === 'approved'
-            ? 'This branch is approved. Withdraw it to make changes.'
-            : `This branch is ${branchStatus}. Its content is read-only.`
-        : undefined
+  // Why the branch takes no writes, with the way forward; shared by Save and Save all. It is set
+  // exactly when BranchLockBanner renders, which says the same.
+  const branchLockReason = !branchLockBannerShown(lock)
+    ? undefined
+    : branchReadOnly
+      ? 'The base branch is read-only. Create a branch to make changes.'
+      : branchDataUnavailable
+        ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
+        : statusLocked
+          ? branchStatus === 'submitted'
+            ? 'This branch is in review. Withdraw it to make changes.'
+            : branchStatus === 'approved'
+              ? 'This branch is approved. Withdraw it to make changes.'
+              : `This branch is ${branchStatus}. Its content is read-only.`
+          : undefined
   const entryLockReason = entryReadOnly
     ? "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it."
     : undefined
@@ -173,7 +173,7 @@ export function EditorHeader({
         ? 'Open an entry to save it.'
         : (entryLockReason ?? (!hasUnsavedChanges ? 'No changes to save.' : '')))
 
-  const presentation = branchStatusPresentation(branchStatus, branchIsProtected)
+  const presentation = branchBarStatusPresentation(branchStatus, branchIsProtected)
   const status =
     !branchLoading &&
     clientOperatingStrategy(operatingMode ?? 'prod').supportsStatusBadge() &&
@@ -192,12 +192,10 @@ export function EditorHeader({
           segments={breadcrumbSegments}
           entryLabel={currentEntry ? (currentEntry.label ?? currentEntry.slug) : undefined}
           entryDirty={hasUnsavedChanges}
+          // BranchLockBanner already says why a locked branch is read-only, so the chip carries
+          // only the entry's own reason, even beside the banner: "Withdraw it" would not unlock it.
           readOnlyReason={
-            branchLoading
-              ? undefined
-              : currentEntry || branchName
-                ? (branchLockReason ?? entryLockReason)
-                : undefined
+            branchLoading ? undefined : currentEntry || branchName ? entryLockReason : undefined
           }
           onCollection={onCollectionOpen}
           onRefresh={onFileReload}

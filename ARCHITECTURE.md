@@ -659,6 +659,7 @@ Assets live in a single bucket — in prod, new prefixes inside each site's exis
 - `asset-originals/` — private, full-fidelity originals, kept forever
 - `asset-staging/` — short-lived presigned-upload target, expired by a lifecycle rule
 - `asset-meta/` — private per-asset sidecar (original filename, uploader, date, dimensions, mime)
+- `asset-hidden/` — private, one marker per file removed from the media library
 - `assets/` — public static delivery, for sanitized SVGs and PDFs only
 - `assets/t/` — transform outputs, where the URL path _is_ the S3 key, kept forever by default
 
@@ -666,7 +667,7 @@ Keys are **immutable, content-addressed and unguessable**, and identical bytes d
 
 **Every write to a content-addressed key is create-only** — S3 `If-None-Match: *`, a local exclusive create — since no correct writer ever replaces one. `AssetSupport` can enforce this with a bucket-policy Deny, opt-in because every writer, CMS or lazy Lambda, must first run a create-only release.
 
-**Unlisted is not private.** Key enumeration is an accepted trade-off — the meta listing that powers the media library is open to any authenticated user — so confidential files do not belong in this store. Deleting an asset removes only its meta sidecar; blobs are kept forever.
+**Unlisted is not private.** Key enumeration is an accepted trade-off — the meta listing that powers the media library is open to any authenticated user — so confidential files do not belong in this store. Removing a file from the library only hides it: a create-only `asset-hidden/` marker drops it from the listing and pickers, while its meta and blobs stay, so every transform keeps resolving; nothing deletes meta or blobs.
 
 ### Upload and Finalize
 

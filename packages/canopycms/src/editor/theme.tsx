@@ -328,6 +328,7 @@ const primaryFill = (theme: MantineTheme, scheme: 'light' | 'dark') => {
  * dark, at 3:1 on gray.1 or dark.5. Mantine draws focus rings, focused borders and a checked
  * Switch in `--mantine-primary-color-filled`, so that becomes the ring; `canopyComponents` points
  * Checkbox, Radio and Tabs at it. A tick on it is white, or black where white is under 3:1.
+ * `--canopy-unsaved-mark` is the same colour, named for the dot that marks unsaved changes.
  */
 const focusRing = (theme: MantineTheme, scheme: 'light' | 'dark') => {
   const scale = theme.colors[theme.primaryColor]
@@ -350,6 +351,7 @@ const focusRing = (theme: MantineTheme, scheme: 'light' | 'dark') => {
           ? ring.value
           : `var(--mantine-color-${theme.primaryColor}-${ring.shade})`,
     '--canopy-focus-ring-contrast': contrast,
+    '--canopy-unsaved-mark': 'var(--canopy-focus-ring)',
     '--mantine-primary-color-filled': 'var(--canopy-focus-ring)',
   }
 }

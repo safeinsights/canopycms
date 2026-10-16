@@ -41,6 +41,7 @@ import { calculatePathToEntry } from './editor-utils'
 import { matchesEntryQuery } from './entry-search'
 import { EDITOR_ACTIONS } from './copy'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
+import { UnsavedMark } from './components/UnsavedMark'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { UnavailableTypeMessage } from './components/UnavailableTypeMessage'
 
@@ -290,19 +291,7 @@ const stopTreeKeys = (event: React.KeyboardEvent) => {
 
 const UnsavedDot: React.FC<{ label: string }> = ({ label }) => (
   <Tooltip label={label} withinPortal>
-    <Box
-      component="span"
-      role="img"
-      aria-label={label}
-      data-testid="unsaved-dot"
-      style={{
-        flexShrink: 0,
-        width: 8,
-        height: 8,
-        borderRadius: '50%',
-        backgroundColor: 'var(--mantine-color-brand-6)',
-      }}
-    />
+    <UnsavedMark role="img" aria-label={label} data-testid="unsaved-dot" />
   </Tooltip>
 )
 

@@ -197,7 +197,7 @@ const loaded = async () => {
 
 const editTitle = async () => {
   await userEvent.type(titleInput(), ' edited')
-  await waitFor(() => expect(screen.getByTestId('unsaved-indicator')).toBeTruthy())
+  await waitFor(() => expect(screen.getByTestId('entry-unsaved-dot')).toBeTruthy())
 }
 
 const focusEl = (el: HTMLElement) => {
@@ -353,7 +353,7 @@ describe('Change URL… and Delete entry (file menu)', () => {
   it('blocks both on a locked branch, saying why, and opens neither', async () => {
     stubApi({ locked: true })
     renderEditor()
-    await waitFor(() => expect(screen.getByTestId('read-only-chip')).toBeTruthy())
+    await waitFor(() => expect(screen.getByTestId('status-locked-banner')).toBeTruthy())
 
     await userEvent.click(fileTrigger())
     for (const id of ['entry-menu-rename', 'entry-menu-delete']) {
