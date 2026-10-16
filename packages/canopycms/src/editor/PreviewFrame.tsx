@@ -32,6 +32,12 @@ export interface PreviewMarks {
 const READY_TIMEOUT_MS = 5000
 
 /**
+ * What a page's handshake says of the site's header and footer: its ready message says it renders
+ * them for `chrome=1` or that it does not, or no ready message came in `READY_TIMEOUT_MS`.
+ */
+export type SiteChromeSupport = 'supported' | 'unsupported' | 'unanswered'
+
+/**
  * `waiting` until the preview's ready message arrives, `missing` once `READY_TIMEOUT_MS` passes
  * after `load` without one. A late ready still moves it to `ready`.
  */
@@ -113,11 +119,8 @@ export const PreviewFrame = ({
   iframeStyle?: CSSProperties
   /** Replaces the chip's Retry, for a host whose own reload control remounts the frame. */
   onReload?: () => void
-  /**
-   * Called with whether the page can render the site's header and footer, from its ready message;
-   * `false` once it has had `READY_TIMEOUT_MS` to say so and has not.
-   */
-  onSiteChrome?: (supported: boolean) => void
+  /** Called with what the page's handshake says of the site's header and footer. */
+  onSiteChrome?: (support: SiteChromeSupport) => void
   /** The editor is loading the next page's data: this page stays in view, dimmed and inert. */
   busy?: boolean
 }) => {
@@ -218,7 +221,7 @@ export const PreviewFrame = ({
   })
 
   useEffect(() => {
-    if (handshake === 'missing') onSiteChromeRef.current?.(false)
+    if (handshake === 'missing') onSiteChromeRef.current?.('unanswered')
   }, [handshake])
 
   useEffect(() => {
@@ -244,7 +247,11 @@ export const PreviewFrame = ({
         postRef.current()
         postHighlightRef.current()
         setHandshake('ready')
-        onSiteChromeRef.current?.((event.data as Partial<PreviewReadyMessage>).siteChrome === true)
+        onSiteChromeRef.current?.(
+          (event.data as Partial<PreviewReadyMessage>).siteChrome === true
+            ? 'supported'
+            : 'unsupported',
+        )
       } else if (type === CANOPY_PREVIEW_ERROR) {
         const msg = event.data as Partial<PreviewErrorMessage>
         // Shape-check the payload: an adopter passing an Error object (instead of

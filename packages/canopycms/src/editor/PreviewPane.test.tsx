@@ -6,6 +6,7 @@ import { useState } from 'react'
 
 import type { PreviewWidth } from './hooks/useEditorLayout'
 import {
+  CANOPY_PREVIEW_ERROR,
   CANOPY_PREVIEW_MARKS,
   CANOPY_PREVIEW_MESSAGE,
   CANOPY_PREVIEW_READY,
@@ -422,6 +423,51 @@ describe('PreviewPane', () => {
       expect(screen.getByTestId('preview-loading-skeleton')).toBeTruthy()
       expect(iframe()).toBeNull()
     })
+    it('passes on no error report from the page it holds', () => {
+      const onPreviewError = vi.fn()
+      const { rerender } = render(pane({ onPreviewError }), { wrapper: Wrapper })
+      const first = iframe()
+      rerender(pane({ src: nextSrc, data: undefined, pending: true, onPreviewError }))
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: CANOPY_PREVIEW_ERROR, path: src, message: 'Broken draft' },
+            origin: window.location.origin,
+            source: first.contentWindow,
+          }),
+        )
+      })
+      expect(onPreviewError).not.toHaveBeenCalled()
+    })
+
+    it('keeps the held page through a reload or the toggle, and applies them to the next', async () => {
+      const { rerender } = render(pane({ onSiteChromeChange: vi.fn() }), { wrapper: Wrapper })
+      const first = iframe()
+      rerender(pane({ src: nextSrc, data: undefined, pending: true, onSiteChromeChange: vi.fn() }))
+      await userEvent.click(screen.getByRole('button', { name: 'Reload preview' }))
+      rerender(
+        pane({
+          src: nextSrc,
+          data: undefined,
+          pending: true,
+          siteChrome: true,
+          onSiteChromeChange: vi.fn(),
+        }),
+      )
+      expect(iframe()).toBe(first)
+      expect(first.getAttribute('src')).toBe(src)
+
+      rerender(
+        pane({
+          src: nextSrc,
+          data: { title: 'World draft' },
+          siteChrome: true,
+          onSiteChromeChange: vi.fn(),
+        }),
+      )
+      expect(iframe()).not.toBe(first)
+      expect(iframe().getAttribute('src')).toBe(`${nextSrc}&chrome=1`)
+    })
   })
 
   describe('the site header and footer', () => {
@@ -436,7 +482,7 @@ describe('PreviewPane', () => {
         {...props}
       />
     )
-    const toggle = () => screen.queryByRole('button', { name: 'Site header and footer' })
+    const toggle = () => screen.queryByRole('button', { name: 'Show site header and footer' })
     const sayReady = (siteChrome?: boolean) => {
       const frame = document.querySelector('iframe') as HTMLIFrameElement
       act(() => {
@@ -491,6 +537,65 @@ describe('PreviewPane', () => {
         screen.getByRole('link', { name: 'Open saved version in a new tab' }).getAttribute('href'),
       ).toBe(chromeSrc)
       expect(screen.getByRole('button', { name: 'Copy path /posts/hello' })).toBeTruthy()
+    })
+
+    describe("when the page with them doesn't connect", () => {
+      const chromeSrc = '/preview/posts/hello?branch=feature-a&chrome=1'
+      const timeOut = () => {
+        fireEvent.load(document.querySelector('iframe') as HTMLIFrameElement)
+        act(() => {
+          vi.advanceTimersByTime(5_000)
+        })
+      }
+      const note = () => {
+        const id = toggle()?.getAttribute('aria-describedby')
+        return id ? document.getElementById(id)?.textContent : undefined
+      }
+
+      it('shows the page without them, keeps the toggle and says why, when on from the start', () => {
+        vi.useFakeTimers()
+        const onSiteChromeChange = vi.fn()
+        render(pane({ siteChrome: true, onSiteChromeChange }), { wrapper: Wrapper })
+        expect(document.querySelector('iframe')?.getAttribute('src')).toBe(chromeSrc)
+        expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
+        expect(note()).toBeUndefined()
+
+        timeOut()
+        expect(document.querySelector('iframe')?.getAttribute('src')).toBe(src)
+        expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
+        expect(note()).toMatch(/couldn't show its header and footer/)
+        expect(
+          screen
+            .getByRole('link', { name: 'Open saved version in a new tab' })
+            .getAttribute('href'),
+        ).toBe(src)
+        fireEvent.click(toggle() as HTMLElement)
+        expect(onSiteChromeChange).toHaveBeenCalledWith(false)
+      })
+
+      it('does the same when turned on and then never answered', () => {
+        vi.useFakeTimers()
+        const { rerender } = render(pane({}), { wrapper: Wrapper })
+        sayReady(true)
+        rerender(pane({ siteChrome: true }))
+        expect(document.querySelector('iframe')?.getAttribute('src')).toBe(chromeSrc)
+
+        timeOut()
+        expect(document.querySelector('iframe')?.getAttribute('src')).toBe(src)
+        sayReady(true)
+        expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
+        expect(note()).toMatch(/couldn't show its header and footer/)
+      })
+
+      it('tries them again when turned off and on', () => {
+        vi.useFakeTimers()
+        const { rerender } = render(pane({ siteChrome: true }), { wrapper: Wrapper })
+        timeOut()
+        fireEvent.click(toggle() as HTMLElement)
+        rerender(pane({ siteChrome: false }))
+        rerender(pane({ siteChrome: true }))
+        expect(document.querySelector('iframe')?.getAttribute('src')).toBe(chromeSrc)
+      })
     })
   })
 })

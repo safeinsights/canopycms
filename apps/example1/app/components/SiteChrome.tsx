@@ -34,8 +34,8 @@ const SiteFooter = () => (
 
 /**
  * The site's header and footer around a page. Every public page renders it, and the preview route
- * passes it as `createPreviewPage`'s `layout`, which sets `chrome` from the editor's "Site header
- * and footer" toggle.
+ * passes it as `createPreviewPage`'s `layout`, which sets `chrome` from the editor's "Show site
+ * header and footer" toggle.
  */
 export const SiteChrome = ({
   children,

@@ -66,28 +66,38 @@ export function HighlightToggle({ enabled, onToggle, marksNothing = false }: Hig
   )
 }
 
-const SITE_CHROME_LABEL = 'Site header and footer'
+const SITE_CHROME_LABEL = 'Show site header and footer'
+const SITE_CHROME_FAILED_NOTE =
+  "The site couldn't show its header and footer on this page, so the preview shows the page without them."
 
-/** Shows and hides the site's header and footer around the previewed page. */
-export function SiteChromeToggle({
-  enabled,
-  onToggle,
-}: {
+export interface SiteChromeToggleProps {
   enabled: boolean
   onToggle: () => void
-}) {
+  /** On, but the page with the header and footer never connected; see `PreviewPane`. */
+  failed?: boolean
+}
+
+/** Shows and hides the site's header and footer around the previewed page. */
+export function SiteChromeToggle({ enabled, onToggle, failed = false }: SiteChromeToggleProps) {
+  const noteId = useId()
   return (
-    <Tooltip label={SITE_CHROME_LABEL}>
+    <Tooltip
+      label={failed ? `${SITE_CHROME_LABEL}. ${SITE_CHROME_FAILED_NOTE}` : SITE_CHROME_LABEL}
+      multiline
+      maw={280}
+    >
       <ActionIcon
         variant={enabled ? 'filled' : 'subtle'}
         color={enabled ? 'brand' : 'gray'}
         size="md"
         aria-pressed={enabled}
         aria-label={SITE_CHROME_LABEL}
+        aria-describedby={failed ? noteId : undefined}
         data-testid="toggle-site-chrome-button"
         onClick={onToggle}
       >
         <IconLayoutNavbar size={16} />
+        {failed && <VisuallyHidden id={noteId}>{SITE_CHROME_FAILED_NOTE}</VisuallyHidden>}
       </ActionIcon>
     </Tooltip>
   )

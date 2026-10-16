@@ -13,8 +13,8 @@ import { loadHomeExtras } from '../../lib/home-extras'
 // the entry is read, and returns plain data that arrives as the view's `extras` prop. The public
 // home page passes the same `loadHomeExtras` result.
 //
-// `layout` wraps every view in the public pages' header and footer when the editor's "Site header
-// and footer" toggle asks for them, and in the same page container without them otherwise.
+// `layout` wraps every view in the public pages' header and footer when the editor's "Show site
+// header and footer" toggle asks for them, and in the same page container without them otherwise.
 export default createPreviewPage({
   layout: SiteChrome,
   views: {

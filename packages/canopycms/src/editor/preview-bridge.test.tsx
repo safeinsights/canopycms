@@ -20,7 +20,7 @@ import {
   type PreviewMarksMessage,
 } from './preview-bridge'
 import type { TypeFromEntrySchema } from '../entry-schema'
-import { PreviewFrame } from './PreviewFrame'
+import { PreviewFrame, type SiteChromeSupport } from './PreviewFrame'
 import { buildPreviewSrc } from './editor-utils'
 import { assetUrl } from '../assets/asset-url'
 import { getPreviewAssetBase, setServerPreviewAssetBaseGetter } from './preview-asset-base'
@@ -857,7 +857,7 @@ describe('the site header and footer handshake', () => {
   })
 
   describe('PreviewFrame', () => {
-    const renderFrame = (onSiteChrome: (supported: boolean) => void) => {
+    const renderFrame = (onSiteChrome: (support: SiteChromeSupport) => void) => {
       const utils = render(
         <PreviewFrame
           src="/preview/x?branch=main"
@@ -884,14 +884,14 @@ describe('the site header and footer handshake', () => {
       const onSiteChrome = vi.fn()
       const { ready } = renderFrame(onSiteChrome)
       ready({ siteChrome: true })
-      expect(onSiteChrome).toHaveBeenLastCalledWith(true)
+      expect(onSiteChrome).toHaveBeenLastCalledWith('supported')
       ready({ siteChrome: 'yes' })
-      expect(onSiteChrome).toHaveBeenLastCalledWith(false)
+      expect(onSiteChrome).toHaveBeenLastCalledWith('unsupported')
       ready({})
-      expect(onSiteChrome).toHaveBeenLastCalledWith(false)
+      expect(onSiteChrome).toHaveBeenLastCalledWith('unsupported')
     })
 
-    it('says no once the page has had its time to connect and has not', () => {
+    it('says it went unanswered once the page has had its time to connect and has not', () => {
       vi.useFakeTimers()
       onTestFinished(() => {
         vi.useRealTimers()
@@ -903,7 +903,7 @@ describe('the site header and footer handshake', () => {
       act(() => {
         vi.advanceTimersByTime(5_000)
       })
-      expect(onSiteChrome).toHaveBeenCalledWith(false)
+      expect(onSiteChrome).toHaveBeenCalledWith('unanswered')
     })
   })
 })

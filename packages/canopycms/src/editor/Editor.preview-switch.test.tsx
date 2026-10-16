@@ -10,6 +10,7 @@ import { ApiClientProvider } from './context'
 import { editorLayoutStorageKey } from './hooks/useEditorLayout'
 import { CANOPY_PREVIEW_MESSAGE, CANOPY_PREVIEW_READY } from './preview-bridge'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../paths/test-utils'
+import { mockConsole } from '../test-utils/console-spy'
 
 const renderWithProviders = (ui: React.ReactElement) =>
   render(
@@ -92,15 +93,27 @@ const world: EditorEntry = {
   label: 'World',
   slug: 'world',
 }
-const readPath = (entry: EditorEntry) => `/api/canopycms/main/content/${entry.path}`
+const readPath = (entry: EditorEntry, branch = 'main') =>
+  `/api/canopycms/${branch}/content/${entry.path}`
 const helloSrc = '/preview/posts/hello?branch=main'
 const worldSrc = '/preview/posts/world?branch=main'
 
 /** The API, with each entry's reads held until the test releases it, and answered at once after. */
 const stubApi = () => {
-  const held: Record<string, ((title: string) => void)[]> = {}
-  const released: Record<string, string> = {}
-  const answer = (title: string) => okJson({ ok: true, status: 200, data: { title, version: 1 } })
+  const held: Record<string, ((response: Response) => void)[]> = {}
+  const settled: Record<string, () => Response> = {}
+  const branch = (name: string) => ({
+    name,
+    status: 'editing',
+    access: {},
+    createdBy: 'user-1',
+    createdAt: '2024-01-01',
+    updatedAt: '2024-01-01',
+    isProtected: false,
+    readOnly: false,
+    writeBlocked: false,
+    submitBlocked: false,
+  })
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -112,20 +125,7 @@ const stubApi = () => {
             ok: true,
             status: 200,
             data: {
-              branches: [
-                {
-                  name: 'main',
-                  status: 'editing',
-                  access: {},
-                  createdBy: 'user-1',
-                  createdAt: '2024-01-01',
-                  updatedAt: '2024-01-01',
-                  isProtected: false,
-                  readOnly: false,
-                  writeBlocked: false,
-                  submitBlocked: false,
-                },
-              ],
+              branches: [branch('main'), branch('feature')],
               defaultBranch: 'main',
             },
           }),
@@ -186,22 +186,27 @@ const stubApi = () => {
           }),
         )
       }
-      if ([hello, world].some((e) => url === readPath(e)) && (init?.method ?? 'GET') === 'GET') {
-        if (url in released) return Promise.resolve(answer(released[url]))
+      if (url.includes('/content/content/posts/') && (init?.method ?? 'GET') === 'GET') {
+        if (url in settled) return Promise.resolve(settled[url]())
         return new Promise<Response>((resolve) => {
-          ;(held[url] ??= []).push((title) => resolve(answer(title)))
+          ;(held[url] ??= []).push(resolve)
         })
       }
       return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
     }),
   )
+  const settle = async (url: string, response: () => Response) => {
+    await waitFor(() => expect(held[url]).toBeDefined())
+    settled[url] = response
+    for (const resolve of held[url]) resolve(response())
+  }
   return {
-    release: async (entry: EditorEntry, title: string) => {
-      const url = readPath(entry)
-      await waitFor(() => expect(held[url]).toBeDefined())
-      released[url] = title
-      for (const resolve of held[url]) resolve(title)
-    },
+    release: (entry: EditorEntry, title: string, onBranch = 'main') =>
+      settle(readPath(entry, onBranch), () =>
+        okJson({ ok: true, status: 200, data: { title, version: 1 } }),
+      ),
+    fail: (entry: EditorEntry) =>
+      settle(readPath(entry), () => okJson({ ok: false, status: 500 }, 500)),
   }
 }
 
@@ -286,6 +291,65 @@ describe('the preview across an entry switch', () => {
   })
 })
 
+describe('the preview when the next entry does not arrive as asked', () => {
+  const switchToWorld = async () => {
+    fireEvent.click(screen.getByTestId('content-panel-toggle'))
+    fireEvent.click(await screen.findByTestId('entry-nav-item-world'))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Copy path /posts/world' })).toBeTruthy(),
+    )
+  }
+
+  it("gives way to the form's load failure when the next entry can't be read", async () => {
+    const consoleSpy = mockConsole()
+    const api = stubApi()
+    renderEditor()
+    await api.release(hello, 'Hello title')
+    await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(helloSrc))
+    await switchToWorld()
+
+    await api.fail(world)
+    await waitFor(() => expect(screen.getByTestId('entry-load-failed')).toBeTruthy())
+    expect(iframe()).toBeNull()
+    expect(screen.queryByTestId('preview-toolbar')).toBeNull()
+    consoleSpy.restore()
+  })
+
+  // A branch switch reloads the entry list, so the pane starts over rather than holding a page
+  // read from the other branch.
+  it('frames the open entry on the new branch after a branch switch mid-load', async () => {
+    const api = stubApi()
+    renderEditor()
+    await api.release(hello, 'Hello title')
+    await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(helloSrc))
+    const first = iframe() as HTMLIFrameElement
+    const firstPost = vi.spyOn(first.contentWindow as Window, 'postMessage')
+    await switchToWorld()
+
+    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+    fireEvent.click(await screen.findByTestId('switch-to-branch-button-feature'))
+    await waitFor(() => expect(screen.getByTestId('preview-loading-skeleton')).toBeTruthy())
+    expect(first.isConnected).toBe(false)
+    expect(screen.getByTestId('preview-toolbar')).toBeTruthy()
+
+    // The editor reopens its first entry with a page on the new branch.
+    await api.release(hello, 'Feature title', 'feature')
+    const featureSrc = '/preview/posts/hello?branch=feature'
+    await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(featureSrc))
+    const next = iframe() as HTMLIFrameElement
+    const nextPost = vi.spyOn(next.contentWindow as Window, 'postMessage')
+    sayReady()
+    expect(draftsTo(next, nextPost)).toEqual([
+      expect.objectContaining({
+        path: featureSrc,
+        data: expect.objectContaining({ title: 'Feature title' }),
+      }),
+    ])
+    expect(JSON.stringify(firstPost.mock.calls)).not.toContain('Feature title')
+  })
+})
+
 describe('the site header and footer toggle', () => {
   it('frames the page with chrome=1 while on, and remembers the choice', async () => {
     const key = editorLayoutStorageKey()
@@ -294,10 +358,11 @@ describe('the site header and footer toggle', () => {
     renderEditor()
     await api.release(hello, 'Hello title')
     await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(`${helloSrc}&chrome=1`))
-    expect(screen.queryByRole('button', { name: 'Site header and footer' })).toBeNull()
+    // On, so it shows before the page connects, and can always be turned off.
+    expect(screen.getByRole('button', { name: 'Show site header and footer' })).toBeTruthy()
 
     sayReady({ siteChrome: true })
-    const toggle = screen.getByRole('button', { name: 'Site header and footer' })
+    const toggle = screen.getByRole('button', { name: 'Show site header and footer' })
     expect(toggle.getAttribute('aria-pressed')).toBe('true')
 
     fireEvent.click(toggle)
@@ -305,7 +370,9 @@ describe('the site header and footer toggle', () => {
     expect(JSON.parse(window.localStorage.getItem(key) ?? '{}').siteChrome).toBe(false)
     // The toggle stays while the page without them connects.
     expect(
-      screen.getByRole('button', { name: 'Site header and footer' }).getAttribute('aria-pressed'),
+      screen
+        .getByRole('button', { name: 'Show site header and footer' })
+        .getAttribute('aria-pressed'),
     ).toBe('false')
   })
 })

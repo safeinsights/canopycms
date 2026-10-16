@@ -104,8 +104,9 @@ export interface CreatePreviewPageOptions {
   /**
    * Wraps every view on the server, so a preview can show the site's header and footer. It
    * receives the view as `children`, and `chrome`: whether to render them. Given a layout, the
-   * editor's preview toolbar offers a "Site header and footer" toggle, which adds `?chrome=1` to
-   * the preview's URL; without it, `chrome` is `false` and the layout renders the page alone.
+   * editor's preview toolbar offers a "Show site header and footer" toggle, which adds
+   * `?chrome=1` to the preview's URL; without it, `chrome` is `false` and the layout renders the
+   * page alone.
    */
   layout?: (props: { children: ReactNode; chrome: boolean }) => ReactNode
 }

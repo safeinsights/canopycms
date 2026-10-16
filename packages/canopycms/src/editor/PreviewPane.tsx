@@ -18,7 +18,7 @@ import { useClipboard, useElementSize, useWindowEvent } from '@mantine/hooks'
 import { IconCheck, IconExternalLink, IconRefresh } from '@tabler/icons-react'
 
 import type { PreviewWidth } from './hooks/useEditorLayout'
-import { PreviewFrame, type PreviewMarks } from './PreviewFrame'
+import { PreviewFrame, type PreviewMarks, type SiteChromeSupport } from './PreviewFrame'
 import type { InexactMark } from './preview-marks'
 import {
   HighlightToggle,
@@ -96,14 +96,22 @@ export interface PreviewPaneProps {
   resizing?: boolean
   /** The site's header and footer are asked for, by `chrome=1` on a `previewPrefix` page. */
   siteChrome?: boolean
-  /** With it, the toolbar offers the site header and footer toggle once the page says it can. */
+  /**
+   * With it, the toolbar offers the site header and footer toggle once the page says it can show
+   * them, and whenever `siteChrome` is on, so it can always be turned off.
+   */
   onSiteChromeChange?: (siteChrome: boolean) => void
 }
 
 /** What the viewport frames: the open entry's page, or the one before it while that loads. */
 interface FramedPage {
+  /** The page, as the editor names it. */
+  page: string
+  /** The URL framed: `page`, with `chrome=1` while the site's header and footer are on. */
   src: string
   path: string
+  /** Counts reloads, so a reload remounts the frame. */
+  key: number
 }
 
 /**
@@ -191,19 +199,41 @@ export const PreviewPane = ({
     frameProps.onPreviewError?.(null)
   }
 
-  // The frame changes page only once the open entry's data is in, so one render hands the new
-  // page its own draft: no draft is ever posted to the page of another entry.
-  const [framed, setFramed] = useState<FramedPage | null>(pending ? null : { src, path })
-  if (!pending && (framed?.src !== src || framed.path !== path)) setFramed({ src, path })
-  const frame = pending ? framed : { src, path }
   // Whether the page framed last said it renders the site's header and footer. Kept across
   // pages, so the toggle stays put while the next page connects.
   const [chromeSupported, setChromeSupported] = useState(false)
-  const chromeFrameSrc = frame && siteChromeSrc(frame.src, mount)
-  const frameSrc = frame && (siteChrome && chromeFrameSrc ? chromeFrameSrc : frame.src)
-  const showChromeToggle = Boolean(onSiteChromeChange && chromeSupported && chromeFrameSrc)
-  // "Open saved version" opens what the frame shows, the site's header and footer included.
-  const savedSrc = (siteChrome && siteChromeSrc(src, mount)) || src
+  // The page whose `chrome=1` URL never connected, such as one whose layout throws: it is framed
+  // without them, so its draft still shows.
+  const [chromeFailedPage, setChromeFailedPage] = useState<string | null>(null)
+  const chromeSrc = siteChromeSrc(src, mount)
+  const chromeFailed = siteChrome && chromeFailedPage === src
+  // Also what "Open saved version" opens, so it shows what the frame shows.
+  const liveSrc = siteChrome && chromeSrc && !chromeFailed ? chromeSrc : src
+  // The frame changes page only once the open entry's data is in, so one render hands the new
+  // page its own draft: no draft is ever posted to the page of another entry. A reload or the
+  // toggle waits for that page too, since the held page has no draft to render.
+  const live: FramedPage = { page: src, src: liveSrc, path, key: reloads }
+  const [framed, setFramed] = useState<FramedPage | null>(pending ? null : live)
+  if (
+    !pending &&
+    (framed?.src !== live.src ||
+      framed.page !== src ||
+      framed.path !== path ||
+      framed.key !== reloads)
+  ) {
+    setFramed(live)
+  }
+  const frame = pending ? framed : live
+  const onSiteChrome = (support: SiteChromeSupport) => {
+    setChromeSupported(support === 'supported')
+    if (support === 'unanswered' && frame && frame.src !== frame.page) {
+      setChromeFailedPage(frame.page)
+    }
+  }
+  // Shown while on even without support, so a page that never connects can still turn it off.
+  const showChromeToggle = Boolean(
+    onSiteChromeChange && chromeSrc && (chromeSupported || siteChrome),
+  )
 
   const shownPath = displayPreviewPath(path, mount)
   const viewport = computePreviewViewport(previewWidth, width, height)
@@ -318,7 +348,11 @@ export const PreviewPane = ({
             {showChromeToggle && onSiteChromeChange && (
               <SiteChromeToggle
                 enabled={siteChrome}
-                onToggle={() => onSiteChromeChange(!siteChrome)}
+                failed={chromeFailed}
+                onToggle={() => {
+                  setChromeFailedPage(null)
+                  onSiteChromeChange(!siteChrome)
+                }}
               />
             )}
             {onHighlightToggle && (
@@ -355,7 +389,7 @@ export const PreviewPane = ({
           <Tooltip label={OPEN_SAVED_LABEL}>
             <ActionIcon
               component="a"
-              href={savedSrc}
+              href={liveSrc}
               target="_blank"
               rel="noopener noreferrer"
               variant="subtle"
@@ -369,18 +403,19 @@ export const PreviewPane = ({
       </Group>
       {notice}
       <Box ref={viewportRef} pos="relative" style={{ flex: '1 1 auto', minHeight: 0 }}>
-        {frame && frameSrc ? (
+        {frame ? (
           <PreviewFrame
-            key={reloads}
-            src={frameSrc}
+            key={frame.key}
+            src={frame.src}
             path={frame.path}
-            // A held page gets no draft and reports nothing: it belongs to another entry.
+            {...frameProps}
+            // A held page gets no draft and its reports go nowhere: it belongs to another entry.
             data={pending ? undefined : data}
             isLoading={pending ? undefined : isLoading}
             onMarks={pending ? undefined : onMarks}
+            onPreviewError={pending ? undefined : frameProps.onPreviewError}
             busy={pending}
-            onSiteChrome={setChromeSupported}
-            {...frameProps}
+            onSiteChrome={onSiteChrome}
             onReload={() => {
               // Retry goes with the frame it sits in; the toolbar's reload offers the same action.
               reload()

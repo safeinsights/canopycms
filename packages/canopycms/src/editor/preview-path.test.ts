@@ -127,6 +127,7 @@ describe('siteChromeSrc', () => {
     ['/previewer/x', { previewPrefix: '/preview' }],
     ['https://other.example.com/preview/x?branch=b', { previewPrefix: '/preview' }],
     ['/preview/x', { basePath: '/b', previewPrefix: '/preview' }],
+    ['/posts/x?branch=b', { previewPrefix: '/' }],
   ])("leaves %s under %j alone: it is a page of the site's own", (src, mount) => {
     expect(siteChromeSrc(src, mount)).toBeUndefined()
   })
