@@ -143,7 +143,7 @@ describe('CommentsPanel', () => {
   it('renders an "Open branch discussion" action for branch threads', () => {
     renderPanel()
 
-    expect(screen.getByRole('button', { name: 'Open branch discussion' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Open branch discussion: Branch' })).toBeTruthy()
   })
 
   it('renders comment timestamps as relative time', () => {
@@ -233,9 +233,12 @@ describe('CommentsPanel', () => {
       renderPanel({ comments: [fieldThread('a')], onJumpToField, onClose })
 
       const heading = within(card('a')).getByRole('button', {
-        name: 'Jump to field: posts/hello › blocks[0].title',
+        name: 'Jump to field: Field · posts/hello › blocks[0].title',
       })
-      expect(heading.textContent).toBe('Field · posts/hello › blocks[0].title')
+      // The visible text is inside the name (WCAG 2.5.3); the prefix is hidden.
+      expect(within(heading).getByTestId('comment-thread-heading').textContent).toBe(
+        'Field · posts/hello › blocks[0].title',
+      )
       await user.click(heading)
       expect(onJumpToField).toHaveBeenCalledWith('posts/hello', 'blocks[0].title', 'a')
       expect(onClose).toHaveBeenCalledTimes(1)
@@ -252,10 +255,10 @@ describe('CommentsPanel', () => {
       })
 
       await user.click(
-        within(card('e')).getByRole('button', { name: 'Jump to entry: posts/hello' }),
+        within(card('e')).getByRole('button', { name: 'Jump to entry: Entry · posts/hello' }),
       )
       expect(onJumpToEntry).toHaveBeenCalledWith('posts/hello', 'e')
-      await user.click(screen.getByRole('button', { name: 'Open branch discussion' }))
+      await user.click(screen.getByRole('button', { name: 'Open branch discussion: Branch' }))
       expect(onJumpToBranch).toHaveBeenCalledWith('thread-branch-1')
     })
 
@@ -395,6 +398,52 @@ describe('CommentsPanel', () => {
       expect(
         screen.getByRole('article', { name: 'Field · posts/hello › meta.summary' }),
       ).toBeTruthy()
+    })
+
+    it('names the card by its heading text alone when the heading is a jump button', () => {
+      renderPanel({
+        comments: [
+          fieldThread('t1'),
+          fieldThread('t2', { canopyPath: 'meta.summary', onRemovedItem: true }),
+        ],
+        onJumpToField: vi.fn(),
+        onJumpToEntry: vi.fn(),
+      })
+
+      expect(
+        screen.getByRole('article', { name: 'Field · posts/hello › blocks[0].title' }),
+      ).toBeTruthy()
+      // Neither the hidden "Jump to…" prefix nor the heading's own button name leaks in.
+      expect(
+        screen.getByRole('article', {
+          name: /^Field · posts\/hello › meta\.summary\s*, on a removed item$/,
+        }),
+      ).toBeTruthy()
+    })
+
+    it('puts each heading under the drawer title as an h3 holding the one jump button', () => {
+      renderPanel({ comments: [fieldThread('a')], onJumpToField: vi.fn() })
+
+      const heading = within(card('a')).getByRole('heading', { level: 3 })
+      expect(within(heading).getAllByRole('button')).toHaveLength(1)
+      expect(within(card('a')).getAllByRole('button', { name: /^Jump to/ })).toHaveLength(1)
+      expect(
+        screen.getByRole('dialog', { name: 'Comments' }).querySelector('h2.mantine-Drawer-title'),
+      ).toBeTruthy()
+    })
+
+    it('lets a long unbreakable heading wrap inside the card', () => {
+      renderPanel({
+        comments: [fieldThread('a', { entryPath: `posts/${'x'.repeat(120)}` })],
+        onJumpToField: vi.fn(),
+      })
+
+      const label = within(card('a'))
+        .getByRole('button', { name: /^Jump to field/ })
+        .querySelector<HTMLElement>('.mantine-Button-label')!
+      expect(label.style.overflowWrap).toBe('anywhere')
+      expect(label.style.whiteSpace).toBe('normal')
+      expect(label.style.lineHeight).toBe('1.35')
     })
 
     it('words the collapsed reply control "Reply…" and the submit "Reply"', async () => {
@@ -546,9 +595,7 @@ describe('CommentsPanel', () => {
       await userEvent.click(within(card('a')).getByTestId('resolve-thread-button'))
 
       await waitFor(() =>
-        expect(document.activeElement).toBe(
-          within(card('a')).getByTestId('comment-thread-heading').parentElement,
-        ),
+        expect(document.activeElement).toBe(within(card('a')).getByRole('heading', { level: 3 })),
       )
     })
 
@@ -560,14 +607,26 @@ describe('CommentsPanel', () => {
         onJumpToField: vi.fn(),
       })
       await userEvent.click(screen.getByLabelText('Show resolved'))
+      const button = within(card('a')).getByRole('button', { name: /^Jump to field/ })
+      let busyAtFocus: string | null = 'unset'
+      button.addEventListener('focus', () => {
+        busyAtFocus = button.getAttribute('aria-disabled')
+      })
+      // Hold the frame callbacks, to see that focus waits for the commit rather than racing it.
+      const frames: FrameRequestCallback[] = []
+      const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        frames.push(cb)
+        return frames.length
+      })
 
       await userEvent.click(within(card('a')).getByTestId('resolve-thread-button'))
 
-      await waitFor(() =>
-        expect(document.activeElement).toBe(
-          within(card('a')).getByRole('button', { name: /^Jump to field/ }),
-        ),
-      )
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0))
+      expect(document.activeElement).not.toBe(button)
+      raf.mockRestore()
+      frames.forEach((cb) => cb(0))
+      await waitFor(() => expect(document.activeElement).toBe(button))
+      expect(busyAtFocus).toBeNull()
     })
 
     it('reports a reply that fails after the panel is gone (another branch opened), as a toast', async () => {
@@ -681,6 +740,8 @@ describe('CommentsPanel', () => {
       expect((jump as HTMLButtonElement).disabled).toBe(false)
       expect(jump.getAttribute('aria-disabled')).toBe('true')
       expect(jump.style.cursor).toBe('default')
+      // Waiting is not shown as a greyed-out heading: no disabled colours, only the cursor.
+      expect(jump.hasAttribute('data-disabled')).toBe(false)
       expect(screen.queryByText(/still saving/)).toBeNull()
       act(() => jump.focus())
       expect(

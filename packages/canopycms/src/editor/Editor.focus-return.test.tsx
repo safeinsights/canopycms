@@ -446,7 +446,7 @@ describe('Switch branch… (branch menu)', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
 
     await userEvent.click(screen.getByTestId('comments-button'))
-    await userEvent.click(await screen.findByRole('button', { name: 'Open branch discussion' }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Open branch discussion/ }))
     await screen.findByRole('heading', { name: 'Branches' })
     await userEvent.keyboard('{Escape}')
 

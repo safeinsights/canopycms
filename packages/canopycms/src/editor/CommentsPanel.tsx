@@ -260,52 +260,59 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                     <Stack gap="xs">
                       <Group gap="xs">
                         {target ? (
-                          // The heading is the jump control, the one tab stop on the card. It
-                          // stays focusable while a write is in flight (`aria-disabled`, not
-                          // `disabled`), so its reason opens on keyboard focus and touch as well
-                          // as hover.
-                          <Tooltip
-                            label="Your change is still saving. Try again once it finishes."
-                            disabled={inFlight === 0}
-                            multiline
-                            maw={280}
-                          >
-                            <Button
-                              ref={(node: HTMLButtonElement | null) =>
-                                setHeadingRef(thread.id, node)
-                              }
-                              variant="subtle"
-                              color="neutral"
-                              h="auto"
-                              px={6}
-                              py={2}
-                              mx={-6}
-                              rightSection={<IconChevronRight size={14} aria-hidden />}
-                              aria-label={
-                                threadPath(thread)
-                                  ? `${target.label}: ${threadPath(thread)}`
-                                  : target.label
-                              }
-                              aria-disabled={inFlight > 0 ? true : undefined}
-                              data-disabled={inFlight > 0 ? true : undefined}
-                              styles={{
-                                root: { cursor: inFlight > 0 ? 'default' : 'pointer' },
-                                label: { whiteSpace: 'normal', textAlign: 'start' },
-                              }}
-                              onClick={() => {
-                                if (inFlight === 0) jump(target.go)
-                              }}
+                          // The heading is the jump control, the one tab stop on the card, in an
+                          // `h3` under the drawer's `h2` so it is reachable by heading. It stays
+                          // focusable while a write is in flight (`aria-disabled`, not `disabled`),
+                          // so its reason opens on keyboard focus and touch as well as hover, and
+                          // keeps its text colour: only the cursor says it is waiting. The visible
+                          // text is inside the button's name (WCAG 2.5.3), after a hidden prefix
+                          // that says what it does.
+                          <Text component="h3" size="xs" fw={600} m={0}>
+                            <Tooltip
+                              label="Your change is still saving. Try again once it finishes."
+                              disabled={inFlight === 0}
+                              multiline
+                              maw={280}
                             >
-                              {headingText(thread)}
-                            </Button>
-                          </Tooltip>
+                              <Button
+                                ref={(node: HTMLButtonElement | null) =>
+                                  setHeadingRef(thread.id, node)
+                                }
+                                variant="subtle"
+                                color="neutral"
+                                h="auto"
+                                px={6}
+                                py={2}
+                                mx={-6}
+                                rightSection={<IconChevronRight size={14} aria-hidden />}
+                                aria-disabled={inFlight > 0 ? true : undefined}
+                                styles={{
+                                  root: { cursor: inFlight > 0 ? 'default' : 'pointer' },
+                                  label: {
+                                    whiteSpace: 'normal',
+                                    textAlign: 'start',
+                                    lineHeight: 1.35,
+                                    overflowWrap: 'anywhere',
+                                  },
+                                }}
+                                onClick={() => {
+                                  if (inFlight === 0) jump(target.go)
+                                }}
+                              >
+                                <VisuallyHidden component="span">{`${target.label}: `}</VisuallyHidden>
+                                {headingText(thread)}
+                              </Button>
+                            </Tooltip>
+                          </Text>
                         ) : (
                           <Text
-                            ref={(node: HTMLParagraphElement | null) =>
+                            component="h3"
+                            ref={(node: HTMLHeadingElement | null) =>
                               setHeadingRef(thread.id, node)
                             }
                             size="xs"
                             fw={600}
+                            m={0}
                             tabIndex={-1}
                           >
                             {headingText(thread)}
