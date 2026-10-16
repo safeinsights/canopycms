@@ -21,7 +21,8 @@ export const SHELL_REGION_BORDER = '1px solid var(--canopy-input-border)'
 /**
  * Every resizable divider in the shell, the panel's and the panes', shows this many pixels wide.
  * Its pointer target is wider, `DIVIDER_TARGET_PX`. A finger's reaches 6px past each side of the
- * bar: less than the panel header's 10px top padding, so a tap on its close button stays one.
+ * bar: under the panes' separator, the narrow window's overlay panel keeps its header's close
+ * button clear, as that header's top padding is 10px.
  */
 export const DIVIDER_WIDTH_PX = 4
 export const DIVIDER_TARGET_PX = { fine: 12, coarse: 16 } as const

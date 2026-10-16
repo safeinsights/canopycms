@@ -33,7 +33,7 @@ const SEPARATOR_STYLES = `
   min-height: ${DIVIDER_WIDTH_PX}px;
   background: ${DIVIDER_COLOR};
 }
-.canopy-pane-separator:is([data-separator='hover'], [data-separator='active'], [data-separator='focus']) {
+.canopy-pane-separator:is([data-separator='hover'], [data-separator='active'], :focus-visible) {
   background: var(--canopy-focus-ring);
 }
 .canopy-pane-separator:focus-visible {
@@ -110,9 +110,10 @@ export function PaneLayout({
 
   const aside = arrangement === 'stacked' ? formAside : undefined
   const hasAside = Boolean(aside)
-  // The aside precedes the panes in the DOM, so focus meets it in the order it shows. It is placed
-  // from the form row's measured top, and the form and a maximized preview start at its measured
-  // width. Written straight to CSS variables, so a drag moves them in the frame it moves the split.
+  // The aside precedes the panes in the DOM, so focus reaches it first, as it reaches the shell's
+  // panel column first side by side. It is placed from the form row's measured top, and the form
+  // and a maximized preview start at its measured width. Written straight to CSS variables, so a
+  // drag moves them in the frame it moves the split.
   useLayoutEffect(() => {
     const layout = layoutRef.current
     if (!layout || !hasAside) return
@@ -182,7 +183,8 @@ export function PaneLayout({
             insetInlineStart: 0,
             bottom: 0,
             top: previewMaximized ? 0 : `var(${ASIDE_TOP}, 0px)`,
-            zIndex: 1,
+            // Over a maximized preview, which would cover its separator's target and focus ring.
+            zIndex: previewMaximized ? 3 : 1,
           }}
         >
           {aside}

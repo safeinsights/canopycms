@@ -25,17 +25,35 @@ beforeAll(() => {
   Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, value: 1000 })
   Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, value: 800 })
   window.ResizeObserver = class {
-    constructor(private callback: ResizeObserverCallback) {}
-    observe(target: Element) {
-      const rect = target.getBoundingClientRect()
-      const size = [{ inlineSize: rect.width, blockSize: rect.height }]
-      const entry = { target, contentRect: rect, borderBoxSize: size, contentBoxSize: size }
-      this.callback([entry as unknown as ResizeObserverEntry], this as unknown as ResizeObserver)
+    private targets = new Set<Element>()
+    constructor(private callback: ResizeObserverCallback) {
+      observers.add(this)
     }
-    unobserve() {}
-    disconnect() {}
+    observe(target: Element) {
+      this.targets.add(target)
+      this.fire([target])
+    }
+    unobserve(target: Element) {
+      this.targets.delete(target)
+    }
+    disconnect() {
+      this.targets.clear()
+      observers.delete(this)
+    }
+    fire(targets: Iterable<Element> = this.targets) {
+      const entries = [...targets].map((target) => {
+        const rect = target.getBoundingClientRect()
+        const size = [{ inlineSize: rect.width, blockSize: rect.height }]
+        return { target, contentRect: rect, borderBoxSize: size, contentBoxSize: size }
+      })
+      this.callback(entries as unknown as ResizeObserverEntry[], this as unknown as ResizeObserver)
+    }
   }
 })
+
+/** Every live ResizeObserver in the stub, so a test can report a resize jsdom never computes. */
+const observers = new Set<{ fire: () => void }>()
+const fireResizeObservers = () => act(() => observers.forEach((observer) => observer.fire()))
 
 afterAll(() => {
   HTMLElement.prototype.getBoundingClientRect = originalRect
@@ -212,21 +230,22 @@ describe('PaneLayout', () => {
     )
     const aside = () => screen.getByTestId('form-aside')
 
-    /** Measures the form row from 450px down, and the aside's width probe 280px wide. */
-    const stubFormRowLayout = () => {
+    /** Measures the form row from `measured.top` down, and the aside's width probe `measured.width` wide. */
+    const stubFormRowLayout = (measured = { top: 450, width: 280 }) => {
       const stubbed = HTMLElement.prototype.getBoundingClientRect
       HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
         if (this.firstElementChild?.getAttribute('data-testid') === 'form-pane') {
-          return new DOMRect(0, 450, 1000, 350)
+          return new DOMRect(0, measured.top, 1000, 800 - measured.top)
         }
         if (this.parentElement?.dataset.testid === 'form-aside' && this.ariaHidden === 'true') {
-          return new DOMRect(0, 450, 280, 0)
+          return new DOMRect(0, measured.top, measured.width, 0)
         }
         return stubbed.call(this)
       }
       onTestFinished(() => {
         HTMLElement.prototype.getBoundingClientRect = stubbed
       })
+      return measured
     }
     const layoutVar = (name: string) =>
       (aside().parentElement as HTMLElement).style.getPropertyValue(name)
@@ -244,7 +263,17 @@ describe('PaneLayout', () => {
       expect(screen.getByTestId('form-pane').closest('[inert]')).toBeNull()
     })
 
-    it('comes before the panes in focus order, as it shows at their inline start', () => {
+    it('follows the form row and its own width as they resize', () => {
+      const measured = stubFormRowLayout()
+      renderPanes({ arrangement: 'stacked', formAside: contentPanel })
+      measured.top = 300
+      measured.width = 360
+      fireResizeObservers()
+      expect(layoutVar('--canopy-form-aside-top')).toBe('300px')
+      expect(layoutVar('--canopy-form-aside-width')).toBe('360px')
+    })
+
+    it("comes before the panes in focus order, as the side layout's panel column does", () => {
       const { rerenderPanes } = renderPanes({ arrangement: 'stacked', formAside: contentPanel })
       const tree = screen.getByRole('button', { name: 'In the tree' })
       const follows = (element: Element) =>
@@ -276,6 +305,8 @@ describe('PaneLayout', () => {
       // Its insets size it: a set width would run it past the layout's end.
       expect(preview.style.width).toBe('')
       expect(screen.getByTestId('form-pane').closest('[inert]')).not.toBeNull()
+      // Over the preview, whose stacking would otherwise cover its separator's outer edge.
+      expect(Number(aside().style.zIndex)).toBeGreaterThan(Number(preview.style.zIndex))
     })
 
     it("draws its separator as the panel's, at the shared divider width", () => {
@@ -290,14 +321,17 @@ describe('PaneLayout', () => {
       expect(panel.getPropertyValue('background')).toBe(DIVIDER_COLOR)
     })
 
-    it('lifts the separator over the panes, and colours it while focused', () => {
+    it('lifts the separator over the panes, and colours it only while focus is visible', () => {
       renderPanes({ arrangement: 'stacked', formAside: contentPanel })
+      const background = () => getComputedStyle(separator()).getPropertyValue('background')
       expect(getComputedStyle(separator()).position).toBe('relative')
       expect(getComputedStyle(separator()).zIndex).toBe('1')
+      // The library marks a separator 'focus' on any press; a click alone leaves it uncoloured.
       act(() => separator().setAttribute('data-separator', 'focus'))
-      expect(getComputedStyle(separator()).getPropertyValue('background')).toBe(
-        'var(--canopy-focus-ring)',
-      )
+      expect(background()).toBe(DIVIDER_COLOR)
+      act(() => separator().focus())
+      expect(separator().matches(':focus-visible')).toBe(true)
+      expect(background()).toBe('var(--canopy-focus-ring)')
     })
   })
 })
