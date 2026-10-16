@@ -1463,7 +1463,8 @@ const EditorContent: React.FC<EditorProps> = ({
   const [contentPanelFocusRequest, setContentPanelFocusRequest] = useState(0)
   const openNavigator = () => {
     navigatorOpenerRef.current = rememberOpener()
-    // In the same commit as the overlay mounts, so its focus request meets no inert form panel.
+    // In the commit that opens the overlay, so the form panel is no longer inert when the overlay
+    // mounts, then or a frame later as its slide starts, and serves its focus request.
     if (!contentPanelDocked) setPreviewMaximized(false)
     setContentPanelShown(true)
     setContentPanelFocusRequest((request) => request + 1)

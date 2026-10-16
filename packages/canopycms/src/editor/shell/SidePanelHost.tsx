@@ -11,12 +11,12 @@ import React, {
   type PointerEvent,
   type ReactNode,
 } from 'react'
-import { CloseButton, Group, Text, Tooltip, Transition, useDirection } from '@mantine/core'
+import { CloseButton, Group, Text, Tooltip, Transition } from '@mantine/core'
 import { useReducedMotion, useWindowEvent } from '@mantine/hooks'
 import { FOCUS_RETURN_ATTR, focusIfIdle } from '../utils/focus-return'
 import { DIVIDER_COLOR, DIVIDER_TARGET_PX, DIVIDER_WIDTH_PX } from './EditorShell'
 
-/** Docked beside the main region, or laid over the form pane only. */
+/** Docked, pushing its neighbours aside, or laid over the form pane only. */
 type SidePanelMode = 'docked' | 'overlay'
 
 const KEY_STEP_PX = 16
@@ -52,6 +52,7 @@ body[${RESIZING_ATTR}] iframe { pointer-events: none; }
   }
 }
 .canopy-side-panel-separator:hover,
+.canopy-side-panel-separator:focus-visible,
 .canopy-side-panel-separator[data-dragging] {
   background: var(--canopy-focus-ring);
 }
@@ -121,7 +122,13 @@ export function SidePanelHost({
   const wasOpened = useRef(opened)
   const servedFocusRequest = useRef(focusRequest)
   const reduceMotion = useReducedMotion()
-  const { dir } = useDirection()
+  // The slide's direction, read from the page as each opening starts, as the resize keys read it.
+  const anchorRef = useRef<HTMLSpanElement>(null)
+  const [rtl, setRtl] = useState(false)
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current
+    if (opened && anchor) setRtl(getComputedStyle(anchor).direction === 'rtl')
+  }, [opened])
   const drag = useRef<{ startX: number; startWidth: number; width: number; sign: number } | null>(
     null,
   )
@@ -268,66 +275,72 @@ export function SidePanelHost({
   }
 
   return (
-    <Transition
-      mounted={opened}
-      transition={dir === 'rtl' ? 'slide-left' : 'slide-right'}
-      duration={overlay && !reduceMotion ? SLIDE_MS : 0}
-    >
-      {(transitionStyles) => (
-        <section
-          ref={setPanel}
-          id={panelId}
-          aria-labelledby={titleId}
-          tabIndex={-1}
-          data-testid={testId}
-          data-panel-mode={mode}
-          // While it slides out, focus left inside it counts as idle, so it can still go back.
-          {...{ [FOCUS_RETURN_ATTR]: opened ? undefined : '' }}
-          style={{ ...style, ...transitionStyles }}
-          onFocus={() => {
-            focusInside.current = true
-          }}
-          onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget)) focusInside.current = false
-          }}
-        >
-          <style>{PANEL_STYLES}</style>
-          <Group
-            justify="space-between"
-            wrap="nowrap"
-            gap="xs"
-            px="md"
-            py="xs"
-            style={{ borderBlockEnd: '1px solid var(--canopy-input-border)' }}
+    <>
+      <span ref={anchorRef} hidden />
+      <Transition
+        mounted={opened}
+        transition={rtl ? 'slide-left' : 'slide-right'}
+        duration={overlay && !reduceMotion ? SLIDE_MS : 0}
+      >
+        {(transitionStyles) => (
+          <section
+            ref={setPanel}
+            id={panelId}
+            aria-labelledby={titleId}
+            tabIndex={-1}
+            data-testid={testId}
+            data-panel-mode={mode}
+            // While it slides out, focus left inside it counts as idle, so it can still go back.
+            {...{ [FOCUS_RETURN_ATTR]: opened ? undefined : '' }}
+            style={{ ...style, ...transitionStyles }}
+            onFocus={() => {
+              focusInside.current = true
+            }}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) focusInside.current = false
+            }}
           >
-            <Text id={titleId} component="h2" fw={600} size="md" m={0}>
-              {title}
-            </Text>
-            <Group gap="xs" wrap="nowrap">
-              {actions}
-              <Tooltip label={`Close ${title.toLowerCase()} panel`}>
-                <CloseButton aria-label={`Close ${title.toLowerCase()} panel`} onClick={onClose} />
-              </Tooltip>
+            <style>{PANEL_STYLES}</style>
+            <Group
+              justify="space-between"
+              wrap="nowrap"
+              gap="xs"
+              px="md"
+              py="xs"
+              style={{ borderBlockEnd: '1px solid var(--canopy-input-border)' }}
+            >
+              <Text id={titleId} component="h2" fw={600} size="md" m={0}>
+                {title}
+              </Text>
+              <Group gap="xs" wrap="nowrap">
+                {actions}
+                <Tooltip label={`Close ${title.toLowerCase()} panel`}>
+                  <CloseButton
+                    aria-label={`Close ${title.toLowerCase()} panel`}
+                    onClick={onClose}
+                  />
+                </Tooltip>
+              </Group>
             </Group>
-          </Group>
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{children}</div>
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={`Resize ${title.toLowerCase()} panel`}
-            aria-controls={panelId}
-            aria-valuenow={Math.round(shownWidth)}
-            aria-valuemin={minWidth}
-            aria-valuemax={maxWidth}
-            // A focusable separator is a window splitter, a widget; jsx-a11y counts every one static.
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-            tabIndex={0}
-            className="canopy-side-panel-separator"
-            data-dragging={dragWidth !== null || undefined}
-            {...separatorHandlers}
-          />
-        </section>
-      )}
-    </Transition>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{children}</div>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={`Resize ${title.toLowerCase()} panel`}
+              aria-controls={panelId}
+              aria-valuenow={Math.round(shownWidth)}
+              aria-valuemin={minWidth}
+              aria-valuemax={maxWidth}
+              // A focusable separator is a window splitter, a widget; jsx-a11y counts every one static.
+              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+              tabIndex={0}
+              className="canopy-side-panel-separator"
+              data-dragging={dragWidth !== null || undefined}
+              {...separatorHandlers}
+            />
+          </section>
+        )}
+      </Transition>
+    </>
   )
 }

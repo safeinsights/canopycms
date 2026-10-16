@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React, { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { SidePanelHost, type SidePanelHostProps } from './SidePanelHost'
 import { CanopyCMSProvider } from '../theme'
@@ -216,6 +216,56 @@ describe('SidePanelHost', () => {
       expect(region()?.hasAttribute(FOCUS_RETURN_ATTR)).toBe(true)
       expect(document.activeElement).toBe(toggle)
       await waitFor(() => expect(region()).toBeNull())
+    })
+
+    it('keeps the same section when reopened mid-slide, live again and taking focus', async () => {
+      render(<Harness mode="overlay" />)
+      const toggle = screen.getByRole('button', { name: 'Toggle' })
+      act(() => toggle.focus())
+      fireEvent.click(toggle)
+      await waitFor(() => expect(document.activeElement).toBe(region()))
+      const section = region()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Close content panel' }))
+      expect(region()).toBe(section)
+      expect(section?.hasAttribute('inert')).toBe(true)
+
+      fireEvent.click(toggle)
+      expect(region()).toBe(section)
+      expect(section?.hasAttribute('inert')).toBe(false)
+      expect(section?.hasAttribute(FOCUS_RETURN_ATTR)).toBe(false)
+      await waitFor(() => expect(document.activeElement).toBe(section))
+    })
+
+    it.each([
+      ['left to right', 'ltr', 'translateX(-100%)'],
+      ['right to left', 'rtl', 'translateX(100%)'],
+    ])('slides out toward the inline start, %s', async (_how, dir, out) => {
+      // jsdom computes no `direction`, so the page's is stubbed from the nearest `dir`.
+      const computed = window.getComputedStyle
+      vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+        const style = computed(element, pseudo)
+        const direction = element.closest('[dir]')?.getAttribute('dir') ?? 'ltr'
+        return new Proxy(style, {
+          get: (target, key) => {
+            if (key === 'direction') return direction
+            const value: unknown = Reflect.get(target, key, target)
+            return typeof value === 'function' ? value.bind(target) : value
+          },
+        })
+      })
+      onTestFinished(() => {
+        vi.restoreAllMocks()
+      })
+      render(
+        <div dir={dir}>
+          <Harness mode="overlay" />
+        </div>,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle' }))
+      await waitFor(() => expect(region()).not.toBeNull())
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle' }))
+      await waitFor(() => expect(region()?.style.transform).toBe(out))
     })
 
     it('opens and closes a docked panel at once, with no slide', () => {
