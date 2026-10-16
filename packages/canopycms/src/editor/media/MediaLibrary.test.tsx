@@ -217,7 +217,7 @@ describe('MediaLibraryBody', () => {
     expect(mockClient.assets.list).toHaveBeenCalledTimes(1)
   })
 
-  it('hides the delete control for non-admin users in manage mode', async () => {
+  it('hides the remove control for non-admin users in manage mode', async () => {
     mockClient.assets.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -232,10 +232,10 @@ describe('MediaLibraryBody', () => {
     renderBody()
 
     await waitFor(() => expect(screen.getByText('cat.png')).toBeTruthy())
-    expect(screen.queryByTestId(`asset-card-delete-${catAsset.hash32}`)).toBeNull()
+    expect(screen.queryByTestId(`asset-card-remove-${catAsset.hash32}`)).toBeNull()
   })
 
-  it('shows the delete control to the editor who uploaded the asset', async () => {
+  it('shows the remove control to the editor who uploaded the asset', async () => {
     mockClient.assets.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -249,11 +249,11 @@ describe('MediaLibraryBody', () => {
 
     renderBody()
 
-    // Mirrors the server rule in api/assets.ts: uploader may delete their own.
-    expect(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`)).toBeTruthy()
+    // Mirrors the server rule in api/assets.ts: uploader may remove their own.
+    expect(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`)).toBeTruthy()
   })
 
-  it("hides the delete control on another editor's upload", async () => {
+  it("hides the remove control on another editor's upload", async () => {
     mockClient.assets.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -268,10 +268,10 @@ describe('MediaLibraryBody', () => {
     renderBody()
 
     await waitFor(() => expect(screen.getByText('cat.png')).toBeTruthy())
-    expect(screen.queryByTestId(`asset-card-delete-${catAsset.hash32}`)).toBeNull()
+    expect(screen.queryByTestId(`asset-card-remove-${catAsset.hash32}`)).toBeNull()
   })
 
-  it('shows the delete control for admins and removes the asset on confirm', async () => {
+  it('shows the remove control for admins and removes the asset on confirm', async () => {
     mockClient.assets.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -282,24 +282,24 @@ describe('MediaLibraryBody', () => {
       status: 200,
       data: { userId: 'admin-1', groups: ['Admins'] },
     })
-    mockClient.assets.delete.mockResolvedValueOnce({
+    mockClient.assets.hide.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { deleted: true },
+      data: { hidden: true },
     })
 
     renderBody()
 
-    const deleteButton = await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`)
-    fireEvent.click(deleteButton)
+    const removeButton = await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`)
+    fireEvent.click(removeButton)
 
     await waitFor(() =>
-      expect(mockClient.assets.delete).toHaveBeenCalledWith({ key: catAsset.hash32 }),
+      expect(mockClient.assets.hide).toHaveBeenCalledWith({ key: catAsset.hash32 }),
     )
     await waitFor(() => expect(screen.queryByText('cat.png')).toBeNull())
   })
 
-  it('never shows the delete control in picker mode, even for admins', async () => {
+  it('never shows the remove control in picker mode, even for admins', async () => {
     mockClient.assets.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -314,7 +314,7 @@ describe('MediaLibraryBody', () => {
     renderBody({ mode: 'picker', onSelect: vi.fn() })
 
     await waitFor(() => expect(screen.getByText('cat.png')).toBeTruthy())
-    expect(screen.queryByTestId(`asset-card-delete-${catAsset.hash32}`)).toBeNull()
+    expect(screen.queryByTestId(`asset-card-remove-${catAsset.hash32}`)).toBeNull()
   })
 
   it('calls onSelect with the chosen asset in picker mode', async () => {
@@ -662,15 +662,15 @@ describe('MediaLibraryBody', () => {
       expect(renderedHashes()).toHaveLength(2)
     })
 
-    it('does not bring back an asset that was deleted while a later page was in flight', async () => {
+    it('does not bring back an asset that was removed while a later page was in flight', async () => {
       asAdmin()
-      mockClient.assets.delete.mockResolvedValue({ ok: true, status: 200, data: { deleted: true } })
+      mockClient.assets.hide.mockResolvedValue({ ok: true, status: 200, data: { hidden: true } })
       const second = deferred<ReturnType<typeof page>>()
       mockClient.assets.list.mockImplementation(((params: Record<string, string>) =>
         params.cursor === 'c1' ? second.promise : Promise.resolve(page([catAsset], 'c1'))) as never)
 
       renderBody()
-      fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
+      fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
       await waitFor(() => expect(screen.queryByText('cat.png')).toBeNull())
 
       await act(async () => second.resolve(page([catAsset, dogAsset])))
@@ -965,16 +965,16 @@ describe('MediaLibraryBody', () => {
 
     it('removes an asset from a list row after confirming', async () => {
       asAdmin()
-      mockClient.assets.delete.mockResolvedValue({ ok: true, status: 200, data: { deleted: true } })
+      mockClient.assets.hide.mockResolvedValue({ ok: true, status: 200, data: { hidden: true } })
       mockClient.assets.list.mockResolvedValueOnce(page([photo]))
 
       renderBody()
       await screen.findByText('photo.png')
       await userEvent.setup().click(screen.getByRole('radio', { name: 'List' }))
-      fireEvent.click(await screen.findByTestId(`asset-row-delete-${photo.hash32}`))
+      fireEvent.click(await screen.findByTestId(`asset-row-remove-${photo.hash32}`))
 
       await waitFor(() =>
-        expect(mockClient.assets.delete).toHaveBeenCalledWith({ key: photo.hash32 }),
+        expect(mockClient.assets.hide).toHaveBeenCalledWith({ key: photo.hash32 }),
       )
       await waitFor(() => expect(screen.queryByTestId(`asset-row-${photo.hash32}`)).toBeNull())
     })
@@ -1342,16 +1342,16 @@ describe('MediaLibraryBody', () => {
     it('moves focus to the field after a confirmed remove, and announces it', async () => {
       asAdmin()
       mockClient.assets.list.mockResolvedValueOnce(page([catAsset, dogAsset]))
-      mockClient.assets.delete.mockResolvedValueOnce({
+      mockClient.assets.hide.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { deleted: true },
+        data: { hidden: true },
       })
 
       renderBody()
-      const trash = await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`)
-      trash.focus()
-      fireEvent.click(trash)
+      const remove = await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`)
+      remove.focus()
+      fireEvent.click(remove)
 
       await waitFor(() => expect(screen.queryByText('cat.png')).toBeNull())
       expect(document.activeElement).toBe(screen.getByTestId('media-library-filter'))
@@ -1362,14 +1362,14 @@ describe('MediaLibraryBody', () => {
       asAdmin()
       const otherCat: AssetRecord = { ...catAsset, hash32: 'c'.repeat(32) }
       mockClient.assets.list.mockResolvedValueOnce(page([catAsset, otherCat]))
-      mockClient.assets.delete.mockResolvedValue({ ok: true, status: 200, data: { deleted: true } })
+      mockClient.assets.hide.mockResolvedValue({ ok: true, status: 200, data: { hidden: true } })
 
       renderBody()
-      fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
+      fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
       await waitFor(() => expect(actionNotice()).toBe('Removed cat.png from library'))
       const first = screen.getByTestId('media-library-action-notice').firstChild
 
-      fireEvent.click(screen.getByTestId(`asset-card-delete-${otherCat.hash32}`))
+      fireEvent.click(screen.getByTestId(`asset-card-remove-${otherCat.hash32}`))
       await waitFor(() => expect(screen.queryByTestId(`asset-card-${otherCat.hash32}`)).toBeNull())
       const second = screen.getByTestId('media-library-action-notice').firstChild
       expect(actionNotice()).toBe('Removed cat.png from library')
@@ -1380,16 +1380,16 @@ describe('MediaLibraryBody', () => {
     it('leaves focus on the search field when the last file is removed', async () => {
       asAdmin()
       mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
-      mockClient.assets.delete.mockResolvedValueOnce({
+      mockClient.assets.hide.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { deleted: true },
+        data: { hidden: true },
       })
 
       renderBody()
-      const trash = await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`)
-      trash.focus()
-      fireEvent.click(trash)
+      const remove = await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`)
+      remove.focus()
+      fireEvent.click(remove)
 
       await waitFor(() => expect(screen.queryByText('cat.png')).toBeNull())
       expect(screen.getByTestId('media-library-filter')).toBeTruthy()
@@ -1403,14 +1403,14 @@ describe('MediaLibraryBody', () => {
         params.cursor === 'c1'
           ? second.promise
           : Promise.resolve(page([catAsset, dogAsset], 'c1'))) as never)
-      mockClient.assets.delete.mockResolvedValueOnce({
+      mockClient.assets.hide.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { deleted: true },
+        data: { hidden: true },
       })
 
       renderBody()
-      fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
+      fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
 
       await waitFor(() => expect(actionNotice()).toBe('Removed cat.png from library'))
       expect(loadAnnouncement()).toBe('Loading more files…')
@@ -1570,31 +1570,203 @@ describe('MediaLibraryBody', () => {
   it('names the remove action the same way on the control and in the confirmation', async () => {
     asAdmin()
     mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
-    mockClient.assets.delete.mockResolvedValueOnce({
+    mockClient.assets.hide.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { deleted: true },
+      data: { hidden: true },
     })
 
     renderBody()
-    const trash = await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`)
-    expect(trash.getAttribute('aria-label')).toBe('Remove cat.png from library')
+    const remove = await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`)
+    expect(remove.getAttribute('aria-label')).toBe('Remove cat.png from library')
 
-    fireEvent.click(trash)
+    fireEvent.click(remove)
 
     const options = vi.mocked(modals.openConfirmModal).mock.calls[0]![0]
     expect(options.title).toBe('Remove from library')
     expect(options.labels).toEqual({ confirm: 'Remove from library', cancel: 'Cancel' })
-    expect(options.confirmProps).toMatchObject({ color: 'red' })
+    // Removal destroys nothing, so its confirm is not the red of a destructive action.
+    expect(options.confirmProps?.color).toBeUndefined()
+  })
+
+  describe('the remove confirmation', () => {
+    /** Opens the confirm for cat.png and renders its body. */
+    const confirmText = async (): Promise<string> => {
+      fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
+      const options = vi.mocked(modals.openConfirmModal).mock.calls[0]![0]
+      cleanup()
+      render(<CanopyCMSProvider>{options.children}</CanopyCMSProvider>)
+      return document.body.textContent ?? ''
+    }
+
+    it('says the file only leaves the library, and how an admin restores it', async () => {
+      asAdmin()
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
+      renderBody()
+
+      const text = await confirmText()
+      expect(text).toContain(
+        '“cat.png” will no longer be listed in the media library or offered when choosing an image.',
+      )
+      expect(text).toContain(
+        'Entries that already use it keep working, including published and earlier versions of the site.',
+      )
+      expect(text).toContain('To restore it, turn on “Show removed files”.')
+      expect(text).not.toMatch(/delete/i)
+    })
+
+    it('tells an editor removing their own upload how to get it back', async () => {
+      mockClient.user.whoami.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { userId: 'user-1', groups: [] },
+      })
+      mockClient.assets.list.mockResolvedValueOnce(page([{ ...catAsset, uploadedBy: 'user-1' }]))
+      renderBody()
+
+      const text = await confirmText()
+      expect(text).toContain('To restore it, upload it again or ask an admin.')
+      expect(text).not.toContain('Show removed files')
+    })
+  })
+
+  describe('removed files', () => {
+    const removedCat: AssetRecord = { ...catAsset, hidden: true }
+    const showRemovedSwitch = () => screen.queryByRole('switch', { name: 'Show removed files' })
+
+    it('offers "Show removed files" to an admin in the media drawer only', async () => {
+      asAdmin()
+      mockClient.assets.list.mockResolvedValue(page([catAsset]))
+      renderBody()
+      await screen.findByText('cat.png')
+      await waitFor(() => expect(showRemovedSwitch()).toBeTruthy())
+
+      cleanup()
+      renderBody({ mode: 'picker', onSelect: vi.fn() })
+      await screen.findByText('cat.png')
+      expect(showRemovedSwitch()).toBeNull()
+    })
+
+    it('never offers "Show removed files" to an editor', async () => {
+      mockClient.user.whoami.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { userId: 'user-1', groups: [] },
+      })
+      mockClient.assets.list.mockResolvedValue(page([{ ...catAsset, uploadedBy: 'user-1' }]))
+      renderBody()
+      await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`)
+      expect(showRemovedSwitch()).toBeNull()
+    })
+
+    it('never asks for removed files in picker mode, even for an admin', async () => {
+      asAdmin()
+      mockClient.assets.list.mockResolvedValue(page([catAsset]))
+      renderBody({ mode: 'picker', onSelect: vi.fn() })
+      await screen.findByText('cat.png')
+      for (const [params] of mockClient.assets.list.mock.calls) {
+        expect(params).not.toHaveProperty('includeHidden')
+      }
+    })
+
+    it('lists removed files when turned on, badged, and restores one', async () => {
+      asAdmin()
+      mockClient.assets.list
+        .mockResolvedValueOnce(page([dogAsset]))
+        .mockResolvedValueOnce(page([dogAsset, removedCat]))
+      mockClient.assets.restore.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { hidden: false },
+      })
+      renderBody()
+      await screen.findByText('dog.jpg')
+      expect(screen.queryByText('cat.png')).toBeNull()
+
+      fireEvent.click(await waitFor(() => showRemovedSwitch()!))
+
+      await screen.findByText('cat.png')
+      expect(mockClient.assets.list).toHaveBeenLastCalledWith({
+        limit: '40',
+        includeHidden: 'true',
+      })
+      expect(screen.getByTestId(`asset-card-removed-${catAsset.hash32}`).textContent).toBe(
+        'Removed',
+      )
+      expect(screen.queryByTestId(`asset-card-remove-${catAsset.hash32}`)).toBeNull()
+
+      const restore = screen.getByTestId(`asset-card-restore-${catAsset.hash32}`)
+      expect(restore.getAttribute('aria-label')).toBe('Restore cat.png to library')
+      fireEvent.click(restore)
+
+      await waitFor(() =>
+        expect(mockClient.assets.restore).toHaveBeenCalledWith({ key: catAsset.hash32 }),
+      )
+      await waitFor(() =>
+        expect(screen.queryByTestId(`asset-card-removed-${catAsset.hash32}`)).toBeNull(),
+      )
+      expect(screen.getByTestId(`asset-card-remove-${catAsset.hash32}`)).toBeTruthy()
+      expect(actionNotice()).toBe('Restored cat.png to library')
+      expect(document.activeElement).toBe(screen.getByTestId('media-library-filter'))
+    })
+
+    it('keeps a file it removes on screen, badged, while removed files are shown', async () => {
+      asAdmin()
+      mockClient.assets.list.mockResolvedValue(page([catAsset]))
+      renderBody()
+      await screen.findByText('cat.png')
+      fireEvent.click(await waitFor(() => showRemovedSwitch()!))
+      await waitFor(() => expect(mockClient.assets.list).toHaveBeenCalledTimes(2))
+
+      fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
+
+      await screen.findByTestId(`asset-card-removed-${catAsset.hash32}`)
+      expect(screen.getByTestId(`asset-card-restore-${catAsset.hash32}`)).toBeTruthy()
+      expect(actionNotice()).toBe('Removed cat.png from library')
+    })
+
+    it('restores from a list row too', async () => {
+      asAdmin()
+      mockClient.assets.list.mockResolvedValue(page([removedCat]))
+      renderBody()
+      await waitFor(() => expect(showRemovedSwitch()).toBeTruthy())
+      fireEvent.click(showRemovedSwitch()!)
+      await userEvent.setup().click(screen.getByRole('radio', { name: 'List' }))
+
+      fireEvent.click(await screen.findByTestId(`asset-row-restore-${catAsset.hash32}`))
+
+      await waitFor(() =>
+        expect(mockClient.assets.restore).toHaveBeenCalledWith({ key: catAsset.hash32 }),
+      )
+    })
+
+    it('reports a failed restore and keeps the file marked removed', async () => {
+      asAdmin()
+      mockClient.assets.list.mockResolvedValue(page([removedCat]))
+      mockClient.assets.restore.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        error: 'Disk full',
+      })
+      renderBody()
+      await waitFor(() => expect(showRemovedSwitch()).toBeTruthy())
+      fireEvent.click(showRemovedSwitch()!)
+
+      fireEvent.click(await screen.findByTestId(`asset-card-restore-${catAsset.hash32}`))
+
+      const alert = await screen.findByTestId('media-library-action-error')
+      expect(alert.textContent).toBe("Couldn't restore cat.png to the library. Disk full")
+      expect(screen.getByTestId(`asset-card-removed-${catAsset.hash32}`)).toBeTruthy()
+    })
   })
 
   it('reports a failed removal in plain words and keeps the asset', async () => {
     asAdmin()
     mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
-    mockClient.assets.delete.mockResolvedValueOnce({ ok: false, status: 500, error: 'Disk full' })
+    mockClient.assets.hide.mockResolvedValueOnce({ ok: false, status: 500, error: 'Disk full' })
 
     renderBody()
-    fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
+    fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
 
     const alert = await screen.findByTestId('media-library-action-error')
     expect(alert.textContent).toContain("Couldn't remove cat.png from the library.")
@@ -1605,10 +1777,10 @@ describe('MediaLibraryBody', () => {
   it("shows an admin a refusal's raw message, since the ownership check never refuses them", async () => {
     asAdmin()
     mockClient.assets.list.mockResolvedValueOnce(page([catAsset]))
-    mockClient.assets.delete.mockResolvedValueOnce({ ok: false, status: 403, error: 'Forbidden' })
+    mockClient.assets.hide.mockResolvedValueOnce({ ok: false, status: 403, error: 'Forbidden' })
 
     renderBody()
-    fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
+    fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
 
     const alert = await screen.findByTestId('media-library-action-error')
     expect(alert.textContent).toBe("Couldn't remove cat.png from the library. Forbidden")
@@ -1626,42 +1798,40 @@ describe('MediaLibraryBody', () => {
 
     it('hides the raw server message', async () => {
       asUploader()
-      mockClient.assets.delete.mockResolvedValueOnce({
+      mockClient.assets.hide.mockResolvedValueOnce({
         ok: false,
         status: 500,
         error: 'ECONNRESET at 10.0.0.7',
       })
 
       renderBody()
-      fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
+      fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
 
       const alert = await screen.findByTestId('media-library-action-error')
       expect(alert.textContent).toBe("Couldn't remove cat.png from the library. Try again.")
     })
 
-    it('says the file may be gone when the server refuses its uploader', async () => {
+    it('hides the message of a refusal too', async () => {
       asUploader()
-      mockClient.assets.delete.mockResolvedValueOnce({
+      mockClient.assets.hide.mockResolvedValueOnce({
         ok: false,
         status: 403,
-        error: 'You can only delete assets you uploaded',
+        error: 'You can only remove files you uploaded',
       })
 
       renderBody()
-      fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
+      fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
 
       const alert = await screen.findByTestId('media-library-action-error')
-      expect(alert.textContent).toBe(
-        "Couldn't remove cat.png from the library. It may have been removed already.",
-      )
+      expect(alert.textContent).toBe("Couldn't remove cat.png from the library. Try again.")
     })
 
     it('hides the message of a request that threw', async () => {
       asUploader()
-      mockClient.assets.delete.mockRejectedValueOnce(new Error('ECONNRESET at 10.0.0.7'))
+      mockClient.assets.hide.mockRejectedValueOnce(new Error('ECONNRESET at 10.0.0.7'))
 
       renderBody()
-      fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
+      fireEvent.click(await screen.findByTestId(`asset-card-remove-${catAsset.hash32}`))
 
       const alert = await screen.findByTestId('media-library-action-error')
       expect(alert.textContent).toBe("Couldn't remove cat.png from the library. Try again.")

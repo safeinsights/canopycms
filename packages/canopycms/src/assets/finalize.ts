@@ -48,7 +48,13 @@ export async function finalizeAsset(
   const { meta, data, publicObject } = result
 
   const existing = await store.getMeta(meta.hash32)
-  if (existing) return { ok: true, meta: existing }
+  if (existing) {
+    // Uploading a file removed from the library puts it back. Hiding is a de-list, not access
+    // control: whoever uploads the bytes has the file, and a picker selecting an upload the
+    // library never shows would be a dead end.
+    await store.unhideAsset(meta.hash32)
+    return { ok: true, meta: existing }
+  }
 
   // Either put may find its key taken (`already-exists`): by an earlier attempt that stopped
   // before the meta commit, or by a concurrent identical upload. The object kept there is this

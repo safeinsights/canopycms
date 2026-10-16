@@ -21,7 +21,7 @@ import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResp
 import type { ReferenceOptionsResponse } from './reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from './resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from './entries'
-import type { AssetDeleteResponse, AssetsListResponse, FinalizeAssetBody, FinalizeAssetResponse, PresignAssetBody, PresignAssetResponse } from './assets'
+import type { AssetKeyBody, AssetVisibilityResponse, AssetsListResponse, FinalizeAssetBody, FinalizeAssetResponse, PresignAssetBody, PresignAssetResponse } from './assets'
 import type { BatchGetUserMetadataBody, BatchGetUserMetadataResponse, GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from './permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from './groups'
 import type { UserInfoResponse } from './user'
@@ -221,9 +221,14 @@ export class CanopyApiClient {
       return this.request('GET', this.buildPath('/assets', params), undefined, 'standard', options)
     },
 
-    /** DELETE /assets */
-    delete: (params: Record<string, string>, options?: RequestOptions): Promise<AssetDeleteResponse> => {
-      return this.request('DELETE', this.buildPath('/assets', params), undefined, 'standard', options)
+    /** POST /assets/hide */
+    hide: (body: AssetKeyBody, options?: RequestOptions): Promise<AssetVisibilityResponse> => {
+      return this.request('POST', '/assets/hide', body, 'standard', options)
+    },
+
+    /** POST /assets/restore */
+    restore: (body: AssetKeyBody, options?: RequestOptions): Promise<AssetVisibilityResponse> => {
+      return this.request('POST', '/assets/restore', body, 'standard', options)
     },
   }
 

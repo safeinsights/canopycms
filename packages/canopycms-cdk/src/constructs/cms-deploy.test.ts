@@ -1222,9 +1222,26 @@ describe('CanopyCmsService B1: the Lambda can actually reach S3', () => {
       .map((r) => JSON.stringify(r))
       .join('\n')
 
-    for (const prefix of ['asset-staging/*', 'asset-originals/*', 'asset-meta/*', 'assets/*']) {
+    for (const prefix of [
+      'asset-staging/*',
+      'asset-originals/*',
+      'asset-meta/*',
+      'asset-hidden/*',
+      'assets/*',
+    ]) {
       expect(resourcePatterns).toContain(prefix)
     }
+    const deleteResources = statements
+      .filter((s) => {
+        const action = (s as { Action?: unknown }).Action
+        return [action].flat().some((a) => typeof a === 'string' && a.startsWith('s3:DeleteObject'))
+      })
+      .map((s) => JSON.stringify((s as { Resource?: unknown }).Resource))
+      .join('\n')
+    expect(deleteResources).toContain('asset-staging/*')
+    expect(deleteResources).toContain('asset-hidden/*')
+    // Meta is never deleted: every transform not yet stored is computed from it.
+    expect(deleteResources).not.toContain('asset-meta/')
   })
 
   it('does not grant any asset bucket access when assetBucket is omitted', () => {

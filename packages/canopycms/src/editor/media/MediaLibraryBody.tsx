@@ -14,6 +14,7 @@ import {
   Select,
   SimpleGrid,
   Stack,
+  Switch,
   Text,
   TextInput,
   Tooltip,
@@ -33,7 +34,6 @@ import {
 
 import type { AssetRecord } from '../../api'
 import { getErrorMessage } from '../../utils/error'
-import { isNonApiResponse } from '../../api/client'
 // Import directly from helpers (not the authorization barrel) to keep server-only
 // authorization code out of this client bundle - matches BranchManager's convention.
 import { isAdmin } from '../../authorization/helpers'
@@ -102,8 +102,15 @@ export interface MediaLibraryBodyProps {
   onSelect?: (asset: AssetRecord) => void
 }
 
+/** A restored file's record: the same asset, no longer marked `hidden`. */
+function withoutHidden(asset: AssetRecord): AssetRecord {
+  const restored = { ...asset }
+  delete restored.hidden
+  return restored
+}
+
 /**
- * Shared grid/list/upload/search/delete core for both MediaLibrary
+ * Shared grid/list/upload/search/remove core for both MediaLibrary
  * presentations (Drawer "manage" mode, Modal "picker" mode) - see
  * MediaLibrary.tsx for the two wrappers.
  */
@@ -111,38 +118,47 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
   const client = useApiClient()
   const { baseUrl } = useAssetContext()
   const { userContext } = useUserContext()
-  // Mirrors the server's rule in api/assets.ts's deleteAssetHandler: an admin
-  // may delete anything, anyone else only what they uploaded. Kept per-asset
+  const admin = isAdmin(userContext?.groups)
+  // Mirrors the server's rule in api/assets.ts's visibilityRefusal: an admin may
+  // remove or restore any file, anyone else only what they uploaded. Kept per-asset
   // (not a single boolean) because ownership varies row by row. The server is
   // still the authority - this only decides whether to render the control.
-  const canDeleteAsset = (asset: AssetRecord): boolean => {
+  const canChangeVisibility = (asset: AssetRecord): boolean => {
     if (mode !== 'manage') return false
-    if (isAdmin(userContext?.groups)) return true
+    if (admin) return true
     return !!asset.uploadedBy && asset.uploadedBy === userContext?.userId
   }
+  // Only an admin in the manage drawer can list removed files, so a picker never offers one.
+  const [showRemovedChoice, setShowRemoved] = useState(false)
+  const showRemoved = showRemovedChoice && admin && mode === 'manage'
   const upload = useAssetUpload()
   // `picker` mode is used exclusively by ImageField and the MDX image dialog
   // (see MediaLibraryProps.mode's doc comment) - both image-only contexts.
   // `manage` mode (the Editor's Media Library drawer) keeps accepting PDFs.
   const imageOnly = mode === 'picker'
 
-  const library = useAssetLibrary(opened)
+  const library = useAssetLibrary(opened, showRemoved)
   const { sort, density, setSort, setDensity } = useMediaLibraryPrefs()
   const [kind, setKind] = useState<MediaKind>('all')
   const [filterText, setFilterText] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
-  // The result of the last remove, for the live region; the removed card itself is gone.
-  // `id` re-keys the region's text, so a second remove with the same words is announced too.
+  // The result of the last remove or restore, for the live region; the card may be gone.
+  // `id` re-keys the region's text, so a second action with the same words is announced too.
   const [actionNotice, setActionNotice] = useState<{ id: number; text: string } | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
-  // A removed card takes its focused button with it, so focus moves to the search field once the
-  // removal has rendered (Mantine returns focus to the trash button when the confirm closes).
-  const focusAfterRemove = useRef(false)
+  // A remove or restore takes the focused button with it (the card goes, or its button swaps), so
+  // focus moves to the search field once that has rendered (Mantine returns focus to the remove
+  // button when the confirm closes).
+  const focusAfterAction = useRef(false)
   useEffect(() => {
-    if (!focusAfterRemove.current) return
-    focusAfterRemove.current = false
+    if (!focusAfterAction.current) return
+    focusAfterAction.current = false
     searchRef.current?.focus()
   })
+  const announce = (text: string) => {
+    setActionNotice((prev) => ({ id: (prev?.id ?? 0) + 1, text }))
+    focusAfterAction.current = true
+  }
   // Clearing hides the control that did it, so focus moves to the search field.
   const clearSearch = () => {
     setFilterText('')
@@ -220,49 +236,69 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     setActionError(rejections[0]?.errors[0]?.message ?? 'The file was rejected.')
   }
 
-  const handleDelete = async (asset: AssetRecord) => {
+  /** Runs a remove or restore; `failure` words its error, and the raw server message is for admins. */
+  const changeVisibility = async (
+    request: () => Promise<{ ok: boolean; error?: string }>,
+    failure: string,
+    onDone: () => void,
+  ) => {
     setActionError(null)
-    const failure = (detail: string) =>
-      `Couldn't remove ${asset.filename} from the library. ${detail}`
-    // The raw server message is a diagnostic, shown to admins only.
-    const generic = (serverMessage: string | undefined) =>
-      failure((isAdmin(userContext?.groups) && serverMessage) || 'Try again.')
+    const fail = (serverMessage: string | undefined) =>
+      setActionError(`${failure} ${(admin && serverMessage) || 'Try again.'}`)
     try {
-      const result = await client.assets.delete({ key: asset.hash32 })
+      const result = await request()
       if (!result.ok) {
-        // An editor sees this button only for their own upload, and the endpoint answers a
-        // missing file with the same 403 as someone else's, so their 403 means it is gone.
-        const alreadyGone =
-          result.status === 403 && !isNonApiResponse(result) && !isAdmin(userContext?.groups)
-        setActionError(
-          alreadyGone ? failure('It may have been removed already.') : generic(result.error),
-        )
+        fail(result.error)
         return
       }
-      library.remove(asset.hash32)
-      setActionNotice((prev) => ({
-        id: (prev?.id ?? 0) + 1,
-        text: `Removed ${asset.filename} from library`,
-      }))
-      focusAfterRemove.current = true
+      onDone()
     } catch (err) {
-      setActionError(generic(getErrorMessage(err)))
+      fail(getErrorMessage(err))
     }
   }
 
-  const handleDeleteClick = (asset: AssetRecord) => {
+  const handleRemove = (asset: AssetRecord) =>
+    changeVisibility(
+      () => client.assets.hide({ key: asset.hash32 }),
+      `Couldn't remove ${asset.filename} from the library.`,
+      () => {
+        if (showRemoved) library.replace({ ...asset, hidden: true })
+        else library.remove(asset.hash32)
+        announce(`Removed ${asset.filename} from library`)
+      },
+    )
+
+  const handleRestore = (asset: AssetRecord) =>
+    changeVisibility(
+      () => client.assets.restore({ key: asset.hash32 }),
+      `Couldn't restore ${asset.filename} to the library.`,
+      () => {
+        library.replace(withoutHidden(asset))
+        announce(`Restored ${asset.filename} to library`)
+      },
+    )
+
+  // A confirm, not an Undo: only an admin can restore, from the "Show removed files" view.
+  const handleRemoveClick = (asset: AssetRecord) => {
     openConfirm({
       title: 'Remove from library',
       children: (
-        <Text size="sm">
-          Remove &ldquo;{asset.filename}&rdquo; from the media library? Content that already uses
-          this file keeps working, and the file itself is not deleted.
-        </Text>
+        <Stack gap="xs">
+          <Text size="sm">
+            &ldquo;{asset.filename}&rdquo; will no longer be listed in the media library or offered
+            when choosing an image. Entries that already use it keep working, including published
+            and earlier versions of the site.
+          </Text>
+          <Text size="sm">
+            {admin
+              ? 'To restore it, turn on “Show removed files”.'
+              : 'To restore it, upload it again or ask an admin.'}
+          </Text>
+        </Stack>
       ),
       labels: { confirm: 'Remove from library', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
       onConfirm: () => {
-        void handleDelete(asset)
+        void handleRemove(asset)
       },
     })
   }
@@ -323,7 +359,8 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
               asset={asset}
               baseUrl={baseUrl}
               onSelect={mode === 'picker' ? onSelect : undefined}
-              onDelete={canDeleteAsset(asset) ? () => handleDeleteClick(asset) : undefined}
+              onRemove={canChangeVisibility(asset) ? handleRemoveClick : undefined}
+              onRestore={canChangeVisibility(asset) ? handleRestore : undefined}
             />
           ))}
         </Stack>
@@ -338,7 +375,8 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
             baseUrl={baseUrl}
             density={density}
             onSelect={mode === 'picker' ? onSelect : undefined}
-            onDelete={canDeleteAsset(asset) ? () => handleDeleteClick(asset) : undefined}
+            onRemove={canChangeVisibility(asset) ? handleRemoveClick : undefined}
+            onRestore={canChangeVisibility(asset) ? handleRestore : undefined}
           />
         ))}
       </SimpleGrid>
@@ -454,15 +492,25 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
         {imageOnly ? (
           <span />
         ) : (
-          <SegmentedControl
-            aria-label="File type"
-            data={KIND_OPTIONS}
-            value={kind}
-            onChange={(value) =>
-              setKind(KIND_OPTIONS.find((o) => o.value === value)?.value ?? 'all')
-            }
-            data-testid="media-library-kind"
-          />
+          <Group gap="md" wrap="wrap">
+            <SegmentedControl
+              aria-label="File type"
+              data={KIND_OPTIONS}
+              value={kind}
+              onChange={(value) =>
+                setKind(KIND_OPTIONS.find((o) => o.value === value)?.value ?? 'all')
+              }
+              data-testid="media-library-kind"
+            />
+            {admin && mode === 'manage' && (
+              <Switch
+                label="Show removed files"
+                checked={showRemoved}
+                onChange={(event) => setShowRemoved(event.currentTarget.checked)}
+                data-testid="media-library-show-removed"
+              />
+            )}
+          </Group>
         )}
         <Group gap="xs" wrap="wrap">
           <Select

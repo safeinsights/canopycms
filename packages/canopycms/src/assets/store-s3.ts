@@ -2,7 +2,7 @@
  * S3-backed AssetStore. Same bucket-prefix layout as LocalAssetStore (see
  * keys.ts). Assumes an EXISTING content bucket (versioning/SSE/replication
  * already configured by the site's CDK stack). It reads and writes under the
- * five asset prefixes, plus a caller's output prefix for `copyPublicObject`.
+ * six asset prefixes, plus a caller's output prefix for `copyPublicObject`.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -27,6 +27,8 @@ import type {
   AssetStore,
   BeginUploadInput,
   CreateOnlyResult,
+  HiddenAssetMarker,
+  ListedAssetMeta,
   PublicObject,
   StagedUploadTarget,
 } from './types'
@@ -53,6 +55,8 @@ export interface S3AssetStoreOptions {
 }
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+/** What `metaKey` and `hiddenKey` put after the hash32. */
+const JSON_SUFFIX = '.json'
 const PRESIGN_EXPIRY_SECONDS = 15 * 60
 /** A presigned read is followed by the browser at once; it is never stored or cached. */
 const PRESIGNED_READ_EXPIRY_SECONDS = 5 * 60
@@ -349,7 +353,11 @@ export class S3AssetStore implements AssetStore {
     }
   }
 
-  async *listPublicObjectKeys(prefix: string): AsyncIterable<string> {
+  listPublicObjectKeys(prefix: string): AsyncIterable<string> {
+    return this.listKeys(prefix)
+  }
+
+  private async *listKeys(prefix: string): AsyncIterable<string> {
     const pages = paginateListObjectsV2(
       { client: this.client },
       { Bucket: this.bucket, Prefix: prefix },
@@ -383,42 +391,78 @@ export class S3AssetStore implements AssetStore {
     return JSON.parse(Buffer.from(bytes).toString('utf-8')) as AssetMeta
   }
 
-  async listMeta(input?: { cursor?: string; limit?: number }): Promise<{
-    items: AssetMeta[]
+  /**
+   * One page of meta keys, filtered by a full listing of the hidden markers: few files are hidden,
+   * and a listing needs only `s3:ListBucket`. A hidden file's meta is fetched only for
+   * `includeHidden`.
+   */
+  async listMeta(input?: { cursor?: string; limit?: number; includeHidden?: boolean }): Promise<{
+    items: ListedAssetMeta[]
     nextCursor?: string
   }> {
-    const listed = await this.client.send(
-      new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: this.keys.metaPrefix(),
-        MaxKeys: input?.limit,
-        ContinuationToken: input?.cursor,
-      }),
-    )
+    const metaPrefix = this.keys.metaPrefix()
+    const [listed, hidden] = await Promise.all([
+      this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: metaPrefix,
+          MaxKeys: input?.limit,
+          ContinuationToken: input?.cursor,
+        }),
+      ),
+      this.listHiddenHashes(),
+    ])
     const objectKeys = (listed.Contents ?? [])
       .map((obj) => obj.Key)
       .filter((key): key is string => Boolean(key))
 
     const fetched = await Promise.all(
-      objectKeys.map(async (key) => {
+      objectKeys.map(async (key): Promise<ListedAssetMeta | null> => {
+        const isHidden = hidden.has(key.slice(metaPrefix.length, -JSON_SUFFIX.length))
+        if (isHidden && !input?.includeHidden) return null
         const bytes = await this.getObjectBytes(key)
-        // A meta object deleted between LIST and GET (deleteMeta race) reads
-        // as null; skip it rather than failing the whole page.
         if (!bytes) return null
-        return JSON.parse(Buffer.from(bytes).toString('utf-8')) as AssetMeta
+        const meta = JSON.parse(Buffer.from(bytes).toString('utf-8')) as AssetMeta
+        return isHidden ? { ...meta, hidden: true } : meta
       }),
     )
 
     return {
-      items: fetched.filter((meta): meta is AssetMeta => meta !== null),
+      items: fetched.filter((meta): meta is ListedAssetMeta => meta !== null),
       nextCursor: listed.IsTruncated ? listed.NextContinuationToken : undefined,
     }
   }
 
-  async deleteMeta(hash32: string): Promise<void> {
-    await this.client.send(
-      new DeleteObjectCommand({ Bucket: this.bucket, Key: this.keys.metaKey(hash32) }),
+  private async listHiddenHashes(): Promise<Set<string>> {
+    const prefix = this.keys.hiddenPrefix()
+    const hashes = new Set<string>()
+    for await (const key of this.listKeys(prefix)) {
+      if (key.endsWith(JSON_SUFFIX)) hashes.add(key.slice(prefix.length, -JSON_SUFFIX.length))
+    }
+    return hashes
+  }
+
+  async hideAsset(hash32: string, marker: HiddenAssetMarker): Promise<CreateOnlyResult> {
+    return this.putIfAbsent({
+      Key: this.keys.hiddenKey(hash32),
+      Body: JSON.stringify(marker),
+      ContentType: 'application/json',
+    })
+  }
+
+  /**
+   * Lists before deleting: a DELETE of an absent key writes a delete marker on a versioned bucket,
+   * and a listing, unlike a HEAD, needs no permission on the hidden prefix, so finalize can call
+   * this on every re-upload under a role that has never hidden a file.
+   */
+  async unhideAsset(hash32: string): Promise<boolean> {
+    const key = this.keys.hiddenKey(hash32)
+    const listed = await this.client.send(
+      new ListObjectsV2Command({ Bucket: this.bucket, Prefix: key, MaxKeys: 1 }),
     )
+    if (listed.Contents?.[0]?.Key !== key) return false
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }))
+    return true
   }
 
   private async getObject(key: string) {

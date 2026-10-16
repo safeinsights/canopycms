@@ -95,23 +95,20 @@ describe('matchRoute - static vs dynamic vs catch-all precedence (SEC-H3)', () =
 })
 
 describe('createCanopyRouter - real route table (SEC-H3 regression)', () => {
-  it('dispatches DELETE /assets to the asset delete handler, not the branch delete handler', () => {
+  it('dispatches POST /assets/hide and /assets/restore to the asset handlers, with no :branch param', () => {
     const router = createCanopyRouter()
 
-    const assetsRoute = router.routes.find(
-      (r) => r.method === 'DELETE' && r.pattern.join('/') === 'assets',
-    )
-    const branchRoute = router.routes.find(
-      (r) => r.method === 'DELETE' && r.pattern.join('/') === ':branch',
-    )
-    expect(assetsRoute).toBeDefined()
-    expect(branchRoute).toBeDefined()
+    for (const action of ['hide', 'restore']) {
+      const assetsRoute = router.routes.find(
+        (r) => r.method === 'POST' && r.pattern.join('/') === `assets/${action}`,
+      )
+      expect(assetsRoute).toBeDefined()
 
-    const match = router.match('DELETE', ['assets'])
-    expect(match).not.toBeNull()
-    expect(match?.handler).toBe(assetsRoute?.handler)
-    expect(match?.handler).not.toBe(branchRoute?.handler)
-    expect(match?.params).toEqual({})
+      const match = router.match('POST', ['assets', action])
+      expect(match).not.toBeNull()
+      expect(match?.handler).toBe(assetsRoute?.handler)
+      expect(match?.params).toEqual({})
+    }
   })
 
   it('still dispatches DELETE /:branch to the branch delete handler for a non-"assets" segment', () => {
