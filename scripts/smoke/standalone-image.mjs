@@ -6,6 +6,7 @@
  *
  *   node scripts/smoke/standalone-image.mjs --pm pnpm            # or --pm npm
  *   node scripts/smoke/standalone-image.mjs --pm npm --tarballs /path/with/tgzs --keep
+ *   node scripts/smoke/standalone-image.mjs --pm pnpm --base-images /path/to/base-images.tar
  *
  * Needs Docker, Node >= 22.2 (`zlib.crc32`), pnpm (to pack) and, for `--pm pnpm`, corepack. CI
  * runs it as the `standalone-image` job in .github/workflows/ci.yml.
@@ -40,6 +41,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import zlib from 'node:zlib'
+
+import { ensureBaseImages } from './base-images.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -83,6 +86,7 @@ function parseOptions() {
       'pnpm-version': { type: 'string', default: '11.27.0' },
       tarballs: { type: 'string' },
       'work-dir': { type: 'string' },
+      'base-images': { type: 'string' },
       keep: { type: 'boolean', default: false },
     },
   })
@@ -95,6 +99,7 @@ function parseOptions() {
     pnpmVersion: values['pnpm-version'],
     tarballDir: values.tarballs ? path.resolve(values.tarballs) : undefined,
     workDir: values['work-dir'] ? path.resolve(values['work-dir']) : undefined,
+    baseImagesTar: values['base-images'] ? path.resolve(values['base-images']) : undefined,
     keep: values.keep,
   }
 }
@@ -902,6 +907,8 @@ async function main() {
   const container = `canopycms-standalone-smoke-${label}-${process.pid}`
 
   scaffold(appDir, options)
+  // The build then finds every base in the local store and sends public.ecr.aws nothing.
+  ensureBaseImages(path.join(appDir, 'Dockerfile.cms'), { tar: options.baseImagesTar })
   // The container runs a dev server (see the header), so the editor bundle must be dev too.
   runRetryingRegistryLag(
     'docker',
