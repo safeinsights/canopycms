@@ -4,7 +4,12 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import type { RouteDefinition } from '../http/router'
 import type { CanopyBinaryResponse } from '../http/types'
-import type { AssetStore, ListedAssetMeta, StagedUploadTarget } from '../assets/types'
+import type {
+  AssetStore,
+  ListedAssetMeta,
+  PresignedRead,
+  StagedUploadTarget,
+} from '../assets/types'
 import { ASSET_PREFIXES } from '../assets/keys'
 import { ALLOWED_UPLOAD_CONTENT_TYPES } from '../assets/pipeline'
 import { finalizeStagedUpload } from '../assets/finalize'
@@ -350,15 +355,19 @@ const restoreAssetHandler = async (
 const INLINE_BODY_LIMIT_BYTES = 4 * 1024 * 1024
 
 /**
- * A 302 to a presigned store URL. `no-store` because the URL expires: a cached redirect would
- * outlive it, and a browser revisiting the page would follow it to a 403.
+ * A 302 to a presigned store URL, cacheable by this browser alone for as long as the store says
+ * the URL stays reusable: the redirect then outlives a sign-out by at most that long, which is
+ * accepted because the target is a public-prefix object under an unguessable key.
  */
-function presignedRedirect(url: string): CanopyBinaryResponse {
+function presignedRedirect({ url, maxAgeSeconds }: PresignedRead): CanopyBinaryResponse {
   return {
     kind: 'binary',
     status: 302,
     body: new Uint8Array(),
-    headers: { location: url, cacheControl: 'no-store' },
+    headers: {
+      location: url,
+      cacheControl: maxAgeSeconds > 0 ? `private, max-age=${maxAgeSeconds}` : 'no-store',
+    },
   }
 }
 
@@ -380,8 +389,8 @@ async function serveLazyTransform(
   }
 
   if (transformed.data.byteLength > INLINE_BODY_LIMIT_BYTES && assetStore.presignPublicObjectRead) {
-    const url = await assetStore.presignPublicObjectRead(canonicalKey)
-    if (url) return presignedRedirect(url)
+    const presigned = await assetStore.presignPublicObjectRead(canonicalKey)
+    if (presigned) return presignedRedirect(presigned)
   }
 
   return {
@@ -392,14 +401,21 @@ async function serveLazyTransform(
   }
 }
 
+/**
+ * For a streamed object stored without a Cache-Control of its own. Every key under the public
+ * prefix is content-addressed, so its bytes never change; `private` because this route is
+ * authenticated.
+ */
+const STREAMED_OBJECT_CACHE_CONTROL = 'private, max-age=31536000, immutable'
+
 /** A redirect to, or the bytes of, the public object stored at `key`; `null` when there is none. */
 async function serveStoredObject(
   assetStore: AssetStore,
   key: string,
 ): Promise<CanopyBinaryResponse | null> {
   if (assetStore.presignPublicObjectRead) {
-    const url = await assetStore.presignPublicObjectRead(key)
-    return url ? presignedRedirect(url) : null
+    const presigned = await assetStore.presignPublicObjectRead(key)
+    return presigned ? presignedRedirect(presigned) : null
   }
   const object = await assetStore.readPublicObject(key)
   if (!object) return null
@@ -410,7 +426,7 @@ async function serveStoredObject(
     headers: {
       contentType: object.contentType,
       contentDisposition: object.contentDisposition,
-      cacheControl: object.cacheControl,
+      cacheControl: object.cacheControl ?? STREAMED_OBJECT_CACHE_CONTROL,
     },
   }
 }

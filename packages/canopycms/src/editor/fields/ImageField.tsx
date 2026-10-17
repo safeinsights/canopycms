@@ -7,6 +7,7 @@ import { Dropzone, type FileRejection } from '@mantine/dropzone'
 import { IconAlertCircle, IconPhoto, IconPhotoOff, IconUpload } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
+import { EDITOR_THUMBNAIL_WIDTHS } from '../../assets/editor-thumbnail-widths'
 import { isAssetStoreSrc } from '../../assets/asset-url'
 import type { CropRect } from '../../assets/transform-directives'
 import type { ImageFieldValue } from '../../config'
@@ -48,7 +49,7 @@ export interface ImageFieldProps {
 /** Which image the crop step is currently cropping. */
 type CropRequest = { kind: 'new'; asset: AssetRecord } | { kind: 'existing' }
 
-const PREVIEW_WIDTH = 320
+const PREVIEW_WIDTH = EDITOR_THUMBNAIL_WIDTHS.imageField
 
 export const ImageField: React.FC<ImageFieldProps> = ({
   id,

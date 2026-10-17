@@ -6,6 +6,7 @@
 
 import { runFinalizePipeline, type FinalizeInput, type FinalizeRejection } from './pipeline'
 import { ASSET_PREFIXES } from './keys'
+import { storeEditorThumbnails } from './materialize'
 import type { AssetMeta, AssetStore } from './types'
 import { getErrorMessage } from '../utils/error'
 import { canopyLogWarn } from '../utils/logger'
@@ -32,12 +33,13 @@ export type FinalizeAssetResult = { ok: true; meta: AssetMeta } | FinalizeReject
  * Run the finalize pipeline over raw bytes and persist the result.
  *
  * Order matters here too: dedup FIRST (after hashing, inside the pipeline) -
- * if an identical blob already exists, return the existing meta and skip all
- * writes entirely (first-name-wins). Otherwise write the original, then the
- * optional public object, then `putMetaIfAbsent` LAST: meta is the commit
- * point for an asset's existence, so a crash between `putOriginal` and here
- * leaves only orphaned (harmless, content-addressed) blobs, never a meta
- * record pointing at a missing blob.
+ * if an identical blob already exists, return the existing meta, touching
+ * only its hidden marker and any editor thumbnails it lacks (first-name-wins).
+ * Otherwise write the original, then the optional public object, then
+ * `putMetaIfAbsent` LAST: meta is the commit point for an asset's existence,
+ * so a crash between `putOriginal` and here leaves only orphaned (harmless,
+ * content-addressed) blobs, never a meta record pointing at a missing blob.
+ * The editor thumbnails come after the commit.
  * @internal Exported for tests.
  */
 export async function finalizeAsset(
@@ -62,6 +64,8 @@ export async function finalizeAsset(
         `[canopycms] could not restore removed asset ${meta.hash32} to the library on re-upload: ${getErrorMessage(err)}`,
       )
     }
+    // Stores any thumbnail the existing asset lacks; this upload's bytes are its original's.
+    await storeEditorThumbnails(store, existing, data, { skipStored: true })
     return { ok: true, meta: existing }
   }
 
@@ -76,11 +80,14 @@ export async function finalizeAsset(
   const putResult = await store.putMetaIfAbsent(meta.hash32, meta)
   if (putResult === 'already-exists') {
     // Lost a race against a concurrent identical upload - the winner's meta
-    // (already committed) is authoritative; return it rather than ours.
+    // (already committed) is authoritative; return it rather than ours. The
+    // winner's own finalize stores its thumbnails.
     const winner = await store.getMeta(meta.hash32)
-    if (winner) return { ok: true, meta: winner }
+    return { ok: true, meta: winner ?? meta }
   }
 
+  // After the commit point: a thumbnail is keyed by the committed meta's slug.
+  await storeEditorThumbnails(store, meta, data)
   return { ok: true, meta }
 }
 
