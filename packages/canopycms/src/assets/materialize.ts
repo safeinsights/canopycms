@@ -141,9 +141,9 @@ export async function storeEditorThumbnails(
   if (meta.kind !== 'raster') return
   let failure: string | undefined
   try {
-    // An animated source re-encodes every frame at every width, which takes tens of seconds for a
-    // large GIF: too long to hold an upload for, so its first view transforms it instead. The
-    // probe reads only the header.
+    // An animated source re-encodes every frame at every width, over 15 s for a large GIF: too
+    // long to hold an upload for, so its first view transforms it instead. The probe decodes no
+    // pixels.
     const sharp = await loadSharp()
     if (((await sharp(data).metadata()).pages ?? 1) > 1) return
     for (const { key, parsed } of editorThumbnailTargets(meta)) {

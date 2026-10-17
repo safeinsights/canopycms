@@ -675,7 +675,7 @@ Uploads go **directly from the browser to S3** via a presigned POST with a conte
 
 Once the upload lands in staging, the editor calls a **finalize** step that runs synchronously in the CMS API process. It sniffs the real file type from magic bytes, **sanitizes SVGs**, which cannot be type-sniffed, by stripping their scripts, extracts dimensions honoring EXIF orientation, writes the original and the meta sidecar (plus a public copy for SVG/PDF), deletes the staging object, and returns the structured field value. **The commit-point ordering is deliberate — dedup check, then original, then meta — so a crash never leaves a meta record pointing at bytes that were never written.** Its throwaway resize that catches corrupt pixel data loads sharp lazily, so a Lambda without sharp skips only that check.
 
-After the commit it stores, best effort, a raster's three editor thumbnail widths: **not the rejected ladder**, since only the editor requests them and a missing one is computed on demand.
+After the commit it stores, best effort, a still raster's three editor thumbnail widths: **not the rejected ladder**, since only the editor requests them and a missing one is computed on demand.
 
 ### On-Demand Image Transforms
 
@@ -705,7 +705,7 @@ The schema has a first-class `image` field whose value is `{ src, alt, width, he
 
 One **MediaLibrary** component serves both a manage drawer and a picker modal, searching and sorting the whole meta prefix client-side. The MDX body editor's image plugin opens the same dialog, so prose images share the store and transform layer with structured image fields.
 
-**The editor never reads the public asset path.** Every editor image loads through the authenticated raw route (`api/assets.ts`) under `basePath`, which transforms on demand. On S3 it answers a stored object, or a fresh transform over 4 MiB, with a 302 to a presigned GET: the CMS function's response is buffered and capped near 6 MiB, and its concurrency is reserved. The URL is signed per hour and the 302 cached privately until the hour ends, so a reopened library makes no requests; a cached redirect outliving a sign-out is accepted, as it names a public object under an unguessable key. It never redirects to `/assets/…`, which `withCanopy` rewrites back onto the route.
+**The editor never reads the public asset path.** Every editor image loads through the authenticated raw route (`api/assets.ts`) under `basePath`, which transforms on demand. On S3 it answers a stored object, or a fresh transform over 4 MiB, with a 302 to a presigned GET: the CMS function's response is buffered and capped near 6 MiB, and its concurrency is reserved. The URL is signed per hour and the 302 cached privately until the hour ends, so a reopened library fetches no thumbnails; a cached redirect outliving a sign-out is accepted, as it names a public object under an unguessable key. It never redirects to `/assets/…`, which `withCanopy` rewrites back onto the route.
 
 The live preview follows suit: drafts, or `createPreviewPage`'s server page, carry the route prefix, and `assetUrl` puts `/assets/t/…` srcs behind it ahead of `baseUrl` (`editor/preview-asset-base.ts`).
 

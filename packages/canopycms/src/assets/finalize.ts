@@ -33,12 +33,13 @@ export type FinalizeAssetResult = { ok: true; meta: AssetMeta } | FinalizeReject
  * Run the finalize pipeline over raw bytes and persist the result.
  *
  * Order matters here too: dedup FIRST (after hashing, inside the pipeline) -
- * if an identical blob already exists, return the existing meta and skip all
- * writes entirely (first-name-wins). Otherwise write the original, then the
- * optional public object, then `putMetaIfAbsent` LAST: meta is the commit
- * point for an asset's existence, so a crash between `putOriginal` and here
- * leaves only orphaned (harmless, content-addressed) blobs, never a meta
- * record pointing at a missing blob.
+ * if an identical blob already exists, return the existing meta and write
+ * nothing but the editor thumbnails it lacks (first-name-wins). Otherwise write
+ * the original, then the optional public object, then `putMetaIfAbsent` LAST:
+ * meta is the commit point for an asset's existence, so a crash between
+ * `putOriginal` and here leaves only orphaned (harmless, content-addressed)
+ * blobs, never a meta record pointing at a missing blob. The editor thumbnails
+ * come after the commit.
  * @internal Exported for tests.
  */
 export async function finalizeAsset(

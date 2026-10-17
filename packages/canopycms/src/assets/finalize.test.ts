@@ -16,6 +16,12 @@ import * as transformModule from './transform'
 import { canonicalizeTransformPath } from './transform-directives'
 import type { AssetMeta, AssetStore } from './types'
 
+// Partial mock: the real applyTransform, wrapped so one test can make a width's transform reject.
+vi.mock('./transform', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./transform')>()
+  return { ...actual, applyTransform: vi.fn(actual.applyTransform) }
+})
+
 /**
  * A real, sharp-decodable 3x5 PNG - finalize's pipeline now forces a real
  * pixel decode for raster kinds (pipeline.ts's `rasterIsDecodable`), so the
@@ -23,12 +29,6 @@ import type { AssetMeta, AssetStore } from './types'
  * would be correctly rejected here. Memoized: every call site in this file
  * wants the same trivial fixture.
  */
-// Partial mock: the real applyTransform, wrapped so one test can make a width's transform reject.
-vi.mock('./transform', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./transform')>()
-  return { ...actual, applyTransform: vi.fn(actual.applyTransform) }
-})
-
 let cachedPngBytes: Uint8Array | undefined
 async function pngBytes(): Promise<Uint8Array> {
   if (!cachedPngBytes) {
@@ -65,7 +65,7 @@ function makeStore(overrides: Partial<AssetStore> = {}): AssetStore {
 }
 
 describe('finalizeAsset', () => {
-  it('dedups: an existing meta for the same hash skips all writes', async () => {
+  it('dedups: an existing meta whose thumbnails are stored skips all writes', async () => {
     const existing: AssetMeta = {
       hash32: 'e'.repeat(32),
       filename: 'first.png',
