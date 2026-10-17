@@ -5,9 +5,14 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { describe, expect, it, vi } from 'vitest'
 
+import { editorImageSrc } from '../editor/media/editor-image-src'
+import { assetSrc } from './asset-src'
+import { EDITOR_THUMBNAIL_WIDTHS } from './editor-thumbnail-widths'
 import { finalizeAsset, finalizeStagedUpload } from './finalize'
+import { ASSET_PREFIXES } from './keys'
 import { resetCanopyLogger, setCanopyLogger } from '../utils/logger'
 import { LocalAssetStore } from './store-local'
+import { canonicalizeTransformPath } from './transform-directives'
 import type { AssetMeta, AssetStore } from './types'
 
 /**
@@ -55,7 +60,7 @@ function makeStore(overrides: Partial<AssetStore> = {}): AssetStore {
 describe('finalizeAsset', () => {
   it('dedups: an existing meta for the same hash skips all writes', async () => {
     const existing: AssetMeta = {
-      hash32: 'x'.repeat(32),
+      hash32: 'e'.repeat(32),
       filename: 'first.png',
       slug: 'first',
       ext: 'png',
@@ -64,7 +69,10 @@ describe('finalizeAsset', () => {
       kind: 'raster',
       uploadedAt: '2026-01-01T00:00:00.000Z',
     }
-    const store = makeStore({ getMeta: vi.fn().mockResolvedValue(existing) })
+    const store = makeStore({
+      getMeta: vi.fn().mockResolvedValue(existing),
+      hasPublicObject: vi.fn().mockResolvedValue(true),
+    })
 
     const result = await finalizeAsset(store, { data: await pngBytes(), filename: 'second.png' })
 
@@ -78,7 +86,7 @@ describe('finalizeAsset', () => {
 
   it('still returns the existing file when putting it back in the library fails', async () => {
     const existing: AssetMeta = {
-      hash32: 'y'.repeat(32),
+      hash32: 'd'.repeat(32),
       filename: 'first.png',
       slug: 'first',
       ext: 'png',
@@ -132,11 +140,20 @@ describe('finalizeAsset', () => {
       calls.push('putMetaIfAbsent')
       return 'created'
     })
+    ;(store.putPublicObject as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      calls.push('putPublicObject')
+      return 'created'
+    })
 
     const result = await finalizeAsset(store, { data: await pngBytes(), filename: 'a.png' })
 
     expect(result.ok).toBe(true)
-    expect(calls).toEqual(['putOriginal', 'putMetaIfAbsent'])
+    // The editor thumbnails come after the commit point, one per width.
+    expect(calls).toEqual([
+      'putOriginal',
+      'putMetaIfAbsent',
+      ...Object.values(EDITOR_THUMBNAIL_WIDTHS).map(() => 'putPublicObject'),
+    ])
   })
 
   it('writes a public object for svg/pdf before the meta commit point', async () => {
@@ -165,7 +182,7 @@ describe('finalizeAsset', () => {
 
   it('resolves a lost race (putMetaIfAbsent -> already-exists) to the winner meta', async () => {
     const winner: AssetMeta = {
-      hash32: 'y'.repeat(32),
+      hash32: 'f'.repeat(32),
       filename: 'winner.png',
       slug: 'winner',
       ext: 'png',
@@ -191,6 +208,88 @@ describe('finalizeAsset', () => {
     if (!result.ok) return
     expect(result.meta).toBe(winner)
     expect(getMetaCalls).toBe(2)
+    // The winner's own finalize stores its thumbnails.
+    expect(store.putPublicObject).not.toHaveBeenCalled()
+  })
+})
+
+describe('finalizeAsset editor thumbnails', () => {
+  /** A 400x200 PNG, wider than every editor thumbnail width. */
+  async function widePng(): Promise<Uint8Array> {
+    const buf = await sharp({
+      create: { width: 400, height: 200, channels: 3, background: { r: 40, g: 80, b: 120 } },
+    })
+      .png()
+      .toBuffer()
+    return new Uint8Array(buf)
+  }
+
+  /** The store key the raw route reads for the editor's request at `width`. */
+  function editorRequestKey(meta: AssetMeta, width: number): string {
+    const base = '/api/canopycms/assets/raw'
+    const url = editorImageSrc(assetSrc(meta), base, { width })
+    const transformPrefix = `/${ASSET_PREFIXES.transform}/`
+    const rest = url.slice(base.length + transformPrefix.length)
+    const canonical = canonicalizeTransformPath(rest.split('/'), 'any')
+    if (!canonical.ok) throw new Error(canonical.error)
+    return `${ASSET_PREFIXES.transform}/${canonical.canonicalPath}`
+  }
+
+  async function withLocalStore(
+    run: (store: LocalAssetStore, root: string) => Promise<void>,
+  ): Promise<void> {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-finalize-thumbs-'))
+    try {
+      await run(new LocalAssetStore({ root }), root)
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
+  }
+
+  it('stores each editor width of a new raster upload at the key the editor requests', async () => {
+    await withLocalStore(async (store) => {
+      const result = await finalizeAsset(store, { data: await widePng(), filename: 'Wide.png' })
+      if (!result.ok) throw new Error(result.error)
+
+      for (const width of Object.values(EDITOR_THUMBNAIL_WIDTHS)) {
+        const stored = await store.readPublicObject(editorRequestKey(result.meta, width))
+        if (!stored) throw new Error(`no thumbnail stored at width ${width}`)
+        expect((await sharp(stored.data).metadata()).width).toBe(width)
+      }
+    })
+  })
+
+  it('stores the widths an existing asset lacks when its bytes are uploaded again', async () => {
+    await withLocalStore(async (store, root) => {
+      const first = await finalizeAsset(store, { data: await widePng(), filename: 'a.png' })
+      if (!first.ok) throw new Error(first.error)
+      const missingKey = editorRequestKey(first.meta, EDITOR_THUMBNAIL_WIDTHS.card)
+      await fs.rm(path.join(root, missingKey))
+      const putPublicObject = vi.spyOn(store, 'putPublicObject')
+
+      const again = await finalizeAsset(store, { data: await widePng(), filename: 'b.png' })
+
+      expect(again.ok).toBe(true)
+      expect(putPublicObject.mock.calls.map(([input]) => input.key)).toEqual([missingKey])
+      expect(await store.hasPublicObject(missingKey)).toBe(true)
+    })
+  })
+
+  it('still finalizes, and stops at the first width, when storing a thumbnail fails', async () => {
+    const warn = vi.fn()
+    setCanopyLogger({ log: vi.fn(), warn, error: vi.fn() })
+    try {
+      const store = makeStore({ putPublicObject: vi.fn().mockRejectedValue(new Error('SlowDown')) })
+
+      const result = await finalizeAsset(store, { data: await widePng(), filename: 'a.png' })
+
+      expect(result.ok).toBe(true)
+      expect(store.putMetaIfAbsent).toHaveBeenCalledTimes(1)
+      expect(store.putPublicObject).toHaveBeenCalledTimes(1)
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('SlowDown'))
+    } finally {
+      resetCanopyLogger()
+    }
   })
 })
 

@@ -6,6 +6,7 @@ import { ActionIcon, Badge, Group, Text, Tooltip, UnstyledButton } from '@mantin
 import { IconEyeOff, IconFileTypePdf, IconPhotoOff, IconRestore } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
+import { EDITOR_THUMBNAIL_WIDTHS } from '../../assets/editor-thumbnail-widths'
 import { EDITOR_ACTIONS } from '../copy'
 import { formatRelativeTime } from '../relative-time'
 import { editorImageSrc } from './editor-image-src'
@@ -28,7 +29,6 @@ export interface AssetListRowProps {
 }
 
 const THUMBNAIL_SIZE = 40
-const THUMBNAIL_WIDTH = 80
 
 const rowStyle: React.CSSProperties = {
   width: '100%',
@@ -61,7 +61,9 @@ export const AssetListRow: React.FC<AssetListRowProps> = ({
   onRestore,
 }) => {
   const removed = asset.hidden === true
-  const thumbnailSrc = editorImageSrc(asset.src, baseUrl ?? '', { width: THUMBNAIL_WIDTH })
+  const thumbnailSrc = editorImageSrc(asset.src, baseUrl ?? '', {
+    width: EDITOR_THUMBNAIL_WIDTHS.listRow,
+  })
   const [thumbnailFailed, markThumbnailFailed] = useThumbnailFailure(thumbnailSrc)
   const hasDimensions = asset.width !== undefined && asset.height !== undefined
 

@@ -377,7 +377,8 @@ test.describe('Assets / Media pipeline', () => {
       expect(src).toMatch(/^\/assets\/t\/orig\//)
     })
 
-    const derivedUrl = src.replace('/orig/', '/w=320/')
+    // Not an editor thumbnail width: finalize already stores those, so nothing would be computed.
+    const derivedUrl = src.replace('/orig/', '/w=240/')
 
     await test.step('first request computes and serves the transform', async () => {
       const response = await page.request.get(derivedUrl)
@@ -389,7 +390,7 @@ test.describe('Assets / Media pipeline', () => {
 
     await test.step('transform output is cached on disk under assets/t/', async () => {
       const dirs = await listTransformDirs(hash32)
-      expect(dirs).toContain('w=320')
+      expect(dirs).toContain('w=240')
     })
 
     await test.step('second request is served FROM the cache: delete the original first, so a recompute is impossible', async () => {

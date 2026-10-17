@@ -6,6 +6,7 @@ import { ActionIcon, Badge, Card, Text, Tooltip } from '@mantine/core'
 import { IconEyeOff, IconFileTypePdf, IconPhotoOff, IconRestore } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
+import { EDITOR_THUMBNAIL_WIDTHS } from '../../assets/editor-thumbnail-widths'
 import { EDITOR_ACTIONS } from '../copy'
 import { formatRelativeTime } from '../relative-time'
 import { editorImageSrc } from './editor-image-src'
@@ -25,8 +26,6 @@ export interface AssetCardProps {
   /** `compact` shrinks the thumbnail and drops the date line. */
   density?: 'grid' | 'compact'
 }
-
-const THUMBNAIL_WIDTH = 160
 
 /** Over the thumbnail, so opaque: the default fill. */
 const overlayActionStyle: React.CSSProperties = {
@@ -52,7 +51,9 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   const compact = density === 'compact'
   const removed = asset.hidden === true
   const thumbnailHeight = CARD_THUMBNAIL_HEIGHT[density]
-  const thumbnailSrc = editorImageSrc(asset.src, baseUrl ?? '', { width: THUMBNAIL_WIDTH })
+  const thumbnailSrc = editorImageSrc(asset.src, baseUrl ?? '', {
+    width: EDITOR_THUMBNAIL_WIDTHS.card,
+  })
   const [thumbnailFailed, markThumbnailFailed] = useThumbnailFailure(thumbnailSrc)
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {

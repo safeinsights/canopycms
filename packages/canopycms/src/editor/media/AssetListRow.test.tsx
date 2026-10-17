@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MantineProvider } from '@mantine/core'
 
 import type { AssetRecord } from '../../api'
+import { EDITOR_THUMBNAIL_WIDTHS } from '../../assets/editor-thumbnail-widths'
 import { AssetListRow } from './AssetListRow'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -27,6 +28,20 @@ const catAsset: AssetRecord = {
 describe('AssetListRow', () => {
   afterEach(() => {
     cleanup()
+  })
+
+  it('requests the listRow editor thumbnail width, which finalize stores ahead of the first view', () => {
+    const { container } = render(
+      <AssetListRow asset={catAsset} baseUrl="/api/canopycms/assets/raw" />,
+      {
+        wrapper: Wrapper,
+      },
+    )
+
+    // Decorative (alt=""), so it has no img role.
+    expect(container.querySelector('img')?.getAttribute('src')).toBe(
+      `/api/canopycms/assets/raw/assets/t/w=${EDITOR_THUMBNAIL_WIDTHS.listRow}/${catAsset.hash32}/cat.png`,
+    )
   })
 
   it('offers Remove with an eye-off icon, not a trash can', () => {

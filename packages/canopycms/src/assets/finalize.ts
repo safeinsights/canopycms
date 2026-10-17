@@ -6,6 +6,7 @@
 
 import { runFinalizePipeline, type FinalizeInput, type FinalizeRejection } from './pipeline'
 import { ASSET_PREFIXES } from './keys'
+import { storeEditorThumbnails } from './materialize'
 import type { AssetMeta, AssetStore } from './types'
 import { getErrorMessage } from '../utils/error'
 import { canopyLogWarn } from '../utils/logger'
@@ -62,6 +63,8 @@ export async function finalizeAsset(
         `[canopycms] could not restore removed asset ${meta.hash32} to the library on re-upload: ${getErrorMessage(err)}`,
       )
     }
+    // Stores any thumbnail the existing asset lacks; this upload's bytes are its original's.
+    await storeEditorThumbnails(store, existing, data, { skipStored: true })
     return { ok: true, meta: existing }
   }
 
@@ -76,11 +79,14 @@ export async function finalizeAsset(
   const putResult = await store.putMetaIfAbsent(meta.hash32, meta)
   if (putResult === 'already-exists') {
     // Lost a race against a concurrent identical upload - the winner's meta
-    // (already committed) is authoritative; return it rather than ours.
+    // (already committed) is authoritative; return it rather than ours. The
+    // winner's own finalize stores its thumbnails.
     const winner = await store.getMeta(meta.hash32)
     if (winner) return { ok: true, meta: winner }
   }
 
+  // After the commit point: a thumbnail is keyed by the committed meta's slug.
+  await storeEditorThumbnails(store, meta, data)
   return { ok: true, meta }
 }
 
