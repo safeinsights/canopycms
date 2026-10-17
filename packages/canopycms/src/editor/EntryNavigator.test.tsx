@@ -526,8 +526,12 @@ describe('EntryNavigator', () => {
 
       const row = screen.getByTestId('entry-nav-item-hello-world')
       const lock = within(row).getByTestId('branch-lock')
-      expect(lock.getAttribute('aria-label')).toBe(BRANCH_REASON)
+      expect(lock.getAttribute('aria-label')).toBe('Entry actions')
       expect(lock.getAttribute('aria-disabled')).toBe('true')
+      expect(lock.getAttribute('aria-describedby')).toBeTruthy()
+      expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toBe(
+        BRANCH_REASON,
+      )
       expect(screen.queryByTestId('entry-menu-hello-world')).toBeNull()
     })
 
@@ -539,8 +543,39 @@ describe('EntryNavigator', () => {
       })
 
       const row = screen.getByTestId('entry-nav-item-posts')
-      expect(within(row).getByTestId('branch-lock')).toBeTruthy()
+      expect(within(row).getByTestId('branch-lock').getAttribute('aria-label')).toBe(
+        'Collection actions',
+      )
       expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
+    })
+
+    it('holds an empty slot, not a lock, while the branch reason is not yet known', () => {
+      renderEntryNavigator({ items: [post], onDeleteEntry: vi.fn(), readOnly: true })
+
+      const row = screen.getByTestId('entry-nav-item-hello-world')
+      expect(within(row).getByTestId('branch-lock-pending')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+      expect(screen.queryByTestId('entry-menu-hello-world')).toBeNull()
+    })
+
+    it('keeps Space on the lock from expanding or collapsing its row', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        collections: [
+          collection({
+            entries: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }],
+          }),
+        ],
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const childShown = () => screen.queryByText('Hello World') !== null
+
+      expect(childShown()).toBe(false)
+      screen.getByTestId('branch-lock').focus()
+      await user.keyboard(' ')
+
+      expect(childShown()).toBe(false)
     })
 
     it('shows no lock on a row that would have had no menu anyway', () => {
@@ -578,8 +613,7 @@ describe('EntryNavigator', () => {
       const lock = screen.getByTestId('branch-lock')
       lock.focus()
 
-      expect((await screen.findAllByText(BRANCH_REASON)).length).toBeGreaterThan(0)
-      expect(screen.getByRole('tooltip').textContent).toBe(BRANCH_REASON)
+      expect((await screen.findByRole('tooltip')).textContent).toBe(BRANCH_REASON)
     })
 
     it('does not select the row when the lock is clicked', async () => {

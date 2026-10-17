@@ -105,7 +105,7 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
   the per-item "…" actions and show one collection-level line saying why ("You can't add entries
   here").
 - A locked branch shows a lock, always, where each row's "…" would be; its Tooltip gives the
-  banner's reason.
+  top bar's reason.
 
 ## Loading, empty and error states
 

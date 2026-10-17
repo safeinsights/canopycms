@@ -428,6 +428,10 @@ const EditorContent: React.FC<EditorProps> = ({
   // loading state during that window anyway.
   const branchContentLocked = currentBranch?.writeBlocked ?? true
 
+  // No branch answer yet (a failed fetch leaves the list empty too; the banner says that one):
+  // the lock's reason would be "details could not be loaded", which is not yet true.
+  const branchLoading = !currentBranch && (branchesLoading || branchSummaries.length === 0)
+
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
     selectedPath,
@@ -1900,11 +1904,15 @@ const EditorContent: React.FC<EditorProps> = ({
           hiddenRootPath={hiddenRootPath}
           loading={entriesInitializing}
           readOnly={branchContentLocked}
-          readOnlyReason={describeBranchLock({
-            branchStatus: currentBranch?.status,
-            branchReadOnly: currentBranch?.readOnly,
-            branchWriteBlocked: branchContentLocked,
-          })}
+          readOnlyReason={
+            branchLoading
+              ? undefined
+              : describeBranchLock({
+                  branchStatus: currentBranch?.status,
+                  branchReadOnly: currentBranch?.readOnly,
+                  branchWriteBlocked: branchContentLocked,
+                })
+          }
           dirtyPaths={dirtyPaths}
           revealCollection={collectionReveal}
           onRevealed={() => setCollectionReveal(undefined)}
@@ -1946,7 +1954,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchReadOnly={currentBranch?.readOnly}
               branchWriteBlocked={branchContentLocked}
               // A failed fetch leaves the list empty too; the banner says that one.
-              branchLoading={!currentBranch && (branchesLoading || branchSummaries.length === 0)}
+              branchLoading={branchLoading}
               onCollectionOpen={revealCollection}
               navigatorToggleRef={navigatorToggleRef}
               branchToggleRef={branchToggleRef}

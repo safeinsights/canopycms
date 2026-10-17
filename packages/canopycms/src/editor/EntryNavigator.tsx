@@ -137,7 +137,10 @@ export interface EntryNavigatorProps {
    * writes, where they would only 403 after the fact. Default false.
    */
   readOnly?: boolean
-  /** Why the branch takes no writes (`describeBranchLock`); the tooltip of each row's lock. */
+  /**
+   * Why the branch takes no writes (`describeBranchLock`), the tooltip of each row's lock. While
+   * readOnly without one, the lock's slot stays empty.
+   */
   readOnlyReason?: string
   /** Entry paths with unsaved changes; each shows a dot, and so does every collection holding one. */
   dirtyPaths?: ReadonlySet<string>
@@ -795,8 +798,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       !!entryPath &&
       !entryUnavailable &&
       !!(onDeleteEntryProp || onRenameEntryProp || onReorderEntryProp)
-    const branchLockReason =
-      readOnly && (wouldHaveCollectionMenu || wouldHaveEntryMenu) ? readOnlyReason : undefined
+    const showsLockSlot = readOnly && (wouldHaveCollectionMenu || wouldHaveEntryMenu)
 
     const showEntryDirtyDot = isEntry && !!entryPath && !!dirtyPaths?.has(entryPath)
     const showCollectionDirtyDot = !isEntry && dirtyCollections.has(node.value)
@@ -991,7 +993,16 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                 </Menu.Dropdown>
               </Menu>
             )}
-            {branchLockReason && <BranchRowLock reason={branchLockReason} />}
+            {showsLockSlot &&
+              (readOnlyReason ? (
+                <BranchRowLock
+                  label={isCollection ? 'Collection actions' : 'Entry actions'}
+                  reason={readOnlyReason}
+                />
+              ) : (
+                // The branch's state is still loading: hold the slot so rows do not shift.
+                <Box w={18} h={18} aria-hidden data-testid="branch-lock-pending" />
+              ))}
             {hasEntryMenu && (
               <Menu shadow="md" width={180} withinPortal position="bottom-end">
                 <Menu.Target>

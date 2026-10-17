@@ -1540,11 +1540,16 @@ describe('Editor integration', () => {
       type: 'entry',
     }
 
+    // The branch list answers only once released, so the rows can be seen while it is pending.
+    let releaseBranches!: () => void
+    const branchesAnswered = new Promise<void>((resolve) => {
+      releaseBranches = resolve
+    })
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url.endsWith('/api/canopycms/branches')) {
-        return Promise.resolve(
+        return branchesAnswered.then(() =>
           okJson({
             ok: true,
             status: 200,
@@ -1653,6 +1658,15 @@ describe('Editor integration', () => {
       />,
     )
 
+    // While the branch list is pending the rows hold their slot: no lock with a false reason.
+    openContentPanel()
+    await waitFor(() => {
+      expect(screen.getByTestId('entry-nav-item-posts')).toBeDefined()
+    })
+    expect(screen.queryAllByTestId('branch-lock')).toHaveLength(0)
+    expect(screen.getAllByTestId('branch-lock-pending').length).toBeGreaterThan(0)
+    releaseBranches()
+
     // Read-only banner appears with the create-branch CTA.
     await waitFor(() => {
       expect(screen.getByTestId('protected-branch-banner')).toBeDefined()
@@ -1691,11 +1705,10 @@ describe('Editor integration', () => {
     expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
     expect(screen.queryByRole('button', { name: /content actions/i })).toBeNull()
     // A lock stands in the menu's slot, giving the banner's reason.
-    expect(
-      within(screen.getByTestId('entry-nav-item-posts'))
-        .getByTestId('branch-lock')
-        .getAttribute('aria-label'),
-    ).toBe('The base branch is read-only. Create a branch to make changes.')
+    const lock = within(screen.getByTestId('entry-nav-item-posts')).getByTestId('branch-lock')
+    expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toBe(
+      'The base branch is read-only. Create a branch to make changes.',
+    )
   })
 
   it('grants an admin who is neither creator nor in ACL an enabled Withdraw button on a protected base branch stuck in "submitted"', async () => {
