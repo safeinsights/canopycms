@@ -368,9 +368,8 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
 }
 
 /**
- * Where a click's link leaves the page for: `browser` when the browser opens it elsewhere, else
- * this origin (`navigate`) or another (`open`). `undefined` for no link, this page itself (a fragment or
- * a reload), or a scheme other than http(s).
+ * `browser` when the browser opens the link elsewhere, else this origin (`navigate`) or another
+ * (`open`); `undefined` for no link, this page itself, or a scheme other than http(s).
  */
 type LinkClick = { kind: 'browser' } | { kind: 'navigate' | 'open'; href: string }
 
@@ -409,9 +408,8 @@ const isInMark = (event: MouseEvent) =>
 const followedLinkClicks = new WeakSet<Event>()
 
 /**
- * Hook for preview pages to keep link clicks inside the editor: the frame would leave its preview
- * route for a public page that may refuse framing. Captured on the window, so it runs before the
- * page's own handlers, a client router's included.
+ * Hook for preview pages to keep link clicks off public pages that may refuse framing. Captured on
+ * the window, so it runs before the page's own handlers, a client router's included.
  */
 const usePreviewLinkNavigation = (opts: { editorOrigin?: string; highlighting: boolean }) => {
   const editorOrigin = opts.editorOrigin

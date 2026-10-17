@@ -4,10 +4,8 @@ import { Anchor } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 
 /**
- * Says that a page clicked in the preview has no entry, so it went to a new tab. The new tab takes
- * the window a moment after it opens and a toast's timer runs while the editor is hidden, so the
- * note waits until the editor is in view. A blocked tab stays until dismissed, with a link that
- * opens the page, since a click on it is a fresh gesture the browser lets through.
+ * Says a preview link's page has no entry, so it went to a new tab: once the editor is in view, as
+ * the toast's timer runs while hidden. A blocked tab's note stays, linking the page for a new click.
  */
 export const showPreviewLinkOutcome = (href: string, path: string, opened: boolean) => {
   if (!opened) {

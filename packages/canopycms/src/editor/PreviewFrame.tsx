@@ -140,10 +140,7 @@ export const PreviewFrame = ({
   onReload?: () => void
   /** Called with what the page's handshake says of the site's header and footer. */
   onSiteChrome?: (support: SiteChromeSupport) => void
-  /**
-   * Called with the absolute URL of a link clicked in the preview, which the bridge kept the frame
-   * from following. Focus follows into the next page unless the user puts it elsewhere first.
-   */
+  /** A preview link's absolute URL, unfollowed; focus follows into the next page unless moved. */
   onNavigate?: (href: string) => void
   /** The editor is loading the next page's data: this page stays in view, dimmed and inert. */
   busy?: boolean

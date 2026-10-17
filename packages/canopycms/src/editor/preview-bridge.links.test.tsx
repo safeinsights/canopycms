@@ -20,10 +20,7 @@ const simulateFramed = () => {
   return vi.spyOn(parentWin, 'postMessage').mockImplementation(() => {})
 }
 
-/**
- * Whether each click reached the end of its dispatch still to be followed. It then stops the
- * click, since jsdom implements no navigation.
- */
+/** Whether each click was still to be followed at the end of dispatch; jsdom can't navigate. */
 const recordFollowed = () => {
   const followed: boolean[] = []
   const listener = (event: MouseEvent) => {
@@ -352,8 +349,7 @@ describe('a link clicked in the preview', () => {
     })
   })
 
-  // A page composing the hooks itself, without `usePreviewLinkNavigation`, keeps the browser's
-  // navigation; a link it stops on its own still focuses.
+  // A page composing the hooks itself keeps the browser's navigation; a link it stops still focuses.
   describe('on a page running only the focus emitter', () => {
     const FocusOnly = ({ stop }: { stop: boolean }) => {
       usePreviewFocusEmitter('/posts/here')

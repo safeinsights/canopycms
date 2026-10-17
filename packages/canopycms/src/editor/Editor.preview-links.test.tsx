@@ -72,7 +72,6 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   window.localStorage.clear()
-  // The editor names the open entry in the URL, which the next test would otherwise open.
   window.history.replaceState(null, '', '/')
 })
 
@@ -101,7 +100,6 @@ const world: EditorEntry = {
 const helloSrc = '/preview/posts/hello?branch=main'
 const worldSrc = '/preview/posts/world?branch=main'
 
-/** The API, answering every read at once. */
 const stubApi = () => {
   const branch = (name: string) => ({
     name,
