@@ -1075,6 +1075,30 @@ describe('useEntryManager', () => {
     })
   })
 
+  it('follows a Back made before the entries load, not the URL it loaded with', async () => {
+    window.location.search = '?entry=entry2'
+    const entry2: EditorEntry = {
+      ...mockEntry,
+      path: unsafeAsLogicalPath('entry2'),
+      slug: 'entry2',
+    }
+    const { result } = renderHook((props) => useEntryManager(props), {
+      initialProps: { ...defaultOptions, initialEntries: [], initialSelectedId: 'entry2' },
+      wrapper,
+    })
+    window.location.search = '?entry='
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    act(() => {
+      result.current.setEntries([mockEntry, entry2])
+    })
+
+    await waitFor(() => expect(result.current.navigatorOpen).toBe(true))
+    expect(result.current.selectedPath).toBe('')
+  })
+
   it('falls back to first entry when URL entry does not exist in entries', async () => {
     // URL contains a non-existent entry
     window.location.search = '?entry=nonexistent'
@@ -1383,7 +1407,8 @@ describe('useEntryManager', () => {
       const { result, opened } = await mountWithOpenedEntry()
       act(() => result.current.setSelectedPath(opened.path))
 
-      act(() => result.current.closeEntry('entry-deleted-elsewhere'))
+      act(() => result.current.closeEntry('entry-deleted-elsewhere', 'main'))
+      act(() => result.current.closeEntry(opened.path, 'another-branch'))
 
       expect(result.current.selectedPath).toBe(opened.path)
     })
@@ -1467,7 +1492,7 @@ describe('useEntryManager', () => {
         { wrapper, initialProps: { branchName: 'main' } },
       )
       await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
-      act(() => result.current.closeEntry(result.current.selectedPath))
+      act(() => result.current.closeEntry(result.current.selectedPath, 'main'))
       await waitFor(() => expect(result.current.selectedPath).toBe(''))
 
       rerender({ branchName: 'feature' })

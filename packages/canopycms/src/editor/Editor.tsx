@@ -137,6 +137,7 @@ import { findFieldTarget, focusFieldTarget } from './field-target'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
 import { MayHaveLandedError } from './unanswered'
+import { sanitizeBranchName } from '../paths/branch-name'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -643,7 +644,8 @@ const EditorContent: React.FC<EditorProps> = ({
     userId: userContext?.userId,
   })
   switchBranchRef.current = async (branch) => {
-    if (branchSummaries.length > 0 && !branchSummaries.some((b) => b.name === branch)) {
+    const listed = (name: string) => name === branch || name === sanitizeBranchName(branch)
+    if (branchSummaries.length > 0 && !branchSummaries.some((b) => listed(b.name))) {
       notifications.show({
         message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchNameState}”.`,
         color: 'yellow',
@@ -1312,7 +1314,7 @@ const EditorContent: React.FC<EditorProps> = ({
         setDeletingEntryReferencedBy(result.referencedBy)
         return
       }
-      if (result.ok) closeEntry(deletingEntryPath)
+      if (result.ok) closeEntry(deletingEntryPath, branchNameState)
       closeDeleteEntryModal()
     } finally {
       setDeleteInProgress(false)

@@ -121,7 +121,7 @@ const stubApi = () => {
             ok: true,
             status: 200,
             data: {
-              branches: [branch('main'), branch('feature')],
+              branches: [branch('main'), branch('feature'), branch('feature-x')],
               defaultBranch: 'main',
             },
           }),
@@ -404,6 +404,60 @@ describe('history across entries', () => {
     await forward()
     await waitFor(() => expect(urlBranch()).toBe('main'))
     expect(notifications.show).toHaveBeenCalledTimes(2)
+  })
+
+  it("switches for a Back onto a branch listed under its name's sanitized form", async () => {
+    await openEditor()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    window.history.replaceState(null, '', '/?branch=feature%2Fx&entry=content/posts/world')
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() => expect(isOpen('world')).toBe(true))
+    expect(urlBranch()).toBe('feature/x')
+    expect(notifications.show).not.toHaveBeenCalled()
+  })
+
+  it('leaves focus alone on a Back to the entry already open', async () => {
+    await openEditor()
+    await openInTree('world')
+    await waitFor(() => expect(urlEntry()).toBe(world.path))
+    const filter = screen.getByTestId('entry-nav-filter')
+    act(() => filter.focus())
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+    })
+
+    expect(document.activeElement).toBe(filter)
+  })
+
+  it('writes no URL while the page shown is not the editor', async () => {
+    await openEditor()
+    window.history.pushState(null, '', '/docs/guide')
+
+    await openInTree('world')
+    await waitFor(() => expect(isOpen('world')).toBe(true))
+
+    expect(window.location.pathname).toBe('/docs/guide')
+    expect(window.location.search).toBe('')
+  })
+
+  it("keeps the editor's branch in the URLs it writes", async () => {
+    await openEditor()
+    window.history.replaceState(null, '', '/?branch=feature&entry=content/posts/hello')
+
+    await openInTree('world')
+
+    await waitFor(() => expect(urlEntry()).toBe(world.path))
+    expect(urlBranch()).toBe('main')
   })
 
   it('opens the home page, replacing the URL, when Back returns to an entry since deleted', async () => {

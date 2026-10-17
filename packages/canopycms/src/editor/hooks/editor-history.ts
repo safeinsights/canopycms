@@ -5,16 +5,24 @@
 const POSITION_KEY = 'canopyHistoryPosition'
 
 let position: number | undefined
-let ownMoves = 0
+// Where `undoHistoryMove` lands, so the popstate arriving there is known as its own.
+let undoTarget: number | undefined
 
-const currentState = (): Record<string, unknown> => {
+const stampedPosition = (): number | undefined => {
   const state: unknown = window.history.state
-  return state !== null && typeof state === 'object' ? { ...state } : {}
+  const value =
+    state !== null && typeof state === 'object' ? Reflect.get(state, POSITION_KEY) : undefined
+  return typeof value === 'number' ? value : undefined
 }
 
-const positionIn = (state: Record<string, unknown>): number | undefined => {
-  const value = state[POSITION_KEY]
-  return typeof value === 'number' ? value : undefined
+/**
+ * Writes only the stamp: Next.js's patched history methods add its router keys and record the
+ * new URL, which they skip for state already carrying those keys.
+ */
+const write = (push: boolean, at: number, url: string) => {
+  const method = push ? window.history.pushState : window.history.replaceState
+  method.call(window.history, { [POSITION_KEY]: at }, '', url)
+  position = at
 }
 
 /** Whether two URLs name the same page, however each encodes its query. */
@@ -26,39 +34,34 @@ const samePage = (a: string, b: string): boolean => {
   )
 }
 
-/** Shows `url`, pushed or replaced, keeping Next.js's router state; never rewrites the URL shown. */
+/** The current entry's position; a stamp a host write dropped falls back to the last known. */
+const here = (): number => stampedPosition() ?? position ?? 0
+
+/** Shows `url`, pushed or replaced; never rewrites the URL already shown. */
 export function writeEditorUrl(url: string, push: boolean): void {
   if (samePage(url, window.location.href)) return
-  const state = currentState()
-  const next = (positionIn(state) ?? 0) + (push ? 1 : 0)
-  const write = push ? window.history.pushState : window.history.replaceState
-  write.call(window.history, { ...state, [POSITION_KEY]: next }, '', url)
-  position = next
+  write(push, here() + (push ? 1 : 0), url)
 }
 
 /** Stamps the history entry the editor opened on, which it did not write. */
 export function markEditorHistoryStart(): void {
-  const state = currentState()
-  if (positionIn(state) === undefined) {
-    window.history.replaceState({ ...state, [POSITION_KEY]: 0 }, '', window.location.href)
-  }
-  position = positionIn(currentState())
+  if (stampedPosition() === undefined) write(false, here(), window.location.href)
+  else position = stampedPosition()
 }
 
 /** On `popstate`: entries moved, undefined if an end is not the editor's, null for an undo's. */
 export function recordHistoryMove(): number | undefined | null {
-  const arrived = positionIn(currentState())
+  const arrived = stampedPosition()
   const moved = arrived === undefined || position === undefined ? undefined : arrived - position
+  const undone = undoTarget !== undefined && arrived === undoTarget
+  undoTarget = undefined
   position = arrived
-  if (ownMoves > 0) {
-    ownMoves -= 1
-    return null
-  }
-  return moved
+  return undone ? null : moved
 }
 
 /** Steps back over a move of `moved` entries, to the entry it left. */
 export function undoHistoryMove(moved: number): void {
-  ownMoves += 1
+  if (position === undefined) return
+  undoTarget = position - moved
   window.history.go(-moved)
 }

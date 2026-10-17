@@ -83,8 +83,8 @@ export interface UseEntryManagerReturn {
   selectedPath: string
   /** Opens an entry the user chose, adding a history entry, so Back returns to the one before. */
   setSelectedPath: (path: string) => void
-  /** Leaves no entry open if `path` is still open, as after deleting it, instead of opening the first. */
-  closeEntry: (path: string) => void
+  /** Leaves no entry open if `path` on `branch` is still open, as after deleting it. */
+  closeEntry: (path: string, branch: string) => void
   entries: EditorEntry[]
   setEntries: (entries: EditorEntry[]) => void
   collections: EditorCollection[]
@@ -359,8 +359,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   }, [])
   // No entry open, as the URL's empty `entry` asks, where a lost selection opens the home page.
   // Replaces the history entry: it follows a delete, which Back could not undo.
-  const closeEntry = useCallback((path: string) => {
-    if (selectedPathRef.current !== path) return
+  const closeEntry = useCallback((path: string, branch: string) => {
+    if (selectedPathRef.current !== path || currentBranchRef.current !== branch) return
     noEntryRequested.current = true
     selectionsByCallerRef.current += 1
     setSelectedPath('')
@@ -959,7 +959,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     // Don't update URL until we've synced from it first
     if (!hasSyncedFromUrl.current) return
     if (window.location.pathname !== editorPathRef.current) return
-    writeEditorUrl(entryUrl(selectedPath, noEntryRequested.current), push)
+    writeEditorUrl(entryUrl(selectedPath, noEntryRequested.current, currentBranchRef.current), push)
   }, [selectedPath])
 
   const entriesRef = useRef(entriesState)
@@ -1011,13 +1011,15 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       setNavigatorOpen(entry === '')
       if (!hasSyncedFromUrl.current) {
         initialUrlEntry.current = entry
+        setSelectedPath(entry ?? '')
         return
       }
-      restoredPathRef.current = entry
+      const target =
+        entry ?? resolveHomeEntry(entriesRef.current, resolvePreviewRouteRef.current)?.path ?? ''
+      if (target === selectedPathRef.current) return
+      restoredPathRef.current = target
       // A path no longer listed falls back to the home page, through the selection check above.
-      setSelectedPath(
-        entry ?? resolveHomeEntry(entriesRef.current, resolvePreviewRouteRef.current)?.path ?? '',
-      )
+      setSelectedPath(target)
       onHistoryRestoreRef.current?.()
     }
     window.addEventListener('popstate', restore)
