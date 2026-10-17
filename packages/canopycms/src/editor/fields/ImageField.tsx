@@ -44,7 +44,7 @@ export interface ImageFieldProps {
   description?: string
   value: ImageFieldValue | undefined
   onChange: (value: ImageFieldValue | undefined) => void
-  /** "W:H" aspect ratio - when set, picking/uploading a new image opens the crop step before the value commits, and Crop keeps that shape. Without it, a pick commits as is and Crop is free-form. */
+  /** "W:H" aspect ratio - when set, picking or uploading a new raster opens the crop step before the value commits, and Crop keeps that shape. Without it, a pick commits as is and Crop is free-form. */
   aspect?: string
   /** Allow empty alt text. Default: required (accessibility). */
   altOptional?: boolean
@@ -211,7 +211,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
             }}
             data-disabled={cropBlocked ? true : undefined}
             aria-disabled={cropBlocked ? true : undefined}
-            // The Tooltip names no description, so a screen reader reaches the reason here.
+            // The Tooltip describes its trigger only while it is open; this keeps the reason reachable without it.
             aria-describedby={cropBlocked ? cropReasonId : undefined}
             data-testid={`image-field-crop-${dataCanopyField}`}
           >
