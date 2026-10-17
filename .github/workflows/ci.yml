@@ -743,12 +743,36 @@ jobs:
       - uses: ./.github/actions/setup
         if: steps.filter.outputs.relevant == 'true'
 
+      # The newest base-image tar cms-base-images.yml saved on main this ISO week or last, so a seed
+      # that keeps failing leaves CI pulling fresh bases rather than building on ever-older ones.
+      # Restore only: from a pull request a save lands in that PR's own cache scope, which only its
+      # re-runs read. scripts/smoke/base-images.mjs pulls any base the Dockerfile names that the tar
+      # lacks.
+      - name: Base-image cache keys
+        id: base-images
+        if: steps.filter.outputs.relevant == 'true'
+        run: |
+          prefix="cms-base-images-${RUNNER_OS}-${RUNNER_ARCH}-"
+          echo "this-week=${prefix}$(date -u +%G-W%V)-" >> "$GITHUB_OUTPUT"
+          echo "last-week=${prefix}$(date -u -d '7 days ago' +%G-W%V)-" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the base images
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/cms-base-images
+          key: ${{ steps.base-images.outputs.this-week }}
+          restore-keys: |
+            ${{ steps.base-images.outputs.this-week }}
+            ${{ steps.base-images.outputs.last-week }}
+
       - name: Build, boot and check the CMS image
         if: steps.filter.outputs.relevant == 'true'
         run: >-
           node scripts/smoke/standalone-image.mjs
           --pm ${{ matrix.pm }}
           --work-dir "${{ runner.temp }}/standalone-image-smoke"
+          --base-images "${{ runner.temp }}/cms-base-images/base-images.tar"
 
       # The step log keeps only the last 200 lines of the container's output; this keeps all of it.
       - name: Upload the container log
