@@ -39,7 +39,7 @@ export function branchLockBannerShown(lock: BranchLockInput): boolean {
 
 /**
  * Why the branch takes no writes, with the way forward; undefined when it does take them. The
- * top bar's Save and the navigator's row locks say this, and the banner says the same at length.
+ * top bar's Save and the navigator's row locks say this; the banner describes the same lock.
  */
 export function describeBranchLock(lock: BranchLockInput): string | undefined {
   if (!branchLockBannerShown(lock)) return undefined

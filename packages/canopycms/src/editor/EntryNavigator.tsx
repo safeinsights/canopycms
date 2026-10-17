@@ -132,9 +132,10 @@ export interface EntryNavigatorProps {
   /** When true and the tree is empty, show a loading indicator instead of "No content" */
   loading?: boolean
   /**
-   * When true, replaces every row's mutation menu (create, rename, delete, reorder, add/edit
+   * When true, replaces each row's mutation menu (create, rename, delete, reorder, add/edit
    * collection) with a lock -- selection/navigation stays enabled. Set on a branch that takes no
-   * writes, where they would only 403 after the fact. Default false.
+   * writes, where they would only 403 after the fact. An entry the user may not edit keeps its own
+   * lock and gets none here. Default false.
    */
   readOnly?: boolean
   /**
@@ -749,7 +750,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const unavailableSchemaRefs = node.nodeProps?.unavailableSchemaRefs as
       | readonly string[]
       | undefined
-    // A read-only navigator says so in each row's lock, so the add-refused line is not repeated.
+    // A read-only navigator already says writes are refused, so the add-refused line is not repeated.
     const addRefused = !readOnly && !!(node.nodeProps?.addRefused as boolean | undefined)
     const isLeaf = !hasChildren || isEntry
     const selected = node.value === selectedPath
@@ -772,8 +773,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       isCollection && (onAdd || onEdit || onAddSubCollection || onDelete || canReorder)
     // An unavailable entry cannot be written, so its menu (rename, delete, reorder) is not offered.
     const entryUnavailable = node.nodeProps?.unavailable as boolean | undefined
-    // The same holds for an entry this user may not edit, on any branch: its own lock stays, since
-    // creating a branch would not lift it, and the branch lock leaves that row's slot empty.
+    // The same holds for an entry this user may not edit, on any branch: its own lock stays, since a
+    // path rule, not the branch, refuses it, and the branch lock leaves that row's slot empty.
     const entryLocked = !!(node.nodeProps?.itemReadOnly as boolean | undefined)
     const hasEntryMenu =
       isEntry &&
