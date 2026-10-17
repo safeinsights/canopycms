@@ -589,6 +589,43 @@ describe('EntryNavigator', () => {
       expect(screen.queryByTestId('branch-lock')).toBeNull()
     })
 
+    it('shows no lock on a collection row with no menu actions', () => {
+      renderEntryNavigator({
+        collections: [collection({ onAdd: undefined })],
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.getByTestId('entry-nav-item-posts')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('shows no lock on an unavailable entry', () => {
+      renderEntryNavigator({
+        collections: [collection({ onAdd: undefined, entries: [{ ...post, unavailable: true }] })],
+        expandedStateRef: { current: { 'collection:posts': true } },
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.getByTestId('entry-nav-item-hello-world')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('shows the lock on a row whose only menu action is reordering', () => {
+      renderEntryNavigator({
+        items: [post],
+        onReorderEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(
+        within(screen.getByTestId('entry-nav-item-hello-world')).getByTestId('branch-lock'),
+      ).toBeTruthy()
+    })
+
     it('shows the menu and no lock on an editing branch', () => {
       renderEntryNavigator({
         items: [post],
@@ -1530,7 +1567,7 @@ describe('EntryNavigator', () => {
       ).toBeNull()
     })
 
-    it('shows one lock, the branch one, when the whole navigator is read-only', () => {
+    it("keeps an entry's own lock, and leaves its slot empty, on a read-only navigator", () => {
       renderEntryNavigator({
         readOnly: true,
         readOnlyReason: BRANCH_REASON,
@@ -1539,8 +1576,9 @@ describe('EntryNavigator', () => {
       })
 
       const row = screen.getByTestId('entry-nav-item-locked')
-      expect(screen.queryByTestId('entry-lock')).toBeNull()
-      expect(within(row).getAllByTestId('branch-lock')).toHaveLength(1)
+      expect(within(row).getAllByTestId('entry-lock')).toHaveLength(1)
+      expect(within(row).queryByTestId('branch-lock')).toBeNull()
+      expect(within(row).queryByTestId('branch-lock-pending')).toBeNull()
     })
   })
 

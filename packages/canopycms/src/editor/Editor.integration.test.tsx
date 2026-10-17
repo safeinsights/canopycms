@@ -1711,6 +1711,84 @@ describe('Editor integration', () => {
     )
   })
 
+  it('shows each row a lock saying the branch details could not be loaded when the fetch fails', async () => {
+    // The deliberate 500 makes useBranchManager report via console.error, which vitest's console
+    // interceptor fails the run on; swallow it here.
+    mockConsole()
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        return Promise.resolve(okJson({ ok: false, status: 500 }, 500))
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'collection',
+                  logicalPath: 'content/posts',
+                  name: 'posts',
+                  label: 'Posts',
+                  entries: [{ name: 'post', format: 'json', schema: [] }],
+                },
+              ],
+              entrySchemas: {},
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  logicalPath: 'content/posts',
+                  contentId: 'abc123XYZ789',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: [],
+                  order: [],
+                },
+              ],
+              entries: [],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Editor
+        entries={[]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="prod"
+        themeOptions={{}}
+      />,
+    )
+
+    openContentPanel()
+    const lock = await waitFor(() =>
+      within(screen.getByTestId('entry-nav-item-posts')).getByTestId('branch-lock'),
+    )
+    expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toMatch(
+      /could not be loaded/,
+    )
+    expect(screen.queryAllByTestId('branch-lock-pending')).toHaveLength(0)
+  })
+
   it('grants an admin who is neither creator nor in ACL an enabled Withdraw button on a protected base branch stuck in "submitted"', async () => {
     // Recovery-flow regression: the base branch's system-branch grant is
     // disabled once protected (see EditorHeader's canPerformAction), so an

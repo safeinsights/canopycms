@@ -729,7 +729,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const entryMissing = !!(node.nodeProps?.missing as boolean | undefined)
     const entryNoPage = !!(node.nodeProps?.noPage as boolean | undefined)
     // Collection-level mutation callbacks are nulled when readOnly, same as the entry-level ones
-    // above, so hasCollectionMenu is false and the row shows its lock instead.
+    // above, so hasCollectionMenu is false; a row that would have had a menu shows its lock.
     const rawOnAdd = node.nodeProps?.onAdd as (() => void) | undefined
     const rawOnEdit = node.nodeProps?.onEdit as (() => void) | undefined
     const rawOnAddSubCollection = node.nodeProps?.onAddSubCollection as (() => void) | undefined
@@ -772,9 +772,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       isCollection && (onAdd || onEdit || onAddSubCollection || onDelete || canReorder)
     // An unavailable entry cannot be written, so its menu (rename, delete, reorder) is not offered.
     const entryUnavailable = node.nodeProps?.unavailable as boolean | undefined
-    // The same holds for an entry this user may not edit. On a read-only navigator the branch lock
-    // in the menu slot takes precedence: it is the reason the user can act on first.
-    const entryLocked = !readOnly && !!(node.nodeProps?.itemReadOnly as boolean | undefined)
+    // The same holds for an entry this user may not edit, on any branch: its own lock stays, since
+    // creating a branch would not lift it, and the branch lock leaves that row's slot empty.
+    const entryLocked = !!(node.nodeProps?.itemReadOnly as boolean | undefined)
     const hasEntryMenu =
       isEntry &&
       entryPath &&
@@ -797,6 +797,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       isEntry &&
       !!entryPath &&
       !entryUnavailable &&
+      !entryLocked &&
       !!(onDeleteEntryProp || onRenameEntryProp || onReorderEntryProp)
     const showsLockSlot = readOnly && (wouldHaveCollectionMenu || wouldHaveEntryMenu)
 

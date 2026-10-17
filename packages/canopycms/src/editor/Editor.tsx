@@ -398,6 +398,7 @@ const EditorContent: React.FC<EditorProps> = ({
     setBranchName,
     branchSummaries,
     currentBranch,
+    branchesLoadFailed,
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,
@@ -428,9 +429,10 @@ const EditorContent: React.FC<EditorProps> = ({
   // loading state during that window anyway.
   const branchContentLocked = currentBranch?.writeBlocked ?? true
 
-  // No branch answer yet (a failed fetch leaves the list empty too; the banner says that one):
-  // the lock's reason would be "details could not be loaded", which is not yet true.
   const branchLoading = !currentBranch && (branchesLoading || branchSummaries.length === 0)
+  // A row's lock reason on an unanswered branch would be "details could not be loaded", which is
+  // not yet true; once the fetch has failed it is, and the lock says so.
+  const branchRowsPending = branchLoading && !branchesLoadFailed
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
@@ -1905,7 +1907,7 @@ const EditorContent: React.FC<EditorProps> = ({
           loading={entriesInitializing}
           readOnly={branchContentLocked}
           readOnlyReason={
-            branchLoading
+            branchRowsPending
               ? undefined
               : describeBranchLock({
                   branchStatus: currentBranch?.status,
