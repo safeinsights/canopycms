@@ -406,7 +406,7 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
  * draws itself (a blocked menu item, a combobox's empty message, outside days). Outside days lose
  * Mantine's half opacity, under 4.5:1. The crop box and its handles sit on an arbitrary image, where
  * no single colour holds 3:1, so they take a white and black pair. A navigator row's lock is
- * drawn only while its row is hovered, focused (the tree focuses the `li` around the row), has focus
+ * drawn only while its row is hovered, focused (Mantine's Tree focuses the `li` around the row, on click and arrow keys), has focus
  * within, or is selected. It hides by opacity alone, so it keeps its place and stays in the tab order
  * and the accessibility tree; while hidden it takes no pointer events, so a tap on its slot reaches
  * the row.
