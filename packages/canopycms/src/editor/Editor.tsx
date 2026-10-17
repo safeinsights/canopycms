@@ -35,7 +35,8 @@ import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { CustomFieldRenderers, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
 import { PreviewPane } from './PreviewPane'
-import { previewPageKey } from './preview-path'
+import { displayPreviewPath, previewPageKey } from './preview-path'
+import { showPreviewLinkOutcome } from './components/PreviewLinkToast'
 import type { OperatingMode } from '../operating-mode'
 import { clientOperatingStrategy } from '../operating-mode/client'
 import { EditorShell } from './shell/EditorShell'
@@ -492,8 +493,8 @@ const EditorContent: React.FC<EditorProps> = ({
     setNavigatorOpen(false)
   }
   // A preview link opens its entry, or a page no entry has in a new tab. The opener is cut by hand,
-  // since `noopener` would hide whether the browser blocked the tab.
-  const openPreviewLink = (href: string) => {
+  // since `noopener` would hide whether the browser blocked the tab. True when the frame moves on.
+  const openPreviewLink = (href: string): boolean => {
     const mount = { basePath, previewPrefix }
     const base = window.location.href
     const page = previewPageKey(href, mount, base)
@@ -505,19 +506,14 @@ const EditorContent: React.FC<EditorProps> = ({
           )
     if (entry) {
       openEntry(entry.path)
-      return
+      return entry.path !== selectedPath
     }
     const opened = window.open(href, '_blank')
     if (opened) opened.opener = null
-    notifications.show(
-      opened
-        ? { message: 'That page has no entry to edit, so it opened in a new tab.', color: 'blue' }
-        : {
-            message:
-              'That page has no entry to edit, and your browser blocked opening it in a new tab.',
-            color: 'yellow',
-          },
-    )
+    const url = new URL(href)
+    const shown = url.origin === window.location.origin ? `${url.pathname}${url.search}` : href
+    showPreviewLinkOutcome(href, displayPreviewPath(shown, mount), Boolean(opened))
+    return false
   }
 
   // An open overlay docks open, as the URL's ask for no entry does at load; `navigatorOpen` is only

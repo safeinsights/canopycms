@@ -6,7 +6,7 @@
  * (`pnpm lint:bundle`); the editor's side is `PreviewFrame.tsx`.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { ResolvedReferenceMeta } from '../entry-schema'
 import { createFieldProps } from './field-props'
@@ -170,7 +170,7 @@ export const useCanopyPreview = <T,>(opts: {
   })
   const highlightEnabled = usePreviewHighlight(bridgeOpts)
   usePreviewFocusEmitter(resolvedPath, bridgeOpts)
-  usePreviewLinkNavigation(bridgeOpts)
+  usePreviewLinkNavigation({ editorOrigin, highlighting: highlightEnabled })
 
   const fieldProps = createFieldProps<T>()
 
@@ -369,8 +369,8 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
 
 /**
  * Where a click's link leaves the page for: `browser` when the browser opens it elsewhere, else
- * this origin (`navigate`) or another (`open`). `undefined` for no link, a same-page fragment, or
- * a scheme other than http(s).
+ * this origin (`navigate`) or another (`open`). `undefined` for no link, this page itself (a fragment or
+ * a reload), or a scheme other than http(s).
  */
 type LinkClick = { kind: 'browser' } | { kind: 'navigate' | 'open'; href: string }
 
@@ -388,7 +388,7 @@ const linkClick = (event: MouseEvent): LinkClick | undefined => {
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined
   const here = new URL(window.location.href)
-  if (url.hash && url.href.split('#')[0] === here.href.split('#')[0]) return undefined
+  if (url.href.split('#')[0] === here.href.split('#')[0]) return undefined
   const target =
     anchor.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target')
   if (
@@ -405,6 +405,11 @@ const linkClick = (event: MouseEvent): LinkClick | undefined => {
   return { kind: url.origin === here.origin ? 'navigate' : 'open', href: url.href }
 }
 
+const isInMark = (event: MouseEvent) =>
+  event
+    .composedPath()
+    .some((node) => node instanceof Element && node.hasAttribute('data-canopy-path'))
+
 /** Clicks `usePreviewLinkNavigation` followed itself, so click-to-focus leaves them be. */
 const followedLinkClicks = new WeakSet<Event>()
 
@@ -413,8 +418,12 @@ const followedLinkClicks = new WeakSet<Event>()
  * route for a public page that may refuse framing. Captured on the window, so it runs before the
  * page's own handlers, a client router's included.
  */
-const usePreviewLinkNavigation = (opts?: { editorOrigin?: string }) => {
-  const editorOrigin = opts?.editorOrigin
+const usePreviewLinkNavigation = (opts: { editorOrigin?: string; highlighting: boolean }) => {
+  const editorOrigin = opts.editorOrigin
+  const highlighting = useRef(opts.highlighting)
+  useEffect(() => {
+    highlighting.current = opts.highlighting
+  })
   useEffect(() => {
     if (window.parent === window) return
     const targetOrigin = resolveMessageOrigin(editorOrigin)
@@ -423,6 +432,8 @@ const usePreviewLinkNavigation = (opts?: { editorOrigin?: string }) => {
     // as a site embedding a public page, would drop the message and leave every link dead.
     let connected = false
     const handleMessage = (event: MessageEvent) => {
+      const type = (event.data as { type?: unknown } | null)?.type
+      if (type !== CANOPY_PREVIEW_HIGHLIGHT && type !== CANOPY_PREVIEW_MESSAGE) return
       if (isTrustedEditorMessage(event, editorOrigin)) connected = true
     }
     const handleClick = (event: MouseEvent) => {
@@ -430,6 +441,8 @@ const usePreviewLinkNavigation = (opts?: { editorOrigin?: string }) => {
       const link = linkClick(event)
       if (link?.kind !== 'navigate' && link?.kind !== 'open') return
       event.preventDefault()
+      // While fields are outlined, a marked link is a field to pick, which click-to-focus does.
+      if (highlighting.current && isInMark(event)) return
       followedLinkClicks.add(event)
       if (link.kind === 'open') {
         window.open(link.href, '_blank', 'noopener,noreferrer')

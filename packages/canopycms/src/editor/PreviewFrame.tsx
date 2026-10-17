@@ -140,8 +140,11 @@ export const PreviewFrame = ({
   onReload?: () => void
   /** Called with what the page's handshake says of the site's header and footer. */
   onSiteChrome?: (support: SiteChromeSupport) => void
-  /** Called with the absolute URL of a link clicked in the preview, which the page did not follow. */
-  onNavigate?: (href: string) => void
+  /**
+   * Called with the absolute URL of a link clicked in the preview, which the page did not follow.
+   * Returning true says the frame moves to that page, so focus follows into it once it loads.
+   */
+  onNavigate?: (href: string) => boolean
   /** The editor is loading the next page's data: this page stays in view, dimmed and inert. */
   busy?: boolean
 }) => {
@@ -160,10 +163,15 @@ export const PreviewFrame = ({
 
   // A new src is a new page, with a handshake of its own.
   const [prevSrc, setPrevSrc] = useState(src)
+  // The frame a followed link was clicked in is replaced, which drops focus to the editor's body.
+  const [followingLink, setFollowingLink] = useState(false)
+  const [focusOnLoad, setFocusOnLoad] = useState(false)
   if (src !== prevSrc) {
     setPrevSrc(src)
     setHandshake('waiting')
     setLoaded(false)
+    setFocusOnLoad(followingLink)
+    setFollowingLink(false)
   }
 
   useEffect(() => {
@@ -292,7 +300,7 @@ export const PreviewFrame = ({
           onMarksRef.current?.({ count, ...(isMarkPaths(paths) ? { paths } : {}) })
         }
       } else if (isPreviewNavigateMessage(event.data, previewOrigin)) {
-        onNavigateRef.current?.(event.data.href)
+        if (onNavigateRef.current?.(event.data.href)) setFollowingLink(true)
       }
     }
     window.addEventListener('message', handleMessage)
@@ -395,6 +403,10 @@ export const PreviewFrame = ({
           post()
           postHighlight()
           setLoaded(true)
+          if (focusOnLoad) {
+            iframeRef.current?.focus()
+            setFocusOnLoad(false)
+          }
         }}
       />
     </div>

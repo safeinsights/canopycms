@@ -68,7 +68,7 @@ test.describe('Links in the preview', () => {
       expect(new URL(tab.url()).pathname).toBe('/edit')
       await tab.close()
       await expect(
-        page.getByText('That page has no entry to edit, so it opened in a new tab.'),
+        page.getByText('/edit has no entry here, so it opened in a new tab.'),
       ).toBeVisible()
       await expect(preview.locator('[data-canopy-path="title"]')).toContainText('Home Page')
     })

@@ -59,11 +59,11 @@ const Page = ({ children, editorOrigin }: { children: React.ReactNode; editorOri
 }
 
 /** A message from the parent frame, as the editor sends on load: trusted when `from` is its origin. */
-const editorSays = (from: string) =>
+const editorSays = (from: string, highlight = false) =>
   act(() => {
     window.dispatchEvent(
       new MessageEvent('message', {
-        data: { type: CANOPY_PREVIEW_HIGHLIGHT, enabled: false },
+        data: { type: CANOPY_PREVIEW_HIGHLIGHT, enabled: highlight },
         origin: from,
         source: window.parent,
       }),
@@ -177,6 +177,8 @@ describe('a link clicked in the preview', () => {
       ['a target', { href: '/posts/other', target: '_blank' }],
       ['download', { href: '/posts/other', download: '' }],
       ['a same-page fragment', { href: '#section' }],
+      ['an empty fragment', { href: '#' }],
+      ['an empty href, which reloads this page', { href: '' }],
       ['mailto:', { href: 'mailto:someone@example.com' }],
       ['tel:', { href: 'tel:+15550100' }],
       ['javascript:', { href: 'javascript:void(0)' }],
@@ -219,6 +221,24 @@ describe('a link clicked in the preview', () => {
       expect(followed).toEqual([true])
       expect(sent(CANOPY_PREVIEW_NAVIGATE)).toEqual([])
       expect(open).not.toHaveBeenCalled()
+    })
+
+    it("when the parent frame sends something other than the editor's messages", () => {
+      const { getByText, followed, sent } = setup(
+        <a href="/posts/other">Other</a>,
+        undefined,
+        false,
+      )
+      for (const data of [{ type: 'resizer:init' }, 'hello', null]) {
+        act(() => {
+          window.dispatchEvent(new MessageEvent('message', { data, origin, source: window.parent }))
+        })
+      }
+
+      fireEvent.click(getByText('Other'))
+
+      expect(followed).toEqual([true])
+      expect(sent(CANOPY_PREVIEW_NAVIGATE)).toEqual([])
     })
 
     it('when the page is not framed', () => {
@@ -278,6 +298,38 @@ describe('a link clicked in the preview', () => {
         [{ type: CANOPY_PREVIEW_FOCUS, entryPath: '/posts/here', fieldPath: 'title' }, origin],
         [{ type: CANOPY_PREVIEW_FOCUS, entryPath: '/posts/here', fieldPath: 'title' }, origin],
       ])
+    })
+  })
+
+  describe('while fields are highlighted', () => {
+    it('focuses a marked link instead of following it', () => {
+      const { getByText, followed, sent, open } = setup(
+        <div data-canopy-path="cta">
+          <a href="/posts/other">Get started</a>
+          <a href="https://elsewhere.example/">Elsewhere</a>
+        </div>,
+      )
+      editorSays(origin, true)
+
+      fireEvent.click(getByText('Get started'))
+      fireEvent.click(getByText('Elsewhere'))
+
+      expect(followed).toEqual([false, false])
+      expect(sent(CANOPY_PREVIEW_NAVIGATE)).toEqual([])
+      expect(open).not.toHaveBeenCalled()
+      expect(sent(CANOPY_PREVIEW_FOCUS)).toEqual([
+        [{ type: CANOPY_PREVIEW_FOCUS, entryPath: '/posts/here', fieldPath: 'cta' }, origin],
+        [{ type: CANOPY_PREVIEW_FOCUS, entryPath: '/posts/here', fieldPath: 'cta' }, origin],
+      ])
+    })
+
+    it('still follows a link outside any mark', () => {
+      const { getByText, sent } = setup(<a href="/posts/other">Other</a>)
+      editorSays(origin, true)
+
+      fireEvent.click(getByText('Other'))
+
+      expect(sent(CANOPY_PREVIEW_NAVIGATE)).toHaveLength(1)
     })
   })
 

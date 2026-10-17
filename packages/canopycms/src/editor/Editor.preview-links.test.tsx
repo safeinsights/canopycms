@@ -1,12 +1,13 @@
 import React from 'react'
 
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
 import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
+import { MantineProvider } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 
 import { CANOPY_PREVIEW_NAVIGATE, CANOPY_PREVIEW_READY } from './preview-bridge'
@@ -260,32 +261,85 @@ describe('a link clicked in the preview', () => {
     expect(notifications.show).not.toHaveBeenCalled()
   })
 
+  it('moves focus into the next page once it loads, as following a link does', async () => {
+    await openHello()
+
+    navigate(`${origin}/posts/world`)
+
+    await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(worldSrc))
+    expect(document.activeElement).not.toBe(iframe())
+    fireEvent.load(iframe() as HTMLIFrameElement)
+    expect(document.activeElement).toBe(iframe())
+  })
+
+  it('leaves focus alone when the next page comes from anywhere but a followed link', async () => {
+    await openHello()
+    // A link to the open entry's own page moves nothing, so it owes the next page no focus.
+    navigate(`${origin}/posts/hello`)
+    fireEvent.click(screen.getByTestId('content-panel-toggle'))
+    fireEvent.click(await screen.findByTestId('entry-nav-item-world'))
+
+    await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(worldSrc))
+    fireEvent.load(iframe() as HTMLIFrameElement)
+    expect(document.activeElement).not.toBe(iframe())
+  })
+
   it('opens a page no entry has in a new tab, cut off from the editor, and says so', async () => {
     await openHello()
     const tab = { opener: window } as unknown as Window
     const open = vi.spyOn(window, 'open').mockReturnValue(tab)
 
-    navigate(`${origin}/posts`)
+    navigate(`${origin}/posts?page=2#top`)
 
-    expect(open).toHaveBeenCalledWith(`${origin}/posts`, '_blank')
+    expect(open).toHaveBeenCalledWith(`${origin}/posts?page=2#top`, '_blank')
     expect(tab.opener).toBeNull()
-    expect(notifications.show).toHaveBeenCalledWith({
-      message: 'That page has no entry to edit, so it opened in a new tab.',
-      color: 'blue',
-    })
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith({
+        color: 'blue',
+        message: '/posts?page=2 has no entry here, so it opened in a new tab.',
+      }),
+    )
     expect(iframe()?.getAttribute('src')).toBe(helloSrc)
   })
 
-  it('says so when the browser blocks the new tab', async () => {
+  it('says so only once the editor is in view again, since the new tab takes the window', async () => {
+    await openHello()
+    vi.spyOn(window, 'open').mockReturnValue({ opener: null } as unknown as Window)
+    let visibility: DocumentVisibilityState = 'visible'
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+
+    navigate(`${origin}/posts`)
+    visibility = 'hidden'
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(notifications.show).not.toHaveBeenCalled()
+
+    visibility = 'visible'
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(notifications.show).toHaveBeenCalledTimes(1)
+  })
+
+  it('says so until dismissed, with a link to the page, when the browser blocks the new tab', async () => {
     await openHello()
     vi.spyOn(window, 'open').mockReturnValue(null)
 
     navigate(`${origin}/posts`)
 
-    expect(notifications.show).toHaveBeenCalledWith({
-      message: 'That page has no entry to edit, and your browser blocked opening it in a new tab.',
-      color: 'yellow',
-    })
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ color: 'yellow', autoClose: false }),
+    )
+    const [[toast]] = vi.mocked(notifications.show).mock.calls
+    render(<MantineProvider>{toast.message}</MantineProvider>)
+    expect(
+      screen.getByText('/posts has no entry here, and your browser blocked the new tab.', {
+        exact: false,
+      }),
+    ).toBeTruthy()
+    const link = screen.getByRole('link', { name: 'Open /posts' })
+    expect(link.getAttribute('href')).toBe(`${origin}/posts`)
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer')
   })
 
   it.each([
@@ -298,7 +352,8 @@ describe('a link clicked in the preview', () => {
     const open = vi.spyOn(window, 'open')
 
     navigate(href, from, source)
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    // Longer than the toast's wait for the editor to be in view.
+    await new Promise((resolve) => setTimeout(resolve, 400))
 
     expect(worldOpen()).toBeNull()
     expect(open).not.toHaveBeenCalled()
