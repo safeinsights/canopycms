@@ -1,9 +1,10 @@
 import React, { useEffect, useRef } from 'react'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CANOPY_PREVIEW_FOCUS,
+  CANOPY_PREVIEW_HIGHLIGHT,
   CANOPY_PREVIEW_NAVIGATE,
   useCanopyPreview,
   usePreviewFocusEmitter,
@@ -57,12 +58,29 @@ const Page = ({ children, editorOrigin }: { children: React.ReactNode; editorOri
   return <main>{children}</main>
 }
 
-const setup = (children: React.ReactNode, editorOrigin?: string) => {
+/** A message from the parent frame, as the editor sends on load: trusted when `from` is its origin. */
+const editorSays = (from: string) =>
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: CANOPY_PREVIEW_HIGHLIGHT, enabled: false },
+        origin: from,
+        source: window.parent,
+      }),
+    )
+  })
+
+const setup = (
+  children: React.ReactNode,
+  editorOrigin?: string,
+  connect: string | false = editorOrigin ?? window.location.origin,
+) => {
   const post = simulateFramed()
   const open = vi.spyOn(window, 'open').mockImplementation(() => null)
   const recorder = recordFollowed()
   stopRecording = recorder.stop
   const utils = render(<Page editorOrigin={editorOrigin}>{children}</Page>)
+  if (connect) editorSays(connect)
   const sent = (type: string) =>
     post.mock.calls.filter(([message]) => (message as { type?: string }).type === type)
   return { ...utils, post, open, followed: recorder.followed, sent }
@@ -107,6 +125,20 @@ describe('a link clicked in the preview', () => {
       'noopener,noreferrer',
     )
     expect(sent(CANOPY_PREVIEW_NAVIGATE)).toEqual([])
+  })
+
+  it('takes an image map area as a link', () => {
+    const { container, sent } = setup(
+      <map name="m">
+        <area href="/posts/area" alt="Area" shape="rect" coords="0,0,1,1" />
+      </map>,
+    )
+
+    fireEvent.click(container.querySelector('area') as HTMLAreaElement)
+
+    expect(sent(CANOPY_PREVIEW_NAVIGATE)).toEqual([
+      [{ type: CANOPY_PREVIEW_NAVIGATE, href: `${origin}/posts/area` }, origin],
+    ])
   })
 
   it('finds a link inside a shadow root', () => {
@@ -170,6 +202,23 @@ describe('a link clicked in the preview', () => {
 
       expect(followed).toEqual([true])
       expect(sent(CANOPY_PREVIEW_NAVIGATE)).toEqual([])
+    })
+
+    it.each([
+      ['before the editor has sent anything', false],
+      ['when the parent frame is not the editor', 'https://embedder.example'],
+    ] as const)('%s', (_, connect) => {
+      const { getByText, followed, sent, open } = setup(
+        <a href="/posts/other">Other</a>,
+        undefined,
+        connect,
+      )
+
+      fireEvent.click(getByText('Other'))
+
+      expect(followed).toEqual([true])
+      expect(sent(CANOPY_PREVIEW_NAVIGATE)).toEqual([])
+      expect(open).not.toHaveBeenCalled()
     })
 
     it('when the page is not framed', () => {

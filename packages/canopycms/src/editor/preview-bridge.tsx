@@ -378,7 +378,7 @@ const linkClick = (event: MouseEvent): LinkClick | undefined => {
   // The composed path reaches a link inside a shadow root, which the retargeted `target` hides.
   const anchor = event
     .composedPath()
-    .find((node): node is Element => node instanceof Element && node.matches('a[href]'))
+    .find((node): node is Element => node instanceof Element && node.matches('a[href], area[href]'))
   if (!anchor) return undefined
   let url: URL
   try {
@@ -419,8 +419,14 @@ const usePreviewLinkNavigation = (opts?: { editorOrigin?: string }) => {
     if (window.parent === window) return
     const targetOrigin = resolveMessageOrigin(editorOrigin)
     if (isOpaqueOrigin(targetOrigin)) return
+    // Links stay the browser's until the editor speaks: a frame that isn't a trusted editor, such
+    // as a site embedding a public page, would drop the message and leave every link dead.
+    let connected = false
+    const handleMessage = (event: MessageEvent) => {
+      if (isTrustedEditorMessage(event, editorOrigin)) connected = true
+    }
     const handleClick = (event: MouseEvent) => {
-      if (event.defaultPrevented) return
+      if (!connected || event.defaultPrevented) return
       const link = linkClick(event)
       if (link?.kind !== 'navigate' && link?.kind !== 'open') return
       event.preventDefault()
@@ -432,8 +438,12 @@ const usePreviewLinkNavigation = (opts?: { editorOrigin?: string }) => {
       const msg: PreviewNavigateMessage = { type: CANOPY_PREVIEW_NAVIGATE, href: link.href }
       window.parent.postMessage(msg, targetOrigin)
     }
+    window.addEventListener('message', handleMessage)
     window.addEventListener('click', handleClick, true)
-    return () => window.removeEventListener('click', handleClick, true)
+    return () => {
+      window.removeEventListener('message', handleMessage)
+      window.removeEventListener('click', handleClick, true)
+    }
   }, [editorOrigin])
 }
 
