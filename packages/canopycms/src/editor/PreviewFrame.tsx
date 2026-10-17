@@ -8,6 +8,7 @@ import {
   CANOPY_PREVIEW_HIGHLIGHT,
   CANOPY_PREVIEW_MARKS,
   CANOPY_PREVIEW_MESSAGE,
+  CANOPY_PREVIEW_NAVIGATE,
   CANOPY_PREVIEW_READY,
   type DraftUpdateMessage,
   type HighlightMessage,
@@ -15,6 +16,7 @@ import {
   MARK_REPORT_LIMITS,
   type PreviewErrorMessage,
   type PreviewMarksMessage,
+  type PreviewNavigateMessage,
   type PreviewReadyMessage,
   resolveMessageOrigin,
 } from './preview-bridge'
@@ -63,6 +65,22 @@ const isMarkPaths = (paths: unknown): paths is string[] =>
   paths.length <= MARK_REPORT_LIMITS.paths &&
   paths.every((path) => typeof path === 'string' && path.length <= MARK_REPORT_LIMITS.pathLength)
 
+/** Only http(s) on the preview's origin, so the editor never opens a `javascript:` URL or another site. */
+const isPreviewNavigateMessage = (
+  data: unknown,
+  previewOrigin: string,
+): data is PreviewNavigateMessage => {
+  if (typeof data !== 'object' || data === null) return false
+  const { type, href } = data as Partial<Record<keyof PreviewNavigateMessage, unknown>>
+  if (type !== CANOPY_PREVIEW_NAVIGATE || typeof href !== 'string') return false
+  try {
+    const url = new URL(href)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === previewOrigin
+  } catch {
+    return false
+  }
+}
+
 const sendDraftUpdate = (
   iframe: HTMLIFrameElement | null,
   message: DraftUpdateMessage,
@@ -94,6 +112,7 @@ export const PreviewFrame = ({
   iframeStyle,
   onReload,
   onSiteChrome,
+  onNavigate,
   busy = false,
 }: {
   src: string
@@ -121,6 +140,8 @@ export const PreviewFrame = ({
   onReload?: () => void
   /** Called with what the page's handshake says of the site's header and footer. */
   onSiteChrome?: (support: SiteChromeSupport) => void
+  /** A preview link's absolute URL, unfollowed; focus follows into the next page unless moved. */
+  onNavigate?: (href: string) => void
   /** The editor is loading the next page's data: this page stays in view, dimmed and inert. */
   busy?: boolean
 }) => {
@@ -139,10 +160,15 @@ export const PreviewFrame = ({
 
   // A new src is a new page, with a handshake of its own.
   const [prevSrc, setPrevSrc] = useState(src)
+  // The frame a followed link was clicked in is replaced, which drops focus to the editor's body.
+  const [followingLink, setFollowingLink] = useState(false)
+  const [focusOnLoad, setFocusOnLoad] = useState(false)
   if (src !== prevSrc) {
     setPrevSrc(src)
     setHandshake('waiting')
     setLoaded(false)
+    setFocusOnLoad(followingLink)
+    setFollowingLink(false)
   }
 
   useEffect(() => {
@@ -212,17 +238,30 @@ export const PreviewFrame = ({
   const onPreviewErrorRef = useRef(onPreviewError)
   const onMarksRef = useRef(onMarks)
   const onSiteChromeRef = useRef(onSiteChrome)
+  const onNavigateRef = useRef(onNavigate)
   useEffect(() => {
     postRef.current = post
     postHighlightRef.current = postHighlight
     onPreviewErrorRef.current = onPreviewError
     onMarksRef.current = onMarks
     onSiteChromeRef.current = onSiteChrome
+    onNavigateRef.current = onNavigate
   })
 
   useEffect(() => {
     if (handshake === 'missing') onSiteChromeRef.current?.('unanswered')
   }, [handshake])
+
+  // Focus the user puts anywhere before the next page loads is theirs to keep.
+  useEffect(() => {
+    if (!followingLink && !focusOnLoad) return
+    const keep = () => {
+      setFollowingLink(false)
+      setFocusOnLoad(false)
+    }
+    document.addEventListener('focusin', keep)
+    return () => document.removeEventListener('focusin', keep)
+  }, [followingLink, focusOnLoad])
 
   useEffect(() => {
     post()
@@ -268,6 +307,9 @@ export const PreviewFrame = ({
         if (typeof count === 'number' && Number.isInteger(count) && count >= 0) {
           onMarksRef.current?.({ count, ...(isMarkPaths(paths) ? { paths } : {}) })
         }
+      } else if (isPreviewNavigateMessage(event.data, previewOrigin)) {
+        onNavigateRef.current?.(event.data.href)
+        setFollowingLink(true)
       }
     }
     window.addEventListener('message', handleMessage)
@@ -370,6 +412,10 @@ export const PreviewFrame = ({
           post()
           postHighlight()
           setLoaded(true)
+          if (focusOnLoad) {
+            iframeRef.current?.focus()
+            setFocusOnLoad(false)
+          }
         }}
       />
     </div>

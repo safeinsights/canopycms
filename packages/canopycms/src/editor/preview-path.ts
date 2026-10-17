@@ -121,3 +121,26 @@ export const displayPreviewPath = (src: string, mount: PreviewMount = {}): strin
     ? `//${parsed.host}${path}`
     : `${parsed.protocol}//${parsed.host}${path}`
 }
+
+/**
+ * The page `url` shows, as origin plus `displayPreviewPath` without a trailing slash, so a preview
+ * link and the entry `src` framing its page match, under the `previewPrefix` mount or not.
+ */
+export const previewPageKey = (
+  url: string,
+  mount: PreviewMount,
+  base: string,
+): string | undefined => {
+  let parsed: URL
+  try {
+    parsed = new URL(url, base)
+  } catch {
+    return undefined
+  }
+  // A relative mount is a path on the editor's origin, so a URL there is matched to it as a path.
+  const spelled =
+    splitPreviewPrefix(parsed.href, mount) || parsed.origin !== new URL(base).origin
+      ? parsed.href
+      : `${parsed.pathname}${parsed.search}`
+  return `${parsed.origin}${normalizePreviewPath(displayPreviewPath(spelled, mount))}`
+}
