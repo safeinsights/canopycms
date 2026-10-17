@@ -2,24 +2,34 @@
 
 import React, { useEffect, useId, useRef, useState } from 'react'
 
-import { Alert, Button, Group, Stack, Text, TextInput } from '@mantine/core'
+import {
+  Alert,
+  Button,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  TextInput,
+  Tooltip,
+  VisuallyHidden,
+} from '@mantine/core'
 import { Dropzone, type FileRejection } from '@mantine/dropzone'
 import { IconAlertCircle, IconPhoto, IconPhotoOff, IconUpload } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
 import { EDITOR_THUMBNAIL_WIDTHS } from '../../assets/editor-thumbnail-widths'
-import { isAssetStoreSrc } from '../../assets/asset-url'
 import type { CropRect } from '../../assets/transform-directives'
 import type { ImageFieldValue } from '../../config'
 import { useAssetContext } from '../context'
 import { CropStep } from '../media/CropStep'
+import { cropBlockedReason } from '../media/crop-availability'
 import { editorImageSrc } from '../media/editor-image-src'
-import { parseAspectRatio } from '../media/crop-math'
+import { isFullFrameCrop, parseAspectRatio } from '../media/crop-math'
 import { MediaLibrary } from '../media/MediaLibrary'
 import { useAssetUpload } from '../media/useAssetUpload'
 import { ACCEPTED_IMAGE_MIME_TYPES, MAX_UPLOAD_BYTES } from '../media/upload-constants'
 import { useFieldCommentControl } from '../comments/field-comment-context'
-import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { groupDescriptionProps } from './FieldDescription'
 import { FieldLabel } from './FieldLabel'
 
 interface ImageFieldErrors {
@@ -34,7 +44,7 @@ export interface ImageFieldProps {
   description?: string
   value: ImageFieldValue | undefined
   onChange: (value: ImageFieldValue | undefined) => void
-  /** "W:H" aspect ratio - when set, picking/uploading a new image opens the crop step before the value commits, and a "Crop" button appears on the filled state. */
+  /** "W:H" aspect ratio - when set, picking or uploading a new raster opens the crop step before the value commits, and Crop keeps that shape. Without it, a pick commits as is and Crop is free-form. */
   aspect?: string
   /** Allow empty alt text. Default: required (accessibility). */
   altOptional?: boolean
@@ -83,8 +93,8 @@ export const ImageField: React.FC<ImageFieldProps> = ({
   const previewSrc = value
     ? editorImageSrc(value.src, baseUrl, { width: PREVIEW_WIDTH, crop: value.crop })
     : undefined
-  // `assetUrl` never applies a crop to a src outside the asset store, so one stored there never renders.
-  const canCrop = aspectRatio !== undefined && !!value && isAssetStoreSrc(value.src)
+  const cropBlocked = value ? cropBlockedReason(value.src) : undefined
+  const cropReasonId = `${inputId}-crop-reason`
   // Broken-preview fallback, mirroring AssetCard.tsx's thumbnail fallback (same
   // icon/copy, same reset-during-render pattern). Covers both an asset broken
   // at upload time and a transform failing at render time.
@@ -123,7 +133,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
 
   const handleAssetReady = (asset: AssetRecord) => {
     setPickerOpen(false)
-    if (aspectRatio !== undefined) {
+    if (aspectRatio !== undefined && !cropBlockedReason(asset.src)) {
       setCropRequest({ kind: 'new', asset })
     } else {
       commitAsset(asset)
@@ -154,11 +164,15 @@ export const ImageField: React.FC<ImageFieldProps> = ({
     field?.focus()
   }
 
+  // A whole-frame rectangle stores no crop: it would only turn the image's URL into a derivative
+  // that looks the same, and it is how an editor takes a crop back off.
   const handleCropConfirm = (rect: CropRect) => {
+    const crop = isFullFrameCrop(rect) ? undefined : rect
     if (cropRequest?.kind === 'new') {
-      commitAsset(cropRequest.asset, rect)
+      commitAsset(cropRequest.asset, crop)
     } else if (cropRequest?.kind === 'existing' && value) {
-      edit({ ...value, crop: rect })
+      const { crop: _previous, ...rest } = value
+      edit(crop ? { ...rest, crop } : rest)
     }
     setCropRequest(null)
   }
@@ -171,9 +185,58 @@ export const ImageField: React.FC<ImageFieldProps> = ({
         : ''
   const cropInitial = cropRequest?.kind === 'existing' ? value?.crop : undefined
 
+  const actions =
+    hasValue && !readOnly ? (
+      <>
+        <Button
+          size="compact-sm"
+          variant="light"
+          onClick={() => setPickerOpen(true)}
+          data-testid={`image-field-replace-${dataCanopyField}`}
+        >
+          Replace
+        </Button>
+        <Tooltip
+          label={cropBlocked}
+          disabled={!cropBlocked}
+          position="bottom-end"
+          multiline
+          maw={280}
+        >
+          <Button
+            size="compact-sm"
+            variant="light"
+            onClick={() => {
+              if (!cropBlocked) setCropRequest({ kind: 'existing' })
+            }}
+            data-disabled={cropBlocked ? true : undefined}
+            aria-disabled={cropBlocked ? true : undefined}
+            // The Tooltip describes its trigger only while it is open; this keeps the reason reachable without it.
+            aria-describedby={cropBlocked ? cropReasonId : undefined}
+            data-testid={`image-field-crop-${dataCanopyField}`}
+          >
+            Crop
+          </Button>
+        </Tooltip>
+        {cropBlocked && <VisuallyHidden id={cropReasonId}>{cropBlocked}</VisuallyHidden>}
+        <Button
+          size="compact-sm"
+          variant="subtle"
+          color="red"
+          onClick={handleRemove}
+          data-testid={`image-field-remove-${dataCanopyField}`}
+        >
+          Remove
+        </Button>
+      </>
+    ) : undefined
+
   return (
-    <Stack
-      gap={4}
+    <Paper
+      withBorder
+      p="md"
+      bg="var(--canopy-surface-subtle)"
+      shadow="xs"
       data-canopy-field={dataCanopyField}
       data-testid={`image-field-${dataCanopyField}`}
       {...groupDescriptionProps(inputId, description)}
@@ -182,157 +245,136 @@ export const ImageField: React.FC<ImageFieldProps> = ({
       data-removal-focus
       tabIndex={-1}
     >
-      <FieldLabel label={label} commentControl={commentControl} />
-      <FieldDescription baseId={inputId} description={description} />
+      <Stack gap="sm">
+        <FieldLabel
+          label={label}
+          description={description}
+          descriptionBaseId={inputId}
+          commentControl={commentControl}
+          actions={actions}
+        />
 
-      {!hasValue && readOnly ? (
-        <Text size="sm" c="dimmed" data-testid={`image-field-empty-${dataCanopyField}`}>
-          No image
-        </Text>
-      ) : !hasValue ? (
-        <Stack gap="xs">
-          <Dropzone
-            onDrop={(files) => void handleDrop(files)}
-            onReject={handleReject}
-            maxSize={MAX_UPLOAD_BYTES}
-            accept={ACCEPTED_IMAGE_MIME_TYPES}
-            loading={upload.uploading}
-            multiple={false}
-            data-testid={`image-field-dropzone-${dataCanopyField}`}
-          >
-            <Group justify="center" gap="xs" py="xs" style={{ pointerEvents: 'none' }}>
-              <IconUpload size={18} />
-              <Text size="xs">Drop an image here, or click to browse</Text>
-            </Group>
-          </Dropzone>
-          <Group justify="center">
-            <Button
-              variant="light"
-              leftSection={<IconPhoto size={14} />}
-              onClick={() => setPickerOpen(true)}
-              data-testid={`image-field-browse-library-${dataCanopyField}`}
+        {!hasValue && readOnly ? (
+          <Text size="sm" c="dimmed" data-testid={`image-field-empty-${dataCanopyField}`}>
+            No image
+          </Text>
+        ) : !hasValue ? (
+          <Stack gap="xs">
+            <Dropzone
+              onDrop={(files) => void handleDrop(files)}
+              onReject={handleReject}
+              maxSize={MAX_UPLOAD_BYTES}
+              accept={ACCEPTED_IMAGE_MIME_TYPES}
+              loading={upload.uploading}
+              multiple={false}
+              data-testid={`image-field-dropzone-${dataCanopyField}`}
             >
-              Browse library
-            </Button>
-          </Group>
-          {(upload.error || dropError) && (
-            <Alert icon={<IconAlertCircle size={16} />} color="red">
-              {upload.error || dropError}
-            </Alert>
-          )}
-          {errors?.src && (
-            <Text size="xs" c="var(--canopy-danger-text)">
-              {errors.src}
-            </Text>
-          )}
-        </Stack>
-      ) : (
-        <Stack gap="xs">
-          {previewFailed ? (
-            <div
-              data-testid={`image-field-preview-fallback-${dataCanopyField}`}
-              style={{
-                width: PREVIEW_WIDTH,
-                height: 160,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 4,
-                borderRadius: 'var(--mantine-radius-sm)',
-                background: 'var(--canopy-surface-muted)',
-              }}
-            >
-              <IconPhotoOff size={28} stroke={1.5} color="var(--mantine-color-dimmed)" />
-              <Text size="xs" c="dimmed">
-                Preview unavailable
-              </Text>
-            </div>
-          ) : (
-            <img
-              src={previewSrc}
-              alt={value!.alt}
-              style={{
-                maxWidth: PREVIEW_WIDTH,
-                maxHeight: PREVIEW_WIDTH,
-                borderRadius: 'var(--mantine-radius-sm)',
-                display: 'block',
-              }}
-              onError={() => setPreviewFailed(true)}
-            />
-          )}
-          {errors?.src && (
-            <Text size="xs" c="var(--canopy-danger-text)">
-              {errors.src}
-            </Text>
-          )}
-          <TextInput
-            id={inputId}
-            ref={altInputRef}
-            label="Alt text"
-            required={!altOptional}
-            readOnly={readOnly}
-            value={value!.alt}
-            onChange={(event) => handleAltChange(event.currentTarget.value)}
-            error={errors?.alt}
-            size="sm"
-            data-testid={`image-field-alt-${dataCanopyField}`}
-          />
-          {!readOnly && (
-            <Group gap="xs">
+              <Group justify="center" gap="xs" py="xs" style={{ pointerEvents: 'none' }}>
+                <IconUpload size={18} />
+                <Text size="xs">Drop an image here, or click to browse</Text>
+              </Group>
+            </Dropzone>
+            <Group justify="center">
               <Button
                 variant="light"
+                leftSection={<IconPhoto size={14} />}
                 onClick={() => setPickerOpen(true)}
-                data-testid={`image-field-replace-${dataCanopyField}`}
+                data-testid={`image-field-browse-library-${dataCanopyField}`}
               >
-                Replace
-              </Button>
-              {canCrop && (
-                <Button
-                  variant="light"
-                  onClick={() => setCropRequest({ kind: 'existing' })}
-                  data-testid={`image-field-crop-${dataCanopyField}`}
-                >
-                  Crop
-                </Button>
-              )}
-              <Button
-                variant="subtle"
-                color="red"
-                onClick={handleRemove}
-                data-testid={`image-field-remove-${dataCanopyField}`}
-              >
-                Remove
+                Browse library
               </Button>
             </Group>
-          )}
-          {errors?.crop && (
-            <Text size="xs" c="var(--canopy-danger-text)">
-              {errors.crop}
-            </Text>
-          )}
-        </Stack>
-      )}
+            {(upload.error || dropError) && (
+              <Alert icon={<IconAlertCircle size={16} />} color="red">
+                {upload.error || dropError}
+              </Alert>
+            )}
+            {errors?.src && (
+              <Text size="xs" c="var(--canopy-danger-text)">
+                {errors.src}
+              </Text>
+            )}
+          </Stack>
+        ) : (
+          <Stack gap="xs">
+            {previewFailed ? (
+              <div
+                data-testid={`image-field-preview-fallback-${dataCanopyField}`}
+                style={{
+                  width: PREVIEW_WIDTH,
+                  height: 160,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 4,
+                  borderRadius: 'var(--mantine-radius-sm)',
+                  background: 'var(--canopy-surface-muted)',
+                }}
+              >
+                <IconPhotoOff size={28} stroke={1.5} color="var(--mantine-color-dimmed)" />
+                <Text size="xs" c="dimmed">
+                  Preview unavailable
+                </Text>
+              </div>
+            ) : (
+              <img
+                src={previewSrc}
+                alt={value!.alt}
+                style={{
+                  maxWidth: PREVIEW_WIDTH,
+                  maxHeight: PREVIEW_WIDTH,
+                  borderRadius: 'var(--mantine-radius-sm)',
+                  display: 'block',
+                }}
+                onError={() => setPreviewFailed(true)}
+              />
+            )}
+            {errors?.src && (
+              <Text size="xs" c="var(--canopy-danger-text)">
+                {errors.src}
+              </Text>
+            )}
+            <TextInput
+              id={inputId}
+              ref={altInputRef}
+              label="Alt text"
+              required={!altOptional}
+              readOnly={readOnly}
+              value={value!.alt}
+              onChange={(event) => handleAltChange(event.currentTarget.value)}
+              error={errors?.alt}
+              size="sm"
+              data-testid={`image-field-alt-${dataCanopyField}`}
+            />
+            {errors?.crop && (
+              <Text size="xs" c="var(--canopy-danger-text)">
+                {errors.crop}
+              </Text>
+            )}
+          </Stack>
+        )}
 
-      {!readOnly && (
-        <MediaLibrary
-          opened={pickerOpen}
-          onClose={() => setPickerOpen(false)}
-          mode="picker"
-          onSelect={handleAssetReady}
-        />
-      )}
+        {!readOnly && (
+          <MediaLibrary
+            opened={pickerOpen}
+            onClose={() => setPickerOpen(false)}
+            mode="picker"
+            onSelect={handleAssetReady}
+          />
+        )}
 
-      {aspectRatio !== undefined && !readOnly && (
-        <CropStep
-          opened={cropRequest !== null}
-          onClose={() => setCropRequest(null)}
-          imageSrc={cropImageSrc}
-          aspect={aspectRatio}
-          initialCrop={cropInitial}
-          onConfirm={handleCropConfirm}
-        />
-      )}
-    </Stack>
+        {!readOnly && (
+          <CropStep
+            opened={cropRequest !== null}
+            onClose={() => setCropRequest(null)}
+            imageSrc={cropImageSrc}
+            aspect={aspectRatio}
+            initialCrop={cropInitial}
+            onConfirm={handleCropConfirm}
+          />
+        )}
+      </Stack>
+    </Paper>
   )
 }

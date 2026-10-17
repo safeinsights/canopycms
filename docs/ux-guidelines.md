@@ -140,6 +140,9 @@ inline and in a summary of labelled breadcrumbs that focus the field. A date-tim
 12- or 24-hour time from the locale and shows the time zone; a date-only value is read as local
 midnight.
 
+An image field is a bordered card; its label row carries Replace, Crop and Remove. A Crop that can't
+apply stays, disabled with its reason.
+
 The comment control hides until its field is hovered or focused, unless the field has open
 threads: then it shows their count, never a zero badge. Idle, it is not a Tab stop
 (`tabIndex={-1}`): Mod+Alt+M on the focused field, or the "Field comments" menu listing every

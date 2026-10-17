@@ -507,7 +507,7 @@ Top-level components and helpers:
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
 - `CommentsPanel.tsx` — comment panel
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group, permission drawers
-- `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; `PreviewPane.tsx` adds the toolbar, its controls in `PreviewToolbarTools.tsx`; see [Preview Bridge](#preview-bridge)
+- `preview-bridge.tsx` / `PreviewFrame.tsx` — the bridge's host and editor sides; `PreviewPane.tsx` adds the toolbar (`PreviewToolbarTools.tsx`); see [Preview Bridge](#preview-bridge)
 - `unavailable-entry-type.ts` — unavailable-entry-type wording
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
 - `editor-utils.ts` — `buildPreviewRoute`, `buildPreviewSrc`, `buildBreadcrumbSegments`, `resolveHomeEntry`, `entryNameSource`; see [Preview URL Construction](#preview-url-construction)
@@ -621,9 +621,10 @@ Media UI, in `editor/media/`:
 
 - `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser; `useAssetLibrary.ts` loads every page; admins pass `includeHidden`
 - `AssetCard.tsx` / `AssetListRow.tsx` — one asset's tile or row
-- `CropStep.tsx` — crop UI over `react-easy-crop`
+- `CropStep.tsx` — crop UI over `react-image-crop`
+- `crop-availability.ts` — why Crop is off
 - `editor-image-src.ts` — editor image preview srcs
-- `crop-math.ts` — pure conversion between the crop library's `Area` and normalized `CropRect`
+- `crop-math.ts` — conversion between the crop library's box and normalized `CropRect`
 - `upload-asset.ts` — shared presign, transport, finalize state machine behind every upload
 - `useAssetUpload.ts` — React hook over that state machine
 - `xhr-upload.ts` — raw XHR POST for presigned uploads, with progress
