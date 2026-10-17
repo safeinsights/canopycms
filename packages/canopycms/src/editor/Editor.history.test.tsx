@@ -9,6 +9,7 @@ import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { notifications } from '@mantine/notifications'
 import { RESTORED_ENTRY_GONE_MESSAGE } from './hooks/useEntryManager'
+import { writeEditorUrl } from './hooks/editor-history'
 
 import { CANOPY_PREVIEW_NAVIGATE, CANOPY_PREVIEW_READY } from './preview-bridge'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../paths/test-utils'
@@ -385,11 +386,7 @@ describe('history across entries', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50))
     })
-    window.history.pushState(
-      { canopyHistoryPosition: 1 },
-      '',
-      '/?branch=gone&entry=content/posts/world',
-    )
+    writeEditorUrl('/?branch=gone&entry=content/posts/world', true)
     await back()
 
     await forward()

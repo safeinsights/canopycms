@@ -1004,6 +1004,24 @@ describe('useEntryManager', () => {
     expect(window.history.pushState).not.toHaveBeenCalled()
   })
 
+  it('treats a Back onto a legacy branch name as the branch it sanitizes to, not a switch', async () => {
+    const switchBranch = vi.fn().mockResolvedValue(undefined)
+    const { result } = renderHook(
+      () => useEntryManager({ ...defaultOptions, branchName: 'feature-x', switchBranch }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.selectedPath).toBe('entry1'))
+    window.location.href = 'http://localhost/?branch=feature%2Fx&entry='
+    window.location.search = '?branch=feature%2Fx&entry='
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    expect(switchBranch).not.toHaveBeenCalled()
+    expect(result.current.selectedPath).toBe('')
+  })
+
   it('resets selectedPath when selected entry is removed', () => {
     const entries = [mockEntry, { ...mockEntry, path: unsafeAsLogicalPath('entry2') }]
     const { result, rerender } = renderHook((props) => useEntryManager(props), {

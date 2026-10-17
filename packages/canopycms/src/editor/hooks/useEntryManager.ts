@@ -16,6 +16,7 @@ import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
 import { RetryToastMessage } from '../components/RetryToastMessage'
 import { isGatewayFailure, isUnanswered, MayHaveLandedError, UnansweredError } from '../unanswered'
+import { sanitizeBranchName } from '../../paths/branch-name'
 import {
   markEditorHistoryStart,
   recordHistoryMove,
@@ -978,7 +979,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       const params = new URLSearchParams(window.location.search)
       const entry = params.get('entry')
       const branch = params.get('branch')
-      if (branch && branch !== currentBranchRef.current) {
+      const current = currentBranchRef.current
+      // A legacy name and its sanitized form are one branch, with one set of drafts.
+      if (branch && sanitizeBranchName(branch) !== sanitizeBranchName(current)) {
         const move = historyMovesRef.current
         const stay = () => {
           if (move !== historyMovesRef.current) return

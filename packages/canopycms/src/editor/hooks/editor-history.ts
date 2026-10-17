@@ -1,22 +1,35 @@
 /** Session-history writes stamped with their position, so a refused Back can be undone. */
-const POSITION_KEY = 'canopyHistoryPosition'
+const STAMP_KEY = 'canopyHistory'
+// Next.js's patched history methods add these back and record the URL, unless already present.
+const ROUTER_KEYS = ['__NA', '__PRIVATE_NEXTJS_INTERNALS_TREE', '_N']
 
-let position: number | undefined
-// Where `undoHistoryMove` lands, so the popstate arriving there is known as its own.
-let undoTarget: number | undefined
-
-const stampedPosition = (): number | undefined => {
-  const state: unknown = window.history.state
-  const value =
-    state !== null && typeof state === 'object' ? Reflect.get(state, POSITION_KEY) : undefined
-  return typeof value === 'number' ? value : undefined
+interface Stamp {
+  run: string
+  position: number
 }
 
-// Only the stamp: Next.js's patched methods then add their keys and record the URL.
-const write = (push: boolean, at: number, url: string) => {
-  const method = push ? window.history.pushState : window.history.replaceState
-  method.call(window.history, { [POSITION_KEY]: at }, '', url)
-  position = at
+// A run restarts wherever the position is lost, so positions from two runs are never compared.
+let run = ''
+let position: number | undefined
+let undoTarget: Stamp | undefined
+
+const newRun = () => {
+  run = Math.random().toString(36).slice(2)
+  position = undefined
+}
+
+const currentState = (): Record<string, unknown> => {
+  const state: unknown = window.history.state
+  return state !== null && typeof state === 'object' ? { ...state } : {}
+}
+
+const stampIn = (state: Record<string, unknown>): Stamp | undefined => {
+  const value: unknown = state[STAMP_KEY]
+  if (value === null || typeof value !== 'object') return undefined
+  const [stampRun, at]: unknown[] = [Reflect.get(value, 'run'), Reflect.get(value, 'position')]
+  return typeof stampRun === 'string' && typeof at === 'number'
+    ? { run: stampRun, position: at }
+    : undefined
 }
 
 const samePage = (a: string, b: string): boolean => {
@@ -27,33 +40,55 @@ const samePage = (a: string, b: string): boolean => {
   )
 }
 
-/** The current entry's position; a stamp a host write dropped falls back to the last known. */
-const here = (): number => stampedPosition() ?? position ?? 0
-
-/** Shows `url`, pushed or replaced; never rewrites the URL already shown. */
+/** Shows `url`, pushed or replaced (keeping the entry's other state); never rewrites the URL shown. */
 export function writeEditorUrl(url: string, push: boolean): void {
   if (samePage(url, window.location.href)) return
-  write(push, here() + (push ? 1 : 0), url)
+  if (!run) newRun()
+  const at = (position ?? 0) + (push ? 1 : 0)
+  const kept = push ? {} : currentState()
+  for (const key of ROUTER_KEYS) delete kept[key]
+  const method = push ? window.history.pushState : window.history.replaceState
+  method.call(window.history, { ...kept, [STAMP_KEY]: { run, position: at } }, '', url)
+  position = at
 }
 
-/** Stamps the history entry the editor opened on, which it did not write. */
+/** Stamps the history entry the editor opened on, keeping Next.js's keys: the URL is unchanged. */
 export function markEditorHistoryStart(): void {
-  if (stampedPosition() === undefined) write(false, here(), window.location.href)
-  else position = stampedPosition()
+  const state = currentState()
+  const stamp = stampIn(state)
+  if (stamp) {
+    run = stamp.run
+    position = stamp.position
+    return
+  }
+  newRun()
+  position = 0
+  window.history.replaceState(
+    { ...state, [STAMP_KEY]: { run, position } },
+    '',
+    window.location.href,
+  )
 }
 
-/** On `popstate`: entries moved, undefined if an end is not the editor's, null for an undo's. */
+/** On `popstate`: entries moved, undefined if an end is not this run's, null for an undo's. */
 export function recordHistoryMove(): number | undefined | null {
-  const arrived = stampedPosition()
-  const moved = arrived === undefined || position === undefined ? undefined : arrived - position
-  const undone = undoTarget !== undefined && arrived === undoTarget
+  const arrived = stampIn(currentState())
+  const undone =
+    undoTarget !== undefined &&
+    arrived?.run === undoTarget.run &&
+    arrived.position === undoTarget.position
   undoTarget = undefined
-  position = arrived
+  const moved =
+    arrived?.run === run && position !== undefined ? arrived.position - position : undefined
+  if (arrived) {
+    run = arrived.run
+    position = arrived.position
+  } else newRun()
   return undone ? null : moved
 }
 
 export function undoHistoryMove(moved: number): void {
   if (position === undefined) return
-  undoTarget = position - moved
+  undoTarget = { run, position: position - moved }
   window.history.go(-moved)
 }
