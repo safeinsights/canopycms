@@ -49,8 +49,8 @@ parser"), recognisable in any adopter's tree.
 
 ## Rules
 
-`pnpm lint:changesets` checks all of these except **Template first**, **Length**, which
-`pnpm lint:docs` checks, and the last one.
+`pnpm lint:changesets` checks all of these except **Length** (`pnpm lint:docs` checks it),
+**Template first** and the last one.
 
 - **Bump.** The frontmatter names any of the five packages; they release together. `minor` when
   `action` is anything but `None` or `Optional`, since adopters must act. Otherwise `patch` is enough.
@@ -63,7 +63,8 @@ parser"), recognisable in any adopter's tree.
   10 words.
 - **Template first.** When the CMS image or worker bundle needs a grant, environment variable,
   resource or unit setting that only the stack template adds, `action` starts `Template first`
-  ([what it means](../CHANGELOG.md#unreleased)) and **To adopt** names what to deploy first.
+  ([what it means](../CHANGELOG.md#unreleased)), the title's bold suffix includes "template
+  first", and **To adopt** names what to deploy first.
 - **To adopt** may be left out only when `action` is `None` or `Optional`. Leave out **Now
   deletable** when nothing becomes deletable.
 - **No int labels.** Never write `(int.N)` or `next`: a build computes them.

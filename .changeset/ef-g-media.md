@@ -27,7 +27,9 @@ the media library and restore a file, and uploading the same file again restores
   write the CMS role's bucket policy yourself, do the same (no `s3:GetObject` is needed), and if
   it scopes `s3:ListBucket` by prefix, include `asset-hidden/`.
 - Deploy those grants before CI rolls this release's CMS image: the stack template, built with
-  this release's `canopycms-cdk`, and your own bucket policy if you write one. On the old grants, removing a file is denied, and a policy that
-  scopes `s3:ListBucket` by prefix without `asset-hidden/` fails every media library page.
+  this release's `canopycms-cdk`, and your own bucket policy if you write one. On the old grants,
+  removing a file is denied, and a policy that scopes `s3:ListBucket` by prefix without
+  `asset-hidden/` fails every media library page. Between the deploy and the image roll,
+  removing a file is denied too.
 - Files removed before this release lost their metadata. Uploading the same bytes again recreates
   it, recorded under the re-uploader's name.
