@@ -603,7 +603,7 @@ Components, in `editor/components/`:
 - `ReasonedMenuItem.tsx` — a blocked menu item and why
 - `UndoToastMessage.tsx` — the undo toast for Remove or Clear
 - `RetryToastMessage.tsx` — a failed load's toast body with Retry
-- `PreviewLinkToast.tsx` — preview links' new-tab toast
+- `PreviewLinkToast.tsx` — preview-link toast
 - `ValidationSummary.tsx` — pre-save issues alert with breadcrumb buttons
 - `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`
 - `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the editor crash screen
