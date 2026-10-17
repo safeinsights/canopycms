@@ -405,7 +405,11 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
  * Switch thumbs, white text on the primary colour (moved to the fill), and dimmed text Mantine
  * draws itself (a blocked menu item, a combobox's empty message, outside days). Outside days lose
  * Mantine's half opacity, under 4.5:1. The crop box and its handles sit on an arbitrary image, where
- * no single colour holds 3:1, so they take a white and black pair.
+ * no single colour holds 3:1, so they take a white and black pair. A navigator row's lock is
+ * drawn only while its row is hovered, focused (Mantine's Tree focuses the `li` around the row, on click and arrow keys), has focus
+ * within, or is selected. It hides by opacity alone, so it keeps its place and stays in the tab order
+ * and the accessibility tree; while hidden it takes no pointer events, so a tap on its slot reaches
+ * the row.
  */
 const CANOPY_STYLES = `
 .mantine-Checkbox-input:not(:checked, :disabled, [data-indeterminate], [data-error]),
@@ -437,6 +441,23 @@ const CANOPY_STYLES = `
   background: var(--canopy-focus-ring);
   outline: 2px solid var(--mantine-color-white);
   box-shadow: 0 0 0 4px var(--mantine-color-black);
+}
+[data-nav-row] [data-row-lock] {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+[data-nav-row]:hover [data-row-lock],
+[data-nav-row]:focus-within [data-row-lock],
+[role='treeitem']:focus > [data-nav-row] [data-row-lock],
+[data-nav-row][data-nav-selected] [data-row-lock] {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-nav-row] [data-row-lock] {
+    transition: none;
+  }
 }
 [data-combobox-selected] {
   --mantine-primary-color-filled: var(--canopy-primary-fill);

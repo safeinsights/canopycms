@@ -783,8 +783,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       !entryLocked &&
       (onDeleteEntry || onRenameEntry || onReorderEntry)
 
-    // The lock stands where the menu would, on exactly the rows that would otherwise have one. It
-    // is always shown: on hover alone, touch and keyboard users would see neither menu nor reason.
+    // The lock holds the slot where the menu would be, on exactly the rows that would otherwise have
+    // one, so rows never shift. The stylesheet reveals it on the hovered, focused or selected
+    // row (`data-nav-selected`), which keeps touch and keyboard users' route to the reason.
     const wouldHaveCollectionMenu =
       isCollection &&
       !!(
@@ -813,6 +814,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         {...elementProps}
         ref={selected ? selectedNodeRef : undefined}
         data-nav-row
+        data-nav-selected={selected ? '' : undefined}
         data-testid={`entry-nav-item-${testIdSuffix}`}
         onClick={(event) => {
           elementProps.onClick(event)
@@ -1002,7 +1004,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                   reason={readOnlyReason}
                 />
               ) : (
-                // The branch's state is still loading: hold the slot so rows do not shift.
+                // The branch's state is still loading: hold the slot so rows do not shift. It draws
+                // nothing, so it needs no reveal.
                 <Box w={18} h={18} aria-hidden data-testid="branch-lock-pending" />
               ))}
             {hasEntryMenu && (

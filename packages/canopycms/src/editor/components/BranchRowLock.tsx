@@ -9,7 +9,9 @@ import { IconLock } from '@tabler/icons-react'
  * writes. It matches the menu button's footprint so rows do not shift between branches, and takes
  * the menu's name; the reason is its Tooltip and its description. It stays `aria-disabled` rather
  * than `disabled`, so the reason opens on keyboard focus and touch too. Space is stopped here: the
- * tree would read it as expand/collapse.
+ * tree would read it as expand/collapse. `data-row-lock` marks it for the theme stylesheet, which
+ * draws it only on the hovered, focused or selected row (opacity, never `display`, so
+ * focusing it reveals it); a touch user sees it on the row they tapped.
  */
 export const BranchRowLock: React.FC<{ label: string; reason: string }> = ({ label, reason }) => {
   const reasonId = useId()
@@ -30,6 +32,7 @@ export const BranchRowLock: React.FC<{ label: string; reason: string }> = ({ lab
         aria-label={label}
         aria-describedby={reasonId}
         data-testid="branch-lock"
+        data-row-lock
         style={{ cursor: 'default' }}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
