@@ -169,8 +169,9 @@ export interface ReferenceFieldConfig extends BaseFieldConfig {
 export interface ImageFieldConfig extends BaseFieldConfig {
   type: 'image'
   /**
-   * "W:H" aspect ratio (e.g. "16:9", "1:1") that triggers a crop step in the
-   * editor. Validated at config-parse time: positive integers on both sides.
+   * "W:H" aspect ratio (e.g. "16:9", "1:1"). Picking an image opens a crop step locked to it,
+   * and Crop keeps that shape. Without it, a pick isn't cropped and Crop is free-form.
+   * Validated at config-parse time: positive integers on both sides.
    */
   aspect?: string
   /** Allow an empty `alt`. Default: alt text is required (accessibility). */

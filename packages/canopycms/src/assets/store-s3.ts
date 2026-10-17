@@ -29,6 +29,7 @@ import type {
   CreateOnlyResult,
   HiddenAssetMarker,
   ListedAssetMeta,
+  PresignedRead,
   PublicObject,
   StagedUploadTarget,
 } from './types'
@@ -58,8 +59,15 @@ const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 /** What `metaKey` and `hiddenKey` put after the hash32. */
 const JSON_SUFFIX = '.json'
 const PRESIGN_EXPIRY_SECONDS = 15 * 60
-/** A presigned read is followed by the browser at once; it is never stored or cached. */
-const PRESIGNED_READ_EXPIRY_SECONDS = 5 * 60
+/**
+ * A presigned read is signed at the start of its window, so every read of one key inside a window
+ * gets the same URL, and a browser can reuse both the redirect to it and the object behind it.
+ */
+const PRESIGNED_READ_WINDOW_SECONDS = 60 * 60
+/** Valid a full window past the window's end, so a redirect cached until then never expires first. */
+const PRESIGNED_READ_EXPIRY_SECONDS = 2 * PRESIGNED_READ_WINDOW_SECONDS
+/** How long before its signing credentials expire a presigned read stops being reusable. */
+const CREDENTIAL_EXPIRY_MARGIN_SECONDS = 60
 
 /**
  * Shape of the fields an AWS SDK v3 service exception carries, narrowed from
@@ -369,12 +377,28 @@ export class S3AssetStore implements AssetStore {
     }
   }
 
-  /** HEADs first: signing is local and succeeds for a missing key too. */
-  async presignPublicObjectRead(key: string): Promise<string | null> {
+  /**
+   * HEADs first: signing is local and succeeds for a missing key too. A URL signed with temporary
+   * credentials dies when they expire, whatever its own expiry, so `maxAgeSeconds` also stops short
+   * of the credentials' `expiration` when the provider reports one.
+   */
+  async presignPublicObjectRead(key: string): Promise<PresignedRead | null> {
     if (!(await this.hasPublicObject(key))) return null
-    return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
-      expiresIn: PRESIGNED_READ_EXPIRY_SECONDS,
-    })
+    // Read before signing: a provider refresh in between leaves the signing credentials the newer.
+    const { expiration } = await this.client.config.credentials()
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const windowStart = nowSeconds - (nowSeconds % PRESIGNED_READ_WINDOW_SECONDS)
+    const url = await getSignedUrl(
+      this.client,
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      { expiresIn: PRESIGNED_READ_EXPIRY_SECONDS, signingDate: new Date(windowStart * 1000) },
+    )
+    let maxAgeSeconds = windowStart + PRESIGNED_READ_WINDOW_SECONDS - nowSeconds
+    if (expiration) {
+      const credentialSeconds = Math.floor(expiration.getTime() / 1000) - nowSeconds
+      maxAgeSeconds = Math.min(maxAgeSeconds, credentialSeconds - CREDENTIAL_EXPIRY_MARGIN_SECONDS)
+    }
+    return { url, maxAgeSeconds: Math.max(0, maxAgeSeconds) }
   }
 
   async putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<CreateOnlyResult> {

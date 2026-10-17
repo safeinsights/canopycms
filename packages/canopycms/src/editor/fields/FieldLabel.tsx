@@ -24,7 +24,7 @@ export interface FieldLabelProps {
   labelId?: string
   /** Slot right after the label text, for the field's comment control. */
   commentControl?: React.ReactNode
-  /** Right-aligned slot for field actions (Expand all, an object's "…" menu). */
+  /** Right-aligned slot for field actions (Expand all, an object's "…" menu); it wraps under the label when the row is too narrow for both. */
   actions?: React.ReactNode
 }
 
@@ -44,8 +44,8 @@ export const FieldLabel: React.FC<FieldLabelProps> = ({
   return (
     <Stack gap={2}>
       {hasRow && (
-        <Group justify="space-between" wrap="nowrap" gap="xs" align="center">
-          <Group gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
+        <Group justify="space-between" wrap="wrap" gap="xs" align="center">
+          <Group gap={4} wrap="nowrap" style={{ minWidth: 0, flex: '1 1 8rem' }}>
             {label && (
               <Input.Label
                 required={required}
@@ -59,7 +59,7 @@ export const FieldLabel: React.FC<FieldLabelProps> = ({
             {commentControl}
           </Group>
           {actions && (
-            <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+            <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0, marginLeft: 'auto' }}>
               {actions}
             </Group>
           )}

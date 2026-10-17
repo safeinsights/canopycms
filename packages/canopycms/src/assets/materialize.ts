@@ -7,11 +7,17 @@
  */
 
 import { getErrorMessage, isNodeError } from '../utils/error'
+import { canopyLogWarn } from '../utils/logger'
 import { ASSET_PREFIXES } from './asset-prefixes'
 import { loadSharp } from './sharp-loader'
 import { applyTransform } from './transform'
-import { canonicalizeTransformPath, type ParsedTransformPath } from './transform-directives'
-import type { AssetStore, CreateOnlyResult } from './types'
+import { EDITOR_THUMBNAIL_WIDTHS } from './editor-thumbnail-widths'
+import {
+  canonicalizeTransformPath,
+  formatDirectives,
+  type ParsedTransformPath,
+} from './transform-directives'
+import type { AssetMeta, AssetStore, CreateOnlyResult } from './types'
 
 /** Every transform output is stored under a content-addressed key, so it never changes. */
 export const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
@@ -38,15 +44,23 @@ export type StoreTransformResult =
  * `canonicalizeTransformPath`, so the stored pixels always match their key. A rejection is a fact
  * about the asset or the URL and is never worth retrying; a thrown error belongs to the store or
  * the environment. A 404's `error` names what was missing, so a caller answering a browser
- * replaces it.
+ * replaces it. A caller already holding the asset's committed meta and original bytes passes them
+ * as `source`, and the store is not read.
  */
 export async function storeTransform(
   store: AssetStore,
   parsed: ParsedTransformPath,
   key: string,
-  options: { tags?: Readonly<Record<string, string>> } = {},
+  options: {
+    tags?: Readonly<Record<string, string>>
+    source?: { meta: AssetMeta; data: Uint8Array }
+  } = {},
 ): Promise<StoreTransformResult> {
-  const meta = await store.getMeta(parsed.hash32)
+  const { source } = options
+  if (source && source.meta.hash32 !== parsed.hash32) {
+    throw new Error(`source is asset ${source.meta.hash32}, not ${parsed.hash32}`)
+  }
+  const meta = source?.meta ?? (await store.getMeta(parsed.hash32))
   if (!meta) {
     return { ok: false, status: 404, error: `Asset ${parsed.hash32} has no meta in the store` }
   }
@@ -72,7 +86,9 @@ export async function storeTransform(
     return { ok: false, status: 400, error: 'Extension does not match the source format' }
   }
 
-  const original = await store.readOriginal(parsed.hash32, meta.ext)
+  const original = source
+    ? { data: source.data, ext: meta.ext }
+    : await store.readOriginal(parsed.hash32, meta.ext)
   if (!original) {
     return { ok: false, status: 404, error: `Asset ${parsed.hash32} has no original in the store` }
   }
@@ -93,6 +109,57 @@ export async function storeTransform(
     tags: options.tags,
   })
   return { ok: true, data: transformed.data, contentType: transformed.contentType, stored }
+}
+
+/** The canonical keys of an asset's `EDITOR_THUMBNAIL_WIDTHS`, the keys the raw route reads them at. */
+function editorThumbnailTargets(
+  meta: Pick<AssetMeta, 'hash32' | 'slug' | 'ext'>,
+): { key: string; parsed: ParsedTransformPath }[] {
+  return Object.values(EDITOR_THUMBNAIL_WIDTHS).map((width) => {
+    const canonical = canonicalizeTransformPath(
+      [formatDirectives({ identity: false, width }), meta.hash32, `${meta.slug}.${meta.ext}`],
+      'any',
+    )
+    if (!canonical.ok) throw new Error(canonical.error)
+    return { key: `${ASSET_PREFIXES.transform}/${canonical.canonicalPath}`, parsed: canonical }
+  })
+}
+
+/**
+ * Store the editor thumbnails of a raster asset whose meta is committed, from `data`, its
+ * original's bytes. Best effort: the raw route computes a missing one on first view, so a failure
+ * is logged, never thrown, and the first one stops the rest, which would decode the same bytes in
+ * the same environment. One width at a time, so one decode is in memory. A multi-page (animated)
+ * source is skipped. `skipStored` HEADs each key first, for an asset that may already have them.
+ */
+export async function storeEditorThumbnails(
+  store: AssetStore,
+  meta: AssetMeta,
+  data: Uint8Array,
+  options: { skipStored?: boolean } = {},
+): Promise<void> {
+  if (meta.kind !== 'raster') return
+  let failure: string | undefined
+  try {
+    // An animated source re-encodes every frame at every width, over 15 s for a large GIF: too
+    // long to hold an upload for, so its first view transforms it instead. The probe decodes no
+    // pixels.
+    const sharp = await loadSharp()
+    if (((await sharp(data).metadata()).pages ?? 1) > 1) return
+    for (const { key, parsed } of editorThumbnailTargets(meta)) {
+      if (options.skipStored && (await store.hasPublicObject(key))) continue
+      const result = await storeTransform(store, parsed, key, { source: { meta, data } })
+      if (!result.ok) {
+        failure = `${key}: ${result.error}`
+        break
+      }
+    }
+  } catch (err: unknown) {
+    failure = getErrorMessage(err)
+  }
+  if (failure !== undefined) {
+    canopyLogWarn(`[canopycms] could not store editor thumbnails of ${meta.hash32}: ${failure}`)
+  }
 }
 
 /** One key a build references, and where it was referenced, for the failure report. */

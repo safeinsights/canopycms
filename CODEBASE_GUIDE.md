@@ -365,8 +365,8 @@ for why a single file cannot switch between them, and
 **Location**: `packages/canopycms/src/assets/` —
 [AGENTS.md](packages/canopycms/src/assets/AGENTS.md)
 
-`asset-prefixes.ts`, `transform-directives.ts` and `asset-url.ts` are import-chain-pure, reachable
-from client bundles and static builds; everything else here is server-only (`node:fs`,
+`asset-prefixes.ts`, `transform-directives.ts`, `asset-url.ts` and `editor-thumbnail-widths.ts` are import-chain-pure,
+reachable from client bundles and builds; everything else here is server-only (`node:fs`,
 `node:crypto`, `sharp`, the S3 SDK), so client code takes only types, from `types.ts`.
 
 - `types.ts` — `AssetStore` (create-only writes, public-object existence, listing, presigned reads), `CreateOnlyResult`, `AssetMeta`, `StagedUploadTarget`; type-only
@@ -377,13 +377,14 @@ from client bundles and static builds; everything else here is server-only (`nod
 - `factory.ts` — `createAssetStore`, instantiates the configured store and falls back to a local dev store
 - `pipeline.ts` — `runFinalizePipeline`: sniff, hash, dimensions, SVG sanitize, real raster decode check
 - `finalize.ts` — `finalizeAsset` / `finalizeStagedUpload`, store orchestration around the pipeline; un-hides re-uploads
+- `editor-thumbnail-widths.ts` — `EDITOR_THUMBNAIL_WIDTHS` (editor media, finalize)
 - `svg-sanitizer.ts` — `sanitizeSvg` via `sanitize-html`
 - `asset-src.ts` — `assetSrc(meta)`, the root-relative URL stored in content
 - `transform-directives.ts` — transform-URL parser/formatter, `TransformWidthPolicy` (`allowlist` | `any`), `MAX_INPUT_PIXELS`, `roundCropRect`, `canonicalizeTransformPath`
 - `sharp-loader.ts` — `loadSharp()`, the package's only runtime load of `sharp`, memoized
 - `transform.ts` — `applyTransform`: resize, crop, reformat, EXIF-strip
 - `asset-url.ts` — `assetUrl` / `assetSrcSet`, isomorphic; `baseUrl` applies at render time only; `AssetRef.crop` honored
-- `materialize.ts` — `storeTransform`, `materializeAssets` (`outputPrefix`, `assertValidOutputPrefix`, `MaterializeReport.schemaVersion`): writing transform outputs
+- `materialize.ts` — `storeTransform`, `storeEditorThumbnails`, `materializeAssets` (`outputPrefix`, `assertValidOutputPrefix`, `MaterializeReport.schemaVersion`): writing transform outputs
 - `index.ts` — internal server-side barrel, not a package entrypoint
 
 Design: [On-Demand Image Transforms](ARCHITECTURE.md#on-demand-image-transforms) and [Stored vs
@@ -506,7 +507,7 @@ Top-level components and helpers:
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
 - `CommentsPanel.tsx` — comment panel
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group, permission drawers
-- `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; `PreviewPane.tsx` adds the toolbar, its controls in `PreviewToolbarTools.tsx`; see [Preview Bridge](#preview-bridge)
+- `preview-bridge.tsx` / `PreviewFrame.tsx` — the bridge's host and editor sides; `PreviewPane.tsx` adds the toolbar (`PreviewToolbarTools.tsx`); see [Preview Bridge](#preview-bridge)
 - `unavailable-entry-type.ts` — unavailable-entry-type wording
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
 - `editor-utils.ts` — `buildPreviewRoute`, `buildPreviewSrc`, `buildBreadcrumbSegments`, `resolveHomeEntry`, `entryNameSource`; see [Preview URL Construction](#preview-url-construction)
@@ -591,7 +592,7 @@ Components, in `editor/components/`:
 
 - `EditorHeader.tsx` — the top bar: `EntryBreadcrumb` and its entry menu, `BranchPill`, Submit/Withdraw, `SaveSplitButton` (Saving…/Saved); `SaveAllResult` is Save all's toast
 - `UnsavedMark.tsx` — the unsaved dot
-- `BranchLockBanner.tsx` — read-only banners, `branchLockState`, `branchLockBannerShown`
+- `BranchLockBanner.tsx` — read-only banners, `describeBranchLock`
 - `EditorRail.tsx` — the rail's buttons and Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `QuickOpenPalette.tsx` — Mod+P quick-open palette
@@ -600,8 +601,9 @@ Components, in `editor/components/`:
 - `UserBadge.tsx` — user avatar and name
 - `BranchAccessList.tsx` — a branch card's access list
 - `ReasonedMenuItem.tsx` — a blocked menu item and why
-- `UndoToastMessage.tsx` — the undo toast for a Remove or Clear
+- `UndoToastMessage.tsx` — the undo toast for Remove or Clear
 - `RetryToastMessage.tsx` — a failed load's toast body with Retry
+- `PreviewLinkToast.tsx` — preview-link toast
 - `ValidationSummary.tsx` — pre-save issues alert with breadcrumb buttons
 - `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`
 - `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the editor crash screen
@@ -619,9 +621,10 @@ Media UI, in `editor/media/`:
 
 - `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser; `useAssetLibrary.ts` loads every page; admins pass `includeHidden`
 - `AssetCard.tsx` / `AssetListRow.tsx` — one asset's tile or row
-- `CropStep.tsx` — crop UI over `react-easy-crop`
+- `CropStep.tsx` — crop UI over `react-image-crop`
+- `crop-availability.ts` — why Crop is off
 - `editor-image-src.ts` — editor image preview srcs
-- `crop-math.ts` — pure conversion between the crop library's `Area` and normalized `CropRect`
+- `crop-math.ts` — conversion between the crop library's box and normalized `CropRect`
 - `upload-asset.ts` — shared presign, transport, finalize state machine behind every upload
 - `useAssetUpload.ts` — React hook over that state machine
 - `xhr-upload.ts` — raw XHR POST for presigned uploads, with progress
@@ -668,7 +671,7 @@ Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 exported via `canopycms/preview`) and `PreviewFrame.tsx` (editor side, via `canopycms/client`)
 
 Message types: `canopycms:draft:update`, `canopycms:preview:focus`, `canopycms:preview:highlight`,
-`canopycms:preview:marks`, `canopycms:preview:ready`, `canopycms:preview:error`.
+`canopycms:preview:marks`, `canopycms:preview:ready`, `canopycms:preview:error`, `canopycms:preview:navigate`.
 
 - `PreviewFrame` — editor-side iframe wrapper: pins the preview origin, posts drafts and highlights, validates inbound messages
 - `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, typed `fieldProps()`, `reportError()`

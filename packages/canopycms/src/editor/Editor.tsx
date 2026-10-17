@@ -35,6 +35,8 @@ import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { CustomFieldRenderers, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
 import { PreviewPane } from './PreviewPane'
+import { displayPreviewPath, previewPageKey } from './preview-path'
+import { showPreviewLinkOutcome } from './components/PreviewLinkToast'
 import type { OperatingMode } from '../operating-mode'
 import { clientOperatingStrategy } from '../operating-mode/client'
 import { EditorShell } from './shell/EditorShell'
@@ -84,7 +86,7 @@ import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
-import { BranchLockBanner, EditorHeader, EditorRail } from './components'
+import { BranchLockBanner, describeBranchLock, EditorHeader, EditorRail } from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { QuickOpenPalette, type QuickOpenEntry } from './components/QuickOpenPalette'
@@ -398,6 +400,7 @@ const EditorContent: React.FC<EditorProps> = ({
     setBranchName,
     branchSummaries,
     currentBranch,
+    branchesLoadFailed,
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,
@@ -427,6 +430,11 @@ const EditorContent: React.FC<EditorProps> = ({
   // of unlocked that invites a click the server rejects -- and the pane shows a
   // loading state during that window anyway.
   const branchContentLocked = currentBranch?.writeBlocked ?? true
+
+  const branchLoading = !currentBranch && (branchesLoading || branchSummaries.length === 0)
+  // A row's lock reason on an unanswered branch would be "details could not be loaded", which is
+  // not yet true; once the fetch has failed it is, and the lock says so.
+  const branchRowsPending = branchLoading && !branchesLoadFailed
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
@@ -489,6 +497,28 @@ const EditorContent: React.FC<EditorProps> = ({
   const openEntry = (path: string) => {
     setSelectedPath(path)
     setNavigatorOpen(false)
+  }
+  // A preview link opens its entry, or a page no entry has in a new tab. The opener is cut by hand,
+  // since `noopener` would hide whether the browser blocked the tab.
+  const openPreviewLink = (href: string) => {
+    const mount = { basePath, previewPrefix }
+    const base = window.location.href
+    const page = previewPageKey(href, mount, base)
+    const entry =
+      page === undefined
+        ? undefined
+        : entriesState.find(
+            (e) => e.previewSrc && previewPageKey(e.previewSrc, mount, base) === page,
+          )
+    if (entry) {
+      openEntry(entry.path)
+      return
+    }
+    const opened = window.open(href, '_blank')
+    if (opened) opened.opener = null
+    const url = new URL(href)
+    const shown = url.origin === window.location.origin ? `${url.pathname}${url.search}` : href
+    showPreviewLinkOutcome(href, displayPreviewPath(shown, mount), Boolean(opened))
   }
 
   // An open overlay docks open, as the URL's ask for no entry does at load; `navigatorOpen` is only
@@ -1710,6 +1740,7 @@ const EditorContent: React.FC<EditorProps> = ({
         resizing={paneResizing}
         siteChrome={siteChrome}
         onSiteChromeChange={setSiteChrome}
+        onNavigate={openPreviewLink}
         notice={
           previewError && (
             <Alert
@@ -1900,6 +1931,15 @@ const EditorContent: React.FC<EditorProps> = ({
           hiddenRootPath={hiddenRootPath}
           loading={entriesInitializing}
           readOnly={branchContentLocked}
+          readOnlyReason={
+            branchRowsPending
+              ? undefined
+              : describeBranchLock({
+                  branchStatus: currentBranch?.status,
+                  branchReadOnly: currentBranch?.readOnly,
+                  branchWriteBlocked: branchContentLocked,
+                })
+          }
           dirtyPaths={dirtyPaths}
           revealCollection={collectionReveal}
           onRevealed={() => setCollectionReveal(undefined)}
@@ -1941,7 +1981,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchReadOnly={currentBranch?.readOnly}
               branchWriteBlocked={branchContentLocked}
               // A failed fetch leaves the list empty too; the banner says that one.
-              branchLoading={!currentBranch && (branchesLoading || branchSummaries.length === 0)}
+              branchLoading={branchLoading}
               onCollectionOpen={revealCollection}
               navigatorToggleRef={navigatorToggleRef}
               branchToggleRef={branchToggleRef}

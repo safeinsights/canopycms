@@ -81,4 +81,16 @@ describe('FieldLabel', () => {
     expect(container.querySelector('.mantine-Stack-root')).toBeNull()
     expect(container.querySelectorAll('*:not(style)')).toHaveLength(0)
   })
+
+  it('lets the actions wrap under a label that has no room left, rather than crushing it', () => {
+    const { container } = renderLabel({
+      label: 'Title',
+      actions: <button type="button">Replace</button>,
+    })
+    const row = screen.getByText('Replace').parentElement?.parentElement
+    expect(row?.style.getPropertyValue('--group-wrap')).toBe('wrap')
+    expect(container.contains(row ?? null)).toBe(true)
+    const labelGroup = screen.getByText('Title').parentElement
+    expect(labelGroup?.style.flex).toBe('1 1 8rem')
+  })
 })

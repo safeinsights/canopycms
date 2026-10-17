@@ -652,6 +652,21 @@ describe('assetRawRoute (GET /assets/raw/{key...})', () => {
     })
   })
 
+  it('streams an object stored without a Cache-Control as privately immutable', async () => {
+    const key = `assets/${'a'.repeat(32)}/slug.pdf`
+    await store.putPublicObject({
+      key,
+      data: new Uint8Array([1]),
+      contentType: 'application/pdf',
+    })
+
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+    expect(res).toMatchObject({
+      status: 200,
+      headers: { cacheControl: 'private, max-age=31536000, immutable' },
+    })
+  })
+
   it('404s when the public object does not exist', async () => {
     const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
       key: `assets/${'b'.repeat(32)}/missing.svg`,
@@ -741,7 +756,7 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
     expect(res).toMatchObject({
       kind: 'binary',
       status: 200,
-      headers: { contentType: 'image/png' },
+      headers: { contentType: 'image/png', cacheControl: 'public, max-age=31536000, immutable' },
     })
     expect(transformModule.applyTransform).toHaveBeenCalledTimes(1)
 
@@ -983,10 +998,12 @@ describe('assetRawRoute - redirects, on a store that presigns reads and on one t
   let local: LocalAssetStore
 
   /** The local store plus S3's presign capability, answering from the same files. */
-  const presigningStore = (): AssetStore => {
+  const presigningStore = (maxAgeSeconds = 1234): AssetStore => {
     const store: AssetStore = Object.create(local)
     store.presignPublicObjectRead = async (key) =>
-      (await local.readPublicObject(key)) ? `${PRESIGNED_ORIGIN}/${key}?X-Amz-Signature=sig` : null
+      (await local.readPublicObject(key))
+        ? { url: `${PRESIGNED_ORIGIN}/${key}?X-Amz-Signature=sig`, maxAgeSeconds }
+        : null
     return store
   }
 
@@ -1022,7 +1039,7 @@ describe('assetRawRoute - redirects, on a store that presigns reads and on one t
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
-  it('redirects a stored transform to a no-store presigned GET without reading its bytes', async () => {
+  it('redirects a stored transform to a privately cacheable presigned GET without reading its bytes', async () => {
     await local.putPublicObject({ key: transformKey, data: oversized(), contentType: 'image/png' })
     const store = presigningStore()
     const readSpy = vi.spyOn(store, 'readPublicObject')
@@ -1035,11 +1052,21 @@ describe('assetRawRoute - redirects, on a store that presigns reads and on one t
       body: new Uint8Array(),
       headers: {
         location: `${PRESIGNED_ORIGIN}/${transformKey}?X-Amz-Signature=sig`,
-        cacheControl: 'no-store',
+        cacheControl: 'private, max-age=1234',
       },
     })
     expect(readSpy).not.toHaveBeenCalled()
     expect(transformModule.applyTransform).not.toHaveBeenCalled()
+  })
+
+  it('sends a redirect the store says is not reusable as no-store', async () => {
+    await local.putPublicObject({ key: transformKey, data: oversized(), contentType: 'image/png' })
+
+    const res = await assetRawRoute.handler(ctxWith(presigningStore(0)), authedReq(), {
+      key: transformKey,
+    })
+
+    expect(res).toMatchObject({ status: 302, headers: { cacheControl: 'no-store' } })
   })
 
   it('redirects a stored static object (svg/pdf) the same way', async () => {
@@ -1080,7 +1107,7 @@ describe('assetRawRoute - redirects, on a store that presigns reads and on one t
     expect(res).toMatchObject({
       kind: 'binary',
       status: 200,
-      headers: { contentType: 'image/png' },
+      headers: { contentType: 'image/png', cacheControl: 'public, max-age=31536000, immutable' },
     })
     expect(transformModule.applyTransform).toHaveBeenCalledTimes(1)
     expect(await local.readPublicObject(transformKey)).not.toBeNull()
@@ -1103,7 +1130,7 @@ describe('assetRawRoute - redirects, on a store that presigns reads and on one t
       body: new Uint8Array(),
       headers: {
         location: `${PRESIGNED_ORIGIN}/${transformKey}?X-Amz-Signature=sig`,
-        cacheControl: 'no-store',
+        cacheControl: 'private, max-age=1234',
       },
     })
     expect((await local.readPublicObject(transformKey))?.data.byteLength).toBe(4 * 1024 * 1024 + 1)
