@@ -1,7 +1,4 @@
-/**
- * The editor's writes to session history, each stamped with its position, so a Back or Forward
- * it refuses can be undone. Module state, as a window has one session history.
- */
+/** Session-history writes stamped with their position, so a refused Back can be undone. */
 const POSITION_KEY = 'canopyHistoryPosition'
 
 let position: number | undefined
@@ -15,17 +12,13 @@ const stampedPosition = (): number | undefined => {
   return typeof value === 'number' ? value : undefined
 }
 
-/**
- * Writes only the stamp: Next.js's patched history methods add its router keys and record the
- * new URL, which they skip for state already carrying those keys.
- */
+// Only the stamp: Next.js's patched methods then add their keys and record the URL.
 const write = (push: boolean, at: number, url: string) => {
   const method = push ? window.history.pushState : window.history.replaceState
   method.call(window.history, { [POSITION_KEY]: at }, '', url)
   position = at
 }
 
-/** Whether two URLs name the same page, however each encodes its query. */
 const samePage = (a: string, b: string): boolean => {
   const [x, y] = [new URL(a, window.location.href), new URL(b, window.location.href)]
   const query = (u: URL) => new URLSearchParams(u.search).toString()
@@ -59,7 +52,6 @@ export function recordHistoryMove(): number | undefined | null {
   return undone ? null : moved
 }
 
-/** Steps back over a move of `moved` entries, to the entry it left. */
 export function undoHistoryMove(moved: number): void {
   if (position === undefined) return
   undoTarget = position - moved
