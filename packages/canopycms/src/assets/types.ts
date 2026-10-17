@@ -53,6 +53,12 @@ export interface PublicObject {
   cacheControl?: string
 }
 
+/** A presigned GET, and how long a client may keep reusing that URL (0: not at all). */
+export interface PresignedRead {
+  url: string
+  maxAgeSeconds: number
+}
+
 /**
  * What a create-only write did. Every key the store writes this way is content-addressed, so no
  * correct writer ever replaces an object: `already-exists` means an object was already at the key
@@ -103,8 +109,8 @@ export interface AssetStore {
   hasPublicObject(key: string): Promise<boolean>
   /** Every public object key under `prefix`, in the store's own pages. S3 only. */
   listPublicObjectKeys?(prefix: string): AsyncIterable<string>
-  /** A short-lived URL a browser can GET `key` from directly, or `null` if absent. S3 only. */
-  presignPublicObjectRead?(key: string): Promise<string | null>
+  /** A URL a browser can GET `key` from directly, or `null` if absent. S3 only. */
+  presignPublicObjectRead?(key: string): Promise<PresignedRead | null>
   /**
    * Meta is create-only and never deleted: every transform not yet stored, at upload, release or
    * after a lazy output expires, is computed from it, and content anywhere may still name the file.
