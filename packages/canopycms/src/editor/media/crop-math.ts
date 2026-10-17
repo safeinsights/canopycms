@@ -99,3 +99,8 @@ export function initialCropBox(opts: {
     height: heightPct,
   }
 }
+
+/** True for a rectangle covering the whole frame, which renders the image unchanged. */
+export function isFullFrameCrop(rect: CropRect): boolean {
+  return rect.x === 0 && rect.y === 0 && rect.w === 1 && rect.h === 1
+}

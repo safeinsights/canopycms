@@ -11,16 +11,16 @@ import { AssetContextProvider } from '../context'
 import { ImageField, type ImageFieldProps } from './ImageField'
 import type { CropRect } from '../../assets/transform-directives'
 
-// Mock CropStep - its own percentage->rect math is unit-tested in
-// crop-math.test.ts, and its crop UI can't meaningfully render in
-// jsdom (no real image load/measurement). Stub it down to a single button
-// that calls onConfirm with a fixed rect, so ImageField's own logic (when to
-// open the crop step, what it commits on confirm) is exercised in isolation.
+// Mock CropStep - its box->rect math and its UI are tested in crop-math.test.ts and
+// CropStep.test.tsx. Stub it down to buttons that call onConfirm with fixed rects, so
+// ImageField's own logic (when to open the crop step, what it commits on confirm) is
+// exercised in isolation.
 vi.mock('../media/CropStep', () => ({
   CropStep: (props: {
     opened: boolean
     imageSrc: string
     aspect?: number
+    initialCrop?: CropRect
     onConfirm: (rect: CropRect) => void
     onClose: () => void
   }) =>
@@ -28,6 +28,15 @@ vi.mock('../media/CropStep', () => ({
       <div data-testid="mock-crop-step">
         <span data-testid="mock-crop-step-image-src">{props.imageSrc}</span>
         <span data-testid="mock-crop-step-aspect">{String(props.aspect)}</span>
+        <span data-testid="mock-crop-step-initial">
+          {JSON.stringify(props.initialCrop ?? null)}
+        </span>
+        <button
+          data-testid="mock-crop-confirm-full"
+          onClick={() => props.onConfirm({ x: 0, y: 0, w: 1, h: 1 })}
+        >
+          Confirm whole frame
+        </button>
         <button
           data-testid="mock-crop-confirm-wide"
           onClick={() => props.onConfirm({ x: 0, y: 0.25, w: 1, h: 0.5 })}
@@ -258,12 +267,13 @@ describe('ImageField', () => {
       const describedBy = crop.getAttribute('aria-describedby')
       expect(document.getElementById(describedBy ?? '')?.textContent).toBe(reason)
       act(() => crop.focus())
-      expect(await screen.findByText(reason)).toBeTruthy()
+      // Once in the Tooltip, once in the visually hidden description.
+      await waitFor(() => expect(screen.getAllByText(reason)).toHaveLength(2))
       fireEvent.click(crop)
       expect(screen.queryByTestId('mock-crop-step')).toBeNull()
     }
 
-    it('is enabled for a library raster, with or without aspect, and opens the crop step', () => {
+    it('is enabled for a library raster without aspect, and opens the crop step', () => {
       renderField({ value: libraryValue })
       const crop = screen.getByTestId('image-field-crop-hero')
       expect(crop.getAttribute('aria-disabled')).toBeNull()
@@ -364,6 +374,52 @@ describe('ImageField', () => {
         expect(state?.crop).toBeUndefined()
       })
       expect(screen.queryByTestId('mock-crop-step')).toBeNull()
+    })
+  })
+
+  describe('crop rectangle', () => {
+    const cropped: ImageFieldValue = {
+      src: catAsset.src,
+      alt: 'A cat',
+      width: 400,
+      height: 300,
+      crop: { x: 0.1, y: 0.2, w: 0.5, h: 0.25 },
+    }
+
+    it('re-crops from the stored rectangle', () => {
+      renderField({ value: cropped })
+      fireEvent.click(screen.getByTestId('image-field-crop-hero'))
+      expect(
+        JSON.parse(screen.getByTestId('mock-crop-step-initial').textContent ?? 'null'),
+      ).toEqual(cropped.crop)
+    })
+
+    it('applying the whole frame takes the crop off', async () => {
+      renderField({ value: cropped })
+      fireEvent.click(screen.getByTestId('image-field-crop-hero'))
+      fireEvent.click(screen.getByTestId('mock-crop-confirm-full'))
+
+      await waitFor(() => {
+        const state = JSON.parse(screen.getByTestId('field-value').textContent ?? 'null')
+        expect(state).toEqual({ src: catAsset.src, alt: 'A cat', width: 400, height: 300 })
+      })
+    })
+
+    it('applying the whole frame on a first crop commits the image uncropped', async () => {
+      mockClient.assets.list.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { assets: [catAsset] },
+      })
+      renderField({ aspect: '16:9' })
+      fireEvent.click(screen.getByTestId('image-field-browse-library-hero'))
+      fireEvent.click(await screen.findByTestId(`asset-card-${catAsset.hash32}`))
+      fireEvent.click(await screen.findByTestId('mock-crop-confirm-full'))
+
+      await waitFor(() => {
+        const state = JSON.parse(screen.getByTestId('field-value').textContent ?? 'null')
+        expect(state).toEqual({ src: catAsset.src, alt: '', width: 400, height: 300 })
+      })
     })
   })
 

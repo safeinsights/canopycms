@@ -24,7 +24,7 @@ import { useAssetContext } from '../context'
 import { CropStep } from '../media/CropStep'
 import { cropBlockedReason } from '../media/crop-availability'
 import { editorImageSrc } from '../media/editor-image-src'
-import { parseAspectRatio } from '../media/crop-math'
+import { isFullFrameCrop, parseAspectRatio } from '../media/crop-math'
 import { MediaLibrary } from '../media/MediaLibrary'
 import { useAssetUpload } from '../media/useAssetUpload'
 import { ACCEPTED_IMAGE_MIME_TYPES, MAX_UPLOAD_BYTES } from '../media/upload-constants'
@@ -164,11 +164,15 @@ export const ImageField: React.FC<ImageFieldProps> = ({
     field?.focus()
   }
 
+  // A whole-frame rectangle stores no crop: it would only turn the image's URL into a derivative
+  // that looks the same, and it is how an editor takes a crop back off.
   const handleCropConfirm = (rect: CropRect) => {
+    const crop = isFullFrameCrop(rect) ? undefined : rect
     if (cropRequest?.kind === 'new') {
-      commitAsset(cropRequest.asset, rect)
+      commitAsset(cropRequest.asset, crop)
     } else if (cropRequest?.kind === 'existing' && value) {
-      edit({ ...value, crop: rect })
+      const { crop: _previous, ...rest } = value
+      edit(crop ? { ...rest, crop } : rest)
     }
     setCropRequest(null)
   }

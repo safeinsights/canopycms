@@ -101,6 +101,7 @@ const CropStepBody: React.FC<CropStepBodyProps> = ({
   onClose,
 }) => {
   const [box, setBox] = useState<PercentCrop | undefined>(undefined)
+  const [loadFailed, setLoadFailed] = useState(false)
 
   // The box can't be seeded until the image's displayed size is known, so Apply stays off until then.
   const rect = box ? cropAreaPercentToRect(box) : null
@@ -140,9 +141,15 @@ const CropStepBody: React.FC<CropStepBodyProps> = ({
             alt=""
             style={{ maxHeight: PREVIEW_MAX_HEIGHT, maxWidth: '100%', display: 'block' }}
             onLoad={handleImageLoad}
+            onError={() => setLoadFailed(true)}
           />
         </ReactCrop>
       </div>
+      {loadFailed && (
+        <Text size="sm" c="var(--canopy-danger-text)" role="alert">
+          {"This image couldn't be loaded, so it can't be cropped."}
+        </Text>
+      )}
       <Text size="sm" c="dimmed">
         {aspect === undefined
           ? 'Drag the box to move it, or its edges and corners to resize it. With a keyboard, arrow keys move it; Shift takes larger steps.'

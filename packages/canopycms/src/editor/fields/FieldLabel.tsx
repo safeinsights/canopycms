@@ -24,7 +24,7 @@ export interface FieldLabelProps {
   labelId?: string
   /** Slot right after the label text, for the field's comment control. */
   commentControl?: React.ReactNode
-  /** Right-aligned slot for field actions (Expand all, an object's "…" menu). */
+  /** Right-aligned slot for field actions (Expand all, an object's "…" menu); it wraps under the label when the row is too narrow for both. */
   actions?: React.ReactNode
 }
 

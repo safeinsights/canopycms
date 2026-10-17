@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { formatDirectives, parseTransformPath } from '../../assets/transform-directives'
-import { cropAreaPercentToRect, initialCropBox, parseAspectRatio } from './crop-math'
+import {
+  cropAreaPercentToRect,
+  initialCropBox,
+  isFullFrameCrop,
+  parseAspectRatio,
+} from './crop-math'
 
 describe('cropAreaPercentToRect', () => {
   it('converts a simple percentage area to a normalized 0..1 rect', () => {
@@ -152,5 +157,14 @@ describe('initialCropBox', () => {
       width: 100,
       height: 100,
     })
+  })
+})
+
+describe('isFullFrameCrop', () => {
+  it('is true only for the whole frame', () => {
+    expect(isFullFrameCrop({ x: 0, y: 0, w: 1, h: 1 })).toBe(true)
+    expect(isFullFrameCrop({ x: 0, y: 0, w: 1, h: 0.9999 })).toBe(false)
+    expect(isFullFrameCrop({ x: 0.0001, y: 0, w: 0.9999, h: 1 })).toBe(false)
+    expect(isFullFrameCrop({ x: 0, y: 0.5, w: 1, h: 1 })).toBe(false)
   })
 })

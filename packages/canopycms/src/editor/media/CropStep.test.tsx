@@ -85,6 +85,14 @@ describe('CropStep', () => {
     expect(screen.getByLabelText('Top-left corner. Arrow keys resize the box.')).toBeTruthy()
   })
 
+  it('says so, and keeps Apply off, when the image cannot be loaded', () => {
+    renderStep()
+    fireEvent.error(screen.getByRole('presentation', { hidden: true }))
+
+    expect(screen.getByRole('alert').textContent).toContain("couldn't be loaded")
+    expect(apply().disabled).toBe(true)
+  })
+
   it('Cancel calls onClose without confirming', () => {
     const { onConfirm, onClose } = renderStep()
     fireEvent.click(screen.getByText('Cancel'))
