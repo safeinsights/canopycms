@@ -323,6 +323,25 @@ describe('a link clicked in the preview', () => {
       ])
     })
 
+    it('picks the field of a marked link that opens elsewhere, unless the click is modified', () => {
+      const { getByText, followed, sent } = setup(
+        <div data-canopy-path="cta">
+          <a href="https://elsewhere.example/" target="_blank" rel="noreferrer">
+            Elsewhere
+          </a>
+        </div>,
+      )
+      editorSays(origin, true)
+
+      fireEvent.click(getByText('Elsewhere'))
+      fireEvent.click(getByText('Elsewhere'), { metaKey: true })
+
+      expect(followed).toEqual([false, true])
+      expect(sent(CANOPY_PREVIEW_FOCUS)).toEqual([
+        [{ type: CANOPY_PREVIEW_FOCUS, entryPath: '/posts/here', fieldPath: 'cta' }, origin],
+      ])
+    })
+
     it('still follows a link outside any mark', () => {
       const { getByText, sent } = setup(<a href="/posts/other">Other</a>)
       editorSays(origin, true)

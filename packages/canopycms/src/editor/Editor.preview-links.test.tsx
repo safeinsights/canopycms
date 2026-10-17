@@ -272,6 +272,22 @@ describe('a link clicked in the preview', () => {
     expect(document.activeElement).toBe(iframe())
   })
 
+  it.each([
+    ['before the next page is framed', true],
+    ['after it is framed, before it loads', false],
+  ])('leaves focus where the user puts it %s', async (_, early) => {
+    await openHello()
+    const field = () => screen.getAllByRole('textbox')[0]
+
+    navigate(`${origin}/posts/world`)
+    if (early) act(() => field().focus())
+    await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(worldSrc))
+    if (!early) act(() => field().focus())
+    fireEvent.load(iframe() as HTMLIFrameElement)
+
+    expect(document.activeElement).toBe(field())
+  })
+
   it('leaves focus alone when the next page comes from anywhere but a followed link', async () => {
     await openHello()
     // A link to the open entry's own page moves nothing, so it owes the next page no focus.

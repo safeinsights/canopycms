@@ -255,6 +255,17 @@ export const PreviewFrame = ({
     if (handshake === 'missing') onSiteChromeRef.current?.('unanswered')
   }, [handshake])
 
+  // Focus the user puts anywhere before the next page loads is theirs to keep.
+  useEffect(() => {
+    if (!followingLink && !focusOnLoad) return
+    const keep = () => {
+      setFollowingLink(false)
+      setFocusOnLoad(false)
+    }
+    document.addEventListener('focusin', keep)
+    return () => document.removeEventListener('focusin', keep)
+  }, [followingLink, focusOnLoad])
+
   useEffect(() => {
     post()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- post is tracked via ref

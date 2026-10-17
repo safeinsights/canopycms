@@ -374,6 +374,9 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
  */
 type LinkClick = { kind: 'browser' } | { kind: 'navigate' | 'open'; href: string }
 
+const isPlainClick = (event: MouseEvent) =>
+  event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+
 const linkClick = (event: MouseEvent): LinkClick | undefined => {
   // The composed path reaches a link inside a shadow root, which the retargeted `target` hides.
   const anchor = event
@@ -391,15 +394,7 @@ const linkClick = (event: MouseEvent): LinkClick | undefined => {
   if (url.href.split('#')[0] === here.href.split('#')[0]) return undefined
   const target =
     anchor.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target')
-  if (
-    event.button !== 0 ||
-    event.metaKey ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.altKey ||
-    (target && target !== '_self') ||
-    anchor.hasAttribute('download')
-  ) {
+  if (!isPlainClick(event) || (target && target !== '_self') || anchor.hasAttribute('download')) {
     return { kind: 'browser' }
   }
   return { kind: url.origin === here.origin ? 'navigate' : 'open', href: url.href }
@@ -439,10 +434,14 @@ const usePreviewLinkNavigation = (opts: { editorOrigin?: string; highlighting: b
     const handleClick = (event: MouseEvent) => {
       if (!connected || event.defaultPrevented) return
       const link = linkClick(event)
-      if (link?.kind !== 'navigate' && link?.kind !== 'open') return
-      event.preventDefault()
+      if (!link) return
       // While fields are outlined, a marked link is a field to pick, which click-to-focus does.
-      if (highlighting.current && isInMark(event)) return
+      if (highlighting.current && isPlainClick(event) && isInMark(event)) {
+        event.preventDefault()
+        return
+      }
+      if (link.kind === 'browser') return
+      event.preventDefault()
       followedLinkClicks.add(event)
       if (link.kind === 'open') {
         window.open(link.href, '_blank', 'noopener,noreferrer')
