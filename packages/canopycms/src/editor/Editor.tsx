@@ -35,6 +35,7 @@ import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { CustomFieldRenderers, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
 import { PreviewPane } from './PreviewPane'
+import { previewPageKey } from './preview-path'
 import type { OperatingMode } from '../operating-mode'
 import { clientOperatingStrategy } from '../operating-mode/client'
 import { EditorShell } from './shell/EditorShell'
@@ -489,6 +490,34 @@ const EditorContent: React.FC<EditorProps> = ({
   const openEntry = (path: string) => {
     setSelectedPath(path)
     setNavigatorOpen(false)
+  }
+  // A preview link opens its entry, or a page no entry has in a new tab. The opener is cut by hand,
+  // since `noopener` would hide whether the browser blocked the tab.
+  const openPreviewLink = (href: string) => {
+    const mount = { basePath, previewPrefix }
+    const base = window.location.href
+    const page = previewPageKey(href, mount, base)
+    const entry =
+      page === undefined
+        ? undefined
+        : entriesState.find(
+            (e) => e.previewSrc && previewPageKey(e.previewSrc, mount, base) === page,
+          )
+    if (entry) {
+      openEntry(entry.path)
+      return
+    }
+    const opened = window.open(href, '_blank')
+    if (opened) opened.opener = null
+    notifications.show(
+      opened
+        ? { message: 'That page has no entry to edit, so it opened in a new tab.', color: 'blue' }
+        : {
+            message:
+              'That page has no entry to edit, and your browser blocked opening it in a new tab.',
+            color: 'yellow',
+          },
+    )
   }
 
   // An open overlay docks open, as the URL's ask for no entry does at load; `navigatorOpen` is only
@@ -1710,6 +1739,7 @@ const EditorContent: React.FC<EditorProps> = ({
         resizing={paneResizing}
         siteChrome={siteChrome}
         onSiteChromeChange={setSiteChrome}
+        onNavigate={openPreviewLink}
         notice={
           previewError && (
             <Alert

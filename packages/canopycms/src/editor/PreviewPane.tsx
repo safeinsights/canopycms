@@ -101,6 +101,8 @@ export interface PreviewPaneProps {
    * them, and whenever `siteChrome` is on, so it can always be turned off.
    */
   onSiteChromeChange?: (siteChrome: boolean) => void
+  /** Called with the absolute URL of a link clicked in the preview; see `PreviewFrame`. */
+  onNavigate?: (href: string) => void
 }
 
 /** What the viewport frames: the open entry's page, or the one before it while that loads. */

@@ -21,9 +21,15 @@ export default function HomeView({ initialData = {} }: { initialData?: HomeData 
         {data?.tagline ?? 'This app is for Playwright E2E testing'}
       </p>
       {isResolvedReference(spotlight) && typeof spotlight.title === 'string' && (
-        <p className="mb-8" data-testid="spotlight" {...fieldProps('spotlight.post')}>
-          Spotlight: {spotlight.title}
-        </p>
+        <>
+          <p className="mb-2" data-testid="spotlight" {...fieldProps('spotlight.post')}>
+            Spotlight: {spotlight.title}
+          </p>
+          {/* An internal link: in the editor's preview it opens the post's entry. */}
+          <a className="mb-8 underline" href={`/preview/posts/${spotlight.slug}`}>
+            Read the spotlight post
+          </a>
+        </>
       )}
       {hero && (
         <div

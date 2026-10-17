@@ -8,6 +8,7 @@ import {
   CANOPY_PREVIEW_HIGHLIGHT,
   CANOPY_PREVIEW_MARKS,
   CANOPY_PREVIEW_MESSAGE,
+  CANOPY_PREVIEW_NAVIGATE,
   CANOPY_PREVIEW_READY,
   type DraftUpdateMessage,
   type HighlightMessage,
@@ -15,6 +16,7 @@ import {
   MARK_REPORT_LIMITS,
   type PreviewErrorMessage,
   type PreviewMarksMessage,
+  type PreviewNavigateMessage,
   type PreviewReadyMessage,
   resolveMessageOrigin,
 } from './preview-bridge'
@@ -63,6 +65,22 @@ const isMarkPaths = (paths: unknown): paths is string[] =>
   paths.length <= MARK_REPORT_LIMITS.paths &&
   paths.every((path) => typeof path === 'string' && path.length <= MARK_REPORT_LIMITS.pathLength)
 
+/** Only http(s) on the preview's origin, so the editor never opens a `javascript:` URL or another site. */
+const isPreviewNavigateMessage = (
+  data: unknown,
+  previewOrigin: string,
+): data is PreviewNavigateMessage => {
+  if (typeof data !== 'object' || data === null) return false
+  const { type, href } = data as Partial<Record<keyof PreviewNavigateMessage, unknown>>
+  if (type !== CANOPY_PREVIEW_NAVIGATE || typeof href !== 'string') return false
+  try {
+    const url = new URL(href)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === previewOrigin
+  } catch {
+    return false
+  }
+}
+
 const sendDraftUpdate = (
   iframe: HTMLIFrameElement | null,
   message: DraftUpdateMessage,
@@ -94,6 +112,7 @@ export const PreviewFrame = ({
   iframeStyle,
   onReload,
   onSiteChrome,
+  onNavigate,
   busy = false,
 }: {
   src: string
@@ -121,6 +140,8 @@ export const PreviewFrame = ({
   onReload?: () => void
   /** Called with what the page's handshake says of the site's header and footer. */
   onSiteChrome?: (support: SiteChromeSupport) => void
+  /** Called with the absolute URL of a link clicked in the preview, which the page did not follow. */
+  onNavigate?: (href: string) => void
   /** The editor is loading the next page's data: this page stays in view, dimmed and inert. */
   busy?: boolean
 }) => {
@@ -212,12 +233,14 @@ export const PreviewFrame = ({
   const onPreviewErrorRef = useRef(onPreviewError)
   const onMarksRef = useRef(onMarks)
   const onSiteChromeRef = useRef(onSiteChrome)
+  const onNavigateRef = useRef(onNavigate)
   useEffect(() => {
     postRef.current = post
     postHighlightRef.current = postHighlight
     onPreviewErrorRef.current = onPreviewError
     onMarksRef.current = onMarks
     onSiteChromeRef.current = onSiteChrome
+    onNavigateRef.current = onNavigate
   })
 
   useEffect(() => {
@@ -268,6 +291,8 @@ export const PreviewFrame = ({
         if (typeof count === 'number' && Number.isInteger(count) && count >= 0) {
           onMarksRef.current?.({ count, ...(isMarkPaths(paths) ? { paths } : {}) })
         }
+      } else if (isPreviewNavigateMessage(event.data, previewOrigin)) {
+        onNavigateRef.current?.(event.data.href)
       }
     }
     window.addEventListener('message', handleMessage)

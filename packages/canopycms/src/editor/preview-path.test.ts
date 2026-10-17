@@ -4,6 +4,7 @@ import {
   displayPreviewPath,
   isSamePreviewPath,
   normalizePreviewPath,
+  previewPageKey,
   siteChromeSrc,
 } from './preview-path'
 
@@ -130,5 +131,59 @@ describe('siteChromeSrc', () => {
     ['/posts/x?branch=b', { previewPrefix: '/' }],
   ])("leaves %s under %j alone: it is a page of the site's own", (src, mount) => {
     expect(siteChromeSrc(src, mount)).toBeUndefined()
+  })
+})
+
+describe('previewPageKey', () => {
+  const editor = 'https://cms.example/edit?entry=x'
+  const key = (url: string, mount: Parameters<typeof previewPageKey>[1] = {}) =>
+    previewPageKey(url, mount, editor)
+
+  it.each([
+    ['/preview/posts/x/?branch=b', 'https://cms.example/posts/x', { previewPrefix: '/preview' }],
+    [
+      '/base/preview/posts/x?branch=b&chrome=1',
+      'https://cms.example/base/posts/x/',
+      { basePath: '/base', previewPrefix: '/preview' },
+    ],
+    [
+      '/base/preview/posts/x',
+      'https://cms.example/base/preview/posts/x#top',
+      {
+        basePath: '/base',
+        previewPrefix: '/preview',
+      },
+    ],
+    ['/posts/x?branch=b', 'https://cms.example/posts/x', {}],
+    [
+      'https://site.example/preview/posts/x?branch=b',
+      'https://site.example/posts/x',
+      { previewPrefix: 'https://site.example/preview' },
+    ],
+    [
+      'https://cms.example/preview/posts/x',
+      'https://cms.example/posts/x',
+      { previewPrefix: 'https://cms.example/preview' },
+    ],
+  ])('names the entry page %s and the link %s alike under %j', (src, href, mount) => {
+    expect(key(src, mount)).toBeDefined()
+    expect(key(src, mount)).toBe(key(href, mount))
+  })
+
+  it.each([
+    ['/preview/posts/x?branch=b', 'https://cms.example/posts/y', { previewPrefix: '/preview' }],
+    [
+      '/preview/posts/x?branch=b',
+      'https://cms.example/posts/x?page=2',
+      { previewPrefix: '/preview' },
+    ],
+    ['/preview/posts/x?branch=b', 'https://other.example/posts/x', { previewPrefix: '/preview' }],
+    ['https://site.example/posts/x', 'https://cms.example/posts/x', {}],
+  ])('tells the entry page %s from the link %s under %j', (src, href, mount) => {
+    expect(key(src, mount)).not.toBe(key(href, mount))
+  })
+
+  it('names nothing for a URL that does not parse', () => {
+    expect(key('http://')).toBeUndefined()
   })
 })
