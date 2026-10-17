@@ -65,8 +65,7 @@ Branch status labels and colours come from `packages/canopycms/src/editor/branch
 | One entry's lasting state, such as a read-only draft                   | Notice above its form |
 
 Never open a modal from a modal. A popover anchored to a field never covers its input; a short field's opens below it
-(`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible: a saved entry shows "Saved" inline, a new comment
-appears in its thread. Toasts go in the corner opposite the rail (`Notifications` in
+(`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible: a saved entry shows "Saved" inline, a new comment appears in its thread. Toasts go in the corner opposite the rail (`Notifications` in
 `packages/canopycms/src/editor/theme.tsx`); one with an action pauses while hovered or focused
 (`UndoToastMessage`). An error that needs action stays until dismissed.
 
@@ -78,11 +77,10 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
   it), and its red confirm button repeats the verb.
 - **Undo instead of confirm** for removals inside a form: a list item, block or image goes at
   once, and a toast offers Undo; an optional object's Clear leaves "Undo clear" behind. Undo
-  updates the current draft rather than restoring a snapshot, and moves focus to the restored row
-  or object. Inside a modal, the Undo is the dialog's own status line: a toast would sit outside
+  updates the current draft, not a snapshot, and focuses the restored row or object. Inside a modal, the Undo is the dialog's own status line: a toast would sit outside
   its focus trap.
-- A removed item's comment threads move to the entry's thread, labelled "On a removed item", and
-  the Remove toast says so.
+- A removed item's comment threads move to the entry's thread, labelled "On a removed item"; the
+  Remove toast says so.
 - Never both. A removal most users can't restore, such as "Remove from library", confirms.
 
 ## Disabled controls
@@ -93,8 +91,8 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
   condition, not a verb. Mantine's `data-disabled` keeps the Tooltip working on focus
   and touch. A control with text needs only the Tooltip; an icon-only one adds an
   `aria-label` for its name and the reason as visually hidden text.
-- No reason for a submit disabled only by an empty adjacent input (Reply), or a close button
-  disabled while its dialog is busy.
+- No reason for a submit disabled only by an empty adjacent input (Reply) or a busy dialog's
+  close button.
 - An action blocked only by unsaved state shows the reason first, allows drafting, and disables
   only its submit.
 - A disabled menu item stays focusable (`aria-disabled`, not `disabled`) and shows the reason
@@ -104,8 +102,8 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
   a read-only form's row actions ([Fields](#fields)). Where a path rule refuses an action, hide
   the per-item "…" actions and show one collection-level line saying why ("You can't add entries
   here").
-- A locked branch shows a lock, always, where each row's "…" would be; its Tooltip gives the
-  top bar's reason.
+- A locked branch keeps each row's "…" slot and draws a lock there on the hovered, focused or
+  selected row, by opacity; its Tooltip gives the top bar's reason.
 
 ## Loading, empty and error states
 

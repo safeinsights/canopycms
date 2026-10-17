@@ -558,6 +558,169 @@ describe('EntryNavigator', () => {
       expect(screen.queryByTestId('entry-menu-hello-world')).toBeNull()
     })
 
+    /**
+     * The `opacity` the provider's stylesheet gives `element`, read from the rules whose selector
+     * matches it. jsdom cannot evaluate `:hover` or `:focus-within`, so a rule using one is matched
+     * with the pseudo-class stripped, and only when the state holds: `hovered`, or focus inside the
+     * row that the rule's selector names. Every other selector, `:focus >` included, is matched whole.
+     */
+    const lockOpacities = (element: Element, { hovered = false } = {}): string[] => {
+      const sheet = document.querySelector<HTMLStyleElement>('style[data-canopy-styles]')?.sheet
+      if (!sheet) throw new Error('no canopy stylesheet')
+      const row = element.closest('[data-nav-row]')
+      return Array.from(sheet.cssRules).flatMap((rule) => {
+        if (!(rule instanceof CSSStyleRule) || rule.style.getPropertyValue('opacity') === '')
+          return []
+        const applies = rule.selectorText.split(',').some((selector) => {
+          const trimmed = selector.trim()
+          if (trimmed.includes(':hover')) {
+            return hovered && element.matches(trimmed.replace(':hover', ''))
+          }
+          if (trimmed.includes(':focus >')) return element.matches(trimmed)
+          if (trimmed.includes(':focus-within')) {
+            return (
+              !!row?.contains(document.activeElement) &&
+              element.matches(trimmed.replace(':focus-within', ''))
+            )
+          }
+          return element.matches(trimmed)
+        })
+        return applies ? [rule.style.getPropertyValue('opacity')] : []
+      })
+    }
+
+    const twoPosts = [post, { path: unsafeAsLogicalPath('posts/second'), label: 'Second' }]
+
+    it('keeps every locked row focusable and named, but draws the lock only on the selected row', () => {
+      renderEntryNavigator({
+        items: twoPosts,
+        collections: undefined,
+        selectedPath: post.path,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      const selectedLock = within(screen.getByTestId('entry-nav-item-hello-world')).getByTestId(
+        'branch-lock',
+      )
+      const otherLock = within(screen.getByTestId('entry-nav-item-second')).getByTestId(
+        'branch-lock',
+      )
+
+      expect(lockOpacities(otherLock)).toEqual(['0'])
+      expect(lockOpacities(selectedLock)).toEqual(['0', '1'])
+      expect(lockOpacities(otherLock, { hovered: true })).toEqual(['0', '1'])
+      for (const lock of [selectedLock, otherLock]) {
+        expect(lock.getAttribute('aria-label')).toBe('Entry actions')
+        expect(lock.getAttribute('aria-disabled')).toBe('true')
+        expect(lock.getAttribute('tabindex')).not.toBe('-1')
+        expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toBe(
+          BRANCH_REASON,
+        )
+      }
+    })
+
+    it('draws the lock on a row with focus inside it', () => {
+      renderEntryNavigator({
+        items: twoPosts,
+        collections: undefined,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const locks = screen.getAllByTestId('branch-lock')
+
+      expect(locks.map((lock) => lockOpacities(lock))).toEqual([['0'], ['0']])
+      locks[1].focus()
+
+      expect(lockOpacities(locks[0])).toEqual(['0'])
+      expect(lockOpacities(locks[1])).toEqual(['0', '1'])
+    })
+
+    it('draws the lock on a row whose tree item has focus, not on its neighbours', () => {
+      renderEntryNavigator({
+        items: twoPosts,
+        collections: undefined,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const locks = screen.getAllByTestId('branch-lock')
+      const treeItem = locks[1].closest<HTMLElement>('[role=treeitem]')!
+      treeItem.focus()
+
+      expect(document.activeElement).toBe(treeItem)
+      expect(lockOpacities(locks[0])).toEqual(['0'])
+      expect(lockOpacities(locks[1])).toEqual(['0', '1'])
+    })
+
+    it("does not draw a nested row's lock when its parent tree item has focus", () => {
+      renderEntryNavigator({
+        collections: [
+          collection({
+            entries: [
+              { path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' },
+              { path: unsafeAsLogicalPath('posts/second'), label: 'Second' },
+            ],
+          }),
+        ],
+        selectedPath: unsafeAsLogicalPath('posts/second'),
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const parentLock = within(screen.getByTestId('entry-nav-item-posts')).getByTestId(
+        'branch-lock',
+      )
+      const childLock = within(screen.getByTestId('entry-nav-item-hello-world')).getByTestId(
+        'branch-lock',
+      )
+      parentLock.closest<HTMLElement>('[role=treeitem]')!.focus()
+
+      expect(lockOpacities(parentLock)).toEqual(['0', '1'])
+      expect(lockOpacities(childLock)).toEqual(['0'])
+    })
+
+    it('leaves a hidden lock untouchable, so a tap on its slot reaches the row', () => {
+      renderEntryNavigator({
+        items: twoPosts,
+        collections: undefined,
+        selectedPath: post.path,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const sheet = document.querySelector<HTMLStyleElement>('style[data-canopy-styles]')!.sheet!
+      const pointerEvents = (lock: HTMLElement) =>
+        Array.from(sheet.cssRules).flatMap((rule) =>
+          rule instanceof CSSStyleRule &&
+          rule.style.getPropertyValue('pointer-events') !== '' &&
+          rule.selectorText.split(',').some((selector) => lock.matches(selector.trim()))
+            ? [rule.style.getPropertyValue('pointer-events')]
+            : [],
+        )
+      const [selectedLock, otherLock] = screen.getAllByTestId('branch-lock')
+
+      expect(pointerEvents(otherLock)).toEqual(['none'])
+      expect(pointerEvents(selectedLock)).toEqual(['none', 'auto'])
+    })
+
+    it('hides the lock by opacity, never by display or visibility', () => {
+      renderEntryNavigator({
+        items: [post],
+        collections: undefined,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const css = document.querySelector('style[data-canopy-styles]')!.textContent!
+      const rules = css.match(/[^{}]*\[data-row-lock\][^{}]*\{[^}]*\}/g) ?? []
+
+      expect(rules.length).toBeGreaterThan(0)
+      expect(rules.join('')).not.toMatch(/display\s*:|visibility\s*:/)
+    })
+
     it('keeps Space on the lock from expanding or collapsing its row', async () => {
       const user = userEvent.setup()
       renderEntryNavigator({
@@ -658,6 +821,7 @@ describe('EntryNavigator', () => {
       const onSelect = vi.fn()
       renderEntryNavigator({
         items: [post],
+        selectedPath: post.path,
         onSelect,
         onDeleteEntry: vi.fn(),
         readOnly: true,
