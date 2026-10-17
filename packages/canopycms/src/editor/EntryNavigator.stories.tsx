@@ -87,7 +87,7 @@ export const AddRefused: Story = {
   ),
 }
 
-/** A branch that takes no writes: each row that would have a "…" menu shows a lock in its place. */
+/** A branch that takes no writes: each row that would have a "…" menu draws a lock there on the hovered, focused or selected row. */
 export const LockedBranch: Story = {
   render: () => (
     <div className="w-80">

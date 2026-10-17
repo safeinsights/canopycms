@@ -137,6 +137,7 @@ import { findFieldTarget, focusFieldTarget } from './field-target'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
 import { MayHaveLandedError } from './unanswered'
+import { sanitizeBranchName } from '../paths/branch-name'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -436,6 +437,9 @@ const EditorContent: React.FC<EditorProps> = ({
   // not yet true; once the fetch has failed it is, and the lock says so.
   const branchRowsPending = branchLoading && !branchesLoadFailed
 
+  // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
+  const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
+
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
     selectedPath,
@@ -483,6 +487,14 @@ const EditorContent: React.FC<EditorProps> = ({
     resolvePreviewRoute: (entry) =>
       buildPreviewRoute(entry, { previewBaseByCollection, contentRoot }),
     setBusy: setEntriesLoading,
+    switchBranch: (branch) => switchBranchRef.current(branch),
+    // To the entry menu, which names the entry opened; a dialog keeps focus.
+    onHistoryRestore: () =>
+      requestAnimationFrame(() => {
+        if (!document.activeElement?.closest('[role="dialog"]')) {
+          navigatorToggleRef.current?.focus({ preventScroll: true })
+        }
+      }),
   })
 
   // The content overlay and a maximized preview hide the form; `navigatorOpen` is only the
@@ -631,6 +643,17 @@ const EditorContent: React.FC<EditorProps> = ({
     onBranchCreated: addCreatedBranch,
     userId: userContext?.userId,
   })
+  switchBranchRef.current = async (branch) => {
+    const listed = (name: string) => name === branch || name === sanitizeBranchName(branch)
+    if (branchSummaries.length > 0 && !branchSummaries.some((b) => listed(b.name))) {
+      notifications.show({
+        message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchNameState}”.`,
+        color: 'yellow',
+      })
+      throw new Error(`Branch ${branch} is not listed`)
+    }
+    await handleBranchChange(branch)
+  }
 
   // 5. Comment system (depends on branchNameState)
   const {
@@ -1291,7 +1314,7 @@ const EditorContent: React.FC<EditorProps> = ({
         setDeletingEntryReferencedBy(result.referencedBy)
         return
       }
-      if (result.ok && selectedPath === deletingEntryPath) closeEntry()
+      if (result.ok) closeEntry(deletingEntryPath, branchNameState)
       closeDeleteEntryModal()
     } finally {
       setDeleteInProgress(false)

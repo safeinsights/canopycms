@@ -73,4 +73,54 @@ test.describe('Links in the preview', () => {
       await expect(preview.locator('[data-canopy-path="title"]')).toContainText('Home Page')
     })
   })
+
+  test('Back returns from the entry a link opened to the one before, and Forward goes again', async ({
+    page,
+  }) => {
+    const preview = editorPage.previewFrame()
+    const iframe = editorPage.previewPane.locator('iframe')
+    const postSrc = /\/preview\/posts\/link-target(\/)?\?branch=/
+
+    await test.step('open Home Page, linked to a post', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.createPost('link-target', 'Link Target Post')
+      await editorPage.openContentNavigator()
+      await editorPage.selectEntry('Home')
+      await editorPage.closeContentNavigator()
+      await editorPage.selectReferenceOption('spotlight.post', 'Link Target Post')
+      await expect(preview.locator('[data-testid="spotlight"]')).toHaveText(
+        'Spotlight: Link Target Post',
+        { timeout: STANDARD_TIMEOUT },
+      )
+    })
+
+    await test.step('follow the link to the post', async () => {
+      await preview.getByRole('link', { name: 'Read the spotlight post' }).click()
+      await expect(iframe).toHaveAttribute('src', postSrc, { timeout: STANDARD_TIMEOUT })
+      await editorPage.verifyFieldValue('title', 'Link Target Post')
+    })
+
+    await test.step('Back opens Home Page again, in the same page load', async () => {
+      await page.evaluate(() => {
+        ;(window as unknown as { __sameLoad?: boolean }).__sameLoad = true
+      })
+      await page.goBack()
+      await expect(preview.locator('[data-testid="spotlight"]')).toHaveText(
+        'Spotlight: Link Target Post',
+        { timeout: STANDARD_TIMEOUT },
+      )
+      await expect(iframe).not.toHaveAttribute('src', postSrc)
+      expect(new URL(page.url()).searchParams.get('entry')).not.toContain('link-target')
+      expect(
+        await page.evaluate(() => (window as unknown as { __sameLoad?: boolean }).__sameLoad),
+      ).toBe(true)
+    })
+
+    await test.step('Forward opens the post again', async () => {
+      await page.goForward()
+      await expect(iframe).toHaveAttribute('src', postSrc, { timeout: STANDARD_TIMEOUT })
+      await editorPage.verifyFieldValue('title', 'Link Target Post')
+    })
+  })
 })
