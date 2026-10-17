@@ -23,7 +23,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     # Both platforms' tars are made on an arm runner. ECR's anonymous data quota refuses every GET
     # from an IP that has spent it, the adapter's few MB included, and the amd64 pool's shared IPs
-    # usually have; nothing in the images runs here, so no emulation is needed.
+    # often have; nothing in the images runs here, so no emulation is needed.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     strategy:
@@ -45,11 +45,10 @@ jobs:
         with:
           node-version-file: '.nvmrc'
 
-      # The amd64 runner restores what this arm runner saves because a cache entry's version
-      # hashes only its paths, its compression method (zstd on both runner images) and, on Windows
-      # alone, a cross-OS flag, never the runner's architecture: getCacheVersion in
-      # actions/toolkit packages/cache/src/internal/cacheUtils.ts, which actions/cache v6.1.0
-      # bundles. runner.temp is /home/runner/work/_temp on both, so the paths match.
+      # The amd64 runner restores what this arm runner saves: a cache entry's version hashes its
+      # paths and compression method, not the runner's architecture (getCacheVersion in
+      # actions/toolkit packages/cache/src/internal/cacheUtils.ts, bundled by actions/cache
+      # v6.1.0), and both runner images use zstd and runner.temp /home/runner/work/_temp.
       - name: Base-image cache key
         id: base-images
         env:

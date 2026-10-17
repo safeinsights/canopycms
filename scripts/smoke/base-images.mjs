@@ -123,8 +123,8 @@ export function parseEcrRef(ref) {
   return { repository: match[1], tag: match[2] }
 }
 
-/** ECR's `docker/library/*` is Docker's official image, served by mirror.gcr.io and Docker Hub
- * under the same digest, so the seed pulls it from those; anything else only ECR has. */
+/** ECR's `docker/library/*` is Docker's official image, which mirror.gcr.io and Docker Hub also
+ * serve; pulled by ECR's digest, they can only answer with ECR's image. Anything else only ECR has. */
 export function pullSources(repository) {
   const official = /^docker\/library\/([^/]+)$/.exec(repository)
   if (!official) return [`public.ecr.aws/${repository}`]
@@ -167,8 +167,8 @@ async function fetchWithRetry(url, init, { fetch, sleep, delays }) {
 
 /**
  * The index digest ECR's tag `ref` names now, read with an anonymous token and a manifest HEAD.
- * Neither carries image data, and an IP whose data quota is spent still gets both answered: the
- * quota refuses its GETs, the manifest's included.
+ * Neither carries image data, and an IP whose data quota is spent still gets both answered, while
+ * its `/v2/` GETs, a manifest's included, are refused.
  */
 export async function resolveEcrDigest(
   ref,
@@ -211,8 +211,9 @@ export function checkImage(inspected, name, { arch, id, digest }) {
 /**
  * The flags `docker image inspect` and `docker save` need to act on `platform`'s image, given
  * `docker info --format '{{json .DriverStatus}}'`. On the containerd store a tag names the whole
- * index and both act on the daemon's own platform unless told another. The classic store holds one
- * platform per image, and Docker 28, which GitHub's runners have, refuses `--platform` on inspect.
+ * index and both act on the daemon's own platform unless told another (inspect's flag needs API
+ * 1.49). The classic store holds one platform per image, and GitHub's runners' Docker 28.0.4 (API
+ * 1.48) has no `--platform` on inspect, so it gets none.
  */
 export function platformFlags(driverStatus, platform) {
   const status = JSON.parse(driverStatus)
@@ -234,8 +235,9 @@ function inspect(name, run, flags) {
 
 /**
  * Saves `platform`'s copy of every base `dockerfilePath` names to `save`, each pulled by the index
- * digest ECR's tag names now and tagged with the reference the Dockerfile uses. A pull by digest
- * is content-addressed, so no source can substitute another image for ECR's. Any failure throws
+ * digest ECR's tag names now and tagged with the reference the Dockerfile uses. No source can
+ * substitute another image: the daemon verifies the index's bytes against that digest, and each
+ * manifest, config and layer against the index (moby distribution/pull_v2.go). Any failure throws
  * and leaves no `save`, so the workflow saves no cache entry and the previous one stays newest.
  */
 export async function seedBaseImages(

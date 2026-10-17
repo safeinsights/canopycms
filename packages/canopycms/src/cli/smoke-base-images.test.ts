@@ -460,7 +460,7 @@ describe('platformFlags', () => {
     ])
   })
 
-  it('adds nothing on the classic store, whose Docker 28 refuses the flag on inspect', () => {
+  it('adds nothing on the classic store, where Docker 28.0.4 has no --platform on inspect', () => {
     expect(mod.platformFlags(CLASSIC_STATUS, 'linux/amd64')).toEqual([])
     expect(mod.platformFlags('null\n', 'linux/amd64')).toEqual([])
     expect(
