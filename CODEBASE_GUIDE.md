@@ -600,8 +600,9 @@ Components, in `editor/components/`:
 - `UserBadge.tsx` — user avatar and name
 - `BranchAccessList.tsx` — a branch card's access list
 - `ReasonedMenuItem.tsx` — a blocked menu item and why
-- `UndoToastMessage.tsx` — the undo toast for a Remove or Clear
+- `UndoToastMessage.tsx` — the undo toast for Remove or Clear
 - `RetryToastMessage.tsx` — a failed load's toast body with Retry
+- `PreviewLinkToast.tsx` — preview links' new-tab toast
 - `ValidationSummary.tsx` — pre-save issues alert with breadcrumb buttons
 - `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`
 - `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the editor crash screen
