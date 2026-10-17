@@ -52,6 +52,8 @@ beforeEach(() => {
     'AWS_USE_FIPS_ENDPOINT',
     'AWS_USE_DUALSTACK_ENDPOINT',
     'AWS_PROFILE',
+    // Caps a presigned read's maxAgeSeconds; the presign tests set it themselves.
+    'AWS_CREDENTIAL_EXPIRATION',
   ]) {
     // vitest's stubEnv DELETES on undefined rather than storing the string 'undefined'.
     vi.stubEnv(key, undefined as unknown as string)
@@ -150,8 +152,13 @@ describe('S3AssetStore.presignPublicObjectRead', () => {
   const KEY = `assets/t/w=320/${'a'.repeat(32)}/photo.png`
   const s3Mock = mockClient(S3Client)
 
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+  })
+
   afterEach(() => {
     s3Mock.reset()
+    vi.useRealTimers()
   })
 
   it('returns null without signing when the HEAD finds no object', async () => {
@@ -167,21 +174,58 @@ describe('S3AssetStore.presignPublicObjectRead', () => {
     })
   })
 
-  it('signs a short-lived GET of exactly that key when the object exists', async () => {
+  it('signs a GET of exactly that key at the start of the hour, valid two hours', async () => {
+    vi.setSystemTime(new Date('2026-10-17T15:42:10Z'))
     s3Mock.on(HeadObjectCommand).resolves({})
     const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
 
     const signed = await store.presignPublicObjectRead(KEY)
     if (signed === null) throw new Error('expected a presigned URL')
-    const url = new URL(signed)
+    const url = new URL(signed.url)
 
     // The signer percent-encodes `=` in the directive segment; S3 decodes it back to the key.
     expect(url.origin).toBe(`https://${BUCKET}.s3.${REGION}.amazonaws.com`)
     expect(decodeURIComponent(url.pathname)).toBe(`/${KEY}`)
-    expect(url.searchParams.get('X-Amz-Expires')).toBe('300')
+    expect(url.searchParams.get('X-Amz-Date')).toBe('20261017T150000Z')
+    expect(url.searchParams.get('X-Amz-Expires')).toBe('7200')
     expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/)
+    // Reusable until the hour ends: 17 min 50 s.
+    expect(signed.maxAgeSeconds).toBe(17 * 60 + 50)
     // Signing is local: the only request the store made was the HEAD.
     expect(s3Mock.commandCalls(GetObjectCommand)).toHaveLength(0)
+  })
+
+  it('returns the same URL throughout one hour and a new one in the next', async () => {
+    s3Mock.on(HeadObjectCommand).resolves({})
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+    const urlAt = async (iso: string) => {
+      vi.setSystemTime(new Date(iso))
+      return (await store.presignPublicObjectRead(KEY))?.url
+    }
+
+    const first = await urlAt('2026-10-17T15:00:00Z')
+    expect(first).toMatch(/X-Amz-Signature=/)
+    expect(await urlAt('2026-10-17T15:31:07Z')).toBe(first)
+    expect(await urlAt('2026-10-17T15:59:59Z')).toBe(first)
+    expect(await urlAt('2026-10-17T16:00:00Z')).not.toBe(first)
+  })
+
+  it('stops reuse a minute before credentials that report an expiration expire', async () => {
+    vi.setSystemTime(new Date('2026-10-17T15:10:00Z'))
+    vi.stubEnv('AWS_CREDENTIAL_EXPIRATION', '2026-10-17T15:20:00Z')
+    s3Mock.on(HeadObjectCommand).resolves({})
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    expect((await store.presignPublicObjectRead(KEY))?.maxAgeSeconds).toBe(9 * 60)
+  })
+
+  it('reports a URL from credentials about to expire as not reusable', async () => {
+    vi.setSystemTime(new Date('2026-10-17T15:10:00Z'))
+    vi.stubEnv('AWS_CREDENTIAL_EXPIRATION', '2026-10-17T15:10:30Z')
+    s3Mock.on(HeadObjectCommand).resolves({})
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    expect((await store.presignPublicObjectRead(KEY))?.maxAgeSeconds).toBe(0)
   })
 
   it('propagates a HEAD failure that is not a missing object', async () => {

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MantineProvider } from '@mantine/core'
 
 import type { AssetRecord } from '../../api'
+import { EDITOR_THUMBNAIL_WIDTHS } from '../../assets/editor-thumbnail-widths'
 import { AssetCard } from './AssetCard'
 import { formatRelativeTime } from '../relative-time'
 
@@ -29,6 +30,14 @@ const catAsset: AssetRecord = {
 describe('AssetCard', () => {
   afterEach(() => {
     cleanup()
+  })
+
+  it('requests the card editor thumbnail width, which finalize stores ahead of the first view', () => {
+    render(<AssetCard asset={catAsset} baseUrl="/api/canopycms/assets/raw" />, { wrapper: Wrapper })
+
+    expect(screen.getByRole('img', { hidden: true }).getAttribute('src')).toBe(
+      `/api/canopycms/assets/raw/assets/t/w=${EDITOR_THUMBNAIL_WIDTHS.card}/${catAsset.hash32}/cat.png`,
+    )
   })
 
   it('renders the thumbnail image by default', () => {
