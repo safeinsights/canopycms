@@ -7,6 +7,8 @@ import { SWRConfig } from 'swr'
 import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
+import { notifications } from '@mantine/notifications'
+import { RESTORED_ENTRY_GONE_MESSAGE } from './hooks/useEntryManager'
 
 import { CANOPY_PREVIEW_NAVIGATE, CANOPY_PREVIEW_READY } from './preview-bridge'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../paths/test-utils'
@@ -63,6 +65,7 @@ afterAll(() => {
 
 afterEach(() => {
   cleanup()
+  vi.mocked(notifications.show).mockClear()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   window.localStorage.clear()
@@ -227,6 +230,8 @@ const followPreviewLink = (href: string) => {
     )
   })
 }
+const entryMenu = () =>
+  screen.queryAllByTestId('file-dropdown-button').find((el) => el.tagName === 'BUTTON')
 const urlEntry = () => new URLSearchParams(window.location.search).get('entry')
 const urlBranch = () => new URLSearchParams(window.location.search).get('branch')
 const isOpen = (slug: string) =>
@@ -338,7 +343,7 @@ describe('history across entries', () => {
     expect(pushedEntries()).toEqual([world.path])
   })
 
-  it('leaves focus out of the preview after Back to a page a link left', async () => {
+  it('moves focus to the entry menu after Back, not into the preview a link left', async () => {
     await openEditor()
     followPreviewLink(`${window.location.origin}/posts/world`)
     await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(worldSrc))
@@ -349,7 +354,56 @@ describe('history across entries', () => {
 
     await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(helloSrc))
     fireEvent.load(iframe() as HTMLIFrameElement)
-    expect(document.activeElement).not.toBe(iframe())
+    await waitFor(() => expect(document.activeElement).toBe(entryMenu()))
+    expect(entryMenu()?.textContent).toContain('hello')
+  })
+
+  it('leaves the URL alone on a Back off the editor to another page', async () => {
+    await openEditor()
+    await openInTree('world')
+    await waitFor(() => expect(urlEntry()).toBe(world.path))
+    window.history.pushState(null, '', '/docs/guide')
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(window.location.pathname).toBe('/docs/guide')
+    expect(window.location.search).toBe('')
+    expect(isOpen('world')).toBe(true)
+  })
+
+  it('refuses a Forward onto a branch no longer listed, keeping that history entry', async () => {
+    await openEditor()
+    await waitFor(() =>
+      expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/branches'))).toBe(
+        true,
+      ),
+    )
+    // The branch list is in once its response has been read.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    window.history.pushState(
+      { canopyHistoryPosition: 1 },
+      '',
+      '/?branch=gone&entry=content/posts/world',
+    )
+    await back()
+
+    await forward()
+
+    await waitFor(() => expect(urlBranch()).toBe('main'))
+    expect(urlEntry()).toBe(hello.path)
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('Branch “gone” no longer exists'),
+      }),
+    )
+    await forward()
+    await waitFor(() => expect(urlBranch()).toBe('main'))
+    expect(notifications.show).toHaveBeenCalledTimes(2)
   })
 
   it('opens the home page, replacing the URL, when Back returns to an entry since deleted', async () => {
@@ -365,6 +419,10 @@ describe('history across entries', () => {
     await waitFor(() => expect(isOpen('hello')).toBe(true))
     await waitFor(() => expect(urlEntry()).toBe(hello.path))
     expect(pushedEntries()).toEqual([world.path])
+    expect(notifications.show).toHaveBeenCalledWith({
+      message: RESTORED_ENTRY_GONE_MESSAGE,
+      color: 'blue',
+    })
   })
 
   it('switches branch for a Back onto another branch, and opens its entry there', async () => {

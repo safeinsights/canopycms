@@ -16,8 +16,17 @@ import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
 import { RetryToastMessage } from '../components/RetryToastMessage'
 import { isGatewayFailure, isUnanswered, MayHaveLandedError, UnansweredError } from '../unanswered'
+import {
+  markEditorHistoryStart,
+  recordHistoryMove,
+  undoHistoryMove,
+  writeEditorUrl,
+} from './editor-history'
 
 const ENTRIES_LOAD_FAILED_TOAST_ID = 'canopy-entries-load-failed'
+/** @internal Exported for tests. */
+export const RESTORED_ENTRY_GONE_MESSAGE =
+  'The entry you returned to is no longer on this branch, so the home page opened.'
 
 // Re-exported so existing imports of `listAllEntries` from this module keep
 // working -- the implementation lives in useEntriesData.ts alongside the
@@ -64,19 +73,18 @@ export interface UseEntryManagerOptions {
   /** An entry's route on the site (`buildPreviewRoute`), which picks the home page to open first. */
   resolvePreviewRoute?: (entry: EditorEntry) => string | undefined
   setBusy: (busy: boolean) => void
-  /**
-   * Switches to the branch a Back or Forward returns to, rejecting when the user stays on this
-   * one. Without it, the URL is put back to this branch.
-   */
+  /** Switches to the branch a Back or Forward reached; rejects when the user stays on this one. */
   switchBranch?: (branch: string) => Promise<void>
+  /** Called when a Back or Forward has opened an entry, which replaces the form and preview. */
+  onHistoryRestore?: () => void
 }
 
 export interface UseEntryManagerReturn {
   selectedPath: string
   /** Opens an entry the user chose, adding a history entry, so Back returns to the one before. */
   setSelectedPath: (path: string) => void
-  /** Leaves no entry open, as after deleting the open one, instead of opening the first. */
-  closeEntry: () => void
+  /** Leaves no entry open if `path` is still open, as after deleting it, instead of opening the first. */
+  closeEntry: (path: string) => void
   entries: EditorEntry[]
   setEntries: (entries: EditorEntry[]) => void
   collections: EditorCollection[]
@@ -243,13 +251,20 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   selectedPathRef.current = selectedPath
   // Counts selections through the returned setter, not this hook's own fallbacks.
   const selectionsByCallerRef = useRef(0)
-  // The selection the URL sync pushes a history entry for, as the user chose it; any other
-  // selection, such as a fallback, a correction or a Back, replaces the current one.
+  // The path the user chose, which the URL sync pushes; any other selection replaces the URL.
   const pushTargetRef = useRef<string | null>(null)
-  // The URL's `entry` that a Back or Forward onto another branch opens once that branch is shown.
+  // The `entry` a Back onto another branch opens once that branch shows; a later move drops it.
   const entryAfterBranchChangeRef = useRef<{ branch: string; entry: string | null } | undefined>(
     undefined,
   )
+  // Counts Back and Forward moves, so a branch switch one asked for knows when another followed.
+  const historyMovesRef = useRef(0)
+  // The path a Back or Forward opened, until the entries show whether it is still there.
+  const restoredPathRef = useRef<string | null>(null)
+  // The editor's own page: a Back off it to another page of the host is no move between entries.
+  const editorPathRef = useRef(typeof window === 'undefined' ? '' : window.location.pathname)
+  const onHistoryRestoreRef = useRef(options.onHistoryRestore)
+  onHistoryRestoreRef.current = options.onHistoryRestore
   const [navigatorOpen, setNavigatorOpen] = useState(() => readUrlEntry() === '')
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
@@ -344,7 +359,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   }, [])
   // No entry open, as the URL's empty `entry` asks, where a lost selection opens the home page.
   // Replaces the history entry: it follows a delete, which Back could not undo.
-  const closeEntry = useCallback(() => {
+  const closeEntry = useCallback((path: string) => {
+    if (selectedPathRef.current !== path) return
     noEntryRequested.current = true
     selectionsByCallerRef.current += 1
     setSelectedPath('')
@@ -766,12 +782,16 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (isInitialMount.current) {
       isInitialMount.current = false
     } else {
-      // Undefined unless a Back or Forward brought the switch, whose entry waits for the list.
       const restored = entryAfterBranchChangeRef.current
       entryAfterBranchChangeRef.current = undefined
       const entry = restored?.branch === options.branchName ? restored.entry : undefined
       noEntryRequested.current = entry === ''
       setSelectedPath(entry ?? '')
+      if (entry !== undefined) {
+        restoredPathRef.current = entry
+        setNavigatorOpen(entry === '')
+        onHistoryRestoreRef.current?.()
+      }
       // Bound version-map growth across switches. Correctness no longer
       // depends on this clear: tokens are keyed by `${branch}:${contentId}`
       // (see entryVersionsRef), so a late response from the previous branch
@@ -915,26 +935,31 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       }
     }
 
+    const restored = restoredPathRef.current === selectedPath
+    if (restored) restoredPathRef.current = null
+
     // If the selected entry exists, keep it
     if (entriesState.find((e) => e.path === selectedPath)) return
 
     if (selectedPath === '' && noEntryRequested.current) return
 
+    if (restored && selectedPath) {
+      notifications.show({ message: RESTORED_ENTRY_GONE_MESSAGE, color: 'blue' })
+    }
     setSelectedPath(resolveHomeEntry(entriesState, resolvePreviewRouteRef.current)?.path ?? '')
   }, [entriesState, selectedPath])
 
   // Update URL when selection changes (skip until URL sync has happened)
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const push = pushTargetRef.current === selectedPath
+    // Pushed only once listed: a path the check above replaces would leave a stale entry behind.
+    const push =
+      pushTargetRef.current === selectedPath && entriesState.some((e) => e.path === selectedPath)
     pushTargetRef.current = null
     // Don't update URL until we've synced from it first
     if (!hasSyncedFromUrl.current) return
-    const url = entryUrl(selectedPath, noEntryRequested.current)
-    // A Back or Forward has already put the URL there; pushing it again would trap Back.
-    if (url === window.location.href) return
-    if (push) window.history.pushState({}, '', url)
-    else window.history.replaceState({}, '', url)
+    if (window.location.pathname !== editorPathRef.current) return
+    writeEditorUrl(entryUrl(selectedPath, noEntryRequested.current), push)
   }, [selectedPath])
 
   const entriesRef = useRef(entriesState)
@@ -944,39 +969,56 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // Back and Forward open the entry their URL names, as a load of that URL would, without a reload.
   useEffect(() => {
     if (typeof window === 'undefined') return
+    markEditorHistoryStart()
     const restore = () => {
+      const moved = recordHistoryMove()
+      if (moved === null || window.location.pathname !== editorPathRef.current) return
+      historyMovesRef.current += 1
+      entryAfterBranchChangeRef.current = undefined
       const params = new URLSearchParams(window.location.search)
       const entry = params.get('entry')
       const branch = params.get('branch')
       if (branch && branch !== currentBranchRef.current) {
-        const putBack = () =>
-          window.history.replaceState(
-            {},
-            '',
-            entryUrl(selectedPathRef.current, noEntryRequested.current, currentBranchRef.current),
-          )
+        const move = historyMovesRef.current
+        const stay = () => {
+          if (move !== historyMovesRef.current) return
+          if (moved) undoHistoryMove(moved)
+          else {
+            const url = entryUrl(
+              selectedPathRef.current,
+              noEntryRequested.current,
+              currentBranchRef.current,
+            )
+            writeEditorUrl(url, false)
+          }
+        }
         const switchBranch = switchBranchRef.current
         if (!switchBranch) {
-          putBack()
+          stay()
           return
         }
         entryAfterBranchChangeRef.current = { branch, entry }
+        if (!hasSyncedFromUrl.current) initialUrlEntry.current = entry
         switchBranch(branch).catch(() => {
-          entryAfterBranchChangeRef.current = undefined
-          putBack()
+          if (move === historyMovesRef.current) entryAfterBranchChangeRef.current = undefined
+          stay()
         })
         return
       }
+      // A Back is a selection, so a rename or create that lands afterwards leaves it open.
+      selectionsByCallerRef.current += 1
       noEntryRequested.current = entry === ''
       setNavigatorOpen(entry === '')
       if (!hasSyncedFromUrl.current) {
         initialUrlEntry.current = entry
         return
       }
+      restoredPathRef.current = entry
       // A path no longer listed falls back to the home page, through the selection check above.
       setSelectedPath(
         entry ?? resolveHomeEntry(entriesRef.current, resolvePreviewRouteRef.current)?.path ?? '',
       )
+      onHistoryRestoreRef.current?.()
     }
     window.addEventListener('popstate', restore)
     return () => window.removeEventListener('popstate', restore)

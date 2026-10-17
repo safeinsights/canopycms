@@ -830,6 +830,14 @@ describe('useEntryManager', () => {
     expect(result.current.createModalOpen).toBe(false)
     // The create flow navigates to the newly created entry
     expect(result.current.selectedPath).toBe('new-post')
+    // As a history entry of its own, so Back returns to the entry open before.
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(window.history.pushState)
+          .mock.calls.some(([, , url]) => String(url).includes('entry=new-post')),
+      ).toBe(true),
+    )
   })
 
   describe('create payload title', () => {
@@ -1330,6 +1338,67 @@ describe('useEntryManager', () => {
       return { ...hook, opened }
     }
 
+    it('leaves open the entry a Back opened while a rename was in flight', async () => {
+      const other = {
+        contentId: unsafeAsContentId('other0000001'),
+        logicalPath: unsafeAsLogicalPath('entry2'),
+        slug: unsafeAsSlug('two'),
+      }
+      mockClient.entries.list.mockResolvedValue(listOf(listedAsOpenedItem, other))
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.entries).toHaveLength(2))
+      act(() => result.current.setSelectedPath(mockEntry.path))
+      let answer!: (value: { ok: true; status: 200; data: { newPath: string } }) => void
+      mockClient.content.renameEntry.mockReturnValueOnce(
+        new Promise((resolve) => {
+          answer = resolve
+        }),
+      )
+      mockClient.entries.list.mockResolvedValue(
+        listOf(
+          { ...listedAsOpenedItem, logicalPath: unsafeAsLogicalPath('entry1-renamed') },
+          other,
+        ),
+      )
+
+      let renaming!: Promise<void>
+      act(() => {
+        renaming = result.current.renameEntry(mockEntry.path, 'renamed')
+      })
+      window.location.search = '?branch=main&entry=entry2'
+      window.location.href = 'http://localhost/?branch=main&entry=entry2'
+      act(() => {
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      })
+      expect(result.current.selectedPath).toBe('entry2')
+      await act(async () => {
+        answer({ ok: true, status: 200, data: { newPath: 'entry1-renamed' } })
+        await renaming
+      })
+
+      expect(result.current.selectedPath).toBe('entry2')
+    })
+
+    it('closes only the entry it is asked to, if that one is still open', async () => {
+      const { result, opened } = await mountWithOpenedEntry()
+      act(() => result.current.setSelectedPath(opened.path))
+
+      act(() => result.current.closeEntry('entry-deleted-elsewhere'))
+
+      expect(result.current.selectedPath).toBe(opened.path)
+    })
+
+    it('pushes no history entry for a chosen path the list does not have', async () => {
+      const { result, opened } = await mountWithOpenedEntry()
+      act(() => result.current.setSelectedPath(opened.path))
+      vi.mocked(window.history.pushState).mockClear()
+
+      act(() => result.current.setSelectedPath('entry-not-listed'))
+
+      await waitFor(() => expect(result.current.selectedPath).toBe(opened.path))
+      expect(window.history.pushState).not.toHaveBeenCalled()
+    })
+
     it('keeps a renamed entry selected while the list it moved in loads', async () => {
       const { result, opened } = await mountWithOpenedEntry()
       act(() => result.current.setSelectedPath(opened.path))
@@ -1398,7 +1467,7 @@ describe('useEntryManager', () => {
         { wrapper, initialProps: { branchName: 'main' } },
       )
       await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
-      act(() => result.current.closeEntry())
+      act(() => result.current.closeEntry(result.current.selectedPath))
       await waitFor(() => expect(result.current.selectedPath).toBe(''))
 
       rerender({ branchName: 'feature' })

@@ -486,8 +486,14 @@ const EditorContent: React.FC<EditorProps> = ({
     resolvePreviewRoute: (entry) =>
       buildPreviewRoute(entry, { previewBaseByCollection, contentRoot }),
     setBusy: setEntriesLoading,
-    // Back or Forward onto another branch asks first, as any switch with unsaved changes does.
     switchBranch: (branch) => switchBranchRef.current(branch),
+    // The entry menu names the entry opened, which the replaced form or preview can no longer hold.
+    onHistoryRestore: () =>
+      requestAnimationFrame(() => {
+        if (!document.activeElement?.closest('[role="dialog"]')) {
+          navigatorToggleRef.current?.focus({ preventScroll: true })
+        }
+      }),
   })
 
   // The content overlay and a maximized preview hide the form; `navigatorOpen` is only the
@@ -636,7 +642,16 @@ const EditorContent: React.FC<EditorProps> = ({
     onBranchCreated: addCreatedBranch,
     userId: userContext?.userId,
   })
-  switchBranchRef.current = handleBranchChange
+  switchBranchRef.current = async (branch) => {
+    if (branchSummaries.length > 0 && !branchSummaries.some((b) => b.name === branch)) {
+      notifications.show({
+        message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchNameState}”.`,
+        color: 'yellow',
+      })
+      throw new Error(`Branch ${branch} is not listed`)
+    }
+    await handleBranchChange(branch)
+  }
 
   // 5. Comment system (depends on branchNameState)
   const {
@@ -1297,7 +1312,7 @@ const EditorContent: React.FC<EditorProps> = ({
         setDeletingEntryReferencedBy(result.referencedBy)
         return
       }
-      if (result.ok && selectedPath === deletingEntryPath) closeEntry()
+      if (result.ok) closeEntry(deletingEntryPath)
       closeDeleteEntryModal()
     } finally {
       setDeleteInProgress(false)
