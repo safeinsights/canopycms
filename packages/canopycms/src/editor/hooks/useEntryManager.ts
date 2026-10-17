@@ -74,9 +74,9 @@ export interface UseEntryManagerOptions {
   /** An entry's route on the site (`buildPreviewRoute`), which picks the home page to open first. */
   resolvePreviewRoute?: (entry: EditorEntry) => string | undefined
   setBusy: (busy: boolean) => void
-  /** Switches to the branch a Back or Forward reached; rejects when the user stays on this one. */
+  /** Switches to the branch a Back or Forward reached; rejects when the switch does not happen. */
   switchBranch?: (branch: string) => Promise<void>
-  /** Called when a Back or Forward has opened an entry, which replaces the form and preview. */
+  /** Called when a Back or Forward has opened another entry. */
   onHistoryRestore?: () => void
 }
 
@@ -187,7 +187,7 @@ const EMPTY_SCHEMAS: string[] = []
 const readUrlEntry = (): string | null =>
   typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('entry')
 
-/** The current URL with the `entry` that `selectedPath` shows, as `readUrlEntry` reads it. */
+/** The current URL with `branch` and the `entry` that `selectedPath` shows, as `readUrlEntry` reads it. */
 const entryUrl = (selectedPath: string, noEntry: boolean, branch?: string): string => {
   const url = new URL(window.location.href)
   if (branch) url.searchParams.set('branch', branch)
@@ -967,7 +967,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   entriesRef.current = entriesState
   const switchBranchRef = useRef(options.switchBranch)
   switchBranchRef.current = options.switchBranch
-  // Back and Forward open the entry their URL names, as a load of that URL would, without a reload.
+  // Back and Forward open the entry their URL names, without a reload.
   useEffect(() => {
     if (typeof window === 'undefined') return
     markEditorHistoryStart()
@@ -980,7 +980,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       const entry = params.get('entry')
       const branch = params.get('branch')
       const current = currentBranchRef.current
-      // A legacy name and its sanitized form are one branch, with one set of drafts.
+      // A legacy name and its sanitized form are one branch; a switch would key drafts by the other.
       if (branch && sanitizeBranchName(branch) !== sanitizeBranchName(current)) {
         const move = historyMovesRef.current
         const stay = () => {
@@ -1008,7 +1008,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         })
         return
       }
-      // A Back is a selection, so a rename or create that lands afterwards leaves it open.
+      // A Back is a selection, so a rename, move or re-create landing afterwards leaves it open.
       selectionsByCallerRef.current += 1
       noEntryRequested.current = entry === ''
       setNavigatorOpen(entry === '')

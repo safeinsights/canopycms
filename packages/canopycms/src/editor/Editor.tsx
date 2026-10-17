@@ -488,7 +488,7 @@ const EditorContent: React.FC<EditorProps> = ({
       buildPreviewRoute(entry, { previewBaseByCollection, contentRoot }),
     setBusy: setEntriesLoading,
     switchBranch: (branch) => switchBranchRef.current(branch),
-    // The entry menu names the entry opened, which the replaced form or preview can no longer hold.
+    // To the entry menu, which names the entry opened; a dialog keeps focus.
     onHistoryRestore: () =>
       requestAnimationFrame(() => {
         if (!document.activeElement?.closest('[role="dialog"]')) {

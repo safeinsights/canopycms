@@ -1,6 +1,7 @@
 /** Session-history writes stamped with their position, so a refused Back can be undone. */
 const STAMP_KEY = 'canopyHistory'
-// Next.js's patched history methods add these back and record the URL, unless already present.
+// Next.js's router keys: its patched history methods copy `__NA` and the tree back and record the
+// URL, but do neither for state already holding `__NA` or `_N` (app-router.js, next 15.5).
 const ROUTER_KEYS = ['__NA', '__PRIVATE_NEXTJS_INTERNALS_TREE', '_N']
 
 interface Stamp {
@@ -40,7 +41,7 @@ const samePage = (a: string, b: string): boolean => {
   )
 }
 
-/** Shows `url`, pushed or replaced (keeping the entry's other state); never rewrites the URL shown. */
+/** Shows `url`, pushed, or replaced keeping the entry's other state; never rewrites the URL shown. */
 export function writeEditorUrl(url: string, push: boolean): void {
   if (samePage(url, window.location.href)) return
   if (!run) newRun()

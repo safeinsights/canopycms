@@ -41,7 +41,7 @@ test.describe('Back and Forward between entries', () => {
         page.getByText('The entry you returned to is no longer on this branch'),
       ).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect.poll(urlEntry, { timeout: STANDARD_TIMEOUT }).toBe(homeEntry)
-      // Next.js's router commits its own update after the editor's; the URL must survive it.
+      // Any later update of the router's own must leave the URL there too.
       await page.waitForTimeout(1000)
       expect(urlEntry()).toBe(homeEntry)
     })
