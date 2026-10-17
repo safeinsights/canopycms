@@ -141,7 +141,7 @@ export const PreviewFrame = ({
   /** Called with what the page's handshake says of the site's header and footer. */
   onSiteChrome?: (support: SiteChromeSupport) => void
   /**
-   * Called with the absolute URL of a link clicked in the preview, which the page did not follow.
+   * Called with the absolute URL of a link clicked in the preview, which the bridge kept the frame from following.
    * Returning true says the frame moves to that page, so focus follows into it once it loads.
    */
   onNavigate?: (href: string) => boolean
