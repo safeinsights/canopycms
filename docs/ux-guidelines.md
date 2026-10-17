@@ -87,17 +87,16 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
 
 ## Disabled controls
 
-- **Disabled says why.** A control that can't act now stays visible, disabled, with a Tooltip
-  giving the reason as a full sentence with the way forward ("This branch is in review.
+- **Disabled says why.** A control that can't act stays visible, disabled, with a Tooltip
+  giving a full-sentence reason with the way forward ("This branch is in review.
   Withdraw it to make changes."). One reason blocking controls with different verbs names the
-  blocking condition, not a verb. Mantine's `data-disabled` keeps the Tooltip working, on focus
-  and touch too. The Tooltip alone serves a control that carries text. An icon-only one's
-  Tooltip gives the reason, its `aria-label` keeps the name, and the reason is also visually
-  hidden text.
-- No reason is needed for a submit disabled only because its adjacent input is empty, such as
-  Reply, or a close button disabled only while its dialog is briefly busy.
-- An action blocked only by unsaved state shows the reason first and still allows drafting;
-  only its submit is disabled.
+  condition, not a verb. Mantine's `data-disabled` keeps the Tooltip working on focus
+  and touch. A control with text needs only the Tooltip; an icon-only one adds an
+  `aria-label` for its name and the reason as visually hidden text.
+- No reason for a submit disabled only by an empty adjacent input (Reply), or a close button
+  disabled while its dialog is busy.
+- An action blocked only by unsaved state shows the reason first, allows drafting, and disables
+  only its submit.
 - A disabled menu item stays focusable (`aria-disabled`, not `disabled`) and shows the reason
   inline (`ReasonedMenuItem`). An empty menu shows one such item saying why, so arrow keys reach
   it; an empty section of a non-empty menu is plain text, with no not-allowed cursor.
@@ -105,6 +104,8 @@ appears in its thread. Toasts go in the corner opposite the rail (`Notifications
   a read-only form's row actions ([Fields](#fields)). Where a path rule refuses an action, hide
   the per-item "…" actions and show one collection-level line saying why ("You can't add entries
   here").
+- A locked branch shows a lock, always, where each row's "…" would be; its Tooltip gives the
+  top bar's reason.
 
 ## Loading, empty and error states
 

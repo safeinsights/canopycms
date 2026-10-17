@@ -343,6 +343,8 @@ export interface UseBranchManagerReturn {
   branches: BranchListItem[]
   branchSummaries: BranchSummary[]
   currentBranch: BranchListItem | undefined
+  /** The listing failed and nothing earlier stands in for it. */
+  branchesLoadFailed: boolean
   /** Shows a branch the server just created before any listing includes it. */
   addCreatedBranch: (branch: BranchListItem) => void
   handleSubmit: (branchName: string) => Promise<void>
@@ -842,6 +844,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches,
     branchSummaries,
     currentBranch,
+    branchesLoadFailed: !!branchesError && !branchesData,
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,

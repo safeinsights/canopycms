@@ -43,6 +43,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+const BRANCH_REASON = 'This branch is in review. Withdraw it to make changes.'
+
 const renderEntryNavigator = (props: Partial<React.ComponentProps<typeof EntryNavigator>> = {}) => {
   const defaultProps: React.ComponentProps<typeof EntryNavigator> = {
     onSelect: vi.fn(),
@@ -500,6 +502,170 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByText('Add entry…'))
 
       expect(onAdd).toHaveBeenCalled()
+    })
+  })
+
+  describe('branch lock', () => {
+    const post = { path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }
+    const collection = (extra: Partial<EntryNavCollection> = {}): EntryNavCollection => ({
+      path: unsafeAsLogicalPath('posts'),
+      label: 'Posts',
+      type: 'collection',
+      onAdd: vi.fn(),
+      ...extra,
+    })
+
+    it('shows a lock with the branch reason, and no menu, on a locked branch', () => {
+      renderEntryNavigator({
+        items: [post],
+        collections: undefined,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      const row = screen.getByTestId('entry-nav-item-hello-world')
+      const lock = within(row).getByTestId('branch-lock')
+      expect(lock.getAttribute('aria-label')).toBe('Entry actions')
+      expect(lock.getAttribute('aria-disabled')).toBe('true')
+      expect(lock.getAttribute('aria-describedby')).toBeTruthy()
+      expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toBe(
+        BRANCH_REASON,
+      )
+      expect(screen.queryByTestId('entry-menu-hello-world')).toBeNull()
+    })
+
+    it('shows the lock on a collection row that would have had a menu', () => {
+      renderEntryNavigator({
+        collections: [collection()],
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      const row = screen.getByTestId('entry-nav-item-posts')
+      expect(within(row).getByTestId('branch-lock').getAttribute('aria-label')).toBe(
+        'Collection actions',
+      )
+      expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
+    })
+
+    it('holds an empty slot, not a lock, while the branch reason is not yet known', () => {
+      renderEntryNavigator({ items: [post], onDeleteEntry: vi.fn(), readOnly: true })
+
+      const row = screen.getByTestId('entry-nav-item-hello-world')
+      expect(within(row).getByTestId('branch-lock-pending')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+      expect(screen.queryByTestId('entry-menu-hello-world')).toBeNull()
+    })
+
+    it('keeps Space on the lock from expanding or collapsing its row', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        collections: [
+          collection({
+            entries: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }],
+          }),
+        ],
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const childShown = () => screen.queryByText('Hello World') !== null
+
+      expect(childShown()).toBe(false)
+      screen.getByTestId('branch-lock').focus()
+      await user.keyboard(' ')
+
+      expect(childShown()).toBe(false)
+    })
+
+    it('shows no lock on a row that would have had no menu anyway', () => {
+      renderEntryNavigator({
+        items: [post],
+        collections: undefined,
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('shows no lock on a collection row with no menu actions', () => {
+      renderEntryNavigator({
+        collections: [collection({ onAdd: undefined })],
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.getByTestId('entry-nav-item-posts')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('shows no lock on an unavailable entry', () => {
+      renderEntryNavigator({
+        collections: [collection({ onAdd: undefined, entries: [{ ...post, unavailable: true }] })],
+        expandedStateRef: { current: { 'collection:posts': true } },
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.getByTestId('entry-nav-item-hello-world')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('shows the lock on a row whose only menu action is reordering', () => {
+      renderEntryNavigator({
+        items: [post],
+        onReorderEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(
+        within(screen.getByTestId('entry-nav-item-hello-world')).getByTestId('branch-lock'),
+      ).toBeTruthy()
+    })
+
+    it('shows the menu and no lock on an editing branch', () => {
+      renderEntryNavigator({
+        items: [post],
+        onDeleteEntry: vi.fn(),
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.getByTestId('entry-menu-hello-world')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('opens the reason on keyboard focus', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        items: [post],
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      await user.tab()
+      const lock = screen.getByTestId('branch-lock')
+      lock.focus()
+
+      expect((await screen.findByRole('tooltip')).textContent).toBe(BRANCH_REASON)
+    })
+
+    it('does not select the row when the lock is clicked', async () => {
+      const user = userEvent.setup()
+      const onSelect = vi.fn()
+      renderEntryNavigator({
+        items: [post],
+        onSelect,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      await user.click(screen.getByTestId('branch-lock'))
+      expect(onSelect).not.toHaveBeenCalled()
     })
   })
 
@@ -1401,14 +1567,18 @@ describe('EntryNavigator', () => {
       ).toBeNull()
     })
 
-    it('shows no per-entry lock when the whole navigator is read-only', () => {
+    it("keeps an entry's own lock, and leaves its slot empty, on a read-only navigator", () => {
       renderEntryNavigator({
         readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+        onDeleteEntry: vi.fn(),
         items: [{ path: lp('posts/locked'), label: 'Locked', readOnly: true }],
       })
 
-      expect(screen.getByTestId('entry-nav-item-locked')).toBeTruthy()
-      expect(screen.queryByTestId('entry-lock')).toBeNull()
+      const row = screen.getByTestId('entry-nav-item-locked')
+      expect(within(row).getAllByTestId('entry-lock')).toHaveLength(1)
+      expect(within(row).queryByTestId('branch-lock')).toBeNull()
+      expect(within(row).queryByTestId('branch-lock-pending')).toBeNull()
     })
   })
 
