@@ -745,6 +745,7 @@ jobs:
 
       # The newest base-image tar cms-base-images.yml saved on main this ISO week or last, so a seed
       # that keeps failing leaves CI pulling fresh bases rather than building on ever-older ones.
+      # An arm runner saves both architectures' tars; that workflow says why this runner restores its.
       # Restore only: from a pull request a save lands in that PR's own cache scope, which only its
       # re-runs read. scripts/smoke/base-images.mjs pulls any base the Dockerfile names that the tar
       # lacks.
