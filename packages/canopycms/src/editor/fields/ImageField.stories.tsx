@@ -52,7 +52,7 @@ export const TwoInARow: Story = {
   render: () => (
     <div style={{ display: 'grid', gap: 16, maxWidth: 480 }}>
       <Field label="Hero image" field="first" initial={outsideLibrary} />
-      <Field label="Square image" field="second" initial={outsideLibrary} />
+      <Field label="Banner image" field="second" initial={outsideLibrary} />
     </div>
   ),
 }
