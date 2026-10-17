@@ -365,8 +365,8 @@ for why a single file cannot switch between them, and
 **Location**: `packages/canopycms/src/assets/` —
 [AGENTS.md](packages/canopycms/src/assets/AGENTS.md)
 
-`asset-prefixes.ts`, `transform-directives.ts` and `asset-url.ts` are import-chain-pure, reachable
-from client bundles and static builds; everything else here is server-only (`node:fs`,
+`asset-prefixes.ts`, `transform-directives.ts`, `asset-url.ts` and `editor-thumbnail-widths.ts` are import-chain-pure,
+reachable from client bundles and builds; everything else here is server-only (`node:fs`,
 `node:crypto`, `sharp`, the S3 SDK), so client code takes only types, from `types.ts`.
 
 - `types.ts` — `AssetStore` (create-only writes, public-object existence, listing, presigned reads), `CreateOnlyResult`, `AssetMeta`, `StagedUploadTarget`; type-only
@@ -377,13 +377,14 @@ from client bundles and static builds; everything else here is server-only (`nod
 - `factory.ts` — `createAssetStore`, instantiates the configured store and falls back to a local dev store
 - `pipeline.ts` — `runFinalizePipeline`: sniff, hash, dimensions, SVG sanitize, real raster decode check
 - `finalize.ts` — `finalizeAsset` / `finalizeStagedUpload`, store orchestration around the pipeline; un-hides re-uploads
+- `editor-thumbnail-widths.ts` — `EDITOR_THUMBNAIL_WIDTHS` (editor media, finalize)
 - `svg-sanitizer.ts` — `sanitizeSvg` via `sanitize-html`
 - `asset-src.ts` — `assetSrc(meta)`, the root-relative URL stored in content
 - `transform-directives.ts` — transform-URL parser/formatter, `TransformWidthPolicy` (`allowlist` | `any`), `MAX_INPUT_PIXELS`, `roundCropRect`, `canonicalizeTransformPath`
 - `sharp-loader.ts` — `loadSharp()`, the package's only runtime load of `sharp`, memoized
 - `transform.ts` — `applyTransform`: resize, crop, reformat, EXIF-strip
 - `asset-url.ts` — `assetUrl` / `assetSrcSet`, isomorphic; `baseUrl` applies at render time only; `AssetRef.crop` honored
-- `materialize.ts` — `storeTransform`, `materializeAssets` (`outputPrefix`, `assertValidOutputPrefix`, `MaterializeReport.schemaVersion`): writing transform outputs
+- `materialize.ts` — `storeTransform`, `storeEditorThumbnails`, `materializeAssets` (`outputPrefix`, `assertValidOutputPrefix`, `MaterializeReport.schemaVersion`): writing transform outputs
 - `index.ts` — internal server-side barrel, not a package entrypoint
 
 Design: [On-Demand Image Transforms](ARCHITECTURE.md#on-demand-image-transforms) and [Stored vs
