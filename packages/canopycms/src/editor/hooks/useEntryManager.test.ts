@@ -972,6 +972,30 @@ describe('useEntryManager', () => {
     expect(window.history.replaceState).toHaveBeenCalled()
   })
 
+  it('puts the URL back to this branch when a Back onto another branch is cancelled', async () => {
+    const replaceState = vi.mocked(window.history.replaceState)
+    const switchBranch = vi.fn().mockRejectedValue(new Error('User cancelled branch switch'))
+    const { result } = renderHook(() => useEntryManager({ ...defaultOptions, switchBranch }), {
+      wrapper,
+    })
+    await waitFor(() => expect(result.current.selectedPath).toBe('entry1'))
+    replaceState.mockClear()
+    window.location.href = 'http://localhost/?branch=feature&entry=other'
+    window.location.search = '?branch=feature&entry=other'
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    expect(switchBranch).toHaveBeenCalledWith('feature')
+    await waitFor(() => expect(replaceState).toHaveBeenCalled())
+    const url = new URL(String(replaceState.mock.calls.at(-1)?.[2]))
+    expect(url.searchParams.get('branch')).toBe('main')
+    expect(url.searchParams.get('entry')).toBe('entry1')
+    expect(result.current.selectedPath).toBe('entry1')
+    expect(window.history.pushState).not.toHaveBeenCalled()
+  })
+
   it('resets selectedPath when selected entry is removed', () => {
     const entries = [mockEntry, { ...mockEntry, path: unsafeAsLogicalPath('entry2') }]
     const { result, rerender } = renderHook((props) => useEntryManager(props), {

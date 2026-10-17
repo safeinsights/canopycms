@@ -436,6 +436,9 @@ const EditorContent: React.FC<EditorProps> = ({
   // not yet true; once the fetch has failed it is, and the lock says so.
   const branchRowsPending = branchLoading && !branchesLoadFailed
 
+  // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
+  const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
+
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
     selectedPath,
@@ -483,6 +486,8 @@ const EditorContent: React.FC<EditorProps> = ({
     resolvePreviewRoute: (entry) =>
       buildPreviewRoute(entry, { previewBaseByCollection, contentRoot }),
     setBusy: setEntriesLoading,
+    // Back or Forward onto another branch asks first, as any switch with unsaved changes does.
+    switchBranch: (branch) => switchBranchRef.current(branch),
   })
 
   // The content overlay and a maximized preview hide the form; `navigatorOpen` is only the
@@ -631,6 +636,7 @@ const EditorContent: React.FC<EditorProps> = ({
     onBranchCreated: addCreatedBranch,
     userId: userContext?.userId,
   })
+  switchBranchRef.current = handleBranchChange
 
   // 5. Comment system (depends on branchNameState)
   const {
