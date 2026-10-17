@@ -129,8 +129,8 @@ function editorThumbnailTargets(
  * Store the editor thumbnails of a raster asset whose meta is committed, from `data`, its
  * original's bytes. Best effort: the raw route computes a missing one on first view, so a failure
  * is logged, never thrown, and the first one stops the rest, which would decode the same bytes in
- * the same environment. One width at a time, so one decode is in memory. `skipStored` HEADs each
- * key first, for an asset that may already have them.
+ * the same environment. One width at a time, so one decode is in memory. A multi-page (animated)
+ * source is skipped. `skipStored` HEADs each key first, for an asset that may already have them.
  */
 export async function storeEditorThumbnails(
   store: AssetStore,
@@ -141,6 +141,11 @@ export async function storeEditorThumbnails(
   if (meta.kind !== 'raster') return
   let failure: string | undefined
   try {
+    // An animated source re-encodes every frame at every width, which takes tens of seconds for a
+    // large GIF: too long to hold an upload for, so its first view transforms it instead. The
+    // probe reads only the header.
+    const sharp = await loadSharp()
+    if (((await sharp(data).metadata()).pages ?? 1) > 1) return
     for (const { key, parsed } of editorThumbnailTargets(meta)) {
       if (options.skipStored && (await store.hasPublicObject(key))) continue
       const result = await storeTransform(store, parsed, key, { source: { meta, data } })

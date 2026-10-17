@@ -384,6 +384,8 @@ export class S3AssetStore implements AssetStore {
    */
   async presignPublicObjectRead(key: string): Promise<PresignedRead | null> {
     if (!(await this.hasPublicObject(key))) return null
+    // Read before signing: a provider refresh in between leaves the signing credentials the newer.
+    const { expiration } = await this.client.config.credentials()
     const nowSeconds = Math.floor(Date.now() / 1000)
     const windowStart = nowSeconds - (nowSeconds % PRESIGNED_READ_WINDOW_SECONDS)
     const url = await getSignedUrl(
@@ -392,7 +394,6 @@ export class S3AssetStore implements AssetStore {
       { expiresIn: PRESIGNED_READ_EXPIRY_SECONDS, signingDate: new Date(windowStart * 1000) },
     )
     let maxAgeSeconds = windowStart + PRESIGNED_READ_WINDOW_SECONDS - nowSeconds
-    const { expiration } = await this.client.config.credentials()
     if (expiration) {
       const credentialSeconds = Math.floor(expiration.getTime() / 1000) - nowSeconds
       maxAgeSeconds = Math.min(maxAgeSeconds, credentialSeconds - CREDENTIAL_EXPIRY_MARGIN_SECONDS)

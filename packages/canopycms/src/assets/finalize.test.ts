@@ -12,6 +12,7 @@ import { finalizeAsset, finalizeStagedUpload } from './finalize'
 import { ASSET_PREFIXES } from './keys'
 import { resetCanopyLogger, setCanopyLogger } from '../utils/logger'
 import { LocalAssetStore } from './store-local'
+import * as transformModule from './transform'
 import { canonicalizeTransformPath } from './transform-directives'
 import type { AssetMeta, AssetStore } from './types'
 
@@ -22,6 +23,12 @@ import type { AssetMeta, AssetStore } from './types'
  * would be correctly rejected here. Memoized: every call site in this file
  * wants the same trivial fixture.
  */
+// Partial mock: the real applyTransform, wrapped so one test can make a width's transform reject.
+vi.mock('./transform', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./transform')>()
+  return { ...actual, applyTransform: vi.fn(actual.applyTransform) }
+})
+
 let cachedPngBytes: Uint8Array | undefined
 async function pngBytes(): Promise<Uint8Array> {
   if (!cachedPngBytes) {
@@ -273,6 +280,59 @@ describe('finalizeAsset editor thumbnails', () => {
       expect(putPublicObject.mock.calls.map(([input]) => input.key)).toEqual([missingKey])
       expect(await store.hasPublicObject(missingKey)).toBe(true)
     })
+  })
+
+  it('stores no thumbnails for an animated (multi-page) source', async () => {
+    await withLocalStore(async (store) => {
+      const frame = (r: number) =>
+        sharp({ create: { width: 400, height: 200, channels: 3, background: { r, g: 0, b: 0 } } })
+          .png()
+          .toBuffer()
+      const gif = await sharp(await Promise.all([frame(10), frame(200)]), {
+        join: { animated: true },
+      })
+        .gif()
+        .toBuffer()
+      const putPublicObject = vi.spyOn(store, 'putPublicObject')
+
+      const result = await finalizeAsset(store, { data: new Uint8Array(gif), filename: 'a.gif' })
+
+      if (!result.ok) throw new Error(result.error)
+      expect(result.meta.kind).toBe('raster')
+      expect(putPublicObject).not.toHaveBeenCalled()
+    })
+  })
+
+  it('stops at the first width a transform rejects, and still finalizes', async () => {
+    const warn = vi.fn()
+    setCanopyLogger({ log: vi.fn(), warn, error: vi.fn() })
+    vi.mocked(transformModule.applyTransform).mockClear()
+    vi.mocked(transformModule.applyTransform).mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      error: 'cannot decode',
+    })
+    try {
+      const store = makeStore()
+
+      const result = await finalizeAsset(store, { data: await widePng(), filename: 'a.png' })
+
+      expect(result.ok).toBe(true)
+      expect(transformModule.applyTransform).toHaveBeenCalledTimes(1)
+      expect(store.putPublicObject).not.toHaveBeenCalled()
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot decode'))
+    } finally {
+      resetCanopyLogger()
+    }
+  })
+
+  it('stores no thumbnails when the meta it lost to cannot be read', async () => {
+    const store = makeStore({ putMetaIfAbsent: vi.fn().mockResolvedValue('already-exists') })
+
+    const result = await finalizeAsset(store, { data: await widePng(), filename: 'a.png' })
+
+    expect(result.ok && result.meta.filename).toBe('a.png')
+    expect(store.putPublicObject).not.toHaveBeenCalled()
   })
 
   it('still finalizes, and stops at the first width, when storing a thumbnail fails', async () => {

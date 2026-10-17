@@ -82,7 +82,7 @@ export async function finalizeAsset(
     // (already committed) is authoritative; return it rather than ours. The
     // winner's own finalize stores its thumbnails.
     const winner = await store.getMeta(meta.hash32)
-    if (winner) return { ok: true, meta: winner }
+    return { ok: true, meta: winner ?? meta }
   }
 
   // After the commit point: a thumbnail is keyed by the committed meta's slug.
