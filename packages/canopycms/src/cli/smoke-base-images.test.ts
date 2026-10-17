@@ -19,6 +19,7 @@ import { mockConsole, type MockConsole } from '../test-utils/console-spy'
 interface PullResult {
   status: number | null
   output: string
+  stdout?: string
 }
 
 interface InspectedImage {
@@ -402,12 +403,13 @@ describe('resolveEcrDigest', () => {
     expect(d.fetch.mock.calls).toEqual([
       [
         'https://public.ecr.aws/token/?service=public.ecr.aws&scope=repository:docker/library/node:pull',
-        { method: 'GET' },
+        { method: 'GET', redirect: 'error' },
       ],
       [
         'https://public.ecr.aws/v2/docker/library/node/manifests/22-slim',
         {
           method: 'HEAD',
+          redirect: 'error',
           headers: { Accept: mod.INDEX_MEDIA_TYPES.join(', '), Authorization: 'Bearer tok' },
         },
       ],
@@ -560,6 +562,7 @@ describe('seedBaseImages', () => {
     saveStatus = 0,
     tagStatus = 0,
     driverStatus = CLASSIC_STATUS,
+    repoDigest,
   }: {
     serving?: string[]
     arch?: string
@@ -567,6 +570,7 @@ describe('seedBaseImages', () => {
     saveStatus?: number
     tagStatus?: number
     driverStatus?: string
+    repoDigest?: string
   } = {}) => {
     const flags = driverStatus === CONTAINERD_STATUS ? ['--platform'] : []
     const store = new Map<string, InspectedImage>()
@@ -580,12 +584,12 @@ describe('seedBaseImages', () => {
         store.set(ref, {
           Id: `sha256:id-of-${ref}`,
           Architecture: arch ?? args[2].split('/')[1],
-          RepoDigests: [ref],
+          RepoDigests: [repoDigest ?? ref],
         })
         return { status: 0, output: '' }
       }
       if (args.join(' ') === 'info --format {{json .DriverStatus}}') {
-        return { status: 0, output: driverStatus }
+        return { status: 0, stdout: driverStatus, output: `${driverStatus}WARNING: on stderr\n` }
       }
       const inspectAt = 2 + (flags.length && 2)
       if (
@@ -596,7 +600,8 @@ describe('seedBaseImages', () => {
         args.length === inspectAt + 3
       ) {
         const image = store.get(args[inspectAt + 2])
-        return image ? { status: 0, output: JSON.stringify(image) } : { status: 1, output: '' }
+        const stdout = image ? JSON.stringify(image) : ''
+        return { status: image ? 0 : 1, stdout, output: `${stdout}WARNING: on stderr\n` }
       }
       if (command === 'tag' && args.length === 3) {
         if (tagStatus !== 0) return { status: tagStatus, output: '' }
@@ -715,6 +720,12 @@ describe('seedBaseImages', () => {
     const d = fakeDocker()
     await expect(seed(d, ecr(NODE_DIGEST, 'sha256:short'))).rejects.toThrow(/sha256 digest/)
     expect(fs.existsSync(save)).toBe(false)
+  })
+
+  it('saves nothing when no RepoDigest ties the pulled image to the digest', async () => {
+    const d = fakeDocker({ repoDigest: `mirror.gcr.io/library/node@${ADAPTER_DIGEST}` })
+    await expect(seed(d)).rejects.toThrow(/not pulled by/)
+    expect(d.run.mock.calls.some(([a]) => a[0] === 'save')).toBe(false)
   })
 
   it('saves nothing when a pulled image is for another architecture', async () => {

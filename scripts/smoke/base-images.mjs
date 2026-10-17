@@ -62,7 +62,8 @@ function docker(args, { capture = true } = {}) {
     encoding: 'utf8',
   })
   if (result.error) throw result.error
-  return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` }
+  const stdout = result.stdout ?? ''
+  return { status: result.status, stdout, output: `${stdout}${result.stderr ?? ''}` }
 }
 
 function dockerPull(args, run) {
@@ -176,7 +177,7 @@ export async function resolveEcrDigest(
   const { repository, tag } = parseEcrRef(ref)
   const deps = { fetch, sleep, delays }
   const tokenUrl = `https://public.ecr.aws/token/?service=public.ecr.aws&scope=repository:${repository}:pull`
-  const tokenResponse = await fetchWithRetry(tokenUrl, { method: 'GET' }, deps)
+  const tokenResponse = await fetchWithRetry(tokenUrl, { method: 'GET', redirect: 'error' }, deps)
   if (tokenResponse.status !== 200) {
     throw new Error(`public.ecr.aws refused a token for ${ref} with ${tokenResponse.status}`)
   }
@@ -186,7 +187,10 @@ export async function resolveEcrDigest(
   }
   const manifestUrl = `https://public.ecr.aws/v2/${repository}/manifests/${tag}`
   const headers = { Accept: INDEX_MEDIA_TYPES.join(', '), Authorization: `Bearer ${token}` }
-  return indexDigestFrom(await fetchWithRetry(manifestUrl, { method: 'HEAD', headers }, deps), ref)
+  return indexDigestFrom(
+    await fetchWithRetry(manifestUrl, { method: 'HEAD', headers, redirect: 'error' }, deps),
+    ref,
+  )
 }
 
 /** Throws unless the inspected image is for `arch`, and is `id` and pulled by `digest` if given. */
@@ -225,7 +229,7 @@ function inspect(name, run, flags) {
   const result = run(['image', 'inspect', ...flags, '--format', '{{json .}}', name])
   if (result.status !== 0)
     throw new Error(`\`docker image inspect ${name}\` exited with status ${result.status}`)
-  return result.output
+  return result.stdout
 }
 
 /**
@@ -249,7 +253,7 @@ export async function seedBaseImages(
   const refs = baseImageRefs(readFileSync(dockerfilePath, 'utf8'))
   const info = run(['info', '--format', '{{json .DriverStatus}}'])
   if (info.status !== 0) throw new Error(`\`docker info\` exited with status ${info.status}`)
-  const flags = platformFlags(info.output, platform)
+  const flags = platformFlags(info.stdout, platform)
   const verified = []
   for (const ref of refs) {
     const digest = await resolveEcrDigest(ref, { fetch, sleep })
