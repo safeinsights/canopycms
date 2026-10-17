@@ -413,7 +413,7 @@ const followedLinkClicks = new WeakSet<Event>()
  * route for a public page that may refuse framing. Captured on the window, so it runs before the
  * page's own handlers, a client router's included.
  */
-export const usePreviewLinkNavigation = (opts?: { editorOrigin?: string }) => {
+const usePreviewLinkNavigation = (opts?: { editorOrigin?: string }) => {
   const editorOrigin = opts?.editorOrigin
   useEffect(() => {
     if (window.parent === window) return
