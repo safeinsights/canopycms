@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { formatDirectives, parseTransformPath } from '../../assets/transform-directives'
-import { cropAreaPercentToRect, cropRectToAreaPercent, parseAspectRatio } from './crop-math'
+import { cropAreaPercentToRect, initialCropBox, parseAspectRatio } from './crop-math'
 
 describe('cropAreaPercentToRect', () => {
   it('converts a simple percentage area to a normalized 0..1 rect', () => {
@@ -87,13 +87,6 @@ describe('cropAreaPercentToRect', () => {
   })
 })
 
-describe('cropRectToAreaPercent', () => {
-  it('is the inverse of cropAreaPercentToRect for exact values', () => {
-    const rect = { x: 0.25, y: 0.1, w: 0.5, h: 0.6 }
-    expect(cropRectToAreaPercent(rect)).toEqual({ x: 25, y: 10, width: 50, height: 60 })
-  })
-})
-
 describe('parseAspectRatio', () => {
   it('parses "W:H" into a numeric ratio', () => {
     expect(parseAspectRatio('16:9')).toBeCloseTo(16 / 9)
@@ -111,5 +104,53 @@ describe('parseAspectRatio', () => {
     expect(parseAspectRatio('0:9')).toBeUndefined()
     expect(parseAspectRatio('16:0')).toBeUndefined()
     expect(parseAspectRatio('16:9:1')).toBeUndefined()
+  })
+})
+
+describe('initialCropBox', () => {
+  const frame = { imageWidth: 400, imageHeight: 300 }
+
+  it('free-form: covers most of the frame', () => {
+    expect(initialCropBox(frame)).toEqual({ x: 5, y: 5, width: 90, height: 90 })
+  })
+
+  it('locked, wider than the frame: spans 90% of the width, centred', () => {
+    const box = initialCropBox({ ...frame, aspect: 2 })
+    expect(box.width).toBeCloseTo(90)
+    expect(box.height).toBeCloseTo(60)
+    expect(box.x).toBeCloseTo(5)
+    expect(box.y).toBeCloseTo(20)
+  })
+
+  it('locked, taller than the frame: spans 90% of the height, centred', () => {
+    // 1:1 on 400x300 is 270px square: 67.5% of the width, 90% of the height.
+    const box = initialCropBox({ ...frame, aspect: 1 })
+    expect(box.width).toBeCloseTo(67.5)
+    expect(box.height).toBeCloseTo(90)
+    expect(box.x).toBeCloseTo(16.25)
+    expect(box.y).toBeCloseTo(5)
+  })
+
+  it('keeps a stored crop as drawn, free-form or when it still matches the ratio', () => {
+    const stored = { x: 0.1, y: 0.2, w: 0.5, h: 0.25 }
+    const storedBox = { x: 10, y: 20, width: 50, height: 25 }
+    expect(initialCropBox({ ...frame, existing: stored })).toEqual(storedBox)
+    // 0.5*400 = 200px wide, 0.25*300 = 75px tall -> ratio 8/3
+    expect(initialCropBox({ ...frame, aspect: 200 / 75, existing: stored })).toEqual(storedBox)
+  })
+
+  it('replaces a stored crop whose ratio no longer matches the field', () => {
+    const stored = { x: 0.1, y: 0.2, w: 0.5, h: 0.25 }
+    const box = initialCropBox({ ...frame, aspect: 1, existing: stored })
+    expect(box).toEqual(initialCropBox({ ...frame, aspect: 1 }))
+  })
+
+  it('falls back to the default box when the image has no size yet', () => {
+    expect(initialCropBox({ imageWidth: 0, imageHeight: 0, aspect: 2 })).toEqual({
+      x: 5,
+      y: 5,
+      width: 90,
+      height: 90,
+    })
   })
 })

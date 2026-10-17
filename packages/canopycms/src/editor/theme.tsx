@@ -40,6 +40,7 @@ import '@mantine/core/styles.css'
 import '@mantine/dates/styles.css'
 import '@mantine/notifications/styles.css'
 import '@mantine/dropzone/styles.css'
+import 'react-image-crop/dist/ReactCrop.css'
 import '@mdxeditor/editor/style.css'
 
 export type CanopyColorInput = MantineColorsTuple | string

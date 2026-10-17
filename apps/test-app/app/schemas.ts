@@ -9,7 +9,7 @@ export const postSchema = defineEntrySchema([
   // Structured image field: exercises the upload -> finalize -> transform ->
   // MediaLibrary pipeline end to end. Deliberately has no `aspect`, so picking
   // an image commits immediately instead of opening the canvas crop step
-  // (crop math is unit-tested; driving react-easy-crop from Playwright is not).
+  // (crop math is unit-tested; driving the crop library from Playwright is not).
   { name: 'heroImage', type: 'image', label: 'Hero Image' },
   {
     name: 'byline',

@@ -177,7 +177,7 @@
     "pathe": "^1.1.2",
     "picocolors": "^1.1.1",
     "proper-lockfile": "^4.1.2",
-    "react-easy-crop": "^6.2.2",
+    "react-image-crop": "^11.1.2",
     "react-remove-scroll": "^2.7.2",
     "react-resizable-panels": "4.14.1",
     "sanitize-html": "^2.17.5",

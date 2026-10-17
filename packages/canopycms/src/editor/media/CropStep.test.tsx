@@ -1,36 +1,23 @@
 import React from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CanopyCMSProvider } from '../theme'
 import { CropStep } from './CropStep'
 
-// react-easy-crop measures real image/container dimensions via
-// ResizeObserver + image load events, none of which jsdom drives - stub it
-// down to a button that fires onCropComplete with a fixed percentage Area,
-// so CropStep's own wiring (Apply disabled until a selection exists, the
-// confirmed rect matches crop-math.ts's conversion) is testable without a
-// real image.
-vi.mock('react-easy-crop', () => ({
-  __esModule: true,
-  default: ({
-    onCropComplete,
-  }: {
-    onCropComplete?: (area: { x: number; y: number; width: number; height: number }) => void
-  }) => (
-    <button
-      data-testid="mock-cropper"
-      onClick={() => onCropComplete?.({ x: 25, y: 25, width: 50, height: 50 })}
-    >
-      Mock Cropper
-    </button>
-  ),
-}))
+// jsdom never lays an image out, so `load` reports no size. The step seeds its box from the
+// displayed size, so give every image a 400x300 frame.
+const IMAGE_SIZE = { width: 400, height: 300 }
 
 describe('CropStep', () => {
+  beforeEach(() => {
+    vi.spyOn(HTMLImageElement.prototype, 'width', 'get').mockReturnValue(IMAGE_SIZE.width)
+    vi.spyOn(HTMLImageElement.prototype, 'height', 'get').mockReturnValue(IMAGE_SIZE.height)
+  })
+
   afterEach(() => {
     cleanup()
-    vi.clearAllMocks()
+    vi.restoreAllMocks()
   })
 
   const renderStep = (props: Partial<React.ComponentProps<typeof CropStep>> = {}) => {
@@ -42,7 +29,6 @@ describe('CropStep', () => {
           opened
           onClose={onClose}
           imageSrc="/assets/t/orig/aaaa/cat.png"
-          aspect={16 / 9}
           onConfirm={onConfirm}
           {...props}
         />
@@ -51,21 +37,41 @@ describe('CropStep', () => {
     return { ...utils, onConfirm, onClose }
   }
 
-  it('disables Apply crop until a selection is made', () => {
-    renderStep()
-    const applyButton = screen.getByTestId('crop-step-apply') as HTMLButtonElement
-    expect(applyButton.disabled).toBe(true)
+  const loadImage = () => fireEvent.load(screen.getByRole('presentation', { hidden: true }))
+  const apply = () => screen.getByTestId('crop-step-apply') as HTMLButtonElement
 
-    fireEvent.click(screen.getByTestId('mock-cropper'))
-    expect(applyButton.disabled).toBe(false)
+  it('disables Apply crop until the image has loaded', () => {
+    renderStep()
+    expect(apply().disabled).toBe(true)
+
+    loadImage()
+    expect(apply().disabled).toBe(false)
   })
 
-  it('confirms with the rect computed from the selected percentage area', () => {
+  it('free-form: opens with a box covering most of the frame and confirms that rectangle', () => {
     const { onConfirm } = renderStep()
-    fireEvent.click(screen.getByTestId('mock-cropper'))
-    fireEvent.click(screen.getByTestId('crop-step-apply'))
+    loadImage()
+    fireEvent.click(apply())
 
-    expect(onConfirm).toHaveBeenCalledWith({ x: 0.25, y: 0.25, w: 0.5, h: 0.5 })
+    expect(onConfirm).toHaveBeenCalledWith({ x: 0.05, y: 0.05, w: 0.9, h: 0.9 })
+  })
+
+  it('locked: opens with a centred box of the field ratio', () => {
+    const { onConfirm } = renderStep({ aspect: 2 })
+    loadImage()
+    fireEvent.click(apply())
+
+    // 400x300 frame, ratio 2:1: 90% of the width is 360px, so 180px (0.6) tall, centred.
+    expect(onConfirm).toHaveBeenCalledWith({ x: 0.05, y: 0.2, w: 0.9, h: 0.6 })
+  })
+
+  it('re-cropping opens on the stored rectangle', () => {
+    const stored = { x: 0.1, y: 0.2, w: 0.5, h: 0.25 }
+    const { onConfirm } = renderStep({ initialCrop: stored })
+    loadImage()
+    fireEvent.click(apply())
+
+    expect(onConfirm).toHaveBeenCalledWith(stored)
   })
 
   it('Cancel calls onClose without confirming', () => {
@@ -78,7 +84,6 @@ describe('CropStep', () => {
 
   it('renders nothing crop-related when closed', () => {
     renderStep({ opened: false })
-    expect(screen.queryByTestId('mock-cropper')).toBeNull()
     expect(screen.queryByTestId('crop-step-apply')).toBeNull()
   })
 })

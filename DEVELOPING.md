@@ -311,7 +311,7 @@ The live preview must show referenced content, not ids, from its first frame. `u
 
 ## Working with Assets
 
-The asset system (upload, storage, on-demand transforms) lives under `src/assets/`; see [assets/AGENTS.md](packages/canopycms/src/assets/AGENTS.md) for its invariants and [ARCHITECTURE.md](ARCHITECTURE.md#asset--media-system) for the design. It brings dependencies you will meet here and nowhere else: `sharp` (transforms), `file-type` + `image-size` (finalize sniffing), `sanitize-html` (SVG), `content-disposition`, the S3 SDK plus `@aws-sdk/s3-presigned-post`, and on the editor side `@mantine/dropzone` (pinned to the Mantine core version in use) and `react-easy-crop`.
+The asset system (upload, storage, on-demand transforms) lives under `src/assets/`; see [assets/AGENTS.md](packages/canopycms/src/assets/AGENTS.md) for its invariants and [ARCHITECTURE.md](ARCHITECTURE.md#asset--media-system) for the design. It brings dependencies you will meet here and nowhere else: `sharp` (transforms), `file-type` + `image-size` (finalize sniffing), `sanitize-html` (SVG), `content-disposition`, the S3 SDK plus `@aws-sdk/s3-presigned-post`, and on the editor side `@mantine/dropzone` (pinned to the Mantine core version in use) and `react-image-crop`.
 
 ### Transform Engine: One Pipeline, Every Caller
 

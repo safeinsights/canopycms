@@ -1,15 +1,15 @@
 /**
- * Pure math for the ImageField crop step: converting between react-easy-crop's
- * percentage-based `Area` shape and CanopyCMS's normalized 0..1 `CropRect`
+ * Pure math for the ImageField crop step: converting between react-image-crop's
+ * percentage-based crop shape and CanopyCMS's normalized 0..1 `CropRect`
  * (the same shape stored in `ImageFieldValue.crop` and accepted by the `c=`
  * transform directive - see assets/transform-directives.ts). Kept dependency-free
- * (no react-easy-crop import) so it's trivially unit-testable and reusable
+ * (no react-image-crop import) so it's trivially unit-testable and reusable
  * without pulling in the cropper UI library.
  */
 
 import { isValidCropRect, roundCropRect, type CropRect } from '../../assets/transform-directives'
 
-/** react-easy-crop's `Area` shape, expressed in percentages (0..100). */
+/** A crop box in percentages (0..100) of the image, the shape react-image-crop reports for `unit: '%'`. */
 export interface CropAreaPercent {
   x: number
   y: number
@@ -23,8 +23,7 @@ function clamp01(value: number): number {
 }
 
 /**
- * Convert react-easy-crop's `onCropComplete(croppedArea, croppedAreaPixels)`
- * percentage area into a normalized `CropRect`, clamped to [0,1] and then
+ * Convert a percentage crop box into a normalized `CropRect`, clamped to [0,1] and then
  * rounded by `roundCropRect` — the same rounding the transform URL's canonical
  * form applies, so the stored crop is already canonical.
  *
@@ -42,19 +41,61 @@ export function cropAreaPercentToRect(area: CropAreaPercent): CropRect | null {
 }
 
 /**
- * Inverse of `cropAreaPercentToRect` - seeds react-easy-crop's
- * `initialCroppedAreaPercentages` when re-opening the crop step for an
- * already-cropped image, so the user sees their previous selection instead
- * of starting over.
+ * Inverse of `cropAreaPercentToRect` - seeds the crop box when re-opening
+ * the crop step for an already-cropped image, so the user sees their previous
+ * selection instead of starting over.
  */
-export function cropRectToAreaPercent(rect: CropRect): CropAreaPercent {
+function cropRectToAreaPercent(rect: CropRect): CropAreaPercent {
   return { x: rect.x * 100, y: rect.y * 100, width: rect.w * 100, height: rect.h * 100 }
 }
 
-/** "W:H" -> the numeric aspect ratio react-easy-crop's `aspect` prop expects. Mirrors config/schemas/field.ts's ASPECT_RATIO_RE; returns undefined for anything malformed rather than throwing (defensive - the field config was already validated at schema-parse time). */
+/** "W:H" -> the numeric aspect ratio react-image-crop's `aspect` prop expects. Mirrors config/schemas/field.ts's ASPECT_RATIO_RE; returns undefined for anything malformed rather than throwing (defensive - the field config was already validated at schema-parse time). */
 export function parseAspectRatio(aspect: string | undefined): number | undefined {
   if (!aspect) return undefined
   const match = /^([1-9][0-9]*):([1-9][0-9]*)$/.exec(aspect)
   if (!match) return undefined
   return Number(match[1]) / Number(match[2])
+}
+
+const INITIAL_BOX_FRACTION = 0.9
+const FREE_BOX: CropAreaPercent = { x: 5, y: 5, width: 90, height: 90 }
+/** How far a stored crop's pixel ratio may sit from the field's `aspect` before it is replaced by a fresh box. */
+const ASPECT_TOLERANCE = 0.02
+
+/**
+ * The crop box the crop step opens with, once the image's displayed size is known.
+ * A stored crop is kept as it was drawn, unless the field has an `aspect` it no longer
+ * matches (the config changed since); then, like a first crop of a locked field, a box of that
+ * ratio centred on the image. A free field's first box covers most of the image.
+ */
+export function initialCropBox(opts: {
+  imageWidth: number
+  imageHeight: number
+  aspect?: number
+  existing?: CropRect
+}): CropAreaPercent {
+  const { imageWidth, imageHeight, aspect, existing } = opts
+  const sized = imageWidth > 0 && imageHeight > 0
+
+  if (existing) {
+    const box = cropRectToAreaPercent(existing)
+    if (aspect === undefined || !sized) return box
+    const storedRatio = (existing.w * imageWidth) / (existing.h * imageHeight)
+    if (Math.abs(storedRatio - aspect) / aspect <= ASPECT_TOLERANCE) return box
+  }
+
+  if (aspect === undefined || !sized) return { ...FREE_BOX }
+  const wide = aspect >= imageWidth / imageHeight
+  const width = wide
+    ? imageWidth * INITIAL_BOX_FRACTION
+    : imageHeight * INITIAL_BOX_FRACTION * aspect
+  const height = wide ? width / aspect : imageHeight * INITIAL_BOX_FRACTION
+  const widthPct = (width / imageWidth) * 100
+  const heightPct = (height / imageHeight) * 100
+  return {
+    x: (100 - widthPct) / 2,
+    y: (100 - heightPct) / 2,
+    width: widthPct,
+    height: heightPct,
+  }
 }
