@@ -2,7 +2,9 @@
  * `scripts/smoke/base-images.mjs` decides which images CI puts in the local store before the
  * standalone-image smoke builds Dockerfile.cms, and which pull failures it retries. A base it
  * misses is pulled by the build from public.ecr.aws, the request this exists to avoid; a failure
- * it retries wrongly delays a real error.
+ * it retries wrongly delays a real error. Its seed decides what main's cache holds, so every check
+ * that ties a saved image to the digest ECR named is pinned here: a tar saved past a failed one is
+ * an image nobody verified.
  */
 
 import fs from 'node:fs'
@@ -19,8 +21,43 @@ interface PullResult {
   output: string
 }
 
+interface InspectedImage {
+  Id: string
+  Architecture: string
+  RepoDigests: string[]
+}
+
+interface SeedDeps {
+  platform: string
+  save: string
+  run: (args: string[]) => PullResult
+  fetch: (url: string, init: RequestInit) => Promise<Response>
+  sleep: (ms: number) => Promise<void>
+  syncSleep: (ms: number) => void
+}
+
 interface BaseImagesModule {
   PULL_RETRY_DELAYS_S: number[]
+  INDEX_MEDIA_TYPES: string[]
+  parseEcrRef(ref: string): { repository: string; tag: string }
+  pullSources(repository: string): string[]
+  platformArch(platform: string | undefined): string
+  indexDigestFrom(response: Response, ref: string): string
+  resolveEcrDigest(
+    ref: string,
+    deps: {
+      fetch: (url: string, init: RequestInit) => Promise<Response>
+      sleep: (ms: number) => Promise<void>
+      delays?: number[]
+    },
+  ): Promise<string>
+  platformFlags(driverStatus: string, platform: string): string[]
+  checkImage(
+    inspected: string,
+    name: string,
+    expected: { arch: string; id?: string; digest?: string },
+  ): string
+  seedBaseImages(dockerfilePath: string, deps: SeedDeps): Promise<{ ref: string; id: string }[]>
   baseImageRefs(dockerfile: string): string[]
   pullWithRetry(
     ref: string,
@@ -35,7 +72,6 @@ interface BaseImagesModule {
     dockerfilePath: string,
     opts: {
       tar?: string
-      refresh?: boolean
       run: (args: string[]) => PullResult
       sleep: (ms: number) => void
     },
@@ -209,13 +245,6 @@ describe('ensureBaseImages', () => {
     expect(d.pulled()).toEqual([TOOL])
   })
 
-  it('pulls every base with refresh, whatever the store holds', () => {
-    const d = fakeDocker([NODE, TOOL], { inTar: [NODE, TOOL] })
-    mod.ensureBaseImages(dockerfile, { tar, refresh: true, ...d })
-    expect(d.run.mock.calls.some(([args]) => args[0] === 'load')).toBe(false)
-    expect(d.pulled()).toEqual([NODE, TOOL])
-  })
-
   it('stops at the first pull that fails for any reason but a refusal', () => {
     const d = fakeDocker([], { pulls: [{ status: 1, output: 'manifest unknown' }] })
     expect(() => mod.ensureBaseImages(dockerfile, { tar, ...d })).toThrow(/docker pull/)
@@ -230,5 +259,494 @@ describe('ensureBaseImages', () => {
     expect(d.sleep.mock.calls).toEqual([[mod.PULL_RETRY_DELAYS_S[0] * 1000]])
     // Through the console, so a test's console spy holds it rather than the run's output.
     expect(consoleSpy.all().log).toContain(REFUSED)
+  })
+})
+
+const NODE_REF = 'public.ecr.aws/docker/library/node:22-slim'
+const ADAPTER_REF = 'public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1'
+const NODE_DIGEST = `sha256:${'c3'.repeat(32)}`
+const ADAPTER_DIGEST = `sha256:${'1e'.repeat(32)}`
+const OCI_INDEX = 'application/vnd.oci.image.index.v1+json'
+
+const headResponse = (digest: string, type = OCI_INDEX, status = 200) =>
+  new Response(null, { status, headers: { 'content-type': type, 'docker-content-digest': digest } })
+
+describe('parseEcrRef', () => {
+  it("splits both of the template's references into repository and tag", () => {
+    expect(mod.parseEcrRef(NODE_REF)).toEqual({ repository: 'docker/library/node', tag: '22-slim' })
+    expect(mod.parseEcrRef(ADAPTER_REF)).toEqual({
+      repository: 'awsguru/aws-lambda-adapter',
+      tag: '1.0.1',
+    })
+  })
+
+  it.each([
+    'docker.io/library/node:22-slim',
+    'node:22-slim',
+    'public.ecr.aws.example/docker/library/node:22-slim',
+    'registry.example/public.ecr.aws/docker/library/node:22-slim',
+    'public.ecr.aws/docker/library/node',
+    `public.ecr.aws/docker/library/node@${NODE_DIGEST}`,
+    `public.ecr.aws/docker/library/node:22-slim@${NODE_DIGEST}`,
+    'public.ecr.aws/docker/../node:22-slim',
+    'public.ecr.aws/docker//node:22-slim',
+    'public.ecr.aws/docker/library/:22-slim',
+    'public.ecr.aws/Docker/library/node:22-slim',
+    'public.ecr.aws/docker/library/node:22?x=1',
+  ])('refuses %s', (ref) => {
+    expect(() => mod.parseEcrRef(ref)).toThrow(/tagged public\.ecr\.aws/)
+  })
+})
+
+describe('pullSources', () => {
+  it("pulls Docker's official images from mirror.gcr.io, then Docker Hub, never ECR", () => {
+    expect(mod.pullSources('docker/library/node')).toEqual([
+      'mirror.gcr.io/library/node',
+      'docker.io/library/node',
+    ])
+  })
+
+  it('pulls every other repository from ECR alone', () => {
+    expect(mod.pullSources('awsguru/aws-lambda-adapter')).toEqual([
+      'public.ecr.aws/awsguru/aws-lambda-adapter',
+    ])
+    expect(mod.pullSources('docker/library/node/extra')).toEqual([
+      'public.ecr.aws/docker/library/node/extra',
+    ])
+    expect(mod.pullSources('docker/libraryx/node')).toEqual(['public.ecr.aws/docker/libraryx/node'])
+  })
+})
+
+describe('platformArch', () => {
+  it('maps the two platforms the CMS image ships on to their architectures', () => {
+    expect(mod.platformArch('linux/amd64')).toBe('amd64')
+    expect(mod.platformArch('linux/arm64')).toBe('arm64')
+  })
+
+  it.each([undefined, '', 'amd64', 'linux/arm/v7', 'linux/amd64 ', 'windows/amd64'])(
+    'refuses %s',
+    (platform) => {
+      expect(() => mod.platformArch(platform)).toThrow(/--platform/)
+    },
+  )
+})
+
+describe('indexDigestFrom', () => {
+  it('takes the digest of an OCI index or a Docker manifest list', () => {
+    expect(mod.indexDigestFrom(headResponse(NODE_DIGEST), NODE_REF)).toBe(NODE_DIGEST)
+    expect(
+      mod.indexDigestFrom(
+        headResponse(NODE_DIGEST, 'application/vnd.docker.distribution.manifest.list.v2+json'),
+        NODE_REF,
+      ),
+    ).toBe(NODE_DIGEST)
+    expect(
+      mod.indexDigestFrom(headResponse(NODE_DIGEST, `${OCI_INDEX}; charset=utf-8`), NODE_REF),
+    ).toBe(NODE_DIGEST)
+  })
+
+  it('refuses any status but 200', () => {
+    expect(() => mod.indexDigestFrom(headResponse(NODE_DIGEST, OCI_INDEX, 429), NODE_REF)).toThrow(
+      /with 429/,
+    )
+  })
+
+  it('refuses a single-platform manifest or no type', () => {
+    expect(() =>
+      mod.indexDigestFrom(
+        headResponse(NODE_DIGEST, 'application/vnd.oci.image.manifest.v1+json'),
+        NODE_REF,
+      ),
+    ).toThrow(/not an index/)
+    expect(() => mod.indexDigestFrom(headResponse(NODE_DIGEST, ''), NODE_REF)).toThrow(
+      /no type, not an index/,
+    )
+  })
+
+  it.each([
+    '',
+    'sha256:abc',
+    `sha512:${'c3'.repeat(64)}`,
+    `sha256:${'C3'.repeat(32)}`,
+    `sha256:${'g3'.repeat(32)}`,
+    `${NODE_DIGEST}00`,
+  ])('refuses the digest %j', (digest) => {
+    expect(() => mod.indexDigestFrom(headResponse(digest), NODE_REF)).toThrow(/sha256 digest/)
+  })
+})
+
+describe('resolveEcrDigest', () => {
+  let consoleSpy: MockConsole
+  beforeEach(() => {
+    consoleSpy = mockConsole()
+  })
+  afterEach(() => {
+    consoleSpy.restore()
+  })
+
+  const tokenResponse = (body: unknown = { token: 'tok' }) =>
+    new Response(JSON.stringify(body), { status: 200 })
+
+  const fakeFetch = (responses: Response[]) => {
+    const fetch = vi.fn(
+      async (_url: string, _init: RequestInit): Promise<Response> =>
+        responses.shift() ?? new Response(null, { status: 500 }),
+    )
+    const sleep = vi.fn(async (_ms: number) => {})
+    return { fetch, sleep }
+  }
+
+  it("reads the tag's index digest with an anonymous token and a HEAD, never a GET of it", async () => {
+    const d = fakeFetch([tokenResponse(), headResponse(NODE_DIGEST)])
+    await expect(mod.resolveEcrDigest(NODE_REF, d)).resolves.toBe(NODE_DIGEST)
+    expect(d.fetch.mock.calls).toEqual([
+      [
+        'https://public.ecr.aws/token/?service=public.ecr.aws&scope=repository:docker/library/node:pull',
+        { method: 'GET' },
+      ],
+      [
+        'https://public.ecr.aws/v2/docker/library/node/manifests/22-slim',
+        {
+          method: 'HEAD',
+          headers: { Accept: mod.INDEX_MEDIA_TYPES.join(', '), Authorization: 'Bearer tok' },
+        },
+      ],
+    ])
+  })
+
+  it('retries a 429 on either request after each delay', async () => {
+    const refused = () => new Response(null, { status: 429 })
+    const d = fakeFetch([refused(), tokenResponse(), refused(), headResponse(NODE_DIGEST)])
+    await expect(mod.resolveEcrDigest(NODE_REF, { ...d, delays: [1, 2] })).resolves.toBe(
+      NODE_DIGEST,
+    )
+    expect(d.sleep.mock.calls).toEqual([[1000], [1000]])
+  })
+
+  it('gives up on a HEAD refused past the last delay', async () => {
+    const refused = () => new Response(null, { status: 429 })
+    const d = fakeFetch([tokenResponse(), refused(), refused(), refused()])
+    await expect(mod.resolveEcrDigest(NODE_REF, { ...d, delays: [1, 2] })).rejects.toThrow(
+      /HEAD of .* with 429/,
+    )
+    expect(d.fetch).toHaveBeenCalledTimes(4)
+  })
+
+  it('fails at once on a refused token, without waiting', async () => {
+    const d = fakeFetch([new Response(null, { status: 403 })])
+    await expect(mod.resolveEcrDigest(NODE_REF, d)).rejects.toThrow(/token .* 403/)
+    expect(d.sleep).not.toHaveBeenCalled()
+  })
+
+  it.each([{}, { token: '' }, { token: 42 }])('fails on the token response %j', async (body) => {
+    const d = fakeFetch([tokenResponse(body), headResponse(NODE_DIGEST)])
+    await expect(mod.resolveEcrDigest(NODE_REF, d)).rejects.toThrow(/no token/)
+    expect(d.fetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+// `docker info --format '{{json .DriverStatus}}'` from Docker 28.0.4 and 29.9, one per store.
+const CLASSIC_STATUS =
+  '[["Backing Filesystem","extfs"],["Supports d_type","true"],["Using metacopy","false"],["Native Overlay Diff","true"],["userxattr","false"]]'
+const CONTAINERD_STATUS = '[["driver-type","io.containerd.snapshotter.v1"]]'
+
+describe('platformFlags', () => {
+  it('names the platform on the containerd store, where a tag names the whole index', () => {
+    expect(mod.platformFlags(CONTAINERD_STATUS, 'linux/amd64')).toEqual([
+      '--platform',
+      'linux/amd64',
+    ])
+  })
+
+  it('adds nothing on the classic store, whose Docker 28 refuses the flag on inspect', () => {
+    expect(mod.platformFlags(CLASSIC_STATUS, 'linux/amd64')).toEqual([])
+    expect(mod.platformFlags('null\n', 'linux/amd64')).toEqual([])
+    expect(
+      mod.platformFlags('[["Snapshotter hint","io.containerd.snapshotter.v1"]]', 'linux/amd64'),
+    ).toEqual([])
+  })
+
+  it('throws on output it cannot read, rather than guess the store', () => {
+    expect(() => mod.platformFlags('', 'linux/amd64')).toThrow()
+    expect(() => mod.platformFlags('{"driver-type":"x"}', 'linux/amd64')).toThrow(/DriverStatus/)
+  })
+})
+
+describe('checkImage', () => {
+  const image = (over: Partial<InspectedImage> = {}) =>
+    JSON.stringify({
+      Id: 'sha256:id',
+      Architecture: 'amd64',
+      RepoDigests: [`mirror.gcr.io/library/node@${NODE_DIGEST}`],
+      ...over,
+    })
+
+  it('passes an image for the architecture, with the id and the pull digest', () => {
+    expect(
+      mod.checkImage(image(), 'n', { arch: 'amd64', id: 'sha256:id', digest: NODE_DIGEST }),
+    ).toBe('sha256:id')
+  })
+
+  it('refuses another architecture', () => {
+    expect(() => mod.checkImage(image({ Architecture: 'arm64' }), 'n', { arch: 'amd64' })).toThrow(
+      /arm64, not amd64/,
+    )
+  })
+
+  it('refuses another image id', () => {
+    expect(() => mod.checkImage(image(), 'n', { arch: 'amd64', id: 'sha256:other' })).toThrow(
+      /not the verified/,
+    )
+  })
+
+  it('refuses an image that no RepoDigest ties to the digest', () => {
+    for (const RepoDigests of [
+      [],
+      [`mirror.gcr.io/library/node@${ADAPTER_DIGEST}`],
+      [`x@${NODE_DIGEST}x`],
+    ]) {
+      expect(() =>
+        mod.checkImage(image({ RepoDigests }), 'n', { arch: 'amd64', digest: NODE_DIGEST }),
+      ).toThrow(/not pulled by/)
+    }
+  })
+})
+
+describe('seedBaseImages', () => {
+  let dir: string
+  let dockerfile: string
+  let save: string
+  let consoleSpy: MockConsole
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-seed-'))
+    dockerfile = path.join(dir, 'Dockerfile')
+    fs.writeFileSync(
+      dockerfile,
+      `FROM ${NODE_REF} AS b\nFROM ${NODE_REF}\nCOPY --from=${ADAPTER_REF} /a /a\nCOPY --from=b /x /x\n`,
+    )
+    save = path.join(dir, 'out', 'base-images.tar')
+    consoleSpy = mockConsole()
+  })
+
+  afterEach(() => {
+    consoleSpy.restore()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** ECR's answers: a token, then the HEAD of each base, in Dockerfile order. */
+  const ecr = (nodeDigest = NODE_DIGEST, adapterDigest = ADAPTER_DIGEST) => {
+    const answers: Record<string, () => Response> = {
+      'docker/library/node': () => headResponse(nodeDigest),
+      'awsguru/aws-lambda-adapter': () =>
+        headResponse(adapterDigest, 'application/vnd.docker.distribution.manifest.list.v2+json'),
+    }
+    return vi.fn(async (url: string, init: RequestInit): Promise<Response> => {
+      if (init.method === 'GET')
+        return new Response(JSON.stringify({ token: 't' }), { status: 200 })
+      const repository = /\/v2\/(.+)\/manifests\//.exec(url)?.[1] ?? ''
+      return answers[repository]()
+    })
+  }
+
+  /**
+   * A docker whose pulls by digest succeed from `serving` sources (each image for the pulled
+   * platform unless `arch` overrides it), where `tag` copies an image and `save` writes the file.
+   */
+  const fakeDocker = ({
+    serving = ['mirror.gcr.io/library/node', 'public.ecr.aws/awsguru/aws-lambda-adapter'],
+    arch,
+    retag = {} as Record<string, string>,
+    saveStatus = 0,
+    tagStatus = 0,
+    driverStatus = CLASSIC_STATUS,
+  }: {
+    serving?: string[]
+    arch?: string
+    retag?: Record<string, string>
+    saveStatus?: number
+    tagStatus?: number
+    driverStatus?: string
+  } = {}) => {
+    const flags = driverStatus === CONTAINERD_STATUS ? ['--platform'] : []
+    const store = new Map<string, InspectedImage>()
+    let pulledPlatform = ''
+    const run = vi.fn((args: string[]): PullResult => {
+      const [command] = args
+      if (command === 'pull' && args[1] === '--platform' && args.length === 4) {
+        const ref = args[3]
+        pulledPlatform = args[2]
+        if (!serving.includes(ref.split('@')[0])) return { status: 1, output: 'manifest unknown' }
+        store.set(ref, {
+          Id: `sha256:id-of-${ref}`,
+          Architecture: arch ?? args[2].split('/')[1],
+          RepoDigests: [ref],
+        })
+        return { status: 0, output: '' }
+      }
+      if (args.join(' ') === 'info --format {{json .DriverStatus}}') {
+        return { status: 0, output: driverStatus }
+      }
+      const inspectAt = 2 + (flags.length && 2)
+      if (
+        args.slice(0, 2).join(' ') === 'image inspect' &&
+        args.slice(2, inspectAt).join(' ') ===
+          (flags.length ? `--platform ${pulledPlatform}` : '') &&
+        args.slice(inspectAt, inspectAt + 2).join(' ') === '--format {{json .}}' &&
+        args.length === inspectAt + 3
+      ) {
+        const image = store.get(args[inspectAt + 2])
+        return image ? { status: 0, output: JSON.stringify(image) } : { status: 1, output: '' }
+      }
+      if (command === 'tag' && args.length === 3) {
+        if (tagStatus !== 0) return { status: tagStatus, output: '' }
+        const image = store.get(retag[args[2]] ?? args[1])
+        if (!image) return { status: 1, output: '' }
+        store.set(args[2], { ...image, RepoDigests: image.RepoDigests })
+        return { status: 0, output: '' }
+      }
+      const saveAt = 1 + (flags.length && 2)
+      if (
+        command === 'save' &&
+        args.slice(1, saveAt).join(' ') === (flags.length ? `--platform ${pulledPlatform}` : '') &&
+        args[saveAt] === '-o'
+      ) {
+        fs.writeFileSync(
+          args[saveAt + 1],
+          saveStatus === 0 ? args.slice(saveAt + 2).join('\n') : 'partial',
+        )
+        return { status: saveStatus, output: '' }
+      }
+      throw new Error(`unexpected docker ${args.join(' ')}`)
+    })
+    const pulled = () => run.mock.calls.filter(([a]) => a[0] === 'pull').map(([a]) => a.slice(1))
+    return { run, pulled, syncSleep: vi.fn((_ms: number) => {}) }
+  }
+
+  const seed = (docker: ReturnType<typeof fakeDocker>, fetch = ecr(), platform = 'linux/amd64') =>
+    mod.seedBaseImages(dockerfile, {
+      platform,
+      save,
+      fetch,
+      sleep: async () => {},
+      run: docker.run,
+      syncSleep: docker.syncSleep,
+    })
+
+  it('pulls node from the mirror and the adapter from ECR, each by the digest ECR named', async () => {
+    const d = fakeDocker()
+    await expect(seed(d)).resolves.toEqual([
+      { ref: NODE_REF, id: `sha256:id-of-mirror.gcr.io/library/node@${NODE_DIGEST}` },
+      {
+        ref: ADAPTER_REF,
+        id: `sha256:id-of-public.ecr.aws/awsguru/aws-lambda-adapter@${ADAPTER_DIGEST}`,
+      },
+    ])
+    expect(d.pulled()).toEqual([
+      ['--platform', 'linux/amd64', `mirror.gcr.io/library/node@${NODE_DIGEST}`],
+      ['--platform', 'linux/amd64', `public.ecr.aws/awsguru/aws-lambda-adapter@${ADAPTER_DIGEST}`],
+    ])
+    expect(d.run.mock.calls.filter(([a]) => a[0] === 'tag').map(([a]) => a.slice(1))).toEqual([
+      [`mirror.gcr.io/library/node@${NODE_DIGEST}`, NODE_REF],
+      [`public.ecr.aws/awsguru/aws-lambda-adapter@${ADAPTER_DIGEST}`, ADAPTER_REF],
+    ])
+    expect(fs.readFileSync(save, 'utf8')).toBe(`${NODE_REF}\n${ADAPTER_REF}`)
+  })
+
+  it('pulls the platform it is asked for', async () => {
+    const d = fakeDocker()
+    await seed(d, ecr(), 'linux/arm64')
+    expect(d.pulled().map(([, platform]) => platform)).toEqual(['linux/arm64', 'linux/arm64'])
+  })
+
+  it('inspects and saves that platform by name on the containerd store', async () => {
+    const d = fakeDocker({ driverStatus: CONTAINERD_STATUS })
+    await seed(d, ecr(), 'linux/arm64')
+    const named = d.run.mock.calls
+      .map(([a]) => a)
+      .filter((a) => a[0] === 'save' || a[1] === 'inspect')
+    expect(named).toHaveLength(5)
+    expect(named.every((a) => a.join(' ').includes('--platform linux/arm64'))).toBe(true)
+    expect(fs.readFileSync(save, 'utf8')).toBe(`${NODE_REF}\n${ADAPTER_REF}`)
+  })
+
+  it('saves nothing when docker info fails', async () => {
+    const d = fakeDocker()
+    const run = vi.fn((args: string[]) =>
+      args[0] === 'info' ? { status: 1, output: '' } : d.run(args),
+    )
+    await expect(seed({ ...d, run })).rejects.toThrow(/docker info/)
+    expect(fs.existsSync(save)).toBe(false)
+  })
+
+  it('falls back to Docker Hub when the mirror lacks the digest', async () => {
+    const d = fakeDocker({
+      serving: ['docker.io/library/node', 'public.ecr.aws/awsguru/aws-lambda-adapter'],
+    })
+    await seed(d)
+    expect(d.pulled().map(([, , ref]) => ref)).toEqual([
+      `mirror.gcr.io/library/node@${NODE_DIGEST}`,
+      `docker.io/library/node@${NODE_DIGEST}`,
+      `public.ecr.aws/awsguru/aws-lambda-adapter@${ADAPTER_DIGEST}`,
+    ])
+    expect(fs.existsSync(save)).toBe(true)
+  })
+
+  it('saves nothing when no source has the digest', async () => {
+    const d = fakeDocker({ serving: ['public.ecr.aws/awsguru/aws-lambda-adapter'] })
+    await expect(seed(d)).rejects.toThrow(/no source had/)
+    expect(fs.existsSync(save)).toBe(false)
+    expect(d.run.mock.calls.some(([a]) => a[0] === 'save')).toBe(false)
+  })
+
+  it('saves nothing, and pulls nothing, when ECR names no digest', async () => {
+    const d = fakeDocker()
+    const fetch = vi.fn(async (_url: string, init: RequestInit) =>
+      init.method === 'GET'
+        ? new Response(JSON.stringify({ token: 't' }), { status: 200 })
+        : new Response(null, { status: 404 }),
+    )
+    await expect(seed(d, fetch)).rejects.toThrow(/with 404/)
+    expect(d.pulled()).toEqual([])
+    expect(fs.existsSync(save)).toBe(false)
+  })
+
+  it("saves nothing when a later base's digest cannot be read", async () => {
+    const d = fakeDocker()
+    await expect(seed(d, ecr(NODE_DIGEST, 'sha256:short'))).rejects.toThrow(/sha256 digest/)
+    expect(fs.existsSync(save)).toBe(false)
+  })
+
+  it('saves nothing when a pulled image is for another architecture', async () => {
+    const d = fakeDocker({ arch: 'arm64' })
+    await expect(seed(d)).rejects.toThrow(/arm64, not amd64/)
+    expect(fs.existsSync(save)).toBe(false)
+  })
+
+  it('saves nothing when a tag no longer names the verified image', async () => {
+    const d = fakeDocker({
+      retag: { [ADAPTER_REF]: `mirror.gcr.io/library/node@${NODE_DIGEST}` },
+    })
+    await expect(seed(d)).rejects.toThrow(/not the verified/)
+    expect(d.run.mock.calls.some(([a]) => a[0] === 'save')).toBe(false)
+  })
+
+  it('leaves no tar when the save fails part-way', async () => {
+    const d = fakeDocker({ saveStatus: 1 })
+    await expect(seed(d)).rejects.toThrow(/docker save/)
+    expect(fs.existsSync(save)).toBe(false)
+  })
+
+  it('saves nothing when a tag fails', async () => {
+    const d = fakeDocker({ tagStatus: 1 })
+    await expect(seed(d)).rejects.toThrow(/docker tag/)
+    expect(d.run.mock.calls.some(([a]) => a[0] === 'save')).toBe(false)
+  })
+
+  it('refuses a platform before asking ECR anything', async () => {
+    const d = fakeDocker()
+    const fetch = ecr()
+    await expect(seed(d, fetch, 'linux/arm/v7')).rejects.toThrow(/--platform/)
+    expect(fetch).not.toHaveBeenCalled()
   })
 })

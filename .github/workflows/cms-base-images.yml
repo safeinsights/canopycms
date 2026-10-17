@@ -17,17 +17,25 @@ permissions:
 
 jobs:
   seed:
-    name: Seed (${{ matrix.runner }})
+    name: Seed (${{ matrix.platform }})
     # A dispatch on another branch would save into that branch's scope, which the pull requests
     # into that branch also restore.
     if: github.ref == 'refs/heads/main'
-    runs-on: ${{ matrix.runner }}
+    # Both platforms' tars are made on an arm runner. ECR's anonymous data quota refuses every GET
+    # from an IP that has spent it, the adapter's few MB included, and the amd64 pool's shared IPs
+    # usually have; nothing in the images runs here, so no emulation is needed.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        # The runners ci.yml's standalone-image legs run on, one per architecture.
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        # One per architecture ci.yml's standalone-image legs run on. `arch` is the RUNNER_ARCH of
+        # the runner that restores the tar, which names it in the key.
+        include:
+          - platform: linux/amd64
+            arch: X64
+          - platform: linux/arm64
+            arch: ARM64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,17 +45,28 @@ jobs:
         with:
           node-version-file: '.nvmrc'
 
+      # The amd64 runner restores what this arm runner saves because a cache entry's version
+      # hashes only its paths, its compression method (zstd on both runner images) and, on Windows
+      # alone, a cross-OS flag, never the runner's architecture: getCacheVersion in
+      # actions/toolkit packages/cache/src/internal/cacheUtils.ts, which actions/cache v6.1.0
+      # bundles. runner.temp is /home/runner/work/_temp on both, so the paths match.
       - name: Base-image cache key
         id: base-images
+        env:
+          ARCH: ${{ matrix.arch }}
         run: >-
-          echo "key=cms-base-images-${RUNNER_OS}-${RUNNER_ARCH}-$(date -u +%G-W%V)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "key=cms-base-images-${RUNNER_OS}-${ARCH}-$(date -u +%G-W%V)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           >> "$GITHUB_OUTPUT"
 
-      # Pulls and saves only; nothing is built.
+      # Pulls, verifies against the digests ECR names now, and saves; nothing is built. A failure
+      # saves nothing, so ci.yml keeps restoring the previous tar.
       - name: Pull the base images
+        env:
+          PLATFORM: ${{ matrix.platform }}
         run: >-
           node scripts/smoke/base-images.mjs
           --dockerfile packages/canopycms/src/cli/template-files/Dockerfile.cms.template
+          --platform "$PLATFORM"
           --save "${{ runner.temp }}/cms-base-images/base-images.tar"
 
       - name: Save the base images
