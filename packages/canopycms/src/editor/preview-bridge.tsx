@@ -6,7 +6,7 @@
  * (`pnpm lint:bundle`); the editor's side is `PreviewFrame.tsx`.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { ResolvedReferenceMeta } from '../entry-schema'
 import { createFieldProps } from './field-props'
@@ -20,6 +20,7 @@ export const CANOPY_PREVIEW_HIGHLIGHT = 'canopycms:preview:highlight'
 export const CANOPY_PREVIEW_READY = 'canopycms:preview:ready'
 export const CANOPY_PREVIEW_ERROR = 'canopycms:preview:error'
 export const CANOPY_PREVIEW_MARKS = 'canopycms:preview:marks'
+export const CANOPY_PREVIEW_NAVIGATE = 'canopycms:preview:navigate'
 
 /**
  * The shape of the preview's `isLoading` for data of type `T`: a `boolean` at each reference
@@ -85,6 +86,17 @@ export const isTrustedEditorMessage = (event: MessageEvent, editorOrigin?: strin
   return event.origin === expected && event.source === window.parent
 }
 
+/**
+ * Preview → editor, once the page listens for drafts: the editor answers with the current draft.
+ * `siteChrome` says the page renders the site's header and footer when its URL carries
+ * `chrome=1`, so the editor offers the toggle that adds it.
+ */
+export interface PreviewReadyMessage {
+  type: typeof CANOPY_PREVIEW_READY
+  path: string
+  siteChrome?: boolean
+}
+
 export interface PreviewFocusMessage {
   type: typeof CANOPY_PREVIEW_FOCUS
   entryPath: string
@@ -109,6 +121,12 @@ export interface PreviewMarksMessage {
   type: typeof CANOPY_PREVIEW_MARKS
   count: number
   paths?: string[]
+}
+
+/** Preview → editor: a plain click on a link to another page of this origin, left unfollowed. */
+export interface PreviewNavigateMessage {
+  type: typeof CANOPY_PREVIEW_NAVIGATE
+  href: string
 }
 
 /**
@@ -137,13 +155,22 @@ export const useCanopyPreview = <T,>(opts: {
   initialData: T
   /** Editor origin to trust for preview messages. Defaults to this page's own origin. */
   editorOrigin?: string
+  /**
+   * This page renders the site's header and footer when its URL carries `chrome=1`, so the editor
+   * offers a toggle for them; see `PreviewReadyMessage`.
+   */
+  siteChrome?: boolean
 }) => {
   const resolvedPath = resolvePreviewPath(opts.path)
   const editorOrigin = opts.editorOrigin
   const bridgeOpts = { editorOrigin }
-  const { data, isLoading } = usePreviewData<T>(resolvedPath, opts.initialData, bridgeOpts)
+  const { data, isLoading } = usePreviewData<T>(resolvedPath, opts.initialData, {
+    editorOrigin,
+    siteChrome: opts.siteChrome,
+  })
   const highlightEnabled = usePreviewHighlight(bridgeOpts)
   usePreviewFocusEmitter(resolvedPath, bridgeOpts)
+  usePreviewLinkNavigation({ editorOrigin, highlighting: highlightEnabled })
 
   const fieldProps = createFieldProps<T>()
 
@@ -178,12 +205,13 @@ export const useCanopyPreview = <T,>(opts: {
 export const usePreviewData = <T,>(
   path: string,
   initialData: T,
-  opts?: { editorOrigin?: string },
+  opts?: { editorOrigin?: string; siteChrome?: boolean },
 ): { data: T; isLoading: PreviewLoadingState<T> } => {
   const [data, setData] = useState<T>(initialData)
   // Every key of the loading state is optional, so an empty object is a valid one.
   const [isLoading, setIsLoading] = useState<PreviewLoadingState<T>>({} as PreviewLoadingState<T>)
   const editorOrigin = opts?.editorOrigin
+  const siteChrome = opts?.siteChrome === true
 
   useEffect(() => {
     // Only listen when actually framed by an editor; a standalone page (including
@@ -207,10 +235,15 @@ export const usePreviewData = <T,>(
     // so the first postMessage from the parent may arrive before this listener is set up.
     const target = resolveMessageOrigin(editorOrigin)
     if (!isOpaqueOrigin(target)) {
-      window.parent.postMessage({ type: CANOPY_PREVIEW_READY, path }, target)
+      const ready: PreviewReadyMessage = {
+        type: CANOPY_PREVIEW_READY,
+        path,
+        ...(siteChrome ? { siteChrome } : {}),
+      }
+      window.parent.postMessage(ready, target)
     }
     return () => window.removeEventListener('message', handler)
-  }, [path, editorOrigin])
+  }, [path, editorOrigin, siteChrome])
 
   return { data, isLoading }
 }
@@ -335,13 +368,105 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
 }
 
 /**
+ * `browser` when the browser opens the link elsewhere, else this origin (`navigate`) or another
+ * (`open`); `undefined` for no link, this page itself, or a scheme other than http(s).
+ */
+type LinkClick = { kind: 'browser' } | { kind: 'navigate' | 'open'; href: string }
+
+const isPlainClick = (event: MouseEvent) =>
+  event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+
+const linkClick = (event: MouseEvent): LinkClick | undefined => {
+  // The composed path reaches a link inside a shadow root, which the retargeted `target` hides.
+  const anchor = event
+    .composedPath()
+    .find((node): node is Element => node instanceof Element && node.matches('a[href], area[href]'))
+  if (!anchor) return undefined
+  let url: URL
+  try {
+    url = new URL(anchor.getAttribute('href') ?? '', document.baseURI)
+  } catch {
+    return undefined
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined
+  const here = new URL(window.location.href)
+  if (url.href.split('#')[0] === here.href.split('#')[0]) return undefined
+  const target =
+    anchor.getAttribute('target') ?? document.querySelector('base[target]')?.getAttribute('target')
+  if (!isPlainClick(event) || (target && target !== '_self') || anchor.hasAttribute('download')) {
+    return { kind: 'browser' }
+  }
+  return { kind: url.origin === here.origin ? 'navigate' : 'open', href: url.href }
+}
+
+const isInMark = (event: MouseEvent) =>
+  event
+    .composedPath()
+    .some((node) => node instanceof Element && node.hasAttribute('data-canopy-path'))
+
+/** Clicks `usePreviewLinkNavigation` followed itself, so click-to-focus leaves them be. */
+const followedLinkClicks = new WeakSet<Event>()
+
+/**
+ * Hook for preview pages to keep link clicks off public pages that may refuse framing. Captured on
+ * the window, so it runs before the page's own handlers, a client router's included.
+ */
+const usePreviewLinkNavigation = (opts: { editorOrigin?: string; highlighting: boolean }) => {
+  const editorOrigin = opts.editorOrigin
+  const highlighting = useRef(opts.highlighting)
+  useEffect(() => {
+    highlighting.current = opts.highlighting
+  })
+  useEffect(() => {
+    if (window.parent === window) return
+    const targetOrigin = resolveMessageOrigin(editorOrigin)
+    if (isOpaqueOrigin(targetOrigin)) return
+    // Links stay the browser's until the editor speaks: a frame that isn't a trusted editor, such
+    // as a site embedding a public page, would drop the message and leave every link dead.
+    let connected = false
+    const handleMessage = (event: MessageEvent) => {
+      const type = (event.data as { type?: unknown } | null)?.type
+      if (type !== CANOPY_PREVIEW_HIGHLIGHT && type !== CANOPY_PREVIEW_MESSAGE) return
+      if (isTrustedEditorMessage(event, editorOrigin)) connected = true
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (!connected || event.defaultPrevented) return
+      const link = linkClick(event)
+      if (!link) return
+      // While fields are outlined, a marked link is a field to pick, which click-to-focus does.
+      if (highlighting.current && isPlainClick(event) && isInMark(event)) {
+        event.preventDefault()
+        return
+      }
+      if (link.kind === 'browser') return
+      event.preventDefault()
+      followedLinkClicks.add(event)
+      if (link.kind === 'open') {
+        window.open(link.href, '_blank', 'noopener,noreferrer')
+        return
+      }
+      const msg: PreviewNavigateMessage = { type: CANOPY_PREVIEW_NAVIGATE, href: link.href }
+      window.parent.postMessage(msg, targetOrigin)
+    }
+    window.addEventListener('message', handleMessage)
+    window.addEventListener('click', handleClick, true)
+    return () => {
+      window.removeEventListener('message', handleMessage)
+      window.removeEventListener('click', handleClick, true)
+    }
+  }, [editorOrigin])
+}
+
+/**
  * Hook for preview pages to emit focus messages when elements with data-canopy-path are clicked.
+ * A click that follows a link, ours or the browser's, goes to another page, not to a field.
  */
 export const usePreviewFocusEmitter = (entryPath: string, opts?: { editorOrigin?: string }) => {
   const editorOrigin = opts?.editorOrigin
   useEffect(() => {
     if (window.parent === window) return
     const handleClick = (event: MouseEvent) => {
+      if (followedLinkClicks.has(event) || (!event.defaultPrevented && linkClick(event))) return
       const target = event.target as HTMLElement | null
       if (!target) return
       const el = target.closest<HTMLElement>('[data-canopy-path]')

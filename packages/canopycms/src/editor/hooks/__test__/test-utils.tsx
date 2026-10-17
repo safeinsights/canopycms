@@ -151,9 +151,9 @@ export function setupMockLocation(options: { href?: string; search?: string } = 
 }
 
 /**
- * Setup mock window.history.replaceState for tests.
+ * Setup mock window.history.replaceState and pushState for tests.
  *
- * @returns The mock function
+ * @returns The replaceState mock
  *
  * @example
  * ```ts
@@ -165,6 +165,7 @@ export function setupMockLocation(options: { href?: string; search?: string } = 
 export function setupMockHistory(): Mock {
   const mockReplaceState = vi.fn()
   window.history.replaceState = mockReplaceState
+  window.history.pushState = vi.fn()
   return mockReplaceState
 }
 

@@ -46,9 +46,9 @@ const textOf = (node: ReactNode): string => {
   return ''
 }
 
-/** The URLs the hook passed to `history.replaceState`. */
-const replacedUrls = () =>
-  vi.mocked(window.history.replaceState).mock.calls.map((call) => String(call[2]))
+/** The URLs the hook pushed, each switch being a history entry of its own. */
+const pushedUrls = () =>
+  vi.mocked(window.history.pushState).mock.calls.map((call) => String(call[2]))
 
 describe('useBranchActions', () => {
   let mockClient: MockApiClient
@@ -102,7 +102,7 @@ describe('useBranchActions', () => {
 
     expect(mockSetBranchName).toHaveBeenCalledWith('feature')
     expect(mockOnBranchSwitch).toHaveBeenCalledWith('feature')
-    expect(window.history.replaceState).toHaveBeenCalled()
+    expect(window.history.pushState).toHaveBeenCalled()
   })
 
   it('shows confirmation when a non-selected entry has unsaved changes', async () => {
@@ -248,7 +248,7 @@ describe('useBranchActions', () => {
     expect(mockOnBranchCreated).toHaveBeenCalledWith(createdBranch)
     expect(mockSetBranchName).toHaveBeenCalledWith('new-branch')
     expect(mockOnBranchSwitch).toHaveBeenCalledWith('new-branch')
-    expect(replacedUrls().some((url) => url.includes('branch=new-branch'))).toBe(true)
+    expect(pushedUrls().some((url) => url.includes('branch=new-branch'))).toBe(true)
   })
 
   it('reports a failed create without switching or registering a branch', async () => {
@@ -521,7 +521,7 @@ describe('useBranchActions', () => {
     // server persisted, not the raw user-typed name.
     expect(mockSetBranchName).toHaveBeenCalledWith('feature-x')
     expect(mockOnBranchSwitch).toHaveBeenCalledWith('feature-x')
-    expect(replacedUrls().find((url) => url.includes('branch=feature-x'))).toBeTruthy()
+    expect(pushedUrls().find((url) => url.includes('branch=feature-x'))).toBeTruthy()
   })
 
   it('handles create branch error', async () => {
@@ -553,8 +553,8 @@ describe('useBranchActions', () => {
       await result.current.handleBranchChange('feature')
     })
 
-    expect(window.history.replaceState).toHaveBeenCalled()
-    expect(replacedUrls().find((url) => url.includes('branch=feature'))).toBeTruthy()
+    expect(window.history.pushState).toHaveBeenCalled()
+    expect(pushedUrls().find((url) => url.includes('branch=feature'))).toBeTruthy()
   })
 
   it('calls onBranchSwitch callback when provided', async () => {

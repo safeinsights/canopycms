@@ -7,6 +7,7 @@
  *   asset-originals/{hash32}.{ext}          private; full-fidelity originals
  *   asset-staging/{uuid}                    presigned-POST target
  *   asset-meta/{hash32}.json                private; filename/uploader/dims/mime
+ *   asset-hidden/{hash32}.json              private; marks a file removed from the library
  *   assets/t/{directives}/{hash32}/{slug}   transform outputs (see transform-directives.ts)
  *   assets/{hash32}/{slug}.{ext}            public static: sanitized SVG + PDF only
  *
@@ -95,12 +96,14 @@ export function createKeyBuilders(prefixes: AssetPrefixes = ASSET_PREFIXES) {
     stagingKey: (uuid: string): string => `${prefixes.staging}/${uuid}`,
     metaKey: (hash32: string): string => `${prefixes.meta}/${hash32}.json`,
     metaPrefix: (): string => `${prefixes.meta}/`,
+    hiddenKey: (hash32: string): string => `${prefixes.hidden}/${hash32}.json`,
+    hiddenPrefix: (): string => `${prefixes.hidden}/`,
     publicKey: (hash32: string, slug: string, ext: string): string =>
       `${prefixes.public}/${hash32}/${slug}.${ext}`,
   }
 }
 
 const keyBuilders = createKeyBuilders()
-export const { originalKey, stagingKey, metaKey, publicKey } = keyBuilders
+export const { originalKey, stagingKey, metaKey, hiddenKey, publicKey } = keyBuilders
 /** @internal Exported for tests. */
 export const { originalPrefix, metaPrefix } = keyBuilders

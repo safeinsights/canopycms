@@ -2,7 +2,7 @@
  * S3-backed AssetStore. Same bucket-prefix layout as LocalAssetStore (see
  * keys.ts). Assumes an EXISTING content bucket (versioning/SSE/replication
  * already configured by the site's CDK stack). It reads and writes under the
- * five asset prefixes, plus a caller's output prefix for `copyPublicObject`.
+ * six asset prefixes, plus a caller's output prefix for `copyPublicObject`.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -27,6 +27,9 @@ import type {
   AssetStore,
   BeginUploadInput,
   CreateOnlyResult,
+  HiddenAssetMarker,
+  ListedAssetMeta,
+  PresignedRead,
   PublicObject,
   StagedUploadTarget,
 } from './types'
@@ -53,9 +56,18 @@ export interface S3AssetStoreOptions {
 }
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+/** What `metaKey` and `hiddenKey` put after the hash32. */
+const JSON_SUFFIX = '.json'
 const PRESIGN_EXPIRY_SECONDS = 15 * 60
-/** A presigned read is followed by the browser at once; it is never stored or cached. */
-const PRESIGNED_READ_EXPIRY_SECONDS = 5 * 60
+/**
+ * A presigned read is signed at the start of its window, so every read of one key inside a window
+ * gets the same URL, and a browser can reuse both the redirect to it and the object behind it.
+ */
+const PRESIGNED_READ_WINDOW_SECONDS = 60 * 60
+/** Valid a full window past the window's end, so a redirect cached until then never expires first. */
+const PRESIGNED_READ_EXPIRY_SECONDS = 2 * PRESIGNED_READ_WINDOW_SECONDS
+/** How long before its signing credentials expire a presigned read stops being reusable. */
+const CREDENTIAL_EXPIRY_MARGIN_SECONDS = 60
 
 /**
  * Shape of the fields an AWS SDK v3 service exception carries, narrowed from
@@ -349,7 +361,11 @@ export class S3AssetStore implements AssetStore {
     }
   }
 
-  async *listPublicObjectKeys(prefix: string): AsyncIterable<string> {
+  listPublicObjectKeys(prefix: string): AsyncIterable<string> {
+    return this.listKeys(prefix)
+  }
+
+  private async *listKeys(prefix: string): AsyncIterable<string> {
     const pages = paginateListObjectsV2(
       { client: this.client },
       { Bucket: this.bucket, Prefix: prefix },
@@ -361,12 +377,28 @@ export class S3AssetStore implements AssetStore {
     }
   }
 
-  /** HEADs first: signing is local and succeeds for a missing key too. */
-  async presignPublicObjectRead(key: string): Promise<string | null> {
+  /**
+   * HEADs first: signing is local and succeeds for a missing key too. A URL signed with temporary
+   * credentials dies when they expire, whatever its own expiry, so `maxAgeSeconds` also stops short
+   * of the credentials' `expiration` when the provider reports one.
+   */
+  async presignPublicObjectRead(key: string): Promise<PresignedRead | null> {
     if (!(await this.hasPublicObject(key))) return null
-    return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
-      expiresIn: PRESIGNED_READ_EXPIRY_SECONDS,
-    })
+    // Read before signing: a provider refresh in between leaves the signing credentials the newer.
+    const { expiration } = await this.client.config.credentials()
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const windowStart = nowSeconds - (nowSeconds % PRESIGNED_READ_WINDOW_SECONDS)
+    const url = await getSignedUrl(
+      this.client,
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      { expiresIn: PRESIGNED_READ_EXPIRY_SECONDS, signingDate: new Date(windowStart * 1000) },
+    )
+    let maxAgeSeconds = windowStart + PRESIGNED_READ_WINDOW_SECONDS - nowSeconds
+    if (expiration) {
+      const credentialSeconds = Math.floor(expiration.getTime() / 1000) - nowSeconds
+      maxAgeSeconds = Math.min(maxAgeSeconds, credentialSeconds - CREDENTIAL_EXPIRY_MARGIN_SECONDS)
+    }
+    return { url, maxAgeSeconds: Math.max(0, maxAgeSeconds) }
   }
 
   async putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<CreateOnlyResult> {
@@ -383,42 +415,79 @@ export class S3AssetStore implements AssetStore {
     return JSON.parse(Buffer.from(bytes).toString('utf-8')) as AssetMeta
   }
 
-  async listMeta(input?: { cursor?: string; limit?: number }): Promise<{
-    items: AssetMeta[]
+  /**
+   * One page of meta keys, filtered by a full listing of the hidden markers: few files are hidden,
+   * and a listing needs only `s3:ListBucket`. A hidden file's meta is fetched only for
+   * `includeHidden`.
+   */
+  async listMeta(input?: { cursor?: string; limit?: number; includeHidden?: boolean }): Promise<{
+    items: ListedAssetMeta[]
     nextCursor?: string
   }> {
-    const listed = await this.client.send(
-      new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: this.keys.metaPrefix(),
-        MaxKeys: input?.limit,
-        ContinuationToken: input?.cursor,
-      }),
-    )
+    const metaPrefix = this.keys.metaPrefix()
+    const [listed, hidden] = await Promise.all([
+      this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: metaPrefix,
+          MaxKeys: input?.limit,
+          ContinuationToken: input?.cursor,
+        }),
+      ),
+      this.listHiddenHashes(),
+    ])
     const objectKeys = (listed.Contents ?? [])
       .map((obj) => obj.Key)
       .filter((key): key is string => Boolean(key))
 
     const fetched = await Promise.all(
-      objectKeys.map(async (key) => {
+      objectKeys.map(async (key): Promise<ListedAssetMeta | null> => {
+        const isHidden = hidden.has(key.slice(metaPrefix.length, -JSON_SUFFIX.length))
+        if (isHidden && !input?.includeHidden) return null
         const bytes = await this.getObjectBytes(key)
-        // A meta object deleted between LIST and GET (deleteMeta race) reads
-        // as null; skip it rather than failing the whole page.
         if (!bytes) return null
-        return JSON.parse(Buffer.from(bytes).toString('utf-8')) as AssetMeta
+        const meta = JSON.parse(Buffer.from(bytes).toString('utf-8')) as AssetMeta
+        return isHidden ? { ...meta, hidden: true } : meta
       }),
     )
 
     return {
-      items: fetched.filter((meta): meta is AssetMeta => meta !== null),
+      items: fetched.filter((meta): meta is ListedAssetMeta => meta !== null),
       nextCursor: listed.IsTruncated ? listed.NextContinuationToken : undefined,
     }
   }
 
-  async deleteMeta(hash32: string): Promise<void> {
-    await this.client.send(
-      new DeleteObjectCommand({ Bucket: this.bucket, Key: this.keys.metaKey(hash32) }),
+  private async listHiddenHashes(): Promise<Set<string>> {
+    const prefix = this.keys.hiddenPrefix()
+    const hashes = new Set<string>()
+    for await (const key of this.listKeys(prefix)) {
+      if (key.endsWith(JSON_SUFFIX)) hashes.add(key.slice(prefix.length, -JSON_SUFFIX.length))
+    }
+    return hashes
+  }
+
+  async hideAsset(hash32: string, marker: HiddenAssetMarker): Promise<CreateOnlyResult> {
+    return this.putIfAbsent({
+      Key: this.keys.hiddenKey(hash32),
+      Body: JSON.stringify(marker),
+      ContentType: 'application/json',
+    })
+  }
+
+  /**
+   * Lists before deleting: a DELETE of an absent key writes a delete marker on a versioned bucket.
+   * The listing needs only `s3:ListBucket` covering `asset-hidden/` (a bucket-wide grant does; a
+   * policy scoping it by prefix must name this one), no object permission, so finalize can call
+   * this on every re-upload under a role that has never hidden a file.
+   */
+  async unhideAsset(hash32: string): Promise<boolean> {
+    const key = this.keys.hiddenKey(hash32)
+    const listed = await this.client.send(
+      new ListObjectsV2Command({ Bucket: this.bucket, Prefix: key, MaxKeys: 1 }),
     )
+    if (listed.Contents?.[0]?.Key !== key) return false
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }))
+    return true
   }
 
   private async getObject(key: string) {

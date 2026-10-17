@@ -23,7 +23,7 @@ test.describe('Preview Bridge', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
     })
 
     await test.step('wait for preview iframe to sync home content', async () => {
@@ -63,7 +63,7 @@ test.describe('Preview Bridge', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
     })
 
     await test.step('verify preview shows original content before editing', async () => {
@@ -94,7 +94,7 @@ test.describe('Preview Bridge', () => {
       await editorPage.waitForReady()
       await editorPage.createPost('spotlight-target', 'Spotlight Target Post')
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await expect(previewFrame.locator('[data-canopy-path="title"]')).toContainText('Home Page', {
         timeout: 15000,
@@ -116,7 +116,7 @@ test.describe('Preview Bridge', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Test Site')
+    await editorPage.selectEntry('Settings')
 
     await expect(editorPage.previewPane).toContainText('No preview for this entry.')
     await expect(editorPage.previewPane.locator('iframe')).toHaveCount(0)
@@ -132,7 +132,7 @@ test.describe('Preview Bridge', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
     await editorPage.fillTextField('title', liveTitle)
     await expect(previewTitle).toContainText(liveTitle, { timeout: 10000 })
     // Survives only if the frame is never reloaded.

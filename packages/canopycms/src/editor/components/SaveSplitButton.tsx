@@ -1,15 +1,9 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import { Box, Button, Loader, Menu, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useReducedMotion } from '@mantine/hooks'
-import {
-  IconAlertTriangle,
-  IconCheck,
-  IconChevronDown,
-  IconCircleDot,
-  IconLoader2,
-} from '@tabler/icons-react'
+import { IconAlertTriangle, IconCheck, IconChevronDown, IconLoader2 } from '@tabler/icons-react'
 import { EDITOR_ACTIONS } from '../copy'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
@@ -40,7 +34,18 @@ export interface SaveSplitButtonProps {
   draftStorageFailed: boolean
 }
 
+const STORAGE_FAILED_TEXT = 'Unsaved · not kept on this device'
 const STORAGE_FAILED_HINT = "Save before you leave or reload, or they'll be lost."
+const KEPT_HINT = 'Unsaved changes are kept on this device until you save.'
+// Visually hidden, as Mantine's VisuallyHidden, for a region that must stay mounted.
+const HIDDEN_STYLE: React.CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  overflow: 'hidden',
+  clip: 'rect(0 0 0 0)',
+  whiteSpace: 'nowrap',
+}
 const SAVED_SHOWN_MS = 2000
 
 type SaveLabel = 'save' | 'saving' | 'saved'
@@ -107,8 +112,9 @@ function SaveLabels({ shown, spinner }: { shown: SaveLabel; spinner: boolean }) 
 }
 
 /**
- * The unsaved indicator, then Save with a caret offering "Save all". The indicator is icon-only
- * below `lg`, its text then its Tooltip and accessible name.
+ * Save with a caret offering "Save all". While the open entry has unsaved changes, Save's Tooltip
+ * and description say they are kept on this device. Only when keeping them failed does the bar
+ * carry a warning before Save, icon-only below `lg`, its text then its Tooltip and accessible name.
  */
 export function SaveSplitButton({
   onSave,
@@ -125,6 +131,7 @@ export function SaveSplitButton({
   draftStorageFailed,
 }: SaveSplitButtonProps) {
   const caret = useRef<HTMLButtonElement>(null)
+  const keptHintId = useId()
   const menuFocus = useMenuItemFocusReturn(caret)
   const reducedMotion = useReducedMotion()
   // Each landed Save shows "Saved" once, as it lands and only on its own entry: one that landed
@@ -158,34 +165,33 @@ export function SaveSplitButton({
       ? 'saved'
       : 'save'
   const saveGreyed = saveBlocked && !saveAllProgress && label === 'save'
-  const indicatorText = draftStorageFailed
-    ? 'Unsaved · not kept on this device'
-    : 'Unsaved · kept on this device'
-  const indicatorColor = draftStorageFailed ? 'var(--canopy-danger-text)' : 'dimmed'
+  const storageWarning = entryDirty && draftStorageFailed
+  // Why Save is blocked, else where unsaved changes are held; a blocked Save's reason leads.
+  const keptHint = entryDirty && !draftStorageFailed && !saveBlockedReason ? KEPT_HINT : ''
+  const saveTooltip = saveBlockedReason || keptHint
 
   return (
     <>
-      {/* Always mounted at a fixed width, so the first keystroke shifts nothing. */}
-      <Box role="status" ta="right" w={{ base: 20, lg: 112 }} style={{ flexShrink: 0 }}>
-        {entryDirty && (
-          <Tooltip
-            label={draftStorageFailed ? `${indicatorText}. ${STORAGE_FAILED_HINT}` : indicatorText}
-            multiline
-            w={260}
-          >
-            <Text size="xs" lh={1.2} c={indicatorColor} data-testid="unsaved-indicator">
+      {/* Always mounted so a warning is announced; visible, at a fixed width, only on failure. */}
+      <Box
+        role="status"
+        ta="right"
+        w={{ base: 20, lg: 112 }}
+        style={storageWarning ? { flexShrink: 0 } : HIDDEN_STYLE}
+      >
+        {storageWarning && (
+          <Tooltip label={`${STORAGE_FAILED_TEXT}. ${STORAGE_FAILED_HINT}`} multiline w={260}>
+            <Text size="xs" lh={1.2} c="var(--canopy-danger-text)" data-testid="unsaved-indicator">
               <Box component="span" visibleFrom="lg">
-                {indicatorText}
+                {STORAGE_FAILED_TEXT}
               </Box>
               <Box component="span" hiddenFrom="lg" display="inline-flex" aria-hidden="true">
-                {draftStorageFailed ? <IconAlertTriangle size={18} /> : <IconCircleDot size={18} />}
+                <IconAlertTriangle size={18} />
               </Box>
               <VisuallyHidden component="span" hiddenFrom="lg">
-                {indicatorText}
+                {STORAGE_FAILED_TEXT}
               </VisuallyHidden>
-              {draftStorageFailed && (
-                <VisuallyHidden component="span">. {STORAGE_FAILED_HINT}</VisuallyHidden>
-              )}
+              <VisuallyHidden component="span">. {STORAGE_FAILED_HINT}</VisuallyHidden>
             </Text>
           </Tooltip>
         )}
@@ -197,12 +203,18 @@ export function SaveSplitButton({
             ? 'Saved'
             : ''}
       </VisuallyHidden>
+      {/* `hidden`, so browse mode doesn't read it a second time; `aria-describedby` still can. */}
+      {keptHint && (
+        <span hidden id={keptHintId}>
+          {keptHint}
+        </span>
+      )}
       <style>{LABEL_STYLES}</style>
       <Button.Group style={{ flexShrink: 0 }}>
         <Tooltip
-          label={saveBlockedReason}
+          label={saveTooltip}
           // Not beside "Saving…" or "Saved", which already say what happened.
-          disabled={!saveBlockedReason || busy || label !== 'save'}
+          disabled={!saveTooltip || busy || label !== 'save'}
           multiline
           maw={280}
         >
@@ -221,6 +233,8 @@ export function SaveSplitButton({
             // A progress or "Saved" label stays readable: disabled styling takes it under 4.5:1.
             data-disabled={saveGreyed ? true : undefined}
             aria-disabled={saveBlocked ? true : undefined}
+            // Never an explicit `undefined`: that would replace the Tooltip's own description.
+            {...(keptHint ? { 'aria-describedby': keptHintId } : {})}
           >
             {saveAllProgress ? (
               `Saving ${Math.min(saveAllProgress.done + 1, saveAllProgress.total)} of ${saveAllProgress.total}…`

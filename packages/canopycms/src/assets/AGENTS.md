@@ -11,8 +11,8 @@ Asset store v2 (S3/Local adapters, `factory.ts` consumes `media` config), finali
 
 ## Create-only writes
 
-`putOriginal`, `putPublicObject`, `copyPublicObject` and `putMetaIfAbsent` return `CreateOnlyResult` (`types.ts`). S3 funnels them through `createIfAbsent` (`store-s3.ts`, `IfNoneMatch: '*'`); local through `createExclusive` (`store-local.ts`: a temp file under `.asset-tmp/`, then `link()`), except `putMetaIfAbsent`'s `wx` open. In canopycms-cdk, `AssetSupport`'s `enforceCreateOnlyWrites` denies every unconditional put to the content-addressed prefixes.
+`putOriginal`, `putPublicObject`, `copyPublicObject`, `putMetaIfAbsent`, `hideAsset` return `CreateOnlyResult` (`types.ts`). S3 funnels them through `createIfAbsent` (`store-s3.ts`, `IfNoneMatch: '*'`); local through `createExclusive` (`store-local.ts`: a temp file under `.asset-tmp/`, then `link()`), except `putMetaIfAbsent`'s `wx` open. In canopycms-cdk, `AssetSupport`'s `enforceCreateOnlyWrites` denies every unconditional put to the content-addressed prefixes.
 
 ## Materialize
 
-`materialize.ts` (server-only): `storeTransform` writes one transform output for the raw route, `materializeAssets` and the transform Lambda. `materializeAssets` (exported from `canopycms/server`, run by `cli/asset-refs.ts`) writes each key `k` at `outputPrefix + k` when given one (`assertValidOutputPrefix` guards it); `resolvePresence` sorts each key into `dest`/`canonical`/`absent`, copying a `canonical` one and transforming an `absent` one. The report carries `schemaVersion` (`MATERIALIZE_REPORT_SCHEMA_VERSION`).
+`materialize.ts` (server-only): `storeTransform` writes one transform output for the raw route, `materializeAssets`, the transform Lambda and finalize's `storeEditorThumbnails`. `materializeAssets` (exported from `canopycms/server`, run by `cli/asset-refs.ts`) writes each key `k` at `outputPrefix + k` when given one (`assertValidOutputPrefix` guards it); `resolvePresence` sorts each key into `dest`/`canonical`/`absent`, copying a `canonical` one and transforming an `absent` one. The report carries `schemaVersion` (`MATERIALIZE_REPORT_SCHEMA_VERSION`).

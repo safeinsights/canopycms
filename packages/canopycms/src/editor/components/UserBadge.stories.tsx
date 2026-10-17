@@ -80,3 +80,34 @@ export const NameUnavailableForAdmins: Story = {
     color: 'blue',
   },
 }
+
+/** A photo stand-in as a data URI, so the story needs no network. */
+const PHOTO =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#7c8db5"/><circle cx="32" cy="26" r="12" fill="#e8eaf2"/><rect x="12" y="42" width="40" height="22" rx="11" fill="#e8eaf2"/></svg>',
+  )
+
+/**
+ * A photo avatar with a very long name in a narrow row: the avatar and name stay on one line and
+ * the name ends in an ellipsis, with the full name in the tooltip.
+ */
+export const PhotoAvatarLongName: Story = {
+  args: {
+    userId: asUserId('story-long'),
+    size: 'xs',
+    getUserMetadata: async () => ({
+      id: 'story-long',
+      name: 'Alexandria Montgomery-Featherstonehaugh de la Cruz Fitzgerald',
+      email: 'alexandria@example.com',
+      avatarUrl: PHOTO,
+    }),
+  },
+  decorators: [
+    (Story) => (
+      <div style={{ width: 200, display: 'flex' }}>
+        <Story />
+      </div>
+    ),
+  ],
+}

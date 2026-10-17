@@ -186,6 +186,21 @@ describe('applyTransform - crop', () => {
     expect(pixels[2]).toBeGreaterThan(200) // b
   })
 
+  it.each([
+    ['a full-width strip', { x: 0, y: 0, w: 1, h: 0.5 }, 100, 25],
+    ['an off-centre box of a free ratio', { x: 0.25, y: 0.5, w: 0.5, h: 0.5 }, 50, 25],
+    ['a tall sliver', { x: 0.1, y: 0, w: 0.1, h: 1 }, 10, 50],
+  ])('crops %s to the pixels it names, not a square', async (_label, crop, width, height) => {
+    const data = await makeSplitPng(100, 50, [255, 0, 0], [0, 0, 255])
+    const result = await applyTransform({ data, ext: 'png' }, resize({ crop }))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    const dims = imageSize(Buffer.from(result.data))
+    expect(dims.width).toBe(width)
+    expect(dims.height).toBe(height)
+  })
+
   // Regression: cropping an EXIF-rotated image (orientation 5-8 = 90-degree
   // rotations, which portrait phone photos almost always carry) used to throw
   // `bad extract area` -> 422 because the extract region was computed against

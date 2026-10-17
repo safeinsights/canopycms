@@ -1,6 +1,6 @@
 import React from 'react'
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { SWRConfig } from 'swr'
@@ -111,6 +111,12 @@ const okJson = (data: unknown, status = 200) =>
  * baseVersions }` envelope, so the assertion is about which entries have
  * drafts -- not about the serialization format.
  */
+/** Opens the content panel from the rail, unless it is open already. */
+const openContentPanel = () => {
+  const toggle = screen.getByTestId('content-panel-toggle')
+  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
+}
+
 const readPersistedDrafts = (branch: string): Record<string, unknown> => {
   const raw = window.localStorage.getItem(`canopycms:drafts:${branch}`)
   if (!raw) return {}
@@ -1126,9 +1132,8 @@ describe('Editor integration', () => {
     // Entry A's load starts (parked, not yet resolved).
     await waitFor(() => expect(resolvers[entryAApiPath]).toBeDefined())
 
-    // Navigate to entry B via the File menu -> All content -> entry click,
-    // while A is still in flight.
-    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
+    // Navigate to entry B via the content panel while A is still in flight.
+    openContentPanel()
     await waitFor(() => expect(screen.getByTestId('entry-nav-item-world')).toBeDefined())
     fireEvent.click(screen.getByTestId('entry-nav-item-world'))
 
@@ -1535,11 +1540,16 @@ describe('Editor integration', () => {
       type: 'entry',
     }
 
+    // The branch list answers only once released, so the rows can be seen while it is pending.
+    let releaseBranches!: () => void
+    const branchesAnswered = new Promise<void>((resolve) => {
+      releaseBranches = resolve
+    })
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url.endsWith('/api/canopycms/branches')) {
-        return Promise.resolve(
+        return branchesAnswered.then(() =>
           okJson({
             ok: true,
             status: 200,
@@ -1648,6 +1658,15 @@ describe('Editor integration', () => {
       />,
     )
 
+    // While the branch list is pending the rows hold their slot: no lock with a false reason.
+    openContentPanel()
+    await waitFor(() => {
+      expect(screen.getByTestId('entry-nav-item-posts')).toBeDefined()
+    })
+    expect(screen.queryAllByTestId('branch-lock')).toHaveLength(0)
+    expect(screen.getAllByTestId('branch-lock-pending').length).toBeGreaterThan(0)
+    releaseBranches()
+
     // Read-only banner appears with the create-branch CTA.
     await waitFor(() => {
       expect(screen.getByTestId('protected-branch-banner')).toBeDefined()
@@ -1672,19 +1691,102 @@ describe('Editor integration', () => {
       expect(saveButton.getAttribute('aria-disabled')).toBe('true')
     })
 
-    // Open the entry navigator (File dropdown -> All content) and confirm the
+    // Open the entry navigator from the rail and confirm the
     // read-only branch hides every mutation affordance: the per-collection
     // context menu (EntryNavigator's readOnly gating) and the drawer header's
     // "Content actions" button (Add entry/Add collection for the root), which
     // reads navCollections[0].onAdd directly and would otherwise bypass
     // EntryNavigator's gating entirely.
-    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
+    openContentPanel()
 
     await waitFor(() => {
       expect(screen.getByTestId('entry-nav-item-posts')).toBeDefined()
     })
     expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
     expect(screen.queryByRole('button', { name: /content actions/i })).toBeNull()
+    // A lock stands in the menu's slot, giving the banner's reason.
+    const lock = within(screen.getByTestId('entry-nav-item-posts')).getByTestId('branch-lock')
+    expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toBe(
+      'The base branch is read-only. Create a branch to make changes.',
+    )
+  })
+
+  it('shows each row a lock saying the branch details could not be loaded when the fetch fails', async () => {
+    // The deliberate 500 makes useBranchManager report via console.error, which vitest's console
+    // interceptor fails the run on; swallow it here.
+    mockConsole()
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        return Promise.resolve(okJson({ ok: false, status: 500 }, 500))
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'collection',
+                  logicalPath: 'content/posts',
+                  name: 'posts',
+                  label: 'Posts',
+                  entries: [{ name: 'post', format: 'json', schema: [] }],
+                },
+              ],
+              entrySchemas: {},
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  logicalPath: 'content/posts',
+                  contentId: 'abc123XYZ789',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: [],
+                  order: [],
+                },
+              ],
+              entries: [],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Editor
+        entries={[]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="prod"
+        themeOptions={{}}
+      />,
+    )
+
+    openContentPanel()
+    const lock = await waitFor(() =>
+      within(screen.getByTestId('entry-nav-item-posts')).getByTestId('branch-lock'),
+    )
+    expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toMatch(
+      /could not be loaded/,
+    )
+    expect(screen.queryAllByTestId('branch-lock-pending')).toHaveLength(0)
   })
 
   it('grants an admin who is neither creator nor in ACL an enabled Withdraw button on a protected base branch stuck in "submitted"', async () => {
@@ -1965,7 +2067,7 @@ describe('Editor integration', () => {
     }
 
     const openNavigatorAndFindSubA = async () => {
-      fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
+      openContentPanel()
       // hiddenRootPath collapses the single "content/posts" root (contentRoot
       // is pinned to it below), so its children render directly at the top
       // level with no expand click needed.

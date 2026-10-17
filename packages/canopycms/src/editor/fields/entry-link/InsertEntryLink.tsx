@@ -39,6 +39,7 @@ export const InsertEntryLink: React.FC<InsertEntryLinkProps> = ({ onInsert }) =>
     return entries.filter(
       (e) =>
         e.label.toLowerCase().includes(lower) ||
+        e.title?.toLowerCase().includes(lower) ||
         e.slug?.toLowerCase().includes(lower) ||
         e.collectionName?.toLowerCase().includes(lower),
     )
@@ -55,7 +56,8 @@ export const InsertEntryLink: React.FC<InsertEntryLinkProps> = ({ onInsert }) =>
   }, [filtered])
 
   const handleSelect = (entry: EntryLinkOption) => {
-    const rawText = entry.label || entry.slug || 'Link'
+    // The title, not a singleton's type label: published content reads the page's own name.
+    const rawText = entry.title || entry.label || entry.slug || 'Link'
     // Escape backslashes first, then characters that end the link text or that
     // the editor parses as MDX (`{` opens an expression, `<` a JSX tag).
     const linkText = rawText.replace(/\\/g, '\\\\').replace(/([[\]()<>{}])/g, '\\$1')

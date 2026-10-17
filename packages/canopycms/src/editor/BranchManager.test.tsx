@@ -1508,6 +1508,31 @@ describe('BranchManager', () => {
       expect(screen.queryByText('user1')).toBeNull()
     })
 
+    it('offers no way to start a branch comment, and shows no discussion without threads', () => {
+      renderBranchManager({
+        branches: baseBranches,
+        mode: 'prod',
+        user: creatorUser,
+        ...commentProps,
+        comments: [],
+      })
+
+      expect(screen.queryByText('New branch comment')).toBeNull()
+      expect(screen.queryByText('Branch discussion')).toBeNull()
+    })
+
+    it('still shows the discussion of a branch that has threads', async () => {
+      renderBranchManager({
+        branches: baseBranches,
+        mode: 'prod',
+        user: creatorUser,
+        ...commentProps,
+      })
+
+      expect(await screen.findByText(/^Branch discussion/)).toBeDefined()
+      expect(screen.queryByText('New branch comment')).toBeNull()
+    })
+
     it('names owners through the owner lookup only', async () => {
       const onGetUserMetadata = vi.fn(async (id: string) =>
         id === 'user1' ? { id, name: 'Olive Owner', email: 'olive@example.test' } : null,

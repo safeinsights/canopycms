@@ -27,17 +27,13 @@ const meta: Meta<typeof EditorHeader> = {
     branchName: 'feature/landing',
     operatingMode: 'prod',
     busy: false,
-    breadcrumbSegments: [
-      { label: 'All content' },
-      { label: 'Posts', collectionPath: 'content/posts' },
-    ],
+    breadcrumbSegments: [{ label: 'Posts', collectionPath: 'content/posts' }],
     editedFiles: [
       { path: unsafeAsLogicalPath('content/posts/hello'), label: 'Hello' },
       { path: unsafeAsLogicalPath('content/pages/about'), label: 'About us' },
       { path: unsafeAsLogicalPath('content/pages/team'), label: 'Our team' },
     ],
     modifiedCount: 3,
-    onNavigatorOpen: noop,
     onCollectionOpen: noop,
     onFileReload: noop,
     onFileDiscardDraft: noop,
@@ -69,6 +65,7 @@ export const Saved: Story = {
   args: { hasUnsavedChanges: false, editedFiles: [], modifiedCount: 0 },
 }
 
+/** In review: Submit becomes Withdraw and Save is blocked. The lock banner, not shown here, says why. */
 export const InReview: Story = {
   args: {
     branchStatus: 'submitted',
@@ -79,7 +76,10 @@ export const InReview: Story = {
   },
 }
 
-/** The protected base branch: the "Read-only" chip, no Submit, Save blocked with its reason. */
+/**
+ * The protected base branch: "Protected" status, no Submit, Save blocked with its reason. The
+ * lock banner, not shown here, says it is read-only.
+ */
 export const ReadOnly: Story = {
   args: {
     branchName: 'main',
@@ -97,13 +97,23 @@ export const EntryReadOnly: Story = {
   args: { entryReadOnly: true, hasUnsavedChanges: false },
 }
 
+/** A path rule refuses this entry on a locked branch: the chip stays, as withdrawing won't unlock it. */
+export const EntryReadOnlyInReview: Story = {
+  args: {
+    entryReadOnly: true,
+    branchStatus: 'submitted',
+    branchWriteBlocked: true,
+    hasUnsavedChanges: false,
+  },
+}
+
 /** At 390px the breadcrumb takes its own row, so "Withdraw from review" is never clipped. */
 export const Narrow: Story = {
   parameters: phone,
   args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
 }
 
-/** Below `lg` the unsaved indicator is an icon, its text in its Tooltip and accessible name. */
+/** On a phone the bar adds only the entry's dot and the pill's count for unsaved changes. */
 export const NarrowUnsaved: Story = {
   parameters: phone,
 }
@@ -119,7 +129,7 @@ export const NarrowInReviewManyUnsaved: Story = {
   },
 }
 
-/** Before branch details arrive: no lock chip or status yet, as nothing is known. */
+/** Before branch details arrive: no chip or status yet, as nothing is known. */
 export const BranchLoading: Story = {
   args: { branchLoading: true, branchWriteBlocked: true, hasUnsavedChanges: false },
 }
@@ -128,7 +138,7 @@ export const SaveAllInProgress: Story = {
   args: { busy: true, saveAllProgress: { done: 1, total: 3 } },
 }
 
-/** The browser refused to store drafts, so leaving the page would lose them. */
+/** The browser refused to store drafts: a warning joins the bar, an icon below `lg`. */
 export const UnsavedNotKept: Story = {
   args: { draftStorageFailed: true },
 }
@@ -136,7 +146,7 @@ export const UnsavedNotKept: Story = {
 export const NoEntryOpen: Story = {
   args: {
     currentEntry: undefined,
-    breadcrumbSegments: [{ label: 'All content' }],
+    breadcrumbSegments: [],
     hasUnsavedChanges: false,
   },
 }
@@ -156,13 +166,13 @@ const openMenu =
   }
 const openEntryMenu = openMenu('file-dropdown-button')
 
-/** The entry menu: refresh, discard, then Rename… and the destructive Delete entry. */
+/** The entry menu: refresh, discard, then Change URL… and the destructive Delete entry. */
 export const EntryMenu: Story = {
   args: { hasUnsavedChanges: false },
   play: openEntryMenu,
 }
 
-/** On a branch in review, Rename… and Delete entry stay in the menu, blocked, with the reason. */
+/** On a branch in review, Change URL… and Delete entry stay in the menu, blocked, with the reason. */
 export const EntryMenuBlocked: Story = {
   args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
   play: openEntryMenu,

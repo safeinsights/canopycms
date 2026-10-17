@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MantineProvider } from '@mantine/core'
 
 import type { AssetRecord } from '../../api'
+import { EDITOR_THUMBNAIL_WIDTHS } from '../../assets/editor-thumbnail-widths'
 import { AssetCard } from './AssetCard'
 import { formatRelativeTime } from '../relative-time'
 
@@ -29,6 +30,14 @@ const catAsset: AssetRecord = {
 describe('AssetCard', () => {
   afterEach(() => {
     cleanup()
+  })
+
+  it('requests the card editor thumbnail width, which finalize stores ahead of the first view', () => {
+    render(<AssetCard asset={catAsset} baseUrl="/api/canopycms/assets/raw" />, { wrapper: Wrapper })
+
+    expect(screen.getByRole('img', { hidden: true }).getAttribute('src')).toBe(
+      `/api/canopycms/assets/raw/assets/t/w=${EDITOR_THUMBNAIL_WIDTHS.card}/${catAsset.hash32}/cat.png`,
+    )
   })
 
   it('renders the thumbnail image by default', () => {
@@ -103,15 +112,44 @@ describe('AssetCard', () => {
   })
 
   it('names the remove control for the asset, with a matching tooltip', async () => {
-    const onDelete = vi.fn()
-    render(<AssetCard asset={catAsset} onDelete={onDelete} />, { wrapper: Wrapper })
+    const onRemove = vi.fn()
+    render(<AssetCard asset={catAsset} onRemove={onRemove} onRestore={vi.fn()} />, {
+      wrapper: Wrapper,
+    })
 
     const remove = screen.getByRole('button', { name: 'Remove cat.png from library' })
     await userEvent.setup().hover(remove)
     expect(await screen.findByText('Remove from library')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Restore cat.png to library' })).toBeNull()
 
     fireEvent.click(remove)
-    expect(onDelete).toHaveBeenCalledWith(catAsset)
+    expect(onRemove).toHaveBeenCalledWith(catAsset)
+  })
+
+  it('shows removal as hiding, not destroying: an eye-off icon in the default colour', () => {
+    render(<AssetCard asset={catAsset} onRemove={vi.fn()} />, { wrapper: Wrapper })
+
+    const remove = screen.getByRole('button', { name: 'Remove cat.png from library' })
+    expect(remove.querySelector('.tabler-icon-eye-off')).toBeTruthy()
+    expect(remove.querySelector('.tabler-icon-trash')).toBeNull()
+    expect(remove.getAttribute('style') ?? '').not.toContain('danger')
+  })
+
+  it('badges a removed file and offers Restore instead of Remove', async () => {
+    const onRestore = vi.fn()
+    const removed: AssetRecord = { ...catAsset, hidden: true }
+    render(<AssetCard asset={removed} onRemove={vi.fn()} onRestore={onRestore} />, {
+      wrapper: Wrapper,
+    })
+
+    expect(screen.getByTestId(`asset-card-removed-${catAsset.hash32}`).textContent).toBe('Removed')
+    expect(screen.queryByRole('button', { name: 'Remove cat.png from library' })).toBeNull()
+    const restore = screen.getByRole('button', { name: 'Restore cat.png to library' })
+    await userEvent.setup().hover(restore)
+    expect(await screen.findByText('Restore to library')).toBeTruthy()
+
+    fireEvent.click(restore)
+    expect(onRestore).toHaveBeenCalledWith(removed)
   })
 
   it('drops the date line and shrinks the thumbnail in the compact density', () => {

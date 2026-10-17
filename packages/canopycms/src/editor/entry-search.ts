@@ -2,22 +2,21 @@
 
 export interface SearchableEntry {
   label: string
+  /** The entry's title, when its label is something else (a singleton's type label). */
+  title?: string
   slug?: string
   collectionPath?: string
   collectionName?: string
 }
 
-/** Case-insensitive substring match over label and slug; an empty query matches everything. */
+/** Case-insensitive substring match over label, title and slug; an empty query matches everything. */
 export function matchesEntryQuery(
-  entry: Pick<SearchableEntry, 'label' | 'slug'>,
+  entry: Pick<SearchableEntry, 'label' | 'title' | 'slug'>,
   query: string,
 ): boolean {
   const needle = query.trim().toLowerCase()
   if (!needle) return true
-  return (
-    entry.label.toLowerCase().includes(needle) ||
-    (entry.slug?.toLowerCase().includes(needle) ?? false)
-  )
+  return [entry.label, entry.title, entry.slug].some((text) => text?.toLowerCase().includes(needle))
 }
 
 export function filterEntries<T extends SearchableEntry>(

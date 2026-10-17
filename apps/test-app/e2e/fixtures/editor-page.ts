@@ -133,7 +133,8 @@ export class EditorPage {
   }
 
   /**
-   * Open the content navigator from the header's breadcrumb, which shows once an entry is selected.
+   * Open the content navigator from the header's first collection crumb, which shows once an entry
+   * in a collection is open.
    */
   async openContentNavigatorFromBreadcrumb(): Promise<void> {
     await this.page.getByTestId('breadcrumb-segment').first().click()
@@ -656,7 +657,7 @@ export class EditorPage {
     return this.page.getByTestId('save-all-result')
   }
 
-  /** The branch pill's "N unsaved" count, absent with nothing unsaved. */
+  /** The branch pill's unsaved count, a dot and a number named "N entries with unsaved changes", absent with nothing unsaved. */
   branchUnsavedCount(): Locator {
     return this.page.getByTestId('branch-unsaved-count')
   }

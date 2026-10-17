@@ -24,11 +24,14 @@ import {
 } from '@aws-sdk/client-s3'
 import { sdkStreamMixin } from '@smithy/util-stream'
 import { mockClient } from 'aws-sdk-client-mock'
+import sharp from 'sharp'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AssetMeta, AssetStore } from './types'
 import { LocalAssetStore } from './store-local'
 import { S3AssetStore } from './store-s3'
+import { storeTransform } from './materialize'
+import { canonicalizeTransformPath } from './transform-directives'
 
 // createPresignedPost (used by beginUpload) resolves AWS credentials directly
 // via the S3 client's credential provider chain, bypassing the `.send()`
@@ -276,16 +279,88 @@ function runParitySuite(label: string, setup: () => Harness | Promise<Harness>) 
       expect(await harness.store.getMeta(hash32For(12345))).toBeNull()
     })
 
-    it('deleteMeta removes the meta sidecar', async () => {
+    it('hideAsset keeps the meta, so a transform never stored before is still computed', async () => {
       const { store } = harness
-      const meta = makeMeta({ hash32: hash32For(9) })
+      const png = await sharp({
+        create: { width: 8, height: 4, channels: 3, background: { r: 1, g: 2, b: 3 } },
+      })
+        .png()
+        .toBuffer()
+      const meta = makeMeta({ hash32: hash32For(9), size: png.byteLength })
+      await store.putOriginal({
+        hash32: meta.hash32,
+        ext: 'png',
+        data: new Uint8Array(png),
+        contentType: 'image/png',
+      })
       await store.putMetaIfAbsent(meta.hash32, meta)
-      await store.deleteMeta(meta.hash32)
-      expect(await store.getMeta(meta.hash32)).toBeNull()
+
+      expect(await store.hideAsset(meta.hash32, { hiddenAt: '2026-02-01T00:00:00.000Z' })).toBe(
+        'created',
+      )
+
+      expect(await store.getMeta(meta.hash32)).toEqual(meta)
+      const parsed = canonicalizeTransformPath(['w=4', meta.hash32, 'photo.png'], 'any')
+      if (!parsed.ok) throw new Error(parsed.error)
+      const key = `assets/t/${parsed.canonicalPath}`
+      const result = await storeTransform(store, parsed, key)
+      expect(result.ok).toBe(true)
+      expect(await store.hasPublicObject(key)).toBe(true)
     })
 
-    it('deleteMeta on a missing hash is a no-op', async () => {
-      await expect(harness.store.deleteMeta(hash32For(54321))).resolves.toBeUndefined()
+    it('hideAsset is create-only: hiding a hidden file reports already-exists', async () => {
+      const { store } = harness
+      const hash32 = hash32For(10)
+      await store.putMetaIfAbsent(hash32, makeMeta({ hash32 }))
+      expect(await store.hideAsset(hash32, { hiddenAt: '2026-02-01T00:00:00.000Z' })).toBe(
+        'created',
+      )
+      expect(await store.hideAsset(hash32, { hiddenAt: '2026-02-02T00:00:00.000Z' })).toBe(
+        'already-exists',
+      )
+    })
+
+    it('listMeta leaves a hidden file out, and marks it hidden only when asked to include it', async () => {
+      const { store } = harness
+      const shown = makeMeta({ hash32: hash32For(11), uploadedAt: '2026-01-02T00:00:00.000Z' })
+      const hidden = makeMeta({ hash32: hash32For(12), uploadedAt: '2026-01-03T00:00:00.000Z' })
+      await store.putMetaIfAbsent(shown.hash32, shown)
+      await store.putMetaIfAbsent(hidden.hash32, hidden)
+      await store.hideAsset(hidden.hash32, { hiddenAt: '2026-02-01T00:00:00.000Z' })
+
+      expect((await store.listMeta()).items).toEqual([shown])
+      const all = (await store.listMeta({ includeHidden: true })).items
+      expect(all).toHaveLength(2)
+      expect(all).toEqual(expect.arrayContaining([shown, { ...hidden, hidden: true }]))
+    })
+
+    it('unhideAsset puts a hidden file back in the listing, and reports whether it was hidden', async () => {
+      const { store } = harness
+      const meta = makeMeta({ hash32: hash32For(13) })
+      await store.putMetaIfAbsent(meta.hash32, meta)
+      await store.hideAsset(meta.hash32, { hiddenAt: '2026-02-01T00:00:00.000Z' })
+
+      expect(await store.unhideAsset(meta.hash32)).toBe(true)
+      expect((await store.listMeta()).items).toEqual([meta])
+      expect(await store.unhideAsset(meta.hash32)).toBe(false)
+      expect(await store.unhideAsset(hash32For(54321))).toBe(false)
+    })
+
+    it('paginates listMeta past hidden files, with no duplicates and no hidden file', async () => {
+      const { store } = harness
+      const total = 7
+      for (let i = 0; i < total; i++) {
+        await store.putMetaIfAbsent(
+          hash32For(i),
+          makeMeta({ hash32: hash32For(i), uploadedAt: new Date(2026, 0, 1 + i).toISOString() }),
+        )
+      }
+      for (const i of [0, 3, 4]) {
+        await store.hideAsset(hash32For(i), { hiddenAt: '2026-02-01T00:00:00.000Z' })
+      }
+
+      const seen = (await collectAllViaPagination(store, 2)).map((meta) => meta.hash32)
+      expect([...seen].sort()).toEqual([1, 2, 5, 6].map(hash32For))
     })
 
     it('preserves contentType and contentDisposition on putPublicObject/readPublicObject', async () => {
@@ -549,6 +624,31 @@ describe('LocalAssetStore path-traversal guard', () => {
     ).rejects.toThrow('Path traversal detected')
 
     await fs.rm(parent, { recursive: true, force: true })
+  })
+})
+
+describe('LocalAssetStore listMeta cursor', () => {
+  it('resumes after the last item of a page even when that item is hidden in between', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-assets-cursor-'))
+    try {
+      const store = new LocalAssetStore({ root })
+      for (let i = 0; i < 4; i++) {
+        await store.putMetaIfAbsent(
+          hash32For(i),
+          makeMeta({ hash32: hash32For(i), uploadedAt: new Date(2026, 0, 1 + i).toISOString() }),
+        )
+      }
+      const first = await store.listMeta({ limit: 2 })
+      expect(first.items.map((m) => m.hash32)).toEqual([hash32For(3), hash32For(2)])
+
+      await store.hideAsset(hash32For(2), { hiddenAt: '2026-02-01T00:00:00.000Z' })
+      const second = await store.listMeta({ cursor: first.nextCursor, limit: 2 })
+
+      expect(second.items.map((m) => m.hash32)).toEqual([hash32For(1), hash32For(0)])
+      expect(second.nextCursor).toBeUndefined()
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
   })
 })
 

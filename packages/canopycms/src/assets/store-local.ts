@@ -10,18 +10,20 @@ import { randomUUID } from 'node:crypto'
 
 import { getErrorMessage, isFileExistsError, isNotFoundError } from '../utils/error'
 import { atomicWriteFile } from '../utils/atomic-write'
-import { ASSET_PREFIXES, metaKey, originalKey, stagingKey } from './keys'
+import { ASSET_PREFIXES, hiddenKey, metaKey, originalKey, stagingKey } from './keys'
 import type {
   AssetMeta,
   AssetStore,
   BeginUploadInput,
   CreateOnlyResult,
+  HiddenAssetMarker,
+  ListedAssetMeta,
   PublicObject,
   StagedUploadTarget,
 } from './types'
 
 export interface LocalAssetStoreOptions {
-  /** Root directory. The five bucket prefixes are created as subdirectories under it. */
+  /** Root directory. The six bucket prefixes are created as subdirectories under it. */
   root: string
 }
 
@@ -36,6 +38,15 @@ const HEADERS_SIDECAR_SUFFIX = '.headers.json'
 const TEMP_DIR = '.asset-tmp'
 /** An original's file name after `{hash32}.`; a sidecar or any other name in the directory fails it. */
 const ORIGINAL_EXT_RE = /^[a-z0-9]+$/
+/** A hidden marker's file name; a stray file in the directory fails it. */
+const HIDDEN_MARKER_RE = /^([a-f0-9]{32})\.json$/
+
+/** Newest first; hash32 breaks a tie of equal timestamps, so every page boundary is stable. */
+function compareNewestFirst(a: AssetMeta, b: AssetMeta): number {
+  if (a.uploadedAt !== b.uploadedAt) return a.uploadedAt < b.uploadedAt ? 1 : -1
+  if (a.hash32 === b.hash32) return 0
+  return a.hash32 < b.hash32 ? 1 : -1
+}
 
 /** Side-channel headers persisted next to a blob (filesystem has no native HTTP header storage). */
 interface StoredHeaders {
@@ -121,16 +132,17 @@ export class LocalAssetStore implements AssetStore {
   }
 
   /**
-   * Create-only write of a blob and its headers sidecar. Each is written whole to a temp file, then
-   * `link()`ed into place, which fails with EEXIST rather than replacing (see docs/concurrency.md).
-   * The sidecar is linked first, so a reader never finds a blob without its headers. A sidecar
-   * already there was linked by an earlier writer of this key and is kept, as the blob is: the
-   * first writer's headers win, as on S3 (a static's Content-Disposition names its uploaded file).
+   * Create-only write of a blob and, when `headers` is given, its headers sidecar. Each is written
+   * whole to a temp file, then `link()`ed into place, which fails with EEXIST rather than replacing
+   * (see docs/concurrency.md). The sidecar is linked first, so a reader never finds a blob without
+   * its headers. A sidecar already there was linked by an earlier writer of this key and is kept,
+   * as the blob is: the first writer's headers win, as on S3 (a static's Content-Disposition names
+   * its uploaded file).
    */
   private async createExclusive(
     key: string,
     data: Uint8Array,
-    headers: StoredHeaders,
+    headers?: StoredHeaders,
   ): Promise<CreateOnlyResult> {
     const filePath = this.resolveKey(key)
     const tempDir = this.resolveKey(TEMP_DIR)
@@ -142,8 +154,10 @@ export class LocalAssetStore implements AssetStore {
     const tempHeaders = path.join(tempDir, randomUUID())
     try {
       await fs.writeFile(tempBlob, data)
-      await fs.writeFile(tempHeaders, JSON.stringify(headers), 'utf-8')
-      await this.linkIfAbsent(tempHeaders, this.headersSidecarPath(filePath))
+      if (headers) {
+        await fs.writeFile(tempHeaders, JSON.stringify(headers), 'utf-8')
+        await this.linkIfAbsent(tempHeaders, this.headersSidecarPath(filePath))
+      }
       return (await this.linkIfAbsent(tempBlob, filePath)) ? 'created' : 'already-exists'
     } finally {
       await Promise.all([tempBlob, tempHeaders].map((temp) => fs.unlink(temp).catch(() => {})))
@@ -302,8 +316,13 @@ export class LocalAssetStore implements AssetStore {
     }
   }
 
-  async listMeta(input?: { cursor?: string; limit?: number }): Promise<{
-    items: AssetMeta[]
+  /**
+   * The cursor names the last item returned, and the next page starts after it in sort order, so a
+   * page boundary holds when that item is hidden in between: its meta is never deleted, and the
+   * comparison needs only its place, not its presence in the filtered list.
+   */
+  async listMeta(input?: { cursor?: string; limit?: number; includeHidden?: boolean }): Promise<{
+    items: ListedAssetMeta[]
     nextCursor?: string
   }> {
     const limit = input?.limit ?? DEFAULT_LIST_LIMIT
@@ -323,31 +342,32 @@ export class LocalAssetStore implements AssetStore {
         const raw = await fs.readFile(path.join(dir, name), 'utf-8')
         all.push(JSON.parse(raw) as AssetMeta)
       } catch (err: unknown) {
-        // A meta file racing with deleteMeta is expected under concurrency;
-        // anything else is a real problem worth surfacing via getErrorMessage.
+        // Only a file removed by hand since the directory read is skipped; anything else is a real
+        // problem worth surfacing via getErrorMessage.
         if (!isNotFoundError(err)) {
           throw new Error(`Failed to read asset meta file '${name}': ${getErrorMessage(err)}`)
         }
       }
     }
+    all.sort(compareNewestFirst)
 
-    // Newest first; hash32 is the deterministic tiebreak for equal timestamps
-    // (common in fast test loops using Date.now()), which keeps pagination
-    // stable and duplicate/gap-free across calls.
-    all.sort((a, b) => {
-      if (a.uploadedAt !== b.uploadedAt) return a.uploadedAt < b.uploadedAt ? 1 : -1
-      return a.hash32 < b.hash32 ? 1 : -1
-    })
+    const hidden = await this.hiddenHashes()
+    const listed: ListedAssetMeta[] = input?.includeHidden
+      ? all.map((meta) => (hidden.has(meta.hash32) ? { ...meta, hidden: true } : meta))
+      : all.filter((meta) => !hidden.has(meta.hash32))
 
     let startIndex = 0
     if (input?.cursor) {
       const afterHash32 = Buffer.from(input.cursor, 'base64').toString('utf-8')
-      const idx = all.findIndex((m) => m.hash32 === afterHash32)
-      startIndex = idx === -1 ? 0 : idx + 1
+      const anchor = all.find((m) => m.hash32 === afterHash32)
+      if (anchor) {
+        const after = listed.findIndex((m) => compareNewestFirst(m, anchor) > 0)
+        startIndex = after === -1 ? listed.length : after
+      }
     }
 
-    const items = all.slice(startIndex, startIndex + limit)
-    const hasMore = startIndex + limit < all.length
+    const items = listed.slice(startIndex, startIndex + limit)
+    const hasMore = startIndex + limit < listed.length
     const nextCursor = hasMore
       ? Buffer.from(items[items.length - 1].hash32, 'utf-8').toString('base64')
       : undefined
@@ -355,12 +375,26 @@ export class LocalAssetStore implements AssetStore {
     return { items, nextCursor }
   }
 
-  async deleteMeta(hash32: string): Promise<void> {
-    const filePath = this.resolveKey(metaKey(hash32))
+  private async hiddenHashes(): Promise<Set<string>> {
     try {
-      await fs.unlink(filePath)
+      const names = await fs.readdir(this.resolveKey(ASSET_PREFIXES.hidden))
+      return new Set(names.flatMap((name) => HIDDEN_MARKER_RE.exec(name)?.[1] ?? []))
     } catch (err: unknown) {
-      if (isNotFoundError(err)) return
+      if (isNotFoundError(err)) return new Set()
+      throw err
+    }
+  }
+
+  async hideAsset(hash32: string, marker: HiddenAssetMarker): Promise<CreateOnlyResult> {
+    return this.createExclusive(hiddenKey(hash32), new TextEncoder().encode(JSON.stringify(marker)))
+  }
+
+  async unhideAsset(hash32: string): Promise<boolean> {
+    try {
+      await fs.unlink(this.resolveKey(hiddenKey(hash32)))
+      return true
+    } catch (err: unknown) {
+      if (isNotFoundError(err)) return false
       throw err
     }
   }

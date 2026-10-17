@@ -1,13 +1,14 @@
 'use client'
 
 import type { CSSProperties } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import {
   CANOPY_PREVIEW_ERROR,
   CANOPY_PREVIEW_HIGHLIGHT,
   CANOPY_PREVIEW_MARKS,
   CANOPY_PREVIEW_MESSAGE,
+  CANOPY_PREVIEW_NAVIGATE,
   CANOPY_PREVIEW_READY,
   type DraftUpdateMessage,
   type HighlightMessage,
@@ -15,6 +16,8 @@ import {
   MARK_REPORT_LIMITS,
   type PreviewErrorMessage,
   type PreviewMarksMessage,
+  type PreviewNavigateMessage,
+  type PreviewReadyMessage,
   resolveMessageOrigin,
 } from './preview-bridge'
 
@@ -29,6 +32,12 @@ export interface PreviewMarks {
  * says live updates are off. Ready can also arrive before `load`, which waits for images too.
  */
 const READY_TIMEOUT_MS = 5000
+
+/**
+ * What a page's handshake says of the site's header and footer: its ready message says it renders
+ * them for `chrome=1` or that it does not, or no ready message came in `READY_TIMEOUT_MS`.
+ */
+export type SiteChromeSupport = 'supported' | 'unsupported' | 'unanswered'
 
 /**
  * `waiting` until the preview's ready message arrives, `missing` once `READY_TIMEOUT_MS` passes
@@ -56,6 +65,22 @@ const isMarkPaths = (paths: unknown): paths is string[] =>
   paths.length <= MARK_REPORT_LIMITS.paths &&
   paths.every((path) => typeof path === 'string' && path.length <= MARK_REPORT_LIMITS.pathLength)
 
+/** Only http(s) on the preview's origin, so the editor never opens a `javascript:` URL or another site. */
+const isPreviewNavigateMessage = (
+  data: unknown,
+  previewOrigin: string,
+): data is PreviewNavigateMessage => {
+  if (typeof data !== 'object' || data === null) return false
+  const { type, href } = data as Partial<Record<keyof PreviewNavigateMessage, unknown>>
+  if (type !== CANOPY_PREVIEW_NAVIGATE || typeof href !== 'string') return false
+  try {
+    const url = new URL(href)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === previewOrigin
+  } catch {
+    return false
+  }
+}
+
 const sendDraftUpdate = (
   iframe: HTMLIFrameElement | null,
   message: DraftUpdateMessage,
@@ -71,7 +96,7 @@ const sendDraftUpdate = (
  * Lightweight iframe wrapper to keep the preview in sync with form state.
  * It posts the latest draft data to the iframe after load and when data changes. A progress bar
  * runs until the preview's ready message arrives; when none does, a "Live updates off" chip offers
- * to reload the preview.
+ * to reload the preview. While `busy`, the page stays in view, dimmed and inert, under the bar.
  */
 export const PreviewFrame = ({
   src,
@@ -86,6 +111,9 @@ export const PreviewFrame = ({
   assetBase,
   iframeStyle,
   onReload,
+  onSiteChrome,
+  onNavigate,
+  busy = false,
 }: {
   src: string
   path: string
@@ -110,6 +138,12 @@ export const PreviewFrame = ({
   iframeStyle?: CSSProperties
   /** Replaces the chip's Retry, for a host whose own reload control remounts the frame. */
   onReload?: () => void
+  /** Called with what the page's handshake says of the site's header and footer. */
+  onSiteChrome?: (support: SiteChromeSupport) => void
+  /** A preview link's absolute URL, unfollowed; focus follows into the next page unless moved. */
+  onNavigate?: (href: string) => void
+  /** The editor is loading the next page's data: this page stays in view, dimmed and inert. */
+  busy?: boolean
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Pin the preview origin from the src prop: outbound messages target it (never '*'),
@@ -126,10 +160,15 @@ export const PreviewFrame = ({
 
   // A new src is a new page, with a handshake of its own.
   const [prevSrc, setPrevSrc] = useState(src)
+  // The frame a followed link was clicked in is replaced, which drops focus to the editor's body.
+  const [followingLink, setFollowingLink] = useState(false)
+  const [focusOnLoad, setFocusOnLoad] = useState(false)
   if (src !== prevSrc) {
     setPrevSrc(src)
     setHandshake('waiting')
     setLoaded(false)
+    setFocusOnLoad(followingLink)
+    setFollowingLink(false)
   }
 
   useEffect(() => {
@@ -151,6 +190,11 @@ export const PreviewFrame = ({
   const hasDraft = data !== undefined
   const syncPending = hasDraft && handshake === 'waiting'
   const liveUpdatesOff = hasDraft && handshake === 'missing'
+
+  // React 18 has no `inert` prop, so it is set on the DOM.
+  useLayoutEffect(() => {
+    iframeRef.current?.toggleAttribute('inert', busy)
+  }, [busy, retries, src])
 
   // Inject the progress bar keyframe animation once per page.
   useEffect(() => {
@@ -193,12 +237,31 @@ export const PreviewFrame = ({
   const postHighlightRef = useRef(postHighlight)
   const onPreviewErrorRef = useRef(onPreviewError)
   const onMarksRef = useRef(onMarks)
+  const onSiteChromeRef = useRef(onSiteChrome)
+  const onNavigateRef = useRef(onNavigate)
   useEffect(() => {
     postRef.current = post
     postHighlightRef.current = postHighlight
     onPreviewErrorRef.current = onPreviewError
     onMarksRef.current = onMarks
+    onSiteChromeRef.current = onSiteChrome
+    onNavigateRef.current = onNavigate
   })
+
+  useEffect(() => {
+    if (handshake === 'missing') onSiteChromeRef.current?.('unanswered')
+  }, [handshake])
+
+  // Focus the user puts anywhere before the next page loads is theirs to keep.
+  useEffect(() => {
+    if (!followingLink && !focusOnLoad) return
+    const keep = () => {
+      setFollowingLink(false)
+      setFocusOnLoad(false)
+    }
+    document.addEventListener('focusin', keep)
+    return () => document.removeEventListener('focusin', keep)
+  }, [followingLink, focusOnLoad])
 
   useEffect(() => {
     post()
@@ -223,6 +286,11 @@ export const PreviewFrame = ({
         postRef.current()
         postHighlightRef.current()
         setHandshake('ready')
+        onSiteChromeRef.current?.(
+          (event.data as Partial<PreviewReadyMessage>).siteChrome === true
+            ? 'supported'
+            : 'unsupported',
+        )
       } else if (type === CANOPY_PREVIEW_ERROR) {
         const msg = event.data as Partial<PreviewErrorMessage>
         // Shape-check the payload: an adopter passing an Error object (instead of
@@ -239,6 +307,9 @@ export const PreviewFrame = ({
         if (typeof count === 'number' && Number.isInteger(count) && count >= 0) {
           onMarksRef.current?.({ count, ...(isMarkPaths(paths) ? { paths } : {}) })
         }
+      } else if (isPreviewNavigateMessage(event.data, previewOrigin)) {
+        onNavigateRef.current?.(event.data.href)
+        setFollowingLink(true)
       }
     }
     window.addEventListener('message', handleMessage)
@@ -246,11 +317,15 @@ export const PreviewFrame = ({
   }, [previewOrigin])
 
   return (
-    <div className={className} style={{ position: 'relative', overflow: 'hidden', ...style }}>
-      {syncPending && (
+    <div
+      className={className}
+      aria-busy={busy || undefined}
+      style={{ position: 'relative', overflow: 'hidden', ...style }}
+    >
+      {(syncPending || busy) && (
         <div
           role="progressbar"
-          aria-label="Connecting to the preview"
+          aria-label={busy ? 'Loading the entry' : 'Connecting to the preview'}
           style={{
             position: 'absolute',
             top: 0,
@@ -329,11 +404,18 @@ export const PreviewFrame = ({
           height: '100%',
           border: 'none',
           ...iframeStyle,
+          // Eased, so a page that arrives at once barely dims.
+          transition: 'opacity 150ms',
+          ...(busy ? { opacity: 0.5 } : {}),
         }}
         onLoad={() => {
           post()
           postHighlight()
           setLoaded(true)
+          if (focusOnLoad) {
+            iframeRef.current?.focus()
+            setFocusOnLoad(false)
+          }
         }}
       />
     </div>

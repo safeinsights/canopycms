@@ -35,7 +35,7 @@ test.describe('Draft Lifecycle', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
     })
 
     await test.step('verify initial state — save button disabled', async () => {
@@ -70,7 +70,7 @@ test.describe('Draft Lifecycle', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await editorPage.fillTextField('title', homeDraftTitle)
       await expect(editorPage.saveButton).toBeEnabled({ timeout: SHORT_TIMEOUT })
@@ -100,7 +100,7 @@ test.describe('Draft Lifecycle', () => {
 
       // Home reverts too.
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await editorPage.verifyFieldValue('title', 'Home Page')
       await expect(editorPage.saveButton).toBeDisabled({ timeout: STANDARD_TIMEOUT })
@@ -131,7 +131,7 @@ test.describe('Draft Lifecycle', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await editorPage.fillTextField('title', draftTitle)
       await expect(editorPage.saveButton).toBeEnabled({ timeout: SHORT_TIMEOUT })
@@ -146,16 +146,16 @@ test.describe('Draft Lifecycle', () => {
 
     await test.step('the entry navigator still lists entries normally', async () => {
       await editorPage.openContentNavigator()
-      await expect(editorPage.navigatorItem('Home Page')).toBeVisible({
+      await expect(editorPage.navigatorItem('Home')).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
-      await expect(editorPage.navigatorItem('Test Site')).toBeVisible({
+      await expect(editorPage.navigatorItem('Settings')).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
     })
 
     await test.step('switching to a different entry shows its real saved value (server load was not short-circuited by the restored draft)', async () => {
-      await editorPage.selectEntry('Test Site')
+      await editorPage.selectEntry('Settings')
       await editorPage.closeContentNavigator()
       await editorPage.verifyFieldValue('siteName', 'Test Site')
       // This entry has no draft of its own, so it should read as clean —

@@ -281,6 +281,9 @@ export { setServerPreviewAssetBaseGetter } from './editor/preview-asset-base'
 /** The asset store `createAssetStore` returns and `materializeAssets` takes. */
 export type { AssetStore } from './assets/types'
 
+/** What `AssetStore.presignPublicObjectRead` returns: the URL and how long it may be reused. */
+export type { PresignedRead } from './assets/types'
+
 /** What a create-only store write did: `created`, or `already-exists` (the stored object was kept). */
 export type { CreateOnlyResult } from './assets/types'
 

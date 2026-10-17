@@ -41,6 +41,8 @@ function makeAsset(n: number): AssetRecord {
     kind: isPdf ? 'pdf' : 'raster',
     uploadedAt: new Date(Date.now() - n * 5 * 3600 * 1000).toISOString(),
     src: swatch(PALETTE[n % PALETTE.length]!, String(n)),
+    // A few removed files, listed only once "Show removed files" is on.
+    ...(n % 7 === 0 && { hidden: true }),
   }
 }
 
@@ -59,6 +61,8 @@ function createFakeClient({ assets, holdPage, failPage }: FakeClientOptions): Ap
   const client = {
     assets: {
       list: async (params: Record<string, string>) => {
+        const listed =
+          params.includeHidden === 'true' ? assets : assets.filter((asset) => !asset.hidden)
         const pageNumber = params.cursor ? Number(params.cursor.replace('page-', '')) : 1
         if (pageNumber === holdPage) return new Promise<never>(() => {})
         if (pageNumber === failPage) {
@@ -70,12 +74,13 @@ function createFakeClient({ assets, holdPage, failPage }: FakeClientOptions): Ap
           ok: true,
           status: 200,
           data: {
-            assets: assets.slice(start, end),
-            nextCursor: end < assets.length ? `page-${pageNumber + 1}` : undefined,
+            assets: listed.slice(start, end),
+            nextCursor: end < listed.length ? `page-${pageNumber + 1}` : undefined,
           },
         }
       },
-      delete: async () => ({ ok: true, status: 200, data: { deleted: true } }),
+      hide: async () => ({ ok: true, status: 200, data: { hidden: true } }),
+      restore: async () => ({ ok: true, status: 200, data: { hidden: false } }),
     },
     user: {
       whoami: async () => ({

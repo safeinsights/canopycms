@@ -31,4 +31,26 @@ describe('InsertEntryLink', () => {
       '[Costs \\{5\\} \\<b\\> \\[x\\] \\(y\\) \\\\ z](entry:abc123)',
     )
   })
+
+  it('links a type-named entry by its title, found by its title too', async () => {
+    const onInsert = vi.fn()
+    render(
+      <CanopyCMSProvider>
+        <EntryLinkContext.Provider
+          value={{
+            entries: [{ contentId: 'abc123' as ContentId, label: 'Home', title: 'Welcome home' }],
+          }}
+        >
+          <InsertEntryLink onInsert={onInsert} />
+        </EntryLinkContext.Provider>
+      </CanopyCMSProvider>,
+    )
+    const user = userEvent.setup()
+
+    await user.click(screen.getByTestId('insert-entry-link-button'))
+    await user.type(await screen.findByTestId('entry-link-search'), 'welcome')
+    await user.click(await screen.findByText('Home'))
+
+    expect(onInsert).toHaveBeenCalledWith('[Welcome home](entry:abc123)')
+  })
 })

@@ -25,7 +25,7 @@ test.describe('Editor shell', () => {
     expect(shell).toEqual({ x: 0, y: 0, width: viewport?.width, height: viewport?.height })
 
     const separator = await editorPage.paneSplitter.boundingBox()
-    expect(separator?.width).toBeGreaterThanOrEqual(8)
+    expect(separator?.width).toBeCloseTo(4, 0)
 
     await page.mouse.wheel(0, 800)
     expect(await page.evaluate(() => window.scrollY)).toBe(0)
@@ -50,7 +50,7 @@ test.describe('Editor shell', () => {
 
   test('the layout, preview width and highlights survive a reload', async ({ page }) => {
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
     await expect(editorPage.layoutButton()).toHaveAttribute('data-layout', 'side')
     await editorPage.layoutButton().click()
     await editorPage.previewWidthSelect().click()

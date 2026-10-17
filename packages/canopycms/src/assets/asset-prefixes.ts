@@ -1,5 +1,5 @@
 /**
- * The five S3/local bucket-prefix strings (see keys.ts's module doc for the full layout).
+ * The six S3/local bucket-prefix strings (see keys.ts's module doc for the full layout).
  *
  * Split into its own dependency-free file so isomorphic modules (transform-directives.ts,
  * asset-url.ts) can import the prefixes without pulling keys.ts's `node:crypto` import into a
@@ -10,6 +10,8 @@ export const ASSET_PREFIXES = {
   originals: 'asset-originals',
   staging: 'asset-staging',
   meta: 'asset-meta',
+  /** One marker per file removed from the media library; its meta stays (see `hideAsset`). */
+  hidden: 'asset-hidden',
   public: 'assets',
   /** Transform-output prefix; directive-aware key building lives in transform-directives.ts. */
   transform: 'assets/t',
@@ -23,6 +25,7 @@ export interface AssetPrefixes {
   originals: string
   staging: string
   meta: string
+  hidden: string
   public: string
   transform: string
 }
