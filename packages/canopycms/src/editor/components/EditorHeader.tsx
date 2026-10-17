@@ -12,7 +12,7 @@ import { branchBarStatusPresentation } from '../branch-status'
 import { EDITOR_ACTIONS } from '../copy'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
-import { branchLockBannerShown, branchLockState } from './BranchLockBanner'
+import { describeBranchLock } from './BranchLockBanner'
 import { BranchPill } from './BranchPill'
 import { EntryBreadcrumb } from './EntryBreadcrumb'
 import { SaveSplitButton } from './SaveSplitButton'
@@ -143,24 +143,8 @@ export function EditorHeader({
   branchWriteBlocked = false,
   branchLoading = false,
 }: EditorHeaderProps) {
-  const lock = { branchStatus, branchReadOnly, branchWriteBlocked }
-  const { statusLocked, branchDataUnavailable } = branchLockState(lock)
-
-  // Why the branch takes no writes, with the way forward; shared by Save and Save all. It is set
-  // exactly when BranchLockBanner renders, which says the same.
-  const branchLockReason = !branchLockBannerShown(lock)
-    ? undefined
-    : branchReadOnly
-      ? 'The base branch is read-only. Create a branch to make changes.'
-      : branchDataUnavailable
-        ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
-        : statusLocked
-          ? branchStatus === 'submitted'
-            ? 'This branch is in review. Withdraw it to make changes.'
-            : branchStatus === 'approved'
-              ? 'This branch is approved. Withdraw it to make changes.'
-              : `This branch is ${branchStatus}. Its content is read-only.`
-          : undefined
+  // Shared by Save and Save all; set exactly when BranchLockBanner renders.
+  const branchLockReason = describeBranchLock({ branchStatus, branchReadOnly, branchWriteBlocked })
   const entryLockReason = entryReadOnly
     ? "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it."
     : undefined

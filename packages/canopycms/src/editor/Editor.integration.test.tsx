@@ -1,6 +1,6 @@
 import React from 'react'
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { SWRConfig } from 'swr'
@@ -1540,11 +1540,16 @@ describe('Editor integration', () => {
       type: 'entry',
     }
 
+    // The branch list answers only once released, so the rows can be seen while it is pending.
+    let releaseBranches!: () => void
+    const branchesAnswered = new Promise<void>((resolve) => {
+      releaseBranches = resolve
+    })
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url.endsWith('/api/canopycms/branches')) {
-        return Promise.resolve(
+        return branchesAnswered.then(() =>
           okJson({
             ok: true,
             status: 200,
@@ -1653,6 +1658,15 @@ describe('Editor integration', () => {
       />,
     )
 
+    // While the branch list is pending the rows hold their slot: no lock with a false reason.
+    openContentPanel()
+    await waitFor(() => {
+      expect(screen.getByTestId('entry-nav-item-posts')).toBeDefined()
+    })
+    expect(screen.queryAllByTestId('branch-lock')).toHaveLength(0)
+    expect(screen.getAllByTestId('branch-lock-pending').length).toBeGreaterThan(0)
+    releaseBranches()
+
     // Read-only banner appears with the create-branch CTA.
     await waitFor(() => {
       expect(screen.getByTestId('protected-branch-banner')).toBeDefined()
@@ -1690,6 +1704,89 @@ describe('Editor integration', () => {
     })
     expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
     expect(screen.queryByRole('button', { name: /content actions/i })).toBeNull()
+    // A lock stands in the menu's slot, giving the banner's reason.
+    const lock = within(screen.getByTestId('entry-nav-item-posts')).getByTestId('branch-lock')
+    expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toBe(
+      'The base branch is read-only. Create a branch to make changes.',
+    )
+  })
+
+  it('shows each row a lock saying the branch details could not be loaded when the fetch fails', async () => {
+    // The deliberate 500 makes useBranchManager report via console.error, which vitest's console
+    // interceptor fails the run on; swallow it here.
+    mockConsole()
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        return Promise.resolve(okJson({ ok: false, status: 500 }, 500))
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'collection',
+                  logicalPath: 'content/posts',
+                  name: 'posts',
+                  label: 'Posts',
+                  entries: [{ name: 'post', format: 'json', schema: [] }],
+                },
+              ],
+              entrySchemas: {},
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  logicalPath: 'content/posts',
+                  contentId: 'abc123XYZ789',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: [],
+                  order: [],
+                },
+              ],
+              entries: [],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Editor
+        entries={[]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="prod"
+        themeOptions={{}}
+      />,
+    )
+
+    openContentPanel()
+    const lock = await waitFor(() =>
+      within(screen.getByTestId('entry-nav-item-posts')).getByTestId('branch-lock'),
+    )
+    expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toMatch(
+      /could not be loaded/,
+    )
+    expect(screen.queryAllByTestId('branch-lock-pending')).toHaveLength(0)
   })
 
   it('grants an admin who is neither creator nor in ACL an enabled Withdraw button on a protected base branch stuck in "submitted"', async () => {

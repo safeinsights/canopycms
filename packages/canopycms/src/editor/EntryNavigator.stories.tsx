@@ -87,6 +87,37 @@ export const AddRefused: Story = {
   ),
 }
 
+/** A branch that takes no writes: each row that would have a "…" menu shows a lock in its place. */
+export const LockedBranch: Story = {
+  render: () => (
+    <div className="w-80">
+      <EntryNavigator
+        selectedPath="posts/hello-world"
+        onSelect={(id) => alert(`Select ${id}`)}
+        onDeleteEntry={() => {}}
+        onRenameEntry={() => {}}
+        readOnly
+        readOnlyReason="This branch is in review. Withdraw it to make changes."
+        collections={[
+          {
+            path: unsafeAsLogicalPath('home'),
+            label: 'Home',
+            type: 'entry',
+            entries: entries,
+          },
+          {
+            path: unsafeAsLogicalPath('posts'),
+            label: 'Posts',
+            type: 'collection',
+            entries: posts,
+            onAdd: () => {},
+          },
+        ]}
+      />
+    </div>
+  ),
+}
+
 const noop = () => {}
 
 /** The navigator at the drawer's content width: long titles and types, a singleton, a missing entry, nesting, markers and every menu. */

@@ -592,7 +592,7 @@ Components, in `editor/components/`:
 
 - `EditorHeader.tsx` — the top bar: `EntryBreadcrumb` and its entry menu, `BranchPill`, Submit/Withdraw, `SaveSplitButton` (Saving…/Saved); `SaveAllResult` is Save all's toast
 - `UnsavedMark.tsx` — the unsaved dot
-- `BranchLockBanner.tsx` — read-only banners, `branchLockState`, `branchLockBannerShown`
+- `BranchLockBanner.tsx` — read-only banners, `describeBranchLock`
 - `EditorRail.tsx` — the rail's buttons and Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `QuickOpenPalette.tsx` — Mod+P quick-open palette
