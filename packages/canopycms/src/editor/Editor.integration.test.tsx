@@ -1,6 +1,6 @@
 import React from 'react'
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { SWRConfig } from 'swr'
@@ -1690,6 +1690,12 @@ describe('Editor integration', () => {
     })
     expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
     expect(screen.queryByRole('button', { name: /content actions/i })).toBeNull()
+    // A lock stands in the menu's slot, giving the banner's reason.
+    expect(
+      within(screen.getByTestId('entry-nav-item-posts'))
+        .getByTestId('branch-lock')
+        .getAttribute('aria-label'),
+    ).toBe('The base branch is read-only. Create a branch to make changes.')
   })
 
   it('grants an admin who is neither creator nor in ACL an enabled Withdraw button on a protected base branch stuck in "submitted"', async () => {

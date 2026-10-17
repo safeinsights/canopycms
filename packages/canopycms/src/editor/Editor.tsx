@@ -84,7 +84,7 @@ import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
-import { BranchLockBanner, EditorHeader, EditorRail } from './components'
+import { BranchLockBanner, describeBranchLock, EditorHeader, EditorRail } from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { QuickOpenPalette, type QuickOpenEntry } from './components/QuickOpenPalette'
@@ -1900,6 +1900,11 @@ const EditorContent: React.FC<EditorProps> = ({
           hiddenRootPath={hiddenRootPath}
           loading={entriesInitializing}
           readOnly={branchContentLocked}
+          readOnlyReason={describeBranchLock({
+            branchStatus: currentBranch?.status,
+            branchReadOnly: currentBranch?.readOnly,
+            branchWriteBlocked: branchContentLocked,
+          })}
           dirtyPaths={dirtyPaths}
           revealCollection={collectionReveal}
           onRevealed={() => setCollectionReveal(undefined)}

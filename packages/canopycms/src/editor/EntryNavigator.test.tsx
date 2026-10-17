@@ -43,6 +43,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+const BRANCH_REASON = 'This branch is in review. Withdraw it to make changes.'
+
 const renderEntryNavigator = (props: Partial<React.ComponentProps<typeof EntryNavigator>> = {}) => {
   const defaultProps: React.ComponentProps<typeof EntryNavigator> = {
     onSelect: vi.fn(),
@@ -500,6 +502,99 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByText('Add entry…'))
 
       expect(onAdd).toHaveBeenCalled()
+    })
+  })
+
+  describe('branch lock', () => {
+    const post = { path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }
+    const collection = (extra: Partial<EntryNavCollection> = {}): EntryNavCollection => ({
+      path: unsafeAsLogicalPath('posts'),
+      label: 'Posts',
+      type: 'collection',
+      onAdd: vi.fn(),
+      ...extra,
+    })
+
+    it('shows a lock with the branch reason, and no menu, on a locked branch', () => {
+      renderEntryNavigator({
+        items: [post],
+        collections: undefined,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      const row = screen.getByTestId('entry-nav-item-hello-world')
+      const lock = within(row).getByTestId('branch-lock')
+      expect(lock.getAttribute('aria-label')).toBe(BRANCH_REASON)
+      expect(lock.getAttribute('aria-disabled')).toBe('true')
+      expect(screen.queryByTestId('entry-menu-hello-world')).toBeNull()
+    })
+
+    it('shows the lock on a collection row that would have had a menu', () => {
+      renderEntryNavigator({
+        collections: [collection()],
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      const row = screen.getByTestId('entry-nav-item-posts')
+      expect(within(row).getByTestId('branch-lock')).toBeTruthy()
+      expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
+    })
+
+    it('shows no lock on a row that would have had no menu anyway', () => {
+      renderEntryNavigator({
+        items: [post],
+        collections: undefined,
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('shows the menu and no lock on an editing branch', () => {
+      renderEntryNavigator({
+        items: [post],
+        onDeleteEntry: vi.fn(),
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.getByTestId('entry-menu-hello-world')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('opens the reason on keyboard focus', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        items: [post],
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      await user.tab()
+      const lock = screen.getByTestId('branch-lock')
+      lock.focus()
+
+      expect((await screen.findAllByText(BRANCH_REASON)).length).toBeGreaterThan(0)
+      expect(screen.getByRole('tooltip').textContent).toBe(BRANCH_REASON)
+    })
+
+    it('does not select the row when the lock is clicked', async () => {
+      const user = userEvent.setup()
+      const onSelect = vi.fn()
+      renderEntryNavigator({
+        items: [post],
+        onSelect,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      await user.click(screen.getByTestId('branch-lock'))
+      expect(onSelect).not.toHaveBeenCalled()
     })
   })
 
@@ -1401,14 +1496,17 @@ describe('EntryNavigator', () => {
       ).toBeNull()
     })
 
-    it('shows no per-entry lock when the whole navigator is read-only', () => {
+    it('shows one lock, the branch one, when the whole navigator is read-only', () => {
       renderEntryNavigator({
         readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+        onDeleteEntry: vi.fn(),
         items: [{ path: lp('posts/locked'), label: 'Locked', readOnly: true }],
       })
 
-      expect(screen.getByTestId('entry-nav-item-locked')).toBeTruthy()
+      const row = screen.getByTestId('entry-nav-item-locked')
       expect(screen.queryByTestId('entry-lock')).toBeNull()
+      expect(within(row).getAllByTestId('branch-lock')).toHaveLength(1)
     })
   })
 

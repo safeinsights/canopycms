@@ -42,6 +42,7 @@ import { matchesEntryQuery } from './entry-search'
 import { EDITOR_ACTIONS } from './copy'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { UnsavedMark } from './components/UnsavedMark'
+import { BranchRowLock } from './components/BranchRowLock'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { UnavailableTypeMessage } from './components/UnavailableTypeMessage'
 
@@ -131,12 +132,13 @@ export interface EntryNavigatorProps {
   /** When true and the tree is empty, show a loading indicator instead of "No content" */
   loading?: boolean
   /**
-   * When true, hides all entry/collection mutation affordances (create,
-   * rename, delete, reorder, add/edit collection) -- selection/navigation
-   * stays enabled. Set on a read-only protected base branch, where writes
-   * would only 403 after the fact. Default false.
+   * When true, replaces every row's mutation menu (create, rename, delete, reorder, add/edit
+   * collection) with a lock -- selection/navigation stays enabled. Set on a branch that takes no
+   * writes, where they would only 403 after the fact. Default false.
    */
   readOnly?: boolean
+  /** Why the branch takes no writes (`describeBranchLock`); the tooltip of each row's lock. */
+  readOnlyReason?: string
   /** Entry paths with unsaved changes; each shows a dot, and so does every collection holding one. */
   dirtyPaths?: ReadonlySet<string>
   /**
@@ -309,6 +311,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   hiddenRootPath,
   loading,
   readOnly = false,
+  readOnlyReason,
   dirtyPaths,
   revealCollection,
   onRevealed,
@@ -722,15 +725,16 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const status = node.nodeProps?.status as string | undefined
     const entryMissing = !!(node.nodeProps?.missing as boolean | undefined)
     const entryNoPage = !!(node.nodeProps?.noPage as boolean | undefined)
-    // Collection-level mutation callbacks are nulled when readOnly, same as
-    // the entry-level ones above -- this removes the collection menu button
-    // entirely (hasCollectionMenu below) rather than leaving it enabled.
-    const onAdd = readOnly ? undefined : (node.nodeProps?.onAdd as (() => void) | undefined)
-    const onEdit = readOnly ? undefined : (node.nodeProps?.onEdit as (() => void) | undefined)
-    const onAddSubCollection = readOnly
-      ? undefined
-      : (node.nodeProps?.onAddSubCollection as (() => void) | undefined)
-    const onDelete = readOnly ? undefined : (node.nodeProps?.onDelete as (() => void) | undefined)
+    // Collection-level mutation callbacks are nulled when readOnly, same as the entry-level ones
+    // above, so hasCollectionMenu is false and the row shows its lock instead.
+    const rawOnAdd = node.nodeProps?.onAdd as (() => void) | undefined
+    const rawOnEdit = node.nodeProps?.onEdit as (() => void) | undefined
+    const rawOnAddSubCollection = node.nodeProps?.onAddSubCollection as (() => void) | undefined
+    const rawOnDelete = node.nodeProps?.onDelete as (() => void) | undefined
+    const onAdd = readOnly ? undefined : rawOnAdd
+    const onEdit = readOnly ? undefined : rawOnEdit
+    const onAddSubCollection = readOnly ? undefined : rawOnAddSubCollection
+    const onDelete = readOnly ? undefined : rawOnDelete
     const entryPath = node.nodeProps?.entryPath as LogicalPath | undefined
     const contentId = node.nodeProps?.contentId as string | undefined
     const parentCollectionPath = node.nodeProps?.parentCollectionPath as LogicalPath | undefined
@@ -742,7 +746,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const unavailableSchemaRefs = node.nodeProps?.unavailableSchemaRefs as
       | readonly string[]
       | undefined
-    // A read-only navigator already says so once, in the branch banner.
+    // A read-only navigator says so in each row's lock, so the add-refused line is not repeated.
     const addRefused = !readOnly && !!(node.nodeProps?.addRefused as boolean | undefined)
     const isLeaf = !hasChildren || isEntry
     const selected = node.value === selectedPath
@@ -754,8 +758,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     // collections to always be expandable
     const showChevron = hasChildren || Boolean(isCollection)
 
-    const canReorder =
-      onReorderEntry && contentId && parentCollectionPath && typeof childIndex === 'number'
+    const reorderPosition = contentId && parentCollectionPath && typeof childIndex === 'number'
+    const canReorder = onReorderEntry && reorderPosition
     const canMoveUp = canReorder && childIndex > 0
     const canMoveDown =
       canReorder && typeof totalChildrenCount === 'number' && childIndex < totalChildrenCount - 1
@@ -765,8 +769,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       isCollection && (onAdd || onEdit || onAddSubCollection || onDelete || canReorder)
     // An unavailable entry cannot be written, so its menu (rename, delete, reorder) is not offered.
     const entryUnavailable = node.nodeProps?.unavailable as boolean | undefined
-    // The same holds for an entry this user may not edit. A read-only navigator already says so
-    // once, in the branch banner, so only a lone read-only entry gets its own lock.
+    // The same holds for an entry this user may not edit. On a read-only navigator the branch lock
+    // in the menu slot takes precedence: it is the reason the user can act on first.
     const entryLocked = !readOnly && !!(node.nodeProps?.itemReadOnly as boolean | undefined)
     const hasEntryMenu =
       isEntry &&
@@ -774,6 +778,25 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       !entryUnavailable &&
       !entryLocked &&
       (onDeleteEntry || onRenameEntry || onReorderEntry)
+
+    // The lock stands where the menu would, on exactly the rows that would otherwise have one. It
+    // is always shown: on hover alone, touch and keyboard users would see neither menu nor reason.
+    const wouldHaveCollectionMenu =
+      isCollection &&
+      !!(
+        rawOnAdd ||
+        rawOnEdit ||
+        rawOnAddSubCollection ||
+        rawOnDelete ||
+        (onReorderEntryProp && reorderPosition)
+      )
+    const wouldHaveEntryMenu =
+      isEntry &&
+      !!entryPath &&
+      !entryUnavailable &&
+      !!(onDeleteEntryProp || onRenameEntryProp || onReorderEntryProp)
+    const branchLockReason =
+      readOnly && (wouldHaveCollectionMenu || wouldHaveEntryMenu) ? readOnlyReason : undefined
 
     const showEntryDirtyDot = isEntry && !!entryPath && !!dirtyPaths?.has(entryPath)
     const showCollectionDirtyDot = !isEntry && dirtyCollections.has(node.value)
@@ -968,6 +991,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                 </Menu.Dropdown>
               </Menu>
             )}
+            {branchLockReason && <BranchRowLock reason={branchLockReason} />}
             {hasEntryMenu && (
               <Menu shadow="md" width={180} withinPortal position="bottom-end">
                 <Menu.Target>
