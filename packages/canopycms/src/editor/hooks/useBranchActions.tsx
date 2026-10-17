@@ -6,6 +6,7 @@ import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
 import { requestBranchCreate } from './create-branch-request'
 import type { UnsavedSummary } from './useDraftManager'
+import { writeEditorUrl } from './editor-history'
 
 export interface UseBranchActionsOptions {
   branchName: string
@@ -56,10 +57,11 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
   const performBranchSwitch = (next: string) => {
     options.setBranchName(next)
 
+    // Its own history entry; a Back onto another branch already shows this URL, so writes nothing.
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href)
       url.searchParams.set('branch', next)
-      window.history.replaceState({}, '', url.toString())
+      writeEditorUrl(url.toString(), true)
     }
     options.onBranchSwitch?.(next)
   }

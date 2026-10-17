@@ -25,6 +25,7 @@ import type { ApiResponse } from '../../api/types'
 import type { UnsavedSummary } from './useDraftManager'
 import type { StampedEntry } from '../../stamp-on-publish'
 import { describeUnsaved } from './useBranchActions'
+import { writeEditorUrl } from './editor-history'
 
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
 const BRANCH_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-branch-outcome-unknown'
@@ -827,14 +828,16 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     await loadBranches()
   }
 
+  // The editor's own page; a Back off it to a page of the host leaves that page's URL alone.
+  const editorPathRef = useRef(typeof window === 'undefined' ? '' : window.location.pathname)
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (!branchName) return
+    if (!branchName || window.location.pathname !== editorPathRef.current) return
     const url = new URL(window.location.href)
     const current = url.searchParams.get('branch')
     if (current !== branchName) {
       url.searchParams.set('branch', branchName)
-      window.history.replaceState({}, '', url.toString())
+      writeEditorUrl(url.toString(), false)
     }
   }, [branchName])
 
