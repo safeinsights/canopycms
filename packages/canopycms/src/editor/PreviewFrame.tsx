@@ -141,10 +141,10 @@ export const PreviewFrame = ({
   /** Called with what the page's handshake says of the site's header and footer. */
   onSiteChrome?: (support: SiteChromeSupport) => void
   /**
-   * Called with the absolute URL of a link clicked in the preview, which the bridge kept the frame from following.
-   * Returning true says the frame moves to that page, so focus follows into it once it loads.
+   * Called with the absolute URL of a link clicked in the preview, which the bridge kept the frame
+   * from following. Focus follows into the next page unless the user puts it elsewhere first.
    */
-  onNavigate?: (href: string) => boolean
+  onNavigate?: (href: string) => void
   /** The editor is loading the next page's data: this page stays in view, dimmed and inert. */
   busy?: boolean
 }) => {
@@ -311,7 +311,8 @@ export const PreviewFrame = ({
           onMarksRef.current?.({ count, ...(isMarkPaths(paths) ? { paths } : {}) })
         }
       } else if (isPreviewNavigateMessage(event.data, previewOrigin)) {
-        if (onNavigateRef.current?.(event.data.href)) setFollowingLink(true)
+        onNavigateRef.current?.(event.data.href)
+        setFollowingLink(true)
       }
     }
     window.addEventListener('message', handleMessage)

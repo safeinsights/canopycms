@@ -290,8 +290,6 @@ describe('a link clicked in the preview', () => {
 
   it('leaves focus alone when the next page comes from anywhere but a followed link', async () => {
     await openHello()
-    // A link to the open entry's own page moves nothing, so it owes the next page no focus.
-    navigate(`${origin}/posts/hello`)
     fireEvent.click(screen.getByTestId('content-panel-toggle'))
     fireEvent.click(await screen.findByTestId('entry-nav-item-world'))
 

@@ -493,8 +493,8 @@ const EditorContent: React.FC<EditorProps> = ({
     setNavigatorOpen(false)
   }
   // A preview link opens its entry, or a page no entry has in a new tab. The opener is cut by hand,
-  // since `noopener` would hide whether the browser blocked the tab. True when the frame moves on.
-  const openPreviewLink = (href: string): boolean => {
+  // since `noopener` would hide whether the browser blocked the tab.
+  const openPreviewLink = (href: string) => {
     const mount = { basePath, previewPrefix }
     const base = window.location.href
     const page = previewPageKey(href, mount, base)
@@ -506,14 +506,13 @@ const EditorContent: React.FC<EditorProps> = ({
           )
     if (entry) {
       openEntry(entry.path)
-      return entry.path !== selectedPath
+      return
     }
     const opened = window.open(href, '_blank')
     if (opened) opened.opener = null
     const url = new URL(href)
     const shown = url.origin === window.location.origin ? `${url.pathname}${url.search}` : href
     showPreviewLinkOutcome(href, displayPreviewPath(shown, mount), Boolean(opened))
-    return false
   }
 
   // An open overlay docks open, as the URL's ask for no entry does at load; `navigatorOpen` is only

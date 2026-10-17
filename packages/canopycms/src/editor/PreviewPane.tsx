@@ -102,7 +102,7 @@ export interface PreviewPaneProps {
    */
   onSiteChromeChange?: (siteChrome: boolean) => void
   /** Called with the absolute URL of a link clicked in the preview; see `PreviewFrame`. */
-  onNavigate?: (href: string) => boolean
+  onNavigate?: (href: string) => void
 }
 
 /** What the viewport frames: the open entry's page, or the one before it while that loads. */
