@@ -407,7 +407,9 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
  * Mantine's half opacity, under 4.5:1. The crop box and its handles sit on an arbitrary image, where
  * no single colour holds 3:1, so they take a white and black pair. A navigator row's lock is
  * drawn only while its row is hovered, focused (the tree focuses the `li` around the row), has focus
- * within, or is selected, and by opacity alone: it keeps its place and stays in the tab order and the accessibility tree.
+ * within, or is selected. It hides by opacity alone, so it keeps its place and stays in the tab order
+ * and the accessibility tree; while hidden it takes no pointer events, so a tap on its slot reaches
+ * the row.
  */
 const CANOPY_STYLES = `
 .mantine-Checkbox-input:not(:checked, :disabled, [data-indeterminate], [data-error]),
@@ -442,6 +444,7 @@ const CANOPY_STYLES = `
 }
 [data-nav-row] [data-row-lock] {
   opacity: 0;
+  pointer-events: none;
   transition: opacity 120ms ease;
 }
 [data-nav-row]:hover [data-row-lock],
@@ -449,6 +452,7 @@ const CANOPY_STYLES = `
 [role='treeitem']:focus > [data-nav-row] [data-row-lock],
 [data-nav-row][data-nav-selected] [data-row-lock] {
   opacity: 1;
+  pointer-events: auto;
 }
 @media (prefers-reduced-motion: reduce) {
   [data-nav-row] [data-row-lock] {

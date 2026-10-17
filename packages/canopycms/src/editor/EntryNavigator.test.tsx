@@ -562,7 +562,7 @@ describe('EntryNavigator', () => {
      * The `opacity` the provider's stylesheet gives `element`, read from the rules whose selector
      * matches it. jsdom cannot evaluate `:hover` or `:focus-within`, so a rule using one is matched
      * with the pseudo-class stripped, and only when the state holds: `hovered`, or focus inside the
-     * row that the rule's selector names.
+     * row that the rule's selector names. Every other selector, `:focus >` included, is matched whole.
      */
     const lockOpacities = (element: Element, { hovered = false } = {}): string[] => {
       const sheet = document.querySelector<HTMLStyleElement>('style[data-canopy-styles]')?.sheet
@@ -576,15 +576,7 @@ describe('EntryNavigator', () => {
           if (trimmed.includes(':hover')) {
             return hovered && element.matches(trimmed.replace(':hover', ''))
           }
-          if (trimmed.includes(':focus >')) {
-            const focused = document.activeElement
-            return (
-              focused?.getAttribute('role') === 'treeitem' &&
-              element.matches(trimmed.replace(/^\[role='treeitem'\]:focus > /, '')) &&
-              focused.contains(element) &&
-              focused === element.closest('[role=treeitem]')
-            )
-          }
+          if (trimmed.includes(':focus >')) return element.matches(trimmed)
           if (trimmed.includes(':focus-within')) {
             return (
               !!row?.contains(document.activeElement) &&
@@ -661,6 +653,57 @@ describe('EntryNavigator', () => {
       expect(document.activeElement).toBe(treeItem)
       expect(lockOpacities(locks[0])).toEqual(['0'])
       expect(lockOpacities(locks[1])).toEqual(['0', '1'])
+    })
+
+    it("does not draw a nested row's lock when its parent tree item has focus", () => {
+      renderEntryNavigator({
+        collections: [
+          collection({
+            entries: [
+              { path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' },
+              { path: unsafeAsLogicalPath('posts/second'), label: 'Second' },
+            ],
+          }),
+        ],
+        selectedPath: unsafeAsLogicalPath('posts/second'),
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const parentLock = within(screen.getByTestId('entry-nav-item-posts')).getByTestId(
+        'branch-lock',
+      )
+      const childLock = within(screen.getByTestId('entry-nav-item-hello-world')).getByTestId(
+        'branch-lock',
+      )
+      parentLock.closest<HTMLElement>('[role=treeitem]')!.focus()
+
+      expect(lockOpacities(parentLock)).toEqual(['0', '1'])
+      expect(lockOpacities(childLock)).toEqual(['0'])
+    })
+
+    it('leaves a hidden lock untouchable, so a tap on its slot reaches the row', () => {
+      renderEntryNavigator({
+        items: twoPosts,
+        collections: undefined,
+        selectedPath: post.path,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const sheet = document.querySelector<HTMLStyleElement>('style[data-canopy-styles]')!.sheet!
+      const pointerEvents = (lock: HTMLElement) =>
+        Array.from(sheet.cssRules).flatMap((rule) =>
+          rule instanceof CSSStyleRule &&
+          rule.style.getPropertyValue('pointer-events') !== '' &&
+          rule.selectorText.split(',').some((selector) => lock.matches(selector.trim()))
+            ? [rule.style.getPropertyValue('pointer-events')]
+            : [],
+        )
+      const [selectedLock, otherLock] = screen.getAllByTestId('branch-lock')
+
+      expect(pointerEvents(otherLock)).toEqual(['none'])
+      expect(pointerEvents(selectedLock)).toEqual(['none', 'auto'])
     })
 
     it('hides the lock by opacity, never by display or visibility', () => {
@@ -778,6 +821,7 @@ describe('EntryNavigator', () => {
       const onSelect = vi.fn()
       renderEntryNavigator({
         items: [post],
+        selectedPath: post.path,
         onSelect,
         onDeleteEntry: vi.fn(),
         readOnly: true,
