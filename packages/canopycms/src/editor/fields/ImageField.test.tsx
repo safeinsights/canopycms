@@ -247,7 +247,7 @@ describe('ImageField', () => {
   })
 
   describe('Crop button', () => {
-    const SVG_REASON = "SVG images can't be cropped."
+    const SVG_REASON = "SVG images can't be cropped. Replace it with a PNG or JPEG to crop it."
     const STORE_REASON =
       'Crop works on media-library images. Replace this file with a library copy to crop it.'
     const libraryValue = { src: catAsset.src, alt: 'A cat', width: 400, height: 300 }
@@ -255,6 +255,8 @@ describe('ImageField', () => {
     const expectReasonOnFocus = async (reason: string) => {
       const crop = screen.getByTestId('image-field-crop-hero')
       expect(crop.getAttribute('aria-disabled')).toBe('true')
+      const describedBy = crop.getAttribute('aria-describedby')
+      expect(document.getElementById(describedBy ?? '')?.textContent).toBe(reason)
       act(() => crop.focus())
       expect(await screen.findByText(reason)).toBeTruthy()
       fireEvent.click(crop)

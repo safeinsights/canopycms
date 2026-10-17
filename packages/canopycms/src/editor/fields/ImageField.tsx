@@ -2,7 +2,17 @@
 
 import React, { useEffect, useId, useRef, useState } from 'react'
 
-import { Alert, Button, Group, Paper, Stack, Text, TextInput, Tooltip } from '@mantine/core'
+import {
+  Alert,
+  Button,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  TextInput,
+  Tooltip,
+  VisuallyHidden,
+} from '@mantine/core'
 import { Dropzone, type FileRejection } from '@mantine/dropzone'
 import { IconAlertCircle, IconPhoto, IconPhotoOff, IconUpload } from '@tabler/icons-react'
 
@@ -84,6 +94,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
     ? editorImageSrc(value.src, baseUrl, { width: PREVIEW_WIDTH, crop: value.crop })
     : undefined
   const cropBlocked = value ? cropBlockedReason(value.src) : undefined
+  const cropReasonId = `${inputId}-crop-reason`
   // Broken-preview fallback, mirroring AssetCard.tsx's thumbnail fallback (same
   // icon/copy, same reset-during-render pattern). Covers both an asset broken
   // at upload time and a transform failing at render time.
@@ -186,7 +197,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
           disabled={!cropBlocked}
           position="bottom-end"
           multiline
-          w={260}
+          maw={280}
         >
           <Button
             size="compact-sm"
@@ -196,11 +207,14 @@ export const ImageField: React.FC<ImageFieldProps> = ({
             }}
             data-disabled={cropBlocked ? true : undefined}
             aria-disabled={cropBlocked ? true : undefined}
+            // The Tooltip names no description, so a screen reader reaches the reason here.
+            aria-describedby={cropBlocked ? cropReasonId : undefined}
             data-testid={`image-field-crop-${dataCanopyField}`}
           >
             Crop
           </Button>
         </Tooltip>
+        {cropBlocked && <VisuallyHidden id={cropReasonId}>{cropBlocked}</VisuallyHidden>}
         <Button
           size="compact-sm"
           variant="subtle"

@@ -404,7 +404,8 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
  * What Mantine draws from class rules, out of the theme variables' reach: unchecked control borders,
  * Switch thumbs, white text on the primary colour (moved to the fill), and dimmed text Mantine
  * draws itself (a blocked menu item, a combobox's empty message, outside days). Outside days lose
- * Mantine's half opacity, under 4.5:1.
+ * Mantine's half opacity, under 4.5:1. The crop box and its handles sit on an arbitrary image, where
+ * no single colour holds 3:1, so they take a white and black pair.
  */
 const CANOPY_STYLES = `
 .mantine-Checkbox-input:not(:checked, :disabled, [data-indeterminate], [data-error]),
@@ -422,6 +423,20 @@ const CANOPY_STYLES = `
 .mantine-Switch-input:checked:not(:disabled, [data-disabled]) + .mantine-Switch-track > .mantine-Switch-thumb {
   --switch-thumb-bg: var(--canopy-switch-thumb-on, var(--mantine-color-white));
   --switch-thumb-bd: var(--canopy-switch-thumb-on, var(--mantine-color-white));
+}
+.ReactCrop .ReactCrop__crop-selection:focus {
+  outline: 2px solid var(--mantine-color-white);
+  outline-offset: 0;
+  box-shadow: 0 0 0 4px var(--mantine-color-black);
+}
+.ReactCrop .ReactCrop__drag-handle {
+  --rc-drag-handle-bg-colour: var(--mantine-color-white);
+  border-color: var(--mantine-color-black);
+}
+.ReactCrop .ReactCrop__drag-handle:focus {
+  background: var(--canopy-focus-ring);
+  outline: 2px solid var(--mantine-color-white);
+  box-shadow: 0 0 0 4px var(--mantine-color-black);
 }
 [data-combobox-selected] {
   --mantine-primary-color-filled: var(--canopy-primary-fill);

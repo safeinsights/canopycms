@@ -110,8 +110,8 @@ describe('parseAspectRatio', () => {
 describe('initialCropBox', () => {
   const frame = { imageWidth: 400, imageHeight: 300 }
 
-  it('free-form: covers most of the frame', () => {
-    expect(initialCropBox(frame)).toEqual({ x: 5, y: 5, width: 90, height: 90 })
+  it('free-form: is the whole frame', () => {
+    expect(initialCropBox(frame)).toEqual({ x: 0, y: 0, width: 100, height: 100 })
   })
 
   it('locked, wider than the frame: spans 90% of the width, centred', () => {
@@ -147,10 +147,10 @@ describe('initialCropBox', () => {
 
   it('falls back to the default box when the image has no size yet', () => {
     expect(initialCropBox({ imageWidth: 0, imageHeight: 0, aspect: 2 })).toEqual({
-      x: 5,
-      y: 5,
-      width: 90,
-      height: 90,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
     })
   })
 })

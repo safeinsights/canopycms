@@ -58,7 +58,7 @@ export function parseAspectRatio(aspect: string | undefined): number | undefined
 }
 
 const INITIAL_BOX_FRACTION = 0.9
-const FREE_BOX: CropAreaPercent = { x: 5, y: 5, width: 90, height: 90 }
+const FREE_BOX: CropAreaPercent = { x: 0, y: 0, width: 100, height: 100 }
 /** How far a stored crop's pixel ratio may sit from the field's `aspect` before it is replaced by a fresh box. */
 const ASPECT_TOLERANCE = 0.02
 
@@ -66,7 +66,7 @@ const ASPECT_TOLERANCE = 0.02
  * The crop box the crop step opens with, once the image's displayed size is known.
  * A stored crop is kept as it was drawn, unless the field has an `aspect` it no longer
  * matches (the config changed since); then, like a first crop of a locked field, a box of that
- * ratio centred on the image. A free field's first box covers most of the image.
+ * ratio centred on the image. A free field's first box is the whole frame, so Apply with no change trims nothing.
  */
 export function initialCropBox(opts: {
   imageWidth: number

@@ -21,6 +21,19 @@ export interface CropStepProps {
 }
 
 const MIN_BOX_PX = 16
+
+const CORNER_LABEL = (corner: string) => `${corner} corner. Arrow keys resize the box.`
+const ARIA_LABELS = {
+  cropArea: 'Crop box. Arrow keys move it; hold Shift for larger steps.',
+  nwDragHandle: CORNER_LABEL('Top-left'),
+  neDragHandle: CORNER_LABEL('Top-right'),
+  seDragHandle: CORNER_LABEL('Bottom-right'),
+  swDragHandle: CORNER_LABEL('Bottom-left'),
+  nDragHandle: 'Top edge. Up and down arrow keys resize the box.',
+  sDragHandle: 'Bottom edge. Up and down arrow keys resize the box.',
+  eDragHandle: 'Right edge. Left and right arrow keys resize the box.',
+  wDragHandle: 'Left edge. Left and right arrow keys resize the box.',
+}
 const PREVIEW_MAX_HEIGHT = 360
 
 const toPercentCrop = (box: {
@@ -119,6 +132,7 @@ const CropStepBody: React.FC<CropStepBodyProps> = ({
           minWidth={MIN_BOX_PX}
           minHeight={MIN_BOX_PX}
           keepSelection
+          ariaLabels={ARIA_LABELS}
           onChange={(_pixels, percent) => setBox(percent)}
         >
           <img
@@ -131,8 +145,8 @@ const CropStepBody: React.FC<CropStepBodyProps> = ({
       </div>
       <Text size="sm" c="dimmed">
         {aspect === undefined
-          ? 'Drag the box to move it, or its edges and corners to resize it. Arrow keys nudge it.'
-          : 'Drag the box to move it, or a corner to resize it. Its shape is fixed. Arrow keys nudge it.'}
+          ? 'Drag the box to move it, or its edges and corners to resize it. With a keyboard, arrow keys move it; Shift takes larger steps.'
+          : 'Drag the box to move it, or a corner to resize it. Its shape is fixed. With a keyboard, arrow keys move it; Shift takes larger steps.'}
       </Text>
       <Group justify="flex-end">
         <Button size="sm" variant="default" onClick={onClose}>

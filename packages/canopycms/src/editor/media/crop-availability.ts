@@ -10,10 +10,12 @@ const TRANSFORM_SPACE_PREFIX = `/${ASSET_PREFIXES.transform}/`
  */
 export function cropBlockedReason(src: string): string | undefined {
   const path = src.split(/[?#]/)[0] ?? src
-  if (/\.svg$/i.test(path)) return "SVG images can't be cropped."
+  if (/\.svg$/i.test(path))
+    return "SVG images can't be cropped. Replace it with a PNG or JPEG to crop it."
   if (!isAssetStoreSrc(src)) {
     return 'Crop works on media-library images. Replace this file with a library copy to crop it.'
   }
-  if (!src.startsWith(TRANSFORM_SPACE_PREFIX)) return "This file type can't be cropped."
+  if (!src.startsWith(TRANSFORM_SPACE_PREFIX))
+    return "This file type can't be cropped. Replace it with a PNG or JPEG to crop it."
   return undefined
 }

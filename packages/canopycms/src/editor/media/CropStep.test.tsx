@@ -48,12 +48,12 @@ describe('CropStep', () => {
     expect(apply().disabled).toBe(false)
   })
 
-  it('free-form: opens with a box covering most of the frame and confirms that rectangle', () => {
+  it('free-form: opens on the whole frame, so Apply with no change trims nothing', () => {
     const { onConfirm } = renderStep()
     loadImage()
     fireEvent.click(apply())
 
-    expect(onConfirm).toHaveBeenCalledWith({ x: 0.05, y: 0.05, w: 0.9, h: 0.9 })
+    expect(onConfirm).toHaveBeenCalledWith({ x: 0, y: 0, w: 1, h: 1 })
   })
 
   it('locked: opens with a centred box of the field ratio', () => {
@@ -72,6 +72,17 @@ describe('CropStep', () => {
     fireEvent.click(apply())
 
     expect(onConfirm).toHaveBeenCalledWith(stored)
+  })
+
+  it('names the crop box and each handle in plain words, with the keys that apply', () => {
+    renderStep()
+    loadImage()
+
+    expect(screen.getByLabelText(/^Crop box\. Arrow keys move it; hold Shift/)).toBeTruthy()
+    expect(
+      screen.getByLabelText('Right edge. Left and right arrow keys resize the box.'),
+    ).toBeTruthy()
+    expect(screen.getByLabelText('Top-left corner. Arrow keys resize the box.')).toBeTruthy()
   })
 
   it('Cancel calls onClose without confirming', () => {
