@@ -278,10 +278,37 @@ describe('SidePanelHost', () => {
       })
       await settle()
       vi.restoreAllMocks()
-      // The press in the frame may still be held, so it waits for the pointer to come back.
+      // The press in the frame may still be held, so it waits for the pointer to come back, and
+      // back over the panel is reaching for it.
+      expect(onFocusLeave).not.toHaveBeenCalled()
+      fireEvent.pointerMove(button('Inside'), { buttons: 0 })
+      await settle()
       expect(onFocusLeave).not.toHaveBeenCalled()
 
-      fireEvent.pointerMove(document.body, { buttons: 0 })
+      fireEvent.pointerMove(button('Outside'), { buttons: 0 })
+      await settle()
+
+      expect(onFocusLeave).toHaveBeenCalledWith(frame)
+    })
+
+    it('holds a frame leave through a press that comes back with no hover, as a touch does', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      const frame = document.body.appendChild(document.createElement('iframe'))
+      onTestFinished(() => frame.remove())
+      act(() => button('Inside').focus())
+      vi.spyOn(document, 'activeElement', 'get').mockReturnValue(frame)
+      act(() => {
+        window.dispatchEvent(new FocusEvent('blur'))
+      })
+      await settle()
+      vi.restoreAllMocks()
+
+      fireEvent.pointerDown(button('Outside'), { button: 0, buttons: 1 })
+      fireEvent.pointerMove(button('Outside'), { buttons: 1 })
+      await settle()
+      expect(onFocusLeave).not.toHaveBeenCalled()
+      fireEvent.pointerUp(button('Outside'), { button: 0 })
       await settle()
 
       expect(onFocusLeave).toHaveBeenCalledWith(frame)

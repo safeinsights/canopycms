@@ -155,10 +155,12 @@ export function SidePanelHost({
       if (event.button === 0) pressing = true
     }
     // A press inside a frame never reaches this document, so a frame's leave waits for the pointer
-    // to come back; a release outside the window shows here as a move with no button held.
+    // to come back anywhere but the panel, which it may be reaching for; a release outside the
+    // window shows here as a move with no button held.
     const onPointerMove = (event: PointerEvent) => {
       if (pressing && event.buttons === 0) release()
-      if (frame) report(frame)
+      if (!frame || (event.target instanceof Node && panel.contains(event.target))) return
+      leave(frame)
       frame = null
     }
     // Captured, so it runs before React's own `onFocus`, which cancels it for a portaled descendant.
