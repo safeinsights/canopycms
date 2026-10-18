@@ -54,6 +54,165 @@ entries under **Released**.
 
 ## Released
 
+### 0.2.0
+
+#### Removing a file from the media library hides it, and an admin can restore it — **breaking (assets.delete, AssetStore) / behaviour change; template first**
+
+<!-- changeset: ef-g-media -->
+
+_First in int.119._
+
+**What changed.** "Remove from library" no longer deletes the file's metadata, so every image
+size and crop keeps working wherever the file is used, including `materialize-assets`. It writes
+a marker under the new `asset-hidden/` prefix instead. Admins can turn on "Show removed files" in
+the media library and restore a file, and uploading the same file again restores it too.
+
+**To adopt.**
+
+- `assets.delete` and `DELETE /assets` are removed (`DELETE /assets` answers 410); use
+  `assets.hide` / `POST /assets/hide` and `assets.restore` / `POST /assets/restore`.
+- A custom `AssetStore` drops `deleteMeta` and must implement `hideAsset` and `unhideAsset`; a
+  custom `AssetPrefixes` must set `hidden`.
+- `AssetSupport.grantUploadAccess()` and `CanopyCmsService`'s `assetBucket` grant `s3:PutObject`
+  and `s3:DeleteObject` on `asset-hidden/*` and no longer grant delete on `asset-meta/*`. If you
+  write the CMS role's bucket policy yourself, do the same (no `s3:GetObject` is needed), and if
+  it scopes `s3:ListBucket` by prefix, include `asset-hidden/`.
+- Deploy those grants before CI rolls this release's CMS image: the stack template, built with
+  this release's `canopycms-cdk`, and your own bucket policy if you write one. On the old grants,
+  removing a file is denied, and a policy that scopes `s3:ListBucket` by prefix without
+  `asset-hidden/` fails every media library page. Between the deploy and the image roll,
+  removing a file is denied too.
+- Files removed before this release lost their metadata. Uploading the same bytes again recreates
+  it, recorded under the re-uploader's name.
+
+#### Stacked layout docks the content panel beside the form
+
+<!-- changeset: ef-a-shell -->
+
+_First in int.119._
+
+**What changed.** In a wide window the content panel docks beside the form row in the stacked layout too, keeping the preview full width; in a narrow window it slides in over the form, unless the user prefers reduced motion. Both pane dividers share one width, and a branch banner has a line beneath it.
+
+#### The editor opens the home page and names single-entry types by their type — **behaviour change**
+
+<!-- changeset: ef-b-identity -->
+
+_First in int.119._
+
+**What changed.** With no entry in the URL, the editor opens the entry routed at `/`, else the first with a preview. An entry type limited to one entry (`maxItems: 1`) with a label is named by that label, though entry links and search still use its title. Content tree rows show the type on a second line, quick open shows type and route, "Rename…" is "Change URL…" ("Change slug…" for an entry with no page), and the "All content" crumb, the form header's title and the rail's site button are gone.
+
+#### Compact drawer headers, jumpable comment headings and a steadier owner chip
+
+<!-- changeset: ef-c-drawers -->
+
+_First in int.119._
+
+**What changed.** The Branches, Comments, Media and staged-changes drawers take the content panel's compact header with no subtitle. In the Comments drawer, each thread's heading is the one control that jumps to it. The Branches drawer no longer offers "New branch comment" or "+ New", since new branch comments start in the Comments drawer. A person's chip keeps its avatar and a long name on one line.
+
+#### An object's Clear moves into its "…" menu, with an inline Undo
+
+<!-- changeset: ef-d-clear -->
+
+_First in int.119._
+
+**What changed.** An optional object's Clear is now an item in a "…" menu on its label row, named
+for the object ("Clear "SEO""). After a clear, the label row offers "Undo clear" in the menu's
+place, with focus on it, until it can no longer put the object back where it was (the object was
+filled in again, or the item holding it moved or went), another entry or branch opens, or the entry
+is saved or its draft discarded. It has no timer, and Clear no longer raises a toast; list item and block removals keep
+theirs. Their Undo, and the inline one, now survive edits to other items in an enclosing list.
+
+**To adopt.** A UI test that clicked an object's "Clear" button now opens the object's
+"Actions for …" menu and chooses the "Clear" item, then finds "Undo clear" in the label row instead of a toast.
+
+#### The top bar shows one unsaved mark and a status only when it matters — **behaviour change**
+
+<!-- changeset: ef-f-topbar -->
+
+_First in int.119._
+
+**What changed.** The branch pill's unsaved count is the same dot as the entry's, with a number, in the brand colour the content tree also uses. "Unsaved · kept on this device" moved into Save's tooltip and description; the bar shows it only as a warning when drafts could not be stored. The pill drops the default "Editing" status and shows In review, Approved, Archived or Protected. The "Read-only" chip no longer repeats a branch-wide lock the banner already explains; it stays for an entry read-only for its own reason.
+
+#### Previews can show the site header and footer, and the preview stays put between entries
+
+<!-- changeset: ef-e-preview -->
+
+_First in int.119._
+
+**What changed.** `createPreviewPage` takes an optional `layout`, a server component that wraps every view and receives `{ children, chrome }`. Given one, the preview toolbar offers a "Show site header and footer" toggle, remembered per device, which adds `?chrome=1` to the preview's URL and sets `chrome`. Without the toggle on, `chrome` is `false`. A page that never connects with them, such as one whose layout throws, is shown without them, and the toggle says so. Switching entries keeps the preview pane and its toolbar in place: the last page stays, dimmed, until the next entry's data arrives.
+
+**To adopt.** Pass the component your public pages use for their header and footer:
+
+```tsx
+export default createPreviewPage({
+  layout: ({ children, chrome }) =>
+    chrome ? <SiteChrome>{children}</SiteChrome> : <main>{children}</main>,
+  views: { post: PostPreview },
+})
+```
+
+A preview page built on `useCanopyPreview` alone can pass `siteChrome: true` when it renders the header and footer for `?chrome=1`.
+
+#### Media-library thumbnails are stored at upload and cached by the browser — **breaking (AssetStore.presignPublicObjectRead) / behaviour change**
+
+<!-- changeset: editor-thumbnails-cached -->
+
+_First in int.121._
+
+**What changed.** Finalizing a raster upload also stores the three widths the editor shows it at (`assets/t/w=80`, `w=160`, `w=320`), so the media library's first view reads stored objects instead of transforming in the request. Uploading a file that already exists stores any of those widths it lacks. Animated images are skipped; their first view transforms them as before. This adds roughly 0.1 s to a typical photo's upload; a failure is logged and never fails the upload. On S3, the authenticated asset route's redirect to a presigned URL is now `private, max-age` until the end of the hour rather than `no-store`, and the URL stays the same for that hour, so reopening the media library fetches no thumbnails. A cached redirect can outlive a sign-out by at most that hour; it points only at a public-prefix object under an unguessable key. A streamed object stored without a `Cache-Control` is now sent as `private, max-age=31536000, immutable`, since every public-prefix key is content-addressed.
+
+**To adopt.** Only a custom `AssetStore` that implements `presignPublicObjectRead` changes: it returns `PresignedRead` (`{ url, maxAgeSeconds }`, from `canopycms/server`) or `null`, instead of a URL string. `maxAgeSeconds` is how long a browser may reuse that URL; return `0` to keep the old `no-store` behaviour.
+
+#### Image fields are bordered cards, and Crop explains itself and works without `aspect`
+
+<!-- changeset: image-field-cards -->
+
+_First in int.121._
+
+**What changed.** An image field is now a bordered card: the label row holds Replace, Crop and Remove, so each action sits with its image, and the thumbnail and alt text sit inside. Crop stays visible when it can't apply and says why on hover, focus and touch: a file outside the media library, or an SVG. A read-only form omits it. A field without `aspect` no longer hides Crop: a pick isn't cropped, and Crop afterwards is a free-form rectangle of any shape. A field with `aspect` still crops on pick, locked to that shape; a picked SVG now commits without a crop step. Applying a crop that covers the whole frame stores no crop, which is also how to take one off. The crop step uses `react-image-crop` (ISC) in place of `react-easy-crop`, so it has no zoom slider: resize the box instead. A field's label row now wraps its actions under the label on a narrow form, instead of squeezing the label. The stored `crop` and `width`/`height` are unchanged.
+
+**To adopt.** Nothing. `canopycms/client` now imports `react-image-crop`'s stylesheet through the editor theme, so a bundler that handles the Mantine stylesheets handles it too.
+
+#### A locked branch shows a lock where a row's "…" menu would be
+
+<!-- changeset: locked-row-lock -->
+
+_First in int.121._
+
+**What changed.** On a protected, in-review or approved branch the content tree no longer drops a row's "…" menu without a trace. Each row that would have had a menu shows a lock of the same size, and its tooltip gives the branch's reason ("This branch is in review. Withdraw it to make changes."), on hover, keyboard focus and touch. An entry a path rule locks keeps its own lock beside its title and gets none in the menu slot.
+
+#### Links clicked in the preview open their entry instead of leaving the editor — **behaviour change**
+
+<!-- changeset: preview-links-stay-in-editor -->
+
+_First in int.121._
+
+**What changed.** A plain click on a link in the editor's preview no longer navigates the frame off its preview route to a public page, which could refuse to be framed. A link to another page of the site opens that page's entry in the editor, keeping the draft of the one left, and focus follows into its page. A page no entry has, such as a listing, opens in a new tab, and a note naming it says so; a link to another site opens in a new tab. Cmd/Ctrl/Shift/Alt and middle clicks, links with `download` or a `target` other than `_self`, links to the same page and `mailto:`/`tel:` links behave as they do outside the editor. A click that follows a link no longer also focuses the field it sits in, except while fields are highlighted, when a click on a marked link picks its field instead. The preview takes over links only once the editor has connected, so a public page embedded elsewhere keeps its links. Pages using `useCanopyPreview` or `withCanopyPreview` get this with no change.
+
+#### The browser's Back and Forward move between entries in the editor — **behaviour change**
+
+<!-- changeset: editor-back-forward-entries -->
+
+_First in 0.2.0._
+
+**What changed.** Opening an entry in the editor adds a browser history entry, whether it is opened from the content panel, quick open, a comment, a preview link or a new entry's creation, and so does switching branch. Back and Forward then open the entry their URL names, without reloading the page; the preview follows, focus moves to the entry's menu in the top bar, and drafts are kept, as on any switch. Choosing the open entry again adds nothing, and the editor's own corrections, such as the home page it opens at load or the URL it fixes after a rename or delete, replace the URL instead. An entry since deleted or renamed opens the home page, with a note saying so. A Back onto another branch switches to it, asking first when there are unsaved changes; staying, or a branch no longer listed, returns to the entry the Back left.
+
+#### A locked branch's row lock shows on the hovered, focused or selected row
+
+<!-- changeset: row-lock-on-hover -->
+
+_First in 0.2.0._
+
+**What changed.** The lock in a content-tree row's menu slot was drawn on every row, repeating the branch pill and banner. It now appears on the row under the pointer, the focused row, the row with focus inside it, and the selected row, so a touch user sees the row they tapped. The slot stays reserved so rows do not shift, and the lock stays in the tab order and the accessibility tree on every row.
+
+#### The dev content watcher waits for a save to finish before comparing
+
+<!-- changeset: dev-watcher-waits-for-writes -->
+
+_First in 0.2.0._
+
+**What changed.** In `dev` mode, the watcher that warns when working-tree content has diverged from the served branch clone now acts on a new or changed file only once its size has held still for 100 ms. A save that truncates and then writes could reach the watcher as one event between the two steps. The check then read a half-written file and warned of a divergence that nothing later retracted. Now any warning about a half-finished save is retracted once the save completes.
+
 ### 0.1.0
 
 <!-- changeset: legacy-unreleased -->
