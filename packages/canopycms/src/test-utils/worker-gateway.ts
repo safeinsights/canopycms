@@ -117,9 +117,10 @@ export function expectRebuiltOctokitError(caught: unknown, original: Error): voi
 }
 
 /**
- * Close every gateway {@link gatewayUnderTest} served, and wait out the GitHub fetch each runs in
- * the background: a served gateway prepares as its server starts, and that starts one. A suite
- * that removes the directories those fetches write calls it first in its own `afterEach`, which
+ * Close every gateway {@link gatewayUnderTest} served, and wait out the work each runs in the
+ * background: the GitHub fetch a served gateway starts as its server prepares, and any credential
+ * re-read a failure armed. A suite that removes the directories those fetches write, or restores
+ * a console spy a re-read's failure log must reach, calls it first in its own `afterEach`, which
  * runs before the `worker-http` project's (test-utils/gateway-transport-setup.ts).
  */
 export async function closeServedGateways(): Promise<void> {
@@ -127,28 +128,41 @@ export async function closeServedGateways(): Promise<void> {
   served.clear()
   for (const { server, dir, local } of all) {
     await server.then((s) => s.close()).catch(() => undefined)
-    await backgroundFetchSettled(local)
+    await backgroundWorkSettled(local)
     rmSync(dir, { recursive: true, force: true })
   }
 }
 
 /**
- * Wait out the GitHub fetch an in-process gateway runs detached, the boot fetch its server's
- * `prepare()` started included, so it writes nothing under a directory the test then removes.
+ * Wait out the work an in-process gateway runs detached: its GitHub fetch, the boot fetch its
+ * server's `prepare()` started included, so it writes nothing under a directory the test then
+ * removes; and the credential re-read a failure arms, which logs when it fails, so its line lands
+ * while the suite's console spy is still installed. A re-read is bounded only by the gateway's
+ * `timeoutMs`, so a test that arms one against a provider that never settles sets a `timeoutMs`
+ * below vitest's hook timeout, or this wait outlasts the hook.
  */
-async function backgroundFetchSettled(local: GitHubGateway): Promise<void> {
+async function backgroundWorkSettled(local: GitHubGateway): Promise<void> {
   const internals = local as unknown as {
     githubFetch?: { done: Promise<unknown> } | null
     mirror?: { tail: Promise<unknown> }
+    refreshing?: Promise<void> | null
   }
   // The boot fetch starts once prepare() has; a fetch a push replaced still runs in a session.
   await local.prepare().catch(() => undefined)
   for (;;) {
     const job = internals.githubFetch
     const tail = internals.mirror?.tail
+    const refreshing = internals.refreshing
     await job?.done.catch(() => undefined)
     await tail
-    if (internals.githubFetch === job && internals.mirror?.tail === tail) return
+    await refreshing
+    if (
+      internals.githubFetch === job &&
+      internals.mirror?.tail === tail &&
+      internals.refreshing === refreshing
+    ) {
+      return
+    }
   }
 }
 

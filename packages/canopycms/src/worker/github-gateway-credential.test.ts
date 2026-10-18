@@ -468,8 +468,9 @@ describe('re-reading the credential', () => {
 
     expect(caught).not.toBeInstanceOf(GitHubTransientError)
     expect((caught as { status?: unknown }).status).toBe(404)
-    // The refusal armed a re-read, whose own read of the token fails too; awaited here, so its
-    // line lands in this test's console rather than after it.
+    // The refusal armed a re-read, whose own read of the token fails too. A served gateway's boot
+    // fetch fails the same way and arms one first, so this sees whichever logs first; the
+    // `afterEach` waits out the rest (`closeServedGateways`) before the spy goes.
     await vi.waitFor(() =>
       expect(consoleSpy).toHaveErrored('Failed to re-read the GitHub credential'),
     )
