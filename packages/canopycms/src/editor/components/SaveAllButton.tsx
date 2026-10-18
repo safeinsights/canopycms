@@ -112,7 +112,13 @@ export function SaveAllButton({
           group of one is no group to assistive technology. */}
       <Button.Group
         style={{ flexShrink: 0 }}
-        renderRoot={(props) => <div {...props} role={caret ? 'group' : undefined} />}
+        renderRoot={(props) => (
+          <div
+            {...props}
+            role={caret ? 'group' : undefined}
+            aria-label={caret ? 'Save all and branch actions' : undefined}
+          />
+        )}
       >
         <Tooltip
           label={reason}

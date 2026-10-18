@@ -335,7 +335,13 @@ function BranchWayButton({
     // Grouped even alone, as Save all is, so a caret coming or going never remounts the button.
     <Button.Group
       style={{ flexShrink: 0 }}
-      renderRoot={(props) => <div {...props} role={caret ? 'group' : undefined} />}
+      renderRoot={(props) => (
+        <div
+          {...props}
+          role={caret ? 'group' : undefined}
+          aria-label={caret ? 'Branch controls' : undefined}
+        />
+      )}
     >
       <Button
         ref={buttonRef}

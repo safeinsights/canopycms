@@ -1529,9 +1529,9 @@ const EditorContent: React.FC<EditorProps> = ({
 
   const findShortcut =
     modKeyLabel() === '⌘' ? { label: '⌘P', keys: 'Meta+P' } : { label: 'Ctrl+P', keys: 'Control+P' }
-  // Mod+P opens a closed docked panel only until Enter, Escape in its empty field or focus leaves
-  // it; the stored preference stays closed. A row menu, the Content button or any other ask opens
-  // it for good.
+  // Mod+P opens a closed docked panel only until Enter, Escape from inside it or focus leaves it;
+  // the stored preference stays closed. A row menu, the Content button or any other ask opens it
+  // for good.
   const [contentPanelTransient, setContentPanelTransient] = useState(false)
   if (contentPanelTransient && !contentPanelDocked) setContentPanelTransient(false)
   // Docked, the content panel's open state is the stored preference; as an overlay it is
@@ -1953,6 +1953,7 @@ const EditorContent: React.FC<EditorProps> = ({
       onWidthChange={setContentPanelWidth}
       onClose={() => setContentPanelShown(false)}
       focusRequest={contentPanelFocusRequest}
+      closeOnEscape={contentPanelTransient}
       // An entry opened by Enter takes focus in its form instead.
       returnFocusTo={() => (formFocusPath ? null : navigatorReturnTarget())}
       onFocusLeave={
