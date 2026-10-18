@@ -2,13 +2,16 @@
 
 /**
  * MarkdownField's MDXEditor visitors for markdown its own import and export would change the
- * meaning of: an ordered list's `start`, a link inside a formatted span, an auto-link inside code,
- * and the code spans either side of one. MDXEditor is passed in, as `mdx-jsx-support.tsx`
- * explains.
+ * meaning of: an ordered list's `start`, a bare URL, a link inside a formatted span, an auto-link
+ * inside code, and the code spans either side of one. MDXEditor is passed in (`mdx-jsx-support`).
  */
 
 import type * as MdxEditor from '@mdxeditor/editor'
 import type { MdastImportVisitor } from '@mdxeditor/editor'
+import { gfmAutolinkLiteralFromMarkdown } from 'mdast-util-gfm-autolink-literal'
+import { gfmAutolinkLiteral } from 'micromark-extension-gfm-autolink-literal'
+
+import { autolinkLiteralAt, type AutolinkLiteral } from './gfm-autolink-literal'
 
 type MdxEditorModule = typeof MdxEditor
 
@@ -61,6 +64,21 @@ function isFormatContainer(node: MdastNode): node is FormatContainer {
   return (FORMAT_CONTAINER_TYPES as readonly string[]).includes(node.type)
 }
 
+/** Cuts `tail` off `nodes`' last text at any depth, dropping what that empties; false if not there. */
+function cutTail(nodes: MdastPhrasing[], tail: string): boolean {
+  const last = nodes.at(-1)
+  if (last === undefined) return false
+  if (last.type === 'text') {
+    if (!last.value.endsWith(tail)) return false
+    last.value = last.value.slice(0, last.value.length - tail.length)
+    if (last.value === '') nodes.pop()
+    return true
+  }
+  if (!isFormatContainer(last) || !cutTail(last.children, tail)) return false
+  if (last.children.length === 0) nodes.pop()
+  return true
+}
+
 /** `nodes` with every container of a type in `types` replaced by its children, at any depth. */
 function withoutContainers(
   nodes: readonly MdastPhrasing[],
@@ -82,6 +100,8 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
     IS_STRIKETHROUGH,
     addExportVisitor$,
     addImportVisitor$,
+    addMdastExtension$,
+    addSyntaxExtension$,
     lexical: { $isElementNode, $isTextNode },
     realmPlugin,
   } = mdx
@@ -96,6 +116,23 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
   const sharedFormat = (node: LexicalNode): number => {
     const texts = $isElementNode(node) ? node.getChildren().filter($isTextNode) : []
     return texts.length === 0 ? 0 : texts.reduce((all, text) => all & text.getFormat(), ~0)
+  }
+
+  /**
+   * What GFM reads from an auto-link's text where it stands. Lexical's matcher is its own regex,
+   * which keeps trailing punctuation GFM leaves out and prefixes `https://` where GFM gives `http://`.
+   */
+  const gfmLiteralOf = (autolink: LexicalNode): AutolinkLiteral | undefined => {
+    const text = autolink.getTextContent()
+    let context = ''
+    let offset = 0
+    for (const sibling of autolink.getParent()?.getChildren() ?? [autolink]) {
+      if (sibling.is(autolink)) offset = context.length
+      context += sibling.getTextContent()
+    }
+    const here = autolinkLiteralAt(context, offset)
+    if (here === undefined) return undefined
+    return here.length <= text.length ? here : autolinkLiteralAt(text, 0) // ran into a sibling
   }
 
   // MDXEditor imports a list without its `start`, and exports one without it.
@@ -148,7 +185,8 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
    * lexical keeps no record of which was written: `**[guide](/g)**` saves as `[**guide**](/g)`.
    *
    * An auto-link holding code-formatted text is written as its text: lexical's auto-link matchers
-   * see text, not formats, so a URL inside a code span becomes a link markdown never meant.
+   * see text, not formats, so a URL inside a code span becomes a link markdown never meant. Any
+   * other is written as `gfmLiteralOf` reads it: text, or GFM's link and the punctuation it leaves out.
    */
   const linkExportVisitor: MdxEditor.LexicalVisitor = {
     priority: 100,
@@ -162,6 +200,11 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
           .getChildren()
           .some((child) => $isTextNode(child) && (child.getFormat() & IS_CODE) !== 0)
       ) {
+        actions.visitChildren(lexicalNode, mdastParent)
+        return
+      }
+      const literal = lexicalNode.getType() === 'autolink' ? gfmLiteralOf(lexicalNode) : null
+      if (literal === undefined) {
         actions.visitChildren(lexicalNode, mdastParent)
         return
       }
@@ -190,13 +233,17 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
 
       const link: MdastLink = {
         type: 'link',
-        url: lexicalNode.getURL(),
+        url: literal?.url ?? lexicalNode.getURL(),
         title: lexicalNode.getTitle(),
         children: [],
       }
       actions.appendToParent(parent, link)
       actions.visitChildren(lexicalNode, link)
       if (carried.size > 0) link.children = withoutContainers(link.children, carried)
+      const tail = literal ? lexicalNode.getTextContent().slice(literal.length) : ''
+      if (tail !== '' && cutTail(link.children, tail)) {
+        actions.appendToParent(parent, { type: 'text', value: tail })
+      }
     },
   }
 
@@ -212,6 +259,9 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
 
   return realmPlugin({
     init(realm) {
+      // Without autolink literals a bare URL imports as text, for lexical's matcher to re-link.
+      realm.pub(addSyntaxExtension$, gfmAutolinkLiteral())
+      realm.pub(addMdastExtension$, gfmAutolinkLiteralFromMarkdown())
       realm.pub(addImportVisitor$, listStartImportVisitor)
       realm.pub(addExportVisitor$, [
         listStartExportVisitor,
