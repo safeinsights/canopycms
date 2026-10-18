@@ -442,8 +442,8 @@ const EditorContent: React.FC<EditorProps> = ({
   const branchContentLocked = currentBranch?.writeBlocked ?? true
 
   const branchLoading = !currentBranch && (branchesLoading || branchSummaries.length === 0)
-  // "Details could not be loaded" is not yet true while the list is unanswered; once the fetch
-  // has failed, or answered without this branch, it is, and the lock says so.
+  // No lock reason is true yet while the list is unanswered; once it has failed, or answered
+  // without this branch, the lock says which.
   const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
   const branchMissing = !currentBranch && branchesLoaded
 

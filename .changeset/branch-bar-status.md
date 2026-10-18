@@ -20,5 +20,6 @@ badge, and on a phone it shows the branch name, truncated, with the full name he
 The bar offers the way forward: New branch…, which opens Branches on its new-branch form, on the
 protected base branch; Withdraw from review on a branch in review; Refresh branch when details
 failed to load; and Switch branch… otherwise. Below the `md` breakpoint a locked branch has no
-Save all; its way forward is the split button, with Submit or Withdraw in the caret. Someone who
-may not withdraw gets Switch branch…, with the blocked Withdraw and its reason in the caret.
+Save all: its way forward leads, with Submit or Withdraw in its caret unless Withdraw is that way.
+Someone who may not withdraw gets Switch branch…, with the blocked Withdraw and its reason in the
+caret.

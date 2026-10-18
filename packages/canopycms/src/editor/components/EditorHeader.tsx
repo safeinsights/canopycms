@@ -72,7 +72,7 @@ export interface EditorHeaderProps {
    * (Withdraw stays, as the recovery path). Default false.
    */
   branchIsProtected?: boolean
-  /** `isProtected` as sent, for the status: unlike `branchIsProtected` it never fails closed. */
+  /** `currentBranch.isProtected` for the status, unlike `branchIsProtected` not failed closed here. */
   branchServerProtected?: boolean
   /** Whether the current branch is read-only (protected base branch in prod); disables Save all. */
   branchReadOnly?: boolean
@@ -388,7 +388,7 @@ function workflowAction({
         // today only as a side effect of `branchIsProtected`'s `?? true`
         // default -- not a guarantee this arm stays unreachable.
         branchStatus === undefined
-        ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
+        ? 'Branch details could not be loaded. Use "Refresh branch" to try again.'
         : !statusHasAction
           ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
           : !userHasPermission

@@ -26,15 +26,13 @@ export function branchLockState({
   const statusLocked = branchWriteBlocked && !branchReadOnly
   // `branchStatus` can't describe the lock while branch data loads (undefined) or under version
   // skew (an old server omits `branchWriteBlocked` but reports 'editing'), so both read as
-  // "details unavailable" rather than naming a status the lock contradicts.
+  // unavailable data rather than naming a status the lock contradicts.
   const branchDataUnavailable =
     statusLocked && (branchStatus === undefined || branchStatus === 'editing')
   return { readOnly: branchReadOnly, statusLocked, branchDataUnavailable }
 }
 
-/**
- * Why the branch takes no writes, with the way forward, as Save, Save all and the row locks say.
- */
+/** Why the branch takes no writes, and the way forward, as Save, row locks and the status say. */
 export function describeBranchLock(lock: BranchLockInput): string | undefined {
   const { readOnly, statusLocked, branchDataUnavailable } = branchLockState(lock)
   if (readOnly) return 'The base branch is read-only. Create a branch to make changes.'
@@ -53,7 +51,7 @@ export function describeBranchLock(lock: BranchLockInput): string | undefined {
 }
 
 export interface BranchBarStatusInput extends BranchLockInput {
-  /** `isProtected` as the server sent it: with no answer the status names no protection. */
+  /** The listed branch's `isProtected`, with no fallback here: no listed branch names no protection. */
   isProtected: boolean | undefined
 }
 
