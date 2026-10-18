@@ -1310,6 +1310,17 @@ describe('EditorHeader - branch bar', () => {
     expect(document.activeElement).toBe(withdraw)
   })
 
+  it('below md, leaves focus where it is when the swapped control did not have it', () => {
+    stubNarrowWindow()
+    const props: HeadersProps = { ...defaultProps, ...owner, modifiedCount: 1 }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    const saveAll = screen.getByTestId('save-all-button')
+    act(() => saveAll.focus())
+    rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
+    expect(screen.getByTestId('withdraw-button')).toBeTruthy()
+    expect(document.activeElement).toBe(saveAll)
+  })
+
   it('below md, moves focus from Withdraw to the caret when a withdraw unlocks the branch', () => {
     stubNarrowWindow()
     const props: HeadersProps = {

@@ -138,16 +138,21 @@ export function EditorHeader({
   // withdraw unlocks it; focus on the outgoing one moves to the incoming one, not to the page.
   const workflowEl = useRef<HTMLButtonElement | null>(null)
   const handOffFocus = useRef(false)
+  // Focused on attach, so a detach and re-attach of the same button (React's dev StrictMode)
+  // cancel out; a commit that mounts no control clears the hand-off in the layout effect.
   const workflowRef = useCallback((el: HTMLButtonElement | null) => {
-    if (!el && workflowEl.current && workflowEl.current === document.activeElement) {
+    if (el) {
+      if (handOffFocus.current) {
+        handOffFocus.current = false
+        el.focus({ preventScroll: true })
+      }
+    } else if (workflowEl.current && workflowEl.current === document.activeElement) {
       handOffFocus.current = true
     }
     workflowEl.current = el
   }, [])
   useLayoutEffect(() => {
-    if (!handOffFocus.current) return
     handOffFocus.current = false
-    workflowEl.current?.focus({ preventScroll: true })
   })
   // Whichever control is mounted when the confirm dialog closes: its opener may be gone.
   const workflowControl = {
