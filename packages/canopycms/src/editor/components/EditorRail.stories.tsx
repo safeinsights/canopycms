@@ -23,8 +23,7 @@ const meta: Meta<typeof EditorRail> = {
     contentPanelId: 'content-panel',
     onContentToggle: noop,
     contentShortcut: { label: '⌘P', keys: 'Meta+P' },
-    branchesOpen: false,
-    onBranchesOpen: noop,
+    unsavedCount: 0,
     onCommentsOpen: noop,
     commentsOpen: false,
     unresolvedCommentCount: 0,
@@ -45,6 +44,11 @@ type Story = StoryObj<typeof EditorRail>
 /** No unresolved comments: the Comments button carries no badge. Side by side, the layout
  * button shows columns and offers stacked. */
 export const Default: Story = {}
+
+/** Entries are unsaved and the panel is closed: Content carries the unsaved dot. */
+export const WithUnsavedContent: Story = {
+  args: { unsavedCount: 2 },
+}
 
 /** Three unresolved threads on the branch, and the content panel open. */
 export const WithUnresolvedComments: Story = {

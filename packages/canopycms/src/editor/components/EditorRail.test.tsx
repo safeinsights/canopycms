@@ -15,8 +15,7 @@ const defaultProps = (): EditorRailProps => ({
   contentPanelId: 'content-panel',
   onContentToggle: vi.fn(),
   contentShortcut: { label: '⌘P', keys: 'Meta+P' },
-  branchesOpen: false,
-  onBranchesOpen: vi.fn(),
+  unsavedCount: 0,
   onCommentsOpen: vi.fn(),
   commentsOpen: false,
   unresolvedCommentCount: 0,
@@ -49,22 +48,15 @@ describe('EditorRail - buttons', () => {
 
     expect(toolbarButtons().map((button) => button.getAttribute('aria-label'))).toEqual([
       'Content',
-      'Branches',
       'Comments',
       'Media library',
       'Switch to stacked layout (now side by side)',
       'Settings',
     ])
     await userEvent.click(screen.getByTestId('content-panel-toggle'))
-    await userEvent.click(screen.getByTestId('rail-branches-button'))
     await userEvent.click(screen.getByTestId('comments-button'))
     await userEvent.click(screen.getByTestId('media-library-button'))
-    for (const action of [
-      props.onContentToggle,
-      props.onBranchesOpen,
-      props.onCommentsOpen,
-      props.onMediaLibraryOpen,
-    ]) {
+    for (const action of [props.onContentToggle, props.onCommentsOpen, props.onMediaLibraryOpen]) {
       expect(action).toHaveBeenCalledTimes(1)
     }
   })
@@ -85,10 +77,16 @@ describe('EditorRail - buttons', () => {
     expect(screen.queryByTestId('comments-button')).toBeNull()
   })
 
+  it('offers no Branches button: the branch bar opens the branches drawer', () => {
+    renderRail()
+    expect(screen.queryByTestId('rail-branches-button')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Branches' })).toBeNull()
+  })
+
   it('shows the tooltip of a rail button on keyboard focus', async () => {
     renderRail()
-    act(() => screen.getByTestId('rail-branches-button').focus())
-    expect((await screen.findByRole('tooltip')).textContent).toBe('Branches')
+    act(() => screen.getByTestId('media-library-button').focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Media library')
   })
 
   it('shows a shortcut in the tooltip and in aria-keyshortcuts, not in the name', async () => {
@@ -106,7 +104,53 @@ describe('EditorRail - buttons', () => {
     expect(toggle.getAttribute('data-variant')).toBe('filled')
     // The theme's measured fill for white on the primary colour, not Mantine's.
     expect(toggle.style.getPropertyValue('--ai-bg')).toBe('var(--canopy-primary-fill)')
-    expect(screen.getByTestId('rail-branches-button').getAttribute('data-variant')).toBe('subtle')
+    expect(screen.getByTestId('comments-button').getAttribute('data-variant')).toBe('subtle')
+  })
+})
+
+describe('EditorRail - unsaved mark', () => {
+  const mark = () => screen.queryByTestId('rail-unsaved-mark')
+  const toggle = () => screen.getByTestId('content-panel-toggle')
+
+  it('marks Content while its panel is closed, and says so in its name', () => {
+    renderRail({ unsavedCount: 3 })
+    expect(mark()).not.toBeNull()
+    expect(toggle().getAttribute('aria-label')).toBe('Content, 3 unsaved')
+  })
+
+  it('shows no mark with nothing unsaved, or once the panel is open', () => {
+    renderRail({ unsavedCount: 0 })
+    expect(mark()).toBeNull()
+    expect(toggle().getAttribute('aria-label')).toBe('Content')
+
+    cleanup()
+    renderRail({ unsavedCount: 3, contentPanelOpen: true })
+    expect(mark()).toBeNull()
+    expect(toggle().getAttribute('aria-label')).toBe('Content')
+  })
+
+  it('puts the mark under Content, and the comments count under Comments', () => {
+    renderRail({ unresolvedCommentCount: 2, unsavedCount: 3 })
+    expect(screen.getByTestId('comments-unresolved-count').textContent).toBe('2')
+    expect(toggle().parentElement?.contains(mark())).toBe(true)
+    expect(screen.getByTestId('comments-button').parentElement?.contains(mark())).toBe(false)
+  })
+
+  it('keeps the focused Content button mounted as the mark comes and goes', () => {
+    const props = defaultProps()
+    const { rerender } = render(<EditorRail {...props} />, { wrapper: Wrapper })
+    const button = toggle()
+    act(() => button.focus())
+
+    rerender(<EditorRail {...props} unsavedCount={2} />)
+    expect(mark()).not.toBeNull()
+    expect(toggle()).toBe(button)
+    expect(document.activeElement).toBe(button)
+
+    rerender(<EditorRail {...props} unsavedCount={2} contentPanelOpen />)
+    expect(mark()).toBeNull()
+    expect(toggle()).toBe(button)
+    expect(document.activeElement).toBe(button)
   })
 })
 
@@ -193,12 +237,30 @@ describe('EditorRail - layout', () => {
     expect(status().textContent).toBe('Side by side layout')
   })
 
-  it('sits in the bottom group, just above Settings', () => {
+  it('follows Media after a divider, with Settings left at the bottom', () => {
     renderRail()
-    expect(toolbarButtons().slice(-2)).toEqual([
-      layoutButton(),
-      screen.getByTestId('settings-button'),
+    const order = Array.from(
+      screen
+        .getByRole('toolbar')
+        .querySelectorAll<HTMLElement>('[data-rail-item], [role="separator"]'),
+    )
+    expect(order.map((el) => el.getAttribute('data-testid') ?? el.getAttribute('role'))).toEqual([
+      'content-panel-toggle',
+      'comments-button',
+      'media-library-button',
+      'separator',
+      'rail-layout-button',
+      'settings-button',
     ])
+  })
+
+  it('is skipped by the arrow keys, which pass from Media to the layout button', async () => {
+    renderRail()
+    act(() => screen.getByTestId('media-library-button').focus())
+    await userEvent.keyboard('{ArrowDown}')
+    expect(document.activeElement).toBe(layoutButton())
+    await userEvent.keyboard('{ArrowUp}')
+    expect(document.activeElement).toBe(screen.getByTestId('media-library-button'))
   })
 
   it('says why it is blocked while the preview is maximized, stays focusable and does nothing', async () => {

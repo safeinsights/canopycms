@@ -108,8 +108,7 @@ const EditorChrome = ({
           contentPanelId="story-content-panel"
           onContentToggle={() => setPanelOpen((open) => !open)}
           contentShortcut={{ label: '⌘P', keys: 'Meta+P' }}
-          branchesOpen={false}
-          onBranchesOpen={noop}
+          unsavedCount={props.modifiedCount}
           onCommentsOpen={noop}
           commentsOpen={false}
           unresolvedCommentCount={2}
