@@ -455,6 +455,37 @@ describe('SidePanelHost', () => {
       expect(props.onClose).not.toHaveBeenCalled()
     })
 
+    it('closes a docked panel given closeOnEscape, and marks it for the preview', () => {
+      const { props } = renderPanel({ mode: 'docked', closeOnEscape: true })
+      expect(
+        screen
+          .getByRole('region', { name: 'Content' })
+          .getAttribute('data-mantine-stop-propagation'),
+      ).toBe('true')
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Inside' }), { key: 'Escape' })
+      expect(props.onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('is left to a dialog portalled from a docked panel given closeOnEscape', () => {
+      const { props } = renderPanel({
+        mode: 'docked',
+        closeOnEscape: true,
+        children: <PortalledInput />,
+      })
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'In a dialog' }), { key: 'Escape' })
+      expect(props.onClose).not.toHaveBeenCalled()
+    })
+
+    it('is left to a handler that already took the key', () => {
+      const { props } = renderPanel({
+        mode: 'docked',
+        closeOnEscape: true,
+        children: <button onKeyDown={(event) => event.preventDefault()}>Inside</button>,
+      })
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Inside' }), { key: 'Escape' })
+      expect(props.onClose).not.toHaveBeenCalled()
+    })
+
     it('is left to a dialog portalled from the panel', () => {
       const { props } = renderPanel({
         mode: 'overlay',

@@ -77,6 +77,11 @@ export interface SidePanelHostProps {
    * focus in. Opening alone never does, as a panel also opens when stored state loads.
    */
   focusRequest?: number
+  /**
+   * Escape from inside a docked panel closes it, as an overlay's always does. It also marks the
+   * panel, so a maximized preview's Escape leaves the key to it.
+   */
+  closeOnEscape?: boolean
   /** Where focus goes when the panel closes with focus inside it. */
   returnFocusTo?: () => HTMLElement | null
   /** Focus landed on `target`, outside the panel and what it portals; dropping to nothing isn't. */
@@ -94,9 +99,9 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
  * A titled side panel, resizable from its inline-end edge. Docked, it pushes its neighbours aside
  * and opens and closes at once: a sliding width would reflow the preview's page on every frame.
  * As an overlay it covers the form pane only, so the preview stays in view, slides in and out as
- * the drawers do unless the user prefers reduced motion, and Escape closes it. A `focusRequest`
- * moves focus to its `data-autofocus` element, else to the panel; closing with focus inside
- * returns focus to `returnFocusTo`.
+ * the drawers do unless the user prefers reduced motion, and Escape closes it, as it does a docked
+ * panel given `closeOnEscape`. A `focusRequest` moves focus to its `data-autofocus` element, else
+ * to the panel; closing with focus inside returns focus to `returnFocusTo`.
  */
 export function SidePanelHost({
   title,
@@ -108,6 +113,7 @@ export function SidePanelHost({
   onWidthChange,
   onClose,
   focusRequest = 0,
+  closeOnEscape = false,
   returnFocusTo,
   onFocusLeave,
   actions,
@@ -266,7 +272,7 @@ export function SidePanelHost({
   useWindowEvent('keydown', (event) => {
     if (
       opened &&
-      mode === 'overlay' &&
+      (mode === 'overlay' || closeOnEscape) &&
       event.key === 'Escape' &&
       !event.defaultPrevented &&
       event.target instanceof Node &&
@@ -369,6 +375,7 @@ export function SidePanelHost({
             tabIndex={-1}
             data-testid={testId}
             data-panel-mode={mode}
+            data-mantine-stop-propagation={closeOnEscape ? 'true' : undefined}
             // While it slides out, focus left inside it counts as idle, so it can still go back.
             {...{ [FOCUS_RETURN_ATTR]: opened ? undefined : '' }}
             style={{ ...style, ...transitionStyles }}

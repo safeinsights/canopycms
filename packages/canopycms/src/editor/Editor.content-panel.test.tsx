@@ -275,6 +275,17 @@ describe('content panel', () => {
     )
   })
 
+  it('stays open on Escape from a tree row while docked for good', async () => {
+    await setup(true)
+    const item = (await row('second')).closest<HTMLElement>('[role="treeitem"]')
+    act(() => item?.focus())
+
+    fireEvent.keyDown(item as HTMLElement, { key: 'Escape' })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    expect(panel()).not.toBeNull()
+  })
+
   it('keeps its open state and width across a reload', async () => {
     await setup(true)
     fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize content panel' }), {
@@ -717,6 +728,33 @@ describe('finding an entry with Mod+P', () => {
 
     await waitFor(() => expect(panel()).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(titleField()))
+  })
+
+  it('on Escape from a tree row, closes and returns focus to where Mod+P was pressed', async () => {
+    await transientOpen()
+    const item = (await row('second')).closest<HTMLElement>('[role="treeitem"]')
+    act(() => item?.focus())
+
+    fireEvent.keyDown(item as HTMLElement, { key: 'Escape' })
+
+    await waitFor(() => expect(panel()).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(titleField()))
+    expect(storedLayout().contentPanelOpen).toBe(false)
+  })
+
+  it('on Escape from a tree row over a maximized preview, closes and leaves it maximized', async () => {
+    await closedWide()
+    fireEvent.click(await screen.findByRole('button', { name: 'Maximize preview' }))
+    await screen.findByRole('button', { name: 'Restore' })
+    modP(document.body)
+    await waitFor(() => expect(document.activeElement).toBe(filter()))
+    const item = (await row('second')).closest<HTMLElement>('[role="treeitem"]')
+    act(() => item?.focus())
+
+    fireEvent.keyDown(item as HTMLElement, { key: 'Escape' })
+
+    await waitFor(() => expect(panel()).toBeNull())
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeTruthy()
   })
 
   it('on Escape over a maximized preview, closes and leaves the preview maximized', async () => {
