@@ -600,7 +600,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     [filtering, treeData, query, changedOnly, dirtyPaths],
   )
 
-  // Drafts change `dirtyPaths` on every keystroke, so the filter re-expands only as its folders change.
+  // A caller may pass a new but equal `dirtyPaths` as drafts change, so the filter re-expands only
+  // for a new query or new folders, never over a folder the user closed.
   const filteredFolders = useMemo(
     () => Object.keys(expandedStateFor(filteredTree)).join('\n'),
     [filteredTree],
@@ -631,6 +632,23 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     walk(treeData)
     return { dirtyCollections: dirty, listedUnsaved: listed }
   }, [treeData, dirtyPaths])
+
+  // Unsaved entries the tree has no row for, which Changed offers beneath it.
+  const unlistedNamed = useMemo(() => {
+    if (!changedOnly || !unsavedEntries?.length) return []
+    const rows = new Set<string>()
+    const walk = (nodes: TreeNodeData[]) =>
+      nodes.forEach((node) => {
+        rows.add(node.value)
+        walk(node.children ?? [])
+      })
+    walk(treeData)
+    return unsavedEntries.filter((entry) => !rows.has(entry.path))
+  }, [changedOnly, unsavedEntries, treeData])
+  const unlistedMatches = useMemo(
+    () => unlistedNamed.filter((entry) => matchesEntryQuery({ label: entry.label }, query)),
+    [unlistedNamed, query],
+  )
 
   // The hidden root's own row never renders, so its message is shown once above the tree.
   const hiddenRootAddRefused =
@@ -703,7 +721,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the filter or its folders change; `tree` is a fresh object each render
-  }, [filtering, filteredFolders])
+  }, [filtering, filteredFolders, query.trim()])
 
   useEffect(() => {
     if (!selectedPath || !treeData || filtering) return
@@ -826,7 +844,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       if (query) setQuery('')
       else onFilterEscape?.()
     } else if (event.key === 'Enter' && filtering) {
-      const path = firstEntryPath(filteredTree, query)
+      const path = firstEntryPath(filteredTree, query) ?? unlistedMatches[0]?.path
       if (path) {
         event.preventDefault()
         ;(onFilterEnter ?? onSelect)(path)
@@ -1240,39 +1258,50 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
 
   // Changed can't list every entry it counts: those with no row are offered beneath the tree, and
   // drafts whose entries aren't named yet are counted there.
-  const unlistedNamed = useMemo(() => {
-    if (!changedOnly || !unsavedEntries?.length) return []
-    const rows = new Set<string>()
-    const walk = (nodes: TreeNodeData[]) =>
-      nodes.forEach((node) => {
-        rows.add(node.value)
-        walk(node.children ?? [])
-      })
-    walk(treeData)
-    return unsavedEntries.filter((entry) => !rows.has(entry.path))
-  }, [changedOnly, unsavedEntries, treeData])
   const unsavedCount = Math.max(unsavedCountProp, listedUnsaved + unlistedNamed.length)
   const unnamedUnsaved = unsavedCount - listedUnsaved - unlistedNamed.length
   const showAll = () => {
     onChangedOnlyChange?.(false)
     filterInputRef.current?.focus()
   }
-  const changedNotice = !changedOnly ? null : query.trim() ? (
-    filteredTree.length === 0 && (
-      <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-changed-no-match">
-        <Text size="sm" c="dimmed">
-          No unsaved entries match “{query}”.
-        </Text>
-        <Button size="compact-sm" variant="subtle" onClick={showAll}>
-          Search all entries
+  const outsideRows = unlistedMatches.length > 0 && (
+    <Stack gap={2} py={4} align="flex-start" data-testid="entry-nav-changed-outside">
+      <Text size="xs" c="dimmed">
+        Not in the content tree
+      </Text>
+      {unlistedMatches.map((entry) => (
+        <Button
+          key={entry.path}
+          size="compact-sm"
+          variant="subtle"
+          color="gray"
+          leftSection={<UnsavedMark aria-hidden="true" />}
+          onClick={() => onSelect(entry.path)}
+        >
+          {entry.label}
         </Button>
-      </Stack>
-    )
-  ) : entryListFailed ? (
+      ))}
+    </Stack>
+  )
+  const changedNotice = !changedOnly ? null : entryListFailed ? (
     <Text size="sm" c="dimmed" py="sm" data-testid="entry-nav-changed-failed">
       The list of entries couldn&apos;t be loaded, so unsaved entries can&apos;t be shown. Choose
       &quot;Refresh branch&quot; in the branch menu to try again.
     </Text>
+  ) : query.trim() ? (
+    <>
+      {filteredTree.length === 0 && !outsideRows && (
+        <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-changed-no-match">
+          <Text size="sm" c="dimmed">
+            No unsaved entries match “{query}”.
+          </Text>
+          <Button size="compact-sm" variant="subtle" onClick={showAll}>
+            Search all entries
+          </Button>
+        </Stack>
+      )}
+      {outsideRows}
+    </>
   ) : unsavedCount === 0 ? (
     treeData.length > 0 && (
       <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-changed-none">
@@ -1286,25 +1315,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     )
   ) : (
     <>
-      {unlistedNamed.length > 0 && (
-        <Stack gap={2} py={4} align="flex-start" data-testid="entry-nav-changed-outside">
-          <Text size="xs" c="dimmed">
-            Not in the content tree
-          </Text>
-          {unlistedNamed.map((entry) => (
-            <Button
-              key={entry.path}
-              size="compact-sm"
-              variant="subtle"
-              color="gray"
-              leftSection={<UnsavedMark aria-hidden="true" />}
-              onClick={() => onSelect(entry.path)}
-            >
-              {entry.label}
-            </Button>
-          ))}
-        </Stack>
-      )}
+      {outsideRows}
       {unnamedUnsaved > 0 && (
         <Text size="sm" c="dimmed" py={4} data-testid="entry-nav-changed-unlisted">
           {listedUnsaved + unlistedNamed.length > 0

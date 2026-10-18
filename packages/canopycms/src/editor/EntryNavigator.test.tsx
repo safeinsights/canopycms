@@ -2397,6 +2397,7 @@ describe('EntryNavigator - the Changed filter', () => {
         <Harness initialChanged dirtyPaths={new Set(dirty)} />
       </CanopyCMSProvider>,
     )
+    expect(shown('entry-nav-item-privacy')).toBe(true)
     await userEvent.click(screen.getByTestId('entry-nav-item-guides'))
     await waitFor(() => expect(shown('entry-nav-item-privacy')).toBe(false))
 
@@ -2407,6 +2408,49 @@ describe('EntryNavigator - the Changed filter', () => {
     )
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(shown('entry-nav-item-privacy')).toBe(false)
+  })
+
+  it('opens a folder the user closed again once the query changes', async () => {
+    renderHarness()
+    await userEvent.type(filterInput(), 'auth')
+    expect(shown('entry-nav-item-authentication')).toBe(true)
+    await userEvent.click(screen.getByTestId('entry-nav-item-api'))
+    await waitFor(() => expect(shown('entry-nav-item-authentication')).toBe(false))
+
+    await userEvent.type(filterInput(), 'e')
+
+    await waitFor(() => expect(shown('entry-nav-item-authentication')).toBe(true))
+  })
+
+  it('says the list failed under a query too, when the tree still shows its collections', async () => {
+    renderHarness({ initialChanged: true, dirtyPaths: new Set(), entryListFailed: true })
+    await userEvent.type(filterInput(), 'zzz')
+    expect(shown('entry-nav-changed-failed')).toBe(true)
+    expect(shown('entry-nav-changed-no-match')).toBe(false)
+  })
+
+  it('offers an unsaved entry with no row that matches the query, and opens it on Enter', async () => {
+    const onSelect = vi.fn()
+    renderHarness({
+      initialChanged: true,
+      onSelect,
+      unsavedCount: 4,
+      unsavedEntries: [
+        { path: 'content/elsewhere/orphan', label: 'Orphan page' },
+        { path: 'content/elsewhere/stray', label: 'Stray note' },
+      ],
+    })
+    await userEvent.type(filterInput(), 'orphan')
+
+    const outside = screen.getByTestId('entry-nav-changed-outside')
+    expect(
+      within(outside)
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Orphan page'])
+    expect(shown('entry-nav-changed-no-match')).toBe(false)
+    await userEvent.keyboard('{Enter}')
+    expect(onSelect).toHaveBeenCalledWith('content/elsewhere/orphan')
   })
 
   it('says no unsaved entry matches a query, and offers to search them all', async () => {
