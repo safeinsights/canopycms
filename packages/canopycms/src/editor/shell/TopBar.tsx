@@ -39,10 +39,10 @@ export function TopBar({ leading, trailing }: TopBarProps) {
         wrap="wrap"
         align="center"
         justify="flex-end"
-        // It takes the row's rest beside the pill, so only the controls that don't fit there wrap,
-        // still at the end.
+        // It shares the pill's row while its widest control fits there, and then only the controls
+        // that don't fit wrap, still at the end; narrower, it takes a row of its own.
         flex="1 1 0%"
-        miw={0}
+        miw="min-content"
       >
         {trailing}
       </Group>

@@ -136,7 +136,7 @@ export function EditorHeader({
   const split = narrow && editable
 
   // The workflow control is the caret or a button by turns, as a submit locks the branch or a
-  // withdraw unlocks it; focus on the outgoing one moves to the incoming one, not to the page.
+  // withdraw unlocks it; focus on the outgoing one, or in its open menu, moves to the incoming one.
   const workflowEl = useRef<HTMLButtonElement | null>(null)
   const handOffFocus = useRef(false)
   // Focused on attach, so a detach and re-attach of the same button (React's dev StrictMode)
@@ -147,7 +147,7 @@ export function EditorHeader({
         handOffFocus.current = false
         el.focus({ preventScroll: true })
       }
-    } else if (workflowEl.current && workflowEl.current === document.activeElement) {
+    } else if (workflowEl.current && holdsFocus(workflowEl.current)) {
       handOffFocus.current = true
     }
     workflowEl.current = el
@@ -208,6 +208,13 @@ export function EditorHeader({
       }
     />
   )
+}
+
+/** `el` has focus, or the open menu it controls (`aria-controls`) does. */
+function holdsFocus(el: HTMLElement): boolean {
+  const active = document.activeElement
+  const menuId = el.getAttribute('aria-controls')
+  return active === el || (!!menuId && !!document.getElementById(menuId)?.contains(active))
 }
 
 /** The branch's review action, as both the wide button and the narrow caret offer it. */

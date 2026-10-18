@@ -1310,6 +1310,18 @@ describe('EditorHeader - branch bar', () => {
     expect(document.activeElement).toBe(withdraw)
   })
 
+  it('below md, moves focus from the open caret menu to Withdraw when a submit locks the branch', async () => {
+    stubNarrowWindow()
+    const props: HeadersProps = { ...defaultProps, ...owner }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const menu = await screen.findByRole('menu')
+    act(() => within(menu).getByTestId('submit-menu-item').focus())
+    expect(menu.contains(document.activeElement)).toBe(true)
+    rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
+    expect(document.activeElement).toBe(screen.getByTestId('withdraw-button'))
+  })
+
   it('below md, leaves focus where it is when the swapped control did not have it', () => {
     stubNarrowWindow()
     const props: HeadersProps = { ...defaultProps, ...owner, modifiedCount: 1 }
