@@ -632,6 +632,12 @@ describe('EditorHeader - unsaved changes kept on this device', () => {
     )
   })
 
+  it('sits in the top bar, not in the entry header', () => {
+    renderHeader({ hasUnsavedChanges: true, modifiedCount: 1, draftStorageFailed: true })
+    const header = screen.getByRole('region', { name: 'Entry' })
+    expect(header.contains(screen.getByTestId('unsaved-indicator'))).toBe(false)
+  })
+
   it('shows no warning with nothing unsaved on the branch', () => {
     renderHeader({ hasUnsavedChanges: false, modifiedCount: 0, draftStorageFailed: true })
     expect(screen.queryByTestId('unsaved-indicator')).toBeNull()
@@ -967,6 +973,20 @@ describe('EditorHeader - Save all', () => {
     expect(announced).toEqual(['Saving 3 entries…'])
   })
 
+  it('keeps its progress readable and reasonless when a lock arrives mid-run', async () => {
+    renderHeader({
+      modifiedCount: 3,
+      branchStatus: 'submitted',
+      branchWriteBlocked: true,
+      saveAllProgress: { done: 1, total: 3 },
+    })
+    expect(saveAll().textContent).toBe('Saving 2 of 3…')
+    expect(saveAll().getAttribute('aria-disabled')).toBe('true')
+    expect(saveAll().hasAttribute('data-disabled')).toBe(false)
+    act(() => saveAll().focus())
+    await expect(screen.findByRole('tooltip', {}, { timeout: 300 })).rejects.toThrow()
+  })
+
   it("says why Save waits during Save all, though the run's reloads leave the editor busy", async () => {
     renderHeader({ hasUnsavedChanges: true, busy: true, saveAllProgress: { done: 0, total: 2 } })
     act(() => screen.getByTestId('save-button').focus())
@@ -1032,6 +1052,17 @@ describe('EditorHeader - Save says how it went', () => {
     rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: false })
     rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true })
     expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+  })
+
+  it('says nothing again for an earlier save once a Save all ends inside its window', () => {
+    const rerender = renderSave({ hasUnsavedChanges: false, savedSignal: 0, modifiedCount: 2 })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true, modifiedCount: 2 })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Saved' }))
+    const run = { hasUnsavedChanges: false, savedSignal: 1, savedHere: true }
+    rerender({ ...run, saveAllProgress: { done: 0, total: 2 } })
+    rerender({ ...run, saveAllProgress: null })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+    expect(statuses()).toEqual([])
   })
 
   it('says nothing for a save that landed before it was shown', () => {

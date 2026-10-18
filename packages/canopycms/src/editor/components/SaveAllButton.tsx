@@ -31,17 +31,17 @@ export function SaveAllButton({
   busy,
 }: SaveAllButtonProps) {
   const reducedMotion = useReducedMotion()
-  const reason =
-    blockedReason ??
-    (saveAllProgress
-      ? undefined
-      : singleSaving
+  // A running Save all shows only its progress: a lock arriving mid-run would grey it.
+  const reason = saveAllProgress
+    ? undefined
+    : (blockedReason ??
+      (singleSaving
         ? 'Wait for the save to finish.'
         : unsavedCount === 0
           ? 'No entry on this branch has unsaved changes.'
           : busy
             ? 'Wait for the current save or load to finish.'
-            : undefined)
+            : undefined))
   // Blocked, it stays focusable (`aria-disabled`, not `disabled`), so its reason opens on focus.
   const blocked = !!reason || !!saveAllProgress
 

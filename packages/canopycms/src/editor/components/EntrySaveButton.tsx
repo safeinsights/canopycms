@@ -120,6 +120,12 @@ export function EntrySaveButton({
     setWasHere(savedHere)
     if (!savedHere) setFlashing(undefined)
   }
+  // Save all ends any "Saved", so a run that finishes within its window doesn't bring it back.
+  const [wasRunning, setWasRunning] = useState(saveAllRunning)
+  if (wasRunning !== saveAllRunning) {
+    setWasRunning(saveAllRunning)
+    if (saveAllRunning) setFlashing(undefined)
+  }
   if (savedSignal !== undefined && savedSignal > seenSignal) {
     setSeenSignal(savedSignal)
     setFlashing(savedHere ? savedSignal : undefined)

@@ -660,9 +660,10 @@ describe('maximized preview', () => {
     const header = screen.getByRole('region', { name: 'Entry' })
     const preview = screen.getByTestId('preview-pane')
     expect(header.contains(screen.getByTestId('save-button'))).toBe(true)
-    // Before the panes, in its own box, where the maximized preview's absolute inset can't reach.
-    expect(header.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(header.contains(preview) || preview.contains(header)).toBe(false)
+    // In `main`, beside the box holding the panes, where the preview's absolute inset can't reach.
+    expect(header.closest('[data-canopy-region="main"]')).not.toBeNull()
+    expect(header.nextElementSibling?.contains(preview)).toBe(true)
+    expect(header.contains(preview)).toBe(false)
     expect(header.closest('[inert]')).toBeNull()
   })
 
@@ -842,6 +843,31 @@ describe('saving', () => {
     fireEvent.click(await row('second'))
     await waitFor(() => expect(document.title).toBe('second · Test Editor'))
     expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull()
+    await act(async () => release())
+  })
+
+  it("holds Save all while another entry's save is in flight", async () => {
+    await setup(true)
+    const answered = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (init?.method === 'PUT') await held
+      return answered(input, init)
+    })
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Title/ }), {
+      target: { value: 'Edited' },
+    })
+    fireEvent.click(screen.getByTestId('save-button'))
+    await screen.findByRole('button', { name: 'Saving…' })
+
+    fireEvent.click(await row('second'))
+    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+    const saveAll = screen.getByTestId('save-all-button')
+    expect(saveAll.getAttribute('aria-disabled')).toBe('true')
+    act(() => saveAll.focus())
+    const reason = await screen.findByText('Wait for the save to finish.')
+    expect(saveAll.getAttribute('aria-describedby')).toBe(reason.closest('[role="tooltip"]')?.id)
     await act(async () => release())
   })
 
