@@ -182,7 +182,13 @@ export function EditorHeader({
             reason={branchLockReason}
           />
           {modifiedCount > 0 && (
-            <Tooltip label="Show them in the content panel" events={TOOLTIP_EVENTS}>
+            <Tooltip
+              label="Show them in the content panel"
+              events={TOOLTIP_EVENTS}
+              // Past the entry header, as the bar's other tooltips go, so it covers no crumb.
+              position="bottom-start"
+              offset={ENTRY_HEADER_HEIGHT + 8}
+            >
               <Button
                 variant="subtle"
                 color="gray"
