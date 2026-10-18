@@ -63,8 +63,8 @@ export function checkBranchAccessWithDefault(
   const hasGroupConstraint = !!access.allowedGroups?.length
 
   if (!hasUserConstraint && !hasGroupConstraint) {
-    // The branch creator owns their own un-ACL'd branch, as listBranchesHandler,
-    // canDeleteBranch and canModifyBranchAccess also grant: without it, under
+    // The branch creator owns their own un-ACL'd branch, as canDeleteBranch and
+    // canModifyBranchAccess also grant: without it, under
     // 'deny' a creator could delete their branch and rewrite its ACL but not
     // read a file on it. Scoped to the no-ACL case on purpose -- an EXPLICIT
     // allowlist omitting the creator still denies them, which is how an admin
