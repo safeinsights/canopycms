@@ -54,6 +54,164 @@ entries under **Released**.
 
 ## Released
 
+### 0.3.0
+
+#### The branch bar's tooltips open beside their controls
+
+<!-- changeset: bar-tooltips-beside-controls -->
+
+_First in 0.3.0._
+
+**What changed.** The tooltips on the bar's unsaved count, Save all and the branch-actions caret
+no longer open a fixed distance below the bar, where a bar wrapped to several rows put them over
+the entry's Save and breadcrumb, and a one-row bar over the preview toolbar. The unsaved count's
+and the caret's open at their control. Save all's opens to its left, in the bar's free middle,
+and below it when the left edge has no room. The unsaved count's tooltip now reads "Show unsaved
+entries in the content panel".
+
+#### The top bar becomes the branch bar — **behaviour change**
+
+<!-- changeset: branch-bar-layout -->
+
+_First in 0.3.0._
+
+**What changed.** The branch pill moves to the start of the top bar, and its menu opens from
+there. The actions on the branch sit at the bar's other end: the warning that drafts could not
+be stored on this device, then Save all, then Submit for review or Withdraw from review. Below
+the `md` breakpoint, on a branch you can edit, Save all and the review action share one split
+button: Save all is the button, and its caret holds Submit or Withdraw. A branch with no review
+action draws no caret. The confirm dialog returns focus to the review action, and focus follows
+that action when a submit or withdraw moves it between the caret and a button of its own.
+
+#### The branch bar states a locked branch's status, replacing the lock banner — **behaviour change**
+
+<!-- changeset: branch-bar-status -->
+
+_First in 0.3.0._
+
+**What changed.** The banner under the top bar is gone. A branch's lasting state now shows
+once, beside the branch pill, at every width: "Loading branch…", "Protected · read-only", "In
+review · read-only", "Approved · read-only", "Archived · read-only", "Details unavailable ·
+read-only" when branch details failed to load, "Not available · read-only" when the branch list
+has no such branch for you, or "Protected" for a protected branch that still takes edits. Screen
+readers hear the status with its reason when a lock arrives. The pill no longer carries a status
+badge, and on a phone it shows the branch name, truncated, with the full name heading its menu.
+The bar offers the way forward: New branch…, which opens Branches on its new-branch form, on the
+protected base branch; Withdraw from review on a branch in review; Refresh branch when details
+failed to load; and Switch branch… otherwise. Below the `md` breakpoint a locked branch has no
+Save all: its way forward leads, with Submit or Withdraw in its caret unless Withdraw is that way.
+Someone who may not withdraw gets Switch branch…, with the blocked Withdraw and its reason in the
+caret.
+
+#### The content panel lists unsaved entries under a Changed filter, replacing the pill's list — **behaviour change**
+
+<!-- changeset: changed-filter -->
+
+_First in 0.3.0._
+
+**What changed.** The branch pill's menu no longer lists the unsaved entries. It keeps Switch
+branch…, Refresh branch and Discard all changes. The unsaved count leaves the pill, and Save all
+no longer carries it: "N unsaved" beside the branch's status opens the content panel filtered to
+Changed, with any search cleared, in the overlay on a narrow window. The panel's All / Changed
+choice lists only entries with unsaved changes, under the collections that hold them, and
+combines with the search field. Enter opens the first one. Changed says when nothing is unsaved,
+when no unsaved entry matches the search, when some entries are still being listed, and when the
+entry list failed to load; an unsaved entry outside the content tree is offered beneath it.
+Finding an entry with Mod+P, or switching branch, goes back to All. The entry menu gains "Show
+in content panel": it opens the panel on All, with the search cleared, and focuses the entry's
+row.
+
+#### Save moves into a header over the open entry, and Save all becomes its own button — **behaviour change**
+
+<!-- changeset: entry-header-save -->
+
+_First in 0.3.0._
+
+**What changed.** A header above the preview and form holds the open entry's breadcrumb, entry
+menu, unsaved dot, "Read-only" chip and Save. It stays in view while the preview is maximized,
+and with no entry open Save stays there, blocked, saying to open one; while entries load, the
+crumb is a placeholder. "Save all" leaves Save's
+menu for a button of its own in the top bar, showing the unsaved count and then its progress,
+and waits while any entry is saving. Save waits while Save all runs, and says why. The warning
+that drafts could not be stored on this device now shows whenever anything on the branch is
+unsaved, not only the open entry.
+
+#### EntryNavigator's `revealCollection` prop is replaced by `reveal` — **breaking (EntryNavigator props)**
+
+<!-- changeset: entry-navigator-props -->
+
+_First in 0.3.0._
+
+**What changed.** `EntryNavigatorProps` loses `revealCollection` and gains `reveal`, a
+`ContentPanelReveal` (a new export of `canopycms/client`). `EntryNavItem` gains an optional
+`route`. The other additions are all optional: `onChangedOnlyChange`, `changedOnly`,
+`unsavedCount`, `unsavedEntries`, `entryListFailed`, `branchNotAvailable`, `onSwitchBranch`,
+`onFilterEnter`, `onFilterEscape`, `onRowMenuOpen`, `filterRef` and `filterShortcut`. No prop
+became required, and the editor's own use of the navigator needs no change. Only code that
+renders `EntryNavigator` directly is affected.
+
+**To adopt.** Where you pass `revealCollection={{ path, seq }}`, pass
+`reveal={{ kind: 'collection', path, seq }}` instead. `reveal` also takes
+`{ kind: 'entry', path, seq }` for an entry's row and `{ kind: 'changed', seq }` to clear the
+query for the Changed filter. `onRevealed` is unchanged. A `reveal` of kind `collection` or
+`entry` calls `onChangedOnlyChange(false)`, so a controlled `changedOnly` returns to All.
+
+#### A branch you can't open says so everywhere, and locked drafts say why they wait
+
+<!-- changeset: no-access-branch-and-locked-drafts -->
+
+_First in 0.3.0._
+
+**What changed.** On a branch the branch list doesn't include for you ("Not available ·
+read-only" in the bar), once its content fails to load, the content panel and the form pane say
+"You don't have access to this branch, or it no longer exists." and offer Switch branch…, which
+opens Branches; the preview pane says the same. They used to read "No content" and "Select an
+item to start editing." No failed load is toasted on that branch. On any other branch, a failed
+content load keeps its "Could not load content" toast with Retry, now in plain words, with any
+diagnostic behind a "Details" disclosure. On a locked branch, the bar's "N unsaved" tooltip says
+the edits are in this browser and what lets them be saved: "Withdraw to save them." in review or
+approved, for someone who may withdraw; a pointer to "Refresh branch" when details failed to
+load; and, on a protected or archived branch, that they can only be discarded.
+
+#### One search: Mod+P opens the content panel's "Find entries" field, and the quick-open dialog is gone — **behaviour change**
+
+<!-- changeset: one-entry-search -->
+
+_First in 0.3.0._
+
+**What changed.** Finding an entry has one place, the content panel's field, now called "Find
+entries" and showing its shortcut (⌘P on macOS, Ctrl+P elsewhere). Mod+P focuses it from
+anywhere, a form field included; pressed in the field, it selects the text. With the docked panel
+closed, Mod+P opens it only until Enter opens the first match, Escape is pressed in the empty
+field, or focus moves elsewhere; opening a row's menu or pressing Content keeps it open. That
+Enter moves focus to the opened entry's first field. The quick-open dialog, the panel's
+magnifier button and the rail's Open entry button are removed; the Content button's tooltip names
+the shortcut. Each tree row's second line now shows the entry's route after its type, as in
+"Landing page · /contact" (the type alone when the entry has no page), in full on hover or focus
+when it is cut off.
+
+##### Added in 0.3.0
+
+<!-- changeset: one-entry-search-focus-polish -->
+
+**What changed.** The form pane, when it takes focus after Enter opens an entry with no fields, draws the
+editor's focus ring inside its edges, above the form's sticky header. On keyboard focus, a tree
+row's cut-off line shows in full after a short delay, below the row (above it when
+there is no room), never over the row's title, and Escape hides it. The field's shortcut hint takes
+the placeholder's colour, and its clear buttons read "Clear search".
+
+#### The rail drops its Branches button and moves the layout toggle up — **behaviour change**
+
+<!-- changeset: rail-polish -->
+
+_First in 0.3.0._
+
+**What changed.** The activity rail now runs Content, Comments and Media, then a divider, then the
+layout toggle; Settings and Account stay at the bottom. Arrow keys move across the divider without
+stopping on it. Content shows an unsaved dot while its panel is closed, and its name says how many
+entries are unsaved ("Content, 3 unsaved"). The Branches button is gone: the branch pill's Switch
+branch… opens the Branches drawer.
+
 ### 0.2.0
 
 #### Removing a file from the media library hides it, and an admin can restore it — **breaking (assets.delete, AssetStore) / behaviour change; template first**
