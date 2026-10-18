@@ -146,12 +146,6 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
     return autolinkLiteralAt(context, offset)
   }
 
-  /** Whether `link` is plain text that markdown, md or mdx, reads as written. */
-  const writesAsSource = (link: LexicalNode): boolean =>
-    $isElementNode(link) &&
-    link.getChildren().every((child) => $isTextNode(child) && child.getFormat() === 0) &&
-    !/[\\`<>{}|]/.test(link.getTextContent())
-
   const bareUrlImportVisitor: MdastImportVisitor<MdastLink> = {
     priority: 100,
     testNode: (node) => {
@@ -224,10 +218,9 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
    * An auto-link holding code-formatted text is written as its text: lexical's auto-link matchers
    * see text, not formats, so a URL inside a code span becomes a link markdown never meant.
    *
-   * A bare URL (`isBareUrl`) GFM reads a literal at is written as its text, so GFM decides its
-   * extent and href from what was typed, including text typed after it; when that text has
-   * formats or syntax characters, as GFM's link and the punctuation it leaves out. One GFM links
-   * nothing at is written as text if an auto-link, else as the link the editor shows.
+   * A bare URL (`isBareUrl`) is written as GFM reads its text where it stands: GFM's link and the
+   * punctuation GFM leaves out. Where GFM links nothing, an auto-link is written as text and an
+   * imported one as the link the editor shows.
    */
   const linkExportVisitor: MdxEditor.LexicalVisitor = {
     priority: 100,
@@ -248,11 +241,6 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
       if (isBareUrl(lexicalNode)) {
         const text = lexicalNode.getTextContent()
         const here = literalAt(lexicalNode)
-        if (here !== undefined && writesAsSource(lexicalNode)) {
-          // An `html` node is written verbatim: the bare URL as it stands in the source.
-          actions.appendToParent(mdastParent, { type: 'html', value: text })
-          return
-        }
         if (here === undefined && lexicalNode.getType() === 'autolink') {
           actions.visitChildren(lexicalNode, mdastParent)
           return

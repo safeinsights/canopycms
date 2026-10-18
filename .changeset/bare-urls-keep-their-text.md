@@ -14,6 +14,6 @@ row: Unedited bare URLs saved byte for byte
 or an email address) as GFM does. Opening an entry no longer marks it modified, and saving a
 frontmatter change keeps the body byte for byte. Before, every bare URL was rewritten as an
 explicit link, and a sentence's period went into the href (`[www.example.org.](https://www.example.org.)`).
-A bare URL typed or edited in the editor is saved as typed, so the trailing punctuation GFM
-leaves out of a link (`.`, `,`, `:`, `;`, `!`, `?`, `*`, `_`, `~`, an unbalanced `)`) stays out
-of it. A bare URL given a label becomes an explicit link.
+A URL typed in the editor is saved with the trailing punctuation GFM leaves out of a link
+(`.`, `,`, `:`, `;`, `!`, `?`, `*`, `_`, `~`, an unbalanced `)`) outside it. Editing a bare URL's
+text updates its href; a bare URL given a label keeps its link.

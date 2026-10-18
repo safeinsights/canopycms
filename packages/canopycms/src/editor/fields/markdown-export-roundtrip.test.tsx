@@ -251,16 +251,23 @@ it('writes a URL typed in the editor as GFM reads it where it stands', async () 
         .type(root, 'See www.example.org. Or https://example.org/x? Or www.ex_ample.org '),
     'See',
   )
-  expect(exported).toBe('See www.example.org. Or https://example.org/x? Or www.ex_ample.org typed.')
+  expect(exported).toBe(
+    'See [www.example.org](http://www.example.org). Or [https://example.org/x](https://example.org/x)? Or www.ex_ample.org typed.',
+  )
 }, 30000)
 
 it.each([
-  ['www.example.org', 'www.example'.length, 'X', 'www.exampleX.org'],
-  ['https://example.org/docs', 'https://example.org/'.length, 'v2/', 'https://example.org/v2/docs'],
+  ['www.example.org', 'www.example'.length, 'X', '[www.exampleX.org](http://www.exampleX.org)'],
+  [
+    'https://example.org/docs',
+    'https://example.org/'.length,
+    'v2/',
+    '[https://example.org/v2/docs](https://example.org/v2/docs)',
+  ],
   // No longer a URL to GFM: the link the editor shows.
   ['www.example.org', 'www.ex'.length, '_', '[www.ex_ample.org](http://www.example.org)'],
 ])(
-  'saves an edited bare URL %s as its new text reads',
+  'saves an edited bare URL %s with the href its new text gives',
   async (url, at, keys, saved) => {
     const exported = await editOnce(
       `See ${url} today.\n`,
@@ -320,7 +327,7 @@ it('keeps the format of the punctuation an auto-link leaves out', async () => {
   expect(exported).toBe('[**www.example.org**](http://www.example.org)**.** end typed.')
 }, 30000)
 
-it('extends a bare URL by the text typed right after it', async () => {
+it('saves text typed right after a bare URL outside it, as the editor shows', async () => {
   const exported = await editOnce(
     'See https://example.org today.\n',
     (root) => {
@@ -341,7 +348,7 @@ it('extends a bare URL by the text typed right after it', async () => {
     },
     '/docs',
   )
-  expect(exported).toBe('See https://example.org/docs today.')
+  expect(exported).toBe('See [https://example.org](https://example.org)/docs today.')
 }, 30000)
 
 it('keeps a bare URL given a label as the link the editor shows', async () => {
@@ -364,16 +371,16 @@ it('keeps a bare URL given a label as the link the editor shows', async () => {
   expect(exported).toBe('See [Example site](https://example.org) today.')
 }, 30000)
 
-it('keeps a link written as `[url](url)` explicit when its paragraph is edited', async () => {
+it('keeps the href of a link written as `[url](url)` when its text is edited', async () => {
   const exported = await editOnce(
-    'See [https://example.org](https://example.org)/docs today.\n',
+    'See [https://example.org/docs](https://example.org/docs) today.\n',
     async (root) => {
-      const text = root.querySelector('p > span:last-child')?.firstChild
-      if (!text?.textContent) throw new Error('no text after the link')
-      placeCaret(root, text, text.textContent.length)
-      await userEvent.setup().keyboard('Z')
+      const text = root.querySelector('a span')?.firstChild
+      if (!text) throw new Error('no link')
+      placeCaret(root, text, 'https://example.org/'.length)
+      await userEvent.setup().keyboard('v2/')
     },
-    'Z',
+    'v2/',
   )
-  expect(exported).toBe('See [https://example.org](https://example.org)/docs today.Z')
+  expect(exported).toBe('See [https://example.org/v2/docs](https://example.org/docs) today.')
 }, 30000)
