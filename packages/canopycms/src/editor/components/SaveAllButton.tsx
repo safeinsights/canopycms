@@ -6,7 +6,6 @@ import { useReducedMotion } from '@mantine/hooks'
 import { IconAlertTriangle, IconLoader2 } from '@tabler/icons-react'
 import { EDITOR_ACTIONS } from '../copy'
 import type { SaveAllProgress } from '../hooks/save-all'
-import { ENTRY_HEADER_HEIGHT } from './EntryHeader'
 
 export interface SaveAllButtonProps {
   onSaveAll: () => void
@@ -120,10 +119,10 @@ export function SaveAllButton({
           disabled={!reason}
           multiline
           maw={300}
-          // Down past the entry header, so it covers neither the bar nor the entry's Save below,
-          // while the bar's actions keep to one row.
-          position="bottom-end"
-          offset={ENTRY_HEADER_HEIGHT + 8}
+          // Beside its button, in the bar's free middle, so it covers neither the entry's Save
+          // below nor a stacked row of the bar; below when the left edge has no room for it.
+          position="left"
+          middlewares={{ flip: { fallbackPlacements: ['bottom-end'] }, shift: true }}
         >
           <Button
             ref={buttonRef}
