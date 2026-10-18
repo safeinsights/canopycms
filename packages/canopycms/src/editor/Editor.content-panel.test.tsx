@@ -732,6 +732,18 @@ describe('finding an entry with Mod+P', () => {
     expect(screen.getByRole('button', { name: 'Restore' })).toBeTruthy()
   })
 
+  it('keeps where focus returns when pressed again after focus dropped to nothing', async () => {
+    await transientOpen()
+    act(() => filter().blur())
+
+    expect(modP(document.body)).toBe(false)
+    await waitFor(() => expect(document.activeElement).toBe(filter()))
+    fireEvent.keyDown(filter(), { key: 'Escape' })
+
+    await waitFor(() => expect(panel()).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(titleField()))
+  })
+
   it('closes when focus moves out of it, not when focus drops to nothing', async () => {
     await transientOpen()
     act(() => filter().blur())

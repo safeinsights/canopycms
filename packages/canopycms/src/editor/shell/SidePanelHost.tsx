@@ -121,7 +121,8 @@ export function SidePanelHost({
   // State, not a ref: an overlay's section mounts a frame after `opened`, as its slide starts.
   const [panel, setPanel] = useState<HTMLElement | null>(null)
   const focusInside = useRef(false)
-  const focusLeaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  // Drops a leave the watcher below has not reported yet; the panel's own `onFocus` runs it.
+  const cancelFocusLeave = useRef<() => void>(undefined)
   const onFocusLeaveRef = useRef(onFocusLeave)
   useEffect(() => {
     onFocusLeaveRef.current = onFocusLeave
@@ -131,12 +132,36 @@ export function SidePanelHost({
   // text, or on a button in Safari) and then land elsewhere with no blur left to report it.
   useEffect(() => {
     if (!watchFocus || !panel) return
-    const leave = (target: Element) => {
-      clearTimeout(focusLeaveTimer.current)
-      focusLeaveTimer.current = setTimeout(() => onFocusLeaveRef.current?.(target), 0)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let pressing = false
+    let pending: Element | null = null
+    let frame: Element | null = null
+    const report = (target: Element) => {
+      clearTimeout(timer)
+      timer = setTimeout(() => onFocusLeaveRef.current?.(target), 0)
     }
-    // Captured, so it runs before React's own listeners: a portaled descendant taking focus runs
-    // the panel's `onFocus`, which cancels this.
+    // A caller that closes the panel reflows what the press landed on, losing its click, so a
+    // press waits for its release. The 0ms timer then runs after the click.
+    const leave = (target: Element) => {
+      if (pressing) pending = target
+      else report(target)
+    }
+    const release = () => {
+      pressing = false
+      if (pending) report(pending)
+      pending = null
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button === 0) pressing = true
+    }
+    // A press inside a frame never reaches this document, so a frame's leave waits for the pointer
+    // to come back; a release outside the window shows here as a move with no button held.
+    const onPointerMove = (event: PointerEvent) => {
+      if (pressing && event.buttons === 0) release()
+      if (frame) report(frame)
+      frame = null
+    }
+    // Captured, so it runs before React's own `onFocus`, which cancels it for a portaled descendant.
     const onFocusIn = (event: FocusEvent) => {
       if (event.target instanceof Element && !panel.contains(event.target)) leave(event.target)
     }
@@ -144,14 +169,30 @@ export function SidePanelHost({
     const onWindowBlur = () =>
       setTimeout(() => {
         const active = document.activeElement
-        if (active instanceof HTMLIFrameElement && !panel.contains(active)) leave(active)
+        if (active instanceof HTMLIFrameElement && !panel.contains(active)) frame = active
       }, 0)
-    document.addEventListener('focusin', onFocusIn, true)
-    window.addEventListener('blur', onWindowBlur)
+    cancelFocusLeave.current = () => {
+      clearTimeout(timer)
+      pending = null
+      frame = null
+    }
+    const listeners = [
+      [document, 'pointerdown', onPointerDown],
+      [document, 'pointerup', release],
+      [document, 'pointercancel', release],
+      [document, 'pointermove', onPointerMove],
+      [document, 'focusin', onFocusIn],
+      [window, 'blur', onWindowBlur],
+    ] as const
+    for (const [target, type, listener] of listeners) {
+      target.addEventListener(type, listener as EventListener, true)
+    }
     return () => {
-      document.removeEventListener('focusin', onFocusIn, true)
-      window.removeEventListener('blur', onWindowBlur)
-      clearTimeout(focusLeaveTimer.current)
+      for (const [target, type, listener] of listeners) {
+        target.removeEventListener(type, listener as EventListener, true)
+      }
+      clearTimeout(timer)
+      cancelFocusLeave.current = undefined
     }
   }, [watchFocus, panel])
   const closingWithFocus = useRef(false)
@@ -331,7 +372,7 @@ export function SidePanelHost({
             style={{ ...style, ...transitionStyles }}
             onFocus={() => {
               focusInside.current = true
-              clearTimeout(focusLeaveTimer.current)
+              cancelFocusLeave.current?.()
             }}
             onBlur={(event) => {
               if (!event.currentTarget.contains(event.relatedTarget)) focusInside.current = false

@@ -278,8 +278,50 @@ describe('SidePanelHost', () => {
       })
       await settle()
       vi.restoreAllMocks()
+      // The press in the frame may still be held, so it waits for the pointer to come back.
+      expect(onFocusLeave).not.toHaveBeenCalled()
+
+      fireEvent.pointerMove(document.body, { buttons: 0 })
+      await settle()
 
       expect(onFocusLeave).toHaveBeenCalledWith(frame)
+    })
+
+    it('waits for a press that moved focus outside to be released, so its click lands first', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+
+      fireEvent.pointerDown(button('Outside'), { button: 0, buttons: 1 })
+      act(() => button('Outside').focus())
+      await settle()
+      expect(onFocusLeave).not.toHaveBeenCalled()
+
+      const clicked = vi.fn()
+      button('Outside').addEventListener('click', clicked)
+      fireEvent.pointerUp(button('Outside'), { button: 0 })
+      fireEvent.click(button('Outside'))
+      expect(onFocusLeave).not.toHaveBeenCalled()
+      await settle()
+
+      expect(clicked).toHaveBeenCalledTimes(1)
+      expect(onFocusLeave).toHaveBeenCalledWith(button('Outside'))
+    })
+
+    it('counts a press released outside the window as released at its next move', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+      fireEvent.pointerDown(button('Outside'), { button: 0, buttons: 1 })
+      act(() => button('Outside').focus())
+
+      fireEvent.pointerMove(document.body, { buttons: 1 })
+      await settle()
+      expect(onFocusLeave).not.toHaveBeenCalled()
+      fireEvent.pointerMove(document.body, { buttons: 0 })
+      await settle()
+
+      expect(onFocusLeave).toHaveBeenCalledWith(button('Outside'))
     })
   })
 

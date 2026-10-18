@@ -94,6 +94,23 @@ test.describe('Navigator search', () => {
     await expect(editorPage.getFieldInput('title')).toBeFocused()
   })
 
+  test('a held click that closes the Mod+P panel still lands where it was pressed', async ({
+    page,
+  }) => {
+    await modPFromForm()
+    const box = await page.getByTestId('file-dropdown-button').boundingBox()
+    if (!box) throw new Error('the entry menu is not visible')
+
+    // Closing the docked panel moves the entry header; a release before then would hide that.
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.waitForTimeout(150)
+    await page.mouse.up()
+
+    await expect(editorPage.contentNavigator).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+    await expect(page.getByTestId('entry-menu-rename')).toBeVisible({ timeout: SHORT_TIMEOUT })
+  })
+
   test('the Content button keeps the Mod+P panel open for good', async () => {
     await modPFromForm()
 

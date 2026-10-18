@@ -1534,8 +1534,13 @@ const EditorContent: React.FC<EditorProps> = ({
   const [contentPanelFocusRequest, setContentPanelFocusRequest] = useState(0)
   const openNavigator = ({ transient = false } = {}) => {
     // Focus already in the panel isn't an opener: the panel's own close would hand focus back to it.
-    if (!document.getElementById(CONTENT_PANEL_ID)?.contains(document.activeElement)) {
-      navigatorOpenerRef.current = rememberOpener()
+    // Nor is the page, once the panel is shown: focus dropped there from where it came.
+    const opener = rememberOpener()
+    if (
+      !document.getElementById(CONTENT_PANEL_ID)?.contains(document.activeElement) &&
+      (opener || !contentPanelShown)
+    ) {
+      navigatorOpenerRef.current = opener
     }
     // In the commit that opens the overlay, so the form panel is no longer inert when the overlay
     // mounts, then or a frame later as its slide starts, and serves its focus request.
