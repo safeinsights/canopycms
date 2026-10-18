@@ -2375,6 +2375,56 @@ describe('branches-fetch failure recovery', () => {
     expect(consoleSpy).toHaveErrored(/Failed to load branches/)
     consoleSpy.restore()
   })
+
+  it('stops loading once the branch list answers without the open branch, and offers Switch branch…', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+        if (url.endsWith('/api/canopycms/branches')) {
+          return Promise.resolve(okJson({ ok: true, status: 200, data: { branches: [] } }))
+        }
+        if (url.includes('/schema') && !url.includes('/schema/')) {
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: { schema: {}, flatSchema: [], entrySchemas: {} },
+            }),
+          )
+        }
+        if (url.includes('/entries')) {
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: { collections: [], entries: [], pagination: { hasMore: false, limit: 50 } },
+            }),
+          )
+        }
+        return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+      }),
+    )
+
+    renderWithProviders(
+      <Editor
+        entries={[]}
+        collections={[]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-status').textContent).toBe(
+        'Details unavailable · read-only',
+      ),
+    )
+    expect(screen.getByTestId('switch-branch-button')).toBeTruthy()
+  })
 })
 
 describe('preview pane', () => {

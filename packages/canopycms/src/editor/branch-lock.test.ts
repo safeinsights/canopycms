@@ -5,7 +5,6 @@ import type { BranchBarStatusInput } from './branch-lock'
 
 const input = (overrides: Partial<BranchBarStatusInput> = {}): BranchBarStatusInput => ({
   branchStatus: 'editing',
-  pending: false,
   isProtected: false,
   ...overrides,
 })
@@ -37,7 +36,7 @@ describe('branchBarStatus', () => {
     ['an editable branch', {}, undefined, undefined],
     [
       'a fetch in flight',
-      { branchStatus: undefined, branchWriteBlocked: true, pending: true },
+      { branchStatus: undefined, branchWriteBlocked: true, branchPending: true },
       'Loading branch…',
       undefined,
     ],
@@ -93,7 +92,7 @@ describe('branchBarStatus', () => {
   it('checks a pending fetch before unavailable data, which a fetch in flight also is', () => {
     const lock = { branchStatus: undefined, branchWriteBlocked: true }
     expect(branchLockState(lock).branchDataUnavailable).toBe(true)
-    expect(branchBarStatus(input({ ...lock, pending: true })).label).toBe('Loading branch…')
+    expect(branchBarStatus(input({ ...lock, branchPending: true })).label).toBe('Loading branch…')
   })
 
   it('names the read-only base branch, not its review, when both apply', () => {
@@ -123,8 +122,9 @@ describe('branchBarStatus', () => {
   it('marks exactly the locked rows read-only', () => {
     expect(branchBarStatus(input({ isProtected: true })).readOnly).toBe(false)
     expect(
-      branchBarStatus(input({ branchStatus: undefined, branchWriteBlocked: true, pending: true }))
-        .readOnly,
+      branchBarStatus(
+        input({ branchStatus: undefined, branchWriteBlocked: true, branchPending: true }),
+      ).readOnly,
     ).toBe(false)
     expect(
       branchBarStatus(input({ branchStatus: 'archived', branchWriteBlocked: true })).readOnly,
@@ -138,6 +138,16 @@ describe('describeBranchLock', () => {
     expect(describeBranchLock({ branchStatus: 'submitted', branchWriteBlocked: true })).toBe(
       'This branch is in review. Withdraw it to make changes.',
     )
+    expect(describeBranchLock({ branchStatus: undefined, branchWriteBlocked: true })).toMatch(
+      /could not be loaded/,
+    )
+    expect(
+      describeBranchLock({
+        branchStatus: undefined,
+        branchWriteBlocked: true,
+        branchPending: true,
+      }),
+    ).toBe('Wait for the branch details to load.')
     expect(describeBranchLock({ branchStatus: 'editing', branchReadOnly: true })).toBe(
       'The base branch is read-only. Create a branch to make changes.',
     )

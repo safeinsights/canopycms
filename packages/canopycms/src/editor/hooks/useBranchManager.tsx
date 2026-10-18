@@ -351,6 +351,8 @@ export interface UseBranchManagerReturn {
   currentBranch: BranchListItem | undefined
   /** The listing failed and nothing earlier stands in for it. */
   branchesLoadFailed: boolean
+  /** A listing has arrived, so a branch missing from it is not still loading. */
+  branchesLoaded: boolean
   /** Shows a branch the server just created before any listing includes it. */
   addCreatedBranch: (branch: BranchListItem) => void
   /** Confirms first; the dialog returns focus to `returnFocusTo()` when given, else its opener. */
@@ -857,6 +859,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branchSummaries,
     currentBranch,
     branchesLoadFailed: !!branchesError && !branchesData,
+    branchesLoaded: !!branchesData,
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,

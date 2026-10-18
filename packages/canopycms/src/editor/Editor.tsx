@@ -403,6 +403,7 @@ const EditorContent: React.FC<EditorProps> = ({
     branchSummaries,
     currentBranch,
     branchesLoadFailed,
+    branchesLoaded,
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,
@@ -434,9 +435,9 @@ const EditorContent: React.FC<EditorProps> = ({
   const branchContentLocked = currentBranch?.writeBlocked ?? true
 
   const branchLoading = !currentBranch && (branchesLoading || branchSummaries.length === 0)
-  // A row's lock reason on an unanswered branch would be "details could not be loaded", which is
-  // not yet true; once the fetch has failed it is, and the lock says so.
-  const branchRowsPending = branchLoading && !branchesLoadFailed
+  // "Details could not be loaded" is not yet true while the list is unanswered; once the fetch
+  // has failed, or answered without this branch, it is, and the lock says so.
+  const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
 
   // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
   const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
@@ -1956,7 +1957,7 @@ const EditorContent: React.FC<EditorProps> = ({
           loading={entriesInitializing}
           readOnly={branchContentLocked}
           readOnlyReason={
-            branchRowsPending
+            branchPending
               ? undefined
               : describeBranchLock({
                   branchStatus: currentBranch?.status,
@@ -1999,7 +2000,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchReadOnly={currentBranch?.readOnly}
               branchWriteBlocked={branchContentLocked}
               branchLoading={branchLoading}
-              branchPending={branchRowsPending}
+              branchPending={branchPending}
               branchToggleRef={branchToggleRef}
               onEntrySelect={openEntry}
               onBranchReloadData={() => {
@@ -2087,6 +2088,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 branchReadOnly={currentBranch?.readOnly}
                 branchWriteBlocked={branchContentLocked}
                 branchLoading={branchLoading}
+                branchPending={branchPending}
                 onCollectionOpen={revealCollection}
                 navigatorToggleRef={navigatorToggleRef}
                 onFileReload={() => handleReload(() => navigatorToggleRef.current)}

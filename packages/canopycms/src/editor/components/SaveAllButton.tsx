@@ -157,7 +157,7 @@ export function SaveAllButton({
 const STORAGE_FAILED_TEXT = 'Unsaved · not kept on this device'
 const STORAGE_FAILED_HINT = "Save before you leave or reload, or they'll be lost."
 // Visually hidden, as Mantine's VisuallyHidden, for a region that must stay mounted.
-const HIDDEN_STYLE: React.CSSProperties = {
+export const HIDDEN_STYLE: React.CSSProperties = {
   position: 'absolute',
   width: 1,
   height: 1,

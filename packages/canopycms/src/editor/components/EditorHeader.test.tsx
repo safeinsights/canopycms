@@ -571,6 +571,29 @@ describe('EditorHeader - branch status', () => {
     expect(screen.queryByTestId('switch-branch-button')).toBeNull()
   })
 
+  it('announces a lock that arrives, from a status region that was already there', () => {
+    const props: HeadersProps = { ...defaultProps }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    const regions = screen.getAllByRole('status')
+    rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
+    const region = barStatus().closest('[role="status"]')
+    expect(region).not.toBeNull()
+    expect(regions).toContain(region)
+  })
+
+  it('says Save all waits for the branch details while they load, not that they failed', async () => {
+    renderHeader({
+      branchStatus: undefined,
+      branchLoading: true,
+      branchPending: true,
+      branchWriteBlocked: true,
+      modifiedCount: 1,
+    })
+    act(() => screen.getByTestId('save-all-button').focus())
+    expect(await screen.findByText('Wait for the branch details to load.')).toBeTruthy()
+    expect(screen.queryByText(/could not be loaded/)).toBeNull()
+  })
+
   it('says the details are unavailable once the fetch has failed', () => {
     renderHeader({ branchStatus: undefined, branchLoading: true, branchWriteBlocked: true })
     expect(barStatus().textContent).toBe('Details unavailable · read-only')

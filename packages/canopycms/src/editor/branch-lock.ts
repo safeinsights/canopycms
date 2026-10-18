@@ -6,6 +6,8 @@ export interface BranchLockInput {
   /** The protected base branch, read-only in prod. */
   branchReadOnly?: boolean
   branchWriteBlocked?: boolean
+  /** The branch list is still being fetched, so details aren't unavailable yet, only pending. */
+  branchPending?: boolean
 }
 
 /**
@@ -35,7 +37,9 @@ export function describeBranchLock(lock: BranchLockInput): string | undefined {
   const { readOnly, statusLocked, branchDataUnavailable } = branchLockState(lock)
   if (readOnly) return 'The base branch is read-only. Create a branch to make changes.'
   if (branchDataUnavailable)
-    return 'Branch details could not be loaded. Use "Switch branch…" to retry.'
+    return lock.branchPending
+      ? 'Wait for the branch details to load.'
+      : 'Branch details could not be loaded. Use "Switch branch…" to retry.'
   if (!statusLocked) return undefined
   if (lock.branchStatus === 'submitted')
     return 'This branch is in review. Withdraw it to make changes.'
@@ -45,8 +49,6 @@ export function describeBranchLock(lock: BranchLockInput): string | undefined {
 }
 
 export interface BranchBarStatusInput extends BranchLockInput {
-  /** The branch's details are still being fetched; a failed fetch is not pending. */
-  pending: boolean
   /** `isProtected` as the server sent it: with no answer the status names no protection. */
   isProtected: boolean | undefined
 }
@@ -70,7 +72,7 @@ const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
 export function branchBarStatus(input: BranchBarStatusInput): BranchBarStatus {
   const { readOnly, statusLocked, branchDataUnavailable } = branchLockState(input)
   const status = input.branchStatus
-  if (input.pending) return { label: 'Loading branch…', value: 'loading', readOnly: false }
+  if (input.branchPending) return { label: 'Loading branch…', value: 'loading', readOnly: false }
   if (branchDataUnavailable)
     return {
       label: 'Details unavailable · read-only',

@@ -1,5 +1,6 @@
-import React, { useLayoutEffect, useMemo, useRef, type ReactNode, type Ref } from 'react'
+import React, { useRef, type ReactNode, type Ref } from 'react'
 import {
+  Box,
   Button,
   Group,
   Menu,
@@ -21,9 +22,9 @@ import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
 import { BranchPill } from './BranchPill'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
-import { DraftStorageWarning, SaveAllButton } from './SaveAllButton'
+import { DraftStorageWarning, HIDDEN_STYLE, SaveAllButton } from './SaveAllButton'
 import { ENTRY_HEADER_HEIGHT } from './EntryHeader'
-import { useMenuItemFocusReturn } from '../utils/focus-return'
+import { useFocusHandOff, useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
   branchName: string
@@ -76,7 +77,7 @@ export interface EditorHeaderProps {
   branchWriteBlocked?: boolean
   /** No branch details yet: the fail-closed lock defaults are guesses the status doesn't name. */
   branchLoading?: boolean
-  /** The branch's details are still being fetched, as opposed to having failed to load. */
+  /** The branch list is still being fetched, as opposed to having failed or lacking this branch. */
   branchPending?: boolean
 }
 
@@ -112,12 +113,17 @@ export function EditorHeader({
   branchLoading = false,
   branchPending = false,
 }: EditorHeaderProps) {
-  const branchLockReason = describeBranchLock({ branchStatus, branchReadOnly, branchWriteBlocked })
+  const branchLockReason = describeBranchLock({
+    branchStatus,
+    branchReadOnly,
+    branchWriteBlocked,
+    branchPending,
+  })
   const status = branchBarStatus({
     branchStatus,
     branchReadOnly,
     branchWriteBlocked,
-    pending: branchPending,
+    branchPending,
     isProtected: branchServerProtected,
   })
 
@@ -150,30 +156,8 @@ export function EditorHeader({
         : undefined
       : status.action
 
-  // Controls come and go as a submit or withdraw changes the lock; focus on an outgoing one, or in
-  // its open menu, moves to its incoming counterpart, else to the bar's leading control.
-  const outgoing = useRef<number | undefined>(undefined)
-  const incoming = useRef<Array<HTMLButtonElement | undefined>>([])
-  const [wayRef, saveAllRef, workflowRef] = useMemo(() => {
-    const tracked = (rank: number) => {
-      let current: HTMLButtonElement | null = null
-      return (el: HTMLButtonElement | null) => {
-        if (el) incoming.current[rank] = el
-        else if (current && holdsFocus(current)) outgoing.current = rank
-        current = el
-      }
-    }
-    return [tracked(0), tracked(1), tracked(2)]
-  }, [])
-  // After the commit's refs attach; a dev StrictMode detach and re-attach refocuses the button.
-  useLayoutEffect(() => {
-    if (outgoing.current !== undefined)
-      (incoming.current[outgoing.current] ?? incoming.current.find(Boolean))?.focus({
-        preventScroll: true,
-      })
-    outgoing.current = undefined
-    incoming.current = []
-  })
+  // Controls come and go as a submit or withdraw changes the lock, and focus follows them.
+  const [wayRef, saveAllRef, workflowRef] = useFocusHandOff(3)
   const workflowEl = useRef<HTMLButtonElement | null>(null)
   const workflowControl = {
     onSubmit,
@@ -199,13 +183,13 @@ export function EditorHeader({
             onEntrySelect={onEntrySelect}
             pillRef={branchToggleRef}
           />
-          {branchName && <BranchStatusLabel status={status} />}
+          <BranchStatusLabel status={branchName ? status : { value: 'none', readOnly: false }} />
         </Group>
       }
       trailing={
         <>
           <DraftStorageWarning shown={draftStorageFailed && modifiedCount > 0} />
-          {/* Below `md` a locked branch has no Save all: it could not apply there. */}
+          {/* A lock can end, so wide Save all stays and says why; below `md` space wins. */}
           {(!narrow || editable) && (
             <SaveAllButton
               // Its reserved width follows this branch's counts, not the session's largest.
@@ -254,20 +238,18 @@ export function EditorHeader({
 
 /** The branch's lasting state, beside the pill; an editable branch has none. */
 function BranchStatusLabel({ status }: { status: BranchBarStatus }) {
-  if (!status.label) return null
   return (
-    <Group
-      gap={4}
-      wrap="nowrap"
-      style={{ flexShrink: 0 }}
-      data-testid="branch-status"
-      data-status={status.value}
-    >
-      {status.readOnly && <IconLock size={14} aria-hidden="true" />}
-      <Text span size="sm">
-        {status.label}
-      </Text>
-    </Group>
+    // Always mounted, so a lock that arrives is announced.
+    <Box role="status" style={status.label ? { flexShrink: 0 } : HIDDEN_STYLE}>
+      {status.label && (
+        <Group gap={4} wrap="nowrap" data-testid="branch-status" data-status={status.value}>
+          {status.readOnly && <IconLock size={14} aria-hidden="true" />}
+          <Text span size="sm">
+            {status.label}
+          </Text>
+        </Group>
+      )}
+    </Box>
   )
 }
 
@@ -302,13 +284,6 @@ function BranchWayButton({
       {caret}
     </Button.Group>
   )
-}
-
-/** `el` has focus, or the open menu it controls (`aria-controls`) does. */
-function holdsFocus(el: HTMLElement): boolean {
-  const active = document.activeElement
-  const menuId = el.getAttribute('aria-controls')
-  return active === el || (!!menuId && !!document.getElementById(menuId)?.contains(active))
 }
 
 /** The branch's review action, as both the wide button and the narrow caret offer it. */
