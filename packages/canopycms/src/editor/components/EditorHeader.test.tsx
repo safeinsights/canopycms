@@ -991,8 +991,9 @@ describe('EditorHeader - Save all', () => {
     const labels = [...saveAll().querySelectorAll('[style*="grid-area"]')]
     expect(labels.map((label) => label.textContent)).toEqual([
       'Save all',
+      '1 of 1…',
       'Save all (1)',
-      'Saving 1 of 1…',
+      '1 of 1…',
     ])
     expect(labels.filter((label) => label.getAttribute('aria-hidden') === null)).toHaveLength(1)
   })

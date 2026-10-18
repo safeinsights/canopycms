@@ -10,7 +10,7 @@ import { describeBranchLock } from './BranchLockBanner'
 import { EntryBreadcrumb } from './EntryBreadcrumb'
 import { EntrySaveButton } from './EntrySaveButton'
 
-const ENTRY_HEADER_HEIGHT = 48
+export const ENTRY_HEADER_HEIGHT = 48
 
 export interface EntryHeaderProps {
   currentEntry: EditorEntry | undefined

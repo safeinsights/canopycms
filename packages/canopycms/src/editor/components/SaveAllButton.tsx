@@ -1,11 +1,12 @@
 'use client'
 
-import React from 'react'
+import React, { useState } from 'react'
 import { Box, Button, Loader, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useReducedMotion } from '@mantine/hooks'
-import { IconAlertTriangle } from '@tabler/icons-react'
+import { IconAlertTriangle, IconLoader2 } from '@tabler/icons-react'
 import { EDITOR_ACTIONS } from '../copy'
 import type { SaveAllProgress } from '../hooks/save-all'
+import { ENTRY_HEADER_HEIGHT } from './EntryHeader'
 
 export interface SaveAllButtonProps {
   onSaveAll: () => void
@@ -27,7 +28,7 @@ export interface SaveAllButtonProps {
  */
 function SaveAllLabels({ shown, labels }: { shown: number; labels: React.ReactNode[] }) {
   return (
-    <Box component="span" style={{ display: 'inline-grid' }}>
+    <Box component="span" style={{ display: 'inline-grid', fontVariantNumeric: 'tabular-nums' }}>
       {labels.map((label, index) => (
         <Box
           key={index}
@@ -72,18 +73,29 @@ export function SaveAllButton({
             : undefined))
   // Blocked, it stays focusable (`aria-disabled`, not `disabled`), so its reason opens on focus.
   const blocked = !!reason || !!saveAllProgress
-  // The widest each label gets for this many entries, held in place while another shows.
-  const total = saveAllProgress?.total ?? Math.max(unsavedCount, 1)
-  const progressText = (done: number) => `Saving ${Math.min(done + 1, total)} of ${total}…`
-  const labels = [
-    unsavedCount > 0 ? `${EDITOR_ACTIONS.saveAll} (${unsavedCount})` : EDITOR_ACTIONS.saveAll,
-    `${EDITOR_ACTIONS.saveAll} (${Math.max(unsavedCount, 1)})`,
+  // The largest count yet sizes every label, so the width only ever grows, by a digit.
+  const count = Math.max(unsavedCount, saveAllProgress?.total ?? 0, 1)
+  const [widest, setWidest] = useState(count)
+  if (count > widest) setWidest(count)
+  const progress = (done: number, total: number) => (
     <>
       <Box component="span" display="inline-flex" w={14}>
-        {saveAllProgress && !reducedMotion && <Loader size={14} color="currentColor" />}
+        {saveAllProgress &&
+          (reducedMotion ? (
+            <IconLoader2 size={14} aria-hidden="true" />
+          ) : (
+            <Loader size={14} color="currentColor" />
+          ))}
       </Box>
-      {progressText(saveAllProgress ? saveAllProgress.done : total)}
-    </>,
+      {`${Math.min(done + 1, total)} of ${total}…`}
+    </>
+  )
+  // Progress reads "2 of 3…" beside the spinner, no wider than the count it replaces.
+  const labels = [
+    unsavedCount > 0 ? `${EDITOR_ACTIONS.saveAll} (${unsavedCount})` : EDITOR_ACTIONS.saveAll,
+    saveAllProgress ? progress(saveAllProgress.done, saveAllProgress.total) : progress(0, 1),
+    `${EDITOR_ACTIONS.saveAll} (${widest})`,
+    progress(widest, widest),
   ]
 
   return (
@@ -98,8 +110,9 @@ export function SaveAllButton({
         disabled={!reason}
         multiline
         maw={300}
-        // Down, beside the entry header's Save, whose reasons also open down.
+        // Down past the entry header, so it covers neither the bar nor the entry's Save below.
         position="bottom-end"
+        offset={ENTRY_HEADER_HEIGHT + 8}
       >
         <Button
           data-testid="save-all-button"
@@ -113,8 +126,13 @@ export function SaveAllButton({
           // The progress label stays readable: disabled styling takes it under 4.5:1.
           data-disabled={reason ? true : undefined}
           aria-disabled={blocked ? true : undefined}
+          aria-label={
+            saveAllProgress
+              ? `Saving ${Math.min(saveAllProgress.done + 1, saveAllProgress.total)} of ${saveAllProgress.total}…`
+              : undefined
+          }
         >
-          <SaveAllLabels shown={saveAllProgress ? 2 : 0} labels={labels} />
+          <SaveAllLabels shown={saveAllProgress ? 1 : 0} labels={labels} />
         </Button>
       </Tooltip>
     </>

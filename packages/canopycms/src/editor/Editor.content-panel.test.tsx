@@ -841,6 +841,8 @@ describe('entry header while loading', () => {
 
     await act(async () => release())
     await waitFor(() => expect(screen.queryByTestId('entry-crumb-loading')).toBeNull())
+    // The entry the editor opens, or "No entry open": a crumb either way, never a blank.
+    expect(await screen.findByTestId('file-dropdown-button')).toBeTruthy()
   })
 })
 
