@@ -147,17 +147,24 @@ test.describe('Navigator search', () => {
       probe.style.color = 'var(--canopy-focus-ring)'
       const theme = getComputedStyle(probe).color
       probe.remove()
-      const style = getComputedStyle(pane)
-      return {
-        focusVisible: pane.matches(':focus-visible'),
+      const ringOf = (style: CSSStyleDeclaration) => ({
         style: style.outlineStyle,
         color: style.outlineColor,
-        theme,
         offset: style.outlineOffset,
+      })
+      // Repeated over the pane by its non-scrolling panel, above the form's sticky header.
+      const over = getComputedStyle(pane.parentElement as HTMLElement, '::after')
+      return {
+        focusVisible: pane.matches(':focus-visible'),
+        pane: ringOf(getComputedStyle(pane)),
+        over: { ...ringOf(over), position: over.position, zIndex: over.zIndex },
+        theme,
       }
     })
     expect(ring.focusVisible).toBe(true)
-    expect(ring).toMatchObject({ style: 'solid', color: ring.theme, offset: '-2px' })
+    const theme = { style: 'solid', color: ring.theme, offset: '-2px' }
+    expect(ring.pane).toMatchObject(theme)
+    expect(ring.over).toMatchObject({ ...theme, position: 'absolute', zIndex: '1' })
   })
 
   test.describe('in a window too narrow to dock the panel', () => {

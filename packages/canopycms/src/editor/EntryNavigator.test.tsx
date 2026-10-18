@@ -1002,6 +1002,58 @@ describe('EntryNavigator', () => {
       fireEvent.focusOut(item)
       await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
     })
+
+    it('shows no focus tooltip for a detail line that fits', async () => {
+      renderEntryNavigator({
+        items: [
+          {
+            path: unsafeAsLogicalPath('content/pages/contact'),
+            label: 'Contact',
+            status: 'Landing page',
+            route: '/contact',
+          },
+        ],
+      })
+      const item = screen
+        .getByTestId('entry-nav-item-contact')
+        .closest<HTMLElement>('[role="treeitem"]')!
+
+      fireEvent.focusIn(item)
+      await new Promise((resolve) => setTimeout(resolve, 600))
+
+      expect(screen.queryByRole('tooltip')).toBeNull()
+    })
+
+    it("hides the focused row's tooltip on Escape, taking the key, until focus next arrives", async () => {
+      renderEntryNavigator({
+        items: [
+          {
+            path: unsafeAsLogicalPath('content/pages/contact'),
+            label: 'Contact',
+            status: 'Landing page',
+            route: '/a/long/route/to/contact',
+          },
+        ],
+      })
+      const row = screen.getByTestId('entry-nav-item-contact')
+      const text = detailLine(row)!.querySelector('p')!
+      Object.defineProperty(text, 'scrollWidth', { configurable: true, value: 200 })
+      Object.defineProperty(text, 'clientWidth', { configurable: true, value: 100 })
+      const item = row.closest<HTMLElement>('[role="treeitem"]')!
+      fireEvent.focusIn(item)
+      await screen.findByRole('tooltip')
+
+      expect(fireEvent.keyDown(item, { key: 'Escape' })).toBe(false)
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
+      // With nothing left to hide, Escape is the panel's again.
+      expect(fireEvent.keyDown(item, { key: 'Escape' })).toBe(true)
+
+      fireEvent.focusOut(item)
+      fireEvent.focusIn(item)
+      expect((await screen.findByRole('tooltip')).textContent).toBe(
+        'Landing page · /a/long/route/to/contact',
+      )
+    })
   })
 
   describe('row menus', () => {

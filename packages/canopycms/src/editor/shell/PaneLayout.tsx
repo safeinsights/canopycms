@@ -27,7 +27,8 @@ const ASIDE_WIDTH = '--canopy-form-aside-width'
 
 // The pointer target is the group's `resizeTargetMinimumSize`, wider than the bar it draws. Lifted
 // over the panes' positioned contents, which would otherwise paint over its focus outline. The form
-// pane's ring is inset, since the window's edges clip it outside.
+// pane's ring is inset, since the window's edges clip it outside, and repeated on its non-scrolling
+// panel above the pane, whose sticky header would cover it.
 const PANE_STYLES = `
 .canopy-pane-separator {
   position: relative;
@@ -42,9 +43,17 @@ const PANE_STYLES = `
 .canopy-pane-separator:focus-visible {
   outline: 2px solid var(--canopy-focus-ring);
 }
-#${FORM_PANE_ID}:focus-visible {
+#${FORM_PANE_ID}:focus-visible,
+.canopy-form-panel:has(> #${FORM_PANE_ID}:focus-visible)::after {
   outline: 2px solid var(--canopy-focus-ring);
   outline-offset: -2px;
+}
+.canopy-form-panel:has(> #${FORM_PANE_ID}:focus-visible)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
 }
 `
 
@@ -246,6 +255,7 @@ export function PaneLayout({
         <Panel id={FORM} minSize={FORM_MIN_PX}>
           <Box
             ref={formPanelRef}
+            className="canopy-form-panel"
             pos="relative"
             h="100%"
             // `formOverlay` stacks within this pane, so a maximized preview always covers it.
