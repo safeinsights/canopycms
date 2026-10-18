@@ -129,7 +129,7 @@ export const Narrow: Story = {
   args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
 }
 
-/** On a phone unsaved changes add only the entry's dot and the pill's count. */
+/** On a phone unsaved changes add the entry's dot and the counts on the pill and Save all. */
 export const NarrowUnsaved: Story = {
   parameters: phone,
 }

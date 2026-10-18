@@ -1994,8 +1994,8 @@ const EditorContent: React.FC<EditorProps> = ({
               branchCreatedBy={currentBranch?.createdBy}
               branchAccess={currentBranch?.access}
               // Fail-closed for the same reason branchContentLocked above is:
-              // isProtected/writeBlocked gate real actions in EditorHeader (hiding
-              // Submit, disabling Save), so a missing wire value must read as
+              // isProtected/writeBlocked gate real actions in EditorHeader and EntryHeader
+              // (hiding Submit, disabling Save and Save all), so a missing wire value must read as
               // "protected"/"blocked", not "unprotected"/"unblocked".
               // branchWriteBlocked reuses branchContentLocked itself rather than
               // re-deriving `?? true` a second time here, so there is exactly one
@@ -2084,7 +2084,7 @@ const EditorContent: React.FC<EditorProps> = ({
             <Box h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
               <EntryHeader
                 currentEntry={currentEntry}
-                // As the form's "Setting up…" and "Loading content…" messages.
+                // True exactly while the form below shows "Setting up…" or "Loading content…".
                 entryLoading={!currentEntry && ((!branchNameState && busy) || entriesInitializing)}
                 branchName={branchNameState}
                 busy={busy}

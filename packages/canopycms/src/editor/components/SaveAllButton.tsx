@@ -73,7 +73,7 @@ export function SaveAllButton({
             : undefined))
   // Blocked, it stays focusable (`aria-disabled`, not `disabled`), so its reason opens on focus.
   const blocked = !!reason || !!saveAllProgress
-  // The largest count yet sizes every label, so the width only ever grows, by a digit.
+  // The branch's largest count yet sizes every label, so the width grows only as a digit is added.
   const count = Math.max(unsavedCount, saveAllProgress?.total ?? 0, 1)
   const [widest, setWidest] = useState(count)
   if (count > widest) setWidest(count)
