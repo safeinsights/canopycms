@@ -476,6 +476,21 @@ describe('SidePanelHost', () => {
       expect(props.onClose).not.toHaveBeenCalled()
     })
 
+    it.each([
+      ['composing', { isComposing: true }],
+      ['reported as keyCode 229', { keyCode: 229 }],
+    ])('leaves an Escape that ends an IME composition (%s) to the composition', (_label, init) => {
+      for (const mode of ['docked', 'overlay'] as const) {
+        const { props, unmount } = renderPanel({ mode, closeOnEscape: true })
+        fireEvent.keyDown(screen.getByRole('button', { name: 'Inside' }), {
+          key: 'Escape',
+          ...init,
+        })
+        expect(props.onClose).not.toHaveBeenCalled()
+        unmount()
+      }
+    })
+
     it('is left to a handler that already took the key', () => {
       const { props } = renderPanel({
         mode: 'docked',

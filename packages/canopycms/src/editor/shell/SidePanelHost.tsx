@@ -268,12 +268,15 @@ export function SidePanelHost({
   }, [opened, returnFocusTo])
 
   // On the window, not the panel: a dialog portalled from the panel would bubble its Escape here
-  // through React, so only a key from inside the panel's own DOM closes it.
+  // through React, so only a key from inside the panel's own DOM closes it. An Escape that ends
+  // an IME composition only cancels the composition; Safari reports it as keyCode 229.
   useWindowEvent('keydown', (event) => {
     if (
       opened &&
       (mode === 'overlay' || closeOnEscape) &&
       event.key === 'Escape' &&
+      !event.isComposing &&
+      event.keyCode !== 229 &&
       !event.defaultPrevented &&
       event.target instanceof Node &&
       panel?.contains(event.target)

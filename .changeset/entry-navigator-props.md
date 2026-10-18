@@ -22,4 +22,4 @@ renders `EntryNavigator` directly is affected.
 `reveal={{ kind: 'collection', path, seq }}` instead. `reveal` also takes
 `{ kind: 'entry', path, seq }` for an entry's row and `{ kind: 'changed', seq }` to clear the
 query for the Changed filter. `onRevealed` is unchanged. A `reveal` of kind `collection` or
-`entry` switches `changedOnly` back to All.
+`entry` calls `onChangedOnlyChange(false)`, so a controlled `changedOnly` returns to All.
