@@ -654,6 +654,19 @@ describe('maximized preview', () => {
   }
   const formPanel = () => screen.getByTestId('form-pane').parentElement as HTMLElement
 
+  it('leaves the entry header and its Save out of the maximized panes, in reach', async () => {
+    await setup(true)
+    await maximize()
+    const header = screen.getByRole('region', { name: 'Entry' })
+    const preview = screen.getByTestId('preview-pane')
+    expect(header.contains(screen.getByTestId('save-button'))).toBe(true)
+    // In `main`, beside the box holding the panes, where the preview's absolute inset can't reach.
+    expect(header.closest('[data-canopy-region="main"]')).not.toBeNull()
+    expect(header.nextElementSibling?.contains(preview)).toBe(true)
+    expect(header.contains(preview)).toBe(false)
+    expect(header.closest('[inert]')).toBeNull()
+  })
+
   it('blocks the layout button while maximized, and frees it on restore', async () => {
     await setup(true)
     expect(layoutButton().getAttribute('aria-disabled')).toBeNull()
@@ -761,8 +774,7 @@ describe('maximized preview', () => {
     })
     await maximize()
 
-    fireEvent.click(screen.getByTestId('save-options-button'))
-    fireEvent.click(await screen.findByTestId('save-all-menu-item'))
+    fireEvent.click(screen.getByTestId('save-all-button'))
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull())
     expect(formPanel().hasAttribute('inert')).toBe(false)
   })
@@ -812,6 +824,28 @@ describe('entry menu', () => {
   })
 })
 
+describe('entry header while loading', () => {
+  it('shows a placeholder crumb, not "No entry open", until the entries arrive', async () => {
+    stubWindowWidth(true)
+    stubApi()
+    const answered = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/entries')) await held
+      return answered(input, init)
+    })
+    renderEditor({ entries: [] })
+    expect(await screen.findByTestId('entry-crumb-loading')).toBeTruthy()
+    expect(screen.queryByText('No entry open')).toBeNull()
+
+    await act(async () => release())
+    await waitFor(() => expect(screen.queryByTestId('entry-crumb-loading')).toBeNull())
+    // The entry the editor opens, or "No entry open": a crumb either way, never a blank.
+    expect(await screen.findByTestId('file-dropdown-button')).toBeTruthy()
+  })
+})
+
 describe('saving', () => {
   it('says "Saving…" on the entry being saved only', async () => {
     await setup(true)
@@ -831,6 +865,31 @@ describe('saving', () => {
     fireEvent.click(await row('second'))
     await waitFor(() => expect(document.title).toBe('second · Test Editor'))
     expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull()
+    await act(async () => release())
+  })
+
+  it("holds Save all while another entry's save is in flight", async () => {
+    await setup(true)
+    const answered = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (init?.method === 'PUT') await held
+      return answered(input, init)
+    })
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Title/ }), {
+      target: { value: 'Edited' },
+    })
+    fireEvent.click(screen.getByTestId('save-button'))
+    await screen.findByRole('button', { name: 'Saving…' })
+
+    fireEvent.click(await row('second'))
+    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+    const saveAll = screen.getByTestId('save-all-button')
+    expect(saveAll.getAttribute('aria-disabled')).toBe('true')
+    act(() => saveAll.focus())
+    const reason = await screen.findByText('Wait for the save to finish.')
+    expect(saveAll.getAttribute('aria-describedby')).toBe(reason.closest('[role="tooltip"]')?.id)
     await act(async () => release())
   })
 
@@ -862,11 +921,13 @@ describe('saving', () => {
     renderEditor({ entries: [] })
     await screen.findByText('Could not load content')
 
-    fireEvent.click(screen.getByTestId('save-options-button'))
-    const item = await screen.findByTestId('save-all-menu-item')
-    expect(item.textContent).toContain('Save all (1)')
-    expect(item.getAttribute('aria-disabled')).toBe('true')
-    expect(item.textContent).toContain('Choose "Refresh branch" in the branch menu to try again.')
+    const saveAll = screen.getByTestId('save-all-button')
+    expect(saveAll).toBe(screen.getByRole('button', { name: 'Save all (1)' }))
+    expect(saveAll.getAttribute('aria-disabled')).toBe('true')
+    act(() => saveAll.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toContain(
+      'Choose "Refresh branch" in the branch menu to try again.',
+    )
     expect(consoleSpy).toHaveErrored(/500/)
   })
 })

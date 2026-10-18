@@ -642,14 +642,19 @@ export class EditorPage {
     await this.saveButton.click()
   }
 
-  /**
-   * Run "Save all" from the caret beside Save.
-   */
+  /** Run "Save all" from the top bar. */
   async saveAll(): Promise<void> {
-    await this.page.getByTestId('save-options-button').click()
-    const item = this.page.getByTestId('save-all-menu-item')
-    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-    await item.click()
+    await this.saveAllButton().click()
+  }
+
+  /** The top bar's "Save all", labelled with the unsaved count. */
+  saveAllButton(): Locator {
+    return this.page.getByTestId('save-all-button')
+  }
+
+  /** The open entry's header over the panes: breadcrumb, entry menu, chip and Save. */
+  entryHeader(): Locator {
+    return this.page.getByRole('region', { name: 'Entry' })
   }
 
   /** The toast listing what a Save all could not save. */
