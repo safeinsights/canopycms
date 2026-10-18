@@ -796,12 +796,14 @@ describe('finding an entry with Mod+P', () => {
 
   it('pressed inside the rail-opened overlay, keeps the Content button as where focus returns', async () => {
     await setup(false)
+    const collapse = screen.getByRole('button', { name: 'Collapse all folders' })
+    act(() => collapse.focus())
+
+    modP(collapse)
     await waitFor(() => expect(document.activeElement).toBe(filter()))
+    escapeFromPanel()
 
-    modP(filter())
-    openWithEnter('second')
-
-    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+    await waitFor(() => expect(panel()).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(toggle()))
   })
 
