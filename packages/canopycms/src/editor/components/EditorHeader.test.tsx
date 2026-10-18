@@ -250,6 +250,81 @@ describe('EditorHeader - branch pill unsaved count', () => {
     )
   })
 
+  describe('on a locked branch, says why the unsaved edits wait and what lets them be saved', () => {
+    const creator = { userContext: { userId: 'u1' }, branchCreatedBy: 'u1' }
+    const locks: Array<[string, Partial<HeadersProps>, string]> = [
+      [
+        'in review',
+        { branchStatus: 'submitted', branchWriteBlocked: true, ...creator },
+        'Withdraw to save them.',
+      ],
+      [
+        'approved',
+        { branchStatus: 'approved', branchWriteBlocked: true, ...creator },
+        'Withdraw to save them.',
+      ],
+      [
+        'in review, for someone who may not withdraw',
+        { branchStatus: 'submitted', branchWriteBlocked: true, userContext: { userId: 'u2' } },
+        'They can be saved once the branch is editable again.',
+      ],
+      [
+        'protected and read-only',
+        { branchReadOnly: true, branchWriteBlocked: true, branchIsProtected: true },
+        "This branch won't become editable, so they can only be discarded.",
+      ],
+      [
+        'archived',
+        { branchStatus: 'archived', branchWriteBlocked: true },
+        "This branch won't become editable, so they can only be discarded.",
+      ],
+      [
+        'of an unknown status',
+        { branchStatus: 'frozen' as BranchStatus, branchWriteBlocked: true },
+        'They can be saved once the branch is editable again.',
+      ],
+      [
+        'not available',
+        { branchStatus: undefined, branchWriteBlocked: true, branchMissing: true },
+        "They can't be saved unless this branch is available to you.",
+      ],
+      [
+        'with details unavailable',
+        { branchStatus: undefined, branchWriteBlocked: true },
+        'Use "Refresh branch" to load its details.',
+      ],
+    ]
+    it.each(locks)('%s', async (_name, lock, wayForward) => {
+      const onShowUnsaved = vi.fn()
+      for (const [count, edits] of [
+        [1, '1 unsaved edit in this browser.'],
+        [12, '12 unsaved edits in this browser.'],
+      ] as const) {
+        renderHeader({ ...lock, modifiedCount: count, onShowUnsaved })
+        const button = screen.getByTestId('branch-unsaved-count')
+        act(() => button.focus())
+        expect((await screen.findByRole('tooltip')).textContent).toBe(`${edits} ${wayForward}`)
+        await userEvent.click(button)
+        cleanup()
+      }
+      expect(onShowUnsaved).toHaveBeenCalledTimes(2)
+    })
+
+    it('keeps the editable wording while the branch is loading or protected but writable', async () => {
+      for (const lock of [
+        { branchStatus: undefined, branchWriteBlocked: true, branchPending: true },
+        { branchServerProtected: true, branchIsProtected: true },
+      ]) {
+        renderHeader({ ...lock, modifiedCount: 3 })
+        act(() => screen.getByTestId('branch-unsaved-count').focus())
+        expect((await screen.findByRole('tooltip')).textContent).toBe(
+          'Show unsaved entries in the content panel',
+        )
+        cleanup()
+      }
+    })
+  })
+
   it('draws the count and the breadcrumb dot as the same mark as the tree', () => {
     renderHeader({ modifiedCount: 1, hasUnsavedChanges: true })
     const reference = within(

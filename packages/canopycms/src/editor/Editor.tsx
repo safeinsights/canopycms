@@ -7,6 +7,7 @@ import {
   Alert,
   Box,
   Button,
+  Center,
   Menu,
   Paper,
   Skeleton,
@@ -84,7 +85,7 @@ import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
-import { describeBranchLock } from './branch-lock'
+import { branchBarStatus, describeBranchLock } from './branch-lock'
 import { EditorHeader, EditorRail, EntryHeader } from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
@@ -95,6 +96,7 @@ import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { ReferencedByList, referencedDeleteMessage } from './components/ReferencedByList'
 import type { EntryReferencedBy } from '../api/entries'
 import { NoEditPermissionNotice } from './components/NoEditPermissionNotice'
+import { BranchNotAvailableNotice } from './components/BranchNotAvailableNotice'
 import { ReadOnlyDraftNotice } from './components/ReadOnlyDraftNotice'
 import { UnavailableEntryNotice } from './components/UnavailableEntryNotice'
 import { unavailableSchemaRefs } from './unavailable-entry-type'
@@ -437,6 +439,17 @@ const EditorContent: React.FC<EditorProps> = ({
   // without this branch, the lock says which.
   const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
   const branchMissing = !currentBranch && branchesLoaded
+  // The bar's lock-state row, with the inputs EditorHeader gets, for the states that must agree.
+  const branchBarState = branchBarStatus({
+    branchStatus: currentBranch?.status,
+    branchReadOnly: currentBranch?.readOnly,
+    branchWriteBlocked: branchContentLocked,
+    branchPending,
+    branchMissing,
+    isProtected: currentBranch?.isProtected,
+  }).value
+  // With no branch named, the bar shows no row, so neither do the empty states.
+  const branchNotAvailable = !!branchNameState && branchBarState === 'not-available'
 
   // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
   const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
@@ -488,6 +501,7 @@ const EditorContent: React.FC<EditorProps> = ({
     resolvePreviewRoute: (entry) =>
       buildPreviewRoute(entry, { previewBaseByCollection, contentRoot }),
     setBusy: setEntriesLoading,
+    branchBarState,
     switchBranch: (branch) => switchBranchRef.current(branch),
     // To the entry menu, which names the entry opened; a dialog keeps focus.
     onHistoryRestore: () =>
@@ -497,6 +511,10 @@ const EditorContent: React.FC<EditorProps> = ({
         }
       }),
   })
+  // The "Not available" empty states wait for the load to answer with nothing: content that does
+  // load, for a branch the list lags in granting, shows as usual.
+  const branchShowsNotAvailable =
+    branchNotAvailable && !entriesInitializing && entriesState.length === 0
 
   // The content overlay and a maximized preview hide the form; `navigatorOpen` is only the
   // overlay's. Anything that focuses something in the form reveals it first. Opening an entry
@@ -1873,15 +1891,20 @@ const EditorContent: React.FC<EditorProps> = ({
           justifyContent: 'center',
         }}
       >
-        <Text size="sm" c="dimmed">
-          {!branchNameState && busy
-            ? 'Setting up your branch workspace…'
-            : entriesInitializing
-              ? 'Loading content…'
-              : currentEntry && !currentEntry.previewSrc
-                ? 'No preview for this entry.'
-                : 'Select an item to start editing.'}
-        </Text>
+        {/* The form pane beside it offers Switch branch…, so this one only says why. */}
+        {!currentEntry && branchShowsNotAvailable ? (
+          <BranchNotAvailableNotice align="center" data-testid="preview-branch-not-available" />
+        ) : (
+          <Text size="sm" c="dimmed">
+            {!branchNameState && busy
+              ? 'Setting up your branch workspace…'
+              : entriesInitializing
+                ? 'Loading content…'
+                : currentEntry && !currentEntry.previewSrc
+                  ? 'No preview for this entry.'
+                  : 'Select an item to start editing.'}
+          </Text>
+        )}
       </Paper>
     )
 
@@ -2055,6 +2078,8 @@ const EditorContent: React.FC<EditorProps> = ({
           unsavedCount={modifiedCount}
           unsavedEntries={editedFiles}
           entryListFailed={entriesLoadFailed && entriesState.length === 0}
+          branchNotAvailable={branchShowsNotAvailable}
+          onSwitchBranch={() => openBranchManager()}
           filterRef={entryFilterRef}
           filterShortcut={findShortcut}
           onFilterEnter={
@@ -2238,7 +2263,15 @@ const EditorContent: React.FC<EditorProps> = ({
                       : defaultPreview
                   }
                   form={
-                    !currentEntry ? (
+                    !currentEntry && branchShowsNotAvailable ? (
+                      <Center h="100%">
+                        <BranchNotAvailableNotice
+                          align="center"
+                          onSwitchBranch={() => openBranchManager()}
+                          data-testid="form-branch-not-available"
+                        />
+                      </Center>
+                    ) : !currentEntry ? (
                       <CenteredMessage>
                         {!branchNameState && busy
                           ? 'Setting up your branch workspace…'

@@ -181,7 +181,16 @@ export function EditorHeader({
             reason={branchLockReason}
           />
           {modifiedCount > 0 && (
-            <Tooltip label="Show unsaved entries in the content panel" events={TOOLTIP_EVENTS}>
+            <Tooltip
+              label={unsavedTooltip(
+                branchName ? status : undefined,
+                modifiedCount,
+                !!workflow?.permitted,
+              )}
+              events={TOOLTIP_EVENTS}
+              multiline
+              maw={320}
+            >
               <Button
                 variant="subtle"
                 color="gray"
@@ -254,6 +263,26 @@ export function EditorHeader({
 }
 
 const TOOLTIP_EVENTS = { hover: true, focus: true, touch: false }
+
+/**
+ * On a locked branch, what would let its drafts be saved. A new branch starts without them, so a
+ * branch never editable again leaves only discarding, as `ReadOnlyDraftNotice` says.
+ */
+function unsavedTooltip(
+  status: BranchBarStatus | undefined,
+  count: number,
+  mayWithdraw: boolean,
+): string {
+  if (!status?.readOnly) return 'Show unsaved entries in the content panel'
+  const edits = `${count} unsaved ${count === 1 ? 'edit' : 'edits'} in this browser.`
+  if (status.action === 'workflow' && mayWithdraw) return `${edits} Withdraw to save them.`
+  if (status.value === 'unavailable') return `${edits} Use "Refresh branch" to load its details.`
+  if (status.value === 'not-available')
+    return `${edits} They can't be saved unless this branch is available to you.`
+  if (status.value === 'protected' || status.value === 'archived')
+    return `${edits} This branch won't become editable, so they can only be discarded.`
+  return `${edits} They can be saved once the branch is editable again.`
+}
 
 /** The branch's state beside the pill, heard in words with its reason, but not while it loads. */
 function BranchStatusLabel({ status, reason }: { status: BranchBarStatus; reason?: string }) {
