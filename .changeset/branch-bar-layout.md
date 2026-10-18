@@ -7,7 +7,7 @@
 <!-- migration
 area: Editing
 action: None
-row: Branch pill first; narrow screens get one split button
+row: Branch pill first; narrow editable branches get a split button
 -->
 
 **What changed.** The branch pill moves to the start of the top bar, and its menu opens from
@@ -16,4 +16,5 @@ be stored on this device, then Save all, then Submit for review or Withdraw from
 the `md` breakpoint, on a branch you can edit, Save all and the review action share one split
 button: Save all is the button, and its caret holds Submit or Withdraw. A branch with no review
 action draws no caret, and a locked or still-loading branch keeps the two buttons apart. The
-confirm dialog opened from the caret returns focus to it.
+confirm dialog returns focus to the review action, and focus follows that action when a submit
+or withdraw moves it between the caret and a button of its own.

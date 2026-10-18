@@ -222,7 +222,7 @@ primary is filled: other badges, icons and indicators take their colour's light 
 ## Shell regions
 
 The editor fills the window as one grid: **top bar** (branch pill first, then Save all and
-Submit or Withdraw, one split button below `md`), **banner** (branch-wide notices), **rail**
+Submit or Withdraw, split below `md` when editable), **banner** (branch-wide notices), **rail**
 (activity icons, layout, settings), **panel** (content tree: docked, in the stacked form row,
 or over the form), **main** (entry header, keeping Save above a maximized preview, then preview
 and form) and **overlays** (drawers, quick open, modals, toasts). Regions are layout only. New

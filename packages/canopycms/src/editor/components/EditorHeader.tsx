@@ -58,8 +58,8 @@ export interface EditorHeaderProps {
   }
   /**
    * Whether the current branch is the protected base branch (see
-   * authorization/protected-branch.ts). Hides the Submit button (Withdraw
-   * stays, as the recovery path). Default false.
+   * authorization/protected-branch.ts). Hides Submit, as a button or in the caret
+   * (Withdraw stays, as the recovery path). Default false.
    */
   branchIsProtected?: boolean
   /** Whether the current branch is read-only (protected base branch in prod); disables Save all. */
@@ -118,7 +118,7 @@ export function EditorHeader({
 
   // Below `md` on an editable branch, the workflow action joins Save all as its caret.
   const theme = useMantineTheme()
-  // Mantine's own `hiddenFrom="md"` query, so the split shows exactly where `TopBar` narrows.
+  // Mantine's own below-`md` query, the one `visibleFrom="md"` hides under.
   const belowMd = `(max-width: ${em(getBreakpointValue('md', theme.breakpoints) - 0.1)})`
   const narrow = useMediaQuery(belowMd, false, { getInitialValueInEffect: false }) === true
   const editable = !!branchName && !branchLoading && !branchLockReason
@@ -154,7 +154,6 @@ export function EditorHeader({
   useLayoutEffect(() => {
     handOffFocus.current = false
   })
-  // Whichever control is mounted when the confirm dialog closes: its opener may be gone.
   const workflowControl = {
     onSubmit,
     onWithdraw,
@@ -215,7 +214,7 @@ interface WorkflowAction {
   kind: 'submit' | 'withdraw'
   /** It can't act now. */
   blocked: boolean
-  /** Why it can't; empty when only the editor's own load or save holds it. */
+  /** Why it can't; empty when it can, or when only a load, a save or a missing branch holds it. */
   reason: string
 }
 
@@ -282,7 +281,7 @@ function workflowAction({
       ? 'Wait for Save all to finish.'
       : // No branch data (`branchStatus === undefined`) must not be
         // interpolated raw into this label. Guarded explicitly here rather
-        // than left to the early return above, which hides this button
+        // than left to the early return above, which hides the action
         // today only as a side effect of `branchIsProtected`'s `?? true`
         // default -- not a guarantee this arm stays unreachable.
         branchStatus === undefined
@@ -301,7 +300,7 @@ interface WorkflowControlProps {
   onWithdraw: EditorHeaderProps['onWithdraw']
   /** The control's own button: the wide button, or the caret. */
   controlRef: (el: HTMLButtonElement | null) => void
-  /** Where the confirm dialog returns focus once it closes. */
+  /** Where the confirm dialog returns focus: whichever control is mounted as it closes. */
   returnFocusTo: () => HTMLElement | null
 }
 

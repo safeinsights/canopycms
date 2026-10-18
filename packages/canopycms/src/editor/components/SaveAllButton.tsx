@@ -119,7 +119,8 @@ export function SaveAllButton({
           disabled={!reason}
           multiline
           maw={300}
-          // Down past the entry header, so it covers neither the bar nor the entry's Save below.
+          // Down past the entry header, so it covers neither the bar nor the entry's Save below,
+          // while the bar's actions keep to one row.
           position="bottom-end"
           offset={ENTRY_HEADER_HEIGHT + 8}
         >

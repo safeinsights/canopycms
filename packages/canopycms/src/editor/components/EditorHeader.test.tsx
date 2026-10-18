@@ -1215,7 +1215,7 @@ describe('EditorHeader - during Save all', () => {
 
 describe('EditorHeader - branch bar', () => {
   const originalMatchMedia = window.matchMedia
-  /** A window below `md`: only the bar's own max-width query matches. */
+  /** A window below `md`: max-width queries match, min-width ones don't. */
   const stubNarrowWindow = () => {
     window.matchMedia = (query: string) =>
       ({
