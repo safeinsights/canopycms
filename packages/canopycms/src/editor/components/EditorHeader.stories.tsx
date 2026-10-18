@@ -123,13 +123,13 @@ export const EntryReadOnlyInReview: Story = {
   },
 }
 
-/** At 390px the top bar wraps rather than clip "Withdraw from review"; the breadcrumb truncates. */
+/** At 390px a locked branch keeps Withdraw apart from Save all; the bar wraps rather than clip it. */
 export const Narrow: Story = {
   parameters: phone,
   args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
 }
 
-/** On a phone unsaved changes add the entry's dot and the counts on the pill and Save all. */
+/** Below `md` an editable branch's Save all and Submit share one split button. */
 export const NarrowUnsaved: Story = {
   parameters: phone,
 }
@@ -244,4 +244,10 @@ export const SaveAllEntryListFailed: Story = {
 export const SaveAllWaitsForSave: Story = {
   args: { singleSaving: true },
   play: focusReason('save-all-button'),
+}
+
+/** The split button's caret, holding Submit for review. */
+export const NarrowBranchActions: Story = {
+  parameters: phone,
+  play: openMenu('branch-actions-button'),
 }

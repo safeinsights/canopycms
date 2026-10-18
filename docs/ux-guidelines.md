@@ -221,13 +221,13 @@ primary is filled: other badges, icons and indicators take their colour's light 
 
 ## Shell regions
 
-The editor fills the window as one grid: **top bar** (branch pill, Submit or Withdraw, Save
-all), **banner** (branch-wide notices), **rail** (activity icons, layout, settings), **panel**
-(content tree, docked when wide, in the form row when stacked, else over the form), **main**
-(entry header, keeping Save above a maximized preview, then preview and form) and
-**overlays** (drawers, quick open, modals, toasts). The regions are layout only; features plug
-into them. New UI joins an existing region; adding one is a design decision. Unsaved shows as one dot (`UnsavedMark`),
-counted on the pill.
+The editor fills the window as one grid: **top bar** (branch pill first, then Save all and
+Submit or Withdraw, one split button below `md`), **banner** (branch-wide notices), **rail**
+(activity icons, layout, settings), **panel** (content tree: docked, in the stacked form row,
+or over the form), **main** (entry header, keeping Save above a maximized preview, then preview
+and form) and **overlays** (drawers, quick open, modals, toasts). Regions are layout only. New
+UI joins an existing region; adding one is a design decision. Unsaved shows as one dot
+(`UnsavedMark`), counted on the pill.
 
 ## Enforcement
 

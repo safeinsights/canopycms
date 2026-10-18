@@ -5,6 +5,7 @@ import { useSWRConfig } from 'swr'
 import { Alert, Stack, Text } from '@mantine/core'
 import { IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
+import { focusReturnProps } from '../utils/focus-return'
 import { EDITOR_ACTIONS } from '../copy'
 import { notifications } from '@mantine/notifications'
 import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
@@ -87,6 +88,7 @@ const showSubmitConfirmation = (
   unsaved: UnsavedSummary | undefined,
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
+  returnFocusTo?: () => HTMLElement | null,
 ) => {
   const leftOut = unsaved && unsaved.count > 0 ? unsaved : undefined
   openConfirm({
@@ -115,6 +117,7 @@ const showSubmitConfirmation = (
     },
     confirmProps: { color: 'brand', 'data-testid': 'confirm-submit-branch' },
     ...confirmModalHandlers(onConfirm, onDismiss),
+    ...focusReturnProps(returnFocusTo),
   })
 }
 
@@ -143,6 +146,7 @@ const showWithdrawConfirmation = (
   pr: BranchPullRequest,
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
+  returnFocusTo?: () => HTMLElement | null,
 ) => {
   const bullets = [
     withdrawPullRequestBullet(pr),
@@ -159,6 +163,7 @@ const showWithdrawConfirmation = (
     labels: { confirm: EDITOR_ACTIONS.withdrawFromReview, cancel: 'Cancel' },
     confirmProps: { color: 'orange', 'data-testid': 'confirm-withdraw-branch' },
     ...confirmModalHandlers(onConfirm, onDismiss),
+    ...focusReturnProps(returnFocusTo),
   })
 }
 
@@ -348,8 +353,10 @@ export interface UseBranchManagerReturn {
   branchesLoadFailed: boolean
   /** Shows a branch the server just created before any listing includes it. */
   addCreatedBranch: (branch: BranchListItem) => void
-  handleSubmit: (branchName: string) => Promise<void>
-  handleWithdraw: (branchName: string) => Promise<void>
+  /** Confirms first; the dialog returns focus to `returnFocusTo()` when given, else its opener. */
+  handleSubmit: (branchName: string, returnFocusTo?: () => HTMLElement | null) => Promise<void>
+  /** Confirms first; the dialog returns focus to `returnFocusTo()` when given, else its opener. */
+  handleWithdraw: (branchName: string, returnFocusTo?: () => HTMLElement | null) => Promise<void>
   handleRequestChanges: (branchName: string) => Promise<void>
   handleDelete: (branchName: string) => Promise<void>
   handleReloadBranchData: () => Promise<void>
@@ -606,7 +613,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     notifications.show({ message: err instanceof Error ? err.message : fallback, color: 'red' })
   }
 
-  const handleSubmit = (requested: string) => {
+  const handleSubmit = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
     const branchNameToSubmit = listedName(requested)
     return singleFlight('submit', branchNameToSubmit, async () => {
       // Drafts belong to the open branch, so only its submit can leave edits behind. Without
@@ -668,12 +675,13 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           // Dismissal is not an error: the call sites log rejections to the console. Settled
           // once, by onCancel OR onClose, so an Escape/overlay dismissal can't leave this pending.
           () => resolve(),
+          returnFocusTo,
         )
       })
     })
   }
 
-  const handleWithdraw = (requested: string) => {
+  const handleWithdraw = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
     const branchNameToWithdraw = listedName(requested)
     return singleFlight(
       'withdraw',
@@ -706,6 +714,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               }
             },
             () => resolve(),
+            returnFocusTo,
           )
         }),
     )

@@ -2020,14 +2020,14 @@ const EditorContent: React.FC<EditorProps> = ({
               singleSaving={singleSaving !== null}
               // Save all finds each draft's entry in the list, so with none listed it would save nothing.
               entryListFailed={entriesLoadFailed && entriesState.length === 0}
-              onSubmit={() => {
+              onSubmit={(returnFocusTo) => {
                 if (branchNameState && !isSaveAllRunning()) {
-                  handleSubmit(branchNameState).catch(console.error)
+                  handleSubmit(branchNameState, returnFocusTo).catch(console.error)
                 }
               }}
-              onWithdraw={() => {
+              onWithdraw={(returnFocusTo) => {
                 if (branchNameState && !isSaveAllRunning()) {
-                  handleWithdraw(branchNameState).catch(console.error)
+                  handleWithdraw(branchNameState, returnFocusTo).catch(console.error)
                 }
               }}
             />
