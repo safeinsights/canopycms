@@ -123,54 +123,53 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
   }
 
   /**
-   * What GFM reads from an auto-link's text where it stands. Lexical's matcher is its own regex,
-   * which keeps trailing punctuation GFM leaves out and prefixes `https://` where GFM gives `http://`.
+   * The href a bare URL was imported with. MDXEditor imports it as a LinkNode, whose href, unlike
+   * an AutoLinkNode's, never follows its text; while the href is still this one, the link is
+   * still the bare URL it was.
    */
-  const gfmLiteralOf = (autolink: LexicalNode): AutolinkLiteral | undefined => {
-    const text = autolink.getTextContent()
-    let context = ''
-    let offset = 0
-    for (const sibling of autolink.getParent()?.getChildren() ?? [autolink]) {
-      if (sibling.is(autolink)) offset = context.length
-      context += sibling.getTextContent()
-    }
-    const here = autolinkLiteralAt(context, offset)
-    if (here === undefined) return undefined
-    return here.length <= text.length ? here : autolinkLiteralAt(text, 0) // ran into a sibling
-  }
-
-  /**
-   * The href a link was imported with when its text is a literal GFM reads as exactly that link
-   * (a bare URL, or `[url](url)` and `<url>`). Lexical keeps an AutoLinkNode's href in step
-   * with its text, but not an imported LinkNode's; while the href is still this one, the export
-   * reads it from the text instead.
-   */
-  const literalHref = createState('canopyGfmLiteralHref', {
+  const bareUrlHref = createState('canopyBareUrlHref', {
     parse: (value) => (typeof value === 'string' ? value : null),
   })
 
-  const literalLinkImportVisitor: MdastImportVisitor<MdastLink> = {
+  /** A link written as a bare URL: an auto-link, or an imported one whose href is untouched. */
+  const isBareUrl = (link: LexicalNode & LinkLike): boolean =>
+    link.getType() === 'autolink' || $getState(link, bareUrlHref) === link.getURL()
+
+  /** The literal GFM reads at `link` in its paragraph's text, which may run on past `link`. */
+  const literalAt = (link: LexicalNode): AutolinkLiteral | undefined => {
+    let context = ''
+    let offset = 0
+    for (const sibling of link.getParent()?.getChildren() ?? [link]) {
+      if (sibling.is(link)) offset = context.length
+      context += sibling.getTextContent()
+    }
+    return autolinkLiteralAt(context, offset)
+  }
+
+  /** Whether `link` is plain text that markdown, md or mdx, reads as written. */
+  const writesAsSource = (link: LexicalNode): boolean =>
+    $isElementNode(link) &&
+    link.getChildren().every((child) => $isTextNode(child) && child.getFormat() === 0) &&
+    !/[\\`<>{}|]/.test(link.getTextContent())
+
+  const bareUrlImportVisitor: MdastImportVisitor<MdastLink> = {
     priority: 100,
     testNode: (node) => {
       if (node.type !== 'link') return false
       const [only, ...rest] = 'children' in node ? node.children : []
       if (rest.length > 0 || only?.type !== 'text') return false
       const literal = autolinkLiteralAt(only.value, 0)
-      return literal?.url === node.url && literal.length === only.value.length
+      const start = node.position?.start.offset
+      const end = node.position?.end.offset
+      // A literal's source is its text; `[url](url)` is longer. GFM's own transform sets none.
+      const bare = start === undefined || end === undefined || end - start === only.value.length
+      return bare && literal?.url === node.url && literal.length === only.value.length
     },
     visitNode({ mdastNode, lexicalParent, actions }) {
       actions.nextVisitor()
       const link = $isElementNode(lexicalParent) ? lexicalParent.getLastChild() : null
-      if (link !== null && isLinkLike(link)) $setState(link, literalHref, mdastNode.url)
+      if (link !== null && isLinkLike(link)) $setState(link, bareUrlHref, mdastNode.url)
     },
-  }
-
-  /** What GFM reads from a link's text when the text decides its href, else null. */
-  const textLiteralOf = (link: LexicalNode & LinkLike): AutolinkLiteral | undefined | null => {
-    if (link.getType() === 'autolink') return gfmLiteralOf(link)
-    const imported = $getState(link, literalHref)
-    if (imported === null || imported !== link.getURL()) return null
-    return autolinkLiteralAt(link.getTextContent(), 0)
   }
 
   // MDXEditor imports a list without its `start`, and exports one without it.
@@ -223,9 +222,12 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
    * lexical keeps no record of which was written: `**[guide](/g)**` saves as `[**guide**](/g)`.
    *
    * An auto-link holding code-formatted text is written as its text: lexical's auto-link matchers
-   * see text, not formats, so a URL inside a code span becomes a link markdown never meant. A link
-   * whose text decides its href (`textLiteralOf`) is written as text where GFM links nothing, else
-   * as GFM's link and the punctuation GFM leaves out.
+   * see text, not formats, so a URL inside a code span becomes a link markdown never meant.
+   *
+   * A bare URL (`isBareUrl`) GFM reads a literal at is written as its text, so GFM decides its
+   * extent and href from what was typed, including text typed after it; when that text has
+   * formats or syntax characters, as GFM's link and the punctuation it leaves out. One GFM links
+   * nothing at is written as text if an auto-link, else as the link the editor shows.
    */
   const linkExportVisitor: MdxEditor.LexicalVisitor = {
     priority: 100,
@@ -242,10 +244,20 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
         actions.visitChildren(lexicalNode, mdastParent)
         return
       }
-      const literal = textLiteralOf(lexicalNode)
-      if (literal === undefined) {
-        actions.visitChildren(lexicalNode, mdastParent)
-        return
+      let literal: AutolinkLiteral | undefined
+      if (isBareUrl(lexicalNode)) {
+        const text = lexicalNode.getTextContent()
+        const here = literalAt(lexicalNode)
+        if (here !== undefined && writesAsSource(lexicalNode)) {
+          // An `html` node is written verbatim: the bare URL as it stands in the source.
+          actions.appendToParent(mdastParent, { type: 'html', value: text })
+          return
+        }
+        if (here === undefined && lexicalNode.getType() === 'autolink') {
+          actions.visitChildren(lexicalNode, mdastParent)
+          return
+        }
+        literal = here && (here.length <= text.length ? here : autolinkLiteralAt(text, 0))
       }
 
       const format = sharedFormat(lexicalNode)
@@ -300,7 +312,7 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
       // Without autolink literals a bare URL imports as text, for lexical's matcher to re-link.
       realm.pub(addSyntaxExtension$, gfmAutolinkLiteral())
       realm.pub(addMdastExtension$, gfmAutolinkLiteralFromMarkdown())
-      realm.pub(addImportVisitor$, [listStartImportVisitor, literalLinkImportVisitor])
+      realm.pub(addImportVisitor$, [listStartImportVisitor, bareUrlImportVisitor])
       realm.pub(addExportVisitor$, [
         listStartExportVisitor,
         linkExportVisitor,

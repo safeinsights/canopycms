@@ -251,22 +251,16 @@ it('writes a URL typed in the editor as GFM reads it where it stands', async () 
         .type(root, 'See www.example.org. Or https://example.org/x? Or www.ex_ample.org '),
     'See',
   )
-  expect(exported).toBe(
-    'See [www.example.org](http://www.example.org). Or [https://example.org/x](https://example.org/x)? Or www.ex_ample.org typed.',
-  )
+  expect(exported).toBe('See www.example.org. Or https://example.org/x? Or www.ex_ample.org typed.')
 }, 30000)
 
 it.each([
-  ['www.example.org', 'www.example'.length, 'X', '[www.exampleX.org](http://www.exampleX.org)'],
-  [
-    'https://example.org/docs',
-    'https://example.org/'.length,
-    'v2/',
-    '[https://example.org/v2/docs](https://example.org/v2/docs)',
-  ],
-  ['www.example.org', 'www.ex'.length, '_', 'www.ex_ample.org'],
+  ['www.example.org', 'www.example'.length, 'X', 'www.exampleX.org'],
+  ['https://example.org/docs', 'https://example.org/'.length, 'v2/', 'https://example.org/v2/docs'],
+  // No longer a URL to GFM: the link the editor shows.
+  ['www.example.org', 'www.ex'.length, '_', '[www.ex_ample.org](http://www.example.org)'],
 ])(
-  'saves an edited bare URL %s with the href its new text gives',
+  'saves an edited bare URL %s as its new text reads',
   async (url, at, keys, saved) => {
     const exported = await editOnce(
       `See ${url} today.\n`,
@@ -324,4 +318,62 @@ it('keeps the format of the punctuation an auto-link leaves out', async () => {
     'end',
   )
   expect(exported).toBe('[**www.example.org**](http://www.example.org)**.** end typed.')
+}, 30000)
+
+it('extends a bare URL by the text typed right after it', async () => {
+  const exported = await editOnce(
+    'See https://example.org today.\n',
+    (root) => {
+      act(() => {
+        lexicalEditorOf(root).update(() => {
+          const paragraph = lexical.$getRoot().getFirstChild()
+          const link = lexical.$isElementNode(paragraph) ? paragraph.getChildAtIndex(1) : null
+          const text = lexical.$isElementNode(link) ? link.getFirstChild() : null
+          if (!lexical.$isTextNode(text)) throw new Error('no link')
+          // Lexical's own insert path, which a browser's input takes: past a link, it lands after.
+          text.select(text.getTextContentSize(), text.getTextContentSize())
+          const selection = lexical.$getSelection()
+          if (!lexical.$isRangeSelection(selection)) throw new Error('no selection')
+          selection.insertText('/docs')
+        })
+      })
+      return Promise.resolve()
+    },
+    '/docs',
+  )
+  expect(exported).toBe('See https://example.org/docs today.')
+}, 30000)
+
+it('keeps a bare URL given a label as the link the editor shows', async () => {
+  const exported = await editOnce(
+    'See https://example.org today.\n',
+    (root) => {
+      act(() => {
+        lexicalEditorOf(root).update(() => {
+          const paragraph = lexical.$getRoot().getFirstChild()
+          const link = lexical.$isElementNode(paragraph) ? paragraph.getChildAtIndex(1) : null
+          const text = lexical.$isElementNode(link) ? link.getFirstChild() : null
+          if (!lexical.$isTextNode(text)) throw new Error('no link')
+          text.setTextContent('Example site')
+        })
+      })
+      return Promise.resolve()
+    },
+    'Example site',
+  )
+  expect(exported).toBe('See [Example site](https://example.org) today.')
+}, 30000)
+
+it('keeps a link written as `[url](url)` explicit when its paragraph is edited', async () => {
+  const exported = await editOnce(
+    'See [https://example.org](https://example.org)/docs today.\n',
+    async (root) => {
+      const text = root.querySelector('p > span:last-child')?.firstChild
+      if (!text?.textContent) throw new Error('no text after the link')
+      placeCaret(root, text, text.textContent.length)
+      await userEvent.setup().keyboard('Z')
+    },
+    'Z',
+  )
+  expect(exported).toBe('See [https://example.org](https://example.org)/docs today.Z')
 }, 30000)
