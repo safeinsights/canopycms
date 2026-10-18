@@ -552,6 +552,26 @@ export class EditorPage {
     return this.page.locator('[data-testid="rail-layout-button"]')
   }
 
+  /**
+   * The rail's buttons and dividers from the top, each by its accessible name; a divider is
+   * "separator". Settings opens a menu, so its name is the button's.
+   */
+  async railItems(): Promise<(string | null)[]> {
+    return this.page
+      .getByRole('toolbar', { name: 'Activities' })
+      .locator('[data-rail-item], [role="separator"]')
+      .evaluateAll((items) =>
+        items.map((item) =>
+          item.getAttribute('role') === 'separator' ? 'separator' : item.getAttribute('aria-label'),
+        ),
+      )
+  }
+
+  /** The unsaved dot on the rail's Content button, present while its panel is closed. */
+  railUnsavedMark(): Locator {
+    return this.page.getByTestId('rail-unsaved-mark')
+  }
+
   maximizePreviewButton(): Locator {
     return this.page.locator('[data-testid="preview-maximize-button"]')
   }
