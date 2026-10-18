@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, { useState } from 'react'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { EntryNavigator, type EntryNavCollection, type EntryNavItem } from './EntryNavigator'
@@ -988,14 +988,105 @@ describe('EntryNavigator', () => {
       Object.defineProperty(text, 'clientWidth', { configurable: true, value: 100 })
       const item = row.closest<HTMLElement>('[role="treeitem"]')!
 
-      fireEvent.focus(item)
-      fireEvent.focusIn(item)
+      act(() => item.focus())
 
+      // After the hover tooltip's delay, so arrowing through the tree doesn't flash one per row.
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      expect(screen.queryByRole('tooltip')).toBeNull()
+      const tooltip = await screen.findByRole('tooltip')
+      expect(tooltip.textContent).toBe('Landing page · /a/long/route/to/contact')
+      // Below the row, so its title stays in view: jsdom's empty boxes put a tooltip above at a
+      // negative top.
+      expect(parseFloat(tooltip.style.top)).toBeGreaterThan(0)
+      act(() => item.blur())
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
+    })
+
+    it('shows no focus tooltip for a detail line that fits', async () => {
+      renderEntryNavigator({
+        items: [
+          {
+            path: unsafeAsLogicalPath('content/pages/contact'),
+            label: 'Contact',
+            status: 'Landing page',
+            route: '/contact',
+          },
+        ],
+      })
+      const item = screen
+        .getByTestId('entry-nav-item-contact')
+        .closest<HTMLElement>('[role="treeitem"]')!
+
+      act(() => item.focus())
+      await new Promise((resolve) => setTimeout(resolve, 600))
+
+      expect(screen.queryByRole('tooltip')).toBeNull()
+    })
+
+    it("hides the focused row's tooltip on Escape, taking the key, until focus next arrives", async () => {
+      renderEntryNavigator({
+        items: [
+          {
+            path: unsafeAsLogicalPath('content/pages/contact'),
+            label: 'Contact',
+            status: 'Landing page',
+            route: '/a/long/route/to/contact',
+          },
+        ],
+      })
+      const row = screen.getByTestId('entry-nav-item-contact')
+      const text = detailLine(row)!.querySelector('p')!
+      Object.defineProperty(text, 'scrollWidth', { configurable: true, value: 200 })
+      Object.defineProperty(text, 'clientWidth', { configurable: true, value: 100 })
+      const item = row.closest<HTMLElement>('[role="treeitem"]')!
+      act(() => item.focus())
+      await screen.findByRole('tooltip')
+      // PreviewPane's capture-phase Escape skips a target with this mark, so one press hides only.
+      expect(item.getAttribute('data-mantine-stop-propagation')).toBe('true')
+
+      expect(fireEvent.keyDown(item, { key: 'Escape' })).toBe(false)
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
+      expect(item.hasAttribute('data-mantine-stop-propagation')).toBe(false)
+      // With nothing left to hide, Escape is the panel's again.
+      expect(fireEvent.keyDown(item, { key: 'Escape' })).toBe(true)
+
+      act(() => item.blur())
+      act(() => item.focus())
       expect((await screen.findByRole('tooltip')).textContent).toBe(
         'Landing page · /a/long/route/to/contact',
       )
-      fireEvent.focusOut(item)
+    })
+
+    it("hides the focus tooltip when the row's detail changes under it", async () => {
+      const contact = (status: string) => [
+        {
+          path: unsafeAsLogicalPath('content/pages/contact'),
+          label: 'Contact',
+          status,
+          route: '/a/long/route/to/contact',
+        },
+      ]
+      const { rerender, props } = renderEntryNavigator({ items: contact('Landing page') })
+      const cutOff = () => {
+        const text = detailLine(screen.getByTestId('entry-nav-item-contact'))!.querySelector('p')!
+        Object.defineProperty(text, 'scrollWidth', { configurable: true, value: 200 })
+        Object.defineProperty(text, 'clientWidth', { configurable: true, value: 100 })
+      }
+      cutOff()
+      const item = screen
+        .getByTestId('entry-nav-item-contact')
+        .closest<HTMLElement>('[role="treeitem"]')!
+      act(() => item.focus())
+      await screen.findByRole('tooltip')
+
+      rerender(
+        <CanopyCMSProvider>
+          <EntryNavigator {...props} items={contact('Article')} />
+        </CanopyCMSProvider>,
+      )
+
       await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
+      expect(item.hasAttribute('data-mantine-stop-propagation')).toBe(false)
     })
   })
 
@@ -1368,11 +1459,14 @@ describe('EntryNavigator', () => {
       const hint = screen.getByTestId('entry-nav-filter-shortcut')
       expect(hint.textContent).toBe('⌘P')
       expect(hint.getAttribute('aria-hidden')).toBe('true')
+      // Never brighter than the placeholder beside it, nor italic as dark dimmed text is.
+      expect(hint.getAttribute('style')).toContain('--mantine-color-placeholder')
+      expect(hint.getAttribute('style') ?? '').not.toContain('--canopy-dimmed-font-style')
 
       // The clear button takes its place while the box holds text.
       await user.type(filterInput(), 'a')
       expect(screen.queryByTestId('entry-nav-filter-shortcut')).toBeNull()
-      expect(screen.getByRole('button', { name: 'Clear filter' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Clear search' })).toBeTruthy()
     })
 
     it('calls filterRef with the box', () => {
@@ -1640,7 +1734,7 @@ describe('EntryNavigator', () => {
         const empty = screen.getByTestId('entry-nav-filter-empty')
         expect(empty.textContent).toContain('No entries match “zzz”.')
 
-        await user.click(within(empty).getByRole('button', { name: 'Clear filter' }))
+        await user.click(within(empty).getByRole('button', { name: 'Clear search' }))
 
         expect(filterInput().value).toBe('')
         expect(screen.queryByTestId('entry-nav-filter-empty')).toBeNull()
@@ -1651,12 +1745,12 @@ describe('EntryNavigator', () => {
         const user = userEvent.setup()
         renderEntryNavigator({ collections: filterCollections() })
 
-        expect(screen.queryByRole('button', { name: 'Clear filter' })).toBeNull()
+        expect(screen.queryByRole('button', { name: 'Clear search' })).toBeNull()
         await user.type(filterInput(), 'launch')
-        await user.click(screen.getByRole('button', { name: 'Clear filter' }))
+        await user.click(screen.getByRole('button', { name: 'Clear search' }))
 
         expect(filterInput().value).toBe('')
-        expect(screen.queryByRole('button', { name: 'Clear filter' })).toBeNull()
+        expect(screen.queryByRole('button', { name: 'Clear search' })).toBeNull()
       })
     })
 

@@ -269,10 +269,12 @@ const firstEntryPath = (nodes: TreeNodeData[], query: string): string | undefine
   return (match ?? entries[0])?.value
 }
 
+const TOOLTIP_DELAY = 400
+
 /**
- * A line of a row, truncated with an ellipsis. Its full text shows in a tooltip, and only while
- * the text is cut: the width is measured when the pointer or focus enters the row, not on every
- * render. With `showOnRowFocus` the tooltip also shows while the row itself has focus.
+ * A line of a row, truncated with an ellipsis. Its full text shows in a tooltip on hover, and only
+ * while the text is cut: the width is measured when the pointer or focus enters the row, not on
+ * every render.
  */
 const TruncatedLabel: React.FC<{
   label: string
@@ -280,11 +282,9 @@ const TruncatedLabel: React.FC<{
   fw?: number
   size?: 'sm' | 'xs'
   c?: string
-  showOnRowFocus?: boolean
-}> = ({ label, highlight = '', fw, size = 'sm', c, showOnRowFocus = false }) => {
+}> = ({ label, highlight = '', fw, size = 'sm', c }) => {
   const elementRef = useRef<HTMLElement | null>(null)
   const [truncated, setTruncated] = useState(false)
-  const [rowFocused, setRowFocused] = useState(false)
   const setElement = useCallback((node: HTMLElement | null) => {
     elementRef.current = node
   }, [])
@@ -301,32 +301,18 @@ const TruncatedLabel: React.FC<{
     const item = row.closest('[role="treeitem"]') ?? row
     const focusIn = (event: Event) => {
       const target = event.target
-      if (target !== item && !(target instanceof Node && row.contains(target))) return
-      measure()
-      if (target === item) setRowFocused(true)
-    }
-    const focusOut = (event: Event) => {
-      if (event.target === item) setRowFocused(false)
+      if (target === item || (target instanceof Node && row.contains(target))) measure()
     }
     row.addEventListener('mouseenter', measure)
     item.addEventListener('focusin', focusIn)
-    item.addEventListener('focusout', focusOut)
     return () => {
       row.removeEventListener('mouseenter', measure)
       item.removeEventListener('focusin', focusIn)
-      item.removeEventListener('focusout', focusOut)
     }
   }, [])
 
   return (
-    <Tooltip
-      label={label}
-      openDelay={400}
-      withinPortal
-      disabled={!truncated}
-      // Controlled only while the row has focus; the pointer opens it otherwise.
-      opened={showOnRowFocus && rowFocused && truncated ? true : undefined}
-    >
+    <Tooltip label={label} openDelay={TOOLTIP_DELAY} withinPortal disabled={!truncated}>
       {highlight ? (
         <Highlight
           ref={setElement}
@@ -343,6 +329,81 @@ const TruncatedLabel: React.FC<{
           {label}
         </Text>
       )}
+    </Tooltip>
+  )
+}
+
+/**
+ * A row's cut-off detail line in full once keyboard focus has rested on the row for
+ * `TOOLTIP_DELAY`. Anchored to the whole row, below its focus ring or, without room, above it, so
+ * it never covers the row's title; Escape hides it until focus next arrives (WCAG 1.4.13).
+ */
+const RowDetailTip: React.FC<{ detail?: string; children: React.ReactElement }> = ({
+  detail,
+  children,
+}) => {
+  const rowRef = useRef<HTMLDivElement | null>(null)
+  const [shown, setShown] = useState(false)
+  useEffect(() => {
+    const row = rowRef.current
+    const item = row?.closest('[role="treeitem"]')
+    if (!row || !item || !detail) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let open = false
+    // While shown it also marks the row, so PreviewPane's Escape leaves the key to it.
+    const show = (next: boolean) => {
+      open = next
+      setShown(next)
+      if (next) item.setAttribute('data-mantine-stop-propagation', 'true')
+      else item.removeAttribute('data-mantine-stop-propagation')
+    }
+    const cutOff = () => {
+      const line = row.querySelector('[data-testid="entry-nav-detail"] > *')
+      return !!line && line.scrollWidth > line.clientWidth
+    }
+    const onFocusIn = (event: Event) => {
+      if (event.target !== item) return
+      clearTimeout(timer)
+      // Not after a click, which focuses the treeitem too and would pin it over the next row.
+      timer = setTimeout(() => show(item.matches(':focus-visible') && cutOff()), TOOLTIP_DELAY)
+    }
+    const onFocusOut = (event: Event) => {
+      if (event.target !== item) return
+      clearTimeout(timer)
+      show(false)
+    }
+    // Handled, so a panel's own Escape waits for the next press.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.target !== item) return
+      clearTimeout(timer)
+      if (!open) return
+      event.preventDefault()
+      show(false)
+    }
+    item.addEventListener('focusin', onFocusIn)
+    item.addEventListener('focusout', onFocusOut)
+    item.addEventListener('keydown', onKeyDown as EventListener)
+    return () => {
+      item.removeEventListener('focusin', onFocusIn)
+      item.removeEventListener('focusout', onFocusOut)
+      item.removeEventListener('keydown', onKeyDown as EventListener)
+      clearTimeout(timer)
+      show(false)
+    }
+  }, [detail])
+  // Rendered without a detail too, so the row keeps its place in the tree as one arrives.
+  return (
+    <Tooltip
+      ref={rowRef}
+      label={detail ?? ''}
+      disabled={!detail}
+      opened={shown}
+      position="bottom-start"
+      // Clears the row's 2px focus ring and its 2px offset.
+      offset={8}
+      withinPortal
+    >
+      {children}
     </Tooltip>
   )
 }
@@ -964,295 +1025,297 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const hasCollectionContentItems = onAdd || canReorder
 
     return (
-      <Box
-        {...elementProps}
-        ref={selected ? selectedNodeRef : undefined}
-        data-nav-row
-        data-nav-selected={selected ? '' : undefined}
-        data-testid={`entry-nav-item-${testIdSuffix}`}
-        onClick={(event) => {
-          elementProps.onClick(event)
-          if (isLeaf && isEntry) {
-            onSelect(node.value)
-          }
-        }}
-        style={{
-          ...elementProps.style,
-          marginBottom: 4,
-          borderRadius: 10,
-          paddingInline: 10,
-          paddingBlock: 6,
-          paddingLeft: `calc(${rem(8)} + ${rem(level * 12)})`,
-          backgroundColor: selected ? 'var(--mantine-primary-color-light)' : undefined,
-          color: selected ? 'var(--mantine-primary-color-light-color)' : undefined,
-          border: selected
-            ? '1px solid var(--mantine-primary-color-light-color)'
-            : '1px solid transparent',
-          transition: 'background-color 120ms ease, border-color 120ms ease',
-        }}
-      >
-        <Group gap="xs" justify="space-between" wrap="nowrap" style={{ width: '100%' }}>
-          <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-            <Box
-              w={18}
-              h={18}
-              style={{
-                display: 'flex',
-                flexShrink: 0,
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Chevron expanded={expanded} visible={showChevron} />
-            </Box>
-            <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
-              <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-                <TruncatedLabel
-                  label={label}
-                  highlight={filtering ? query.trim() : ''}
-                  fw={selected ? 600 : 500}
-                />
-                {showEntryDirtyDot && <UnsavedDot label="Unsaved changes" />}
-                {showCollectionDirtyDot && <UnsavedDot label="Contains unsaved changes" />}
-                {conflictNotice && (
-                  <Tooltip
-                    label="This content was updated on the base branch — a reviewer will reconcile"
-                    withArrow
-                  >
-                    <Badge
-                      size="xs"
-                      variant="light"
-                      color="orange"
-                      data-testid="conflict-badge"
-                      style={{ flexShrink: 0 }}
-                    >
-                      Conflict
-                    </Badge>
-                  </Tooltip>
-                )}
-                {entryLocked && (
-                  <Tooltip label="You can't edit this entry" withinPortal>
-                    <Box
-                      component="span"
-                      role="img"
-                      aria-label="You can't edit this entry"
-                      data-testid="entry-lock"
-                      c="dimmed"
-                      style={{ display: 'inline-flex', flexShrink: 0 }}
-                    >
-                      <IconLock size={14} aria-hidden />
-                    </Box>
-                  </Tooltip>
-                )}
-              </Group>
-              {detail && (
-                <Box data-testid="entry-nav-detail" style={{ minWidth: 0 }}>
+      <RowDetailTip detail={detail}>
+        <Box
+          {...elementProps}
+          ref={selected ? selectedNodeRef : undefined}
+          data-nav-row
+          data-nav-selected={selected ? '' : undefined}
+          data-testid={`entry-nav-item-${testIdSuffix}`}
+          onClick={(event) => {
+            elementProps.onClick(event)
+            if (isLeaf && isEntry) {
+              onSelect(node.value)
+            }
+          }}
+          style={{
+            ...elementProps.style,
+            marginBottom: 4,
+            borderRadius: 10,
+            paddingInline: 10,
+            paddingBlock: 6,
+            paddingLeft: `calc(${rem(8)} + ${rem(level * 12)})`,
+            backgroundColor: selected ? 'var(--mantine-primary-color-light)' : undefined,
+            color: selected ? 'var(--mantine-primary-color-light-color)' : undefined,
+            border: selected
+              ? '1px solid var(--mantine-primary-color-light-color)'
+              : '1px solid transparent',
+            transition: 'background-color 120ms ease, border-color 120ms ease',
+          }}
+        >
+          <Group gap="xs" justify="space-between" wrap="nowrap" style={{ width: '100%' }}>
+            <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+              <Box
+                w={18}
+                h={18}
+                style={{
+                  display: 'flex',
+                  flexShrink: 0,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Chevron expanded={expanded} visible={showChevron} />
+              </Box>
+              <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
+                <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
                   <TruncatedLabel
-                    label={detail}
-                    size="xs"
-                    // A missing file is an error, in error text, not a dimmed type.
-                    c={entryMissing ? 'var(--canopy-danger-text)' : 'dimmed'}
-                    showOnRowFocus
+                    label={label}
+                    highlight={filtering ? query.trim() : ''}
+                    fw={selected ? 600 : 500}
                   />
-                </Box>
-              )}
-            </Stack>
-          </Group>
-          <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-            {hasCollectionMenu && (
-              <Menu
-                shadow="md"
-                width={200}
-                withinPortal
-                position="bottom-end"
-                onOpen={onRowMenuOpen}
-              >
-                <Menu.Target>
-                  <ActionIcon
-                    size="xs"
-                    variant="subtle"
-                    color="gray"
-                    onClick={(event) => event.stopPropagation()}
-                    aria-label="Collection actions"
-                    data-testid={`collection-menu-${testIdSuffix}`}
-                  >
-                    <IconDots size={14} />
-                  </ActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown onKeyDown={stopTreeKeys}>
-                  {onAdd && (
-                    <Menu.Item
-                      leftSection={<IconPlus size={14} />}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onAdd()
-                      }}
-                      data-testid="add-entry-menu-item"
+                  {showEntryDirtyDot && <UnsavedDot label="Unsaved changes" />}
+                  {showCollectionDirtyDot && <UnsavedDot label="Contains unsaved changes" />}
+                  {conflictNotice && (
+                    <Tooltip
+                      label="This content was updated on the base branch — a reviewer will reconcile"
+                      withArrow
                     >
-                      Add entry…
-                    </Menu.Item>
+                      <Badge
+                        size="xs"
+                        variant="light"
+                        color="orange"
+                        data-testid="conflict-badge"
+                        style={{ flexShrink: 0 }}
+                      >
+                        Conflict
+                      </Badge>
+                    </Tooltip>
                   )}
-                  {canReorder && (
-                    <>
-                      <ReasonedMenuItem
-                        leftSection={<IconArrowUp size={14} />}
-                        blockedReason={canMoveUp ? undefined : 'Already first'}
+                  {entryLocked && (
+                    <Tooltip label="You can't edit this entry" withinPortal>
+                      <Box
+                        component="span"
+                        role="img"
+                        aria-label="You can't edit this entry"
+                        data-testid="entry-lock"
+                        c="dimmed"
+                        style={{ display: 'inline-flex', flexShrink: 0 }}
+                      >
+                        <IconLock size={14} aria-hidden />
+                      </Box>
+                    </Tooltip>
+                  )}
+                </Group>
+                {detail && (
+                  <Box data-testid="entry-nav-detail" style={{ minWidth: 0 }}>
+                    <TruncatedLabel
+                      label={detail}
+                      size="xs"
+                      // A missing file is an error, in error text, not a dimmed type.
+                      c={entryMissing ? 'var(--canopy-danger-text)' : 'dimmed'}
+                    />
+                  </Box>
+                )}
+              </Stack>
+            </Group>
+            <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+              {hasCollectionMenu && (
+                <Menu
+                  shadow="md"
+                  width={200}
+                  withinPortal
+                  position="bottom-end"
+                  onOpen={onRowMenuOpen}
+                >
+                  <Menu.Target>
+                    <ActionIcon
+                      size="xs"
+                      variant="subtle"
+                      color="gray"
+                      onClick={(event) => event.stopPropagation()}
+                      aria-label="Collection actions"
+                      data-testid={`collection-menu-${testIdSuffix}`}
+                    >
+                      <IconDots size={14} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown onKeyDown={stopTreeKeys}>
+                    {onAdd && (
+                      <Menu.Item
+                        leftSection={<IconPlus size={14} />}
                         onClick={(event) => {
                           event.stopPropagation()
-                          onReorderEntry?.(parentCollectionPath!, contentId!, 'up')
+                          onAdd()
                         }}
+                        data-testid="add-entry-menu-item"
                       >
-                        Move up
-                      </ReasonedMenuItem>
-                      <ReasonedMenuItem
-                        leftSection={<IconArrowDown size={14} />}
-                        blockedReason={canMoveDown ? undefined : 'Already last'}
+                        Add entry…
+                      </Menu.Item>
+                    )}
+                    {canReorder && (
+                      <>
+                        <ReasonedMenuItem
+                          leftSection={<IconArrowUp size={14} />}
+                          blockedReason={canMoveUp ? undefined : 'Already first'}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            onReorderEntry?.(parentCollectionPath!, contentId!, 'up')
+                          }}
+                        >
+                          Move up
+                        </ReasonedMenuItem>
+                        <ReasonedMenuItem
+                          leftSection={<IconArrowDown size={14} />}
+                          blockedReason={canMoveDown ? undefined : 'Already last'}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            onReorderEntry?.(parentCollectionPath!, contentId!, 'down')
+                          }}
+                        >
+                          Move down
+                        </ReasonedMenuItem>
+                      </>
+                    )}
+                    {adminItems && (
+                      <>
+                        {hasCollectionContentItems && <Menu.Divider />}
+                        <Menu.Label>Admin</Menu.Label>
+                      </>
+                    )}
+                    {onAddSubCollection && (
+                      <Menu.Item
+                        leftSection={<IconFolderPlus size={14} />}
                         onClick={(event) => {
                           event.stopPropagation()
-                          onReorderEntry?.(parentCollectionPath!, contentId!, 'down')
+                          onAddSubCollection()
                         }}
                       >
-                        Move down
-                      </ReasonedMenuItem>
-                    </>
-                  )}
-                  {adminItems && (
-                    <>
-                      {hasCollectionContentItems && <Menu.Divider />}
-                      <Menu.Label>Admin</Menu.Label>
-                    </>
-                  )}
-                  {onAddSubCollection && (
-                    <Menu.Item
-                      leftSection={<IconFolderPlus size={14} />}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onAddSubCollection()
-                      }}
-                    >
-                      Add sub-collection…
-                    </Menu.Item>
-                  )}
-                  {onEdit && (
-                    <Menu.Item
-                      leftSection={<IconEdit size={14} />}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onEdit()
-                      }}
-                    >
-                      Edit collection…
-                    </Menu.Item>
-                  )}
-                  {onDelete && (
-                    <DestructiveMenuItem
-                      leftSection={<IconTrash size={14} />}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onDelete()
-                      }}
-                    >
-                      Delete collection
-                    </DestructiveMenuItem>
-                  )}
-                </Menu.Dropdown>
-              </Menu>
-            )}
-            {showsLockSlot &&
-              (readOnlyReason ? (
-                <BranchRowLock
-                  label={isCollection ? 'Collection actions' : 'Entry actions'}
-                  reason={readOnlyReason}
-                />
-              ) : (
-                // The branch's state is still loading: hold the slot so rows do not shift. It draws
-                // nothing, so it needs no reveal.
-                <Box w={18} h={18} aria-hidden data-testid="branch-lock-pending" />
-              ))}
-            {hasEntryMenu && (
-              <Menu
-                shadow="md"
-                width={180}
-                withinPortal
-                position="bottom-end"
-                onOpen={onRowMenuOpen}
-              >
-                <Menu.Target>
-                  <ActionIcon
-                    size="xs"
-                    variant="subtle"
-                    color="gray"
-                    onClick={(event) => event.stopPropagation()}
-                    aria-label="Entry actions"
-                    data-testid={`entry-menu-${testIdSuffix}`}
-                  >
-                    <IconDots size={14} />
-                  </ActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown onKeyDown={stopTreeKeys}>
-                  {onRenameEntry && (
-                    <Menu.Item
-                      leftSection={<IconEdit size={14} />}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onRenameEntry(entryPath)
-                      }}
-                      data-testid="rename-entry-menu-item"
-                    >
-                      {entryNoPage ? EDITOR_ACTIONS.changeSlug : EDITOR_ACTIONS.changeUrl}…
-                    </Menu.Item>
-                  )}
-                  {onReorderEntry && contentId && parentCollectionPath && (
-                    <>
-                      <ReasonedMenuItem
-                        leftSection={<IconArrowUp size={14} />}
-                        blockedReason={canMoveUp ? undefined : 'Already first'}
+                        Add sub-collection…
+                      </Menu.Item>
+                    )}
+                    {onEdit && (
+                      <Menu.Item
+                        leftSection={<IconEdit size={14} />}
                         onClick={(event) => {
                           event.stopPropagation()
-                          onReorderEntry(parentCollectionPath, contentId, 'up')
+                          onEdit()
                         }}
                       >
-                        Move up
-                      </ReasonedMenuItem>
-                      <ReasonedMenuItem
-                        leftSection={<IconArrowDown size={14} />}
-                        blockedReason={canMoveDown ? undefined : 'Already last'}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onReorderEntry(parentCollectionPath, contentId, 'down')
-                        }}
-                      >
-                        Move down
-                      </ReasonedMenuItem>
-                    </>
-                  )}
-                  {onDeleteEntry && (
-                    <>
-                      {(onRenameEntry || (onReorderEntry && contentId && parentCollectionPath)) && (
-                        <Menu.Divider />
-                      )}
+                        Edit collection…
+                      </Menu.Item>
+                    )}
+                    {onDelete && (
                       <DestructiveMenuItem
                         leftSection={<IconTrash size={14} />}
                         onClick={(event) => {
                           event.stopPropagation()
-                          onDeleteEntry(entryPath)
+                          onDelete()
                         }}
-                        data-testid="delete-entry-menu-item"
                       >
-                        Delete entry
+                        Delete collection
                       </DestructiveMenuItem>
-                    </>
-                  )}
-                </Menu.Dropdown>
-              </Menu>
-            )}
+                    )}
+                  </Menu.Dropdown>
+                </Menu>
+              )}
+              {showsLockSlot &&
+                (readOnlyReason ? (
+                  <BranchRowLock
+                    label={isCollection ? 'Collection actions' : 'Entry actions'}
+                    reason={readOnlyReason}
+                  />
+                ) : (
+                  // The branch's state is still loading: hold the slot so rows do not shift. It draws
+                  // nothing, so it needs no reveal.
+                  <Box w={18} h={18} aria-hidden data-testid="branch-lock-pending" />
+                ))}
+              {hasEntryMenu && (
+                <Menu
+                  shadow="md"
+                  width={180}
+                  withinPortal
+                  position="bottom-end"
+                  onOpen={onRowMenuOpen}
+                >
+                  <Menu.Target>
+                    <ActionIcon
+                      size="xs"
+                      variant="subtle"
+                      color="gray"
+                      onClick={(event) => event.stopPropagation()}
+                      aria-label="Entry actions"
+                      data-testid={`entry-menu-${testIdSuffix}`}
+                    >
+                      <IconDots size={14} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown onKeyDown={stopTreeKeys}>
+                    {onRenameEntry && (
+                      <Menu.Item
+                        leftSection={<IconEdit size={14} />}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onRenameEntry(entryPath)
+                        }}
+                        data-testid="rename-entry-menu-item"
+                      >
+                        {entryNoPage ? EDITOR_ACTIONS.changeSlug : EDITOR_ACTIONS.changeUrl}…
+                      </Menu.Item>
+                    )}
+                    {onReorderEntry && contentId && parentCollectionPath && (
+                      <>
+                        <ReasonedMenuItem
+                          leftSection={<IconArrowUp size={14} />}
+                          blockedReason={canMoveUp ? undefined : 'Already first'}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            onReorderEntry(parentCollectionPath, contentId, 'up')
+                          }}
+                        >
+                          Move up
+                        </ReasonedMenuItem>
+                        <ReasonedMenuItem
+                          leftSection={<IconArrowDown size={14} />}
+                          blockedReason={canMoveDown ? undefined : 'Already last'}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            onReorderEntry(parentCollectionPath, contentId, 'down')
+                          }}
+                        >
+                          Move down
+                        </ReasonedMenuItem>
+                      </>
+                    )}
+                    {onDeleteEntry && (
+                      <>
+                        {(onRenameEntry ||
+                          (onReorderEntry && contentId && parentCollectionPath)) && (
+                          <Menu.Divider />
+                        )}
+                        <DestructiveMenuItem
+                          leftSection={<IconTrash size={14} />}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            onDeleteEntry(entryPath)
+                          }}
+                          data-testid="delete-entry-menu-item"
+                        >
+                          Delete entry
+                        </DestructiveMenuItem>
+                      </>
+                    )}
+                  </Menu.Dropdown>
+                </Menu>
+              )}
+            </Group>
           </Group>
-        </Group>
-        {isCollection && unavailableSchemaRefs && unavailableSchemaRefs.length > 0 && (
-          <UnavailableTypeRow schemaRefs={unavailableSchemaRefs} />
-        )}
-        {isCollection && addRefused && <AddRefusedRow />}
-      </Box>
+          {isCollection && unavailableSchemaRefs && unavailableSchemaRefs.length > 0 && (
+            <UnavailableTypeRow schemaRefs={unavailableSchemaRefs} />
+          )}
+          {isCollection && addRefused && <AddRefusedRow />}
+        </Box>
+      </RowDetailTip>
     )
   }
 
@@ -1350,9 +1413,17 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           leftSection={<IconSearch size={14} aria-hidden />}
           rightSection={
             query ? (
-              <CloseButton size="sm" aria-label="Clear filter" onClick={clearFilter} />
+              <Tooltip label="Clear search" withinPortal>
+                <CloseButton size="sm" aria-label="Clear search" onClick={clearFilter} />
+              </Tooltip>
             ) : filterShortcut ? (
-              <Text size="xs" c="dimmed" aria-hidden data-testid="entry-nav-filter-shortcut">
+              // The placeholder's colour, so it never reads brighter than the placeholder beside it.
+              <Text
+                size="xs"
+                c="var(--mantine-color-placeholder)"
+                aria-hidden
+                data-testid="entry-nav-filter-shortcut"
+              >
                 {filterShortcut.label}
               </Text>
             ) : null
@@ -1414,7 +1485,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               No entries match “{query}”.
             </Text>
             <Button size="compact-sm" variant="subtle" onClick={clearFilter}>
-              Clear filter
+              Clear search
             </Button>
           </Stack>
         ) : (

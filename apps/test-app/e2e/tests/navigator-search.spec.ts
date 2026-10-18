@@ -136,6 +136,57 @@ test.describe('Navigator search', () => {
     await expect(editorPage.contentNavigator).toBeVisible()
   })
 
+  test("the form pane, when it takes focus, draws the theme's focus ring inset", async ({
+    page,
+  }) => {
+    // The ring is for keyboard focus, which the last input decides.
+    await page.keyboard.press('Tab')
+    const ring = await editorPage.formPane.evaluate((pane) => {
+      pane.focus()
+      const probe = pane.appendChild(document.createElement('div'))
+      probe.style.color = 'var(--canopy-focus-ring)'
+      const theme = getComputedStyle(probe).color
+      probe.remove()
+      const ringOf = (style: CSSStyleDeclaration) => ({
+        style: style.outlineStyle,
+        color: style.outlineColor,
+        offset: style.outlineOffset,
+      })
+      // Repeated over the pane by its non-scrolling panel, above the form's sticky header.
+      const over = getComputedStyle(pane.parentElement as HTMLElement, '::after')
+      return {
+        focusVisible: pane.matches(':focus-visible'),
+        pane: ringOf(getComputedStyle(pane)),
+        over: { ...ringOf(over), position: over.position, zIndex: over.zIndex },
+        theme,
+      }
+    })
+    expect(ring.focusVisible).toBe(true)
+    const theme = { style: 'solid', color: ring.theme, offset: '-2px' }
+    expect(ring.pane).toMatchObject(theme)
+    expect(ring.over).toMatchObject({ ...theme, position: 'absolute', zIndex: '1' })
+  })
+
+  test("a row's cut-off line shows in full on keyboard focus, not after a click", async ({
+    page,
+  }) => {
+    const slug = 'a-post-whose-slug-runs-well-past-the-edge-of-the-panel'
+    await editorPage.createPost(slug, 'Long route')
+    await editorPage.openContentNavigator()
+    const row = editorPage.contentNavigator.locator('[data-nav-row]', { hasText: `/posts/${slug}` })
+    const tooltip = page.locator('[role="tooltip"]', { hasText: `/posts/${slug}` })
+
+    await row.click()
+    // Off the row, so its hover tooltip stays shut.
+    await page.mouse.move(0, 0)
+    await page.waitForTimeout(900)
+    await expect(tooltip).toHaveCount(0)
+
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('ArrowDown')
+    await expect(tooltip).toBeVisible({ timeout: SHORT_TIMEOUT })
+  })
+
   test.describe('in a window too narrow to dock the panel', () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize({ width: 900, height: 800 })
