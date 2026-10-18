@@ -15,7 +15,7 @@ export interface TopBarProps {
 
 /**
  * The shell's top bar, the branch bar: one 48px row while both sides fit. Narrower, `trailing`
- * wraps onto a row of its own, still at the inline end, rather than clip a control. Layout only.
+ * controls that don't fit beside the branch wrap to a second row at the inline end. Layout only.
  */
 export function TopBar({ leading, trailing }: TopBarProps) {
   return (
@@ -39,9 +39,9 @@ export function TopBar({ leading, trailing }: TopBarProps) {
         wrap="wrap"
         align="center"
         justify="flex-end"
-        // Growing into the row's rest, its own or the pill's, keeps the actions at the end; on a
-        // row of its own it shrinks, so its controls wrap rather than overflow.
-        flex="1 1 auto"
+        // It takes the row's rest beside the pill, so only the controls that don't fit there wrap,
+        // still at the end.
+        flex="1 1 0%"
         miw={0}
       >
         {trailing}

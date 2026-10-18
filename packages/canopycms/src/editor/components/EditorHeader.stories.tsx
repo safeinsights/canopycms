@@ -251,3 +251,17 @@ export const NarrowBranchActions: Story = {
   parameters: phone,
   play: openMenu('branch-actions-button'),
 }
+
+/** Submit in the caret, blocked for someone without access: its reason wraps within the menu. */
+export const NarrowBranchActionsBlocked: Story = {
+  parameters: phone,
+  args: { branchCreatedBy: 'someone-else' },
+  play: openMenu('branch-actions-button'),
+}
+
+/** Withdraw in the caret, for a branch in review that is still writable. */
+export const NarrowBranchActionsWithdraw: Story = {
+  parameters: phone,
+  args: { branchStatus: 'approved' },
+  play: openMenu('branch-actions-button'),
+}

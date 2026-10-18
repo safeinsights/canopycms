@@ -16,6 +16,7 @@ import { describeBranchLock } from './BranchLockBanner'
 import { BranchPill } from './BranchPill'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { DraftStorageWarning, SaveAllButton } from './SaveAllButton'
+import { ENTRY_HEADER_HEIGHT } from './EntryHeader'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
@@ -350,8 +351,14 @@ function WorkflowCaret({
   const menuFocus = useMenuItemFocusReturn(caret)
   const withdraw = action.kind === 'withdraw'
   return (
-    <Menu withinPortal shadow="sm" position="bottom-end" {...menuFocus.menu}>
-      <Tooltip label="Branch actions" events={{ hover: true, focus: true, touch: false }}>
+    // Bounded, so a blocked item's reason wraps on a phone rather than run off the screen.
+    <Menu withinPortal shadow="sm" position="bottom-end" width={280} {...menuFocus.menu}>
+      <Tooltip
+        label="Branch actions"
+        events={{ hover: true, focus: true, touch: false }}
+        position="bottom-end"
+        offset={ENTRY_HEADER_HEIGHT + 8}
+      >
         <Menu.Target>
           <Button
             ref={caretRef}
@@ -360,7 +367,7 @@ function WorkflowCaret({
             px={8}
             aria-label="Branch actions"
             data-testid="branch-actions-button"
-            style={{ borderInlineStart: '1px solid var(--mantine-color-body)' }}
+            style={{ borderInlineStart: '1px solid var(--canopy-input-border)' }}
           >
             <IconChevronDown size={14} aria-hidden="true" />
           </Button>
@@ -369,7 +376,6 @@ function WorkflowCaret({
       <Menu.Dropdown {...menuFocus.dropdown}>
         <ReasonedMenuItem
           data-testid={withdraw ? 'withdraw-menu-item' : 'submit-menu-item'}
-          color={withdraw ? 'orange' : undefined}
           blockedReason={
             action.blocked
               ? action.reason || 'Wait for the current save or load to finish.'
