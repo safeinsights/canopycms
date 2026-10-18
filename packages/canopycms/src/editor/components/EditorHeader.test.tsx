@@ -251,16 +251,22 @@ describe('EditorHeader - branch pill unsaved count', () => {
   })
 
   describe('on a locked branch, says why the unsaved edits wait and what lets them be saved', () => {
+    const creator = { userContext: { userId: 'u1' }, branchCreatedBy: 'u1' }
     const locks: Array<[string, Partial<HeadersProps>, string]> = [
       [
         'in review',
-        { branchStatus: 'submitted', branchWriteBlocked: true },
+        { branchStatus: 'submitted', branchWriteBlocked: true, ...creator },
         'Withdraw to save them.',
       ],
       [
         'approved',
-        { branchStatus: 'approved', branchWriteBlocked: true },
+        { branchStatus: 'approved', branchWriteBlocked: true, ...creator },
         'Withdraw to save them.',
+      ],
+      [
+        'in review, for someone who may not withdraw',
+        { branchStatus: 'submitted', branchWriteBlocked: true, userContext: { userId: 'u2' } },
+        'They can be saved once the branch is editable again.',
       ],
       [
         'protected and read-only',
@@ -280,12 +286,12 @@ describe('EditorHeader - branch pill unsaved count', () => {
       [
         'not available',
         { branchStatus: undefined, branchWriteBlocked: true, branchMissing: true },
-        "They can't be saved without access to this branch.",
+        "They can't be saved unless this branch is available to you.",
       ],
       [
         'with details unavailable',
         { branchStatus: undefined, branchWriteBlocked: true },
-        'Refresh the branch to save them.',
+        'Use "Refresh branch" to load its details.',
       ],
     ]
     it.each(locks)('%s', async (_name, lock, wayForward) => {

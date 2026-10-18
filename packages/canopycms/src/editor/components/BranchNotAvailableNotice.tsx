@@ -20,7 +20,7 @@ export function BranchNotAvailableNotice({
   return (
     <Stack gap={4} py="sm" align={align} data-testid={testId}>
       <Text size="sm" c="dimmed">
-        {"You don't have access to this branch."}
+        {"You don't have access to this branch, or it no longer exists."}
       </Text>
       {onSwitchBranch && (
         <Button size="compact-sm" variant="subtle" onClick={onSwitchBranch}>

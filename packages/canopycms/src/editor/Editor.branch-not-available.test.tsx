@@ -28,7 +28,7 @@ afterEach(() => {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
-const listing = (names: string[]) =>
+const listing = (names: string[], defaultBranch: string) =>
   json({
     ok: true,
     status: 200,
@@ -45,20 +45,27 @@ const listing = (names: string[]) =>
         writeBlocked: false,
         submitBlocked: false,
       })),
-      defaultBranch: 'main',
+      defaultBranch,
       users: [],
     },
   })
 
-/** The branch list answers with `branchNames` once `branchesAnswered` resolves; the schema fails. */
+const schema = [{ name: 'title', type: 'string', label: 'Title' }]
+
+/**
+ * The branch list answers with `branchNames` once `branchesAnswered` resolves. The schema fails
+ * with `schemaFailure`; without one, it and the entry list answer with one post.
+ */
 const stubApi = ({
   branchNames,
   schemaFailure,
   branchesAnswered = Promise.resolve(),
+  defaultBranch = 'main',
 }: {
   branchNames: string[]
-  schemaFailure: { status: number; error: string }
+  schemaFailure?: { status: number; error: string }
   branchesAnswered?: Promise<void>
+  defaultBranch?: string
 }) => {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const url =
@@ -69,9 +76,63 @@ const stubApi = ({
       )
     }
     if (url.endsWith('/api/canopycms/branches')) {
-      return branchesAnswered.then(() => listing(branchNames))
+      return branchesAnswered.then(() => listing(branchNames, defaultBranch))
     }
-    if (url.includes('/schema') && !url.includes('/schema/')) {
+    if (url.includes('/schema') && !url.includes('/schema/') && !schemaFailure) {
+      return Promise.resolve(
+        json({
+          ok: true,
+          status: 200,
+          data: {
+            schema: {},
+            flatSchema: [
+              {
+                type: 'collection',
+                logicalPath: 'content/posts',
+                name: 'posts',
+                label: 'Posts',
+                entries: [{ name: 'post', format: 'json', schema }],
+              },
+              {
+                type: 'entry-type',
+                logicalPath: 'content/posts/post',
+                name: 'post',
+                parentPath: 'content/posts',
+                format: 'json',
+                schemaRef: 'postSchema',
+              },
+            ],
+            entrySchemas: { postSchema: schema },
+          },
+        }),
+      )
+    }
+    if (url.includes('/entries')) {
+      return Promise.resolve(
+        json({
+          ok: true,
+          status: 200,
+          data: {
+            entries: [
+              {
+                logicalPath: 'content/posts/hello',
+                contentId: 'def456ABC123',
+                collectionPath: 'content/posts',
+                collectionName: 'posts',
+                slug: 'hello',
+                title: 'hello',
+                format: 'json',
+                entryType: 'post',
+                physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
+                exists: true,
+              },
+            ],
+            pagination: { hasMore: false, limit: 50 },
+          },
+        }),
+      )
+    }
+    if (url.includes('/schema') && !url.includes('/schema/') && schemaFailure) {
       return Promise.resolve(
         json(
           { ok: false, status: schemaFailure.status, error: schemaFailure.error },
@@ -99,14 +160,14 @@ const stubWideWindow = () => {
     }) as MediaQueryList
 }
 
-const renderEditor = () =>
+const renderEditor = (branchName = 'main') =>
   render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000 }}>
       <ApiClientProvider>
         <Editor
           entries={[]}
           title="Test Editor"
-          branchName="main"
+          branchName={branchName}
           operatingMode="dev"
           themeOptions={{}}
         />
@@ -143,13 +204,17 @@ describe('a branch the list answered without', () => {
     await openContentPanel()
 
     const panelNotice = await screen.findByTestId('entry-nav-branch-not-available')
-    expect(panelNotice.textContent).toContain("You don't have access to this branch.")
+    expect(panelNotice.textContent).toContain(
+      "You don't have access to this branch, or it no longer exists.",
+    )
     expect(screen.queryByText('No content')).toBeNull()
 
     const formNotice = screen.getByTestId('form-branch-not-available')
-    expect(formNotice.textContent).toContain("You don't have access to this branch.")
+    expect(formNotice.textContent).toContain(
+      "You don't have access to this branch, or it no longer exists.",
+    )
     expect(screen.getByTestId('preview-branch-not-available').textContent).toBe(
-      "You don't have access to this branch.",
+      "You don't have access to this branch, or it no longer exists.",
     )
     expect(screen.queryByText('Select an item to start editing.')).toBeNull()
 
@@ -194,6 +259,40 @@ describe('a branch the list answered without', () => {
     await waitFor(async () => expect((await barStatus()).dataset.status).toBe('not-available'))
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(screen.queryByText('Could not load content')).toBeNull()
+  })
+})
+
+describe('the "Not available" empty states stay away', () => {
+  it('when the content loads after all, as for a branch the list lags in granting', async () => {
+    window.history.replaceState({}, '', '/?entry=')
+    stubWideWindow()
+    stubApi({ branchNames: ['other'] })
+    renderEditor()
+    await waitFor(async () => expect((await barStatus()).dataset.status).toBe('not-available'))
+    await openContentPanel()
+    await screen.findByTestId('entry-nav-item-posts')
+    expect(screen.getAllByText('Select an item to start editing.').length).toBeGreaterThan(0)
+    expect(screen.queryByTestId('form-branch-not-available')).toBeNull()
+    expect(screen.queryByTestId('preview-branch-not-available')).toBeNull()
+  })
+
+  it('when no branch is named, though the list has answered', async () => {
+    stubWideWindow()
+    const fetchMock = stubApi({
+      branchNames: ['other'],
+      schemaFailure: { status: 403, error: 'no_acl' },
+      defaultBranch: '',
+    })
+    renderEditor('')
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/branches'))).toBe(
+        true,
+      ),
+    )
+    await openContentPanel()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 100)))
+    expect(screen.getByTestId('content-panel')).toBeTruthy()
+    expect(screen.queryByTestId('entry-nav-branch-not-available')).toBeNull()
   })
 })
 

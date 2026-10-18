@@ -176,7 +176,7 @@ describe('EntryNavigator', () => {
       for (const loading of [false, true]) {
         renderEntryNavigator({ loading, branchNotAvailable: true, onSwitchBranch })
         expect(screen.getByTestId('entry-nav-branch-not-available').textContent).toContain(
-          "You don't have access to this branch.",
+          "You don't have access to this branch, or it no longer exists.",
         )
         expect(screen.queryByText('No content')).toBeNull()
         expect(screen.queryByText('Loading content…')).toBeNull()

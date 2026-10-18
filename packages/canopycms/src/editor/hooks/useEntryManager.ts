@@ -76,10 +76,7 @@ export interface UseEntryManagerOptions {
   /** An entry's route on the site (`buildPreviewRoute`), which picks the home page to open first. */
   resolvePreviewRoute?: (entry: EditorEntry) => string | undefined
   setBusy: (busy: boolean) => void
-  /**
-   * The bar's lock-state row (`branchBarStatus`). A failed load waits for the branch list while
-   * it is 'loading', and is not toasted on 'not-available', which the bar and empty states explain.
-   */
+  /** The bar's row: a failed load is toasted after 'loading' ends, and never on 'not-available'. */
   branchBarState?: BranchBarStatus['value']
   /** Switches to the branch a Back or Forward reached; rejects when the switch does not happen. */
   switchBranch?: (branch: string) => Promise<void>

@@ -448,7 +448,8 @@ const EditorContent: React.FC<EditorProps> = ({
     branchMissing,
     isProtected: currentBranch?.isProtected,
   }).value
-  const branchNotAvailable = branchBarState === 'not-available'
+  // With no branch named, the bar shows no row, so neither do the empty states.
+  const branchNotAvailable = !!branchNameState && branchBarState === 'not-available'
 
   // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
   const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
@@ -510,6 +511,10 @@ const EditorContent: React.FC<EditorProps> = ({
         }
       }),
   })
+  // The "Not available" empty states wait for the load to answer with nothing: content that does
+  // load, for a branch the list lags in granting, shows as usual.
+  const branchShowsNotAvailable =
+    branchNotAvailable && !entriesInitializing && entriesState.length === 0
 
   // The content overlay and a maximized preview hide the form; `navigatorOpen` is only the
   // overlay's. Anything that focuses something in the form reveals it first. Opening an entry
@@ -1887,7 +1892,7 @@ const EditorContent: React.FC<EditorProps> = ({
         }}
       >
         {/* The form pane beside it offers Switch branch…, so this one only says why. */}
-        {branchNameState && !currentEntry && branchNotAvailable ? (
+        {!currentEntry && branchShowsNotAvailable ? (
           <BranchNotAvailableNotice align="center" data-testid="preview-branch-not-available" />
         ) : (
           <Text size="sm" c="dimmed">
@@ -2073,7 +2078,7 @@ const EditorContent: React.FC<EditorProps> = ({
           unsavedCount={modifiedCount}
           unsavedEntries={editedFiles}
           entryListFailed={entriesLoadFailed && entriesState.length === 0}
-          branchNotAvailable={branchNotAvailable}
+          branchNotAvailable={branchShowsNotAvailable}
           onSwitchBranch={() => openBranchManager()}
           filterRef={entryFilterRef}
           filterShortcut={findShortcut}
@@ -2258,7 +2263,7 @@ const EditorContent: React.FC<EditorProps> = ({
                       : defaultPreview
                   }
                   form={
-                    !currentEntry && branchNameState && branchNotAvailable ? (
+                    !currentEntry && branchShowsNotAvailable ? (
                       <Center h="100%">
                         <BranchNotAvailableNotice
                           align="center"

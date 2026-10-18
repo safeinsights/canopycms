@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Anchor, Button, Code, Group, Stack, Text } from '@mantine/core'
 
 export interface RetryToastMessageProps {
@@ -21,6 +21,7 @@ export function RetryToastMessage({
   details,
 }: RetryToastMessageProps) {
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const detailsId = useId()
   return (
     <Stack gap={4}>
       <Group justify="space-between" align="center" gap="sm" wrap="nowrap">
@@ -39,12 +40,13 @@ export function RetryToastMessage({
             size="xs"
             style={{ alignSelf: 'flex-start' }}
             aria-expanded={detailsOpen}
+            aria-controls={detailsOpen ? detailsId : undefined}
             onClick={() => setDetailsOpen((open) => !open)}
           >
             Details
           </Anchor>
           {detailsOpen && (
-            <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <Code id={detailsId} block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
               {details}
             </Code>
           )}

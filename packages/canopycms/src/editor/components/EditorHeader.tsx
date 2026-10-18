@@ -182,7 +182,11 @@ export function EditorHeader({
           />
           {modifiedCount > 0 && (
             <Tooltip
-              label={unsavedTooltip(branchName ? status : undefined, modifiedCount)}
+              label={unsavedTooltip(
+                branchName ? status : undefined,
+                modifiedCount,
+                !!workflow?.permitted,
+              )}
               events={TOOLTIP_EVENTS}
               multiline
               maw={320}
@@ -261,17 +265,20 @@ export function EditorHeader({
 const TOOLTIP_EVENTS = { hover: true, focus: true, touch: false }
 
 /**
- * The "N unsaved" button's tooltip. On a locked branch its drafts can't be saved, so it says what
- * would let them be, by the lock-state row: a new branch starts without them, so a branch that
- * never becomes editable leaves only discarding, as `ReadOnlyDraftNotice` says.
+ * On a locked branch, what would let its drafts be saved. A new branch starts without them, so a
+ * branch never editable again leaves only discarding, as `ReadOnlyDraftNotice` says.
  */
-function unsavedTooltip(status: BranchBarStatus | undefined, count: number): string {
+function unsavedTooltip(
+  status: BranchBarStatus | undefined,
+  count: number,
+  mayWithdraw: boolean,
+): string {
   if (!status?.readOnly) return 'Show unsaved entries in the content panel'
   const edits = `${count} unsaved ${count === 1 ? 'edit' : 'edits'} in this browser.`
-  if (status.action === 'workflow') return `${edits} Withdraw to save them.`
-  if (status.value === 'unavailable') return `${edits} Refresh the branch to save them.`
+  if (status.action === 'workflow' && mayWithdraw) return `${edits} Withdraw to save them.`
+  if (status.value === 'unavailable') return `${edits} Use "Refresh branch" to load its details.`
   if (status.value === 'not-available')
-    return `${edits} They can't be saved without access to this branch.`
+    return `${edits} They can't be saved unless this branch is available to you.`
   if (status.value === 'protected' || status.value === 'archived')
     return `${edits} This branch won't become editable, so they can only be discarded.`
   return `${edits} They can be saved once the branch is editable again.`
