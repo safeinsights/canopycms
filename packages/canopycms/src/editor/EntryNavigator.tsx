@@ -208,7 +208,7 @@ const expandedStateFor = (nodes: TreeNodeData[], acc: Record<string, boolean> = 
 
 /**
  * The nodes of `nodes` that match `query` and, given `changed`, are in it. An entry matches on
- * label or slug; a collection whose label matches keeps its whole subtree, or under `changed` its
+ * label, title or slug; a collection whose label matches keeps its whole subtree, or under `changed` its
  * changed entries, and any other collection survives only with its matching descendants. Nodes keep
  * the position data (`childIndex`, `totalChildrenCount`) of the full tree.
  */
@@ -600,8 +600,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     [filtering, treeData, query, changedOnly, dirtyPaths],
   )
 
-  // A caller may pass a new but equal `dirtyPaths` as drafts change, so the filter re-expands only
-  // for a new query or new folders, never over a folder the user closed.
+  // A caller may pass a new but equal `dirtyPaths` as drafts change: that alone never reopens a
+  // folder the user closed, while a new query or new folders re-expand.
   const filteredFolders = useMemo(
     () => Object.keys(expandedStateFor(filteredTree)).join('\n'),
     [filteredTree],
@@ -720,7 +720,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         onExpandedStateChange?.(next)
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the filter or its folders change; `tree` is a fresh object each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the filter, its query or its folders change; `tree` is a fresh object each render
   }, [filtering, filteredFolders, query.trim()])
 
   useEffect(() => {

@@ -958,7 +958,7 @@ describe('unsaved entries', () => {
   })
 
   it('switches back to All on another branch, whose unsaved entries are its own', async () => {
-    // Nothing unsaved, so the switch asks no confirm; Changed is chosen in the panel itself.
+    // Nothing unsaved, so the switch asks no confirm (`useBranchActions`); Changed is chosen in the panel.
     window.history.replaceState({}, '', `/?branch=main&entry=${hello.path}`)
     stubWindowWidth(true)
     storeLayout({ contentPanelOpen: true })

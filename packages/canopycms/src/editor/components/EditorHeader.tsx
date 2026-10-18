@@ -185,7 +185,7 @@ export function EditorHeader({
             <Tooltip
               label="Show them in the content panel"
               events={TOOLTIP_EVENTS}
-              // Past the entry header, as the bar's other tooltips go, so it covers no crumb.
+              // Past the entry header, as Save all's goes, so it covers no crumb.
               position="bottom-start"
               offset={ENTRY_HEADER_HEIGHT + 8}
             >

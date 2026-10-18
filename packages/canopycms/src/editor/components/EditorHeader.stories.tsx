@@ -65,7 +65,7 @@ const meta: Meta<typeof Headers> = {
 export default meta
 type Story = StoryObj<typeof Headers>
 
-/** Three entries unsaved, the open one among them: its dot, and "3 unsaved" beside the status. */
+/** Three entries unsaved, the open one among them: its dot, and "3 unsaved" beside the pill. */
 export const Unsaved: Story = {}
 
 export const Saved: Story = {
