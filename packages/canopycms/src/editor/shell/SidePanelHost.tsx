@@ -14,7 +14,13 @@ import React, {
 import { CloseButton, Group, Text, Tooltip, Transition } from '@mantine/core'
 import { useReducedMotion, useWindowEvent } from '@mantine/hooks'
 import { FOCUS_RETURN_ATTR, focusIfIdle } from '../utils/focus-return'
-import { DIVIDER_COLOR, DIVIDER_TARGET_PX, DIVIDER_WIDTH_PX } from './EditorShell'
+import {
+  DIVIDER_COLOR,
+  DIVIDER_TARGET_PX,
+  DIVIDER_WIDTH_PX,
+  SHELL_HEADER_HEIGHT,
+  SHELL_REGION_BORDER,
+} from './EditorShell'
 
 /** Docked, pushing its neighbours aside, or laid over the form pane only. */
 type SidePanelMode = 'docked' | 'overlay'
@@ -396,8 +402,8 @@ export function SidePanelHost({
               wrap="nowrap"
               gap="xs"
               px="md"
-              py="xs"
-              style={{ borderBlockEnd: '1px solid var(--canopy-input-border)' }}
+              h={SHELL_HEADER_HEIGHT}
+              style={{ flexShrink: 0, borderBlockEnd: SHELL_REGION_BORDER }}
             >
               <Text id={titleId} component="h2" fw={600} size="md" m={0}>
                 {title}

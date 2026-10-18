@@ -31,6 +31,25 @@ test.describe('Editor shell', () => {
     expect(await page.evaluate(() => window.scrollY)).toBe(0)
   })
 
+  test("the content panel's header and the entry header share a bottom border", async ({
+    page,
+  }) => {
+    await editorPage.openContentNavigator()
+    await editorPage.selectEntry('Home')
+    const panelHeader = page.getByRole('heading', { name: 'Content', level: 2 }).locator('..')
+    const bottom = async (locator: typeof panelHeader) => {
+      const box = await locator.boundingBox()
+      return box ? box.y + box.height : undefined
+    }
+    await expect.poll(() => bottom(panelHeader)).toBe(await bottom(editorPage.entryHeader()))
+
+    // A host page's styles can change the controls' heights in only one of the two headers.
+    await page.addStyleTag({
+      content: '[data-canopy-shell] h2 { padding-block: 12px !important; }',
+    })
+    await expect.poll(() => bottom(panelHeader)).toBe(await bottom(editorPage.entryHeader()))
+  })
+
   test('the rail runs Content, Comments, Media, a divider and the layout toggle', async () => {
     await expect
       .poll(() => editorPage.railItems())
