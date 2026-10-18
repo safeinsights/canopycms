@@ -1870,7 +1870,7 @@ Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a bran
 
 ### Editing Content
 
-Browse collections in the content panel and click an entry to open it, or find one with "Find entries" (⌘P, Ctrl+P elsewhere), which opens the panel if it is closed. "All / Changed", or "N unsaved" in the branch bar, narrows the tree to unsaved entries. Create new entries with the "+" button (disabled for an entry type with `maxItems: 1` when one already exists). Edit fields in the form on the left and watch the live preview on the right. "Save" persists changes to your branch — **not** committed yet — and clears your local unsaved draft for that file. "Discard" reverts unsaved changes to the last saved state, confirming first.
+Browse collections in the content panel and click an entry to open it, or find one with "Find entries" (⌘P, Ctrl+P elsewhere), which opens the panel if it is closed. "All / Changed", or "N unsaved" in the branch bar, narrows the tree to unsaved entries. Create new entries with the "+" button (disabled for an entry type with `maxItems: 1` when one already exists). Edit fields in the form on the right and watch the live preview on the left. "Save" persists changes to your branch — **not** committed yet — and clears your local unsaved draft for that file. "Discard changes" reverts unsaved changes to the last saved state, confirming first.
 
 ### Submitting for Review
 

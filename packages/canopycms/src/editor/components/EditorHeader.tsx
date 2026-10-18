@@ -24,7 +24,6 @@ import { BranchPill } from './BranchPill'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { UnsavedMark } from './UnsavedMark'
 import { DraftStorageWarning, HIDDEN_STYLE, SaveAllButton } from './SaveAllButton'
-import { ENTRY_HEADER_HEIGHT } from './EntryHeader'
 import { useFocusHandOff, useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
@@ -182,13 +181,7 @@ export function EditorHeader({
             reason={branchLockReason}
           />
           {modifiedCount > 0 && (
-            <Tooltip
-              label="Show them in the content panel"
-              events={TOOLTIP_EVENTS}
-              // Past the entry header, as Save all's goes, so it covers no crumb.
-              position="bottom-start"
-              offset={ENTRY_HEADER_HEIGHT + 8}
-            >
+            <Tooltip label="Show unsaved entries in the content panel" events={TOOLTIP_EVENTS}>
               <Button
                 variant="subtle"
                 color="gray"
@@ -475,12 +468,7 @@ function WorkflowCaret({
   return (
     // Bounded, so a blocked item's reason wraps on a phone rather than run off the screen.
     <Menu withinPortal shadow="sm" position="bottom-end" width={280} {...menuFocus.menu}>
-      <Tooltip
-        label="Branch actions"
-        events={{ hover: true, focus: true, touch: false }}
-        position="bottom-end"
-        offset={ENTRY_HEADER_HEIGHT + 8}
-      >
+      <Tooltip label="Branch actions" events={{ hover: true, focus: true, touch: false }}>
         <Menu.Target>
           <Button
             ref={caretRef}

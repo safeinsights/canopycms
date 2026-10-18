@@ -238,7 +238,9 @@ describe('EditorHeader - branch pill unsaved count', () => {
     expect(within(screen.getByTestId('branch-dropdown-button')).queryByText(/\b2\b/)).toBeNull()
 
     act(() => count.focus())
-    expect((await screen.findByRole('tooltip')).textContent).toBe('Show them in the content panel')
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Show unsaved entries in the content panel',
+    )
     await userEvent.click(count)
     expect(onShowUnsaved).toHaveBeenCalledTimes(1)
 
@@ -1591,5 +1593,56 @@ describe('EditorHeader - branch bar', () => {
     expect(follows(screen.getByTestId('save-all-button'), way)).toBe(true)
     expect(follows(way, submit)).toBe(true)
     expect(screen.queryByTestId('branch-actions-button')).toBeNull()
+  })
+})
+
+describe('EditorHeader - bar tooltips', () => {
+  const originalMatchMedia = window.matchMedia
+  const owner = { userContext: { userId: 'u1' }, branchCreatedBy: 'u1' }
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+    cleanup()
+  })
+
+  /**
+   * Focuses a control and returns how far its Tooltip sits from it, in px. jsdom lays out nothing,
+   * so this is the offset alone: a fixed one that assumed a one-row bar puts the Tooltip a row or
+   * two away, over other controls, where the default stays within a few pixels.
+   */
+  const tooltipGap = async (control: HTMLElement) => {
+    act(() => control.focus())
+    const tooltip = await screen.findByRole('tooltip')
+    return Math.max(
+      Math.abs(parseFloat(tooltip.style.top)),
+      Math.abs(parseFloat(tooltip.style.left)),
+    )
+  }
+
+  it("opens the unsaved count's Tooltip at its control", async () => {
+    renderHeader({ modifiedCount: 2 })
+    expect(await tooltipGap(screen.getByTestId('branch-unsaved-count'))).toBeLessThan(10)
+  })
+
+  it("opens Save all's reason Tooltip at its control", async () => {
+    renderHeader({ modifiedCount: 0, hasUnsavedChanges: false })
+    expect(await tooltipGap(screen.getByTestId('save-all-button'))).toBeLessThan(10)
+  })
+
+  it("opens the branch-actions caret's Tooltip at its control", async () => {
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query.startsWith('(max-width:'),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList
+    renderHeader({ ...owner, modifiedCount: 2 })
+    expect(await tooltipGap(screen.getByTestId('branch-actions-button'))).toBeLessThan(10)
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Branch actions')
   })
 })
