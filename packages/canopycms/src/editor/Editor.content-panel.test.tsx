@@ -847,6 +847,114 @@ describe('finding an entry with Mod+P', () => {
   })
 })
 
+describe('unsaved entries', () => {
+  const keepDraft = (...entries: EditorEntry[]) =>
+    window.localStorage.setItem(
+      'canopycms:drafts:main',
+      JSON.stringify({
+        v: 2,
+        drafts: Object.fromEntries(entries.map((e) => [e.contentId, { title: 'Kept' }])),
+        baseVersions: {},
+      }),
+    )
+  const unsaved = () => screen.findByTestId('branch-unsaved-count', {}, { timeout: 3000 })
+  const changedRadio = () => screen.getByRole('radio', { name: /^Changed/ }) as HTMLInputElement
+  const allRadio = () => screen.getByRole('radio', { name: 'All' }) as HTMLInputElement
+  const shown = (slug: string) => screen.queryByTestId(`entry-nav-item-${slug}`) !== null
+  const openedOn = async (wide: boolean, layout: Record<string, unknown> = {}) => {
+    window.history.replaceState({}, '', `/?entry=${hello.path}`)
+    stubWindowWidth(wide)
+    storeLayout(layout)
+    stubApi()
+    renderEditor()
+    await waitFor(() =>
+      expect(screen.getByTestId('file-dropdown-button').textContent).toContain('hello'),
+    )
+  }
+
+  it("lists them in a closed docked panel, filtered to Changed, from the bar's count", async () => {
+    keepDraft(second)
+    await openedOn(true, { contentPanelOpen: false })
+    expect(panel()).toBeNull()
+
+    fireEvent.click(await unsaved())
+
+    await waitFor(() => expect(changedRadio().checked).toBe(true))
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
+    expect(storedLayout().contentPanelOpen).toBe(true)
+    await waitFor(() => expect(shown('second')).toBe(true))
+    expect(shown('hello')).toBe(false)
+  })
+
+  it('opens the narrow overlay with Changed already set', async () => {
+    keepDraft(second)
+    await openedOn(false)
+
+    fireEvent.click(await unsaved())
+
+    await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay'))
+    expect(changedRadio().checked).toBe(true)
+    await waitFor(() => expect(shown('second')).toBe(true))
+    expect(shown('hello')).toBe(false)
+  })
+
+  it('says the list failed to load, not that nothing changed, when it did', async () => {
+    const consoleSpy = mockConsole()
+    onTestFinished(() => consoleSpy.restore())
+    keepDraft(hello)
+    stubWindowWidth(true)
+    stubApi({ failingEntries: true })
+    renderEditor({ entries: [] })
+    await screen.findByText('Could not load content')
+
+    fireEvent.click(await unsaved())
+
+    expect((await screen.findByTestId('entry-nav-changed-failed')).textContent).toContain(
+      "The list of entries couldn't be loaded",
+    )
+    expect(screen.queryByTestId('entry-nav-changed-none')).toBeNull()
+    expect(consoleSpy).toHaveErrored(/500/)
+  })
+
+  it("shows the open entry's row from its menu: All again, its row focused", async () => {
+    keepDraft(second)
+    await openedOn(true)
+    fireEvent.click(await unsaved())
+    await waitFor(() => expect(shown('hello')).toBe(false))
+
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('entry-menu-reveal'))
+
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(hello.path),
+    )
+    expect(allRadio().checked).toBe(true)
+    expect(shown('second')).toBe(true)
+  })
+
+  it('opens a Mod+P panel for good when it shows the open entry', async () => {
+    await openedOn(true, { contentPanelOpen: false })
+    const title = screen.getByRole('textbox', { name: /^Title/ })
+    await waitFor(() => expect(title).toHaveProperty('value', 'Loaded title'))
+    act(() => title.focus())
+    fireEvent.keyDown(title, { key: 'p', ctrlKey: true })
+    await waitFor(() => expect(panel()).not.toBeNull())
+    expect(storedLayout().contentPanelOpen).toBe(false)
+
+    act(() => screen.getByTestId('file-dropdown-button').focus())
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('entry-menu-reveal'))
+
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(hello.path),
+    )
+    expect(storedLayout().contentPanelOpen).toBe(true)
+    act(() => title.focus())
+    await act(() => new Promise((resolve) => setTimeout(resolve, 30)))
+    expect(panel()).not.toBeNull()
+  })
+})
+
 describe('layout button', () => {
   it('switches the layout with no entry open, and stores the choice', async () => {
     window.history.replaceState({}, '', '/?entry=')
@@ -1151,7 +1259,7 @@ describe('saving', () => {
     await screen.findByText('Could not load content')
 
     const saveAll = screen.getByTestId('save-all-button')
-    expect(saveAll).toBe(screen.getByRole('button', { name: 'Save all (1)' }))
+    expect(saveAll).toBe(screen.getByRole('button', { name: 'Save all' }))
     expect(saveAll.getAttribute('aria-disabled')).toBe('true')
     act(() => saveAll.focus())
     expect((await screen.findByRole('tooltip')).textContent).toContain(

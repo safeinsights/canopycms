@@ -33,6 +33,8 @@ export interface EntryBreadcrumbProps {
   /** Why the open entry is read-only; set, the "Read-only" chip shows. */
   readOnlyReason?: string
   onCollection: (collectionPath: string) => void
+  /** Offers "Show in content panel", which brings the entry's row into view and focuses it. */
+  onReveal?: () => void
   onRefresh: () => void
   onDiscard: () => void
   /** With `onDelete`, offers "Change URL…" and "Delete entry"; absent where a path rule refuses them. */
@@ -132,6 +134,7 @@ export function EntryBreadcrumb({
   entryDirty,
   readOnlyReason,
   onCollection,
+  onReveal,
   onRefresh,
   onDiscard,
   onRename,
@@ -224,6 +227,14 @@ export function EntryBreadcrumb({
                   </Menu.Target>
                 </CrumbTooltip>
                 <Menu.Dropdown {...menuFocus.dropdown}>
+                  {onReveal && (
+                    <>
+                      <Menu.Item onClick={onReveal} data-testid="entry-menu-reveal">
+                        Show in content panel
+                      </Menu.Item>
+                      <Menu.Divider />
+                    </>
+                  )}
                   <ReasonedMenuItem
                     onClick={onRefresh}
                     blockedReason={refreshBlockedReason}

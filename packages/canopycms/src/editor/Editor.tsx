@@ -1579,20 +1579,30 @@ const EditorContent: React.FC<EditorProps> = ({
     [],
     true,
   )
-  // A collection crumb opens the panel as the rail's Content button does, then its collection's row
-  // takes focus.
-  const [collectionReveal, setCollectionReveal] = useState<{ path: string; seq: number }>()
+  // A collection crumb, or the entry menu's "Show in content panel", opens the panel as the rail's
+  // Content button does, then the row takes focus.
+  const [contentReveal, setContentReveal] = useState<{
+    kind: 'collection' | 'entry'
+    path: string
+    seq: number
+  }>()
   // Only ever rises: the navigator serves each seq once, and the request is cleared once served.
   const revealSeqRef = useRef(0)
-  const revealCollection = (path: string) => {
+  const revealInContentPanel = (kind: 'collection' | 'entry', path: string) => {
     openNavigator()
     revealSeqRef.current += 1
-    setCollectionReveal({ path, seq: revealSeqRef.current })
+    setContentReveal({ kind, path, seq: revealSeqRef.current })
   }
   // An ask the panel closed on before serving it must not fire when the panel next opens.
   useEffect(() => {
-    if (!contentPanelShown) setCollectionReveal(undefined)
+    if (!contentPanelShown) setContentReveal(undefined)
   }, [contentPanelShown])
+  // The content panel's All / Changed filter; Changed lists the unsaved entries.
+  const [changedOnly, setChangedOnly] = useState(false)
+  const showUnsaved = () => {
+    setChangedOnly(true)
+    openNavigator()
+  }
   const runSaveAll = () => {
     void handleSaveAll()
       .then((result) => {
@@ -2032,8 +2042,12 @@ const EditorContent: React.FC<EditorProps> = ({
                 })
           }
           dirtyPaths={dirtyPaths}
-          revealCollection={collectionReveal}
-          onRevealed={() => setCollectionReveal(undefined)}
+          reveal={contentReveal}
+          onRevealed={() => setContentReveal(undefined)}
+          changedOnly={changedOnly}
+          onChangedOnlyChange={setChangedOnly}
+          unsavedCount={modifiedCount}
+          entryListFailed={entriesLoadFailed && entriesState.length === 0}
           filterRef={entryFilterRef}
           filterShortcut={findShortcut}
           onFilterEnter={
@@ -2061,8 +2075,8 @@ const EditorContent: React.FC<EditorProps> = ({
               branchName={branchNameState}
               branchStatus={currentBranch?.status}
               busy={busy}
-              editedFiles={editedFiles}
               modifiedCount={modifiedCount}
+              onShowUnsaved={showUnsaved}
               draftStorageFailed={draftStorageFailed}
               userContext={userContext}
               branchCreatedBy={currentBranch?.createdBy}
@@ -2082,7 +2096,6 @@ const EditorContent: React.FC<EditorProps> = ({
               branchPending={branchPending}
               branchMissing={branchMissing}
               branchToggleRef={branchToggleRef}
-              onEntrySelect={openEntry}
               onBranchReloadData={() => {
                 void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
                   console.error,
@@ -2173,7 +2186,10 @@ const EditorContent: React.FC<EditorProps> = ({
                 branchLoading={branchLoading}
                 branchPending={branchPending}
                 branchMissing={branchMissing}
-                onCollectionOpen={revealCollection}
+                onCollectionOpen={(path) => revealInContentPanel('collection', path)}
+                onEntryReveal={() =>
+                  currentEntry && revealInContentPanel('entry', currentEntry.path)
+                }
                 navigatorToggleRef={navigatorToggleRef}
                 onFileReload={() => handleReload(() => navigatorToggleRef.current)}
                 onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}

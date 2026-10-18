@@ -23,6 +23,8 @@ export interface EntryHeaderProps {
   breadcrumbSegments: BreadcrumbSegment[]
   /** Opens the content panel on a collection. */
   onCollectionOpen: (collectionPath: string) => void
+  /** Opens the content panel on the open entry's row. */
+  onEntryReveal?: () => void
   /** The entry menu's trigger. */
   navigatorToggleRef?: Ref<HTMLButtonElement>
   /** Replaces the open entry with the server's copy. */
@@ -73,6 +75,7 @@ export function EntryHeader({
   busy,
   breadcrumbSegments,
   onCollectionOpen,
+  onEntryReveal,
   navigatorToggleRef,
   onFileReload,
   onFileDiscardDraft,
@@ -143,6 +146,7 @@ export function EntryHeader({
             branchLoading ? undefined : currentEntry || branchName ? entryLockReason : undefined
           }
           onCollection={onCollectionOpen}
+          onReveal={onEntryReveal}
           onRefresh={onFileReload}
           onDiscard={onFileDiscardDraft}
           // A path rule's refusal hides them, as the content tree hides that entry's "…" menu.

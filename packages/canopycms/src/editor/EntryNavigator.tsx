@@ -14,6 +14,7 @@ import {
   Loader,
   Menu,
   ScrollArea,
+  SegmentedControl,
   Stack,
   Text,
   TextInput,
@@ -149,12 +150,20 @@ export interface EntryNavigatorProps {
   /** Entry paths with unsaved changes; each shows a dot, and so does every collection holding one. */
   dirtyPaths?: ReadonlySet<string>
   /**
-   * A collection to bring into view: any filter clears, its ancestors and itself expand, and its
-   * row takes focus. `seq` makes a repeat ask for the same collection a new one.
+   * A collection or entry to bring into view: the query clears, Changed goes back to All, its
+   * ancestors (and a collection itself) expand, and its row takes focus. `seq` makes a repeat ask
+   * for the same row a new one.
    */
-  revealCollection?: { path: string; seq: number }
-  /** The reveal is done, or its collection is not in the tree. */
+  reveal?: { kind: 'collection' | 'entry'; path: string; seq: number }
+  /** The reveal is done, or its row is not in the tree. */
   onRevealed?: () => void
+  /** The All / Changed control shows only with this; Changed lists the entries in `dirtyPaths`. */
+  onChangedOnlyChange?: (changedOnly: boolean) => void
+  changedOnly?: boolean
+  /** Entries with unsaved changes, counting drafts whose entries the tree doesn't list yet. */
+  unsavedCount?: number
+  /** The branch's entry list failed to load, so Changed can't name what is unsaved. */
+  entryListFailed?: boolean
   /** Takes Enter's first match in the filter in place of `onSelect`. */
   onFilterEnter?: (path: string) => void
   /** Escape in the empty filter. Without it, Escape there does nothing here. */
@@ -191,28 +200,44 @@ const expandedStateFor = (nodes: TreeNodeData[], acc: Record<string, boolean> = 
 }
 
 /**
- * The nodes of `nodes` that match `query`. An entry matches on label or slug; a collection whose
- * label matches keeps its whole subtree, and any other collection survives only with its matching
- * descendants. Nodes keep the position data (`childIndex`, `totalChildrenCount`) of the full tree.
+ * The nodes of `nodes` that match `query` and, given `changed`, are in it. An entry matches on
+ * label or slug; a collection whose label matches keeps its whole subtree, or under `changed` its
+ * changed entries, and any other collection survives only with its matching descendants. Nodes keep
+ * the position data (`childIndex`, `totalChildrenCount`) of the full tree.
  */
-const filterTree = (nodes: TreeNodeData[], query: string): TreeNodeData[] => {
+const filterTree = (
+  nodes: TreeNodeData[],
+  query: string,
+  changed?: ReadonlySet<string>,
+): TreeNodeData[] => {
   const kept: TreeNodeData[] = []
   for (const node of nodes) {
     const label = String(node.label ?? '')
     if (node.nodeProps?.isEntry) {
       const { slug, title } = node.nodeProps as { slug?: string; title?: string }
-      if (matchesEntryQuery({ label, title, slug }, query)) {
+      if (
+        matchesEntryQuery({ label, title, slug }, query) &&
+        (!changed || changed.has(node.value))
+      ) {
         kept.push(node)
       }
-    } else if (matchesEntryQuery({ label }, query)) {
-      kept.push(node)
-    } else {
-      const children = filterTree(node.children ?? [], query)
-      if (children.length > 0) kept.push({ ...node, children })
+      continue
     }
+    // An empty query matches every label, so under Changed a collection is never kept whole.
+    const labelMatches = matchesEntryQuery({ label }, query)
+    if (labelMatches && !changed) {
+      kept.push(node)
+      continue
+    }
+    const children = filterTree(node.children ?? [], labelMatches ? '' : query, changed)
+    if (children.length > 0) kept.push({ ...node, children })
   }
   return kept
 }
+
+/** Whether `value` is a node of `nodes`, at any depth. */
+const hasNode = (nodes: TreeNodeData[], value: string): boolean =>
+  nodes.some((node) => node.value === value || hasNode(node.children ?? [], value))
 
 /** The first entry in tree order that matches `query`, else the first entry of any kind. */
 const firstEntryPath = (nodes: TreeNodeData[], query: string): string | undefined => {
@@ -350,8 +375,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   readOnly = false,
   readOnlyReason,
   dirtyPaths,
-  revealCollection,
+  reveal,
   onRevealed,
+  onChangedOnlyChange,
+  changedOnly: changedOnlyProp = false,
+  unsavedCount: unsavedCountProp = 0,
+  entryListFailed = false,
   onFilterEnter,
   onFilterEscape,
   onRowMenuOpen,
@@ -374,7 +403,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   const [query, setQuery] = useState('')
   const filterInputRef = useRef<HTMLInputElement>(null)
   const mergedFilterRef = useMergedRef(filterInputRef, filterRef)
-  const filtering = query.trim() !== ''
+  const changedOnly = changedOnlyProp && !!onChangedOnlyChange
+  const filtering = query.trim() !== '' || changedOnly
   // Read from the tree's expand/collapse callbacks, which fire from state updaters.
   const filteringRef = useRef(false)
   useEffect(() => {
@@ -555,20 +585,28 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   // Filtered from the finished tree, so each node keeps its position in the whole collection and
   // Move up / Move down stay correct while a filter is on.
   const filteredTree = useMemo(
-    () => (filtering ? filterTree(treeData, query) : treeData),
-    [filtering, treeData, query],
+    () =>
+      filtering
+        ? filterTree(treeData, query, changedOnly ? (dirtyPaths ?? new Set()) : undefined)
+        : treeData,
+    [filtering, treeData, query, changedOnly, dirtyPaths],
   )
 
   // Collections that hold an entry with unsaved changes, found over the whole tree so a filter
   // never hides the reason for a dot.
-  const dirtyCollections = useMemo(() => {
+  // `listedUnsaved` counts the unsaved entries the tree has rows for.
+  const { dirtyCollections, listedUnsaved } = useMemo(() => {
     const dirty = new Set<string>()
-    if (!dirtyPaths?.size) return dirty
+    let listed = 0
+    if (!dirtyPaths?.size) return { dirtyCollections: dirty, listedUnsaved: listed }
     const walk = (nodes: TreeNodeData[]): boolean => {
       let any = false
       for (const node of nodes) {
         if (node.nodeProps?.isEntry) {
-          if (dirtyPaths.has(node.value)) any = true
+          if (dirtyPaths.has(node.value)) {
+            any = true
+            listed += 1
+          }
         } else if (walk(node.children ?? [])) {
           dirty.add(node.value)
           any = true
@@ -577,7 +615,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       return any
     }
     walk(treeData)
-    return dirty
+    return { dirtyCollections: dirty, listedUnsaved: listed }
   }, [treeData, dirtyPaths])
 
   // The hidden root's own row never renders, so its message is shown once above the tree.
@@ -629,17 +667,26 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   // The expanded state from before the filter started, put back exactly when it clears. The tree
   // drops the state of nodes it no longer renders, so it cannot be recovered from the tree itself.
   const expandedBeforeFilterRef = useRef<Record<string, boolean> | null>(null)
+  const servedRevealRef = useRef<number>()
+  const revealAwaitsRestoreRef = useRef(false)
   useEffect(() => {
     if (filtering) {
       expandedBeforeFilterRef.current ??= tree.expandedState
       tree.setExpandedState(expandedStateFor(filteredTree))
     } else if (expandedBeforeFilterRef.current) {
       // Plus the ancestors of an entry picked while filtering, so it stays in view.
-      tree.setExpandedState({
+      const next = {
         ...expandedBeforeFilterRef.current,
         ...calculatePathToEntry(selectedPath, treeData),
-      })
+      }
+      tree.setExpandedState(next)
       expandedBeforeFilterRef.current = null
+      // A reveal that cleared the filter added its row's folders, kept as its own expansion is.
+      if (reveal && servedRevealRef.current !== reveal.seq) {
+        revealAwaitsRestoreRef.current = true
+        localExpandedStateRef.current = next
+        onExpandedStateChange?.(next)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the filter or the filtered tree changes; `tree` is a fresh object each render
   }, [filtering, filteredTree])
@@ -685,24 +732,45 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   }, [])
 
   const treeBoxRef = useRef<HTMLDivElement>(null)
-  const servedRevealRef = useRef<number>()
   // Runs again as the filter clears and the expansion lands, then focuses the row a frame later.
   useEffect(() => {
-    if (!revealCollection || !treeData || servedRevealRef.current === revealCollection.seq) return
-    const served = () => {
-      servedRevealRef.current = revealCollection.seq
-      onRevealed?.()
-    }
-    if (query) {
-      setQuery('')
+    if (!reveal || !treeData || servedRevealRef.current === reveal.seq) {
+      revealAwaitsRestoreRef.current = false
       return
     }
-    const value = collectionNodeValue(treeData, revealCollection.path)
+    const served = () => {
+      servedRevealRef.current = reveal.seq
+      onRevealed?.()
+    }
+    // This commit's expanded state predates the restore's, which re-runs this effect.
+    if (revealAwaitsRestoreRef.current) {
+      revealAwaitsRestoreRef.current = false
+      return
+    }
+    const value =
+      reveal.kind === 'collection'
+        ? collectionNodeValue(treeData, reveal.path)
+        : hasNode(treeData, reveal.path)
+          ? reveal.path
+          : undefined
     if (!value) {
       served()
       return
     }
-    const wanted = { ...calculatePathToEntry(value, treeData), [value]: true }
+    const wanted = {
+      ...calculatePathToEntry(value, treeData),
+      ...(reveal.kind === 'collection' ? { [value]: true } : {}),
+    }
+    if (filtering) {
+      // The filter's restore expands the row's folders along with what was open before it.
+      expandedBeforeFilterRef.current = {
+        ...(expandedBeforeFilterRef.current ?? tree.expandedState),
+        ...wanted,
+      }
+      setQuery('')
+      if (changedOnly) onChangedOnlyChange?.(false)
+      return
+    }
     if (Object.keys(wanted).some((key) => !tree.expandedState[key])) {
       const next = { ...tree.expandedState, ...wanted }
       tree.setExpandedState(next)
@@ -720,7 +788,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     })
     return () => cancelAnimationFrame(frame)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `tree` and the callbacks are fresh each render
-  }, [revealCollection, treeData, query, tree.expandedState])
+  }, [reveal, treeData, filtering, tree.expandedState])
 
   const clearFilter = () => {
     setQuery('')
@@ -1149,6 +1217,33 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     )
   }
 
+  // Changed with no query can't list everything it counts: say why, in place of or after its rows.
+  const unsavedCount = Math.max(unsavedCountProp, listedUnsaved)
+  const unlistedUnsaved = unsavedCount - listedUnsaved
+  const changedNotice =
+    !changedOnly || query.trim() ? null : entryListFailed ? (
+      <Text size="sm" c="dimmed" py="sm" data-testid="entry-nav-changed-failed">
+        The list of entries couldn&apos;t be loaded, so unsaved entries can&apos;t be shown. Choose
+        &quot;Refresh branch&quot; in the branch menu to try again.
+      </Text>
+    ) : unsavedCount === 0 ? (
+      <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-changed-none">
+        <Text size="sm" c="dimmed">
+          No unsaved changes on this branch.
+        </Text>
+        <Button size="compact-sm" variant="subtle" onClick={() => onChangedOnlyChange?.(false)}>
+          Show all entries
+        </Button>
+      </Stack>
+    ) : unlistedUnsaved > 0 ? (
+      <Text size="sm" c="dimmed" py={4} data-testid="entry-nav-changed-unlisted">
+        {listedUnsaved > 0
+          ? `${unlistedUnsaved} more: `
+          : `${unlistedUnsaved} unsaved ${unlistedUnsaved === 1 ? 'entry' : 'entries'}: `}
+        {unlistedUnsaved === 1 ? 'loading its name…' : 'loading their names…'}
+      </Text>
+    ) : null
+
   return (
     <Stack
       h="100%"
@@ -1187,6 +1282,21 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           data-testid="entry-nav-filter"
         />
       )}
+      {onChangedOnlyChange && (treeData.length > 0 || unsavedCount > 0) && (
+        <SegmentedControl
+          size="xs"
+          fullWidth
+          mb={4}
+          aria-label="Entries shown"
+          value={changedOnly ? 'changed' : 'all'}
+          onChange={(value) => onChangedOnlyChange(value === 'changed')}
+          data={[
+            { value: 'all', label: 'All' },
+            { value: 'changed', label: unsavedCount > 0 ? `Changed ${unsavedCount}` : 'Changed' },
+          ]}
+          data-testid="entry-nav-changed-filter"
+        />
+      )}
       <ScrollArea type="auto" scrollbars="y" offsetScrollbars style={{ flex: 1 }}>
         {hiddenRootUnavailableRefs && hiddenRootUnavailableRefs.length > 0 && (
           <Box pt="sm">
@@ -1206,11 +1316,15 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                 Loading content…
               </Text>
             </Group>
+          ) : changedNotice ? (
+            changedNotice
           ) : (
             <Text size="xs" c="dimmed" py="sm">
               No content
             </Text>
           )
+        ) : filteredTree.length === 0 && changedNotice ? (
+          changedNotice
         ) : filteredTree.length === 0 ? (
           <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-filter-empty">
             <Text size="sm" c="dimmed">
@@ -1229,6 +1343,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               selectOnClick={false}
               levelOffset="sm"
             />
+            {changedNotice}
           </Box>
         )}
       </ScrollArea>

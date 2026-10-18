@@ -513,18 +513,18 @@ describe('Focus once a menu has closed', () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger()))
   })
 
-  it('picking an unsaved entry leaves focus on the branch pill', async () => {
+  it("Show in content panel leaves focus on the entry's row, not on its menu button", async () => {
     stubApi()
     renderEditor()
     await loaded()
-    await editTitle()
 
-    await activateByKeyboard(branchTrigger(), async () => {
-      const items = await screen.findAllByRole('menuitem', { name: 'Hello' })
-      return items[0]
-    })
+    await activateByKeyboard(fileTrigger(), byTestId('entry-menu-reveal'))
 
-    await waitFor(() => expect(document.activeElement).toBe(branchTrigger()))
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(hello.path),
+    )
+    await settled()
+    expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(hello.path)
   })
 
   it('leaves focus in the drawer that Switch branch… opened', async () => {

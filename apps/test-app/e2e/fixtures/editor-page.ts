@@ -643,7 +643,7 @@ export class EditorPage {
     await this.saveAllButton().click()
   }
 
-  /** The top bar's "Save all", labelled with the unsaved count. */
+  /** The top bar's "Save all". */
   saveAllButton(): Locator {
     return this.page.getByTestId('save-all-button')
   }
@@ -658,9 +658,26 @@ export class EditorPage {
     return this.page.getByTestId('save-all-result')
   }
 
-  /** The branch pill's unsaved count, a dot and a number named "N entries with unsaved changes", absent with nothing unsaved. */
+  /** The branch bar's "N unsaved" button, absent with nothing unsaved. */
   branchUnsavedCount(): Locator {
     return this.page.getByTestId('branch-unsaved-count')
+  }
+
+  /** Lists the unsaved entries: "N unsaved" opens the content panel filtered to Changed. */
+  async showUnsavedEntries(): Promise<void> {
+    await this.branchUnsavedCount().click()
+    await this.contentNavigator.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+  }
+
+  /** The content panel's All / Changed choice, by its label ("All", or "Changed" and its count). */
+  changedFilterOption(label: 'All' | 'Changed'): Locator {
+    return this.contentNavigator.getByRole('radio', { name: new RegExp(`^${label}`) })
+  }
+
+  /** The entry menu's "Show in content panel": the panel opens on All, the entry's row focused. */
+  async showInContentPanel(): Promise<void> {
+    await this.openFileMenuItem('entry-menu-reveal')
+    await this.contentNavigator.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
   }
 
   /**

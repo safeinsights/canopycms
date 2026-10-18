@@ -500,7 +500,7 @@ Top-level components and helpers:
 - `shell/SidePanelHost.tsx` — a resizable side panel, docked or over the form
 - `shell/TopBar.tsx` — the 48px top bar, wrapping when full
 - `shell/OverlayHeader.tsx` — `OverlayDrawer`, the drawers' compact header
-- `EntryNavigator.tsx` — entry tree: search (Mod+P), unsaved dots, read-only locks, conflict badges
+- `EntryNavigator.tsx` — entry tree: search (Mod+P), Changed filter, unsaved dots, locks, conflict badges
 - `entry-search.ts` — entry match, rows' detail line
 - `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
 - `FormHeader.tsx` / `form-outline.ts` — the form's sticky header and its field outline
@@ -591,7 +591,7 @@ Field components, in `editor/fields/`:
 
 Components, in `editor/components/`:
 
-- `EditorHeader.tsx` — branch bar: `BranchPill`, status, `SaveAllButton.tsx`, Submit/Withdraw (split below `md`); `SaveAllResult` is its toast
+- `EditorHeader.tsx` — branch bar: `BranchPill`, status, "N unsaved", `SaveAllButton.tsx`, Submit/Withdraw (split narrow); toast: `SaveAllResult`
 - `EntryHeader.tsx` — above the panes: `EntryBreadcrumb`, `EntrySaveButton.tsx`
 - `UnsavedMark.tsx` — the unsaved dot
 - `EditorRail.tsx` — the rail's buttons and Settings menu
