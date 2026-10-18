@@ -70,7 +70,8 @@ const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unkno
             branches: [
               {
                 name: 'main',
-                status: locked ? 'submitted' : 'editing',
+                // Archived, so the bar offers Switch branch… as the way forward.
+                status: locked ? 'archived' : 'editing',
                 access: {},
                 createdBy: 'user-1',
                 createdAt: '2024-01-01',
@@ -353,13 +354,15 @@ describe('Change URL… and Delete entry (file menu)', () => {
   it('blocks both on a locked branch, saying why, and opens neither', async () => {
     stubApi({ locked: true })
     renderEditor()
-    await waitFor(() => expect(screen.getByTestId('status-locked-banner')).toBeTruthy())
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-status').textContent).toBe('Archived · read-only'),
+    )
 
     await userEvent.click(fileTrigger())
     for (const id of ['entry-menu-rename', 'entry-menu-delete']) {
       const item = await screen.findByTestId(id)
       expect(item.getAttribute('aria-disabled')).toBe('true')
-      expect(item.textContent).toContain('This branch is in review. Withdraw it to make changes.')
+      expect(item.textContent).toContain('This branch is archived. Its content is read-only.')
       await userEvent.click(item)
     }
     expect(screen.queryByTestId('rename-entry-modal')).toBeNull()
@@ -394,13 +397,11 @@ describe('Switch branch… (branch menu)', () => {
     },
   )
 
-  it('returns focus to the banner button that opened it, not to the menu button', async () => {
+  it("returns focus to the bar's Switch branch… that opened it, not to the menu button", async () => {
     stubApi({ locked: true })
     renderEditor()
     await loaded()
-    const banner = await screen.findByTestId('status-locked-banner')
-    const opener = banner.querySelector('button')
-    if (!opener) throw new Error('no banner button')
+    const opener = await screen.findByTestId('switch-branch-button')
 
     focusEl(opener)
     await userEvent.keyboard('{Enter}')
@@ -435,11 +436,9 @@ describe('Switch branch… (branch menu)', () => {
     })
     renderEditor()
     await loaded()
-    const banner = await screen.findByTestId('status-locked-banner')
-    const bannerOpener = banner.querySelector('button')
-    if (!bannerOpener) throw new Error('no banner button')
+    const barOpener = await screen.findByTestId('switch-branch-button')
 
-    focusEl(bannerOpener)
+    focusEl(barOpener)
     await userEvent.keyboard('{Enter}')
     await screen.findByRole('heading', { name: 'Branches' })
     await userEvent.keyboard('{Escape}')

@@ -43,7 +43,7 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
  * symmetric: the editor client now defaults every missing flag fail-closed
  * (`?? true`), so a NEW client talking to an OLD server that omits these
  * fields degrades to fully locked -- read-only, Submit hidden, and (see
- * EditorHeader's `branchDataUnavailable`) a "could not be loaded" banner --
+ * `branchLockState`'s `branchDataUnavailable`) a "could not be loaded" status --
  * rather than silently behaving as if nothing changed. That is by design:
  * wire compatibility here means "doesn't break", not "behaves the same".
  */
@@ -54,7 +54,7 @@ export interface BranchListItem extends BranchMetadata {
    * True when content writes are rejected -- base-branch read-only OR a status
    * lock (submitted/approved/archived). The editor renders its locked state off
    * this instead of re-deriving the status rule client-side; `readOnly` still
-   * distinguishes WHICH lock applies, for banner copy.
+   * distinguishes WHICH lock applies, for the status copy.
    */
   writeBlocked?: boolean
   /**

@@ -214,7 +214,9 @@ describe('Editor on a read-only branch', () => {
   it('writes no draft from typing or from the markdown editor mounting', async () => {
     stubApi([protectedMain])
     const { baseElement } = renderEditor()
-    await waitFor(() => expect(screen.getByTestId('protected-branch-banner')).toBeTruthy())
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-status').textContent).toBe('Protected · read-only'),
+    )
 
     const input = await titleInput()
     expect(input.readOnly).toBe(true)
@@ -264,7 +266,9 @@ describe('Editor on a read-only branch', () => {
 
     fireEvent.click(screen.getByTestId('branch-dropdown-button'))
     fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
-    await waitFor(() => expect(screen.getByTestId('status-locked-banner')).toBeTruthy())
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-status').textContent).toBe('In review · read-only'),
+    )
 
     act(() => staleOnChange?.({ title: 'Late upload', body: '' }))
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))

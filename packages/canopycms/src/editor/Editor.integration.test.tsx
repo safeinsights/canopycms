@@ -1665,13 +1665,13 @@ describe('Editor integration', () => {
     })
     expect(screen.queryAllByTestId('branch-lock')).toHaveLength(0)
     expect(screen.getAllByTestId('branch-lock-pending').length).toBeGreaterThan(0)
+    expect(screen.getByTestId('branch-status').textContent).toBe('Loading branch…')
     releaseBranches()
 
-    // Read-only banner appears with the create-branch CTA.
+    // The bar says the branch is read-only and offers New branch….
     await waitFor(() => {
-      expect(screen.getByTestId('protected-branch-banner')).toBeDefined()
+      expect(screen.getByTestId('branch-status').textContent).toBe('Protected · read-only')
     })
-    expect(screen.getByText(/protected base branch "main"/i)).toBeDefined()
     expect(screen.getByRole('button', { name: 'New branch…' })).toBeDefined()
 
     // Submit is hidden entirely (not just disabled) on the protected branch.
@@ -1704,7 +1704,7 @@ describe('Editor integration', () => {
     })
     expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
     expect(screen.queryByRole('button', { name: /content actions/i })).toBeNull()
-    // A lock stands in the menu's slot, giving the banner's reason.
+    // A lock stands in the menu's slot, giving the lock's reason.
     const lock = within(screen.getByTestId('entry-nav-item-posts')).getByTestId('branch-lock')
     expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toBe(
       'The base branch is read-only. Create a branch to make changes.',
@@ -2124,9 +2124,9 @@ describe('Editor integration', () => {
         />,
       )
 
-      // Branch data has loaded and content is unlocked (no read-only banner).
+      // Branch data has loaded and content is unlocked: "Loading branch…" leaves no status behind.
       await waitFor(() => {
-        expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
+        expect(screen.queryByTestId('branch-status')).toBeNull()
       })
 
       await openNavigatorAndFindSubA()
@@ -2231,7 +2231,7 @@ describe('Editor integration', () => {
       )
 
       await waitFor(() => {
-        expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
+        expect(screen.queryByTestId('branch-status')).toBeNull()
       })
 
       await openNavigatorAndFindSubA()
@@ -2357,16 +2357,19 @@ describe('branches-fetch failure recovery', () => {
     // The failed fetch leaves the editor locked -- that part is correct and is
     // what the fail-closed default is for.
     await waitFor(() => expect(branchCalls).toBe(1))
-    await waitFor(() => expect(screen.getByTestId('status-locked-banner')).toBeTruthy())
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-status').textContent).toBe(
+        'Details unavailable · read-only',
+      ),
+    )
 
-    // Open the branch manager the way the lock banner tells the user to.
-    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
-    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+    // Open the branch manager the way the bar offers.
+    fireEvent.click(screen.getByTestId('switch-branch-button'))
 
     // A second request goes out...
     await waitFor(() => expect(branchCalls).toBeGreaterThan(1))
     // ...and the editor actually recovers, without a reload.
-    await waitFor(() => expect(screen.queryByTestId('status-locked-banner')).toBeNull())
+    await waitFor(() => expect(screen.queryByTestId('branch-status')).toBeNull())
 
     // The failure was reported, not swallowed silently.
     expect(consoleSpy).toHaveErrored(/Failed to load branches/)

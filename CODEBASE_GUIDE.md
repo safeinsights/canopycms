@@ -525,7 +525,8 @@ Top-level components and helpers:
 - `client-reference-resolver.ts` — resolves preview references at any depth, batched
 - `relative-time.ts` — `formatRelativeTime`; `components/RelativeTime.tsx` adds a tooltip
 - `theme.tsx` — theme, default control sizes
-- `branch-status.ts` — shared status label/colour map; `branchBarStatusPresentation`
+- `branch-status.ts` — status labels and colours
+- `branch-lock.ts` — `branchBarStatus`, the bar's lock-state table; `describeBranchLock`
 - `copy.ts` — fixed action verbs
 - `platform.ts` — `modKeyLabel()`, ⌘ or Ctrl
 - `slug.ts` — `slugFromTitle`; `validateEntrySlug`, the one slug validator
@@ -590,10 +591,9 @@ Field components, in `editor/fields/`:
 
 Components, in `editor/components/`:
 
-- `EditorHeader.tsx` — the top bar: `BranchPill`, `SaveAllButton.tsx`, Submit/Withdraw (caret below `md`); `SaveAllResult` is its toast
+- `EditorHeader.tsx` — branch bar: `BranchPill`, status, `SaveAllButton.tsx`, Submit/Withdraw (split below `md`); `SaveAllResult` is its toast
 - `EntryHeader.tsx` — above the panes: `EntryBreadcrumb`, `EntrySaveButton.tsx`
 - `UnsavedMark.tsx` — the unsaved dot
-- `BranchLockBanner.tsx` — read-only banners, `describeBranchLock`
 - `EditorRail.tsx` — the rail's buttons and Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `QuickOpenPalette.tsx` — Mod+P quick-open palette

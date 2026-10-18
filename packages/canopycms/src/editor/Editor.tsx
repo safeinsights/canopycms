@@ -86,13 +86,8 @@ import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
-import {
-  BranchLockBanner,
-  describeBranchLock,
-  EditorHeader,
-  EditorRail,
-  EntryHeader,
-} from './components'
+import { describeBranchLock } from './branch-lock'
+import { EditorHeader, EditorRail, EntryHeader } from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { QuickOpenPalette, type QuickOpenEntry } from './components/QuickOpenPalette'
@@ -1984,7 +1979,6 @@ const EditorContent: React.FC<EditorProps> = ({
           topBar={
             <EditorHeader
               branchName={branchNameState}
-              operatingMode={operatingMode}
               branchStatus={currentBranch?.status}
               busy={busy}
               editedFiles={editedFiles}
@@ -2001,10 +1995,11 @@ const EditorContent: React.FC<EditorProps> = ({
               // re-deriving `?? true` a second time here, so there is exactly one
               // fail-closed computation of "are writes blocked" in this component.
               branchIsProtected={currentBranch?.isProtected ?? true}
+              branchServerProtected={currentBranch?.isProtected}
               branchReadOnly={currentBranch?.readOnly}
               branchWriteBlocked={branchContentLocked}
-              // A failed fetch leaves the list empty too; the banner says that one.
               branchLoading={branchLoading}
+              branchPending={branchRowsPending}
               branchToggleRef={branchToggleRef}
               onEntrySelect={openEntry}
               onBranchReloadData={() => {
@@ -2030,15 +2025,6 @@ const EditorContent: React.FC<EditorProps> = ({
                   handleWithdraw(branchNameState, returnFocusTo).catch(console.error)
                 }
               }}
-            />
-          }
-          banner={
-            <BranchLockBanner
-              branchName={branchNameState}
-              branchStatus={currentBranch?.status}
-              branchReadOnly={currentBranch?.readOnly}
-              branchWriteBlocked={branchContentLocked}
-              onBranchManagerOpen={openBranchManager}
             />
           }
           rail={

@@ -38,7 +38,6 @@ const meta: Meta<typeof Headers> = {
       schema: [],
     },
     branchName: 'feature/landing',
-    operatingMode: 'prod',
     busy: false,
     breadcrumbSegments: [{ label: 'Posts', collectionPath: 'content/posts' }],
     editedFiles: [
@@ -78,10 +77,7 @@ export const Saved: Story = {
   args: { hasUnsavedChanges: false, editedFiles: [], modifiedCount: 0 },
 }
 
-/**
- * In review: Submit becomes Withdraw, and Save and Save all are blocked. The lock banner, not
- * shown here, says why.
- */
+/** In review: the status says so beside the pill, Submit becomes Withdraw, and saves are blocked. */
 export const InReview: Story = {
   args: {
     branchStatus: 'submitted',
@@ -92,19 +88,47 @@ export const InReview: Story = {
   },
 }
 
-/**
- * The protected base branch: "Protected" status, no Submit, Save blocked with its reason. The
- * lock banner, not shown here, says it is read-only.
- */
+/** The protected base branch in prod: "Protected · read-only", no Submit, and New branch…. */
 export const ReadOnly: Story = {
   args: {
     branchName: 'main',
     branchIsProtected: true,
+    branchServerProtected: true,
     branchReadOnly: true,
     branchWriteBlocked: true,
     hasUnsavedChanges: false,
     editedFiles: [],
     modifiedCount: 0,
+  },
+}
+
+/** The protected base branch in dev: writable, so "Protected" with no read-only and no lock. */
+export const ProtectedWritable: Story = {
+  args: { branchName: 'main', branchIsProtected: true, branchServerProtected: true },
+}
+
+/** Branch details failed to load: locked, with Switch branch… to retry. */
+export const DetailsUnavailable: Story = {
+  args: {
+    branchStatus: undefined,
+    branchLoading: true,
+    branchWriteBlocked: true,
+    hasUnsavedChanges: false,
+  },
+}
+
+/** Archived: read-only, with Switch branch… and Submit blocked with its reason. */
+export const Archived: Story = {
+  args: { branchStatus: 'archived', branchWriteBlocked: true, hasUnsavedChanges: false },
+}
+
+/** In review, for someone who may not withdraw it: Withdraw stays, blocked, with its reason. */
+export const InReviewNoPermission: Story = {
+  args: {
+    branchStatus: 'submitted',
+    branchWriteBlocked: true,
+    branchCreatedBy: 'someone-else',
+    hasUnsavedChanges: false,
   },
 }
 
@@ -123,7 +147,7 @@ export const EntryReadOnlyInReview: Story = {
   },
 }
 
-/** At 390px a locked branch keeps Withdraw apart from Save all; the bar wraps rather than clip it. */
+/** At 390px a branch in review offers Withdraw alone: Save all couldn't apply there. */
 export const Narrow: Story = {
   parameters: phone,
   args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
@@ -145,9 +169,15 @@ export const NarrowInReviewManyUnsaved: Story = {
   },
 }
 
-/** Before branch details arrive: no chip or status yet, as nothing is known. */
+/** Before branch details arrive: "Loading branch…", and no lock named yet. */
 export const BranchLoading: Story = {
-  args: { branchLoading: true, branchWriteBlocked: true, hasUnsavedChanges: false },
+  args: {
+    branchStatus: undefined,
+    branchLoading: true,
+    branchPending: true,
+    branchWriteBlocked: true,
+    hasUnsavedChanges: false,
+  },
 }
 
 /** Save all shows its progress; the entry's Save waits for it, and says so on focus. */
@@ -263,5 +293,30 @@ export const NarrowBranchActionsBlocked: Story = {
 export const NarrowBranchActionsWithdraw: Story = {
   parameters: phone,
   args: { branchStatus: 'approved' },
+  play: openMenu('branch-actions-button'),
+}
+
+/** In review below `md`, for someone who may not withdraw: Switch branch…, Withdraw in its caret. */
+export const NarrowInReviewNoPermission: Story = {
+  parameters: phone,
+  args: {
+    branchStatus: 'submitted',
+    branchWriteBlocked: true,
+    branchCreatedBy: 'someone-else',
+    hasUnsavedChanges: false,
+  },
+  play: openMenu('branch-actions-button'),
+}
+
+/** The protected base branch below `md`: New branch… alone. */
+export const NarrowReadOnly: Story = {
+  parameters: phone,
+  args: { ...ReadOnly.args },
+}
+
+/** Archived below `md`: Switch branch…, the blocked Submit and its reason in the caret. */
+export const NarrowArchived: Story = {
+  parameters: phone,
+  args: { ...Archived.args },
   play: openMenu('branch-actions-button'),
 }

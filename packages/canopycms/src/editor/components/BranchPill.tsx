@@ -15,8 +15,6 @@ export interface BranchPillProps {
   branchName: string
   /** The editor is busy; with no branch name yet, that is the branch list loading. */
   loading: boolean
-  /** The status label ("In review", "Protected"), set only for a status worth a place in the bar. */
-  status?: { label: string; testId: string; value: string }
   /** How many entries on the branch have unsaved changes, counting any the list can't name yet. */
   unsavedCount: number
   /** The listed entries with unsaved changes. */
@@ -32,15 +30,12 @@ export interface BranchPillProps {
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
 /**
- * The branch's name, status and unsaved count: the unsaved mark and a number. Its menu holds the
- * branch actions and lists the unsaved entries, each opening that entry. Below `sm` it is the
- * branch icon and the count, its name then in its Tooltip, accessible name and menu label: the
- * row's actions must not clip.
+ * The branch's name and unsaved count. Its menu, headed by the full name, holds the branch actions
+ * and lists the unsaved entries. Below `sm` the name truncates shorter, so the actions don't clip.
  */
 export function BranchPill({
   branchName,
   loading,
-  status,
   unsavedCount: unsaved,
   unsavedEntries,
   onSwitchBranch,
@@ -58,11 +53,7 @@ export function BranchPill({
 
   return (
     <Menu withinPortal shadow="sm" position="bottom-start" {...menuFocus.menu}>
-      <Tooltip
-        label={status ? `${name} · ${status.label}` : name}
-        disabled={wide}
-        events={{ hover: true, focus: true, touch: false }}
-      >
+      <Tooltip label={name} disabled={wide} events={{ hover: true, focus: true, touch: true }}>
         <Menu.Target>
           <Button
             ref={triggerRef}
@@ -78,20 +69,9 @@ export function BranchPill({
             data-testid="branch-dropdown-button"
             styles={{ label: { minWidth: 0, gap: 6 } }}
           >
-            <Text span inherit truncate="end" maw={200} visibleFrom="sm">
+            <Text span inherit truncate="end" maw={{ base: 120, sm: 200 }}>
               {name}
             </Text>
-            <VisuallyHidden component="span" hiddenFrom="sm">
-              {name}
-            </VisuallyHidden>
-            {branchName && status && (
-              <Text span size="xs" c="dimmed" visibleFrom="md" style={{ flexShrink: 0 }}>
-                <span aria-hidden="true">· </span>
-                <span data-testid={status.testId} data-status={status.value}>
-                  {status.label}
-                </span>
-              </Text>
-            )}
             {unsaved > 0 && (
               <Box
                 component="span"
@@ -112,9 +92,7 @@ export function BranchPill({
         </Menu.Target>
       </Tooltip>
       <Menu.Dropdown data-testid="branch-menu" {...menuFocus.dropdown}>
-        {branchName && status && (
-          <Menu.Label hiddenFrom="md">{`${branchName} · ${status.label}`}</Menu.Label>
-        )}
+        {branchName && <Menu.Label>{branchName}</Menu.Label>}
         <Menu.Item onClick={onSwitchBranch} data-testid="manage-branches-menu-item">
           {`${EDITOR_ACTIONS.switchBranch}…`}
         </Menu.Item>

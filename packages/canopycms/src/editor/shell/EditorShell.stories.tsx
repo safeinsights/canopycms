@@ -5,7 +5,6 @@ import { Box, Center, Stack, Text } from '@mantine/core'
 import { EditorShell, type EditorShellProps } from './EditorShell'
 import { PaneLayout, type PaneArrangement } from './PaneLayout'
 import { SidePanelHost, type SidePanelHostProps } from './SidePanelHost'
-import { BranchLockBanner } from '../components/BranchLockBanner'
 import { EditorHeader, type EditorHeaderProps } from '../components/EditorHeader'
 import { EditorRail } from '../components/EditorRail'
 import { EntryHeader, type EntryHeaderProps } from '../components/EntryHeader'
@@ -40,7 +39,6 @@ const headerProps: HeadersProps = {
     schema: [],
   },
   branchName: 'feature/landing',
-  operatingMode: 'prod',
   busy: false,
   breadcrumbSegments: [{ label: 'Posts', collectionPath: 'content/posts' }],
   editedFiles: [],
@@ -105,7 +103,6 @@ const EditorChrome = ({
   return (
     <EditorShell
       topBar={<EditorHeader {...props} />}
-      banner={<BranchLockBanner {...props} />}
       rail={
         <EditorRail
           contentPanelOpen={panelOpen}
@@ -159,7 +156,6 @@ type Story = StoryObj<typeof EditorShell>
 export const Regions: Story = {
   args: {
     topBar: <Placeholder name="Top bar" />,
-    banner: <Placeholder name="Banner" />,
     panel: <Placeholder name="Panel" minWidth={240} />,
     main: <Placeholder name="Main" />,
     rail: <Placeholder name="Rail" minWidth={44} />,
@@ -205,8 +201,15 @@ export const ContentPanelNarrow: Story = {
   render: () => <EditorChrome arrangement="stacked" panelMode="overlay" />,
 }
 
+/** In review: the bar's status says so beside the pill, and Withdraw is the way forward. */
 export const InReview: Story = {
   render: () => <EditorChrome branchStatus="submitted" branchWriteBlocked />,
+}
+
+/** In review at phone width: Withdraw alone, with no Save all, which couldn't apply. */
+export const InReviewNarrow: Story = {
+  parameters: ContentPanelNarrow.parameters,
+  render: () => <EditorChrome arrangement="stacked" branchStatus="submitted" branchWriteBlocked />,
 }
 
 export const ProtectedBaseBranch: Story = {
@@ -214,6 +217,7 @@ export const ProtectedBaseBranch: Story = {
     <EditorChrome
       branchName="main"
       branchIsProtected
+      branchServerProtected
       branchReadOnly
       branchWriteBlocked
       branchStatus="editing"

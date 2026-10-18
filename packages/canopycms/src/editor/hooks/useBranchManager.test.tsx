@@ -413,7 +413,7 @@ describe('useBranchManager', () => {
     // Absent case, asserted specifically (not just "always sends the field"):
     // isProtected/writeBlocked/submitBlocked gate real mutating actions, so
     // they must fail CLOSED (true) when missing. readOnly only picks WHICH
-    // lock banner to show once something is already locked, so it alone
+    // lock the status names once something is already locked, so it alone
     // stays `false` (unlocked-looking) when absent -- see the comment beside
     // its default in useBranchManager.tsx.
     expect(result.current.branchSummaries[1]).toMatchObject({

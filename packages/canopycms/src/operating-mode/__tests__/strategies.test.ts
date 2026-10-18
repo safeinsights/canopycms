@@ -38,11 +38,6 @@ describe('Operating Mode Strategies', () => {
         expect(strategy.supportsBranching()).toBe(true)
       })
 
-      it('should support status badge', () => {
-        const strategy = clientOperatingStrategy(mode)
-        expect(strategy.supportsStatusBadge()).toBe(true)
-      })
-
       it('should support comments', () => {
         const strategy = clientOperatingStrategy(mode)
         expect(strategy.supportsComments()).toBe(true)
@@ -85,11 +80,6 @@ describe('Operating Mode Strategies', () => {
       it('should support branching', () => {
         const strategy = clientOperatingStrategy(mode)
         expect(strategy.supportsBranching()).toBe(true)
-      })
-
-      it('should support status badge', () => {
-        const strategy = clientOperatingStrategy(mode)
-        expect(strategy.supportsStatusBadge()).toBe(true)
       })
 
       it('should support comments', () => {

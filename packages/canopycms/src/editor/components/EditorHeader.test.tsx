@@ -3,11 +3,11 @@ import { act, render, screen, cleanup, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
 import { EntryHeader, type EntryHeaderProps } from './EntryHeader'
-import { BranchLockBanner, branchLockBannerShown } from './BranchLockBanner'
 import { UnsavedMark } from './UnsavedMark'
 import { CanopyCMSProvider } from '../theme'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { EditorEntry } from '../Editor'
+import type { BranchStatus } from '../../types'
 import { RESERVED_GROUPS } from '../../authorization/helpers'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -28,7 +28,6 @@ type HeadersProps = EditorHeaderProps & Omit<EntryHeaderProps, 'saveAllRunning'>
 const defaultProps: HeadersProps = {
   currentEntry,
   branchName: 'feature/x',
-  operatingMode: 'prod',
   busy: false,
   breadcrumbSegments: [{ label: 'Posts', collectionPath: 'content/posts' }],
   editedFiles: [],
@@ -56,14 +55,16 @@ const Headers = (props: HeadersProps) => (
     <header data-canopy-region="topbar">
       <EditorHeader {...props} />
     </header>
-    <BranchLockBanner {...props} />
     <EntryHeader {...props} saveAllRunning={!!props.saveAllProgress} />
   </>
 )
 
-/** The top bar, the lock banner and the entry header, as Editor.tsx renders them from one state. */
+/** The top bar and the entry header, as Editor.tsx renders them from one state. */
 const renderHeader = (overrides: Partial<HeadersProps> = {}) =>
   render(<Headers {...defaultProps} {...overrides} />, { wrapper: Wrapper })
+
+/** The branch bar's status element. */
+const barStatus = () => screen.getByTestId('branch-status')
 
 describe('EditorHeader - review lock', () => {
   afterEach(() => {
@@ -73,7 +74,7 @@ describe('EditorHeader - review lock', () => {
   // branchWriteBlocked is the server's own getBranchProtection() answer; the
   // Editor always passes it alongside branchStatus off the same BranchListItem,
   // so the two cannot diverge in practice.
-  it('disables Save, shows the status-locked banner, and offers Withdraw when submitted', () => {
+  it('disables Save, says the branch is in review, and offers Withdraw when submitted', () => {
     renderHeader({
       branchStatus: 'submitted',
       branchWriteBlocked: true,
@@ -82,22 +83,20 @@ describe('EditorHeader - review lock', () => {
     })
 
     expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
-    expect(screen.getByTestId('status-locked-banner')).toBeTruthy()
-    expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
+    expect(barStatus().textContent).toBe('In review · read-only')
     expect(screen.getByTestId('withdraw-button').textContent).toBe('Withdraw from review')
   })
 
-  it('enables Save and shows no lock banner when editing with unsaved changes', () => {
+  it('enables Save and shows no status when editing with unsaved changes', () => {
     renderHeader({ branchStatus: 'editing', branchWriteBlocked: false, hasUnsavedChanges: true })
 
     expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBeNull()
-    expect(screen.queryByTestId('status-locked-banner')).toBeNull()
-    expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
+    expect(screen.queryByTestId('branch-status')).toBeNull()
   })
 
-  it('shows the protected-branch banner (not the status banner) when branchReadOnly is set', () => {
+  it('says "Protected · read-only", not a status lock, when branchReadOnly is set', () => {
     // The server sets writeBlocked on a read-only base branch too; readOnly is
-    // what decides which of the two banners wins.
+    // what decides which lock the status names.
     renderHeader({
       branchStatus: 'editing',
       branchReadOnly: true,
@@ -105,12 +104,11 @@ describe('EditorHeader - review lock', () => {
       branchIsProtected: true,
     })
 
-    expect(screen.getByTestId('protected-branch-banner')).toBeTruthy()
-    expect(screen.queryByTestId('status-locked-banner')).toBeNull()
+    expect(barStatus().textContent).toBe('Protected · read-only')
     expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
   })
 
-  it('shows only the protected-branch banner for a submitted base branch', () => {
+  it('names the protection, not the review, for a submitted base branch', () => {
     renderHeader({
       branchStatus: 'submitted',
       branchReadOnly: true,
@@ -118,26 +116,22 @@ describe('EditorHeader - review lock', () => {
       branchIsProtected: true,
     })
 
-    expect(screen.getByTestId('protected-branch-banner')).toBeTruthy()
-    expect(screen.queryByTestId('status-locked-banner')).toBeNull()
+    expect(barStatus().textContent).toBe('Protected · read-only')
   })
 
-  it('never renders the status into the banner when the branch is locked but its status is unknown', () => {
+  it('never renders an unknown status into the bar when the branch is locked', () => {
     // The write lock now fails CLOSED while the branch list is unresolved
     // (Editor.tsx passes `writeBlocked ?? true`), but `branchStatus` comes from
-    // the same unresolved `currentBranch` and is undefined in that window. The
-    // banner interpolated it directly, so an ordinary initial load — and, until
-    // a reload, every failed branches fetch — rendered the literal text
-    // `Branch "main" is undefined — content is read-only.`
+    // the same unresolved `currentBranch` and is undefined in that window, so
+    // interpolating it would read "undefined" after every failed branches fetch.
     //
     // Asserted as "the word undefined never appears", not just "some other copy
     // is shown": the point is that no interpolation of a missing value can leak
     // into user-facing text here, however the copy is later reworded.
     renderHeader({ branchStatus: undefined, branchWriteBlocked: true })
 
-    const banner = screen.getByTestId('status-locked-banner')
-    expect(banner.textContent).not.toMatch(/undefined/)
-    expect(banner.textContent).toMatch(/could not be loaded/i)
+    expect(barStatus().textContent).not.toMatch(/undefined/)
+    expect(barStatus().textContent).toBe('Details unavailable · read-only')
     expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
   })
 
@@ -169,31 +163,26 @@ describe('EditorHeader - review lock', () => {
     expect(screen.queryByText(/is undefined/)).toBeNull()
   })
 
-  it('still names a KNOWN status in the banner', () => {
+  it('still names a KNOWN status in the bar', () => {
     // Guards the fix from over-reaching: only the unknown case gets the new
     // copy, so a real status lock keeps saying which status locked it.
     renderHeader({ branchStatus: 'archived', branchWriteBlocked: true })
 
-    expect(screen.getByTestId('status-locked-banner').textContent).toMatch(/archived/)
+    expect(barStatus().textContent).toBe('Archived · read-only')
   })
 
   it('treats a status-lock that contradicts a known "editing" status as unavailable data, not a real lock', () => {
     // Version skew: an old server that omits `writeBlocked` while still
-    // sending `status: 'editing'` used to render the self-contradicting
-    // "Branch is editing — content is read-only" banner. `branchDataUnavailable`
-    // now also covers branchStatus === 'editing' under a status lock, so this
-    // renders the honest data-unavailable copy instead.
+    // sending `status: 'editing'` would otherwise read "Editing · read-only".
+    // `branchDataUnavailable` covers branchStatus === 'editing' under a status
+    // lock, so this renders the honest data-unavailable copy instead.
     renderHeader({
       branchWriteBlocked: true,
       branchReadOnly: false,
       branchStatus: 'editing',
     })
 
-    // Assert the RIGHT copy renders before asserting the wrong copy is gone --
-    // a bare absence check would pass against a banner that never mounted.
-    const banner = screen.getByTestId('status-locked-banner')
-    expect(banner.textContent).toMatch(/could not be loaded/i)
-    expect(banner.textContent).not.toMatch(/is editing — content is read-only/)
+    expect(barStatus().textContent).toBe('Details unavailable · read-only')
   })
 })
 
@@ -226,6 +215,18 @@ describe('EditorHeader - locked-down branch', () => {
 describe('EditorHeader - branch pill unsaved count', () => {
   afterEach(() => {
     cleanup()
+  })
+
+  it('shows the branch name at every width, and heads its menu with it', async () => {
+    renderHeader()
+    const pill = screen.getByTestId('branch-dropdown-button')
+    const name = within(pill).getByText('feature/x')
+    // No breakpoint hides it, and it is no visually hidden stand-in.
+    expect(name.className).not.toMatch(/visible-from|hidden-from|VisuallyHidden/)
+    await userEvent.click(pill)
+    const label = within(await screen.findByTestId('branch-menu')).getByText('feature/x')
+    expect(label.className).toMatch(/Menu-label/)
+    expect(label.className).not.toMatch(/hidden-from/)
   })
 
   it('shows the unsaved count on the pill and names each entry in its menu', async () => {
@@ -468,43 +469,26 @@ describe('EditorHeader - breadcrumb', () => {
   })
 })
 
-describe('branchLockBannerShown', () => {
-  it.each([
-    [{ branchStatus: 'editing' as const }, false],
-    [{ branchStatus: 'editing' as const, branchReadOnly: true }, true],
-    [{ branchStatus: 'submitted' as const, branchWriteBlocked: true }, true],
-    [{ branchStatus: undefined, branchWriteBlocked: true }, true],
-  ])('is the condition under which the banner renders: %j', (lock, shown) => {
-    expect(branchLockBannerShown(lock)).toBe(shown)
-    const { container } = render(
-      <BranchLockBanner {...lock} branchName="x" onBranchManagerOpen={vi.fn()} />,
-      { wrapper: Wrapper },
-    )
-    expect(container.querySelector('[data-testid$="banner"]') !== null).toBe(shown)
-    cleanup()
-  })
-})
-
 describe('EditorHeader - read-only chip', () => {
   afterEach(() => {
     cleanup()
   })
 
-  it('is hidden while the banner already says the branch is locked', () => {
+  it("is hidden while the bar's status already says the branch is locked", () => {
     renderHeader({ branchStatus: 'submitted', branchWriteBlocked: true })
-    expect(screen.getByTestId('status-locked-banner')).toBeTruthy()
+    expect(barStatus().textContent).toBe('In review · read-only')
     expect(screen.queryByTestId('read-only-chip')).toBeNull()
   })
 
-  it('is hidden under the protected-branch banner too', () => {
-    renderHeader({ branchReadOnly: true, branchIsProtected: true })
-    expect(screen.getByTestId('protected-branch-banner')).toBeTruthy()
+  it('is hidden on the protected base branch too', () => {
+    renderHeader({ branchReadOnly: true, branchWriteBlocked: true, branchIsProtected: true })
+    expect(barStatus().textContent).toBe('Protected · read-only')
     expect(screen.queryByTestId('read-only-chip')).toBeNull()
   })
 
-  it("stays beside the banner for an entry read-only for its own reason, giving that reason, not the branch's", () => {
+  it("stays for an entry read-only for its own reason on a locked branch, giving that reason, not the branch's", () => {
     renderHeader({ entryReadOnly: true, branchStatus: 'approved', branchWriteBlocked: true })
-    expect(screen.getByTestId('status-locked-banner')).toBeTruthy()
+    expect(barStatus().textContent).toBe('Approved · read-only')
     const chip = screen.getByTestId('read-only-chip')
     expect(chip.textContent).toContain("You don't have edit access to this entry.")
     expect(chip.textContent).not.toContain('Withdraw it')
@@ -512,8 +496,7 @@ describe('EditorHeader - read-only chip', () => {
 
   it('stays for an entry alone being read-only on a branch that takes writes', () => {
     renderHeader({ entryReadOnly: true })
-    expect(screen.queryByTestId('status-locked-banner')).toBeNull()
-    expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
+    expect(screen.queryByTestId('branch-status')).toBeNull()
     expect(screen.getByTestId('read-only-chip')).toBeTruthy()
   })
 
@@ -530,44 +513,67 @@ describe('EditorHeader - read-only chip', () => {
   })
 })
 
-describe('EditorHeader - status badge', () => {
+describe('EditorHeader - branch status', () => {
   afterEach(() => {
     cleanup()
   })
 
   it('shows no status for the default editing state', () => {
     renderHeader({ branchStatus: 'editing' })
-    expect(screen.queryByTestId('header-status-badge-editing')).toBeNull()
+    expect(screen.queryByTestId('branch-status')).toBeNull()
     expect(screen.getByTestId('branch-dropdown-button').textContent).not.toContain('Editing')
   })
 
   it.each([
-    ['approved', 'Approved'],
-    ['archived', 'Archived'],
-  ] as const)('labels a %s branch "%s"', (status, label) => {
+    ['submitted', 'In review · read-only'],
+    ['approved', 'Approved · read-only'],
+    ['archived', 'Archived · read-only'],
+  ] as const)('labels a %s branch "%s", with a lock', (status, label) => {
     renderHeader({ branchStatus: status, branchWriteBlocked: true })
-    expect(screen.getByTestId(`header-status-badge-${status}`).textContent).toBe(label)
+    expect(barStatus().textContent).toBe(label)
+    expect(barStatus().getAttribute('data-status')).toBe(status)
+    expect(barStatus().querySelector('svg')).not.toBeNull()
   })
 
-  it('labels a submitted branch "In review"', () => {
+  it('names a status this editor does not know as itself', () => {
+    renderHeader({ branchStatus: 'merged' as BranchStatus, branchWriteBlocked: true })
+    expect(barStatus().textContent).toBe('Merged · read-only')
+  })
+
+  it('sits beside the pill, outside it', () => {
     renderHeader({ branchStatus: 'submitted', branchWriteBlocked: true })
-    const badge = screen.getByTestId('header-status-badge-submitted')
-    expect(badge.textContent).toBe('In review')
-    expect(badge.getAttribute('data-status')).toBe('submitted')
+    const pill = screen.getByTestId('branch-dropdown-button')
+    expect(pill.contains(barStatus())).toBe(false)
+    expect(pill.textContent).not.toContain('In review')
   })
 
-  it('labels the protected base branch "Protected" instead of its workflow status', () => {
-    renderHeader({ branchStatus: 'editing', branchIsProtected: true, branchReadOnly: true })
-    const badge = screen.getByTestId('header-status-badge-protected')
-    expect(badge.textContent).toBe('Protected')
-    expect(badge.getAttribute('data-status')).toBe('protected')
-    expect(screen.queryByText('Editing')).toBeNull()
-    expect(screen.queryByTestId('header-status-badge-editing')).toBeNull()
+  it('says "Protected", with no lock, for a protected branch that takes writes, as in dev', () => {
+    renderHeader({ branchIsProtected: true, branchServerProtected: true })
+    expect(barStatus().textContent).toBe('Protected')
+    expect(barStatus().querySelector('svg')).toBeNull()
+    expect(screen.getByTestId('save-all-button')).toBeTruthy()
   })
 
-  it('renders no badge while the branch status is unknown', () => {
-    renderHeader({ branchStatus: undefined })
-    expect(document.querySelector('[data-testid^="header-status-badge-"]')).toBeNull()
+  it("names no protection the server didn't report, though Submit stays hidden", () => {
+    renderHeader({ branchIsProtected: true, branchServerProtected: undefined })
+    expect(screen.queryByTestId('branch-status')).toBeNull()
+    expect(screen.queryByTestId('submit-button')).toBeNull()
+  })
+
+  it('says "Loading branch…" while the details are fetched, offering no way forward yet', () => {
+    renderHeader({
+      branchStatus: undefined,
+      branchLoading: true,
+      branchPending: true,
+      branchWriteBlocked: true,
+    })
+    expect(barStatus().textContent).toBe('Loading branch…')
+    expect(screen.queryByTestId('switch-branch-button')).toBeNull()
+  })
+
+  it('says the details are unavailable once the fetch has failed', () => {
+    renderHeader({ branchStatus: undefined, branchLoading: true, branchWriteBlocked: true })
+    expect(barStatus().textContent).toBe('Details unavailable · read-only')
   })
 })
 
@@ -688,21 +694,27 @@ describe('EditorHeader - vocabulary', () => {
     expect(menu.textContent).not.toContain('Manage Branches')
   })
 
-  it('points the review-lock banner at Withdraw from review and the Switch branch… action', async () => {
-    const onBranchManagerOpen = vi.fn()
+  it('offers Withdraw from review alone as the way forward from a branch in review', () => {
+    renderHeader({ branchStatus: 'submitted', branchWriteBlocked: true })
+
+    expect(screen.getByTestId('withdraw-button').textContent).toBe('Withdraw from review')
+    expect(screen.queryByTestId('switch-branch-button')).toBeNull()
+    expect(screen.queryByTestId('new-branch-button')).toBeNull()
+  })
+
+  it('leaves a Withdraw the user may not take as the only workflow control, with no Switch branch… beside it', () => {
     renderHeader({
       branchStatus: 'submitted',
       branchWriteBlocked: true,
-      onBranchManagerOpen,
+      userContext: { userId: 'someone-else' },
+      branchCreatedBy: 'u1',
     })
 
-    const banner = screen.getByTestId('status-locked-banner')
-    expect(banner.textContent).toContain('Withdraw it from review to make changes.')
-    await userEvent.click(within(banner).getByRole('button', { name: 'Switch branch…' }))
-    expect(onBranchManagerOpen).toHaveBeenCalled()
+    expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBe('true')
+    expect(screen.queryByTestId('switch-branch-button')).toBeNull()
   })
 
-  it('offers the protected-branch banner the shared New branch… verb', async () => {
+  it('offers the protected base branch the shared New branch… verb', async () => {
     const onBranchManagerOpen = vi.fn()
     renderHeader({
       branchStatus: 'editing',
@@ -712,17 +724,20 @@ describe('EditorHeader - vocabulary', () => {
       onBranchManagerOpen,
     })
 
-    const banner = screen.getByTestId('protected-branch-banner')
-    await userEvent.click(within(banner).getByRole('button', { name: 'New branch…' }))
+    await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
     expect(onBranchManagerOpen).toHaveBeenCalled()
+    expect(screen.queryByTestId('switch-branch-button')).toBeNull()
   })
 
-  it('points the unavailable-data banner at Switch branch… to retry', () => {
-    renderHeader({ branchStatus: undefined, branchWriteBlocked: true })
+  it.each([
+    ['unavailable branch details', { branchStatus: undefined }],
+    ['an archived branch', { branchStatus: 'archived' as const }],
+  ])('offers Switch branch… from %s', async (_label, overrides) => {
+    const onBranchManagerOpen = vi.fn()
+    renderHeader({ ...overrides, branchWriteBlocked: true, onBranchManagerOpen })
 
-    expect(screen.getByTestId('status-locked-banner').textContent).toContain(
-      'Use Switch branch… to retry.',
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Switch branch…' }))
+    expect(onBranchManagerOpen).toHaveBeenCalled()
   })
 })
 
@@ -1170,10 +1185,16 @@ describe('EditorHeader - while branch details load', () => {
     cleanup()
   })
 
-  it('names no lock and no status until they arrive', () => {
-    renderHeader({ branchLoading: true, branchWriteBlocked: true, branchStatus: undefined })
+  it('names no lock until they arrive, only that they are loading', () => {
+    renderHeader({
+      branchLoading: true,
+      branchPending: true,
+      branchWriteBlocked: true,
+      branchStatus: undefined,
+    })
     expect(screen.queryByTestId('read-only-chip')).toBeNull()
-    expect(document.querySelector('[data-testid^="header-status-badge-"]')).toBeNull()
+    expect(barStatus().textContent).toBe('Loading branch…')
+    expect(barStatus().querySelector('svg')).toBeNull()
   })
 })
 
@@ -1322,15 +1343,25 @@ describe('EditorHeader - branch bar', () => {
     expect(document.activeElement).toBe(screen.getByTestId('withdraw-button'))
   })
 
-  it('below md, leaves focus where it is when the swapped control did not have it', () => {
+  it('below md, leaves focus where it is when the swapped controls did not have it', () => {
     stubNarrowWindow()
     const props: HeadersProps = { ...defaultProps, ...owner, modifiedCount: 1 }
     const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
-    const saveAll = screen.getByTestId('save-all-button')
-    act(() => saveAll.focus())
+    const pill = screen.getByTestId('branch-dropdown-button')
+    act(() => pill.focus())
     rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
     expect(screen.getByTestId('withdraw-button')).toBeTruthy()
-    expect(document.activeElement).toBe(saveAll)
+    expect(document.activeElement).toBe(pill)
+  })
+
+  it('below md, moves focus from Save all to the way forward when a lock hides Save all', () => {
+    stubNarrowWindow()
+    const props: HeadersProps = { ...defaultProps, ...owner, modifiedCount: 1 }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    act(() => screen.getByTestId('save-all-button').focus())
+    rerender(<Headers {...props} branchStatus="archived" branchWriteBlocked />)
+    expect(screen.queryByTestId('save-all-button')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByTestId('switch-branch-button'))
   })
 
   it('below md, moves focus from Withdraw to the caret when a withdraw unlocks the branch', () => {
@@ -1387,13 +1418,93 @@ describe('EditorHeader - branch bar', () => {
     expect(group?.contains(screen.getByTestId('branch-actions-button'))).toBe(true)
   })
 
-  it.each([
-    ['a locked branch', { branchStatus: 'submitted', branchWriteBlocked: true }, 'withdraw-button'],
-    ['a branch still loading', { branchLoading: true }, 'submit-button'],
-  ] as const)('below md, keeps separate buttons on %s', (_label, overrides, testId) => {
+  it('below md, shows no Save all on a locked or loading branch, where it could not apply', () => {
     stubNarrowWindow()
-    renderHeader({ ...owner, ...overrides })
+    renderHeader({ ...owner, branchStatus: 'submitted', branchWriteBlocked: true })
+    expect(screen.queryByTestId('save-all-button')).toBeNull()
+    cleanup()
+    renderHeader({ ...owner, branchLoading: true, branchPending: true, branchWriteBlocked: true })
+    expect(barStatus().textContent).toBe('Loading branch…')
+    expect(screen.queryByTestId('save-all-button')).toBeNull()
+  })
+
+  it('below md, makes Withdraw the default on a branch in review the user may withdraw', () => {
+    stubNarrowWindow()
+    renderHeader({ ...owner, branchStatus: 'approved', branchWriteBlocked: true })
+    expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBeNull()
     expect(screen.queryByTestId('branch-actions-button')).toBeNull()
-    expect(follows(screen.getByTestId('save-all-button'), screen.getByTestId(testId))).toBe(true)
+    expect(screen.queryByTestId('switch-branch-button')).toBeNull()
+  })
+
+  it('below md, makes Switch branch… the default when the user may not withdraw, Withdraw blocked in the caret', async () => {
+    stubNarrowWindow()
+    const onWithdraw = vi.fn()
+    renderHeader({
+      userContext: { userId: 'someone-else' },
+      branchCreatedBy: 'u1',
+      branchStatus: 'submitted',
+      branchWriteBlocked: true,
+      onWithdraw,
+    })
+    expect(screen.queryByTestId('withdraw-button')).toBeNull()
+    const way = screen.getByTestId('switch-branch-button')
+    const caret = screen.getByTestId('branch-actions-button')
+    expect(caret.closest('[role="group"]')?.contains(way)).toBe(true)
+    await userEvent.click(caret)
+    const item = await screen.findByTestId('withdraw-menu-item')
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.textContent).toContain('You do not have permission')
+    await userEvent.click(item)
+    expect(onWithdraw).not.toHaveBeenCalled()
+  })
+
+  it('below md, makes New branch… the default on the protected base branch', () => {
+    stubNarrowWindow()
+    renderHeader({
+      ...owner,
+      branchReadOnly: true,
+      branchWriteBlocked: true,
+      branchIsProtected: true,
+    })
+    expect(screen.getByTestId('new-branch-button')).toBeTruthy()
+    expect(screen.queryByTestId('branch-actions-button')).toBeNull()
+    expect(screen.queryByTestId('save-all-button')).toBeNull()
+  })
+
+  it('below md, keeps New branch… the default on a protected branch stuck in review, Withdraw blocked in the caret', async () => {
+    stubNarrowWindow()
+    renderHeader({
+      userContext: { userId: 'someone-else' },
+      branchCreatedBy: 'u1',
+      branchStatus: 'submitted',
+      branchReadOnly: true,
+      branchWriteBlocked: true,
+      branchIsProtected: true,
+    })
+    expect(screen.getByTestId('new-branch-button')).toBeTruthy()
+    expect(screen.queryByTestId('switch-branch-button')).toBeNull()
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const item = await screen.findByTestId('withdraw-menu-item')
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('below md, makes Switch branch… the default on an archived branch, the blocked Submit in the caret', async () => {
+    stubNarrowWindow()
+    renderHeader({ ...owner, branchStatus: 'archived', branchWriteBlocked: true })
+    expect(screen.getByTestId('switch-branch-button')).toBeTruthy()
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const item = await screen.findByTestId('submit-menu-item')
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.textContent).toContain('This branch is archived')
+  })
+
+  it('wide, offers Switch branch… beside the blocked Submit on an archived branch', () => {
+    renderHeader({ ...owner, branchStatus: 'archived', branchWriteBlocked: true })
+    const way = screen.getByTestId('switch-branch-button')
+    const submit = screen.getByTestId('submit-button')
+    expect(submit.getAttribute('aria-disabled')).toBe('true')
+    expect(follows(screen.getByTestId('save-all-button'), way)).toBe(true)
+    expect(follows(way, submit)).toBe(true)
+    expect(screen.queryByTestId('branch-actions-button')).toBeNull()
   })
 })
