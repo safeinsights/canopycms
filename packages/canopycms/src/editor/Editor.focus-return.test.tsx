@@ -47,8 +47,15 @@ const okJson = (data: unknown) =>
     headers: { 'Content-Type': 'application/json' },
   })
 
-const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unknown[] } = {}) => {
-  const { groups = [], locked = false, threads = [] } = options
+const stubApi = (
+  options: {
+    groups?: string[]
+    locked?: boolean
+    readOnlyBase?: boolean
+    threads?: unknown[]
+  } = {},
+) => {
+  const { groups = [], locked = false, readOnlyBase = false, threads = [] } = options
   // The one entry, until a delete removes it or a rename moves it to `hello-two`.
   let deleted = false
   let renamed = false
@@ -76,9 +83,9 @@ const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unkno
                 createdBy: 'user-1',
                 createdAt: '2024-01-01',
                 updatedAt: '2024-01-01',
-                isProtected: false,
-                readOnly: false,
-                writeBlocked: locked,
+                isProtected: readOnlyBase,
+                readOnly: readOnlyBase,
+                writeBlocked: locked || readOnlyBase,
                 submitBlocked: false,
               },
             ],
@@ -410,6 +417,42 @@ describe('Switch branch… (branch menu)', () => {
 
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(opener))
+  })
+
+  it('opens Branches from "Open branch discussion" without the form an earlier New branch… left open', async () => {
+    stubApi({
+      readOnlyBase: true,
+      threads: [
+        {
+          id: 'thread-1',
+          type: 'branch',
+          resolved: false,
+          authorId: 'user-1',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          comments: [
+            {
+              id: 'c1',
+              threadId: 'thread-1',
+              userId: 'user-1',
+              timestamp: '2024-01-01T00:00:00.000Z',
+              text: 'Branch note',
+            },
+          ],
+        },
+      ],
+    })
+    renderEditor()
+    await loaded()
+    await userEvent.click(await screen.findByTestId('new-branch-button'))
+    await screen.findByRole('heading', { name: 'Branches' })
+    expect(screen.getByTestId('create-branch-button').textContent).toBe('Cancel')
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
+
+    await userEvent.click(screen.getByTestId('comments-button'))
+    await userEvent.click(await screen.findByRole('button', { name: /^Open branch discussion/ }))
+    await screen.findByRole('heading', { name: 'Branches' })
+    expect(screen.getByTestId('create-branch-button').textContent).toBe('New branch…')
   })
 
   it('returns focus to the branch menu button after "Open branch discussion", not to an earlier opener', async () => {

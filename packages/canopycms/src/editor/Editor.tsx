@@ -282,8 +282,13 @@ const EditorContent: React.FC<EditorProps> = ({
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
-  // Opened by New branch…, it starts on its new-branch form.
-  const [branchManagerCreating, setBranchManagerCreating] = useState(false)
+  // Each opening remounts Branches; one from New branch… starts on its new-branch form.
+  const [branchManagerOpening, setBranchManagerOpening] = useState({ seq: 0, create: false })
+  const openBranchesDrawer = (create: boolean) => {
+    branchOpenerRef.current = rememberOpener()
+    setBranchManagerOpening(({ seq }) => ({ seq: seq + 1, create }))
+    setBranchManagerOpen(true)
+  }
   const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false)
   const [systemHealthOpen, setSystemHealthOpen] = useState(false)
 
@@ -680,10 +685,8 @@ const EditorContent: React.FC<EditorProps> = ({
     currentUser: commentUserId,
     canResolveComments: canResolveAnyComment,
     setSelectedPath,
-    setBranchManagerOpen: (open) => {
-      if (open) branchOpenerRef.current = rememberOpener()
-      setBranchManagerOpen(open)
-    },
+    setBranchManagerOpen: (open) =>
+      open ? openBranchesDrawer(false) : setBranchManagerOpen(false),
     onCommentsChange: setCommentsForBranchSummaries,
     onRevealForm: revealForm,
   })
@@ -1833,9 +1836,7 @@ const EditorContent: React.FC<EditorProps> = ({
   }, [tabTitle])
 
   const openBranchManager = (options?: { create?: boolean }) => {
-    branchOpenerRef.current = rememberOpener()
-    setBranchManagerCreating(options?.create === true)
-    setBranchManagerOpen(true)
+    openBranchesDrawer(options?.create === true)
     // Always retry, not only when branchless. Opening the manager is
     // the one in-app retry for a failed branches fetch, and the fetch
     // is terminal on its own: SWRProvider sets shouldRetryOnError and
@@ -2275,7 +2276,8 @@ const EditorContent: React.FC<EditorProps> = ({
                 returnFocusTo={branchReturnTarget}
               >
                 <BranchManager
-                  startCreating={branchManagerCreating}
+                  key={branchManagerOpening.seq}
+                  startCreating={branchManagerOpening.create}
                   branches={branchSummaries}
                   mode={operatingMode}
                   user={userContext}
