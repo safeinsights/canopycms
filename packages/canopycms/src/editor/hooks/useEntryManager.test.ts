@@ -12,7 +12,11 @@ import type { ContentId } from '../../paths/types'
 import { notifications } from '@mantine/notifications'
 import { UnansweredError } from '../unanswered'
 import type React from 'react'
-import { ApiTimeoutError, WRITE_TIMED_OUT_MESSAGE } from '../../api/request-deadline'
+import {
+  ApiTimeoutError,
+  REQUEST_TIMED_OUT_MESSAGE,
+  WRITE_TIMED_OUT_MESSAGE,
+} from '../../api/request-deadline'
 import { MayHaveLandedError } from '../unanswered'
 import type { RetryToastMessageProps } from '../components/RetryToastMessage'
 import {
@@ -2371,6 +2375,32 @@ describe('useEntryManager', () => {
       restore()
     })
 
+    it("holds a failed load's toast while the branch list loads, and shows none on a branch not available", async () => {
+      const { restore } = setupMockConsole(['error'])
+      onTestFinished(restore)
+      mockClient.schema.get.mockResolvedValue({ ok: false, status: 403, error: 'no_acl' } as never)
+      const failureToasts = () =>
+        vi
+          .mocked(notifications.show)
+          .mock.calls.filter(([n]) => n.id === 'canopy-entries-load-failed')
+
+      const { result, rerender } = renderHook((props) => useEntryManager(props), {
+        wrapper,
+        initialProps: { ...optionsFor('branch-a'), branchBarState: 'loading' },
+      })
+      await waitFor(() => expect(result.current.entriesLoadFailed).toBe(true))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(failureToasts()).toHaveLength(0)
+
+      rerender({ ...optionsFor('branch-a'), branchBarState: 'not-available' })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(failureToasts()).toHaveLength(0)
+
+      // Listed after all: the failure is no longer explained, so it is reported.
+      rerender({ ...optionsFor('branch-a'), branchBarState: 'editable' })
+      await waitFor(() => expect(failureToasts()).toHaveLength(1))
+    })
+
     it("hides the load-failure toast once the branch shown loads, and replaces another branch's", async () => {
       const { restore } = setupMockConsole(['error'])
       try {
@@ -2441,6 +2471,9 @@ describe('useEntryManager', () => {
 
         if (succeeded) mockClient.schema.get.mockImplementation(succeeded)
         const message = toast?.message as React.ReactElement<RetryToastMessageProps>
+        // Written for people, so it is the message itself, with no "Details" behind it.
+        expect(message.props.message).toBe(REQUEST_TIMED_OUT_MESSAGE)
+        expect(message.props.details).toBeUndefined()
         await act(async () => message.props.onRetry())
 
         await waitFor(() => expect(mockClient.schema.get).toHaveBeenCalledTimes(2))

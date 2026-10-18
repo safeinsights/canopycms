@@ -45,6 +45,7 @@ import { EDITOR_ACTIONS } from './copy'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { UnsavedMark } from './components/UnsavedMark'
 import { BranchRowLock } from './components/BranchRowLock'
+import { BranchNotAvailableNotice } from './components/BranchNotAvailableNotice'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { UnavailableTypeMessage } from './components/UnavailableTypeMessage'
 
@@ -162,6 +163,9 @@ export interface EntryNavigatorProps {
   unsavedEntries?: ReadonlyArray<{ path: string; label: string }>
   /** The branch's entry list failed to load, so Changed can't name what is unsaved. */
   entryListFailed?: boolean
+  /** The bar's "Not available" row: an empty tree says so, with `onSwitchBranch`, not "No content". */
+  branchNotAvailable?: boolean
+  onSwitchBranch?: () => void
   /** Takes Enter's first match in the filter in place of `onSelect`. */
   onFilterEnter?: (path: string) => void
   /** Escape in the empty filter. Without it, Escape there does nothing here. */
@@ -450,6 +454,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   unsavedCount: unsavedCountProp = 0,
   unsavedEntries,
   entryListFailed = false,
+  branchNotAvailable = false,
+  onSwitchBranch,
   onFilterEnter,
   onFilterEscape,
   onRowMenuOpen,
@@ -1463,7 +1469,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           </Box>
         )}
         {treeData.length === 0 ? (
-          loading ? (
+          branchNotAvailable ? (
+            <BranchNotAvailableNotice
+              onSwitchBranch={onSwitchBranch}
+              data-testid="entry-nav-branch-not-available"
+            />
+          ) : loading ? (
             <Group gap="xs" py="sm">
               <Loader size="xs" />
               <Text size="xs" c="dimmed">

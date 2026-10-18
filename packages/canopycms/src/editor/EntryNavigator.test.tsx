@@ -171,6 +171,21 @@ describe('EntryNavigator', () => {
       expect(screen.queryByText('Loading content…')).toBeNull()
     })
 
+    it('says a branch it may not open is out of reach, and offers Switch branch…', async () => {
+      const onSwitchBranch = vi.fn()
+      for (const loading of [false, true]) {
+        renderEntryNavigator({ loading, branchNotAvailable: true, onSwitchBranch })
+        expect(screen.getByTestId('entry-nav-branch-not-available').textContent).toContain(
+          "You don't have access to this branch.",
+        )
+        expect(screen.queryByText('No content')).toBeNull()
+        expect(screen.queryByText('Loading content…')).toBeNull()
+        await userEvent.click(screen.getByRole('button', { name: 'Switch branch…' }))
+        cleanup()
+      }
+      expect(onSwitchBranch).toHaveBeenCalledTimes(2)
+    })
+
     it('shows content (not the loader) once items have loaded, even if loading is still true', () => {
       renderEntryNavigator({
         loading: true,

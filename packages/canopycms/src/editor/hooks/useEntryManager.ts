@@ -17,6 +17,8 @@ import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
 import { RetryToastMessage } from '../components/RetryToastMessage'
 import { isGatewayFailure, isUnanswered, MayHaveLandedError, UnansweredError } from '../unanswered'
 import { sanitizeBranchName } from '../../paths/branch-name'
+import { isApiTimeoutError } from '../../api/client'
+import type { BranchBarStatus } from '../branch-lock'
 import {
   markEditorHistoryStart,
   recordHistoryMove,
@@ -74,6 +76,11 @@ export interface UseEntryManagerOptions {
   /** An entry's route on the site (`buildPreviewRoute`), which picks the home page to open first. */
   resolvePreviewRoute?: (entry: EditorEntry) => string | undefined
   setBusy: (busy: boolean) => void
+  /**
+   * The bar's lock-state row (`branchBarStatus`). A failed load waits for the branch list while
+   * it is 'loading', and is not toasted on 'not-available', which the bar and empty states explain.
+   */
+  branchBarState?: BranchBarStatus['value']
   /** Switches to the branch a Back or Forward reached; rejects when the switch does not happen. */
   switchBranch?: (branch: string) => Promise<void>
   /** Called when a Back or Forward has opened another entry. */
@@ -893,11 +900,12 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // to a branch that fails again still reports.
   const notifiedErrorBranchRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!entriesError || !options.branchName) {
+    if (!entriesError || !options.branchName || options.branchBarState === 'not-available') {
       if (notifiedErrorBranchRef.current !== null) notifications.hide(ENTRIES_LOAD_FAILED_TOAST_ID)
       notifiedErrorBranchRef.current = null
       return
     }
+    if (options.branchBarState === 'loading') return
     if (notifiedErrorBranchRef.current === options.branchName) return
     const branch = options.branchName
     notifiedErrorBranchRef.current = branch
@@ -907,8 +915,12 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     notifications.show({
       id: ENTRIES_LOAD_FAILED_TOAST_ID,
       title: 'Could not load content',
+      // A timeout's message is written for people; any other is a diagnostic, kept for Details.
       message: createElement(RetryToastMessage, {
-        message: getErrorMessage(entriesError),
+        message: isApiTimeoutError(entriesError)
+          ? entriesError.message
+          : "The editor couldn't fetch this branch's entries.",
+        details: isApiTimeoutError(entriesError) ? undefined : getErrorMessage(entriesError),
         onRetry: () => {
           notifications.hide(ENTRIES_LOAD_FAILED_TOAST_ID)
           notifiedErrorBranchRef.current = null
@@ -918,7 +930,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       color: 'red',
       autoClose: false,
     })
-  }, [entriesError, options.branchName])
+  }, [entriesError, options.branchName, options.branchBarState])
 
   // Validate selected entry when entries change
   useEffect(() => {
