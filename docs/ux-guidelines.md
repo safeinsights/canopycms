@@ -153,15 +153,15 @@ field (`comments/form-comments.tsx`), reaches comments instead.
   elsewhere, scoped to the editor root. A shortcut that must work while typing passes `[]` as
   `tagsToIgnore` and `true` as `triggerOnContentEditable`.
 - Taken: Mod+P finds entries, opening a closed content panel until Enter, Esc or focus leaves;
-  Mod+Alt+M comments; Esc closes the topmost overlay (never a docked panel), else restores a
-  maximized preview. Planned for WS8: Mod+S save, Mod+Shift+L layout. Never bind Mod+K
+  Mod+Alt+M comments; Esc closes the topmost overlay (not a docked panel it didn't open), else
+  restores a maximized preview. Planned for WS8: Mod+S save, Mod+Shift+L layout. Never bind Mod+K
   (MDXEditor's link), formatting keys, or the browser's own (Mod+W, T, R, L, F).
 - An overlay panel makes what it covers `inert` (`formInert` in
   `packages/canopycms/src/editor/shell/PaneLayout.tsx`), and anything that targets the covered
   part closes it first (`revealForm` in `packages/canopycms/src/editor/Editor.tsx`).
 - Tooltips and hints show the platform's modifier.
 - Every action is reachable by keyboard, focus follows visual order, and closing an overlay
-  returns focus to the control that opened it. A menu item is gone once it acts, so its menu's
+  returns focus to its opener. A menu item is gone once it acts, so its menu's
   trigger stands in (`packages/canopycms/src/editor/utils/focus-return.ts`). Any other opener that
   is gone hands focus to the menu trigger offering the same action (`returnTarget`), else the
   nearest heading.

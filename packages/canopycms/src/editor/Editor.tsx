@@ -1511,8 +1511,9 @@ const EditorContent: React.FC<EditorProps> = ({
 
   const findShortcut =
     modKeyLabel() === '⌘' ? { label: '⌘P', keys: 'Meta+P' } : { label: 'Ctrl+P', keys: 'Control+P' }
-  // Mod+P opens a closed docked panel only until Enter, Escape or focus leaves it, so the stored
-  // preference stays closed. A row menu, the Content button or any other ask opens it for good.
+  // Mod+P opens a closed docked panel only until Enter, Escape in its empty field or focus leaves
+  // it; the stored preference stays closed. A row menu, the Content button or any other ask opens
+  // it for good.
   const [contentPanelTransient, setContentPanelTransient] = useState(false)
   if (contentPanelTransient && !contentPanelDocked) setContentPanelTransient(false)
   // Docked, the content panel's open state is the stored preference; as an overlay it is
@@ -1545,7 +1546,7 @@ const EditorContent: React.FC<EditorProps> = ({
     // In the commit that opens the overlay, so the form panel is no longer inert when the overlay
     // mounts, then or a frame later as its slide starts, and serves its focus request.
     if (!contentPanelDocked) setPreviewMaximized(false)
-    // A new ask for the panel ends any wait for an Enter-opened form, whose close it was.
+    // A pending Enter focus nulls the panel's return of focus, and only Enter's close may lose it.
     setFormFocusPath(null)
     if (transient && contentPanelDocked && !contentPanelOpen) setContentPanelTransient(true)
     else setContentPanelShown(true)
@@ -1556,7 +1557,7 @@ const EditorContent: React.FC<EditorProps> = ({
   }
   const [formFocusPath, setFormFocusPath] = useState<string | null>(null)
   const formFocusRestoredRef = useRef(false)
-  // Fires from text fields and the MDX editor too.
+  // `[]` (tagsToIgnore) and `true` (contenteditable) let it fire from fields and the MDX editor.
   useHotkeys(
     [
       [

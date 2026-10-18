@@ -76,7 +76,7 @@ export interface EntryNavItem {
   slug?: string
   /** The entry's type, or "Missing" (`entryStatusLabel`): its second line, with `route`. */
   status?: string
-  /** The entry's route on the site (`buildPreviewRoute`); its second line omits it when `noPage`. */
+  /** The entry's route (`buildPreviewRoute`); its second line omits it when `noPage` or `missing`. */
   route?: string
   /** The entry's file is gone: its second line is error text. */
   missing?: boolean

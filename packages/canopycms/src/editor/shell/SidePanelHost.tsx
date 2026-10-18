@@ -163,7 +163,7 @@ export function SidePanelHost({
       leave(frame)
       frame = null
     }
-    // Captured, so it runs before React's own `onFocus`, which cancels it for a portaled descendant.
+    // Captured, so it runs before React's bubbling `onFocus`, which cancels it for a portaled descendant.
     const onFocusIn = (event: FocusEvent) => {
       if (event.target instanceof Element && !panel.contains(event.target)) leave(event.target)
     }
