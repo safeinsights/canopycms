@@ -7,6 +7,7 @@ import matter from 'gray-matter'
 import { format } from 'prettier'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import { lexical, type EditorSubscription } from '@mdxeditor/editor'
 import { serializeFrontmatter } from '../../utils/content-serialize'
 import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/test-utils'
 import { CanopyCMSProvider } from '../theme'
@@ -38,6 +39,23 @@ vi.mock('@mantine/modals', () => ({
 }))
 
 afterEach(() => cleanup())
+
+type LexicalEditor = Parameters<EditorSubscription>[0]
+
+function lexicalEditorOf(root: HTMLElement): LexicalEditor {
+  const editor: unknown = Reflect.get(root, '__lexicalEditor')
+  if (typeof editor !== 'object' || editor === null) throw new Error('no lexical editor')
+  return editor as LexicalEditor
+}
+
+/** Puts lexical's caret at `offset` in `text`; a click in jsdom leaves it at the start. */
+function placeCaret(root: HTMLElement, text: Node, offset: number): void {
+  root.focus()
+  document.getSelection()?.collapse(text, offset)
+  act(() => {
+    document.dispatchEvent(new Event('selectionchange'))
+  })
+}
 
 /** A Prettier-formatted file in the shapes MDXEditor re-serialises differently. */
 const FILE = `---
@@ -209,14 +227,9 @@ it('leaves the bare-URL paragraphs as they are when another paragraph is edited'
   const exported = await editOnce(
     content,
     async (root) => {
-      // Lexical follows the DOM selection; a click in jsdom leaves the caret at the start.
       const text = root.querySelector('p:last-of-type span')?.firstChild
       if (!text?.textContent) throw new Error('no last paragraph')
-      root.focus()
-      document.getSelection()?.collapse(text, text.textContent.length)
-      act(() => {
-        document.dispatchEvent(new Event('selectionchange'))
-      })
+      placeCaret(root, text, text.textContent.length)
       await userEvent.setup().keyboard('Z')
     },
     'Z',
@@ -241,4 +254,74 @@ it('writes a URL typed in the editor as GFM reads it where it stands', async () 
   expect(exported).toBe(
     'See [www.example.org](http://www.example.org). Or [https://example.org/x](https://example.org/x)? Or www.ex_ample.org typed.',
   )
+}, 30000)
+
+it.each([
+  ['www.example.org', 'www.example'.length, 'X', '[www.exampleX.org](http://www.exampleX.org)'],
+  [
+    'https://example.org/docs',
+    'https://example.org/'.length,
+    'v2/',
+    '[https://example.org/v2/docs](https://example.org/v2/docs)',
+  ],
+  ['www.example.org', 'www.ex'.length, '_', 'www.ex_ample.org'],
+])(
+  'saves an edited bare URL %s with the href its new text gives',
+  async (url, at, keys, saved) => {
+    const exported = await editOnce(
+      `See ${url} today.\n`,
+      async (root) => {
+        const text = root.querySelector('a span')?.firstChild
+        if (!text) throw new Error('no link')
+        placeCaret(root, text, at)
+        await userEvent.setup().keyboard(keys)
+      },
+      'today',
+    )
+    expect(exported).toBe(`See ${saved} today.`)
+  },
+  30000,
+)
+
+it('keeps the href of a bare URL whose link was changed in the editor', async () => {
+  const exported = await editOnce(
+    'See www.example.org today.\n',
+    async (root) => {
+      act(() => {
+        lexicalEditorOf(root).update(() => {
+          const paragraph = lexical.$getRoot().getFirstChild()
+          const link = lexical.$isElementNode(paragraph) ? paragraph.getChildAtIndex(1) : null
+          if (link === null || !('setURL' in link) || typeof link.setURL !== 'function') {
+            throw new Error('no link')
+          }
+          link.setURL('https://example.net/')
+        })
+      })
+      const text = root.querySelector('a span')?.firstChild
+      if (!text) throw new Error('no link')
+      placeCaret(root, text, 'www.example'.length)
+      await userEvent.setup().keyboard('X')
+    },
+    'exampleX',
+  )
+  expect(exported).toBe('See [www.exampleX.org](https://example.net/) today.')
+}, 30000)
+
+it('keeps the format of the punctuation an auto-link leaves out', async () => {
+  const exported = await editOnce(
+    'typed.\n',
+    (root) => {
+      act(() => {
+        lexicalEditorOf(root).update(() => {
+          const paragraph = lexical.$getRoot().getFirstChild()
+          if (!lexical.$isElementNode(paragraph)) throw new Error('no paragraph')
+          const url = lexical.$createTextNode('www.example.org.').toggleFormat('bold')
+          paragraph.splice(0, 0, [url, lexical.$createTextNode(' end ')])
+        })
+      })
+      return Promise.resolve()
+    },
+    'end',
+  )
+  expect(exported).toBe('[**www.example.org**](http://www.example.org)**.** end typed.')
 }, 30000)

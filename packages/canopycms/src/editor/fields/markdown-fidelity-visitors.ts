@@ -8,10 +8,13 @@
 
 import type * as MdxEditor from '@mdxeditor/editor'
 import type { MdastImportVisitor } from '@mdxeditor/editor'
-import { gfmAutolinkLiteralFromMarkdown } from 'mdast-util-gfm-autolink-literal'
-import { gfmAutolinkLiteral } from 'micromark-extension-gfm-autolink-literal'
 
-import { autolinkLiteralAt, type AutolinkLiteral } from './gfm-autolink-literal'
+import {
+  autolinkLiteralAt,
+  gfmAutolinkLiteral,
+  gfmAutolinkLiteralFromMarkdown,
+  type AutolinkLiteral,
+} from './gfm-autolink-literal'
 
 type MdxEditorModule = typeof MdxEditor
 
@@ -64,19 +67,20 @@ function isFormatContainer(node: MdastNode): node is FormatContainer {
   return (FORMAT_CONTAINER_TYPES as readonly string[]).includes(node.type)
 }
 
-/** Cuts `tail` off `nodes`' last text at any depth, dropping what that empties; false if not there. */
-function cutTail(nodes: MdastPhrasing[], tail: string): boolean {
+/** Cuts `tail` off `nodes`' last text at any depth, returned in the spans it was cut from. */
+function cutTail(nodes: MdastPhrasing[], tail: string): MdastPhrasing | undefined {
   const last = nodes.at(-1)
-  if (last === undefined) return false
-  if (last.type === 'text') {
-    if (!last.value.endsWith(tail)) return false
+  if (last?.type === 'text') {
+    if (!last.value.endsWith(tail)) return undefined
     last.value = last.value.slice(0, last.value.length - tail.length)
     if (last.value === '') nodes.pop()
-    return true
+    return { type: 'text', value: tail }
   }
-  if (!isFormatContainer(last) || !cutTail(last.children, tail)) return false
+  if (last === undefined || !isFormatContainer(last)) return undefined
+  const cut = cutTail(last.children, tail)
+  if (cut === undefined) return undefined
   if (last.children.length === 0) nodes.pop()
-  return true
+  return { ...last, children: [cut] }
 }
 
 /** `nodes` with every container of a type in `types` replaced by its children, at any depth. */
@@ -102,7 +106,7 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
     addImportVisitor$,
     addMdastExtension$,
     addSyntaxExtension$,
-    lexical: { $isElementNode, $isTextNode },
+    lexical: { $getState, $isElementNode, $isTextNode, $setState, createState },
     realmPlugin,
   } = mdx
 
@@ -133,6 +137,40 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
     const here = autolinkLiteralAt(context, offset)
     if (here === undefined) return undefined
     return here.length <= text.length ? here : autolinkLiteralAt(text, 0) // ran into a sibling
+  }
+
+  /**
+   * The href a link was imported with when its text is a literal GFM reads as exactly that link
+   * (a bare URL, or `[url](url)` and `<url>`). Lexical keeps an AutoLinkNode's href in step
+   * with its text, but not an imported LinkNode's; while the href is still this one, the export
+   * reads it from the text instead.
+   */
+  const literalHref = createState('canopyGfmLiteralHref', {
+    parse: (value) => (typeof value === 'string' ? value : null),
+  })
+
+  const literalLinkImportVisitor: MdastImportVisitor<MdastLink> = {
+    priority: 100,
+    testNode: (node) => {
+      if (node.type !== 'link') return false
+      const [only, ...rest] = 'children' in node ? node.children : []
+      if (rest.length > 0 || only?.type !== 'text') return false
+      const literal = autolinkLiteralAt(only.value, 0)
+      return literal?.url === node.url && literal.length === only.value.length
+    },
+    visitNode({ mdastNode, lexicalParent, actions }) {
+      actions.nextVisitor()
+      const link = $isElementNode(lexicalParent) ? lexicalParent.getLastChild() : null
+      if (link !== null && isLinkLike(link)) $setState(link, literalHref, mdastNode.url)
+    },
+  }
+
+  /** What GFM reads from a link's text when the text decides its href, else null. */
+  const textLiteralOf = (link: LexicalNode & LinkLike): AutolinkLiteral | undefined | null => {
+    if (link.getType() === 'autolink') return gfmLiteralOf(link)
+    const imported = $getState(link, literalHref)
+    if (imported === null || imported !== link.getURL()) return null
+    return autolinkLiteralAt(link.getTextContent(), 0)
   }
 
   // MDXEditor imports a list without its `start`, and exports one without it.
@@ -185,8 +223,9 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
    * lexical keeps no record of which was written: `**[guide](/g)**` saves as `[**guide**](/g)`.
    *
    * An auto-link holding code-formatted text is written as its text: lexical's auto-link matchers
-   * see text, not formats, so a URL inside a code span becomes a link markdown never meant. Any
-   * other is written as `gfmLiteralOf` reads it: text, or GFM's link and the punctuation it leaves out.
+   * see text, not formats, so a URL inside a code span becomes a link markdown never meant. A link
+   * whose text decides its href (`textLiteralOf`) is written as text where GFM links nothing, else
+   * as GFM's link and the punctuation GFM leaves out.
    */
   const linkExportVisitor: MdxEditor.LexicalVisitor = {
     priority: 100,
@@ -203,7 +242,7 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
         actions.visitChildren(lexicalNode, mdastParent)
         return
       }
-      const literal = lexicalNode.getType() === 'autolink' ? gfmLiteralOf(lexicalNode) : null
+      const literal = textLiteralOf(lexicalNode)
       if (literal === undefined) {
         actions.visitChildren(lexicalNode, mdastParent)
         return
@@ -241,9 +280,8 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
       actions.visitChildren(lexicalNode, link)
       if (carried.size > 0) link.children = withoutContainers(link.children, carried)
       const tail = literal ? lexicalNode.getTextContent().slice(literal.length) : ''
-      if (tail !== '' && cutTail(link.children, tail)) {
-        actions.appendToParent(parent, { type: 'text', value: tail })
-      }
+      const cut = tail === '' ? undefined : cutTail(link.children, tail)
+      if (cut !== undefined) actions.appendToParent(parent, cut)
     },
   }
 
@@ -262,7 +300,7 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
       // Without autolink literals a bare URL imports as text, for lexical's matcher to re-link.
       realm.pub(addSyntaxExtension$, gfmAutolinkLiteral())
       realm.pub(addMdastExtension$, gfmAutolinkLiteralFromMarkdown())
-      realm.pub(addImportVisitor$, listStartImportVisitor)
+      realm.pub(addImportVisitor$, [listStartImportVisitor, literalLinkImportVisitor])
       realm.pub(addExportVisitor$, [
         listStartExportVisitor,
         linkExportVisitor,
