@@ -498,7 +498,7 @@ Top-level components and helpers:
 - `shell/PaneLayout.tsx` — the resizable preview/form split
 - `shell/ActivityRail.tsx` — the left rail, one roving Tab stop
 - `shell/SidePanelHost.tsx` — a resizable side panel, docked or over the form
-- `shell/TopBar.tsx` — the 48px top bar, wrapping below `md`
+- `shell/TopBar.tsx` — the 48px top bar, wrapping when full
 - `shell/OverlayHeader.tsx` — `OverlayDrawer`, the drawers' compact header
 - `EntryNavigator.tsx` — entry tree: filter, unsaved dots, read-only locks, conflict badges
 - `entry-search.ts` — label/slug match, collection grouping
@@ -525,7 +525,7 @@ Top-level components and helpers:
 - `client-reference-resolver.ts` — resolves preview references at any depth, batched
 - `relative-time.ts` — `formatRelativeTime`; `components/RelativeTime.tsx` adds a tooltip
 - `theme.tsx` — theme, default control sizes
-- `branch-status.ts` — shared status label/colour map; `branchBarStatusPresentation` for the top bar
+- `branch-status.ts` — shared status label/colour map; `branchBarStatusPresentation`
 - `copy.ts` — fixed action verbs
 - `platform.ts` — `modKeyLabel()`, ⌘ or Ctrl
 - `slug.ts` — `slugFromTitle`; `validateEntrySlug`, the one slug validator
@@ -590,7 +590,7 @@ Field components, in `editor/fields/`:
 
 Components, in `editor/components/`:
 
-- `EditorHeader.tsx` — the top bar: `BranchPill`, Submit/Withdraw, `SaveAllButton.tsx`; `SaveAllResult` is Save all's toast
+- `EditorHeader.tsx` — the top bar: `BranchPill`, `SaveAllButton.tsx`, Submit/Withdraw (caret below `md`); `SaveAllResult` is its toast
 - `EntryHeader.tsx` — above the panes: `EntryBreadcrumb`, `EntrySaveButton.tsx`
 - `UnsavedMark.tsx` — the unsaved dot
 - `BranchLockBanner.tsx` — read-only banners, `describeBranchLock`

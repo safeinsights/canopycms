@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, type ReactNode } from 'react'
 import { Box, Button, Loader, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useReducedMotion } from '@mantine/hooks'
 import { IconAlertTriangle, IconLoader2 } from '@tabler/icons-react'
@@ -20,6 +20,8 @@ export interface SaveAllButtonProps {
   singleSaving: boolean
   /** The editor is loading or saving. */
   busy: boolean
+  /** A caret menu joined to the button, making it a split button. */
+  caret?: ReactNode
 }
 
 /**
@@ -58,6 +60,7 @@ export function SaveAllButton({
   saveAllProgress,
   singleSaving,
   busy,
+  caret,
 }: SaveAllButtonProps) {
   const reducedMotion = useReducedMotion()
   // A running Save all shows only its progress: a lock arriving mid-run would grey it.
@@ -105,36 +108,45 @@ export function SaveAllButton({
           ? `Saving ${saveAllProgress.total} ${saveAllProgress.total === 1 ? 'entry' : 'entries'}…`
           : ''}
       </VisuallyHidden>
-      <Tooltip
-        label={reason}
-        disabled={!reason}
-        multiline
-        maw={300}
-        // Down past the entry header, so it covers neither the bar nor the entry's Save below.
-        position="bottom-end"
-        offset={ENTRY_HEADER_HEIGHT + 8}
+      {/* Grouped even alone, so a caret coming or going never remounts the focused button; a
+          group of one is no group to assistive technology. */}
+      <Button.Group
+        style={{ flexShrink: 0 }}
+        renderRoot={(props) => <div {...props} role={caret ? 'group' : undefined} />}
       >
-        <Button
-          data-testid="save-all-button"
-          // The open entry's Save is the editor's one filled primary.
-          variant="light"
-          size="sm"
-          style={{ flexShrink: 0 }}
-          onClick={() => {
-            if (!blocked) onSaveAll()
-          }}
-          // The progress label stays readable: disabled styling takes it under 4.5:1.
-          data-disabled={reason ? true : undefined}
-          aria-disabled={blocked ? true : undefined}
-          aria-label={
-            saveAllProgress
-              ? `Saving ${Math.min(saveAllProgress.done + 1, saveAllProgress.total)} of ${saveAllProgress.total}…`
-              : undefined
-          }
+        <Tooltip
+          label={reason}
+          disabled={!reason}
+          multiline
+          maw={300}
+          // Down past the entry header, so it covers neither the bar nor the entry's Save below,
+          // while the bar's actions keep to one row.
+          position="bottom-end"
+          offset={ENTRY_HEADER_HEIGHT + 8}
         >
-          <SaveAllLabels shown={saveAllProgress ? 1 : 0} labels={labels} />
-        </Button>
-      </Tooltip>
+          <Button
+            data-testid="save-all-button"
+            // The open entry's Save is the editor's one filled primary.
+            variant="light"
+            size="sm"
+            style={{ flexShrink: 0 }}
+            onClick={() => {
+              if (!blocked) onSaveAll()
+            }}
+            // The progress label stays readable: disabled styling takes it under 4.5:1.
+            data-disabled={reason ? true : undefined}
+            aria-disabled={blocked ? true : undefined}
+            aria-label={
+              saveAllProgress
+                ? `Saving ${Math.min(saveAllProgress.done + 1, saveAllProgress.total)} of ${saveAllProgress.total}…`
+                : undefined
+            }
+          >
+            <SaveAllLabels shown={saveAllProgress ? 1 : 0} labels={labels} />
+          </Button>
+        </Tooltip>
+        {caret}
+      </Button.Group>
     </>
   )
 }

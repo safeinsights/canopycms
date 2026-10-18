@@ -1212,3 +1212,188 @@ describe('EditorHeader - during Save all', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 })
+
+describe('EditorHeader - branch bar', () => {
+  const originalMatchMedia = window.matchMedia
+  /** A window below `md`: max-width queries match, min-width ones don't. */
+  const stubNarrowWindow = () => {
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query.startsWith('(max-width:'),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList
+  }
+  const owner = { userContext: { userId: 'u1' }, branchCreatedBy: 'u1' }
+  const follows = (a: Element, b: Element) =>
+    !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+    cleanup()
+  })
+
+  it('puts the pill first, then Save all, then Submit', () => {
+    renderHeader({ ...owner, modifiedCount: 2 })
+    const pill = screen.getByTestId('branch-dropdown-button')
+    const saveAll = screen.getByTestId('save-all-button')
+    const submit = screen.getByTestId('submit-button')
+    expect(follows(pill, saveAll)).toBe(true)
+    expect(follows(saveAll, submit)).toBe(true)
+    expect(screen.queryByTestId('branch-actions-button')).toBeNull()
+  })
+
+  it('below md, joins Submit to Save all as its caret on an editable branch', async () => {
+    stubNarrowWindow()
+    const onSubmit = vi.fn()
+    renderHeader({ ...owner, modifiedCount: 2, onSubmit })
+    expect(screen.queryByTestId('submit-button')).toBeNull()
+    const caret = screen.getByTestId('branch-actions-button')
+    expect(caret.closest('.mantine-Button-group')).toBe(
+      screen.getByTestId('save-all-button').closest('.mantine-Button-group'),
+    )
+    await userEvent.click(caret)
+    await userEvent.click(await screen.findByTestId('submit-menu-item'))
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    const returnFocusTo = onSubmit.mock.calls[0][0] as () => HTMLElement | null
+    expect(returnFocusTo()).toBe(caret)
+  })
+
+  it('below md, offers Withdraw in the caret when the branch can be withdrawn', async () => {
+    stubNarrowWindow()
+    const onWithdraw = vi.fn()
+    renderHeader({ ...owner, branchStatus: 'approved', onWithdraw })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const item = await screen.findByTestId('withdraw-menu-item')
+    expect(item.textContent).toBe('Withdraw from review')
+    await userEvent.click(item)
+    expect(onWithdraw).toHaveBeenCalledTimes(1)
+  })
+
+  it('below md, says in the caret why Submit is blocked and does not run it', async () => {
+    stubNarrowWindow()
+    const onSubmit = vi.fn()
+    renderHeader({ userContext: { userId: 'someone-else' }, branchCreatedBy: 'u1', onSubmit })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const item = await screen.findByTestId('submit-menu-item')
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.textContent).toContain('You do not have permission to submit this branch')
+    await userEvent.click(item)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('below md, draws no caret when the branch has no workflow action', () => {
+    stubNarrowWindow()
+    renderHeader({ ...owner, modifiedCount: 1 })
+    expect(screen.getByTestId('branch-actions-button')).toBeTruthy()
+    cleanup()
+    // A protected branch that is writable, as in dev mode: Submit never shows on it.
+    renderHeader({ ...owner, branchIsProtected: true, modifiedCount: 1 })
+    expect(screen.getByTestId('save-all-button')).toBeTruthy()
+    expect(screen.queryByTestId('branch-actions-button')).toBeNull()
+    expect(screen.queryByTestId('submit-button')).toBeNull()
+  })
+
+  it('below md, moves focus from the caret to Withdraw when a submit locks the branch', () => {
+    stubNarrowWindow()
+    const onSubmit = vi.fn()
+    const props: HeadersProps = { ...defaultProps, ...owner, onSubmit }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    act(() => screen.getByTestId('branch-actions-button').focus())
+    rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
+    const withdraw = screen.getByTestId('withdraw-button')
+    expect(document.activeElement).toBe(withdraw)
+  })
+
+  it('below md, moves focus from the open caret menu to Withdraw when a submit locks the branch', async () => {
+    stubNarrowWindow()
+    const props: HeadersProps = { ...defaultProps, ...owner }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const menu = await screen.findByRole('menu')
+    act(() => within(menu).getByTestId('submit-menu-item').focus())
+    expect(menu.contains(document.activeElement)).toBe(true)
+    rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
+    expect(document.activeElement).toBe(screen.getByTestId('withdraw-button'))
+  })
+
+  it('below md, leaves focus where it is when the swapped control did not have it', () => {
+    stubNarrowWindow()
+    const props: HeadersProps = { ...defaultProps, ...owner, modifiedCount: 1 }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    const saveAll = screen.getByTestId('save-all-button')
+    act(() => saveAll.focus())
+    rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
+    expect(screen.getByTestId('withdraw-button')).toBeTruthy()
+    expect(document.activeElement).toBe(saveAll)
+  })
+
+  it('below md, moves focus from Withdraw to the caret when a withdraw unlocks the branch', () => {
+    stubNarrowWindow()
+    const props: HeadersProps = {
+      ...defaultProps,
+      ...owner,
+      branchStatus: 'submitted',
+      branchWriteBlocked: true,
+    }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    act(() => screen.getByTestId('withdraw-button').focus())
+    rerender(<Headers {...props} branchStatus="editing" branchWriteBlocked={false} />)
+    expect(document.activeElement).toBe(screen.getByTestId('branch-actions-button'))
+  })
+
+  it("returns a dialog's focus to whichever workflow control is mounted when it closes", async () => {
+    stubNarrowWindow()
+    const onSubmit = vi.fn()
+    const props: HeadersProps = { ...defaultProps, ...owner, onSubmit }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    await userEvent.click(await screen.findByTestId('submit-menu-item'))
+    const returnFocusTo = onSubmit.mock.calls[0][0] as () => HTMLElement | null
+    rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
+    expect(returnFocusTo()).toBe(screen.getByTestId('withdraw-button'))
+  })
+
+  it('gives the wide button itself as where its dialog returns focus', async () => {
+    const onSubmit = vi.fn()
+    renderHeader({ ...owner, onSubmit })
+    const submit = screen.getByTestId('submit-button')
+    await userEvent.click(submit)
+    const returnFocusTo = onSubmit.mock.calls[0][0] as () => HTMLElement | null
+    expect(returnFocusTo()).toBe(submit)
+  })
+
+  it('below md, says in the caret that Submit waits for a load or save', async () => {
+    stubNarrowWindow()
+    renderHeader({ ...owner, busy: true })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const item = await screen.findByTestId('submit-menu-item')
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.textContent).toContain('Wait for the current save or load to finish.')
+  })
+
+  it('groups Save all only when the caret joins it', () => {
+    renderHeader({ ...owner, modifiedCount: 1 })
+    expect(screen.getByTestId('save-all-button').closest('[role="group"]')).toBeNull()
+    cleanup()
+    stubNarrowWindow()
+    renderHeader({ ...owner, modifiedCount: 1 })
+    const group = screen.getByTestId('save-all-button').closest('[role="group"]')
+    expect(group?.contains(screen.getByTestId('branch-actions-button'))).toBe(true)
+  })
+
+  it.each([
+    ['a locked branch', { branchStatus: 'submitted', branchWriteBlocked: true }, 'withdraw-button'],
+    ['a branch still loading', { branchLoading: true }, 'submit-button'],
+  ] as const)('below md, keeps separate buttons on %s', (_label, overrides, testId) => {
+    stubNarrowWindow()
+    renderHeader({ ...owner, ...overrides })
+    expect(screen.queryByTestId('branch-actions-button')).toBeNull()
+    expect(follows(screen.getByTestId('save-all-button'), screen.getByTestId(testId))).toBe(true)
+  })
+})
