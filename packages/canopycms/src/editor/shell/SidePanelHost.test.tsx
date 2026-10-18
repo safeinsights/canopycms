@@ -231,6 +231,8 @@ describe('SidePanelHost', () => {
       act(() => button('Inside').focus())
 
       act(() => button('Portaled').focus())
+      await settle()
+      expect(onFocusLeave).not.toHaveBeenCalled()
       act(() => screen.getByRole('button', { name: 'Close content panel' }).focus())
       act(() => button('Inside').focus())
       await settle()
@@ -247,6 +249,37 @@ describe('SidePanelHost', () => {
       await settle()
 
       expect(onFocusLeave).not.toHaveBeenCalled()
+    })
+
+    it('reports focus landing outside after first dropping to nothing', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+      act(() => button('Inside').blur())
+      await settle()
+
+      act(() => button('Outside').focus())
+      await settle()
+
+      expect(onFocusLeave).toHaveBeenCalledWith(button('Outside'))
+    })
+
+    it('reports focus moving into a frame outside the panel', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      const frame = document.body.appendChild(document.createElement('iframe'))
+      onTestFinished(() => frame.remove())
+      act(() => button('Inside').focus())
+
+      // Focus inside a frame shows in this document as the frame being active, and a window blur.
+      vi.spyOn(document, 'activeElement', 'get').mockReturnValue(frame)
+      act(() => {
+        window.dispatchEvent(new FocusEvent('blur'))
+      })
+      await settle()
+      vi.restoreAllMocks()
+
+      expect(onFocusLeave).toHaveBeenCalledWith(frame)
     })
   })
 

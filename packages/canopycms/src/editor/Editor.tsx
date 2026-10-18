@@ -1540,6 +1540,8 @@ const EditorContent: React.FC<EditorProps> = ({
     // In the commit that opens the overlay, so the form panel is no longer inert when the overlay
     // mounts, then or a frame later as its slide starts, and serves its focus request.
     if (!contentPanelDocked) setPreviewMaximized(false)
+    // A new ask for the panel ends any wait for an Enter-opened form, whose close it was.
+    setFormFocusPath(null)
     if (transient && contentPanelDocked && !contentPanelOpen) setContentPanelTransient(true)
     else setContentPanelShown(true)
     setContentPanelFocusRequest((request) => request + 1)

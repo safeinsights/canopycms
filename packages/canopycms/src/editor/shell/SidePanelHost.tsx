@@ -79,7 +79,7 @@ export interface SidePanelHostProps {
   focusRequest?: number
   /** Where focus goes when the panel closes with focus inside it. */
   returnFocusTo?: () => HTMLElement | null
-  /** Focus moved to `target`, outside the panel and what it portals; to nothing isn't leaving. */
+  /** Focus landed on `target`, outside the panel and what it portals; dropping to nothing isn't. */
   onFocusLeave?: (target: Element) => void
   /** Controls beside the title, before the close button. */
   actions?: ReactNode
@@ -122,7 +122,38 @@ export function SidePanelHost({
   const [panel, setPanel] = useState<HTMLElement | null>(null)
   const focusInside = useRef(false)
   const focusLeaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  useEffect(() => () => clearTimeout(focusLeaveTimer.current), [])
+  const onFocusLeaveRef = useRef(onFocusLeave)
+  useEffect(() => {
+    onFocusLeaveRef.current = onFocusLeave
+  })
+  const watchFocus = opened && !!onFocusLeave
+  // Watched on the document, not the panel's blur: focus can drop to nothing first (a click on
+  // text, or on a button in Safari) and then land elsewhere with no blur left to report it.
+  useEffect(() => {
+    if (!watchFocus || !panel) return
+    const leave = (target: Element) => {
+      clearTimeout(focusLeaveTimer.current)
+      focusLeaveTimer.current = setTimeout(() => onFocusLeaveRef.current?.(target), 0)
+    }
+    // Captured, so it runs before React's own listeners: a portaled descendant taking focus runs
+    // the panel's `onFocus`, which cancels this.
+    const onFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof Element && !panel.contains(event.target)) leave(event.target)
+    }
+    // Focus moving into a frame, such as the preview, reaches this document only as a blur.
+    const onWindowBlur = () =>
+      setTimeout(() => {
+        const active = document.activeElement
+        if (active instanceof HTMLIFrameElement && !panel.contains(active)) leave(active)
+      }, 0)
+    document.addEventListener('focusin', onFocusIn, true)
+    window.addEventListener('blur', onWindowBlur)
+    return () => {
+      document.removeEventListener('focusin', onFocusIn, true)
+      window.removeEventListener('blur', onWindowBlur)
+      clearTimeout(focusLeaveTimer.current)
+    }
+  }, [watchFocus, panel])
   const closingWithFocus = useRef(false)
   const wasOpened = useRef(opened)
   const servedFocusRequest = useRef(focusRequest)
@@ -303,14 +334,7 @@ export function SidePanelHost({
               clearTimeout(focusLeaveTimer.current)
             }}
             onBlur={(event) => {
-              const next = event.relatedTarget
-              if (event.currentTarget.contains(next)) return
-              focusInside.current = false
-              if (!(next instanceof Element)) return
-              // React bubbles focus through portals, so a portaled descendant taking focus runs
-              // `onFocus` above, in the same task, and cancels this.
-              clearTimeout(focusLeaveTimer.current)
-              focusLeaveTimer.current = setTimeout(() => onFocusLeave?.(next), 0)
+              if (!event.currentTarget.contains(event.relatedTarget)) focusInside.current = false
             }}
           >
             <style>{PANEL_STYLES}</style>

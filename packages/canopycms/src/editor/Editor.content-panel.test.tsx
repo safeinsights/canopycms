@@ -718,6 +718,20 @@ describe('finding an entry with Mod+P', () => {
     await waitFor(() => expect(document.activeElement).toBe(titleField()))
   })
 
+  it('on Escape over a maximized preview, closes and leaves the preview maximized', async () => {
+    await closedWide()
+    fireEvent.click(await screen.findByRole('button', { name: 'Maximize preview' }))
+    await screen.findByRole('button', { name: 'Restore' })
+    modP(document.body)
+    await waitFor(() => expect(document.activeElement).toBe(filter()))
+
+    // Dispatched as a browser does, to the window's capture listeners first.
+    fireEvent.keyDown(filter(), { key: 'Escape' })
+
+    await waitFor(() => expect(panel()).toBeNull())
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeTruthy()
+  })
+
   it('closes when focus moves out of it, not when focus drops to nothing', async () => {
     await transientOpen()
     act(() => filter().blur())

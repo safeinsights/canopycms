@@ -1183,7 +1183,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           rightSectionPointerEvents={query ? undefined : 'none'}
           rightSectionProps={query || !filterShortcut ? undefined : { style: { paddingInline: 8 } }}
           // Mantine's drawers and modals ignore an Escape from an element with this attribute.
-          data-mantine-stop-propagation={query ? 'true' : undefined}
+          data-mantine-stop-propagation={query || onFilterEscape ? 'true' : undefined}
           data-testid="entry-nav-filter"
         />
       )}
