@@ -61,6 +61,8 @@ export interface EntryHeaderProps {
   branchLoading?: boolean
   /** The branch list is still being fetched, so Save waits rather than naming a failure. */
   branchPending?: boolean
+  /** The branch list answered without this branch. */
+  branchMissing?: boolean
 }
 
 /** The open entry's breadcrumb, menu, unsaved dot and "Read-only" chip, then Save, over the panes. */
@@ -91,12 +93,14 @@ export function EntryHeader({
   branchWriteBlocked = false,
   branchLoading = false,
   branchPending = false,
+  branchMissing = false,
 }: EntryHeaderProps) {
   const branchLockReason = describeBranchLock({
     branchStatus,
     branchReadOnly,
     branchWriteBlocked,
     branchPending,
+    branchMissing,
   })
   const entryLockReason = entryReadOnly
     ? "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it."

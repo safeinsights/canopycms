@@ -44,13 +44,19 @@ describe('branchBarStatus', () => {
       'a failed fetch',
       { branchStatus: undefined, branchWriteBlocked: true },
       'Details unavailable · read-only',
+      'refreshBranch',
+    ],
+    [
+      'a list that answered without the branch',
+      { branchStatus: undefined, branchWriteBlocked: true, branchMissing: true },
+      'Not available · read-only',
       'switchBranch',
     ],
     [
       'version skew: locked while "editing"',
       { branchWriteBlocked: true },
       'Details unavailable · read-only',
-      'switchBranch',
+      'refreshBranch',
     ],
     [
       'the protected base branch in prod',

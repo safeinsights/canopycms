@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -144,11 +145,18 @@ function holdsFocus(el: HTMLElement): boolean {
 
 /**
  * Refs for `slots` controls that come and go by turns. Focus dropped by one leaving the page, or by
- * its menu, moves to its slot's newcomer, else the first slot filled; a StrictMode re-attach stays.
+ * its menu, moves to its slot's newcomer, else the first slot filled (`target`, which a dialog may
+ * return focus to too); a StrictMode re-attach stays.
  */
-export function useFocusHandOff(slots: number): Array<(el: HTMLButtonElement | null) => void> {
+export function useFocusHandOff(
+  slots: number,
+): [Array<(el: HTMLButtonElement | null) => void>, (slot: number) => HTMLButtonElement | null] {
   const controls = useRef<Array<HTMLButtonElement | null>>([])
   const outgoing = useRef<{ el: HTMLElement; slot: number } | undefined>(undefined)
+  const target = useCallback(
+    (slot: number) => controls.current[slot] ?? controls.current.find(Boolean) ?? null,
+    [],
+  )
   const refs = useMemo(
     () =>
       Array.from({ length: slots }, (_, slot) => (el: HTMLButtonElement | null) => {
@@ -163,7 +171,7 @@ export function useFocusHandOff(slots: number): Array<(el: HTMLButtonElement | n
     outgoing.current = undefined
     const active = document.activeElement
     if (!left || left.el.isConnected || (active && active !== document.body)) return
-    ;(controls.current[left.slot] ?? controls.current.find(Boolean))?.focus({ preventScroll: true })
+    target(left.slot)?.focus({ preventScroll: true })
   })
-  return refs
+  return [refs, target]
 }

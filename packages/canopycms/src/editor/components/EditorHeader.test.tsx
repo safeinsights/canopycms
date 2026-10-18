@@ -581,6 +581,19 @@ describe('EditorHeader - branch status', () => {
     expect(regions).toContain(region)
   })
 
+  it("says the entry's Save waits for the branch details while they load", async () => {
+    renderHeader({
+      branchStatus: undefined,
+      branchLoading: true,
+      branchPending: true,
+      branchWriteBlocked: true,
+    })
+    act(() => screen.getByTestId('save-button').focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Wait for the branch details to load.',
+    )
+  })
+
   it('says Save all waits for the branch details while they load, not that they failed', async () => {
     renderHeader({
       branchStatus: undefined,
@@ -753,7 +766,7 @@ describe('EditorHeader - vocabulary', () => {
   })
 
   it.each([
-    ['unavailable branch details', { branchStatus: undefined }],
+    ['a branch the list answered without', { branchStatus: undefined, branchMissing: true }],
     ['an archived branch', { branchStatus: 'archived' as const }],
   ])('offers Switch branch… from %s', async (_label, overrides) => {
     const onBranchManagerOpen = vi.fn()
@@ -761,6 +774,67 @@ describe('EditorHeader - vocabulary', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Switch branch…' }))
     expect(onBranchManagerOpen).toHaveBeenCalled()
+    expect(screen.queryByTestId('refresh-branch-button')).toBeNull()
+  })
+
+  it('offers Refresh branch, not Switch branch…, when branch details failed to load', async () => {
+    const onBranchReloadData = vi.fn()
+    const onBranchManagerOpen = vi.fn()
+    renderHeader({
+      branchStatus: undefined,
+      branchWriteBlocked: true,
+      onBranchReloadData,
+      onBranchManagerOpen,
+    })
+
+    expect(barStatus().textContent).toBe('Details unavailable · read-only')
+    expect(screen.queryByTestId('switch-branch-button')).toBeNull()
+    await userEvent.click(screen.getByTestId('refresh-branch-button'))
+    expect(onBranchReloadData).toHaveBeenCalledTimes(1)
+    expect(onBranchManagerOpen).not.toHaveBeenCalled()
+  })
+
+  it('opens the new-branch form from the bar, not Branches alone', async () => {
+    const onNewBranch = vi.fn()
+    const onBranchManagerOpen = vi.fn()
+    renderHeader({
+      branchReadOnly: true,
+      branchWriteBlocked: true,
+      branchIsProtected: true,
+      onNewBranch,
+      onBranchManagerOpen,
+    })
+
+    await userEvent.click(screen.getByTestId('new-branch-button'))
+    expect(onNewBranch).toHaveBeenCalledTimes(1)
+    expect(onBranchManagerOpen).not.toHaveBeenCalled()
+  })
+
+  it('tells assistive technology the status in words, with its reason, and nothing while loading', () => {
+    const props: HeadersProps = { ...defaultProps }
+    const { rerender } = render(
+      <Headers {...props} branchStatus="submitted" branchWriteBlocked />,
+      {
+        wrapper: Wrapper,
+      },
+    )
+    const region = barStatus().closest('[role="status"]') as HTMLElement
+    expect(barStatus().getAttribute('aria-hidden')).toBe('true')
+    expect(region.textContent).toContain(
+      'In review, read-only. This branch is in review. Withdraw it to make changes.',
+    )
+    rerender(
+      <Headers
+        {...props}
+        branchStatus={undefined}
+        branchLoading
+        branchPending
+        branchWriteBlocked
+        branchIsProtected
+      />,
+    )
+    expect(barStatus().textContent).toBe('Loading branch…')
+    expect(region.textContent).toBe('Loading branch…')
   })
 })
 
@@ -829,7 +903,16 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
     act(() => screen.getByTestId('save-button').focus())
     const tooltip = await screen.findByRole('tooltip')
     expect(tooltip.textContent).toBe(
-      'Branch details could not be loaded. Use "Switch branch…" to retry.',
+      'Branch details could not be loaded. Use "Refresh branch" to try again.',
+    )
+  })
+
+  it('tells someone the list answered without the branch that no retry will help', async () => {
+    renderHeader({ branchStatus: undefined, branchWriteBlocked: true, branchMissing: true })
+    act(() => screen.getByTestId('save-button').focus())
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip.textContent).toBe(
+      `You don't have access to this branch, or it no longer exists. Use "Switch branch…" to open another.`,
     )
   })
 
@@ -1411,6 +1494,25 @@ describe('EditorHeader - branch bar', () => {
     const returnFocusTo = onSubmit.mock.calls[0][0] as () => HTMLElement | null
     rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
     expect(returnFocusTo()).toBe(screen.getByTestId('withdraw-button'))
+  })
+
+  it("returns a withdraw dialog's focus to the way forward when no workflow action is left", async () => {
+    const onWithdraw = vi.fn()
+    const props: HeadersProps = {
+      ...defaultProps,
+      userContext: { userId: 'boss', groups: [RESERVED_GROUPS.ADMINS] },
+      branchStatus: 'submitted',
+      branchReadOnly: true,
+      branchWriteBlocked: true,
+      branchIsProtected: true,
+      onWithdraw,
+    }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    await userEvent.click(screen.getByTestId('withdraw-button'))
+    const returnFocusTo = onWithdraw.mock.calls[0][0] as () => HTMLElement | null
+    rerender(<Headers {...props} branchStatus="editing" />)
+    expect(screen.queryByTestId('withdraw-button')).toBeNull()
+    expect(returnFocusTo()).toBe(screen.getByTestId('new-branch-button'))
   })
 
   it('gives the wide button itself as where its dialog returns focus', async () => {

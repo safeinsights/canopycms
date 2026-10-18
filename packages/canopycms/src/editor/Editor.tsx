@@ -282,6 +282,8 @@ const EditorContent: React.FC<EditorProps> = ({
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
+  // Opened by New branch…, it starts on its new-branch form.
+  const [branchManagerCreating, setBranchManagerCreating] = useState(false)
   const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false)
   const [systemHealthOpen, setSystemHealthOpen] = useState(false)
 
@@ -438,6 +440,7 @@ const EditorContent: React.FC<EditorProps> = ({
   // "Details could not be loaded" is not yet true while the list is unanswered; once the fetch
   // has failed, or answered without this branch, it is, and the lock says so.
   const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
+  const branchMissing = !currentBranch && branchesLoaded
 
   // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
   const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
@@ -1829,8 +1832,9 @@ const EditorContent: React.FC<EditorProps> = ({
     writtenTitleRef.current = tabTitle
   }, [tabTitle])
 
-  const openBranchManager = () => {
+  const openBranchManager = (options?: { create?: boolean }) => {
     branchOpenerRef.current = rememberOpener()
+    setBranchManagerCreating(options?.create === true)
     setBranchManagerOpen(true)
     // Always retry, not only when branchless. Opening the manager is
     // the one in-app retry for a failed branches fetch, and the fetch
@@ -1963,6 +1967,7 @@ const EditorContent: React.FC<EditorProps> = ({
                   branchStatus: currentBranch?.status,
                   branchReadOnly: currentBranch?.readOnly,
                   branchWriteBlocked: branchContentLocked,
+                  branchMissing,
                 })
           }
           dirtyPaths={dirtyPaths}
@@ -2001,6 +2006,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchWriteBlocked={branchContentLocked}
               branchLoading={branchLoading}
               branchPending={branchPending}
+              branchMissing={branchMissing}
               branchToggleRef={branchToggleRef}
               onEntrySelect={openEntry}
               onBranchReloadData={() => {
@@ -2010,6 +2016,7 @@ const EditorContent: React.FC<EditorProps> = ({
               }}
               onBranchDiscardDrafts={() => handleDiscardDrafts(() => branchToggleRef.current)}
               onBranchManagerOpen={openBranchManager}
+              onNewBranch={() => openBranchManager({ create: true })}
               onSaveAll={runSaveAll}
               saveAllProgress={saveAllProgress}
               // On any entry: EntryHeader's `saving` is the open entry's alone.
@@ -2089,6 +2096,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 branchWriteBlocked={branchContentLocked}
                 branchLoading={branchLoading}
                 branchPending={branchPending}
+                branchMissing={branchMissing}
                 onCollectionOpen={revealCollection}
                 navigatorToggleRef={navigatorToggleRef}
                 onFileReload={() => handleReload(() => navigatorToggleRef.current)}
@@ -2267,6 +2275,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 returnFocusTo={branchReturnTarget}
               >
                 <BranchManager
+                  startCreating={branchManagerCreating}
                   branches={branchSummaries}
                   mode={operatingMode}
                   user={userContext}

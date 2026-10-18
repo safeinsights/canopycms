@@ -183,6 +183,8 @@ export interface BranchManagerProps {
   currentBranchName?: string
   /** Why the open branch's Submit or Withdraw must wait, such as a Save all still writing it. */
   currentWorkflowBlockedReason?: string
+  /** Opens on the new-branch form, its name field focused, as New branch… in the branch bar asks. */
+  startCreating?: boolean
   onSelect?: (name: string) => void
   /** Awaited before the spinner starts, so a confirmation it shows never reads as a hung create. `false` abandons the create. */
   onBeforeCreate?: () => Promise<boolean>
@@ -572,6 +574,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   user,
   currentBranchName,
   currentWorkflowBlockedReason,
+  startCreating = false,
   onSelect,
   onBeforeCreate,
   onCreate,
@@ -591,7 +594,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   onGetCommentUserMetadata,
 }) => {
   const supportsBranching = clientOperatingStrategy(mode).supportsBranching()
-  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [showCreateForm, setShowCreateForm] = useState(startCreating)
   const [newBranchName, setNewBranchName] = useState('')
   const [newBranchTitle, setNewBranchTitle] = useState('')
   const [newBranchDescription, setNewBranchDescription] = useState('')
@@ -675,6 +678,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   onChange={(e) => setNewBranchName(e.target.value)}
                   required
                   disabled={creating}
+                  data-autofocus={startCreating || undefined}
                   data-testid="branch-name-input"
                 />
                 <TextInput

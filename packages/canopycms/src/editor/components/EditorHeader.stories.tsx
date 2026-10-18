@@ -107,13 +107,23 @@ export const ProtectedWritable: Story = {
   args: { branchName: 'main', branchIsProtected: true, branchServerProtected: true },
 }
 
-/** Branch details failed to load: locked, with Switch branch… to retry. */
+/** Branch details failed to load: locked, with Refresh branch to try again. */
 export const DetailsUnavailable: Story = {
   args: {
     branchStatus: undefined,
+    // Editor fails closed to protected while it has no branch details, so no Submit shows.
+    branchIsProtected: true,
     branchLoading: true,
     branchWriteBlocked: true,
     hasUnsavedChanges: false,
+  },
+}
+
+/** The list answered without this branch: no access to it, or it is gone. Switch branch… opens another. */
+export const NotAvailable: Story = {
+  args: {
+    ...DetailsUnavailable.args,
+    branchMissing: true,
   },
 }
 
@@ -173,6 +183,7 @@ export const NarrowInReviewManyUnsaved: Story = {
 export const BranchLoading: Story = {
   args: {
     branchStatus: undefined,
+    branchIsProtected: true,
     branchLoading: true,
     branchPending: true,
     branchWriteBlocked: true,

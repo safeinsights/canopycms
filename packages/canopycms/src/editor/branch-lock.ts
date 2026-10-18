@@ -8,6 +8,8 @@ export interface BranchLockInput {
   branchWriteBlocked?: boolean
   /** The branch list is still being fetched, so details aren't unavailable yet, only pending. */
   branchPending?: boolean
+  /** The branch list answered without this branch: no access to it, or it no longer exists. */
+  branchMissing?: boolean
 }
 
 /**
@@ -39,7 +41,9 @@ export function describeBranchLock(lock: BranchLockInput): string | undefined {
   if (branchDataUnavailable)
     return lock.branchPending
       ? 'Wait for the branch details to load.'
-      : 'Branch details could not be loaded. Use "Switch branch…" to retry.'
+      : lock.branchMissing
+        ? `You don't have access to this branch, or it no longer exists. Use "Switch branch…" to open another.`
+        : 'Branch details could not be loaded. Use "Refresh branch" to try again.'
   if (!statusLocked) return undefined
   if (lock.branchStatus === 'submitted')
     return 'This branch is in review. Withdraw it to make changes.'
@@ -59,7 +63,7 @@ export interface BranchBarStatus {
   value: string
   readOnly: boolean
   /** The way forward; `workflow` leaves it to the Withdraw control, never offered twice. */
-  action?: 'newBranch' | 'switchBranch' | 'workflow'
+  action?: 'newBranch' | 'switchBranch' | 'refreshBranch' | 'workflow'
 }
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
@@ -74,12 +78,19 @@ export function branchBarStatus(input: BranchBarStatusInput): BranchBarStatus {
   const status = input.branchStatus
   if (input.branchPending) return { label: 'Loading branch…', value: 'loading', readOnly: false }
   if (branchDataUnavailable)
-    return {
-      label: 'Details unavailable · read-only',
-      value: 'unavailable',
-      readOnly: true,
-      action: 'switchBranch',
-    }
+    return input.branchMissing
+      ? {
+          label: 'Not available · read-only',
+          value: 'not-available',
+          readOnly: true,
+          action: 'switchBranch',
+        }
+      : {
+          label: 'Details unavailable · read-only',
+          value: 'unavailable',
+          readOnly: true,
+          action: 'refreshBranch',
+        }
   if (readOnly)
     return {
       label: 'Protected · read-only',

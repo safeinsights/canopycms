@@ -6,6 +6,7 @@ import {
   Menu,
   Text,
   Tooltip,
+  VisuallyHidden,
   em,
   getBreakpointValue,
   useMantineTheme,
@@ -41,6 +42,8 @@ export interface EditorHeaderProps {
   onBranchReloadData: () => void
   onBranchDiscardDrafts: () => void
   onBranchManagerOpen: () => void
+  /** Opens Branches with its new-branch form; Branches alone without it. */
+  onNewBranch?: () => void
   onSaveAll: () => void
   saveAllProgress: SaveAllProgress | null
   /** A single Save is in flight, on any entry. */
@@ -79,6 +82,8 @@ export interface EditorHeaderProps {
   branchLoading?: boolean
   /** The branch list is still being fetched, as opposed to having failed or lacking this branch. */
   branchPending?: boolean
+  /** The branch list answered without this branch. */
+  branchMissing?: boolean
 }
 
 /**
@@ -95,6 +100,7 @@ export function EditorHeader({
   onBranchReloadData,
   onBranchDiscardDrafts,
   onBranchManagerOpen,
+  onNewBranch = onBranchManagerOpen,
   onSaveAll,
   saveAllProgress,
   singleSaving = false,
@@ -112,20 +118,11 @@ export function EditorHeader({
   branchWriteBlocked = false,
   branchLoading = false,
   branchPending = false,
+  branchMissing = false,
 }: EditorHeaderProps) {
-  const branchLockReason = describeBranchLock({
-    branchStatus,
-    branchReadOnly,
-    branchWriteBlocked,
-    branchPending,
-  })
-  const status = branchBarStatus({
-    branchStatus,
-    branchReadOnly,
-    branchWriteBlocked,
-    branchPending,
-    isProtected: branchServerProtected,
-  })
+  const lock = { branchStatus, branchReadOnly, branchWriteBlocked, branchPending, branchMissing }
+  const branchLockReason = describeBranchLock(lock)
+  const status = branchBarStatus({ ...lock, isProtected: branchServerProtected })
 
   const theme = useMantineTheme()
   // Mantine's own below-`md` query, the one `visibleFrom="md"` hides under.
@@ -157,13 +154,13 @@ export function EditorHeader({
       : status.action
 
   // Controls come and go as a submit or withdraw changes the lock, and focus follows them.
-  const [wayRef, saveAllRef, workflowRef] = useFocusHandOff(3)
-  const workflowEl = useRef<HTMLButtonElement | null>(null)
+  const [[wayRef, saveAllRef, workflowRef], focusTarget] = useFocusHandOff(3)
   const workflowControl = {
     onSubmit,
     onWithdraw,
-    controlRef: useMergedRef(workflowEl, workflowRef),
-    returnFocusTo: () => workflowEl.current,
+    controlRef: workflowRef,
+    // A withdraw that leaves no workflow action returns focus to the way forward, else Save all.
+    returnFocusTo: () => focusTarget(2),
   }
 
   const caretOnWay = narrow && !!barAction && !!workflow
@@ -183,7 +180,10 @@ export function EditorHeader({
             onEntrySelect={onEntrySelect}
             pillRef={branchToggleRef}
           />
-          <BranchStatusLabel status={branchName ? status : { value: 'none', readOnly: false }} />
+          <BranchStatusLabel
+            status={branchName ? status : { value: 'none', readOnly: false }}
+            reason={branchLockReason}
+          />
         </Group>
       }
       trailing={
@@ -219,7 +219,13 @@ export function EditorHeader({
             <BranchWayButton
               action={barAction}
               buttonRef={wayRef}
-              onClick={onBranchManagerOpen}
+              onClick={
+                barAction === 'newBranch'
+                  ? onNewBranch
+                  : barAction === 'refreshBranch'
+                    ? onBranchReloadData
+                    : onBranchManagerOpen
+              }
               caret={
                 caretOnWay && workflow ? (
                   <WorkflowCaret {...workflowControl} action={workflow} />
@@ -236,31 +242,48 @@ export function EditorHeader({
   )
 }
 
-/** The branch's lasting state, beside the pill; an editable branch has none. */
-function BranchStatusLabel({ status }: { status: BranchBarStatus }) {
+/** The branch's state beside the pill, heard in words with its reason, but not while it loads. */
+function BranchStatusLabel({ status, reason }: { status: BranchBarStatus; reason?: string }) {
+  const spoken =
+    status.label && status.value !== 'loading'
+      ? [status.label.replace(' · ', ', '), reason].filter(Boolean).join('. ')
+      : ''
   return (
     // Always mounted, so a lock that arrives is announced.
     <Box role="status" style={status.label ? { flexShrink: 0 } : HIDDEN_STYLE}>
       {status.label && (
-        <Group gap={4} wrap="nowrap" data-testid="branch-status" data-status={status.value}>
-          {status.readOnly && <IconLock size={14} aria-hidden="true" />}
+        <Group
+          gap={4}
+          wrap="nowrap"
+          aria-hidden="true"
+          data-testid="branch-status"
+          data-status={status.value}
+        >
+          {status.readOnly && <IconLock size={14} />}
           <Text span size="sm">
             {status.label}
           </Text>
         </Group>
       )}
+      <VisuallyHidden>{spoken}</VisuallyHidden>
     </Box>
   )
 }
 
-/** New branch… or Switch branch…, the way forward from a locked branch; both open Branches. */
+const WAY_LABEL = {
+  newBranch: `${EDITOR_ACTIONS.newBranch}…`,
+  switchBranch: `${EDITOR_ACTIONS.switchBranch}…`,
+  refreshBranch: 'Refresh branch',
+} as const
+
+/** The way forward from a locked branch: New branch…, Switch branch… or Refresh branch. */
 function BranchWayButton({
   action,
   onClick,
   caret,
   buttonRef,
 }: {
-  action: 'newBranch' | 'switchBranch'
+  action: keyof typeof WAY_LABEL
   onClick: () => void
   buttonRef: Ref<HTMLButtonElement>
   /** The workflow action's caret below `md`, making it a split button. */
@@ -276,10 +299,10 @@ function BranchWayButton({
         ref={buttonRef}
         variant="light"
         size="sm"
-        onClick={onClick}
-        data-testid={action === 'newBranch' ? 'new-branch-button' : 'switch-branch-button'}
+        onClick={() => onClick()}
+        data-testid={`${action.replace('Branch', '')}-branch-button`}
       >
-        {`${action === 'newBranch' ? EDITOR_ACTIONS.newBranch : EDITOR_ACTIONS.switchBranch}…`}
+        {WAY_LABEL[action]}
       </Button>
       {caret}
     </Button.Group>

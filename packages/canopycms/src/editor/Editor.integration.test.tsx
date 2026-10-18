@@ -1709,6 +1709,11 @@ describe('Editor integration', () => {
     expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toBe(
       'The base branch is read-only. Create a branch to make changes.',
     )
+
+    // The bar's New branch… lands on the new-branch form, its name field focused.
+    fireEvent.click(screen.getByTestId('new-branch-button'))
+    const nameInput = await screen.findByTestId('branch-name-input')
+    await waitFor(() => expect(document.activeElement).toBe(nameInput))
   })
 
   it('shows each row a lock saying the branch details could not be loaded when the fetch fails', async () => {
@@ -2275,7 +2280,19 @@ describe('Editor integration', () => {
 })
 
 describe('branches-fetch failure recovery', () => {
-  it('retries the branches fetch when the branch manager is opened on a pinned branch', async () => {
+  it.each([
+    [
+      'the branch manager is opened',
+      async () => {
+        fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+        fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+      },
+    ],
+    [
+      "the bar's Refresh branch is pressed",
+      async () => fireEvent.click(screen.getByTestId('refresh-branch-button')),
+    ],
+  ])('retries the branches fetch when %s on a pinned branch', async (_label, retry) => {
     // The write lock now fails CLOSED on missing branch data, which turned a
     // pre-existing gate into a lockout: opening the branch manager only called
     // loadBranches() `if (!branchNameState)`, and every ordinary adopter pins a
@@ -2363,8 +2380,7 @@ describe('branches-fetch failure recovery', () => {
       ),
     )
 
-    // Open the branch manager the way the bar offers.
-    fireEvent.click(screen.getByTestId('switch-branch-button'))
+    await retry()
 
     // A second request goes out...
     await waitFor(() => expect(branchCalls).toBeGreaterThan(1))
@@ -2376,7 +2392,7 @@ describe('branches-fetch failure recovery', () => {
     consoleSpy.restore()
   })
 
-  it('stops loading once the branch list answers without the open branch, and offers Switch branch…', async () => {
+  it('says a branch the list answered without is not available, and offers Switch branch…', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((input: RequestInfo | URL) => {
@@ -2419,11 +2435,10 @@ describe('branches-fetch failure recovery', () => {
     )
 
     await waitFor(() =>
-      expect(screen.getByTestId('branch-status').textContent).toBe(
-        'Details unavailable · read-only',
-      ),
+      expect(screen.getByTestId('branch-status').textContent).toBe('Not available · read-only'),
     )
     expect(screen.getByTestId('switch-branch-button')).toBeTruthy()
+    expect(screen.queryByTestId('refresh-branch-button')).toBeNull()
   })
 })
 

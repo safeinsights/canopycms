@@ -187,7 +187,7 @@ describe('useFocusHandOff', () => {
 
   it('moves focus to the control filling the slot the focused one left', () => {
     const { result, rerender } = renderHook(() => useFocusHandOff(2))
-    const [first, second] = result.current
+    const [[first, second]] = result.current
     const caret = button('Caret')
     const saveAll = button('Save all')
     first(saveAll)
@@ -203,7 +203,7 @@ describe('useFocusHandOff', () => {
 
   it('falls back to the first slot filled when the focused control has no counterpart', () => {
     const { result, rerender } = renderHook(() => useFocusHandOff(2))
-    const [first, second] = result.current
+    const [[first, second]] = result.current
     const saveAll = button('Save all')
     const way = button('Switch branch…')
     first(saveAll)
@@ -217,7 +217,7 @@ describe('useFocusHandOff', () => {
 
   it('hands nothing off when a ref detaches and re-attaches the same button, as StrictMode does', () => {
     const { result, rerender } = renderHook(() => useFocusHandOff(2))
-    const [first, second] = result.current
+    const [[first, second]] = result.current
     const saveAll = button('Save all')
     const withdraw = button('Withdraw')
     first(saveAll)
@@ -233,7 +233,7 @@ describe('useFocusHandOff', () => {
 
   it('leaves focus the user has moved elsewhere', () => {
     const { result, rerender } = renderHook(() => useFocusHandOff(2))
-    const [first, second] = result.current
+    const [[first, second]] = result.current
     const saveAll = button('Save all')
     const caret = button('Caret')
     first(saveAll)
