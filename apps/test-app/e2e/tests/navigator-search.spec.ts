@@ -1,12 +1,13 @@
 import { BASE_URL } from '../fixtures/base-url'
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT } from '../fixtures/timeouts'
 
 /**
- * E2E tests for finding an entry: the navigator's filter box and the Mod+P quick-open palette.
+ * E2E tests for finding an entry: the content panel's search field, and Mod+P, which opens a
+ * closed panel at that field until Enter, Escape or focus leaves it.
  * The seeded entries are the single-entry types "Home" and "Settings", named by their types.
  */
 test.describe('Navigator search', () => {
@@ -21,6 +22,18 @@ test.describe('Navigator search', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
   })
+
+  const filter = () => editorPage.page.getByTestId('entry-nav-filter')
+
+  /** Focus Home's title field with the panel closed, then press Mod+P there. */
+  const modPFromForm = async () => {
+    await editorPage.openContentNavigator()
+    await editorPage.selectEntry('Home')
+    await editorPage.closeContentNavigator()
+    await editorPage.getFieldInput('title').click()
+    await editorPage.page.keyboard.press('ControlOrMeta+P')
+    await expect(filter()).toBeFocused({ timeout: STANDARD_TIMEOUT })
+  }
 
   test('the filter keeps a matching entry and hides the others, and Escape clears it', async ({
     page,
@@ -41,56 +54,70 @@ test.describe('Navigator search', () => {
     await expect(editorPage.contentNavigator).toBeVisible()
   })
 
-  test('Mod+P from inside a form field opens an entry by title, with the panel closed', async ({
+  test('Mod+P from inside a form field opens an entry by title, then the panel closes and its form has focus', async ({
     page,
   }) => {
     await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home')
     await editorPage.closeContentNavigator()
+    await editorPage.getFieldInput('title').click()
 
-    await test.step('focus a text field in the form', async () => {
-      await editorPage.getFieldInput('title').click()
-    })
-
-    await editorPage.quickOpen('Settings')
+    await editorPage.findEntry('Settings')
 
     await expect(editorPage.currentEntryLabel()).toContainText('Settings', {
       timeout: STANDARD_TIMEOUT,
     })
     await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
+    await expect(editorPage.formPane.locator('[data-canopy-field] :focus')).toHaveCount(1, {
+      timeout: STANDARD_TIMEOUT,
+    })
+    await expect(editorPage.contentPanelToggle).toHaveAttribute('aria-expanded', 'false')
   })
 
-  for (const [route, open, opener] of [
-    [
-      "the panel's Open entry button",
-      (page: Page) => page.getByTestId('quick-open-button').click(),
-      (page: Page) => page.getByTestId('quick-open-button'),
-    ],
-    [
-      'Mod+P pressed inside the panel',
-      (page: Page) => page.keyboard.press('ControlOrMeta+P'),
-      (page: Page) => page.getByTestId('entry-nav-filter'),
-    ],
-  ] as const) {
-    test(`the docked panel stays open under the palette opened by ${route}, and takes focus back`, async ({
-      page,
-    }) => {
-      await editorPage.openContentNavigator()
-      // Mod+P pressed before the filter has focus would return focus elsewhere.
-      await expect(page.getByTestId('entry-nav-filter')).toBeFocused({ timeout: SHORT_TIMEOUT })
+  test('Escape in the empty field closes the Mod+P panel and returns focus to the form field', async ({
+    page,
+  }) => {
+    await modPFromForm()
 
-      await open(page)
-      await expect(page.getByTestId('quick-open-input')).toBeVisible({ timeout: STANDARD_TIMEOUT })
-      await expect(editorPage.contentNavigator).toBeVisible()
-      await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
 
-      await expect(page.getByTestId('quick-open-input')).not.toBeVisible({
-        timeout: STANDARD_TIMEOUT,
-      })
-      await expect(opener(page)).toBeFocused({ timeout: SHORT_TIMEOUT })
-      await expect(editorPage.contentNavigator).toBeVisible()
-    })
-  }
+    await expect(editorPage.contentNavigator).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+    await expect(editorPage.getFieldInput('title')).toBeFocused({ timeout: SHORT_TIMEOUT })
+  })
+
+  test('the Mod+P panel closes when focus moves outside it', async () => {
+    await modPFromForm()
+
+    await editorPage.getFieldInput('title').click()
+
+    await expect(editorPage.contentNavigator).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+    await expect(editorPage.getFieldInput('title')).toBeFocused()
+  })
+
+  test('the Content button keeps the Mod+P panel open for good', async () => {
+    await modPFromForm()
+
+    await editorPage.contentPanelToggle.click()
+    await editorPage.getFieldInput('title').click()
+
+    await expect(editorPage.contentNavigator).toBeVisible()
+    await expect(editorPage.contentPanelToggle).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  test('Mod+P in the open panel selects the text of its field', async ({ page }) => {
+    await editorPage.openContentNavigator()
+    await editorPage.filterNavigator('home')
+    await filter().press('End')
+
+    await page.keyboard.press('ControlOrMeta+P')
+
+    await expect
+      .poll(() =>
+        filter().evaluate((input: HTMLInputElement) => [input.selectionStart, input.selectionEnd]),
+      )
+      .toEqual([0, 4])
+    await expect(editorPage.contentNavigator).toBeVisible()
+  })
 
   test.describe('in a window too narrow to dock the panel', () => {
     test.beforeEach(async ({ page }) => {
@@ -110,7 +137,7 @@ test.describe('Navigator search', () => {
       await expect.poll(overhang, { timeout: SHORT_TIMEOUT }).toBeLessThanOrEqual(1)
     })
 
-    test('closing the palette opened from a breadcrumb-opened panel returns focus to that breadcrumb and keeps it there', async ({
+    test('Escape from the breadcrumb-opened panel, after Mod+P there, returns focus to that breadcrumb and keeps it there', async ({
       page,
     }) => {
       // A post has a collection crumb; the root entries have none.
@@ -118,35 +145,26 @@ test.describe('Navigator search', () => {
       await editorPage.openContentNavigatorFromBreadcrumb()
       const breadcrumb = page.getByTestId('breadcrumb-segment').first()
 
-      await page.getByTestId('quick-open-button').click()
-      await expect(page.getByTestId('quick-open-input')).toBeVisible({ timeout: STANDARD_TIMEOUT })
-      // The palette replaces the overlay.
-      await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
+      await page.keyboard.press('ControlOrMeta+P')
+      await expect(filter()).toBeFocused({ timeout: STANDARD_TIMEOUT })
       await page.keyboard.press('Escape')
 
-      await expect(page.getByTestId('quick-open-input')).not.toBeVisible({
-        timeout: STANDARD_TIMEOUT,
-      })
+      await expect(editorPage.contentNavigator).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(breadcrumb).toBeFocused({ timeout: SHORT_TIMEOUT })
       // A second, late focus move would land after Mantine's own timers have run.
       await page.waitForTimeout(800)
       await expect(breadcrumb).toBeFocused()
     })
 
-    test('picking an entry in the palette opened from the rail-opened panel returns focus to the Content button', async ({
+    test('Enter after Mod+P in the rail-opened panel returns focus to the Content button', async ({
       page,
     }) => {
       await editorPage.openContentNavigator()
       await page.keyboard.press('ControlOrMeta+P')
-      const input = page.getByTestId('quick-open-input')
-      await expect(input).toBeVisible({ timeout: STANDARD_TIMEOUT })
-      await expect(page.locator('[data-testid="entry-navigator"]')).toHaveCount(0)
+      await expect(filter()).toBeFocused({ timeout: STANDARD_TIMEOUT })
 
-      await input.fill('Settings')
-      await expect(page.getByTestId('quick-open-option').first()).toBeVisible({
-        timeout: STANDARD_TIMEOUT,
-      })
-      await input.press('Enter')
+      await filter().fill('Settings')
+      await filter().press('Enter')
 
       await expect(editorPage.currentEntryLabel()).toContainText('Settings', {
         timeout: STANDARD_TIMEOUT,

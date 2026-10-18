@@ -17,14 +17,17 @@ import {
 export const FOCUS_RETURN_ATTR = 'data-focus-return'
 
 /**
- * Focuses `target` unless the user has moved focus on: nothing is focused, or focus is inside an
- * overlay `FOCUS_RETURN_ATTR` marks, as a closing one is until after its exit callback.
+ * The user has not moved focus on: nothing is focused, or focus is inside an overlay
+ * `FOCUS_RETURN_ATTR` marks, as a closing one is until after its exit callback.
  */
-export function focusIfIdle(target: HTMLElement | null): void {
+export function focusIsIdle(): boolean {
   const active = document.activeElement
-  if (!active || active === document.body || active.closest(`[${FOCUS_RETURN_ATTR}]`)) {
-    target?.focus({ preventScroll: true })
-  }
+  return !active || active === document.body || !!active.closest(`[${FOCUS_RETURN_ATTR}]`)
+}
+
+/** Focuses `target` while `focusIsIdle`. */
+export function focusIfIdle(target: HTMLElement | null): void {
+  if (focusIsIdle()) target?.focus({ preventScroll: true })
 }
 
 /**

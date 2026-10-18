@@ -245,19 +245,15 @@ export class EditorPage {
   }
 
   /**
-   * Open an entry through the Mod+P palette: type `query` and take its first match.
-   * Works from wherever focus is, the form's inputs included.
+   * Open an entry with Mod+P: type `query` into the content panel's field and take its first
+   * match with Enter. Works from wherever focus is, the form's inputs included.
    */
-  async quickOpen(query: string): Promise<void> {
+  async findEntry(query: string): Promise<void> {
     await this.page.keyboard.press('ControlOrMeta+P')
-    const input = this.page.locator('[data-testid="quick-open-input"]')
-    await expect(input).toBeVisible({ timeout: STANDARD_TIMEOUT })
+    const input = this.page.locator('[data-testid="entry-nav-filter"]')
+    await expect(input).toBeFocused({ timeout: STANDARD_TIMEOUT })
     await input.fill(query)
-    await expect(this.page.locator('[data-testid="quick-open-option"]').first()).toBeVisible({
-      timeout: STANDARD_TIMEOUT,
-    })
     await input.press('Enter')
-    await expect(input).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
   /**

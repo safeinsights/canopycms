@@ -198,6 +198,58 @@ describe('SidePanelHost', () => {
     })
   })
 
+  describe('focus leaving', () => {
+    /** A panel with a portaled menu inside it, as a row's "…" menu is, and a button outside. */
+    const renderWithPortal = (onFocusLeave: (target: Element) => void) =>
+      render(
+        <CanopyCMSProvider>
+          <button>Outside</button>
+          <SidePanelHost {...baseProps()} onFocusLeave={onFocusLeave}>
+            <button>Inside</button>
+            {createPortal(<button>Portaled</button>, document.body)}
+          </SidePanelHost>
+        </CanopyCMSProvider>,
+      )
+    const button = (name: string) => screen.getByRole('button', { name })
+    const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 10)))
+
+    it('reports focus moving outside the panel, with where it went', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+
+      act(() => button('Outside').focus())
+      await settle()
+
+      expect(onFocusLeave).toHaveBeenCalledTimes(1)
+      expect(onFocusLeave).toHaveBeenCalledWith(button('Outside'))
+    })
+
+    it('counts what the panel portals, and moves within the panel, as inside', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+
+      act(() => button('Portaled').focus())
+      act(() => screen.getByRole('button', { name: 'Close content panel' }).focus())
+      act(() => button('Inside').focus())
+      await settle()
+
+      expect(onFocusLeave).not.toHaveBeenCalled()
+    })
+
+    it('does not count focus dropping to nothing as leaving', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+
+      act(() => button('Inside').blur())
+      await settle()
+
+      expect(onFocusLeave).not.toHaveBeenCalled()
+    })
+  })
+
   describe('motion', () => {
     const region = () => screen.queryByRole('region', { name: 'Content' })
 

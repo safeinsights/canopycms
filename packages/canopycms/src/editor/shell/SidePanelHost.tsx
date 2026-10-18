@@ -79,6 +79,8 @@ export interface SidePanelHostProps {
   focusRequest?: number
   /** Where focus goes when the panel closes with focus inside it. */
   returnFocusTo?: () => HTMLElement | null
+  /** Focus moved to `target`, outside the panel and what it portals; to nothing isn't leaving. */
+  onFocusLeave?: (target: Element) => void
   /** Controls beside the title, before the close button. */
   actions?: ReactNode
   children: ReactNode
@@ -107,6 +109,7 @@ export function SidePanelHost({
   onClose,
   focusRequest = 0,
   returnFocusTo,
+  onFocusLeave,
   actions,
   children,
   id,
@@ -118,6 +121,8 @@ export function SidePanelHost({
   // State, not a ref: an overlay's section mounts a frame after `opened`, as its slide starts.
   const [panel, setPanel] = useState<HTMLElement | null>(null)
   const focusInside = useRef(false)
+  const focusLeaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(focusLeaveTimer.current), [])
   const closingWithFocus = useRef(false)
   const wasOpened = useRef(opened)
   const servedFocusRequest = useRef(focusRequest)
@@ -295,9 +300,17 @@ export function SidePanelHost({
             style={{ ...style, ...transitionStyles }}
             onFocus={() => {
               focusInside.current = true
+              clearTimeout(focusLeaveTimer.current)
             }}
             onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget)) focusInside.current = false
+              const next = event.relatedTarget
+              if (event.currentTarget.contains(next)) return
+              focusInside.current = false
+              if (!(next instanceof Element)) return
+              // React bubbles focus through portals, so a portaled descendant taking focus runs
+              // `onFocus` above, in the same task, and cancels this.
+              clearTimeout(focusLeaveTimer.current)
+              focusLeaveTimer.current = setTimeout(() => onFocusLeave?.(next), 0)
             }}
           >
             <style>{PANEL_STYLES}</style>

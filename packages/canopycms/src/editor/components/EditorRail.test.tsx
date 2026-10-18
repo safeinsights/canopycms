@@ -14,9 +14,7 @@ const defaultProps = (): EditorRailProps => ({
   contentPanelOpen: false,
   contentPanelId: 'content-panel',
   onContentToggle: vi.fn(),
-  onQuickOpen: vi.fn(),
-  quickOpenShortcut: '⌘P',
-  quickOpenKeys: 'Meta+P',
+  contentShortcut: { label: '⌘P', keys: 'Meta+P' },
   branchesOpen: false,
   onBranchesOpen: vi.fn(),
   onCommentsOpen: vi.fn(),
@@ -51,7 +49,6 @@ describe('EditorRail - buttons', () => {
 
     expect(toolbarButtons().map((button) => button.getAttribute('aria-label'))).toEqual([
       'Content',
-      'Open entry',
       'Branches',
       'Comments',
       'Media library',
@@ -59,13 +56,11 @@ describe('EditorRail - buttons', () => {
       'Settings',
     ])
     await userEvent.click(screen.getByTestId('content-panel-toggle'))
-    await userEvent.click(screen.getByTestId('rail-search-button'))
     await userEvent.click(screen.getByTestId('rail-branches-button'))
     await userEvent.click(screen.getByTestId('comments-button'))
     await userEvent.click(screen.getByTestId('media-library-button'))
     for (const action of [
       props.onContentToggle,
-      props.onQuickOpen,
       props.onBranchesOpen,
       props.onCommentsOpen,
       props.onMediaLibraryOpen,
@@ -98,10 +93,11 @@ describe('EditorRail - buttons', () => {
 
   it('shows a shortcut in the tooltip and in aria-keyshortcuts, not in the name', async () => {
     renderRail()
-    const search = screen.getByTestId('rail-search-button')
-    expect(search.getAttribute('aria-keyshortcuts')).toBe('Meta+P')
-    act(() => search.focus())
-    expect((await screen.findByRole('tooltip')).textContent).toBe('Open entry (⌘P)')
+    const content = screen.getByTestId('content-panel-toggle')
+    expect(content.getAttribute('aria-label')).toBe('Content')
+    expect(content.getAttribute('aria-keyshortcuts')).toBe('Meta+P')
+    act(() => content.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Content (⌘P)')
   })
 
   it('fills the button of an open panel, so its state is not a tint alone', () => {

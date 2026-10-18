@@ -20,6 +20,8 @@ const FORM = 'canopy-form'
 const PREVIEW_LIMITS = { minSize: `${SPLIT_PERCENT_MIN}%`, maxSize: `${SPLIT_PERCENT_MAX}%` }
 const FORM_MIN_PX = 160
 
+export const FORM_PANE_ID = 'canopy-form-pane'
+
 const ASIDE_TOP = '--canopy-form-aside-top'
 const ASIDE_WIDTH = '--canopy-form-aside-width'
 
@@ -249,6 +251,11 @@ export function PaneLayout({
           >
             <Box
               ref={formRef}
+              id={FORM_PANE_ID}
+              // Takes focus when an opened entry's form has no field to focus.
+              tabIndex={-1}
+              role="region"
+              aria-label="Form"
               data-testid="form-pane"
               h="100%"
               w="100%"

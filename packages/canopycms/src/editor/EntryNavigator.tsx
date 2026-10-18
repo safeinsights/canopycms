@@ -24,6 +24,7 @@ import {
   type TreeNodeData,
   rem,
 } from '@mantine/core'
+import { useMergedRef } from '@mantine/hooks'
 import {
   IconArrowDown,
   IconAlertTriangle,
@@ -38,7 +39,7 @@ import {
 } from '@tabler/icons-react'
 
 import { calculatePathToEntry } from './editor-utils'
-import { matchesEntryQuery } from './entry-search'
+import { entryDetailLine, matchesEntryQuery } from './entry-search'
 import { EDITOR_ACTIONS } from './copy'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { UnsavedMark } from './components/UnsavedMark'
@@ -73,8 +74,10 @@ export interface EntryNavItem {
   title?: string
   /** Matched by the filter; the last segment of `path` when absent. */
   slug?: string
-  /** The row's second line: the entry's type, or "Missing" (`entryStatusLabel`). */
+  /** The entry's type, or "Missing" (`entryStatusLabel`): its second line, with `route`. */
   status?: string
+  /** The entry's route on the site (`buildPreviewRoute`); its second line omits it when `noPage`. */
+  route?: string
   /** The entry's file is gone: its second line is error text. */
   missing?: boolean
   /** The entry has no page on the site, so its menu changes its slug rather than its URL. */
@@ -152,6 +155,14 @@ export interface EntryNavigatorProps {
   revealCollection?: { path: string; seq: number }
   /** The reveal is done, or its collection is not in the tree. */
   onRevealed?: () => void
+  /** Takes Enter's first match in the filter in place of `onSelect`. */
+  onFilterEnter?: (path: string) => void
+  /** Escape in the empty filter. Without it, Escape there does nothing here. */
+  onFilterEscape?: () => void
+  onRowMenuOpen?: () => void
+  filterRef?: React.Ref<HTMLInputElement>
+  /** The shortcut that focuses the filter, as the platform writes it ("⌘P") and for `aria-keyshortcuts`. */
+  filterShortcut?: { label: string; keys: string }
 }
 
 const lastSegment = (path: string): string => path.split('/').filter(Boolean).pop() ?? path
@@ -229,7 +240,7 @@ const firstEntryPath = (nodes: TreeNodeData[], query: string): string | undefine
 /**
  * A line of a row, truncated with an ellipsis. Its full text shows in a tooltip, and only while
  * the text is cut: the width is measured when the pointer or focus enters the row, not on every
- * render.
+ * render. With `showOnRowFocus` the tooltip also shows while the row itself has focus.
  */
 const TruncatedLabel: React.FC<{
   label: string
@@ -237,9 +248,11 @@ const TruncatedLabel: React.FC<{
   fw?: number
   size?: 'sm' | 'xs'
   c?: string
-}> = ({ label, highlight = '', fw, size = 'sm', c }) => {
+  showOnRowFocus?: boolean
+}> = ({ label, highlight = '', fw, size = 'sm', c, showOnRowFocus = false }) => {
   const elementRef = useRef<HTMLElement | null>(null)
   const [truncated, setTruncated] = useState(false)
+  const [rowFocused, setRowFocused] = useState(false)
   const setElement = useCallback((node: HTMLElement | null) => {
     elementRef.current = node
   }, [])
@@ -252,16 +265,36 @@ const TruncatedLabel: React.FC<{
       const element = elementRef.current
       setTruncated(!!element && element.scrollWidth > element.clientWidth)
     }
+    // The tree focuses the row's treeitem, which also holds the rows nested under it.
+    const item = row.closest('[role="treeitem"]') ?? row
+    const focusIn = (event: Event) => {
+      const target = event.target
+      if (target !== item && !(target instanceof Node && row.contains(target))) return
+      measure()
+      if (target === item) setRowFocused(true)
+    }
+    const focusOut = (event: Event) => {
+      if (event.target === item) setRowFocused(false)
+    }
     row.addEventListener('mouseenter', measure)
-    row.addEventListener('focusin', measure)
+    item.addEventListener('focusin', focusIn)
+    item.addEventListener('focusout', focusOut)
     return () => {
       row.removeEventListener('mouseenter', measure)
-      row.removeEventListener('focusin', measure)
+      item.removeEventListener('focusin', focusIn)
+      item.removeEventListener('focusout', focusOut)
     }
   }, [])
 
   return (
-    <Tooltip label={label} openDelay={400} withinPortal disabled={!truncated}>
+    <Tooltip
+      label={label}
+      openDelay={400}
+      withinPortal
+      disabled={!truncated}
+      // Controlled only while the row has focus; the pointer opens it otherwise.
+      opened={showOnRowFocus && rowFocused && truncated ? true : undefined}
+    >
       {highlight ? (
         <Highlight
           ref={setElement}
@@ -319,6 +352,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   dirtyPaths,
   revealCollection,
   onRevealed,
+  onFilterEnter,
+  onFilterEscape,
+  onRowMenuOpen,
+  filterRef,
+  filterShortcut,
 }) => {
   // Shadow the entry-mutation callbacks with undefined when readOnly, so every
   // downstream reference (hasEntryMenu, canReorder, the menu items themselves)
@@ -335,6 +373,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
 
   const [query, setQuery] = useState('')
   const filterInputRef = useRef<HTMLInputElement>(null)
+  const mergedFilterRef = useMergedRef(filterInputRef, filterRef)
   const filtering = query.trim() !== ''
   // Read from the tree's expand/collapse callbacks, which fire from state updaters.
   const filteringRef = useRef(false)
@@ -353,6 +392,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       label: entry.label,
       nodeProps: {
         status: entry.status,
+        route: entry.route,
         title: entry.title,
         missing: entry.missing,
         noPage: entry.noPage,
@@ -378,6 +418,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             label: entry?.label ?? col.label,
             nodeProps: {
               status: entry?.status,
+              route: entry?.route,
               title: entry?.title,
               missing: entry?.missing,
               noPage: entry?.noPage,
@@ -499,6 +540,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       label: item.label,
       nodeProps: {
         status: item.status,
+        route: item.route,
         title: item.title,
         missing: item.missing,
         noPage: item.noPage,
@@ -688,16 +730,17 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   const handleFilterKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     // Enter and Escape during IME composition commit or cancel the composition, nothing more.
     if (event.nativeEvent.isComposing) return
-    if (event.key === 'Escape' && query) {
-      // Clears the filter and nothing else: the surrounding drawer stays open.
+    if (event.key === 'Escape' && (query || onFilterEscape)) {
+      // A query clears and nothing else: the surrounding drawer stays open.
       event.preventDefault()
       event.stopPropagation()
-      setQuery('')
+      if (query) setQuery('')
+      else onFilterEscape?.()
     } else if (event.key === 'Enter' && filtering) {
       const path = firstEntryPath(filteredTree, query)
       if (path) {
         event.preventDefault()
-        onSelect(path)
+        ;(onFilterEnter ?? onSelect)(path)
       }
     }
   }
@@ -729,6 +772,10 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const status = node.nodeProps?.status as string | undefined
     const entryMissing = !!(node.nodeProps?.missing as boolean | undefined)
     const entryNoPage = !!(node.nodeProps?.noPage as boolean | undefined)
+    const route = node.nodeProps?.route as string | undefined
+    const detail = entryMissing
+      ? status
+      : entryDetailLine({ typeLabel: status, route: entryNoPage ? undefined : route })
     // Collection-level mutation callbacks are nulled when readOnly, same as the entry-level ones
     // above, so hasCollectionMenu is false; a row that would have had a menu shows its lock.
     const rawOnAdd = node.nodeProps?.onAdd as (() => void) | undefined
@@ -891,13 +938,14 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                   </Tooltip>
                 )}
               </Group>
-              {status && (
-                <Box data-testid="entry-nav-type" style={{ minWidth: 0 }}>
+              {detail && (
+                <Box data-testid="entry-nav-detail" style={{ minWidth: 0 }}>
                   <TruncatedLabel
-                    label={status}
+                    label={detail}
                     size="xs"
                     // A missing file is an error, in error text, not a dimmed type.
                     c={entryMissing ? 'var(--canopy-danger-text)' : 'dimmed'}
+                    showOnRowFocus
                   />
                 </Box>
               )}
@@ -905,7 +953,13 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           </Group>
           <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
             {hasCollectionMenu && (
-              <Menu shadow="md" width={200} withinPortal position="bottom-end">
+              <Menu
+                shadow="md"
+                width={200}
+                withinPortal
+                position="bottom-end"
+                onOpen={onRowMenuOpen}
+              >
                 <Menu.Target>
                   <ActionIcon
                     size="xs"
@@ -1009,7 +1063,13 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                 <Box w={18} h={18} aria-hidden data-testid="branch-lock-pending" />
               ))}
             {hasEntryMenu && (
-              <Menu shadow="md" width={180} withinPortal position="bottom-end">
+              <Menu
+                shadow="md"
+                width={180}
+                withinPortal
+                position="bottom-end"
+                onOpen={onRowMenuOpen}
+              >
                 <Menu.Target>
                   <ActionIcon
                     size="xs"
@@ -1098,20 +1158,30 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     >
       {treeData.length > 0 && (
         <TextInput
-          ref={filterInputRef}
+          ref={mergedFilterRef}
           size="sm"
           py={4}
-          aria-label="Filter entries"
+          aria-label="Find entries"
+          aria-keyshortcuts={filterShortcut?.keys}
           spellCheck={false}
           data-autofocus
-          placeholder="Filter by title or slug"
+          placeholder="Find entries"
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
           onKeyDown={handleFilterKeyDown}
           leftSection={<IconSearch size={14} aria-hidden />}
           rightSection={
-            query ? <CloseButton size="sm" aria-label="Clear filter" onClick={clearFilter} /> : null
+            query ? (
+              <CloseButton size="sm" aria-label="Clear filter" onClick={clearFilter} />
+            ) : filterShortcut ? (
+              <Text size="xs" c="dimmed" aria-hidden data-testid="entry-nav-filter-shortcut">
+                {filterShortcut.label}
+              </Text>
+            ) : null
           }
+          rightSectionWidth={query || !filterShortcut ? undefined : 'auto'}
+          rightSectionPointerEvents={query ? undefined : 'none'}
+          rightSectionProps={query || !filterShortcut ? undefined : { style: { paddingInline: 8 } }}
           // Mantine's drawers and modals ignore an Escape from an element with this attribute.
           data-mantine-stop-propagation={query ? 'true' : undefined}
           data-testid="entry-nav-filter"
