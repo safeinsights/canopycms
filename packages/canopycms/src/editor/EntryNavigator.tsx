@@ -149,12 +149,8 @@ export interface EntryNavigatorProps {
   readOnlyReason?: string
   /** Entry paths with unsaved changes; each shows a dot, and so does every collection holding one. */
   dirtyPaths?: ReadonlySet<string>
-  /**
-   * A collection or entry to bring into view: the query clears, Changed goes back to All, its
-   * ancestors (and a collection itself) expand, and its row takes focus. `seq` makes a repeat ask
-   * for the same row a new one.
-   */
-  reveal?: { kind: 'collection' | 'entry'; path: string; seq: number }
+  /** A row to bring into view, or (`changed`) the unsaved entries; `onRevealed` once done. */
+  reveal?: ContentPanelReveal
   /** The reveal is done, or its row is not in the tree. */
   onRevealed?: () => void
   /** The All / Changed control shows only with this; Changed lists the entries in `dirtyPaths`. */
@@ -162,6 +158,8 @@ export interface EntryNavigatorProps {
   changedOnly?: boolean
   /** Entries with unsaved changes, counting drafts whose entries the tree doesn't list yet. */
   unsavedCount?: number
+  /** The named unsaved entries; Changed offers any the tree has no row for beneath it. */
+  unsavedEntries?: ReadonlyArray<{ path: string; label: string }>
   /** The branch's entry list failed to load, so Changed can't name what is unsaved. */
   entryListFailed?: boolean
   /** Takes Enter's first match in the filter in place of `onSelect`. */
@@ -173,6 +171,15 @@ export interface EntryNavigatorProps {
   /** The shortcut that focuses the filter, as the platform writes it ("⌘P") and for `aria-keyshortcuts`. */
   filterShortcut?: { label: string; keys: string }
 }
+
+/**
+ * A collection or entry reveal clears the query, switches Changed back to All, expands the row's
+ * ancestors (and a collection itself) and focuses the row. A `changed` reveal clears the query
+ * only, for Changed set alongside it. `seq` makes a repeat ask a new one.
+ */
+export type ContentPanelReveal =
+  | { kind: 'collection' | 'entry'; path: string; seq: number }
+  | { kind: 'changed'; seq: number }
 
 const lastSegment = (path: string): string => path.split('/').filter(Boolean).pop() ?? path
 
@@ -380,6 +387,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   onChangedOnlyChange,
   changedOnly: changedOnlyProp = false,
   unsavedCount: unsavedCountProp = 0,
+  unsavedEntries,
   entryListFailed = false,
   onFilterEnter,
   onFilterEscape,
@@ -592,6 +600,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     [filtering, treeData, query, changedOnly, dirtyPaths],
   )
 
+  // Drafts change `dirtyPaths` on every keystroke, so the filter re-expands only as its folders change.
+  const filteredFolders = useMemo(
+    () => Object.keys(expandedStateFor(filteredTree)).join('\n'),
+    [filteredTree],
+  )
+
   // Collections that hold an entry with unsaved changes, found over the whole tree so a filter
   // never hides the reason for a dot.
   // `listedUnsaved` counts the unsaved entries the tree has rows for.
@@ -688,8 +702,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         onExpandedStateChange?.(next)
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the filter or the filtered tree changes; `tree` is a fresh object each render
-  }, [filtering, filteredTree])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the filter or its folders change; `tree` is a fresh object each render
+  }, [filtering, filteredFolders])
 
   useEffect(() => {
     if (!selectedPath || !treeData || filtering) return
@@ -742,6 +756,13 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       servedRevealRef.current = reveal.seq
       onRevealed?.()
     }
+    if (reveal.kind === 'changed') {
+      setQuery('')
+      served()
+      return
+    }
+    // An empty tree that is still loading gets its rows; this runs again when they arrive.
+    if (treeData.length === 0 && loading) return
     // This commit's expanded state predates the restore's, which re-runs this effect.
     if (revealAwaitsRestoreRef.current) {
       revealAwaitsRestoreRef.current = false
@@ -788,7 +809,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     })
     return () => cancelAnimationFrame(frame)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `tree` and the callbacks are fresh each render
-  }, [reveal, treeData, filtering, tree.expandedState])
+  }, [reveal, treeData, filtering, loading, tree.expandedState])
 
   const clearFilter = () => {
     setQuery('')
@@ -1217,32 +1238,83 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     )
   }
 
-  // Changed with no query can't list everything it counts: say why, in place of or after its rows.
-  const unsavedCount = Math.max(unsavedCountProp, listedUnsaved)
-  const unlistedUnsaved = unsavedCount - listedUnsaved
-  const changedNotice =
-    !changedOnly || query.trim() ? null : entryListFailed ? (
-      <Text size="sm" c="dimmed" py="sm" data-testid="entry-nav-changed-failed">
-        The list of entries couldn&apos;t be loaded, so unsaved entries can&apos;t be shown. Choose
-        &quot;Refresh branch&quot; in the branch menu to try again.
-      </Text>
-    ) : unsavedCount === 0 ? (
+  // Changed can't list every entry it counts: those with no row are offered beneath the tree, and
+  // drafts whose entries aren't named yet are counted there.
+  const unlistedNamed = useMemo(() => {
+    if (!changedOnly || !unsavedEntries?.length) return []
+    const rows = new Set<string>()
+    const walk = (nodes: TreeNodeData[]) =>
+      nodes.forEach((node) => {
+        rows.add(node.value)
+        walk(node.children ?? [])
+      })
+    walk(treeData)
+    return unsavedEntries.filter((entry) => !rows.has(entry.path))
+  }, [changedOnly, unsavedEntries, treeData])
+  const unsavedCount = Math.max(unsavedCountProp, listedUnsaved + unlistedNamed.length)
+  const unnamedUnsaved = unsavedCount - listedUnsaved - unlistedNamed.length
+  const showAll = () => {
+    onChangedOnlyChange?.(false)
+    filterInputRef.current?.focus()
+  }
+  const changedNotice = !changedOnly ? null : query.trim() ? (
+    filteredTree.length === 0 && (
+      <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-changed-no-match">
+        <Text size="sm" c="dimmed">
+          No unsaved entries match “{query}”.
+        </Text>
+        <Button size="compact-sm" variant="subtle" onClick={showAll}>
+          Search all entries
+        </Button>
+      </Stack>
+    )
+  ) : entryListFailed ? (
+    <Text size="sm" c="dimmed" py="sm" data-testid="entry-nav-changed-failed">
+      The list of entries couldn&apos;t be loaded, so unsaved entries can&apos;t be shown. Choose
+      &quot;Refresh branch&quot; in the branch menu to try again.
+    </Text>
+  ) : unsavedCount === 0 ? (
+    treeData.length > 0 && (
       <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-changed-none">
         <Text size="sm" c="dimmed">
           No unsaved changes on this branch.
         </Text>
-        <Button size="compact-sm" variant="subtle" onClick={() => onChangedOnlyChange?.(false)}>
+        <Button size="compact-sm" variant="subtle" onClick={showAll}>
           Show all entries
         </Button>
       </Stack>
-    ) : unlistedUnsaved > 0 ? (
-      <Text size="sm" c="dimmed" py={4} data-testid="entry-nav-changed-unlisted">
-        {listedUnsaved > 0
-          ? `${unlistedUnsaved} more: `
-          : `${unlistedUnsaved} unsaved ${unlistedUnsaved === 1 ? 'entry' : 'entries'}: `}
-        {unlistedUnsaved === 1 ? 'loading its name…' : 'loading their names…'}
-      </Text>
-    ) : null
+    )
+  ) : (
+    <>
+      {unlistedNamed.length > 0 && (
+        <Stack gap={2} py={4} align="flex-start" data-testid="entry-nav-changed-outside">
+          <Text size="xs" c="dimmed">
+            Not in the content tree
+          </Text>
+          {unlistedNamed.map((entry) => (
+            <Button
+              key={entry.path}
+              size="compact-sm"
+              variant="subtle"
+              color="gray"
+              leftSection={<UnsavedMark aria-hidden="true" />}
+              onClick={() => onSelect(entry.path)}
+            >
+              {entry.label}
+            </Button>
+          ))}
+        </Stack>
+      )}
+      {unnamedUnsaved > 0 && (
+        <Text size="sm" c="dimmed" py={4} data-testid="entry-nav-changed-unlisted">
+          {listedUnsaved + unlistedNamed.length > 0
+            ? `${unnamedUnsaved} more: `
+            : `${unnamedUnsaved} unsaved ${unnamedUnsaved === 1 ? 'entry' : 'entries'}: `}
+          {unnamedUnsaved === 1 ? 'loading its name…' : 'loading their names…'}
+        </Text>
+      )}
+    </>
+  )
 
   return (
     <Stack
@@ -1323,7 +1395,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               No content
             </Text>
           )
-        ) : filteredTree.length === 0 && changedNotice ? (
+        ) : filteredTree.length === 0 && changedOnly ? (
           changedNotice
         ) : filteredTree.length === 0 ? (
           <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-filter-empty">

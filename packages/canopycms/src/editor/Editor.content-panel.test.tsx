@@ -62,7 +62,10 @@ const stubApi = ({
   postType = {},
   missingSlugs = [],
   loadedTitle = 'Loaded title',
+  branchNames = ['main'],
 }: {
+  /** The branches listed, each editable. */
+  branchNames?: string[]
   failingSlug?: string
   failingEntries?: boolean
   listed?: EditorEntry[]
@@ -82,20 +85,18 @@ const stubApi = ({
       if (url.endsWith('/api/canopycms/branches')) {
         return Promise.resolve(
           okJson({
-            branches: [
-              {
-                name: 'main',
-                status: 'editing',
-                access: {},
-                createdBy: 'user-1',
-                createdAt: '2024-01-01',
-                updatedAt: '2024-01-01',
-                isProtected: false,
-                readOnly: false,
-                writeBlocked: false,
-                submitBlocked: false,
-              },
-            ],
+            branches: branchNames.map((name) => ({
+              name,
+              status: 'editing',
+              access: {},
+              createdBy: 'user-1',
+              createdAt: '2024-01-01',
+              updatedAt: '2024-01-01',
+              isProtected: false,
+              readOnly: false,
+              writeBlocked: false,
+              submitBlocked: false,
+            })),
             defaultBranch: 'main',
             users: [],
           }),
@@ -930,6 +931,52 @@ describe('unsaved entries', () => {
     )
     expect(allRadio().checked).toBe(true)
     expect(shown('second')).toBe(true)
+  })
+
+  it("clears a standing query when the bar's count lists them", async () => {
+    keepDraft(second)
+    await openedOn(true, { contentPanelOpen: true })
+    await loaded()
+    fireEvent.change(screen.getByTestId('entry-nav-filter'), { target: { value: 'hello' } })
+
+    fireEvent.click(await unsaved())
+
+    await waitFor(() => expect(screen.getByTestId('entry-nav-filter')).toHaveProperty('value', ''))
+    expect(changedRadio().checked).toBe(true)
+    await waitFor(() => expect(shown('second')).toBe(true))
+  })
+
+  it('switches back to All when Mod+P finds an entry', async () => {
+    keepDraft(second)
+    await openedOn(true)
+    fireEvent.click(await unsaved())
+    await waitFor(() => expect(changedRadio().checked).toBe(true))
+
+    fireEvent.keyDown(document.body, { key: 'p', ctrlKey: true })
+
+    await waitFor(() => expect(allRadio().checked).toBe(true))
+  })
+
+  it('switches back to All on another branch, whose unsaved entries are its own', async () => {
+    // Nothing unsaved, so the switch asks no confirm; Changed is chosen in the panel itself.
+    window.history.replaceState({}, '', `/?branch=main&entry=${hello.path}`)
+    stubWindowWidth(true)
+    storeLayout({ contentPanelOpen: true })
+    stubApi({ branchNames: ['main', 'feature'] })
+    renderEditor()
+    await loaded()
+    fireEvent.click(changedRadio())
+    await waitFor(() => expect(changedRadio().checked).toBe(true))
+
+    window.history.replaceState(null, '', `/?branch=feature&entry=${hello.path}`)
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-dropdown-button').textContent).toContain('feature'),
+    )
+    await waitFor(() => expect(allRadio().checked).toBe(true))
   })
 
   it('opens a Mod+P panel for good when it shows the open entry', async () => {
