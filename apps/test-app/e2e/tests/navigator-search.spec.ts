@@ -136,6 +136,30 @@ test.describe('Navigator search', () => {
     await expect(editorPage.contentNavigator).toBeVisible()
   })
 
+  test("the form pane, when it takes focus, draws the theme's focus ring inset", async ({
+    page,
+  }) => {
+    // The ring is for keyboard focus, which the last input decides.
+    await page.keyboard.press('Tab')
+    const ring = await editorPage.formPane.evaluate((pane) => {
+      pane.focus()
+      const probe = pane.appendChild(document.createElement('div'))
+      probe.style.color = 'var(--canopy-focus-ring)'
+      const theme = getComputedStyle(probe).color
+      probe.remove()
+      const style = getComputedStyle(pane)
+      return {
+        focusVisible: pane.matches(':focus-visible'),
+        style: style.outlineStyle,
+        color: style.outlineColor,
+        theme,
+        offset: style.outlineOffset,
+      }
+    })
+    expect(ring.focusVisible).toBe(true)
+    expect(ring).toMatchObject({ style: 'solid', color: ring.theme, offset: '-2px' })
+  })
+
   test.describe('in a window too narrow to dock the panel', () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize({ width: 900, height: 800 })

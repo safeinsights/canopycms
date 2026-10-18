@@ -26,8 +26,9 @@ const ASIDE_TOP = '--canopy-form-aside-top'
 const ASIDE_WIDTH = '--canopy-form-aside-width'
 
 // The pointer target is the group's `resizeTargetMinimumSize`, wider than the bar it draws. Lifted
-// over the panes' positioned contents, which would otherwise paint over its focus outline.
-const SEPARATOR_STYLES = `
+// over the panes' positioned contents, which would otherwise paint over its focus outline. The form
+// pane's ring is inset, since the window's edges clip it outside.
+const PANE_STYLES = `
 .canopy-pane-separator {
   position: relative;
   z-index: 1;
@@ -40,6 +41,10 @@ const SEPARATOR_STYLES = `
 }
 .canopy-pane-separator:focus-visible {
   outline: 2px solid var(--canopy-focus-ring);
+}
+#${FORM_PANE_ID}:focus-visible {
+  outline: 2px solid var(--canopy-focus-ring);
+  outline-offset: -2px;
 }
 `
 
@@ -175,7 +180,7 @@ export function PaneLayout({
     : { inset: 0 }
   return (
     <div ref={layoutRef} style={{ position: 'relative', height: '100%', width: '100%' }}>
-      <style>{SEPARATOR_STYLES}</style>
+      <style>{PANE_STYLES}</style>
       {aside && (
         <div
           data-testid="form-aside"

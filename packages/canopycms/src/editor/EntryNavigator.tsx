@@ -269,10 +269,13 @@ const firstEntryPath = (nodes: TreeNodeData[], query: string): string | undefine
   return (match ?? entries[0])?.value
 }
 
+const TOOLTIP_DELAY = 400
+
 /**
  * A line of a row, truncated with an ellipsis. Its full text shows in a tooltip, and only while
  * the text is cut: the width is measured when the pointer or focus enters the row, not on every
- * render. With `showOnRowFocus` the tooltip also shows while the row itself has focus.
+ * render. With `showOnRowFocus` it also shows while the row itself has focus, after the same delay,
+ * and below the row, whose title it would otherwise cover.
  */
 const TruncatedLabel: React.FC<{
   label: string
@@ -299,14 +302,19 @@ const TruncatedLabel: React.FC<{
     }
     // The tree focuses the row's treeitem, which also holds the rows nested under it.
     const item = row.closest('[role="treeitem"]') ?? row
+    let focusTimer: ReturnType<typeof setTimeout> | undefined
     const focusIn = (event: Event) => {
       const target = event.target
       if (target !== item && !(target instanceof Node && row.contains(target))) return
       measure()
-      if (target === item) setRowFocused(true)
+      if (target !== item) return
+      clearTimeout(focusTimer)
+      focusTimer = setTimeout(() => setRowFocused(true), TOOLTIP_DELAY)
     }
     const focusOut = (event: Event) => {
-      if (event.target === item) setRowFocused(false)
+      if (event.target !== item) return
+      clearTimeout(focusTimer)
+      setRowFocused(false)
     }
     row.addEventListener('mouseenter', measure)
     item.addEventListener('focusin', focusIn)
@@ -315,13 +323,15 @@ const TruncatedLabel: React.FC<{
       row.removeEventListener('mouseenter', measure)
       item.removeEventListener('focusin', focusIn)
       item.removeEventListener('focusout', focusOut)
+      clearTimeout(focusTimer)
     }
   }, [])
 
   return (
     <Tooltip
       label={label}
-      openDelay={400}
+      openDelay={TOOLTIP_DELAY}
+      position={showOnRowFocus ? 'bottom-start' : undefined}
       withinPortal
       disabled={!truncated}
       // Controlled only while the row has focus; the pointer opens it otherwise.
@@ -1350,9 +1360,15 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           leftSection={<IconSearch size={14} aria-hidden />}
           rightSection={
             query ? (
-              <CloseButton size="sm" aria-label="Clear filter" onClick={clearFilter} />
+              <CloseButton size="sm" aria-label="Clear search" onClick={clearFilter} />
             ) : filterShortcut ? (
-              <Text size="xs" c="dimmed" aria-hidden data-testid="entry-nav-filter-shortcut">
+              // The placeholder's colour, so it never reads brighter than the placeholder beside it.
+              <Text
+                size="xs"
+                c="var(--mantine-color-placeholder)"
+                aria-hidden
+                data-testid="entry-nav-filter-shortcut"
+              >
                 {filterShortcut.label}
               </Text>
             ) : null
@@ -1414,7 +1430,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               No entries match “{query}”.
             </Text>
             <Button size="compact-sm" variant="subtle" onClick={clearFilter}>
-              Clear filter
+              Clear search
             </Button>
           </Stack>
         ) : (
