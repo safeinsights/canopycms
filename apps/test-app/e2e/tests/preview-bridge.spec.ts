@@ -138,15 +138,28 @@ test.describe('Preview Bridge', () => {
     // Survives only if the frame is never reloaded.
     await previewTitle.evaluate(() => Object.assign(window, { __sameFrame: true }))
 
-    await test.step('Maximize covers the form and puts focus on Restore', async () => {
+    await test.step('Maximize covers the form, not the entry header, and focuses Restore', async () => {
       await editorPage.maximizePreviewButton().click()
       await expect(editorPage.restorePreviewButton()).toBeFocused()
       await expect(formPanel).toHaveAttribute('inert', '')
       const main = await page.locator('[data-canopy-region="main"]').boundingBox()
+      const header = await editorPage.entryHeader().boundingBox()
       const preview = await page.getByTestId('preview-pane').boundingBox()
-      for (const side of ['x', 'y', 'width', 'height'] as const) {
-        expect(Math.abs((preview?.[side] ?? 0) - (main?.[side] ?? -9))).toBeLessThanOrEqual(1)
+      expect(main && header && preview).toBeTruthy()
+      if (!main || !header || !preview) return
+      // `main` minus the entry header, which stays on top with Save in reach.
+      const covered = {
+        x: main.x,
+        y: header.y + header.height,
+        width: main.width,
+        height: main.y + main.height - (header.y + header.height),
       }
+      expect(header.height).toBeGreaterThan(0)
+      expect(Math.abs(header.y - main.y)).toBeLessThanOrEqual(1)
+      for (const side of ['x', 'y', 'width', 'height'] as const) {
+        expect(Math.abs(preview[side] - covered[side])).toBeLessThanOrEqual(1)
+      }
+      await expect(editorPage.saveButton).toBeVisible()
       await expect(previewTitle).toContainText(liveTitle)
     })
 

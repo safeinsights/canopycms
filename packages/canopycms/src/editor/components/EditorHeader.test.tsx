@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, render, screen, cleanup, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
+import { EntryHeader, type EntryHeaderProps } from './EntryHeader'
 import { BranchLockBanner, branchLockBannerShown } from './BranchLockBanner'
 import { UnsavedMark } from './UnsavedMark'
 import { CanopyCMSProvider } from '../theme'
@@ -21,7 +22,10 @@ const currentEntry: EditorEntry = {
   previewSrc: '/posts/hello',
 }
 
-const defaultProps: EditorHeaderProps = {
+/** Both headers' props, as Editor.tsx passes them; the entry header's Save all flag follows. */
+type HeadersProps = EditorHeaderProps & Omit<EntryHeaderProps, 'saveAllRunning'>
+
+const defaultProps: HeadersProps = {
   currentEntry,
   branchName: 'feature/x',
   operatingMode: 'prod',
@@ -47,17 +51,17 @@ const defaultProps: EditorHeaderProps = {
   onWithdraw: vi.fn(),
 }
 
-/** The header with the lock banner Editor.tsx renders under it from the same branch props. */
-const renderHeader = (overrides: Partial<EditorHeaderProps> = {}) => {
-  const props = { ...defaultProps, ...overrides }
-  return render(
-    <>
-      <EditorHeader {...props} />
-      <BranchLockBanner {...props} />
-    </>,
-    { wrapper: Wrapper },
-  )
-}
+const Headers = (props: HeadersProps) => (
+  <>
+    <EditorHeader {...props} />
+    <BranchLockBanner {...props} />
+    <EntryHeader {...props} saveAllRunning={!!props.saveAllProgress} />
+  </>
+)
+
+/** The top bar, the lock banner and the entry header, as Editor.tsx renders them from one state. */
+const renderHeader = (overrides: Partial<HeadersProps> = {}) =>
+  render(<Headers {...defaultProps} {...overrides} />, { wrapper: Wrapper })
 
 describe('EditorHeader - review lock', () => {
   afterEach(() => {
@@ -201,7 +205,7 @@ describe('EditorHeader - locked-down branch', () => {
     branchIsProtected: false,
     branchCreatedBy: 'maker',
     branchAccess: { allowedUsers: ['maker', 'invited'], managerOrAdminAllowed: true },
-  } satisfies Partial<EditorHeaderProps>
+  } satisfies Partial<HeadersProps>
 
   it.each(['maker', 'invited'])('blocks Withdraw for %s, whom only the ACL admits', (userId) => {
     renderHeader({ ...lockedProps, userContext: { userId, groups: [] } })
@@ -608,8 +612,8 @@ describe('EditorHeader - unsaved changes kept on this device', () => {
     expect(save.getAttribute('aria-describedby')).toBe(tooltip.id)
   })
 
-  it('keeps a warning in the bar when storing drafts failed', () => {
-    renderHeader({ hasUnsavedChanges: true, draftStorageFailed: true })
+  it('keeps a warning in the top bar when storing drafts failed', () => {
+    renderHeader({ hasUnsavedChanges: true, modifiedCount: 1, draftStorageFailed: true })
     const indicator = screen.getByTestId('unsaved-indicator')
     expect(indicator.textContent).toContain('Unsaved · not kept on this device')
     // The tooltip's consequence is mouse-only, so the status text carries it too.
@@ -621,8 +625,15 @@ describe('EditorHeader - unsaved changes kept on this device', () => {
     expect(document.body.textContent).not.toContain(KEPT)
   })
 
-  it('shows no warning with nothing unsaved', () => {
-    renderHeader({ hasUnsavedChanges: false, draftStorageFailed: true })
+  it('warns for unsaved changes on another entry, the open one clean', () => {
+    renderHeader({ hasUnsavedChanges: false, modifiedCount: 2, draftStorageFailed: true })
+    expect(screen.getByTestId('unsaved-indicator').textContent).toContain(
+      'Unsaved · not kept on this device',
+    )
+  })
+
+  it('shows no warning with nothing unsaved on the branch', () => {
+    renderHeader({ hasUnsavedChanges: false, modifiedCount: 0, draftStorageFailed: true })
     expect(screen.queryByTestId('unsaved-indicator')).toBeNull()
   })
 })
@@ -843,32 +854,54 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
   })
 })
 
+describe('EditorHeader - entry header', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it("holds the entry's breadcrumb, menu, chip and Save, and leaves the branch's controls to the top bar", () => {
+    renderHeader({ entryReadOnly: true, modifiedCount: 1 })
+    const header = screen.getByRole('region', { name: 'Entry' })
+    for (const testId of ['file-dropdown-button', 'read-only-chip', 'save-button']) {
+      expect(header.contains(screen.getByTestId(testId))).toBe(true)
+    }
+    for (const testId of ['save-all-button', 'submit-button', 'branch-dropdown-button']) {
+      expect(header.contains(screen.getByTestId(testId))).toBe(false)
+    }
+  })
+
+  it('keeps Save in place, blocked, with no entry open', () => {
+    renderHeader({ currentEntry: undefined, hasUnsavedChanges: false })
+    const save = within(screen.getByRole('region', { name: 'Entry' })).getByTestId('save-button')
+    expect(save.getAttribute('aria-disabled')).toBe('true')
+  })
+})
+
 describe('EditorHeader - Save all', () => {
   afterEach(() => {
     cleanup()
   })
 
-  const openSaveOptions = async () => {
-    await userEvent.click(screen.getByRole('button', { name: 'Save options' }))
-    return screen.findByTestId('save-all-menu-item')
+  const saveAll = () => screen.getByTestId('save-all-button')
+  const focusReason = async () => {
+    act(() => saveAll().focus())
+    return (await screen.findByRole('tooltip')).textContent
   }
 
-  it('offers Save all with the unsaved count, and runs it', async () => {
+  it('offers Save all in the top bar with the unsaved count, and runs it', async () => {
     const onSaveAll = vi.fn()
     renderHeader({ modifiedCount: 3, onSaveAll })
-    const item = await openSaveOptions()
-    expect(item.textContent).toBe('Save all (3)')
-    await userEvent.click(item)
+    expect(saveAll().textContent).toBe('Save all (3)')
+    await userEvent.click(saveAll())
     expect(onSaveAll).toHaveBeenCalledTimes(1)
   })
 
   it('blocks Save all with a reason when nothing on the branch is unsaved', async () => {
     const onSaveAll = vi.fn()
     renderHeader({ modifiedCount: 0, hasUnsavedChanges: false, onSaveAll })
-    const item = await openSaveOptions()
-    expect(item.getAttribute('aria-disabled')).toBe('true')
-    expect(item.textContent).toContain('No entry on this branch has unsaved changes.')
-    await userEvent.click(item)
+    expect(saveAll().getAttribute('aria-disabled')).toBe('true')
+    expect(await focusReason()).toBe('No entry on this branch has unsaved changes.')
+    await userEvent.click(saveAll())
     expect(onSaveAll).not.toHaveBeenCalled()
   })
 
@@ -880,33 +913,50 @@ describe('EditorHeader - Save all', () => {
       branchWriteBlocked: true,
       onSaveAll,
     })
-    const item = await openSaveOptions()
-    expect(item.textContent).toContain('This branch is in review. Withdraw it to make changes.')
-    await userEvent.click(item)
+    expect(await focusReason()).toBe('This branch is in review. Withdraw it to make changes.')
+    await userEvent.click(saveAll())
     expect(onSaveAll).not.toHaveBeenCalled()
   })
 
   it("blocks Save all with a way to retry when the branch's entry list didn't load", async () => {
     const onSaveAll = vi.fn()
     renderHeader({ modifiedCount: 2, entryListFailed: true, onSaveAll })
-    const item = await openSaveOptions()
-    expect(item.getAttribute('aria-disabled')).toBe('true')
-    expect(item.textContent).toContain('Choose "Refresh branch" in the branch menu to try again.')
-    await userEvent.click(item)
+    expect(saveAll().getAttribute('aria-disabled')).toBe('true')
+    expect(await focusReason()).toContain(
+      'Choose "Refresh branch" in the branch menu to try again.',
+    )
+    await userEvent.click(saveAll())
     expect(onSaveAll).not.toHaveBeenCalled()
   })
 
-  it('shows progress on Save, blocks it, and announces the run once', async () => {
+  it("waits for a save in flight on any entry, the open one's or another's", async () => {
+    const onSaveAll = vi.fn()
+    renderHeader({ modifiedCount: 2, singleSaving: true, saving: false, onSaveAll })
+    expect(saveAll().getAttribute('aria-disabled')).toBe('true')
+    expect(await focusReason()).toBe('Wait for the save to finish.')
+    await userEvent.click(saveAll())
+    expect(onSaveAll).not.toHaveBeenCalled()
+  })
+
+  it('shows progress on Save all, blocks both buttons, and announces the run once', async () => {
     const onSave = vi.fn()
+    const onSaveAll = vi.fn()
     renderHeader({
       modifiedCount: 3,
-      hasUnsavedChanges: false,
+      hasUnsavedChanges: true,
       busy: true,
       saveAllProgress: { done: 1, total: 3 },
       onSave,
+      onSaveAll,
     })
+    expect(saveAll().textContent).toBe('Saving 2 of 3…')
+    expect(saveAll().getAttribute('aria-disabled')).toBe('true')
+    // The progress label stays readable: no disabled styling.
+    expect(saveAll().hasAttribute('data-disabled')).toBe(false)
+    await userEvent.click(saveAll())
+    expect(onSaveAll).not.toHaveBeenCalled()
     const save = screen.getByTestId('save-button')
-    expect(save.textContent).toBe('Saving 2 of 3…')
+    expect(save).toBe(screen.getByRole('button', { name: 'Save' }))
     expect(save.getAttribute('aria-disabled')).toBe('true')
     await userEvent.click(save)
     expect(onSave).not.toHaveBeenCalled()
@@ -915,6 +965,12 @@ describe('EditorHeader - Save all', () => {
       .map((region) => region.textContent)
       .filter(Boolean)
     expect(announced).toEqual(['Saving 3 entries…'])
+  })
+
+  it("says why Save waits during Save all, though the run's reloads leave the editor busy", async () => {
+    renderHeader({ hasUnsavedChanges: true, busy: true, saveAllProgress: { done: 0, total: 2 } })
+    act(() => screen.getByTestId('save-button').focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Wait for Save all to finish.')
   })
 })
 
@@ -925,10 +981,9 @@ describe('EditorHeader - Save says how it went', () => {
   })
 
   const saveButton = () => screen.getByTestId('save-button')
-  const renderSave = (props: Partial<EditorHeaderProps>) => {
-    const view = render(<EditorHeader {...defaultProps} {...props} />, { wrapper: Wrapper })
-    return (next: Partial<EditorHeaderProps>) =>
-      view.rerender(<EditorHeader {...defaultProps} {...next} />)
+  const renderSave = (props: Partial<HeadersProps>) => {
+    const view = render(<Headers {...defaultProps} {...props} />, { wrapper: Wrapper })
+    return (next: Partial<HeadersProps>) => view.rerender(<Headers {...defaultProps} {...next} />)
   }
   const statuses = () =>
     screen
@@ -1017,16 +1072,15 @@ describe('EditorHeader - emphasis', () => {
     cleanup()
   })
 
-  it('lightens the caret beside a greyed Save, so no half of a blocked split button is filled', () => {
+  it('greys a blocked Save', () => {
     renderHeader({ hasUnsavedChanges: false })
     expect(screen.getByTestId('save-button').hasAttribute('data-disabled')).toBe(true)
-    expect(screen.getByTestId('save-options-button').getAttribute('data-variant')).toBe('light')
   })
 
-  it('fills Save and its caret as the one primary, and leaves Submit and Withdraw secondary', () => {
-    renderHeader({ userContext: { userId: 'u1' }, branchCreatedBy: 'u1' })
+  it("fills the entry's Save as the one primary, and leaves Save all, Submit and Withdraw secondary", () => {
+    renderHeader({ modifiedCount: 1, userContext: { userId: 'u1' }, branchCreatedBy: 'u1' })
     expect(screen.getByTestId('save-button').getAttribute('data-variant')).toBe('filled')
-    expect(screen.getByTestId('save-options-button').getAttribute('data-variant')).toBe('filled')
+    expect(screen.getByTestId('save-all-button').getAttribute('data-variant')).toBe('light')
     expect(screen.getByTestId('submit-button').getAttribute('data-variant')).toBe('light')
     cleanup()
     renderHeader({
@@ -1056,7 +1110,7 @@ describe('EditorHeader - during Save all', () => {
     cleanup()
   })
 
-  it('says why Submit waits, and keeps the progress label out of disabled styling', async () => {
+  it('says why Submit waits', async () => {
     renderHeader({
       busy: true,
       saveAllProgress: { done: 0, total: 2 },
@@ -1069,10 +1123,6 @@ describe('EditorHeader - during Save all', () => {
       submit.focus()
     })
     expect(await screen.findByText('Wait for Save all to finish.')).toBeTruthy()
-
-    const save = screen.getByTestId('save-button')
-    expect(save.getAttribute('aria-disabled')).toBe('true')
-    expect(save.hasAttribute('data-disabled')).toBe(false)
   })
 
   it('holds Submit even when an entry load has cleared the shared busy flag', async () => {

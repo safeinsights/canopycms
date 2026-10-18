@@ -7,14 +7,14 @@ import { SHELL_REGION_BORDER } from './EditorShell'
 const TOP_BAR_HEIGHT = 48
 
 export interface TopBarProps {
-  /** Where you are: the breadcrumb and anything that describes the open entry. */
-  leading: ReactNode
+  /** Where you are; absent, `trailing` takes the whole row. */
+  leading?: ReactNode
   /** What you can do: the branch and the actions on it. */
   trailing: ReactNode
 }
 
 /**
- * The shell's top bar: one 48px row from `md` up. Narrower, `leading` takes a row of its own
+ * The shell's top bar: one 48px row from `md` up. Narrower, any `leading` takes a row of its own
  * above `trailing`, which wraps rather than clip a control. Layout only.
  */
 export function TopBar({ leading, trailing }: TopBarProps) {
@@ -23,6 +23,7 @@ export function TopBar({ leading, trailing }: TopBarProps) {
       gap="xs"
       wrap="wrap"
       align="center"
+      justify="flex-end"
       px="sm"
       py={6}
       mih={TOP_BAR_HEIGHT}
@@ -31,9 +32,11 @@ export function TopBar({ leading, trailing }: TopBarProps) {
         background: 'var(--mantine-color-body)',
       }}
     >
-      <Box flex={{ base: '1 0 100%', md: '1 1 0%' }} miw={0}>
-        {leading}
-      </Box>
+      {leading !== undefined && (
+        <Box flex={{ base: '1 0 100%', md: '1 1 0%' }} miw={0}>
+          {leading}
+        </Box>
+      )}
       <Group
         gap={6}
         wrap="wrap"

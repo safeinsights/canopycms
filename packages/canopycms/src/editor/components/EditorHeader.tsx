@@ -2,9 +2,7 @@ import React, { type Ref } from 'react'
 import { Button, Tooltip } from '@mantine/core'
 import type { OperatingMode } from '../../operating-mode'
 import type { BranchStatus } from '../../types'
-import type { EditorEntry } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
-import type { BreadcrumbSegment } from '../editor-utils'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { clientOperatingStrategy } from '../../operating-mode/client'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
@@ -14,62 +12,34 @@ import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
 import { describeBranchLock } from './BranchLockBanner'
 import { BranchPill } from './BranchPill'
-import { EntryBreadcrumb } from './EntryBreadcrumb'
-import { SaveSplitButton } from './SaveSplitButton'
+import { DraftStorageWarning, SaveAllButton } from './SaveAllButton'
 
 export interface EditorHeaderProps {
-  currentEntry: EditorEntry | undefined
   branchName: string
   operatingMode: OperatingMode
   /** Whether operations are currently in progress. */
   busy: boolean
-  /** The crumbs before the open entry's own. */
-  breadcrumbSegments: BreadcrumbSegment[]
   /** The listed entries with unsaved changes on the branch. */
   editedFiles: Array<{ path: LogicalPath; label: string }>
   /** Entries with unsaved changes on the branch. */
   modifiedCount: number
-  /** Opens the content panel on a collection. */
-  onCollectionOpen: (collectionPath: string) => void
-  /** The entry menu's trigger. */
-  navigatorToggleRef?: Ref<HTMLButtonElement>
   /** The branch pill. */
   branchToggleRef?: Ref<HTMLButtonElement>
-  /** Replaces the open entry with the server's copy. */
-  onFileReload: () => void
-  onFileDiscardDraft: () => void
-  /** Opens the open entry's "Change URL" dialog. */
-  onEntryRename: () => void
-  /** Asks to delete the open entry. */
-  onEntryDelete: () => void
   onEntrySelect: (path: LogicalPath) => void
   /** Re-reads the branch and its entry list, keeping drafts. */
   onBranchReloadData: () => void
   onBranchDiscardDrafts: () => void
   onBranchManagerOpen: () => void
-  onSave: () => void
   onSaveAll: () => void
   saveAllProgress: SaveAllProgress | null
-  /** A Save of the open entry is in flight. */
-  saving?: boolean
-  /** Rises each time a single Save lands, whichever entry it saved. */
-  savedSignal?: number
-  /** The last Save that landed saved the open entry. */
-  savedHere?: boolean
+  /** A single Save is in flight, on any entry. */
+  singleSaving?: boolean
   /** The branch's entry list failed to load and none is held. */
   entryListFailed?: boolean
   onSubmit: () => void
   onWithdraw: () => void
-  /** The open entry has unsaved changes it could save. */
-  hasUnsavedChanges: boolean
-  /** The open entry has a draft, savable or not (a read-only branch's still discards). */
-  entryHasDraft?: boolean
   /** Writing drafts to localStorage failed, so they live only in this tab. */
   draftStorageFailed?: boolean
-  /** The open entry can't be edited by this user (a path rule). */
-  entryReadOnly?: boolean
-  /** The open entry's type has no schema in the running code. */
-  entryUnavailable?: boolean
   /** Current branch status (undefined if unknown). */
   branchStatus: BranchStatus | undefined
   /** Current user context for permission checks. */
@@ -86,54 +56,36 @@ export interface EditorHeaderProps {
    * stays, as the recovery path). Default false.
    */
   branchIsProtected?: boolean
-  /** Whether the current branch is read-only (protected base branch in prod); disables Save. */
+  /** Whether the current branch is read-only (protected base branch in prod); disables Save all. */
   branchReadOnly?: boolean
   /** Server-computed: content writes are rejected on this branch; see `branchLockState`. */
   branchWriteBlocked?: boolean
-  /**
-   * No branch details yet (loading, or the list failed and the banner says so): the fail-closed
-   * lock defaults are guesses, so neither the chip nor the status names them.
-   */
+  /** No branch details yet: the fail-closed lock defaults are guesses the status doesn't name. */
   branchLoading?: boolean
 }
 
 /**
- * The top bar's contents: the breadcrumb with the entry menu and "Read-only" chip, then the branch
- * pill, Submit or Withdraw, and Save with Save all.
+ * The top bar's contents: the branch pill, Submit or Withdraw, the draft-storage warning and
+ * Save all. The open entry's own controls are in `EntryHeader`.
  */
 export function EditorHeader({
-  currentEntry,
   branchName,
   operatingMode,
   busy,
-  breadcrumbSegments,
   editedFiles,
   modifiedCount,
-  onCollectionOpen,
-  navigatorToggleRef,
   branchToggleRef,
-  onFileReload,
-  onFileDiscardDraft,
-  onEntryRename,
-  onEntryDelete,
   onEntrySelect,
   onBranchReloadData,
   onBranchDiscardDrafts,
   onBranchManagerOpen,
-  onSave,
   onSaveAll,
   saveAllProgress,
-  saving = false,
-  savedSignal,
-  savedHere = false,
+  singleSaving = false,
   entryListFailed = false,
   onSubmit,
   onWithdraw,
-  hasUnsavedChanges,
-  entryHasDraft = hasUnsavedChanges,
   draftStorageFailed = false,
-  entryReadOnly = false,
-  entryUnavailable = false,
   branchStatus,
   userContext,
   branchCreatedBy,
@@ -143,19 +95,8 @@ export function EditorHeader({
   branchWriteBlocked = false,
   branchLoading = false,
 }: EditorHeaderProps) {
-  // Shared by Save and Save all; set exactly when BranchLockBanner renders.
+  // Set exactly when BranchLockBanner renders.
   const branchLockReason = describeBranchLock({ branchStatus, branchReadOnly, branchWriteBlocked })
-  const entryLockReason = entryReadOnly
-    ? "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it."
-    : undefined
-  // The Tooltip hides it while the editor is busy.
-  const saveBlockedReason =
-    branchLockReason ??
-    (!branchName
-      ? 'Open a branch first.'
-      : !currentEntry
-        ? 'Open an entry to save it.'
-        : (entryLockReason ?? (!hasUnsavedChanges ? 'No changes to save.' : '')))
 
   const presentation = branchBarStatusPresentation(branchStatus, branchIsProtected)
   const status =
@@ -171,35 +112,6 @@ export function EditorHeader({
 
   return (
     <TopBar
-      leading={
-        <EntryBreadcrumb
-          segments={breadcrumbSegments}
-          entryLabel={currentEntry ? (currentEntry.label ?? currentEntry.slug) : undefined}
-          entryDirty={hasUnsavedChanges}
-          // BranchLockBanner already says why a locked branch is read-only, so the chip carries
-          // only the entry's own reason, even beside the banner: "Withdraw it" would not unlock it.
-          readOnlyReason={
-            branchLoading ? undefined : currentEntry || branchName ? entryLockReason : undefined
-          }
-          onCollection={onCollectionOpen}
-          onRefresh={onFileReload}
-          onDiscard={onFileDiscardDraft}
-          // A path rule's refusal hides them, as the content tree hides that entry's "…" menu.
-          onRename={entryReadOnly ? undefined : onEntryRename}
-          // An entry with a page has a preview `src`; one without changes only its slug.
-          entryNoPage={!!currentEntry && !currentEntry.previewSrc}
-          onDelete={entryReadOnly ? undefined : onEntryDelete}
-          refreshBlockedReason={branchName ? undefined : 'Open a branch first.'}
-          discardBlockedReason={entryHasDraft ? undefined : 'This entry has no unsaved changes.'}
-          changeBlockedReason={
-            branchLockReason ??
-            (entryUnavailable
-              ? "This entry's content type isn't known to this editor version yet. Reload in a few minutes."
-              : undefined)
-          }
-          entryMenuRef={navigatorToggleRef}
-        />
-      }
       trailing={
         <>
           <BranchPill
@@ -226,13 +138,11 @@ export function EditorHeader({
             onWithdraw={onWithdraw}
             savingAll={!!saveAllProgress}
           />
-          <SaveSplitButton
-            onSave={onSave}
-            saveBlockedReason={saveBlockedReason}
-            busy={busy}
+          <DraftStorageWarning shown={draftStorageFailed && modifiedCount > 0} />
+          <SaveAllButton
             onSaveAll={onSaveAll}
             unsavedCount={modifiedCount}
-            saveAllBlockedReason={
+            blockedReason={
               branchLockReason ??
               (!branchName
                 ? 'Open a branch first.'
@@ -241,11 +151,8 @@ export function EditorHeader({
                   : undefined)
             }
             saveAllProgress={saveAllProgress}
-            saving={saving}
-            savedSignal={savedSignal}
-            savedHere={savedHere}
-            entryDirty={hasUnsavedChanges}
-            draftStorageFailed={draftStorageFailed}
+            singleSaving={singleSaving}
+            busy={busy}
           />
         </>
       }
@@ -344,7 +251,7 @@ function WorkflowButton({
     >
       <Button
         size="sm"
-        // Save is the top bar's one filled primary; the rest take their colour's light variant.
+        // The entry's Save is the one filled primary; the rest take their colour's light variant.
         variant="light"
         color={isWithdrawable ? 'orange' : undefined}
         style={{ flexShrink: 0 }}

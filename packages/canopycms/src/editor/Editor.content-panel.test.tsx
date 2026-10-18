@@ -654,6 +654,18 @@ describe('maximized preview', () => {
   }
   const formPanel = () => screen.getByTestId('form-pane').parentElement as HTMLElement
 
+  it('leaves the entry header and its Save out of the maximized panes, in reach', async () => {
+    await setup(true)
+    await maximize()
+    const header = screen.getByRole('region', { name: 'Entry' })
+    const preview = screen.getByTestId('preview-pane')
+    expect(header.contains(screen.getByTestId('save-button'))).toBe(true)
+    // Before the panes, in its own box, where the maximized preview's absolute inset can't reach.
+    expect(header.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(header.contains(preview) || preview.contains(header)).toBe(false)
+    expect(header.closest('[inert]')).toBeNull()
+  })
+
   it('blocks the layout button while maximized, and frees it on restore', async () => {
     await setup(true)
     expect(layoutButton().getAttribute('aria-disabled')).toBeNull()
@@ -761,8 +773,7 @@ describe('maximized preview', () => {
     })
     await maximize()
 
-    fireEvent.click(screen.getByTestId('save-options-button'))
-    fireEvent.click(await screen.findByTestId('save-all-menu-item'))
+    fireEvent.click(screen.getByTestId('save-all-button'))
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull())
     expect(formPanel().hasAttribute('inert')).toBe(false)
   })
@@ -862,11 +873,13 @@ describe('saving', () => {
     renderEditor({ entries: [] })
     await screen.findByText('Could not load content')
 
-    fireEvent.click(screen.getByTestId('save-options-button'))
-    const item = await screen.findByTestId('save-all-menu-item')
-    expect(item.textContent).toContain('Save all (1)')
-    expect(item.getAttribute('aria-disabled')).toBe('true')
-    expect(item.textContent).toContain('Choose "Refresh branch" in the branch menu to try again.')
+    const saveAll = screen.getByTestId('save-all-button')
+    expect(saveAll.textContent).toBe('Save all (1)')
+    expect(saveAll.getAttribute('aria-disabled')).toBe('true')
+    act(() => saveAll.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toContain(
+      'Choose "Refresh branch" in the branch menu to try again.',
+    )
     expect(consoleSpy).toHaveErrored(/500/)
   })
 })

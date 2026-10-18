@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { useState } from 'react'
-import { Center, Stack, Text } from '@mantine/core'
+import { Box, Center, Stack, Text } from '@mantine/core'
 
 import { EditorShell, type EditorShellProps } from './EditorShell'
 import { PaneLayout, type PaneArrangement } from './PaneLayout'
@@ -8,6 +8,7 @@ import { SidePanelHost, type SidePanelHostProps } from './SidePanelHost'
 import { BranchLockBanner } from '../components/BranchLockBanner'
 import { EditorHeader, type EditorHeaderProps } from '../components/EditorHeader'
 import { EditorRail } from '../components/EditorRail'
+import { EntryHeader, type EntryHeaderProps } from '../components/EntryHeader'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 
 const noop = () => {}
@@ -25,7 +26,9 @@ const Placeholder = ({ name, minWidth }: { name: string; minWidth?: number }) =>
   </Center>
 )
 
-const headerProps: EditorHeaderProps = {
+type HeadersProps = EditorHeaderProps & EntryHeaderProps
+
+const headerProps: HeadersProps = {
   currentEntry: {
     path: unsafeAsLogicalPath('posts/hello'),
     contentId: unsafeAsContentId('abc123def456'),
@@ -50,6 +53,7 @@ const headerProps: EditorHeaderProps = {
   onSave: noop,
   onSaveAll: noop,
   saveAllProgress: null,
+  saveAllRunning: false,
   onSubmit: noop,
   onWithdraw: noop,
   hasUnsavedChanges: false,
@@ -61,10 +65,12 @@ const headerProps: EditorHeaderProps = {
 const EditorChrome = ({
   arrangement = 'side',
   panelMode,
+  previewMaximized = false,
   ...header
-}: Partial<EditorHeaderProps> & {
+}: Partial<HeadersProps> & {
   arrangement?: PaneArrangement
   panelMode?: SidePanelHostProps['mode']
+  previewMaximized?: boolean
 }) => {
   const props = { ...headerProps, ...header }
   const [layout, setLayout] = useState(arrangement)
@@ -118,13 +124,19 @@ const EditorChrome = ({
       }
       panel={mode === 'docked' && layout === 'side' ? panel : undefined}
       main={
-        <PaneLayout
-          arrangement={layout}
-          preview={<Placeholder name="Preview" />}
-          form={<Placeholder name="Form" />}
-          formAside={mode === 'docked' && layout === 'stacked' ? panel : undefined}
-          formOverlay={mode === 'overlay' ? panel : undefined}
-        />
+        <Box h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
+          <EntryHeader {...props} />
+          <Box style={{ flex: '1 1 0%', minHeight: 0 }}>
+            <PaneLayout
+              arrangement={layout}
+              preview={<Placeholder name="Preview" />}
+              form={<Placeholder name="Form" />}
+              formAside={mode === 'docked' && layout === 'stacked' ? panel : undefined}
+              formOverlay={mode === 'overlay' ? panel : undefined}
+              previewMaximized={previewMaximized}
+            />
+          </Box>
+        </Box>
       }
     />
   )
@@ -156,6 +168,11 @@ export const Editing: Story = {
 
 export const Stacked: Story = {
   render: () => <EditorChrome arrangement="stacked" />,
+}
+
+/** A maximized preview covers the panes only: the entry header, and its Save, stay above it. */
+export const PreviewMaximized: Story = {
+  render: () => <EditorChrome previewMaximized hasUnsavedChanges modifiedCount={1} />,
 }
 
 /** The content panel docked beside the panes, resizable from its edge. */

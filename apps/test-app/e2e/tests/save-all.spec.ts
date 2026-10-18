@@ -98,9 +98,11 @@ test.describe('Save all', () => {
   test('says why it cannot run when nothing on the branch is unsaved', async ({ page }) => {
     await editorPage.goto()
     await editorPage.waitForReady()
-    await page.getByTestId('save-options-button').click()
-    const item = page.getByTestId('save-all-menu-item')
-    await expect(item).toHaveAttribute('aria-disabled', 'true')
-    await expect(item).toContainText('No entry on this branch has unsaved changes.')
+    const saveAll = editorPage.saveAllButton()
+    await expect(saveAll).toHaveAttribute('aria-disabled', 'true')
+    await saveAll.focus()
+    await expect(page.getByRole('tooltip')).toHaveText(
+      'No entry on this branch has unsaved changes.',
+    )
   })
 })
