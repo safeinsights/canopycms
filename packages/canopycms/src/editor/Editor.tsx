@@ -21,9 +21,8 @@ import {
   IconDots,
   IconFolderPlus,
   IconPlus,
-  IconSearch,
 } from '@tabler/icons-react'
-import { useMediaQuery } from '@mantine/hooks'
+import { useHotkeys, useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 
 type TreeController = ReturnType<typeof useTree>
@@ -40,7 +39,7 @@ import { showPreviewLinkOutcome } from './components/PreviewLinkToast'
 import type { OperatingMode } from '../operating-mode'
 import { clientOperatingStrategy } from '../operating-mode/client'
 import { EditorShell } from './shell/EditorShell'
-import { PaneLayout } from './shell/PaneLayout'
+import { FORM_PANE_ID, PaneLayout } from './shell/PaneLayout'
 import { SidePanelHost } from './shell/SidePanelHost'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
 import { BranchManager } from './BranchManager'
@@ -59,7 +58,6 @@ import {
   buildCollectionLabels,
   entryStatusLabel,
   entryTypeLabel,
-  entryTypeLine,
   buildBreadcrumbSegments,
   entryNameSource,
 } from './editor-utils'
@@ -90,10 +88,8 @@ import { describeBranchLock } from './branch-lock'
 import { EditorHeader, EditorRail, EntryHeader } from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
-import { QuickOpenPalette, type QuickOpenEntry } from './components/QuickOpenPalette'
-import { rememberOpener, returnTarget } from './utils/focus-return'
+import { focusIsIdle, rememberOpener, returnTarget } from './utils/focus-return'
 import { modKeyLabel } from './platform'
-import { EDITOR_ACTIONS } from './copy'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { ReferencedByList, referencedDeleteMessage } from './components/ReferencedByList'
@@ -309,8 +305,6 @@ const EditorContent: React.FC<EditorProps> = ({
   // Each open or close of the collection dialog moves it on, so a slow open answers only if current.
   const collectionOpeningRef = useRef(0)
 
-  const [quickOpenOpen, setQuickOpenOpen] = useState(false)
-  const [quickOpenFromOverlay, setQuickOpenFromOverlay] = useState(false)
   const navigatorToggleRef = useRef<HTMLButtonElement>(null)
   const mediaButtonRef = useRef<HTMLButtonElement>(null)
   const branchToggleRef = useRef<HTMLButtonElement>(null)
@@ -319,10 +313,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const branchOpenerRef = useRef<HTMLElement | null>(null)
   // Null when the panel opened from a menu item, which unmounts on click, or with focus on the page.
   const navigatorOpenerRef = useRef<HTMLElement | null>(null)
-  const quickOpenOpenRef = useRef(false)
-  useEffect(() => {
-    quickOpenOpenRef.current = quickOpenOpen
-  }, [quickOpenOpen])
+  const entryFilterRef = useRef<HTMLInputElement>(null)
 
   const [renameModalOpen, setRenameModalOpen] = useState(false)
   const [renamingEntry, setRenamingEntry] = useState<EditorEntry | null>(null)
@@ -1449,6 +1440,7 @@ const EditorContent: React.FC<EditorProps> = ({
         title: entry.title,
         slug: entry.slug,
         status: entryStatusLabel(activeCollections, entry),
+        route: buildPreviewRoute(entry, { previewBaseByCollection, contentRoot }),
         missing: entry.status === 'missing' || undefined,
         noPage: !entry.previewSrc || undefined,
         contentId: entry.contentId,
@@ -1511,18 +1503,29 @@ const EditorContent: React.FC<EditorProps> = ({
     onCreateEntry,
     handleCreateEntry,
     contentRoot,
+    previewBaseByCollection,
     currentBranch,
     schemaUnavailableKeys,
     userIsAdmin,
   ])
 
-  const quickOpenShortcut = modKeyLabel() === '⌘' ? '⌘P' : 'Ctrl+P'
-  const quickOpenKeys = modKeyLabel() === '⌘' ? 'Meta+P' : 'Control+P'
+  const findShortcut =
+    modKeyLabel() === '⌘' ? { label: '⌘P', keys: 'Meta+P' } : { label: 'Ctrl+P', keys: 'Control+P' }
+  // Mod+P opens a closed docked panel only until Enter, Escape in its empty field or focus leaves
+  // it; the stored preference stays closed. A row menu, the Content button or any other ask opens
+  // it for good.
+  const [contentPanelTransient, setContentPanelTransient] = useState(false)
+  if (contentPanelTransient && !contentPanelDocked) setContentPanelTransient(false)
   // Docked, the content panel's open state is the stored preference; as an overlay it is
   // `navigatorOpen`, which starts open when the URL asks for no entry.
-  const contentPanelShown = contentPanelDocked ? contentPanelOpen : navigatorOpen
-  const setContentPanelShown = (open: boolean) =>
-    contentPanelDocked ? setContentPanelOpen(open) : setNavigatorOpen(open)
+  const contentPanelShown = contentPanelDocked
+    ? contentPanelOpen || contentPanelTransient
+    : navigatorOpen
+  const setContentPanelShown = (open: boolean) => {
+    if (!contentPanelDocked) return setNavigatorOpen(open)
+    setContentPanelOpen(open)
+    setContentPanelTransient(false)
+  }
   // The overlay lives in the form pane, under a maximized preview.
   const contentOverlayShown = !contentPanelDocked && contentPanelShown
   useEffect(() => {
@@ -1530,14 +1533,52 @@ const EditorContent: React.FC<EditorProps> = ({
   }, [contentOverlayShown])
   // Bumped on every ask for the panel, so one already open still takes focus.
   const [contentPanelFocusRequest, setContentPanelFocusRequest] = useState(0)
-  const openNavigator = () => {
-    navigatorOpenerRef.current = rememberOpener()
+  const openNavigator = ({ transient = false } = {}) => {
+    // Focus already in the panel isn't an opener: the panel's own close would hand focus back to it.
+    // Nor is the page, once the panel is shown: focus dropped there from where it came.
+    const opener = rememberOpener()
+    if (
+      !document.getElementById(CONTENT_PANEL_ID)?.contains(document.activeElement) &&
+      (opener || !contentPanelShown)
+    ) {
+      navigatorOpenerRef.current = opener
+    }
     // In the commit that opens the overlay, so the form panel is no longer inert when the overlay
     // mounts, then or a frame later as its slide starts, and serves its focus request.
     if (!contentPanelDocked) setPreviewMaximized(false)
-    setContentPanelShown(true)
+    // A pending Enter focus nulls the panel's return of focus, and only Enter's close may lose it.
+    setFormFocusPath(null)
+    if (transient && contentPanelDocked && !contentPanelOpen) setContentPanelTransient(true)
+    else setContentPanelShown(true)
     setContentPanelFocusRequest((request) => request + 1)
   }
+  const keepContentPanelOpen = () => {
+    if (contentPanelTransient) setContentPanelShown(true)
+  }
+  const [formFocusPath, setFormFocusPath] = useState<string | null>(null)
+  const formFocusRestoredRef = useRef(false)
+  // `[]` (tagsToIgnore) and `true` (contenteditable) let it fire from fields and the MDX editor.
+  useHotkeys(
+    [
+      [
+        'mod+P',
+        (event) => {
+          // Mantine's `mod` is Ctrl or ⌘ everywhere; on macOS Ctrl+P moves the caret up a line.
+          if (modKeyLabel() === '⌘' && !event.metaKey) return
+          // Keeps the browser's print dialog shut, even when the panel can't open.
+          event.preventDefault()
+          // Opened under a modal or drawer, it would take the keyboard from the one in use.
+          if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+          const field = entryFilterRef.current
+          if (field && document.activeElement === field) field.select()
+          else openNavigator({ transient: true })
+        },
+        { preventDefault: false },
+      ],
+    ],
+    [],
+    true,
+  )
   // A collection crumb opens the panel as the rail's Content button does, then its collection's row
   // takes focus.
   const [collectionReveal, setCollectionReveal] = useState<{ path: string; seq: number }>()
@@ -1577,18 +1618,6 @@ const EditorContent: React.FC<EditorProps> = ({
   const branchReturnTarget = () =>
     returnTarget(branchOpenerRef.current, () => branchToggleRef.current)
   const settingsReturnTarget = () => settingsToggleRef.current
-  // The palette replaces the overlay panel; a docked one stays. Opened from inside the overlay,
-  // whose tree then unmounts, it returns focus to the panel's opener.
-  const openQuickOpen = () => {
-    if (!quickOpenOpen) {
-      const panel = document.getElementById(CONTENT_PANEL_ID)
-      setQuickOpenFromOverlay(
-        !contentPanelDocked && navigatorOpen && !!panel?.contains(document.activeElement),
-      )
-    }
-    if (!contentPanelDocked) setNavigatorOpen(false)
-    setQuickOpenOpen(true)
-  }
 
   const dirtyPaths = useMemo<ReadonlySet<string>>(
     () => new Set(editedFiles.map((file) => file.path)),
@@ -1673,22 +1702,6 @@ const EditorContent: React.FC<EditorProps> = ({
     [entriesState],
   )
 
-  // Quick open names each entry's type and route under its label.
-  const quickOpenEntries = useMemo<QuickOpenEntry[]>(
-    () =>
-      entriesState.map((e) => ({
-        path: e.path,
-        label: e.label,
-        title: e.title,
-        slug: e.slug,
-        collectionPath: e.collectionPath,
-        collectionName: e.collectionName,
-        typeLabel: entryTypeLine(activeCollections, e),
-        route: buildPreviewRoute(e, { previewBaseByCollection, contentRoot }),
-      })),
-    [entriesState, activeCollections, previewBaseByCollection, contentRoot],
-  )
-
   const CenteredMessage = ({ children }: { children: React.ReactNode }) => (
     <div
       style={{
@@ -1731,6 +1744,50 @@ const EditorContent: React.FC<EditorProps> = ({
   useEffect(() => {
     if (!previewCanMaximize) setPreviewMaximized(false)
   }, [previewCanMaximize])
+
+  // Enter in the transient panel focuses the opened entry's first field once it renders, else the
+  // form pane; focus the user moved by then stays. A tree click, preview link or Back moves none.
+  useEffect(() => {
+    if (!formFocusPath) return
+    if (selectedPath !== formFocusPath) return setFormFocusPath(null)
+    if (currentEntry?.path !== formFocusPath) return
+    const formShown = schema.length > 0 && !!displayValue
+    const fieldless =
+      currentEntryUnavailable ||
+      currentEntry.canEdit === false ||
+      schema.length === 0 ||
+      loadFailedKey === `${branchNameState}:${currentEntry.contentId}`
+    if (!formShown && !fieldless) return
+    // Restoring the preview hands focus to its Maximize button; that isn't the user moving on.
+    const focusedByRestore = formFocusRestoredRef.current ? document.activeElement : null
+    formFocusRestoredRef.current = false
+    const frame = requestAnimationFrame(() => {
+      if (!focusIsIdle() && document.activeElement !== focusedByRestore) {
+        return setFormFocusPath(null)
+      }
+      // The form is in view first; the next run focuses it.
+      if (previewShownMaximized) {
+        formFocusRestoredRef.current = true
+        return setPreviewMaximized(false)
+      }
+      setFormFocusPath(null)
+      const pane = document.getElementById(FORM_PANE_ID)
+      const field = formShown ? pane?.querySelector<HTMLElement>('[data-canopy-field]') : null
+      if (field) focusFieldTarget(field)
+      else pane?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [
+    formFocusPath,
+    selectedPath,
+    currentEntry,
+    currentEntryUnavailable,
+    schema.length,
+    displayValue,
+    loadFailedKey,
+    branchNameState,
+    previewShownMaximized,
+  ])
   const [paneResizing, setPaneResizing] = useState(false)
 
   const previewErrorField = previewError?.fieldPath
@@ -1857,8 +1914,15 @@ const EditorContent: React.FC<EditorProps> = ({
       onWidthChange={setContentPanelWidth}
       onClose={() => setContentPanelShown(false)}
       focusRequest={contentPanelFocusRequest}
-      // Quick open takes focus as it replaces the overlay.
-      returnFocusTo={() => (quickOpenOpen ? null : navigatorReturnTarget())}
+      // An entry opened by Enter takes focus in its form instead.
+      returnFocusTo={() => (formFocusPath ? null : navigatorReturnTarget())}
+      onFocusLeave={
+        contentPanelTransient
+          ? (target) => {
+              if (!contentToggleRef.current?.contains(target)) setContentPanelTransient(false)
+            }
+          : undefined
+      }
       data-testid="content-panel"
       actions={
         <>
@@ -1866,7 +1930,14 @@ const EditorContent: React.FC<EditorProps> = ({
             navCollections.length > 0 &&
             !branchContentLocked &&
             (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
-              <Menu shadow="md" width={200} withinPortal position="bottom-end">
+              <Menu
+                shadow="md"
+                width={200}
+                withinPortal
+                position="bottom-end"
+                // Its items open dialogs outside the panel, which would close a transient one.
+                onOpen={keepContentPanelOpen}
+              >
                 <Tooltip label="Content actions" withinPortal>
                   <Menu.Target>
                     <ActionIcon variant="subtle" color="gray" aria-label="Content actions">
@@ -1898,18 +1969,6 @@ const EditorContent: React.FC<EditorProps> = ({
                 </Menu.Dropdown>
               </Menu>
             )}
-          <Tooltip label={`${EDITOR_ACTIONS.openEntry} (${quickOpenShortcut})`} withinPortal>
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              onClick={openQuickOpen}
-              aria-label={EDITOR_ACTIONS.openEntry}
-              aria-keyshortcuts={quickOpenKeys}
-              data-testid="quick-open-button"
-            >
-              <IconSearch size={16} />
-            </ActionIcon>
-          </Tooltip>
           <Tooltip label="Collapse all folders" withinPortal>
             <ActionIcon
               variant="subtle"
@@ -1945,6 +2004,7 @@ const EditorContent: React.FC<EditorProps> = ({
                   title: e.title,
                   slug: e.slug,
                   status: entryStatusLabel(activeCollections, e),
+                  route: buildPreviewRoute(e, { previewBaseByCollection, contentRoot }),
                   missing: e.status === 'missing' || undefined,
                   noPage: !e.previewSrc || undefined,
                   readOnly: e.canEdit === false || undefined,
@@ -1974,6 +2034,19 @@ const EditorContent: React.FC<EditorProps> = ({
           dirtyPaths={dirtyPaths}
           revealCollection={collectionReveal}
           onRevealed={() => setCollectionReveal(undefined)}
+          filterRef={entryFilterRef}
+          filterShortcut={findShortcut}
+          onFilterEnter={
+            contentPanelTransient
+              ? (path) => {
+                  openEntry(path)
+                  setContentPanelTransient(false)
+                  setFormFocusPath(path)
+                }
+              : undefined
+          }
+          onFilterEscape={contentPanelTransient ? () => setContentPanelTransient(false) : undefined}
+          onRowMenuOpen={keepContentPanelOpen}
         />
       </Box>
     </SidePanelHost>
@@ -2041,12 +2114,14 @@ const EditorContent: React.FC<EditorProps> = ({
               contentPanelOpen={contentPanelShown}
               contentPanelId={CONTENT_PANEL_ID}
               onContentToggle={() =>
-                contentPanelShown ? setContentPanelShown(false) : openNavigator()
+                contentPanelTransient
+                  ? keepContentPanelOpen()
+                  : contentPanelShown
+                    ? setContentPanelShown(false)
+                    : openNavigator()
               }
               contentToggleRef={contentToggleRef}
-              onQuickOpen={openQuickOpen}
-              quickOpenShortcut={quickOpenShortcut}
-              quickOpenKeys={quickOpenKeys}
+              contentShortcut={findShortcut}
               branchesOpen={branchManagerOpen}
               onBranchesOpen={openBranchManager}
               onCommentsOpen={
@@ -2257,18 +2332,6 @@ const EditorContent: React.FC<EditorProps> = ({
           }
           overlays={
             <>
-              <QuickOpenPalette
-                opened={quickOpenOpen}
-                onOpen={openQuickOpen}
-                onClose={() => setQuickOpenOpen(false)}
-                returnFocusTo={quickOpenFromOverlay ? navigatorReturnTarget : undefined}
-                entries={quickOpenEntries}
-                // The hidden root's entries sit at the top of the tree, so they get no heading here either.
-                collectionLabel={(path) =>
-                  path === hiddenRootPath ? '' : collectionLabels.get(path)
-                }
-                onSelect={setSelectedPath}
-              />
               <BranchesDrawer
                 opened={branchManagerOpen}
                 onClose={() => setBranchManagerOpen(false)}

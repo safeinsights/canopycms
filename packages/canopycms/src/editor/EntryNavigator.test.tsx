@@ -879,8 +879,8 @@ describe('EntryNavigator', () => {
     })
   })
 
-  describe('entry type line', () => {
-    const typeLine = (row: HTMLElement) => within(row).queryByTestId('entry-nav-type')
+  describe('entry detail line', () => {
+    const detailLine = (row: HTMLElement) => within(row).queryByTestId('entry-nav-detail')
 
     it('shows the type dimmed on a second line under the title, with no badge', () => {
       renderEntryNavigator({
@@ -888,14 +888,53 @@ describe('EntryNavigator', () => {
       })
 
       const row = screen.getByTestId('entry-nav-item-hello-world')
-      const type = typeLine(row)!
-      expect(type.textContent).toBe('Post')
-      expect(type.querySelector('p')?.getAttribute('style')).toContain('--mantine-color-dimmed')
+      const detail = detailLine(row)!
+      expect(detail.textContent).toBe('Post')
+      expect(detail.querySelector('p')?.getAttribute('style')).toContain('--mantine-color-dimmed')
       expect(
-        within(row).getByText('Hello World').compareDocumentPosition(type) &
+        within(row).getByText('Hello World').compareDocumentPosition(detail) &
           Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy()
       expect(row.querySelector('.mantine-Badge-root')).toBeNull()
+    })
+
+    it.each(ENTRY_SHAPES)('shows the type and the route, as %s', (_, shape) => {
+      renderEntryNavigator(
+        shape({
+          path: unsafeAsLogicalPath('content/pages/contact'),
+          label: 'Contact',
+          status: 'Landing page',
+          route: '/contact',
+        }),
+      )
+
+      const detail = detailLine(screen.getByTestId('entry-nav-item-contact'))!
+      expect(detail.textContent).toBe('Landing page · /contact')
+      expect(detail.querySelector('p')?.getAttribute('style')).toContain('--mantine-color-dimmed')
+    })
+
+    it('shows the route alone for an entry whose label already names its type', () => {
+      renderEntryNavigator({
+        items: [{ path: unsafeAsLogicalPath('home'), label: 'Home', route: '/' }],
+      })
+      expect(detailLine(screen.getByTestId('entry-nav-item-home'))!.textContent).toBe('/')
+    })
+
+    it('shows the type alone for an entry with no page', () => {
+      renderEntryNavigator({
+        items: [
+          {
+            path: unsafeAsLogicalPath('settings'),
+            label: 'Settings',
+            status: 'Site settings',
+            route: '/settings',
+            noPage: true,
+          },
+        ],
+      })
+      expect(detailLine(screen.getByTestId('entry-nav-item-settings'))!.textContent).toBe(
+        'Site settings',
+      )
     })
 
     it.each(ENTRY_SHAPES)('shows Missing in error text in place of the type, as %s', (_, shape) => {
@@ -904,16 +943,17 @@ describe('EntryNavigator', () => {
           path: unsafeAsLogicalPath('content/pages/gone'),
           label: 'Gone',
           status: 'Missing',
+          route: '/gone',
           missing: true,
         }),
       )
 
-      const type = typeLine(screen.getByTestId('entry-nav-item-gone'))!
-      expect(type.textContent).toBe('Missing')
-      expect(type.querySelector('p')?.getAttribute('style')).toContain('--canopy-danger-text')
+      const detail = detailLine(screen.getByTestId('entry-nav-item-gone'))!
+      expect(detail.textContent).toBe('Missing')
+      expect(detail.querySelector('p')?.getAttribute('style')).toContain('--canopy-danger-text')
     })
 
-    it('keeps an entry without a type, and a collection, on one line', () => {
+    it('keeps an entry without a type or route, and a collection, on one line', () => {
       renderEntryNavigator({
         collections: [
           {
@@ -926,8 +966,63 @@ describe('EntryNavigator', () => {
         expandedStateRef: { current: { 'collection:posts': true } },
       })
 
-      expect(typeLine(screen.getByTestId('entry-nav-item-posts'))).toBeNull()
-      expect(typeLine(screen.getByTestId('entry-nav-item-site-settings'))).toBeNull()
+      expect(detailLine(screen.getByTestId('entry-nav-item-posts'))).toBeNull()
+      expect(detailLine(screen.getByTestId('entry-nav-item-site-settings'))).toBeNull()
+    })
+
+    it('shows a cut-off detail line in full while its row has focus', async () => {
+      renderEntryNavigator({
+        items: [
+          {
+            path: unsafeAsLogicalPath('content/pages/contact'),
+            label: 'Contact',
+            status: 'Landing page',
+            route: '/a/long/route/to/contact',
+          },
+        ],
+      })
+      const row = screen.getByTestId('entry-nav-item-contact')
+      const text = detailLine(row)!.querySelector('p')!
+      // jsdom lays nothing out, so the line reports itself cut off.
+      Object.defineProperty(text, 'scrollWidth', { configurable: true, value: 200 })
+      Object.defineProperty(text, 'clientWidth', { configurable: true, value: 100 })
+      const item = row.closest<HTMLElement>('[role="treeitem"]')!
+
+      fireEvent.focus(item)
+      fireEvent.focusIn(item)
+
+      expect((await screen.findByRole('tooltip')).textContent).toBe(
+        'Landing page · /a/long/route/to/contact',
+      )
+      fireEvent.focusOut(item)
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
+    })
+  })
+
+  describe('row menus', () => {
+    it('calls onRowMenuOpen when an entry or collection menu opens', async () => {
+      const user = userEvent.setup()
+      const onRowMenuOpen = vi.fn()
+      renderEntryNavigator({
+        collections: [
+          {
+            path: unsafeAsLogicalPath('posts'),
+            label: 'Posts',
+            type: 'collection',
+            onAdd: vi.fn(),
+            entries: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello' }],
+          },
+        ],
+        expandedStateRef: { current: { 'collection:posts': true } },
+        onDeleteEntry: vi.fn(),
+        onRowMenuOpen,
+      })
+
+      await user.click(screen.getByTestId('collection-menu-posts'))
+      expect(onRowMenuOpen).toHaveBeenCalledTimes(1)
+      await user.keyboard('{Escape}')
+      await user.click(screen.getByTestId('entry-menu-hello'))
+      expect(onRowMenuOpen).toHaveBeenCalledTimes(2)
     })
   })
 
@@ -1257,8 +1352,33 @@ describe('EntryNavigator', () => {
 
     it('labels the filter box for assistive technology', () => {
       renderEntryNavigator({ collections: filterCollections() })
-      expect(screen.getByRole('textbox', { name: 'Filter entries' })).toBe(filterInput())
-      expect(filterInput().placeholder).toBe('Filter by title or slug')
+      expect(screen.getByRole('textbox', { name: 'Find entries' })).toBe(filterInput())
+      expect(filterInput().placeholder).toBe('Find entries')
+      expect(filterInput().hasAttribute('aria-keyshortcuts')).toBe(false)
+      expect(screen.queryByTestId('entry-nav-filter-shortcut')).toBeNull()
+    })
+
+    it('names its shortcut in the empty box and in aria-keyshortcuts', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        collections: filterCollections(),
+        filterShortcut: { label: '⌘P', keys: 'Meta+P' },
+      })
+      expect(filterInput().getAttribute('aria-keyshortcuts')).toBe('Meta+P')
+      const hint = screen.getByTestId('entry-nav-filter-shortcut')
+      expect(hint.textContent).toBe('⌘P')
+      expect(hint.getAttribute('aria-hidden')).toBe('true')
+
+      // The clear button takes its place while the box holds text.
+      await user.type(filterInput(), 'a')
+      expect(screen.queryByTestId('entry-nav-filter-shortcut')).toBeNull()
+      expect(screen.getByRole('button', { name: 'Clear filter' })).toBeTruthy()
+    })
+
+    it('calls filterRef with the box', () => {
+      const filterRef = React.createRef<HTMLInputElement>()
+      renderEntryNavigator({ collections: filterCollections(), filterRef })
+      expect(filterRef.current).toBe(filterInput())
     })
 
     it('matches an entry by title', async () => {
@@ -1387,12 +1507,14 @@ describe('EntryNavigator', () => {
     })
 
     describe('keys', () => {
-      const renderInsideKeyWatcher = () => {
+      const renderInsideKeyWatcher = (
+        props: Partial<React.ComponentProps<typeof EntryNavigator>> = {},
+      ) => {
         const onParentKeyDown = vi.fn()
         render(
           <CanopyCMSProvider>
             <div onKeyDown={onParentKeyDown}>
-              <EntryNavigator collections={filterCollections()} onSelect={vi.fn()} />
+              <EntryNavigator collections={filterCollections()} onSelect={vi.fn()} {...props} />
             </div>
           </CanopyCMSProvider>,
         )
@@ -1476,6 +1598,35 @@ describe('EntryNavigator', () => {
         await user.type(filterInput(), 'zzz{Enter}')
 
         expect(onSelect).not.toHaveBeenCalled()
+      })
+
+      it("hands Enter's match to onFilterEnter in place of onSelect", async () => {
+        const user = userEvent.setup()
+        const onSelect = vi.fn()
+        const onFilterEnter = vi.fn()
+        renderEntryNavigator({ collections: filterCollections(), onSelect, onFilterEnter })
+
+        await user.type(filterInput(), 'a{Enter}')
+
+        expect(onFilterEnter).toHaveBeenCalledTimes(1)
+        expect(onFilterEnter).toHaveBeenCalledWith('content/guides/getting-started')
+        expect(onSelect).not.toHaveBeenCalled()
+      })
+
+      it('gives Escape in the empty filter to onFilterEscape, after one clearing it', async () => {
+        const user = userEvent.setup()
+        const onFilterEscape = vi.fn()
+        const onParentKeyDown = renderInsideKeyWatcher({ onFilterEscape })
+
+        await user.type(filterInput(), 'launch')
+        await user.keyboard('{Escape}')
+        expect(onFilterEscape).not.toHaveBeenCalled()
+        expect(filterInput().value).toBe('')
+
+        await user.keyboard('{Escape}')
+        expect(onFilterEscape).toHaveBeenCalledTimes(1)
+        // Handled, so it closes nothing else.
+        expect(escapes(onParentKeyDown)).toHaveLength(0)
       })
     })
 

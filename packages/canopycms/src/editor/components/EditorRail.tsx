@@ -14,7 +14,6 @@ import {
   IconLogout,
   IconMessageCircle,
   IconPhoto,
-  IconSearch,
   IconSettings,
   IconUserCircle,
 } from '@tabler/icons-react'
@@ -22,7 +21,6 @@ import { ActivityRail, RailButton } from '../shell/ActivityRail'
 import type { PaneArrangement } from '../shell/PaneLayout'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 import { CANOPYCMS_VERSION } from '../../version'
-import { EDITOR_ACTIONS } from '../copy'
 
 const ABOUT_URL = 'https://github.com/safeinsights/canopycms'
 
@@ -33,11 +31,8 @@ export interface EditorRailProps {
   onContentToggle: () => void
   /** The Content button, which takes focus when the open entry it was reached from is gone. */
   contentToggleRef?: Ref<HTMLButtonElement>
-  onQuickOpen: () => void
-  /** The quick open shortcut as the platform writes it, such as "⌘P". */
-  quickOpenShortcut: string
-  /** The same shortcut for `aria-keyshortcuts`, such as "Meta+P". */
-  quickOpenKeys: string
+  /** The shortcut that opens the panel at its search field: "⌘P", and "Meta+P" for `aria-keyshortcuts`. */
+  contentShortcut: { label: string; keys: string }
   branchesOpen: boolean
   onBranchesOpen: () => void
   /** Without it, the Comments button is not offered (no branch, or a mode without comments). */
@@ -158,9 +153,7 @@ export function EditorRail({
   contentPanelId,
   onContentToggle,
   contentToggleRef,
-  onQuickOpen,
-  quickOpenShortcut,
-  quickOpenKeys,
+  contentShortcut,
   branchesOpen,
   onBranchesOpen,
   onCommentsOpen,
@@ -246,19 +239,11 @@ export function EditorRail({
             active={contentPanelOpen}
             aria-expanded={contentPanelOpen}
             aria-controls={contentPanelOpen ? contentPanelId : undefined}
+            shortcut={contentShortcut.label}
+            aria-keyshortcuts={contentShortcut.keys}
             data-testid="content-panel-toggle"
             ref={contentToggleRef}
             onClick={onContentToggle}
-          />
-          <RailButton
-            railId="search"
-            label={EDITOR_ACTIONS.openEntry}
-            shortcut={quickOpenShortcut}
-            aria-keyshortcuts={quickOpenKeys}
-            icon={<IconSearch size={20} />}
-            aria-haspopup="dialog"
-            data-testid="rail-search-button"
-            onClick={onQuickOpen}
           />
           <RailButton
             railId="branches"

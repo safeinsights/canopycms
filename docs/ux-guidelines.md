@@ -150,18 +150,18 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 ## Keyboard
 
 - Bind shortcuts with Mantine's `useHotkeys` as `mod+…`, which is ⌘ on macOS and Ctrl
-  elsewhere, scoped to the editor root. A shortcut that must work while typing, such as Save,
-  passes `[]` as `tagsToIgnore` and `true` as `triggerOnContentEditable`.
-- Taken: Mod+P quick open, Mod+Alt+M comments, Esc closes the topmost overlay, else restores a
-  maximized preview; a docked panel stays open. Planned for WS8:
-  Mod+S save, Mod+. content panel, Mod+Shift+L layout. Never bind Mod+K (MDXEditor's link), the formatting keys, or the browser's own
-  (Mod+W, T, R, L, F).
+  elsewhere, scoped to the editor root. A shortcut that must work while typing passes `[]` as
+  `tagsToIgnore` and `true` as `triggerOnContentEditable`.
+- Taken: Mod+P finds entries, opening a closed content panel until Enter, Esc or focus leaves;
+  Mod+Alt+M comments; Esc closes the topmost overlay (not a docked panel it didn't open), else
+  restores a maximized preview. Planned for WS8: Mod+S save, Mod+Shift+L layout. Never bind Mod+K
+  (MDXEditor's link), formatting keys, or the browser's own (Mod+W, T, R, L, F).
 - An overlay panel makes what it covers `inert` (`formInert` in
   `packages/canopycms/src/editor/shell/PaneLayout.tsx`), and anything that targets the covered
   part closes it first (`revealForm` in `packages/canopycms/src/editor/Editor.tsx`).
-- Tooltips and the shortcut sheet show the platform's modifier.
+- Tooltips and hints show the platform's modifier.
 - Every action is reachable by keyboard, focus follows visual order, and closing an overlay
-  returns focus to the control that opened it. A menu item is gone once it acts, so its menu's
+  returns focus to its opener. A menu item is gone once it acts, so its menu's
   trigger stands in (`packages/canopycms/src/editor/utils/focus-return.ts`). Any other opener that
   is gone hands focus to the menu trigger offering the same action (`returnTarget`), else the
   nearest heading.

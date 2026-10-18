@@ -500,8 +500,8 @@ Top-level components and helpers:
 - `shell/SidePanelHost.tsx` — a resizable side panel, docked or over the form
 - `shell/TopBar.tsx` — the 48px top bar, wrapping when full
 - `shell/OverlayHeader.tsx` — `OverlayDrawer`, the drawers' compact header
-- `EntryNavigator.tsx` — entry tree: filter, unsaved dots, read-only locks, conflict badges
-- `entry-search.ts` — label/slug match, collection grouping
+- `EntryNavigator.tsx` — entry tree: search (Mod+P), unsaved dots, read-only locks, conflict badges
+- `entry-search.ts` — entry match, rows' detail line
 - `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
 - `FormHeader.tsx` / `form-outline.ts` — the form's sticky header and its field outline
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
@@ -596,7 +596,6 @@ Components, in `editor/components/`:
 - `UnsavedMark.tsx` — the unsaved dot
 - `EditorRail.tsx` — the rail's buttons and Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
-- `QuickOpenPalette.tsx` — Mod+P quick-open palette
 - `BranchesDrawer.tsx` — Branches drawer
 - `StagedChangesDrawer.tsx` — unsaved-changes drawer
 - `UserBadge.tsx` — user avatar and name

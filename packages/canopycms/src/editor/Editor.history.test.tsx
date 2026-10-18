@@ -303,15 +303,13 @@ describe('history across entries', () => {
     expect(pushedEntries()).toEqual([world.path])
   })
 
-  it('pushes an entry for an entry chosen in quick open', async () => {
+  it('pushes an entry for an entry found with Mod+P and opened with Enter', async () => {
     await openEditor()
 
-    fireEvent.click(screen.getByTestId('rail-search-button'))
-    await screen.findByTestId('quick-open-input')
-    const option = (await screen.findAllByTestId('quick-open-option')).find((o) =>
-      /world/i.test(o.textContent ?? ''),
-    )
-    fireEvent.click(option as HTMLElement)
+    fireEvent.keyDown(document.body, { key: 'p', ctrlKey: true })
+    const filter = await screen.findByTestId('entry-nav-filter')
+    fireEvent.change(filter, { target: { value: 'world' } })
+    fireEvent.keyDown(filter, { key: 'Enter' })
 
     await waitFor(() => expect(urlEntry()).toBe(world.path))
     expect(pushedEntries()).toEqual([world.path])

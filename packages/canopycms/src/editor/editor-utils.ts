@@ -309,8 +309,8 @@ export const entryTypeLabel = (
 }
 
 /**
- * The type shown under an entry's label, in the content tree and quick open: `entryTypeLabel`,
- * except for a singleton, whose label already is its type's (`singletonLabel`).
+ * The type shown under an entry's label in the content tree: `entryTypeLabel`, except for a
+ * singleton, whose label already is its type's (`singletonLabel`). @internal Exported for tests.
  */
 export const entryTypeLine = (
   collections: EditorCollection[] | undefined,

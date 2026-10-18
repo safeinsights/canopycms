@@ -198,6 +198,160 @@ describe('SidePanelHost', () => {
     })
   })
 
+  describe('focus leaving', () => {
+    /** A panel with a portaled menu inside it, as a row's "…" menu is, and a button outside. */
+    const renderWithPortal = (onFocusLeave: (target: Element) => void) =>
+      render(
+        <CanopyCMSProvider>
+          <button>Outside</button>
+          <SidePanelHost {...baseProps()} onFocusLeave={onFocusLeave}>
+            <button>Inside</button>
+            {createPortal(<button>Portaled</button>, document.body)}
+          </SidePanelHost>
+        </CanopyCMSProvider>,
+      )
+    const button = (name: string) => screen.getByRole('button', { name })
+    const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 10)))
+
+    it('reports focus moving outside the panel, with where it went', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+
+      act(() => button('Outside').focus())
+      await settle()
+
+      expect(onFocusLeave).toHaveBeenCalledTimes(1)
+      expect(onFocusLeave).toHaveBeenCalledWith(button('Outside'))
+    })
+
+    it('counts what the panel portals, and moves within the panel, as inside', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+
+      act(() => button('Portaled').focus())
+      await settle()
+      expect(onFocusLeave).not.toHaveBeenCalled()
+      act(() => screen.getByRole('button', { name: 'Close content panel' }).focus())
+      act(() => button('Inside').focus())
+      await settle()
+
+      expect(onFocusLeave).not.toHaveBeenCalled()
+    })
+
+    it('does not count focus dropping to nothing as leaving', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+
+      act(() => button('Inside').blur())
+      await settle()
+
+      expect(onFocusLeave).not.toHaveBeenCalled()
+    })
+
+    it('reports focus landing outside after first dropping to nothing', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+      act(() => button('Inside').blur())
+      await settle()
+
+      act(() => button('Outside').focus())
+      await settle()
+
+      expect(onFocusLeave).toHaveBeenCalledWith(button('Outside'))
+    })
+
+    it('reports focus moving into a frame outside the panel', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      const frame = document.body.appendChild(document.createElement('iframe'))
+      onTestFinished(() => frame.remove())
+      act(() => button('Inside').focus())
+
+      // Focus inside a frame shows in this document as the frame being active, and a window blur.
+      vi.spyOn(document, 'activeElement', 'get').mockReturnValue(frame)
+      act(() => {
+        window.dispatchEvent(new FocusEvent('blur'))
+      })
+      await settle()
+      vi.restoreAllMocks()
+      // The press in the frame may still be held, so it waits for the pointer to come back, and
+      // back over the panel is reaching for it.
+      expect(onFocusLeave).not.toHaveBeenCalled()
+      fireEvent.pointerMove(button('Inside'), { buttons: 0 })
+      await settle()
+      expect(onFocusLeave).not.toHaveBeenCalled()
+
+      fireEvent.pointerMove(button('Outside'), { buttons: 0 })
+      await settle()
+
+      expect(onFocusLeave).toHaveBeenCalledWith(frame)
+    })
+
+    it('holds a frame leave through a press that comes back with no hover, as a touch does', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      const frame = document.body.appendChild(document.createElement('iframe'))
+      onTestFinished(() => frame.remove())
+      act(() => button('Inside').focus())
+      vi.spyOn(document, 'activeElement', 'get').mockReturnValue(frame)
+      act(() => {
+        window.dispatchEvent(new FocusEvent('blur'))
+      })
+      await settle()
+      vi.restoreAllMocks()
+
+      fireEvent.pointerDown(button('Outside'), { button: 0, buttons: 1 })
+      fireEvent.pointerMove(button('Outside'), { buttons: 1 })
+      await settle()
+      expect(onFocusLeave).not.toHaveBeenCalled()
+      fireEvent.pointerUp(button('Outside'), { button: 0 })
+      await settle()
+
+      expect(onFocusLeave).toHaveBeenCalledWith(frame)
+    })
+
+    it('waits for a press that moved focus outside to be released, so its click lands first', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+
+      fireEvent.pointerDown(button('Outside'), { button: 0, buttons: 1 })
+      act(() => button('Outside').focus())
+      await settle()
+      expect(onFocusLeave).not.toHaveBeenCalled()
+
+      const clicked = vi.fn()
+      button('Outside').addEventListener('click', clicked)
+      fireEvent.pointerUp(button('Outside'), { button: 0 })
+      fireEvent.click(button('Outside'))
+      expect(onFocusLeave).not.toHaveBeenCalled()
+      await settle()
+
+      expect(clicked).toHaveBeenCalledTimes(1)
+      expect(onFocusLeave).toHaveBeenCalledWith(button('Outside'))
+    })
+
+    it('counts a press released outside the window as released at its next move', async () => {
+      const onFocusLeave = vi.fn()
+      renderWithPortal(onFocusLeave)
+      act(() => button('Inside').focus())
+      fireEvent.pointerDown(button('Outside'), { button: 0, buttons: 1 })
+      act(() => button('Outside').focus())
+
+      fireEvent.pointerMove(document.body, { buttons: 1 })
+      await settle()
+      expect(onFocusLeave).not.toHaveBeenCalled()
+      fireEvent.pointerMove(document.body, { buttons: 0 })
+      await settle()
+
+      expect(onFocusLeave).toHaveBeenCalledWith(button('Outside'))
+    })
+  })
+
   describe('motion', () => {
     const region = () => screen.queryByRole('region', { name: 'Content' })
 
