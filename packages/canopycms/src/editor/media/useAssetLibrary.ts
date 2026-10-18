@@ -25,8 +25,10 @@ export interface UseAssetLibraryResult {
   retry: () => void
   /** Puts an uploaded asset in the list; the one already loaded under its hash is replaced. */
   prepend: (asset: AssetRecord) => void
-  /** Drops a deleted asset, including from a page still on its way. */
+  /** Drops a removed asset, including from a page still on its way. */
   remove: (hash32: string) => void
+  /** Replaces the loaded asset with the same hash in place, such as one just removed or restored. */
+  replace: (asset: AssetRecord) => void
 }
 
 /** Appends the incoming assets not already present; the first copy of a hash wins. */
@@ -48,12 +50,13 @@ function mergeAssets(
 /**
  * Loads the whole library in the background while `opened`: page 1 first, then each following
  * page in turn, so search and sort see every asset. Closing (or unmounting) stops the walk, and
- * reopening starts again from page 1.
+ * reopening, or changing `includeHidden`, starts again from page 1. `includeHidden` (admins only)
+ * also lists the files removed from the library, each marked `hidden`.
  *
  * Finalize dedups content, so a re-uploaded file comes back as an existing record that may also
  * arrive in a later page; assets are merged by `hash32`.
  */
-export function useAssetLibrary(opened: boolean): UseAssetLibraryResult {
+export function useAssetLibrary(opened: boolean, includeHidden = false): UseAssetLibraryResult {
   const client = useApiClient()
   const [assets, setAssets] = useState<AssetRecord[]>([])
   const [firstPageLoaded, setFirstPageLoaded] = useState(false)
@@ -76,11 +79,11 @@ export function useAssetLibrary(opened: boolean): UseAssetLibraryResult {
         let page: { assets: AssetRecord[]; nextCursor?: string } | undefined
         let message = ''
         try {
-          const result = await client.assets.list(
-            cursor === undefined
-              ? { limit: String(PAGE_SIZE) }
-              : { cursor, limit: String(PAGE_SIZE) },
-          )
+          const result = await client.assets.list({
+            limit: String(PAGE_SIZE),
+            ...(cursor !== undefined && { cursor }),
+            ...(includeHidden && { includeHidden: 'true' }),
+          })
           if (result.ok && result.data) page = result.data
           else message = result.error || 'The server did not return the list.'
         } catch (err) {
@@ -105,7 +108,7 @@ export function useAssetLibrary(opened: boolean): UseAssetLibraryResult {
           return
         }
         // A cursor seen before means the listing moved under the walk (the local store restarts
-        // from page 1 when its anchor asset is deleted), so pages may be missing: never report
+        // from page 1 when its anchor's meta file is gone), so pages may be missing: never report
         // that as complete. Retry starts over.
         if (requested.current.has(next)) {
           failedCursor.current = undefined
@@ -115,7 +118,7 @@ export function useAssetLibrary(opened: boolean): UseAssetLibraryResult {
         cursor = next
       }
     },
-    [client],
+    [client, includeHidden],
   )
 
   const start = useCallback(() => {
@@ -136,8 +139,9 @@ export function useAssetLibrary(opened: boolean): UseAssetLibraryResult {
     return () => {
       generation.current += 1
     }
-    // Restart only when the drawer/modal (re)opens, not when `start`'s identity changes.
-  }, [opened])
+    // Restart only when the drawer/modal (re)opens or the listing changes, not when `start`'s
+    // identity changes.
+  }, [opened, includeHidden])
 
   const retry = useCallback(() => {
     const cursor = failedCursor.current
@@ -160,5 +164,11 @@ export function useAssetLibrary(opened: boolean): UseAssetLibraryResult {
     setAssets((prev) => prev.filter((existing) => existing.hash32 !== hash32))
   }, [])
 
-  return { assets, firstPageLoaded, complete, error, retry, prepend, remove }
+  const replace = useCallback((asset: AssetRecord) => {
+    setAssets((prev) =>
+      prev.map((existing) => (existing.hash32 === asset.hash32 ? asset : existing)),
+    )
+  }, [])
+
+  return { assets, firstPageLoaded, complete, error, retry, prepend, remove, replace }
 }

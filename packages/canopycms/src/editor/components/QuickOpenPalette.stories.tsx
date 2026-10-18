@@ -12,6 +12,8 @@ const meta: Meta<typeof QuickOpenPalette> = {
 export default meta
 type Story = StoryObj<typeof QuickOpenPalette>
 
+const TYPES: Record<string, string> = { guides: 'Guide', news: 'News item', pages: 'Page' }
+
 const ENTRIES: QuickOpenEntry[] = [
   ['guides', 'getting-started', 'Getting started'],
   ['guides', 'data-access', 'Requesting access to data'],
@@ -25,13 +27,26 @@ const ENTRIES: QuickOpenEntry[] = [
   ['pages', 'about', 'About us'],
   ['pages', 'contact', 'Contact'],
   ['pages', 'faq', 'Frequently asked questions'],
-].map(([collection, slug, label]) => ({
-  path: `content/${collection}/${slug}`,
-  label,
-  slug,
-  collectionPath: `content/${collection}`,
-  collectionName: collection,
-}))
+].map(
+  ([collection, slug, label]): QuickOpenEntry => ({
+    path: `content/${collection}/${slug}`,
+    label,
+    slug,
+    collectionPath: `content/${collection}`,
+    collectionName: collection,
+    typeLabel: TYPES[collection],
+    route: slug === 'home' ? '/' : `/${collection}/${slug}/`,
+  }),
+)
+
+// A singleton is named by its type, so it shows no type line, and with no page, no route.
+ENTRIES.push({
+  path: 'content/pages/settings',
+  label: 'Site settings',
+  slug: 'settings',
+  collectionPath: 'content/pages',
+  collectionName: 'pages',
+})
 
 const labels: Record<string, string> = {
   'content/guides': 'Guides',

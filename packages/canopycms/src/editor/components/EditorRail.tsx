@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState, type ReactElement, type Ref } from 'react'
-import { ActionIcon, Menu, Stack, Text, Tooltip, VisuallyHidden } from '@mantine/core'
+import { ActionIcon, Menu, Stack, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useMergedRef } from '@mantine/hooks'
 import {
   IconActivity,
@@ -27,13 +27,12 @@ import { EDITOR_ACTIONS } from '../copy'
 const ABOUT_URL = 'https://github.com/safeinsights/canopycms'
 
 export interface EditorRailProps {
-  siteTitle: string
-  /** Opens the site's first entry, which is also what the editor opens with no entry asked for. */
-  onHomeOpen: () => void
   contentPanelOpen: boolean
   /** The content panel's element id, for `aria-controls`. */
   contentPanelId: string
   onContentToggle: () => void
+  /** The Content button, which takes focus when the open entry it was reached from is gone. */
+  contentToggleRef?: Ref<HTMLButtonElement>
   onQuickOpen: () => void
   /** The quick open shortcut as the platform writes it, such as "⌘P". */
   quickOpenShortcut: string
@@ -153,15 +152,12 @@ function LayoutButton({
   )
 }
 
-const monogram = (title: string): string => Array.from(title.trim())[0]?.toUpperCase() ?? '?'
-
 /** The editor's activity rail: what `ActivityRail` lays out, wired to the editor's surfaces. */
 export function EditorRail({
-  siteTitle,
-  onHomeOpen,
   contentPanelOpen,
   contentPanelId,
   onContentToggle,
+  contentToggleRef,
   onQuickOpen,
   quickOpenShortcut,
   quickOpenKeys,
@@ -244,18 +240,6 @@ export function EditorRail({
       top={
         <>
           <RailButton
-            railId="home"
-            label={`Open the first entry of ${siteTitle}`}
-            icon={
-              <Text component="span" fw={700} size="md" aria-hidden>
-                {monogram(siteTitle)}
-              </Text>
-            }
-            tinted
-            data-testid="rail-home-button"
-            onClick={onHomeOpen}
-          />
-          <RailButton
             railId="content"
             label="Content"
             icon={<IconFiles size={20} />}
@@ -263,6 +247,7 @@ export function EditorRail({
             aria-expanded={contentPanelOpen}
             aria-controls={contentPanelOpen ? contentPanelId : undefined}
             data-testid="content-panel-toggle"
+            ref={contentToggleRef}
             onClick={onContentToggle}
           />
           <RailButton

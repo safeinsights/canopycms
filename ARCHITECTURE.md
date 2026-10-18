@@ -659,6 +659,7 @@ Assets live in a single bucket — in prod, new prefixes inside each site's exis
 - `asset-originals/` — private, full-fidelity originals, kept forever
 - `asset-staging/` — short-lived presigned-upload target, expired by a lifecycle rule
 - `asset-meta/` — private per-asset sidecar (original filename, uploader, date, dimensions, mime)
+- `asset-hidden/` — private, one marker per file removed from the media library
 - `assets/` — public static delivery, for sanitized SVGs and PDFs only
 - `assets/t/` — transform outputs, where the URL path _is_ the S3 key, kept forever by default
 
@@ -666,13 +667,15 @@ Keys are **immutable, content-addressed and unguessable**, and identical bytes d
 
 **Every write to a content-addressed key is create-only** — S3 `If-None-Match: *`, a local exclusive create — since no correct writer ever replaces one. `AssetSupport` can enforce this with a bucket-policy Deny, opt-in because every writer, CMS or lazy Lambda, must first run a create-only release.
 
-**Unlisted is not private.** Key enumeration is an accepted trade-off — the meta listing that powers the media library is open to any authenticated user — so confidential files do not belong in this store. Deleting an asset removes only its meta sidecar; blobs are kept forever.
+**Unlisted is not private.** Key enumeration is an accepted trade-off — the meta listing that powers the media library is open to any authenticated user — so confidential files do not belong in this store. Removing a file from the library only hides it: a create-only `asset-hidden/` marker drops it from the listing and pickers, while its meta and blobs stay, so every transform keeps resolving; nothing deletes meta or blobs.
 
 ### Upload and Finalize
 
 Uploads go **directly from the browser to S3** via a presigned POST with a content-length cap and type conditions, so the bytes never traverse the CMS's request path — the serverless function's small request-body limit is irrelevant — and presign generation is local crypto needing no outbound internet.
 
-Once the upload lands in staging, the editor calls a **finalize** step that runs synchronously in the CMS API process. It sniffs the real file type from magic bytes, **sanitizes SVGs**, which cannot be type-sniffed, by stripping their scripts, extracts dimensions honoring EXIF orientation, writes the original and the meta sidecar (plus a public copy for SVG/PDF), deletes the staging object, and returns the structured field value. **The commit-point ordering is deliberate — dedup check, then original, then meta — so a crash never leaves a meta record pointing at bytes that were never written.** Finalize stores no resized variants; its one sharp call, a throwaway resize that catches corrupt pixel data, loads lazily so a Lambda without sharp skips only that check.
+Once the upload lands in staging, the editor calls a **finalize** step that runs synchronously in the CMS API process. It sniffs the real file type from magic bytes, **sanitizes SVGs**, which cannot be type-sniffed, by stripping their scripts, extracts dimensions honoring EXIF orientation, writes the original and the meta sidecar (plus a public copy for SVG/PDF), deletes the staging object, and returns the structured field value. **The commit-point ordering is deliberate — dedup check, then original, then meta — so a crash never leaves a meta record pointing at bytes that were never written.** Its throwaway resize that catches corrupt pixel data loads sharp lazily, so a Lambda without sharp skips only that check.
+
+After the commit it stores, best effort, a still raster's three editor thumbnail widths: **not the rejected ladder**, since only the editor requests them and a missing one is computed on demand.
 
 ### On-Demand Image Transforms
 
@@ -690,9 +693,7 @@ Raster images are **always** served through the transform layer, never as raw or
 
 ### Stored vs Rendered Asset URLs
 
-A stored asset reference is **always root-relative** (`/assets/…`), structurally rather than by convention: both write paths — finalize and the editor's own field writes — store the raw computed src, and nothing that writes content may bake a prefix into it. Content moves: one entry is read from a draft branch workspace, a PR preview, staging and production, so a stored origin or deployment prefix would be right in exactly one of those and quietly wrong in the rest.
-
-A stored src therefore names only the asset's **position in the `/assets` URL space**. A mount point in front of that space is strictly a **render-time** concern, applied only by the `baseUrl` option on `assetUrl`/`assetSrcSet` and never written back. See [Routes and Assets Are Two URL Spaces](#routes-and-assets-are-two-url-spaces).
+A stored asset reference is **always root-relative** (`/assets/…`), structurally rather than by convention: both write paths — finalize and the editor's own field writes — store the raw computed src. Content moves between branch workspaces, PR previews, staging and production, so a stored origin or prefix would be right in exactly one of them. A mount point is strictly a **render-time** concern, applied only by `assetUrl`/`assetSrcSet`'s `baseUrl` and never written back ([Routes and Assets Are Two URL Spaces](#routes-and-assets-are-two-url-spaces)).
 
 ### Structured Image Field
 
@@ -704,11 +705,11 @@ The schema has a first-class `image` field whose value is `{ src, alt, width, he
 
 One **MediaLibrary** component serves both a manage drawer and a picker modal, searching and sorting the whole meta prefix client-side. The MDX body editor's image plugin opens the same dialog, so prose images share the store and transform layer with structured image fields.
 
-**The editor never reads the public asset path.** Every editor image loads through the authenticated raw route (`api/assets.ts`) under `basePath`, which transforms on demand. On S3 it answers a stored object, or a fresh transform over 4 MiB, with a `no-store` 302 to a presigned GET: the CMS function's response is buffered and capped near 6 MiB, and its concurrency is reserved. It never redirects to `/assets/…`, which `withCanopy` rewrites back onto the route.
+**The editor never reads the public asset path.** Every editor image loads through the authenticated raw route (`api/assets.ts`) under `basePath`, which transforms on demand. On S3 it answers a stored object, or a fresh transform over 4 MiB, with a 302 to a presigned GET: the CMS function's response is buffered and capped near 6 MiB, and its concurrency is reserved. The URL is signed per hour and the 302 cached privately until the hour ends, so a reopened library fetches no thumbnails; a cached redirect outliving a sign-out is accepted, as it names a public object under an unguessable key. It never redirects to `/assets/…`, which `withCanopy` rewrites back onto the route.
 
 The live preview follows suit: drafts, or `createPreviewPage`'s server page, carry the route prefix, and `assetUrl` puts `/assets/t/…` srcs behind it ahead of `baseUrl` (`editor/preview-asset-base.ts`).
 
-**Guards mirror the server exactly**: uploading and listing are open to any authenticated user; deleting is allowed to an admin, or to the asset's recorded uploader, and an asset with no recorded uploader is admin-only. There is no per-asset ACL — assets are branch-agnostic and content-addressed, so the branch and path permission layers do not apply to them.
+**Guards mirror the server exactly**: any authenticated user may upload and list; removing a file from the library, or restoring it, takes an admin or its recorded uploader. There is no per-asset ACL: assets are branch-agnostic and content-addressed, so branch and path permissions do not apply.
 
 ### Pluggable Store and Delivery Infrastructure
 

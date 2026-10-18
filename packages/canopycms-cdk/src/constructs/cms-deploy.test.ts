@@ -1222,9 +1222,47 @@ describe('CanopyCmsService B1: the Lambda can actually reach S3', () => {
       .map((r) => JSON.stringify(r))
       .join('\n')
 
-    for (const prefix of ['asset-staging/*', 'asset-originals/*', 'asset-meta/*', 'assets/*']) {
+    for (const prefix of [
+      'asset-staging/*',
+      'asset-originals/*',
+      'asset-meta/*',
+      'asset-hidden/*',
+      'assets/*',
+    ]) {
       expect(resourcePatterns).toContain(prefix)
     }
+    const resourcesFor = (actionPrefix: string) =>
+      statements
+        .filter((s) => {
+          const action = (s as { Action?: unknown }).Action
+          return [action].flat().some((a) => typeof a === 'string' && a.startsWith(actionPrefix))
+        })
+        .map((s) => JSON.stringify((s as { Resource?: unknown }).Resource))
+        .join('\n')
+    const deleteResources = resourcesFor('s3:DeleteObject')
+    expect(deleteResources).toContain('asset-staging/*')
+    expect(deleteResources).toContain('asset-hidden/*')
+    // Meta is never deleted: every transform not yet stored is computed from it.
+    expect(deleteResources).not.toContain('asset-meta/')
+    expect(resourcesFor('s3:PutObject')).toContain('asset-hidden/*')
+    // Listing hidden markers relies on bucket-level s3:List*, unscoped by prefix.
+    const bucketLevelList = statements.some((s) => {
+      const { Action, Resource, Condition } = s as {
+        Action?: unknown
+        Resource?: unknown
+        Condition?: unknown
+      }
+      const actions = [Action].flat()
+      const resources = [Resource].flat().map((r) => JSON.stringify(r))
+      return (
+        actions.some((a) => a === 's3:List*' || a === 's3:ListBucket') &&
+        resources.some((r) => r.includes('Arn') && !r.includes('/*')) &&
+        Condition === undefined
+      )
+    })
+    expect(bucketLevelList).toBe(true)
+    // Hidden markers are listed, written and deleted, never read.
+    expect(resourcesFor('s3:GetObject')).not.toContain('asset-hidden/')
   })
 
   it('does not grant any asset bucket access when assetBucket is omitted', () => {

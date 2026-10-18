@@ -1,5 +1,5 @@
 import type { AsyncLocalStorage } from 'node:async_hooks'
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanopyContext } from 'canopycms/server'
 import { notFound } from 'next/navigation'
@@ -169,6 +169,61 @@ describe('createPreviewPageFor', () => {
       await expect(render(['authors', 'alice'])).rejects.toThrow(NOT_FOUND)
     },
   )
+})
+
+describe('createPreviewPageFor with a layout', () => {
+  const Layout = ({ children }: { children: ReactNode; chrome: boolean }) => children
+  const renderIn = (
+    query: Record<string, string | string[]>,
+    pageViews: Parameters<typeof createPreviewPageFor>[1]['views'] = views,
+  ) =>
+    inRequest(() =>
+      createPreviewPageFor(getCanopy, { views: pageViews, layout: Layout })({
+        params: Promise.resolve({ path: ['posts', 'hello'] }),
+        searchParams: Promise.resolve(query),
+      }),
+    ) as Promise<ReactElement<{ chrome: boolean; children: ReactElement<Record<string, unknown>> }>>
+
+  it('wraps the view, with the header and footer only for ?chrome=1', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+
+    const plain = await renderIn({ branch: 'feature/x' })
+    expect(plain.type).toBe(Layout)
+    expect(plain.props.chrome).toBe(false)
+    expect(plain.props.children.type).toBe(PostView)
+
+    const withChrome = await renderIn({ branch: 'feature/x', chrome: '1' })
+    expect(withChrome.props.chrome).toBe(true)
+    expect(withChrome.props.children.type).toBe(PostView)
+  })
+
+  it.each([{ chrome: '0' }, { chrome: 'true' }, { chrome: ['1', '1'] }])(
+    'leaves them out for %j',
+    async (query) => {
+      readByUrlPath.mockResolvedValue(entry('post'))
+      expect((await renderIn(query)).props.chrome).toBe(false)
+    },
+  )
+
+  it('tells the view it can show them, which a route without a layout does not', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+
+    expect((await renderIn({})).props.children.props.previewSiteChrome).toBe(true)
+    const bare = (await render(['posts', 'hello'])) as ReactElement<Record<string, unknown>>
+    expect(bare.props.previewSiteChrome).toBeUndefined()
+  })
+
+  it('wraps a view that has a loader too', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+    const load = vi.fn(() => ({ related: [] }))
+
+    const element = await renderIn({ chrome: '1' }, { post: previewView({ view: PostView, load }) })
+
+    expect(element.type).toBe(Layout)
+    expect(element.props.chrome).toBe(true)
+    expect(element.props.children.type).toBe(PostView)
+    expect(element.props.children.props.previewSiteChrome).toBe(true)
+  })
 })
 
 describe('createPreviewPageFor with a loader', () => {

@@ -31,7 +31,7 @@ test.describe('Multi-Field Content Editing', () => {
 
     // Open Home Page entry
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
 
     // Edit title field
     const testValue = `Test-Title-${Date.now()}`
@@ -96,7 +96,7 @@ test.describe('Multi-Field Content Editing', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
     })
 
     const toggle = page.locator('[data-testid="field-toggle-published"]')
@@ -180,7 +180,7 @@ test.describe('Multi-Field Content Editing', () => {
 
     // Open Home Page
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
 
     // Edit multiple fields
     const title = `Multi-Field-Test-${Date.now()}`
@@ -214,7 +214,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.waitForReady()
 
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
 
     // Test with special characters and unicode
     const specialChars = 'Test™ • €100 • 你好 • Émojis: 🚀✨'
@@ -232,7 +232,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.waitForReady()
 
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
 
     // Clear the tagline field
     await editorPage.fillTextField('tagline', '')
@@ -249,7 +249,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.waitForReady()
 
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
 
     // Create large content (5KB)
     const largeContent = 'Lorem ipsum dolor sit amet. '.repeat(200)
@@ -267,7 +267,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.waitForReady()
 
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
 
     // Make several rapid edits
     const values = ['Value 1', 'Value 2', 'Value 3', 'Final Value']
@@ -289,7 +289,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.waitForReady()
 
     await editorPage.openContentNavigator()
-    await editorPage.selectEntry('Home Page')
+    await editorPage.selectEntry('Home')
 
     const uniqueTitle = `Preview-Test-${Date.now()}`
     await editorPage.fillTextField('title', uniqueTitle)

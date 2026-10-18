@@ -3,8 +3,9 @@ import React from 'react'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
+import { EntryNavigator, type EntryNavCollection, type EntryNavItem } from './EntryNavigator'
 import { CanopyCMSProvider } from './theme'
+import { UnsavedMark } from './components/UnsavedMark'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 
 // Setup browser APIs
@@ -42,6 +43,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+const BRANCH_REASON = 'This branch is in review. Withdraw it to make changes.'
+
 const renderEntryNavigator = (props: Partial<React.ComponentProps<typeof EntryNavigator>> = {}) => {
   const defaultProps: React.ComponentProps<typeof EntryNavigator> = {
     onSelect: vi.fn(),
@@ -57,6 +60,49 @@ const renderEntryNavigator = (props: Partial<React.ComponentProps<typeof EntryNa
     props: defaultProps,
   }
 }
+
+/**
+ * One entry in each shape the navigator takes it: a flat item, an entry of a collection (as the
+ * editor passes it), and a collection node of type "entry".
+ */
+const ENTRY_SHAPES: Array<
+  [string, (entry: EntryNavItem) => Partial<React.ComponentProps<typeof EntryNavigator>>]
+> = [
+  [
+    'a flat item',
+    (entry) => ({
+      items: [entry, { path: unsafeAsLogicalPath('content/pages/about'), label: 'About' }],
+    }),
+  ],
+  [
+    'an entry of a collection',
+    (entry) => ({
+      collections: [
+        {
+          path: unsafeAsLogicalPath('content/pages'),
+          label: 'Pages',
+          type: 'collection',
+          entries: [entry, { path: unsafeAsLogicalPath('content/pages/about'), label: 'About' }],
+        },
+      ],
+      expandedStateRef: { current: { 'collection:content/pages': true } },
+    }),
+  ],
+  [
+    'an entry node',
+    (entry) => ({
+      collections: [
+        { path: entry.path, label: 'Node', type: 'entry', entries: [entry] },
+        {
+          path: unsafeAsLogicalPath('content/about'),
+          label: 'About',
+          type: 'entry',
+          entries: [{ path: unsafeAsLogicalPath('content/about'), label: 'About' }],
+        },
+      ],
+    }),
+  ],
+]
 
 describe('EntryNavigator', () => {
   describe('basic rendering', () => {
@@ -459,6 +505,334 @@ describe('EntryNavigator', () => {
     })
   })
 
+  describe('branch lock', () => {
+    const post = { path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }
+    const collection = (extra: Partial<EntryNavCollection> = {}): EntryNavCollection => ({
+      path: unsafeAsLogicalPath('posts'),
+      label: 'Posts',
+      type: 'collection',
+      onAdd: vi.fn(),
+      ...extra,
+    })
+
+    it('shows a lock with the branch reason, and no menu, on a locked branch', () => {
+      renderEntryNavigator({
+        items: [post],
+        collections: undefined,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      const row = screen.getByTestId('entry-nav-item-hello-world')
+      const lock = within(row).getByTestId('branch-lock')
+      expect(lock.getAttribute('aria-label')).toBe('Entry actions')
+      expect(lock.getAttribute('aria-disabled')).toBe('true')
+      expect(lock.getAttribute('aria-describedby')).toBeTruthy()
+      expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toBe(
+        BRANCH_REASON,
+      )
+      expect(screen.queryByTestId('entry-menu-hello-world')).toBeNull()
+    })
+
+    it('shows the lock on a collection row that would have had a menu', () => {
+      renderEntryNavigator({
+        collections: [collection()],
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      const row = screen.getByTestId('entry-nav-item-posts')
+      expect(within(row).getByTestId('branch-lock').getAttribute('aria-label')).toBe(
+        'Collection actions',
+      )
+      expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
+    })
+
+    it('holds an empty slot, not a lock, while the branch reason is not yet known', () => {
+      renderEntryNavigator({ items: [post], onDeleteEntry: vi.fn(), readOnly: true })
+
+      const row = screen.getByTestId('entry-nav-item-hello-world')
+      expect(within(row).getByTestId('branch-lock-pending')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+      expect(screen.queryByTestId('entry-menu-hello-world')).toBeNull()
+    })
+
+    /**
+     * The `opacity` the provider's stylesheet gives `element`, read from the rules whose selector
+     * matches it. jsdom cannot evaluate `:hover` or `:focus-within`, so a rule using one is matched
+     * with the pseudo-class stripped, and only when the state holds: `hovered`, or focus inside the
+     * row that the rule's selector names. Every other selector, `:focus >` included, is matched whole.
+     */
+    const lockOpacities = (element: Element, { hovered = false } = {}): string[] => {
+      const sheet = document.querySelector<HTMLStyleElement>('style[data-canopy-styles]')?.sheet
+      if (!sheet) throw new Error('no canopy stylesheet')
+      const row = element.closest('[data-nav-row]')
+      return Array.from(sheet.cssRules).flatMap((rule) => {
+        if (!(rule instanceof CSSStyleRule) || rule.style.getPropertyValue('opacity') === '')
+          return []
+        const applies = rule.selectorText.split(',').some((selector) => {
+          const trimmed = selector.trim()
+          if (trimmed.includes(':hover')) {
+            return hovered && element.matches(trimmed.replace(':hover', ''))
+          }
+          if (trimmed.includes(':focus >')) return element.matches(trimmed)
+          if (trimmed.includes(':focus-within')) {
+            return (
+              !!row?.contains(document.activeElement) &&
+              element.matches(trimmed.replace(':focus-within', ''))
+            )
+          }
+          return element.matches(trimmed)
+        })
+        return applies ? [rule.style.getPropertyValue('opacity')] : []
+      })
+    }
+
+    const twoPosts = [post, { path: unsafeAsLogicalPath('posts/second'), label: 'Second' }]
+
+    it('keeps every locked row focusable and named, but draws the lock only on the selected row', () => {
+      renderEntryNavigator({
+        items: twoPosts,
+        collections: undefined,
+        selectedPath: post.path,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      const selectedLock = within(screen.getByTestId('entry-nav-item-hello-world')).getByTestId(
+        'branch-lock',
+      )
+      const otherLock = within(screen.getByTestId('entry-nav-item-second')).getByTestId(
+        'branch-lock',
+      )
+
+      expect(lockOpacities(otherLock)).toEqual(['0'])
+      expect(lockOpacities(selectedLock)).toEqual(['0', '1'])
+      expect(lockOpacities(otherLock, { hovered: true })).toEqual(['0', '1'])
+      for (const lock of [selectedLock, otherLock]) {
+        expect(lock.getAttribute('aria-label')).toBe('Entry actions')
+        expect(lock.getAttribute('aria-disabled')).toBe('true')
+        expect(lock.getAttribute('tabindex')).not.toBe('-1')
+        expect(document.getElementById(lock.getAttribute('aria-describedby')!)?.textContent).toBe(
+          BRANCH_REASON,
+        )
+      }
+    })
+
+    it('draws the lock on a row with focus inside it', () => {
+      renderEntryNavigator({
+        items: twoPosts,
+        collections: undefined,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const locks = screen.getAllByTestId('branch-lock')
+
+      expect(locks.map((lock) => lockOpacities(lock))).toEqual([['0'], ['0']])
+      locks[1].focus()
+
+      expect(lockOpacities(locks[0])).toEqual(['0'])
+      expect(lockOpacities(locks[1])).toEqual(['0', '1'])
+    })
+
+    it('draws the lock on a row whose tree item has focus, not on its neighbours', () => {
+      renderEntryNavigator({
+        items: twoPosts,
+        collections: undefined,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const locks = screen.getAllByTestId('branch-lock')
+      const treeItem = locks[1].closest<HTMLElement>('[role=treeitem]')!
+      treeItem.focus()
+
+      expect(document.activeElement).toBe(treeItem)
+      expect(lockOpacities(locks[0])).toEqual(['0'])
+      expect(lockOpacities(locks[1])).toEqual(['0', '1'])
+    })
+
+    it("does not draw a nested row's lock when its parent tree item has focus", () => {
+      renderEntryNavigator({
+        collections: [
+          collection({
+            entries: [
+              { path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' },
+              { path: unsafeAsLogicalPath('posts/second'), label: 'Second' },
+            ],
+          }),
+        ],
+        selectedPath: unsafeAsLogicalPath('posts/second'),
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const parentLock = within(screen.getByTestId('entry-nav-item-posts')).getByTestId(
+        'branch-lock',
+      )
+      const childLock = within(screen.getByTestId('entry-nav-item-hello-world')).getByTestId(
+        'branch-lock',
+      )
+      parentLock.closest<HTMLElement>('[role=treeitem]')!.focus()
+
+      expect(lockOpacities(parentLock)).toEqual(['0', '1'])
+      expect(lockOpacities(childLock)).toEqual(['0'])
+    })
+
+    it('leaves a hidden lock untouchable, so a tap on its slot reaches the row', () => {
+      renderEntryNavigator({
+        items: twoPosts,
+        collections: undefined,
+        selectedPath: post.path,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const sheet = document.querySelector<HTMLStyleElement>('style[data-canopy-styles]')!.sheet!
+      const pointerEvents = (lock: HTMLElement) =>
+        Array.from(sheet.cssRules).flatMap((rule) =>
+          rule instanceof CSSStyleRule &&
+          rule.style.getPropertyValue('pointer-events') !== '' &&
+          rule.selectorText.split(',').some((selector) => lock.matches(selector.trim()))
+            ? [rule.style.getPropertyValue('pointer-events')]
+            : [],
+        )
+      const [selectedLock, otherLock] = screen.getAllByTestId('branch-lock')
+
+      expect(pointerEvents(otherLock)).toEqual(['none'])
+      expect(pointerEvents(selectedLock)).toEqual(['none', 'auto'])
+    })
+
+    it('hides the lock by opacity, never by display or visibility', () => {
+      renderEntryNavigator({
+        items: [post],
+        collections: undefined,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const css = document.querySelector('style[data-canopy-styles]')!.textContent!
+      const rules = css.match(/[^{}]*\[data-row-lock\][^{}]*\{[^}]*\}/g) ?? []
+
+      expect(rules.length).toBeGreaterThan(0)
+      expect(rules.join('')).not.toMatch(/display\s*:|visibility\s*:/)
+    })
+
+    it('keeps Space on the lock from expanding or collapsing its row', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        collections: [
+          collection({
+            entries: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }],
+          }),
+        ],
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+      const childShown = () => screen.queryByText('Hello World') !== null
+
+      expect(childShown()).toBe(false)
+      screen.getByTestId('branch-lock').focus()
+      await user.keyboard(' ')
+
+      expect(childShown()).toBe(false)
+    })
+
+    it('shows no lock on a row that would have had no menu anyway', () => {
+      renderEntryNavigator({
+        items: [post],
+        collections: undefined,
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('shows no lock on a collection row with no menu actions', () => {
+      renderEntryNavigator({
+        collections: [collection({ onAdd: undefined })],
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.getByTestId('entry-nav-item-posts')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('shows no lock on an unavailable entry', () => {
+      renderEntryNavigator({
+        collections: [collection({ onAdd: undefined, entries: [{ ...post, unavailable: true }] })],
+        expandedStateRef: { current: { 'collection:posts': true } },
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.getByTestId('entry-nav-item-hello-world')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('shows the lock on a row whose only menu action is reordering', () => {
+      renderEntryNavigator({
+        items: [post],
+        onReorderEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(
+        within(screen.getByTestId('entry-nav-item-hello-world')).getByTestId('branch-lock'),
+      ).toBeTruthy()
+    })
+
+    it('shows the menu and no lock on an editing branch', () => {
+      renderEntryNavigator({
+        items: [post],
+        onDeleteEntry: vi.fn(),
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      expect(screen.getByTestId('entry-menu-hello-world')).toBeTruthy()
+      expect(screen.queryByTestId('branch-lock')).toBeNull()
+    })
+
+    it('opens the reason on keyboard focus', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        items: [post],
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      await user.tab()
+      const lock = screen.getByTestId('branch-lock')
+      lock.focus()
+
+      expect((await screen.findByRole('tooltip')).textContent).toBe(BRANCH_REASON)
+    })
+
+    it('does not select the row when the lock is clicked', async () => {
+      const user = userEvent.setup()
+      const onSelect = vi.fn()
+      renderEntryNavigator({
+        items: [post],
+        selectedPath: post.path,
+        onSelect,
+        onDeleteEntry: vi.fn(),
+        readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+      })
+
+      await user.click(screen.getByTestId('branch-lock'))
+      expect(onSelect).not.toHaveBeenCalled()
+    })
+  })
+
   describe('readOnly mode', () => {
     it('hides the entry menu even when onDeleteEntry/onRenameEntry/onReorderEntry are provided', () => {
       renderEntryNavigator({
@@ -505,19 +879,55 @@ describe('EntryNavigator', () => {
     })
   })
 
-  describe('entry status badge', () => {
-    it('shows status badge on entries with status', () => {
+  describe('entry type line', () => {
+    const typeLine = (row: HTMLElement) => within(row).queryByTestId('entry-nav-type')
+
+    it('shows the type dimmed on a second line under the title, with no badge', () => {
       renderEntryNavigator({
-        items: [
-          {
-            path: unsafeAsLogicalPath('posts/hello'),
-            label: 'Hello World',
-            status: 'draft',
-          },
-        ],
+        items: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World', status: 'Post' }],
       })
 
-      expect(screen.getByText('draft')).toBeTruthy()
+      const row = screen.getByTestId('entry-nav-item-hello-world')
+      const type = typeLine(row)!
+      expect(type.textContent).toBe('Post')
+      expect(type.querySelector('p')?.getAttribute('style')).toContain('--mantine-color-dimmed')
+      expect(
+        within(row).getByText('Hello World').compareDocumentPosition(type) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+      expect(row.querySelector('.mantine-Badge-root')).toBeNull()
+    })
+
+    it.each(ENTRY_SHAPES)('shows Missing in error text in place of the type, as %s', (_, shape) => {
+      renderEntryNavigator(
+        shape({
+          path: unsafeAsLogicalPath('content/pages/gone'),
+          label: 'Gone',
+          status: 'Missing',
+          missing: true,
+        }),
+      )
+
+      const type = typeLine(screen.getByTestId('entry-nav-item-gone'))!
+      expect(type.textContent).toBe('Missing')
+      expect(type.querySelector('p')?.getAttribute('style')).toContain('--canopy-danger-text')
+    })
+
+    it('keeps an entry without a type, and a collection, on one line', () => {
+      renderEntryNavigator({
+        collections: [
+          {
+            path: unsafeAsLogicalPath('posts'),
+            label: 'Posts',
+            type: 'collection',
+            entries: [{ path: unsafeAsLogicalPath('posts/settings'), label: 'Site settings' }],
+          },
+        ],
+        expandedStateRef: { current: { 'collection:posts': true } },
+      })
+
+      expect(typeLine(screen.getByTestId('entry-nav-item-posts'))).toBeNull()
+      expect(typeLine(screen.getByTestId('entry-nav-item-site-settings'))).toBeNull()
     })
   })
 
@@ -859,6 +1269,22 @@ describe('EntryNavigator', () => {
 
       expect(isShown('entry-nav-item-launch-day')).toBe(true)
       expect(isShown('entry-nav-item-getting-started')).toBe(false)
+    })
+
+    it.each(ENTRY_SHAPES)('matches a type-named entry by its title, as %s', async (_, shape) => {
+      const user = userEvent.setup()
+      renderEntryNavigator(
+        shape({
+          path: unsafeAsLogicalPath('content/pages/site'),
+          label: 'Site settings',
+          title: 'Example site',
+        }),
+      )
+
+      await user.type(filterInput(), 'example')
+
+      expect(isShown('entry-nav-item-site-settings')).toBe(true)
+      expect(isShown('entry-nav-item-about')).toBe(false)
     })
 
     it('matches an entry by slug when the title does not contain the text', async () => {
@@ -1231,6 +1657,13 @@ describe('EntryNavigator', () => {
         name: 'Unsaved changes',
       })
       expect(entryDot.getAttribute('data-testid')).toBe('unsaved-dot')
+      // The same mark, so the same colour, as the top bar's.
+      const reference = within(
+        render(<UnsavedMark data-testid="reference-mark" />, { wrapper: CanopyCMSProvider })
+          .container,
+      ).getByTestId('reference-mark')
+      expect(reference.getAttribute('style')).toContain('--canopy-unsaved-mark')
+      expect(entryDot.getAttribute('style')).toBe(reference.getAttribute('style'))
       const collectionDot = within(screen.getByTestId('entry-nav-item-posts')).getByRole('img', {
         name: 'Contains unsaved changes',
       })
@@ -1298,14 +1731,18 @@ describe('EntryNavigator', () => {
       ).toBeNull()
     })
 
-    it('shows no per-entry lock when the whole navigator is read-only', () => {
+    it("keeps an entry's own lock, and leaves its slot empty, on a read-only navigator", () => {
       renderEntryNavigator({
         readOnly: true,
+        readOnlyReason: BRANCH_REASON,
+        onDeleteEntry: vi.fn(),
         items: [{ path: lp('posts/locked'), label: 'Locked', readOnly: true }],
       })
 
-      expect(screen.getByTestId('entry-nav-item-locked')).toBeTruthy()
-      expect(screen.queryByTestId('entry-lock')).toBeNull()
+      const row = screen.getByTestId('entry-nav-item-locked')
+      expect(within(row).getAllByTestId('entry-lock')).toHaveLength(1)
+      expect(within(row).queryByTestId('branch-lock')).toBeNull()
+      expect(within(row).queryByTestId('branch-lock-pending')).toBeNull()
     })
   })
 
@@ -1360,7 +1797,7 @@ describe('EntryNavigator', () => {
       expect(dividers()).toHaveLength(0)
     })
 
-    it('orders the entry menu as rename, move, then a divider and a red delete', async () => {
+    it('orders the entry menu as Change URL, move, then a divider and a red delete', async () => {
       const user = userEvent.setup()
       renderEntryNavigator({
         collections: [
@@ -1386,7 +1823,7 @@ describe('EntryNavigator', () => {
       await user.click(screen.getByTestId('entry-menu-first'))
       await screen.findByRole('menu')
 
-      const rename = screen.getByText('Rename…')
+      const rename = screen.getByText('Change URL…')
       const up = screen.getByText('Move up')
       const down = screen.getByText('Move down')
       const del = screen.getByText('Delete entry')
@@ -1397,6 +1834,22 @@ describe('EntryNavigator', () => {
       expect(precedes(down, dividers()[0])).toBe(true)
       expect(precedes(dividers()[0], del)).toBe(true)
     })
+
+    it.each(ENTRY_SHAPES)(
+      'offers "Change slug…" for an entry with no page, as %s',
+      async (_, shape) => {
+        const user = userEvent.setup()
+        renderEntryNavigator({
+          ...shape({ path: lp('content/pages/settings'), label: 'Settings', noPage: true }),
+          onRenameEntry: vi.fn(),
+        })
+
+        await user.click(screen.getByTestId('entry-menu-settings'))
+        expect((await screen.findByTestId('rename-entry-menu-item')).textContent).toBe(
+          'Change slug…',
+        )
+      },
+    )
 
     it('has no divider in an entry menu that only deletes', async () => {
       const user = userEvent.setup()

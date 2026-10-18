@@ -11,6 +11,8 @@ import type { ContentId, LogicalPath } from '../../../paths/types'
 export interface EntryLinkOption {
   contentId: ContentId
   label: string
+  /** The entry's title, the link text, where `label` is a singleton's type label. */
+  title?: string
   slug?: string
   collectionPath?: LogicalPath
   collectionName?: string

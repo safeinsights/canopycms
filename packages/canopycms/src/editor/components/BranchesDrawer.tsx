@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Drawer, Text, Title } from '@mantine/core'
+import { OverlayDrawer } from '../shell/OverlayHeader'
 import { focusReturnProps } from '../utils/focus-return'
 
 export interface BranchesDrawerProps {
@@ -21,24 +21,15 @@ export const BranchesDrawer: React.FC<BranchesDrawerProps> = ({
   returnFocusTo,
   children,
 }) => (
-  <Drawer
+  <OverlayDrawer
     opened={opened}
     onClose={onClose}
     closeOnEscape={!confirmOpen}
     position="right"
-    title={
-      <div>
-        <Title order={4}>Branches</Title>
-        <Text size="xs" c="dimmed">
-          Manage access, status, and lifecycle
-        </Text>
-      </div>
-    }
-    padding="md"
+    title="Branches"
     size={420}
-    overlayProps={{ blur: 2 }}
     {...focusReturnProps(returnFocusTo)}
   >
     {children}
-  </Drawer>
+  </OverlayDrawer>
 )

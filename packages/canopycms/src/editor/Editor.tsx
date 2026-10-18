@@ -35,6 +35,8 @@ import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { CustomFieldRenderers, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
 import { PreviewPane } from './PreviewPane'
+import { displayPreviewPath, previewPageKey } from './preview-path'
+import { showPreviewLinkOutcome } from './components/PreviewLinkToast'
 import type { OperatingMode } from '../operating-mode'
 import { clientOperatingStrategy } from '../operating-mode/client'
 import { EditorShell } from './shell/EditorShell'
@@ -57,7 +59,9 @@ import {
   buildCollectionLabels,
   entryStatusLabel,
   entryTypeLabel,
+  entryTypeLine,
   buildBreadcrumbSegments,
+  entryNameSource,
 } from './editor-utils'
 import {
   useEditorLayout,
@@ -82,10 +86,10 @@ import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
-import { BranchLockBanner, EditorHeader, EditorRail } from './components'
+import { BranchLockBanner, describeBranchLock, EditorHeader, EditorRail } from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
-import { QuickOpenPalette } from './components/QuickOpenPalette'
+import { QuickOpenPalette, type QuickOpenEntry } from './components/QuickOpenPalette'
 import { rememberOpener, returnTarget } from './utils/focus-return'
 import { modKeyLabel } from './platform'
 import { EDITOR_ACTIONS } from './copy'
@@ -118,6 +122,7 @@ import { MediaLibrary } from './media/MediaLibrary'
 import {
   removalAnchors,
   restoreRemoval,
+  movedThreadsNote,
   openThreadsWithin,
   restoredFieldPath,
   type FieldRemoval,
@@ -132,11 +137,15 @@ import { findFieldTarget, focusFieldTarget } from './field-target'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
 import { MayHaveLandedError } from './unanswered'
+import { sanitizeBranchName } from '../paths/branch-name'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
   contentId: ContentId // 12-char content ID (required - used for draft keying)
+  /** What the editor calls the entry: its title, or a labelled singleton's type label. */
   label: string
+  /** The entry's title, kept where `label` is a singleton's type label: link text and search use it. */
+  title?: string
   status?: string
   schema: EntrySchema
   previewSrc?: string
@@ -327,7 +336,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const [deleteInProgress, setDeleteInProgress] = useState(false)
   // A rename or delete asked for from the top bar's entry menu, whose item is gone once it acts.
   const [entryChangeFromMenu, setEntryChangeFromMenu] = useState(false)
-  const allContentCrumbRef = useRef<HTMLButtonElement>(null)
+  const contentToggleRef = useRef<HTMLButtonElement>(null)
 
   // Draft compile/render error reported by the preview page (null = renders cleanly)
   const [previewError, setPreviewError] = useState<{ message: string; fieldPath?: string } | null>(
@@ -364,6 +373,8 @@ const EditorContent: React.FC<EditorProps> = ({
     setSplitPercent,
     previewWidth,
     setPreviewWidth,
+    siteChrome,
+    setSiteChrome,
     contentPanelOpen,
     setContentPanelOpen,
     contentPanelWidth,
@@ -372,8 +383,9 @@ const EditorContent: React.FC<EditorProps> = ({
     storageKey: editorLayoutStorageKey(basePath),
     defaultLayout: wideWindow ? 'side' : 'stacked',
   })
-  // In the stacked layout the content panel lays over the form only, so the preview stays in view.
-  const contentPanelDocked = layout === 'side' && wideWindow
+  // A wide window docks the content panel: beside the panes side by side, and beside the form row
+  // only when stacked, so the preview keeps its full width. A narrow one lays it over the form.
+  const contentPanelDocked = wideWindow
 
   // Comments state (shared between useCommentSystem and useBranchManager)
   const [commentsForBranchSummaries, setCommentsForBranchSummaries] = useState<CommentThread[]>([])
@@ -389,6 +401,7 @@ const EditorContent: React.FC<EditorProps> = ({
     setBranchName,
     branchSummaries,
     currentBranch,
+    branchesLoadFailed,
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,
@@ -418,6 +431,14 @@ const EditorContent: React.FC<EditorProps> = ({
   // of unlocked that invites a click the server rejects -- and the pane shows a
   // loading state during that window anyway.
   const branchContentLocked = currentBranch?.writeBlocked ?? true
+
+  const branchLoading = !currentBranch && (branchesLoading || branchSummaries.length === 0)
+  // A row's lock reason on an unanswered branch would be "details could not be loaded", which is
+  // not yet true; once the fetch has failed it is, and the lock says so.
+  const branchRowsPending = branchLoading && !branchesLoadFailed
+
+  // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
+  const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
@@ -463,7 +484,17 @@ const EditorContent: React.FC<EditorProps> = ({
         contentRoot,
         basePath,
       }),
+    resolvePreviewRoute: (entry) =>
+      buildPreviewRoute(entry, { previewBaseByCollection, contentRoot }),
     setBusy: setEntriesLoading,
+    switchBranch: (branch) => switchBranchRef.current(branch),
+    // To the entry menu, which names the entry opened; a dialog keeps focus.
+    onHistoryRestore: () =>
+      requestAnimationFrame(() => {
+        if (!document.activeElement?.closest('[role="dialog"]')) {
+          navigatorToggleRef.current?.focus({ preventScroll: true })
+        }
+      }),
   })
 
   // The content overlay and a maximized preview hide the form; `navigatorOpen` is only the
@@ -479,10 +510,32 @@ const EditorContent: React.FC<EditorProps> = ({
     setSelectedPath(path)
     setNavigatorOpen(false)
   }
+  // A preview link opens its entry, or a page no entry has in a new tab. The opener is cut by hand,
+  // since `noopener` would hide whether the browser blocked the tab.
+  const openPreviewLink = (href: string) => {
+    const mount = { basePath, previewPrefix }
+    const base = window.location.href
+    const page = previewPageKey(href, mount, base)
+    const entry =
+      page === undefined
+        ? undefined
+        : entriesState.find(
+            (e) => e.previewSrc && previewPageKey(e.previewSrc, mount, base) === page,
+          )
+    if (entry) {
+      openEntry(entry.path)
+      return
+    }
+    const opened = window.open(href, '_blank')
+    if (opened) opened.opener = null
+    const url = new URL(href)
+    const shown = url.origin === window.location.origin ? `${url.pathname}${url.search}` : href
+    showPreviewLinkOutcome(href, displayPreviewPath(shown, mount), Boolean(opened))
+  }
 
   // An open overlay docks open, as the URL's ask for no entry does at load; `navigatorOpen` is only
-  // the overlay's, so a docked panel never resurfaces as one. Waits for the stored layout, whose
-  // arrival could otherwise dock an overlay the stacked layout keeps.
+  // the overlay's, so a docked panel never resurfaces as one. Waits for the stored preferences, so
+  // the open state it sets lands on them, not on the defaults they replace.
   useEffect(() => {
     if (layoutLoaded && contentPanelDocked && navigatorOpen) {
       setContentPanelOpen(true)
@@ -590,6 +643,17 @@ const EditorContent: React.FC<EditorProps> = ({
     onBranchCreated: addCreatedBranch,
     userId: userContext?.userId,
   })
+  switchBranchRef.current = async (branch) => {
+    const listed = (name: string) => name === branch || name === sanitizeBranchName(branch)
+    if (branchSummaries.length > 0 && !branchSummaries.some((b) => listed(b.name))) {
+      notifications.show({
+        message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchNameState}”.`,
+        color: 'yellow',
+      })
+      throw new Error(`Branch ${branch} is not listed`)
+    }
+    await handleBranchChange(branch)
+  }
 
   // 5. Comment system (depends on branchNameState)
   const {
@@ -662,7 +726,8 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // Undo for a form Remove: a toast whose Undo puts the item back into the entry's draft as it
   // is then, through a functional update, so edits made since are kept. It acts only on the
-  // branch and entry it was raised for, and its toast closes when either changes.
+  // branch and entry it was raised for, and its toast closes when either changes. An object's
+  // Clear offers its Undo in the form instead (FormRenderer), which a save ends via `savedValue`.
   const loadedValuesRef = useRef(loadedValues)
   loadedValuesRef.current = loadedValues
   const draftsRef = useRef(drafts)
@@ -687,7 +752,6 @@ const EditorContent: React.FC<EditorProps> = ({
       ...removal,
       anchors: displayValue ? removalAnchors(fields, displayValue, removal) : undefined,
     }
-    const doing = removal.action === 'clear' ? 'clearing' : 'removing'
     // Open threads keyed inside what was removed leave their fields for the entry's thread list.
     const movedThreads = currentEntry
       ? openThreadsWithin(
@@ -708,7 +772,7 @@ const EditorContent: React.FC<EditorProps> = ({
       undoToastsRef.current.delete(id)
       if (!open) {
         notifications.show({
-          message: `Too late to undo ${doing} ${removal.label}.`,
+          message: `Too late to undo removing ${removal.label}.`,
           color: 'yellow',
         })
         return
@@ -723,7 +787,7 @@ const EditorContent: React.FC<EditorProps> = ({
       const now = draftsRef.current[contentId] ?? loadedValuesRef.current[contentId]
       if (!now || !restoreRemoval(fields, now, anchored)) {
         notifications.show({
-          message: `Couldn't undo ${doing} ${removal.label}: that part of the entry has changed. ${removal.action === 'clear' ? 'Fill it in again' : 'Add it again'} if you still need it.`,
+          message: `Couldn't undo removing ${removal.label}: that part of the entry has changed. Add it again if you still need it.`,
           color: 'yellow',
         })
         return
@@ -747,12 +811,7 @@ const EditorContent: React.FC<EditorProps> = ({
       message: (
         <UndoToastMessage
           label={removal.label}
-          action={removal.action}
-          note={
-            movedThreads > 0
-              ? `Its ${movedThreads === 1 ? 'comment thread' : `${movedThreads} comment threads`} moved to "Comment on this entry".`
-              : undefined
-          }
+          note={movedThreadsNote(movedThreads)}
           onUndo={undo}
           onHold={() => notifications.update({ ...toast, autoClose: false })}
           onRelease={() => notifications.update(toast)}
@@ -1255,7 +1314,7 @@ const EditorContent: React.FC<EditorProps> = ({
         setDeletingEntryReferencedBy(result.referencedBy)
         return
       }
-      if (result.ok && selectedPath === deletingEntryPath) closeEntry()
+      if (result.ok) closeEntry(deletingEntryPath, branchNameState)
       closeDeleteEntryModal()
     } finally {
       setDeleteInProgress(false)
@@ -1379,8 +1438,11 @@ const EditorContent: React.FC<EditorProps> = ({
       list.push({
         path: entry.path,
         label: entry.label,
+        title: entry.title,
         slug: entry.slug,
         status: entryStatusLabel(activeCollections, entry),
+        missing: entry.status === 'missing' || undefined,
+        noPage: !entry.previewSrc || undefined,
         contentId: entry.contentId,
         readOnly: entry.canEdit === false || undefined,
         conflictNotice: !!(
@@ -1462,12 +1524,14 @@ const EditorContent: React.FC<EditorProps> = ({
   const [contentPanelFocusRequest, setContentPanelFocusRequest] = useState(0)
   const openNavigator = () => {
     navigatorOpenerRef.current = rememberOpener()
-    // In the same commit as the overlay mounts, so its focus request meets no inert form panel.
+    // In the commit that opens the overlay, so the form panel is no longer inert when the overlay
+    // mounts, then or a frame later as its slide starts, and serves its focus request.
     if (!contentPanelDocked) setPreviewMaximized(false)
     setContentPanelShown(true)
     setContentPanelFocusRequest((request) => request + 1)
   }
-  // A collection crumb opens the panel as "All content" does, then its collection's row takes focus.
+  // A collection crumb opens the panel as the rail's Content button does, then its collection's row
+  // takes focus.
   const [collectionReveal, setCollectionReveal] = useState<{ path: string; seq: number }>()
   // Only ever rises: the navigator serves each seq once, and the request is cleared once served.
   const revealSeqRef = useRef(0)
@@ -1495,9 +1559,10 @@ const EditorContent: React.FC<EditorProps> = ({
       })
       .catch(console.error)
   }
-  // The entry menu's trigger stands in for its item; once the entry is deleted, "All content".
+  // The entry menu's trigger stands in for its item; once the entry is deleted, the rail's Content
+  // button, where another entry is found.
   const entryChangeReturnTarget = entryChangeFromMenu
-    ? () => navigatorToggleRef.current ?? allContentCrumbRef.current
+    ? () => navigatorToggleRef.current ?? contentToggleRef.current
     : undefined
   const navigatorReturnTarget = () =>
     returnTarget(navigatorOpenerRef.current, () => navigatorToggleRef.current)
@@ -1590,6 +1655,7 @@ const EditorContent: React.FC<EditorProps> = ({
         (e): EntryLinkOption => ({
           contentId: e.contentId,
           label: e.label,
+          title: e.title,
           slug: e.slug,
           collectionPath: e.collectionPath,
           collectionName: e.collectionName,
@@ -1597,6 +1663,22 @@ const EditorContent: React.FC<EditorProps> = ({
       ),
     }),
     [entriesState],
+  )
+
+  // Quick open names each entry's type and route under its label.
+  const quickOpenEntries = useMemo<QuickOpenEntry[]>(
+    () =>
+      entriesState.map((e) => ({
+        path: e.path,
+        label: e.label,
+        title: e.title,
+        slug: e.slug,
+        collectionPath: e.collectionPath,
+        collectionName: e.collectionName,
+        typeLabel: entryTypeLine(activeCollections, e),
+        route: buildPreviewRoute(e, { previewBaseByCollection, contentRoot }),
+      })),
+    [entriesState, activeCollections, previewBaseByCollection, contentRoot],
   )
 
   const CenteredMessage = ({ children }: { children: React.ReactNode }) => (
@@ -1626,12 +1708,18 @@ const EditorContent: React.FC<EditorProps> = ({
     data: displayValue,
   })
 
-  // Only the default preview has the toolbar that maximizes and restores it. With no value to
-  // preview (an entry loading, or failed to load, with no draft) the form shows instead, and the
-  // choice reapplies once a value arrives.
+  // Only the default preview has the toolbar that maximizes and restores it. It stays maximized
+  // while an entry loads. With no value after a failed load and no draft, the form shows instead,
+  // and the choice reapplies once a value arrives.
   const previewCanMaximize =
     !renderPreview && Boolean(currentEntry?.previewSrc) && !currentEntryUnavailable
-  const previewShownMaximized = previewMaximized && previewCanMaximize && Boolean(previewFrameData)
+  // The open entry's data is loading, not failed: the preview keeps its last page, dimmed.
+  const previewPending =
+    previewCanMaximize &&
+    !previewFrameData &&
+    loadFailedKey !== `${branchNameState}:${currentEntry?.contentId}`
+  const previewShownMaximized =
+    previewMaximized && previewCanMaximize && (Boolean(previewFrameData) || previewPending)
   useEffect(() => {
     if (!previewCanMaximize) setPreviewMaximized(false)
   }, [previewCanMaximize])
@@ -1642,11 +1730,13 @@ const EditorContent: React.FC<EditorProps> = ({
     : ''
 
   // An unavailable entry previews nothing: the site cannot read it, and a stored draft would
-  // otherwise mount the frame at a page that answers not-found.
+  // otherwise mount the frame at a page that answers not-found. The pane stays mounted while an
+  // entry loads, so its toolbar never leaves on a switch.
   const defaultPreview =
-    currentEntry?.previewSrc && previewFrameData && !currentEntryUnavailable ? (
+    currentEntry?.previewSrc && (previewFrameData || previewPending) && !currentEntryUnavailable ? (
       <PreviewPane
         src={currentEntry.previewSrc}
+        pending={previewPending}
         data={previewFrameData}
         isLoading={previewLoadingState}
         highlightEnabled={highlightEnabled}
@@ -1671,6 +1761,9 @@ const EditorContent: React.FC<EditorProps> = ({
           setPreviewMaximized(maximized)
         }}
         resizing={paneResizing}
+        siteChrome={siteChrome}
+        onSiteChromeChange={setSiteChrome}
+        onNavigate={openPreviewLink}
         notice={
           previewError && (
             <Alert
@@ -1842,8 +1935,11 @@ const EditorContent: React.FC<EditorProps> = ({
               : entriesState.map((e) => ({
                   path: e.path,
                   label: e.label,
+                  title: e.title,
                   slug: e.slug,
                   status: entryStatusLabel(activeCollections, e),
+                  missing: e.status === 'missing' || undefined,
+                  noPage: !e.previewSrc || undefined,
                   readOnly: e.canEdit === false || undefined,
                 }))
           }
@@ -1858,6 +1954,15 @@ const EditorContent: React.FC<EditorProps> = ({
           hiddenRootPath={hiddenRootPath}
           loading={entriesInitializing}
           readOnly={branchContentLocked}
+          readOnlyReason={
+            branchRowsPending
+              ? undefined
+              : describeBranchLock({
+                  branchStatus: currentBranch?.status,
+                  branchReadOnly: currentBranch?.readOnly,
+                  branchWriteBlocked: branchContentLocked,
+                })
+          }
           dirtyPaths={dirtyPaths}
           revealCollection={collectionReveal}
           onRevealed={() => setCollectionReveal(undefined)}
@@ -1899,8 +2004,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchReadOnly={currentBranch?.readOnly}
               branchWriteBlocked={branchContentLocked}
               // A failed fetch leaves the list empty too; the banner says that one.
-              branchLoading={!currentBranch && (branchesLoading || branchSummaries.length === 0)}
-              onNavigatorOpen={openNavigator}
+              branchLoading={branchLoading}
               onCollectionOpen={revealCollection}
               navigatorToggleRef={navigatorToggleRef}
               branchToggleRef={branchToggleRef}
@@ -1908,7 +2012,6 @@ const EditorContent: React.FC<EditorProps> = ({
               onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
               onEntryRename={() => currentEntry && handleRenameEntry(currentEntry.path, true)}
               onEntryDelete={() => currentEntry && handleDeleteEntry(currentEntry.path, true)}
-              allContentRef={allContentCrumbRef}
               entryUnavailable={currentEntryUnavailable}
               onEntrySelect={openEntry}
               onBranchReloadData={() => {
@@ -1955,16 +2058,12 @@ const EditorContent: React.FC<EditorProps> = ({
           }
           rail={
             <EditorRail
-              siteTitle={siteTitle}
-              onHomeOpen={() => {
-                const first = entriesState[0]
-                if (first) openEntry(first.path)
-              }}
               contentPanelOpen={contentPanelShown}
               contentPanelId={CONTENT_PANEL_ID}
               onContentToggle={() =>
                 contentPanelShown ? setContentPanelShown(false) : openNavigator()
               }
+              contentToggleRef={contentToggleRef}
               onQuickOpen={openQuickOpen}
               quickOpenShortcut={quickOpenShortcut}
               quickOpenKeys={quickOpenKeys}
@@ -1995,10 +2094,11 @@ const EditorContent: React.FC<EditorProps> = ({
               onLogoutClick={onLogoutClick}
             />
           }
-          panel={contentPanelDocked ? contentPanel : undefined}
+          panel={contentPanelDocked && layout === 'side' ? contentPanel : undefined}
           main={
             <Box h="100%">
               <PaneLayout
+                formAside={contentPanelDocked && layout === 'stacked' ? contentPanel : undefined}
                 formOverlay={contentPanelDocked ? undefined : contentPanel}
                 formInert={contentOverlayShown}
                 previewMaximized={previewShownMaximized}
@@ -2060,6 +2160,7 @@ const EditorContent: React.FC<EditorProps> = ({
                           value={displayValue}
                           readOnly={contentReadOnly}
                           onRemoved={handleFieldRemoved}
+                          savedValue={loadedValue}
                           commentBlockedReason={commentBlockedReason}
                           removedItemFieldLabel={commentFieldLabel}
                           onGetUserMetadata={getCommentUserMetadata}
@@ -2139,7 +2240,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 onOpen={openQuickOpen}
                 onClose={() => setQuickOpenOpen(false)}
                 returnFocusTo={quickOpenFromOverlay ? navigatorReturnTarget : undefined}
-                entries={entriesState}
+                entries={quickOpenEntries}
                 // The hidden root's entries sit at the top of the tree, so they get no heading here either.
                 collectionLabel={(path) =>
                   path === hiddenRootPath ? '' : collectionLabels.get(path)
@@ -2301,6 +2402,12 @@ const EditorContent: React.FC<EditorProps> = ({
                 <RenameEntryModal
                   isOpen={renameModalOpen}
                   entryLabel={renamingEntry.label}
+                  nameSource={entryNameSource(
+                    activeCollections,
+                    renamingEntry,
+                    entryValue(renamingEntry),
+                  )}
+                  hasPage={!!renamingEntry.previewSrc}
                   currentSlug={renamingEntry.slug || ''}
                   onSave={handleRenameSubmit}
                   // `renamingEntry` stays until the next rename, so the dialog plays its exit and

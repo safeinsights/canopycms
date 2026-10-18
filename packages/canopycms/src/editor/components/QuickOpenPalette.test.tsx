@@ -21,20 +21,32 @@ const ENTRIES: QuickOpenEntry[] = [
     label: 'Getting started',
     slug: 'start',
     collectionPath: 'content/guides',
+    typeLabel: 'Guide',
+    route: '/guides/start',
   },
   {
     path: 'content/guides/data',
     label: 'Data access',
     slug: 'access-rules',
     collectionPath: 'content/guides',
+    typeLabel: 'Guide',
+    route: '/guides/access-rules',
   },
   {
     path: 'content/news/launch',
     label: 'Launch day',
     slug: 'launch',
     collectionPath: 'content/news',
+    typeLabel: 'News item',
   },
-  { path: 'content/home', label: 'Welcome', slug: 'home', collectionPath: 'content' },
+  { path: 'content/home', label: 'Home', slug: 'index', collectionPath: 'content', route: '/' },
+  {
+    path: 'content/settings',
+    label: 'Site settings',
+    title: 'Example site',
+    slug: 'site',
+    collectionPath: 'content',
+  },
 ]
 const labelFor = (path: string) =>
   ({ 'content/guides': 'Guides', 'content/news': 'News' })[path] ?? undefined
@@ -70,11 +82,15 @@ const renderPalette = (extra: Partial<React.ComponentProps<typeof QuickOpenPalet
 
 const input = () => screen.getByTestId('quick-open-input') as HTMLInputElement
 const options = () => screen.queryAllByTestId('quick-open-option')
+/** An option's first line, its label, without the type and route under it. */
+const labelOf = (option: HTMLElement) => option.firstElementChild?.textContent
 const armedLabels = () =>
   options()
     .filter((option) => option.getAttribute('data-combobox-selected') === 'true')
-    .map((option) => option.textContent)
-const optionLabels = () => options().map((option) => option.textContent)
+    .map(labelOf)
+const optionLabels = () => options().map(labelOf)
+const detailOf = (option: HTMLElement) =>
+  within(option).queryByTestId('quick-open-option-detail')?.textContent
 
 describe('QuickOpenPalette hotkey', () => {
   const press = (target: EventTarget, init: KeyboardEventInit) => {
@@ -223,10 +239,24 @@ describe('QuickOpenPalette', () => {
     }
     expect(within(dialog).queryByText('content/guides')).toBeNull()
     expect(optionLabels()).toEqual([
-      'Getting startedstart',
-      'Data accessaccess-rules',
-      'Launch daylaunch',
-      'Welcomehome',
+      'Getting started',
+      'Data access',
+      'Launch day',
+      'Home',
+      'Site settings',
+    ])
+  })
+
+  it('shows the type and route under each label, whichever the entry has, never the slug', async () => {
+    renderPalette()
+
+    await screen.findByRole('dialog')
+    expect(options().map(detailOf)).toEqual([
+      'Guide · /guides/start',
+      'Guide · /guides/access-rules',
+      'News item',
+      '/',
+      undefined,
     ])
   })
 
@@ -249,11 +279,16 @@ describe('QuickOpenPalette', () => {
     renderPalette()
 
     await user.type(input(), 'launch')
-    expect(optionLabels()).toEqual(['Launch daylaunch'])
+    expect(optionLabels()).toEqual(['Launch day'])
 
     await user.clear(input())
     await user.type(input(), 'access-rules')
-    expect(optionLabels()).toEqual(['Data accessaccess-rules'])
+    expect(optionLabels()).toEqual(['Data access'])
+
+    // A type-named entry is found by its title too.
+    await user.clear(input())
+    await user.type(input(), 'example')
+    expect(optionLabels()).toEqual(['Site settings'])
   })
 
   it('says so when nothing matches', async () => {
@@ -278,7 +313,7 @@ describe('QuickOpenPalette', () => {
   it('arms the first option as soon as it opens', async () => {
     renderPalette()
 
-    await waitFor(() => expect(armedLabels()).toEqual(['Getting startedstart']))
+    await waitFor(() => expect(armedLabels()).toEqual(['Getting started']))
   })
 
   it('moves down with ArrowDown and opens that entry on Enter', async () => {
@@ -311,12 +346,12 @@ describe('QuickOpenPalette', () => {
     await waitFor(() => expect(armedLabels()).toHaveLength(1))
     await user.click(input())
     await user.keyboard('{ArrowDown}{ArrowDown}')
-    expect(armedLabels()).toEqual(['Launch daylaunch'])
+    expect(armedLabels()).toEqual(['Launch day'])
     await user.keyboard('l')
-    await waitFor(() => expect(armedLabels()).toEqual(['Data accessaccess-rules']))
+    await waitFor(() => expect(armedLabels()).toEqual(['Data access']))
     await user.keyboard('{Enter}')
 
-    // "l" matches Data access (by its slug), Launch day and Welcome. The first of them opens,
+    // "l" matches Data access (by its slug) and Launch day. The first of them opens,
     // not the Launch day that was armed before typing.
     expect(onSelect).toHaveBeenCalledWith('content/guides/data')
   })
@@ -377,7 +412,7 @@ describe('QuickOpenPalette', () => {
     rerenderWith({ opened: true })
 
     await waitFor(() => expect(input().value).toBe(''))
-    expect(options()).toHaveLength(4)
+    expect(options()).toHaveLength(ENTRIES.length)
   })
 
   describe('long lists', () => {

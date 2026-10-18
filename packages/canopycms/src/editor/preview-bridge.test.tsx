@@ -20,7 +20,7 @@ import {
   type PreviewMarksMessage,
 } from './preview-bridge'
 import type { TypeFromEntrySchema } from '../entry-schema'
-import { PreviewFrame } from './PreviewFrame'
+import { PreviewFrame, type SiteChromeSupport } from './PreviewFrame'
 import { buildPreviewSrc } from './editor-utils'
 import { assetUrl } from '../assets/asset-url'
 import { getPreviewAssetBase, setServerPreviewAssetBaseGetter } from './preview-asset-base'
@@ -56,15 +56,18 @@ const PreviewValue = ({
   initialData,
   path,
   editorOrigin,
+  siteChrome,
 }: {
   initialData: { value: string }
   path?: string
   editorOrigin?: string
+  siteChrome?: boolean
 }) => {
   const { data, highlightEnabled, fieldProps } = useCanopyPreview<{ value: string }>({
     initialData,
     path,
     editorOrigin,
+    siteChrome,
   })
   return (
     <div data-testid="value" data-highlight={String(highlightEnabled)} {...fieldProps('value')}>
@@ -812,6 +815,96 @@ describe('PreviewFrame - sync status', () => {
   it('titles the iframe', () => {
     const { iframe } = renderFrame()
     expect(iframe().getAttribute('title')).toBe('Live preview')
+  })
+})
+
+describe('the site header and footer handshake', () => {
+  const readyMessages = (parentWin: Window) =>
+    vi
+      .mocked(parentWin.postMessage)
+      .mock.calls.map(([message]) => message as { type?: string })
+      .filter((message) => message.type === CANOPY_PREVIEW_READY)
+
+  it('a page that renders them says so in its ready message', () => {
+    const parentWin = simulateFramed()
+    window.history.pushState({}, '', '/preview/x?branch=main&chrome=1')
+    render(<PreviewValue initialData={{ value: 'initial' }} siteChrome />)
+    expect(readyMessages(parentWin)).toEqual([
+      { type: CANOPY_PREVIEW_READY, path: '/preview/x?branch=main&chrome=1', siteChrome: true },
+    ])
+  })
+
+  it('a page that does not says nothing of them', () => {
+    const parentWin = simulateFramed()
+    window.history.pushState({}, '', '/preview/x?branch=main')
+    render(<PreviewValue initialData={{ value: 'initial' }} />)
+    expect(readyMessages(parentWin)).toEqual([
+      { type: CANOPY_PREVIEW_READY, path: '/preview/x?branch=main' },
+    ])
+  })
+
+  it('a page framed with chrome=1 takes the drafts the editor addresses to the page without it', async () => {
+    const parentWin = simulateFramed()
+    window.history.pushState({}, '', '/preview/x?branch=main&chrome=1')
+    const { getByTestId } = render(<PreviewValue initialData={{ value: 'initial' }} siteChrome />)
+    window.dispatchEvent(
+      trustedEvent(
+        { type: CANOPY_PREVIEW_MESSAGE, path: '/preview/x?branch=main', data: { value: 'draft' } },
+        parentWin,
+      ),
+    )
+    await waitFor(() => expect(getByTestId('value').textContent).toBe('draft'))
+  })
+
+  describe('PreviewFrame', () => {
+    const renderFrame = (onSiteChrome: (support: SiteChromeSupport) => void) => {
+      const utils = render(
+        <PreviewFrame
+          src="/preview/x?branch=main"
+          path="/preview/x?branch=main"
+          data={{ value: 'draft' }}
+          onSiteChrome={onSiteChrome}
+        />,
+      )
+      const iframe = utils.container.querySelector('iframe') as HTMLIFrameElement
+      const ready = (extra: Record<string, unknown>) =>
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: { type: CANOPY_PREVIEW_READY, path: '/preview/x?branch=main', ...extra },
+              origin: window.location.origin,
+              source: iframe.contentWindow,
+            }),
+          )
+        })
+      return { iframe, ready }
+    }
+
+    it('passes on what the ready message says, and only a true counts', () => {
+      const onSiteChrome = vi.fn()
+      const { ready } = renderFrame(onSiteChrome)
+      ready({ siteChrome: true })
+      expect(onSiteChrome).toHaveBeenLastCalledWith('supported')
+      ready({ siteChrome: 'yes' })
+      expect(onSiteChrome).toHaveBeenLastCalledWith('unsupported')
+      ready({})
+      expect(onSiteChrome).toHaveBeenLastCalledWith('unsupported')
+    })
+
+    it('says it went unanswered once the page has had its time to connect and has not', () => {
+      vi.useFakeTimers()
+      onTestFinished(() => {
+        vi.useRealTimers()
+      })
+      const onSiteChrome = vi.fn()
+      const { iframe } = renderFrame(onSiteChrome)
+      fireEvent.load(iframe)
+      expect(onSiteChrome).not.toHaveBeenCalled()
+      act(() => {
+        vi.advanceTimersByTime(5_000)
+      })
+      expect(onSiteChrome).toHaveBeenCalledWith('unanswered')
+    })
   })
 })
 

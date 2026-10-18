@@ -1142,18 +1142,26 @@ describe('CanopyApiClient', () => {
       )
     })
 
-    it('should forward key to assets.delete (API-H4)', async () => {
+    it('should post the key in the body to assets.hide and assets.restore', async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ ok: true, status: 200, data: { deleted: true } }),
+        json: async () => ({ ok: true, status: 200, data: { hidden: true } }),
       })
+      const key = 'a'.repeat(32)
 
       const client = new CanopyApiClient({ fetch: mockFetch })
-      await client.assets.delete({ key: 'a.png' })
+      await client.assets.hide({ key })
+      await client.assets.restore({ key })
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        '/api/canopycms/assets?key=a.png',
-        expect.objectContaining({ method: 'DELETE' }),
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        1,
+        '/api/canopycms/assets/hide',
+        expect.objectContaining({ method: 'POST', body: JSON.stringify({ key }) }),
+      )
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        '/api/canopycms/assets/restore',
+        expect.objectContaining({ method: 'POST', body: JSON.stringify({ key }) }),
       )
     })
   })

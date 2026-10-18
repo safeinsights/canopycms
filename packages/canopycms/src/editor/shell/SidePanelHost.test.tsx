@@ -1,10 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React, { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { SidePanelHost, type SidePanelHostProps } from './SidePanelHost'
 import { CanopyCMSProvider } from '../theme'
+import { FOCUS_RETURN_ATTR } from '../utils/focus-return'
 
 // jsdom has no PointerEvent, so a fired pointer event would carry no button or position.
 const originalPointerEvent = window.PointerEvent
@@ -21,10 +22,27 @@ afterAll(() => {
   window.PointerEvent = originalPointerEvent
 })
 
+const originalMatchMedia = window.matchMedia
 afterEach(() => {
   cleanup()
   document.body.removeAttribute('data-canopy-panel-resizing')
+  window.matchMedia = originalMatchMedia
 })
+
+/** The user's motion preference, as `prefers-reduced-motion` reports it. */
+const stubReducedMotion = () => {
+  window.matchMedia = (query: string) =>
+    ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList
+}
 
 const baseProps = (): SidePanelHostProps => ({
   title: 'Content',
@@ -47,7 +65,13 @@ const renderPanel = (props: Partial<SidePanelHostProps> = {}) => {
 const separator = () => screen.getByRole('separator', { name: 'Resize content panel' })
 
 /** A toggle that opens and closes the panel, as the rail's Content button does. */
-function Harness({ initiallyOpen = false }: { initiallyOpen?: boolean }) {
+function Harness({
+  initiallyOpen = false,
+  mode = 'docked',
+}: {
+  initiallyOpen?: boolean
+  mode?: SidePanelHostProps['mode']
+}) {
   const [opened, setOpened] = useState(initiallyOpen)
   const [focusRequest, setFocusRequest] = useState(0)
   const toggle = useRef<HTMLButtonElement>(null)
@@ -66,6 +90,7 @@ function Harness({ initiallyOpen = false }: { initiallyOpen?: boolean }) {
       <button onClick={() => setFocusRequest((request) => request + 1)}>Ask again</button>
       <SidePanelHost
         {...baseProps()}
+        mode={mode}
         opened={opened}
         focusRequest={focusRequest}
         onClose={() => setOpened(false)}
@@ -170,6 +195,96 @@ describe('SidePanelHost', () => {
       fireEvent.click(toggle)
       expect(screen.queryByRole('region')).toBeNull()
       expect(document.activeElement).toBe(document.body)
+    })
+  })
+
+  describe('motion', () => {
+    const region = () => screen.queryByRole('region', { name: 'Content' })
+
+    it('slides an overlay in, then out inert, handing focus back before it unmounts', async () => {
+      render(<Harness mode="overlay" />)
+      const toggle = screen.getByRole('button', { name: 'Toggle' })
+      act(() => toggle.focus())
+      fireEvent.click(toggle)
+      await waitFor(() => expect(document.activeElement).toBe(region()))
+      expect(region()?.style.transitionDuration).toBe('250ms')
+
+      act(() => screen.getByRole('button', { name: 'Inside' }).focus())
+      fireEvent.click(screen.getByRole('button', { name: 'Close content panel' }))
+      // Still sliding out, it can neither keep focus nor take a click meant for the form.
+      expect(region()?.hasAttribute('inert')).toBe(true)
+      expect(region()?.hasAttribute(FOCUS_RETURN_ATTR)).toBe(true)
+      expect(document.activeElement).toBe(toggle)
+      await waitFor(() => expect(region()).toBeNull())
+    })
+
+    it('keeps the same section when reopened mid-slide, live again and taking focus', async () => {
+      render(<Harness mode="overlay" />)
+      const toggle = screen.getByRole('button', { name: 'Toggle' })
+      act(() => toggle.focus())
+      fireEvent.click(toggle)
+      await waitFor(() => expect(document.activeElement).toBe(region()))
+      const section = region()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Close content panel' }))
+      expect(region()).toBe(section)
+      expect(section?.hasAttribute('inert')).toBe(true)
+
+      fireEvent.click(toggle)
+      expect(region()).toBe(section)
+      expect(section?.hasAttribute('inert')).toBe(false)
+      expect(section?.hasAttribute(FOCUS_RETURN_ATTR)).toBe(false)
+      await waitFor(() => expect(document.activeElement).toBe(section))
+    })
+
+    it.each([
+      ['left to right', 'ltr', 'translateX(-100%)'],
+      ['right to left', 'rtl', 'translateX(100%)'],
+    ])('slides out toward the inline start, %s', async (_how, dir, out) => {
+      // jsdom computes no `direction`, so the page's is stubbed from the nearest `dir`.
+      const computed = window.getComputedStyle
+      vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+        const style = computed(element, pseudo)
+        const direction = element.closest('[dir]')?.getAttribute('dir') ?? 'ltr'
+        return new Proxy(style, {
+          get: (target, key) => {
+            if (key === 'direction') return direction
+            const value: unknown = Reflect.get(target, key, target)
+            return typeof value === 'function' ? value.bind(target) : value
+          },
+        })
+      })
+      onTestFinished(() => {
+        vi.restoreAllMocks()
+      })
+      render(
+        <div dir={dir}>
+          <Harness mode="overlay" />
+        </div>,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle' }))
+      await waitFor(() => expect(region()).not.toBeNull())
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle' }))
+      await waitFor(() => expect(region()?.style.transform).toBe(out))
+    })
+
+    it('opens and closes a docked panel at once, with no slide', () => {
+      render(<Harness mode="docked" />)
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle' }))
+      expect(region()?.style.transform).toBe('')
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle' }))
+      expect(region()).toBeNull()
+    })
+
+    it('opens and closes an overlay at once when the user prefers reduced motion', async () => {
+      stubReducedMotion()
+      render(<Harness mode="overlay" />)
+      // The preference arrives in an effect after the first render.
+      await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle' }))
+      expect(region()?.style.transform).toBe('')
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle' }))
+      expect(region()).toBeNull()
     })
   })
 

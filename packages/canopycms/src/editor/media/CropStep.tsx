@@ -2,37 +2,57 @@
 
 import React, { useState } from 'react'
 
-import { Button, Group, Modal, Slider, Stack, Text } from '@mantine/core'
-import Cropper, { type Area } from 'react-easy-crop'
+import { Button, Group, Modal, Stack, Text } from '@mantine/core'
+import ReactCrop, { type PercentCrop } from 'react-image-crop'
 
 import type { CropRect } from '../../assets/transform-directives'
-import { cropAreaPercentToRect, cropRectToAreaPercent } from './crop-math'
+import { cropAreaPercentToRect, initialCropBox } from './crop-math'
 
 export interface CropStepProps {
   opened: boolean
   onClose: () => void
   /** Full-frame image src to crop - `assetUrl()` with no crop directive, so the user always crops the original frame. */
   imageSrc: string
-  /** Numeric aspect ratio (width/height) parsed from the field config's "W:H" string. */
-  aspect: number
-  /** Existing crop rect, if re-cropping - seeds react-easy-crop's initial selection (best effort). */
+  /** Numeric aspect ratio (width/height) parsed from the field config's "W:H" string. Absent: the crop box is free-form. */
+  aspect?: number
+  /** Existing crop rect, if re-cropping - the box it opens with. */
   initialCrop?: CropRect
   onConfirm: (rect: CropRect) => void
 }
 
-const MIN_ZOOM = 1
-const MAX_ZOOM = 3
-const ZOOM_STEP = 0.05
+const MIN_BOX_PX = 16
+
+const CORNER_LABEL = (corner: string) => `${corner} corner. Arrow keys resize the box.`
+const ARIA_LABELS = {
+  cropArea: 'Crop box. Arrow keys move it; hold Shift for larger steps.',
+  nwDragHandle: CORNER_LABEL('Top-left'),
+  neDragHandle: CORNER_LABEL('Top-right'),
+  seDragHandle: CORNER_LABEL('Bottom-right'),
+  swDragHandle: CORNER_LABEL('Bottom-left'),
+  nDragHandle: 'Top edge. Up and down arrow keys resize the box.',
+  sDragHandle: 'Bottom edge. Up and down arrow keys resize the box.',
+  eDragHandle: 'Right edge. Left and right arrow keys resize the box.',
+  wDragHandle: 'Left edge. Left and right arrow keys resize the box.',
+}
+const PREVIEW_MAX_HEIGHT = 360
+
+const toPercentCrop = (box: {
+  x: number
+  y: number
+  width: number
+  height: number
+}): PercentCrop => ({
+  unit: '%',
+  ...box,
+})
 
 /**
- * react-easy-crop wrapped in a Modal for the ImageField crop step. Percentage
- * -> normalized-rect conversion is delegated to crop-math.ts's pure,
- * independently-unit-tested `cropAreaPercentToRect`.
+ * react-image-crop in a Modal for the ImageField crop step. Box -> normalized-rect
+ * conversion is delegated to crop-math.ts's pure, independently-unit-tested
+ * `cropAreaPercentToRect`.
  *
- * The pan/zoom/pending-selection state lives in `CropStepBody`, mounted only
- * while `opened` and keyed on `imageSrc` - so a fresh crop session always
- * starts from fresh state (React remounts on key change) without an effect
- * that would otherwise need to call `setState` synchronously to reset it.
+ * The box state lives in `CropStepBody`, mounted only while `opened` and keyed on `imageSrc`,
+ * so a fresh crop session always starts from a fresh box (React remounts on key change).
  */
 export const CropStep: React.FC<CropStepProps> = ({
   opened,
@@ -67,7 +87,7 @@ export const CropStep: React.FC<CropStepProps> = ({
 
 interface CropStepBodyProps {
   imageSrc: string
-  aspect: number
+  aspect?: number
   initialCrop?: CropRect
   onConfirm: (rect: CropRect) => void
   onClose: () => void
@@ -80,61 +100,69 @@ const CropStepBody: React.FC<CropStepBodyProps> = ({
   onConfirm,
   onClose,
 }) => {
-  const [crop, setCrop] = useState({ x: 0, y: 0 })
-  const [zoom, setZoom] = useState(1)
-  const [pendingArea, setPendingArea] = useState<Area | null>(null)
+  const [box, setBox] = useState<PercentCrop | undefined>(undefined)
+  const [loadFailed, setLoadFailed] = useState(false)
 
-  const handleConfirm = () => {
-    if (!pendingArea) return
-    const rect = cropAreaPercentToRect(pendingArea)
-    if (rect) onConfirm(rect)
+  // The box can't be seeded until the image's displayed size is known, so Apply stays off until then.
+  const rect = box ? cropAreaPercentToRect(box) : null
+
+  const handleImageLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
+    const { width, height } = event.currentTarget
+    setBox(
+      toPercentCrop(
+        initialCropBox({ imageWidth: width, imageHeight: height, aspect, existing: initialCrop }),
+      ),
+    )
   }
-
-  const initialCroppedAreaPercentages = initialCrop ? cropRectToAreaPercent(initialCrop) : undefined
 
   return (
     <Stack gap="md">
       <div
-        style={{
-          position: 'relative',
-          width: '100%',
-          height: 360,
-          background: 'var(--mantine-color-black)',
-        }}
+        style={
+          {
+            display: 'flex',
+            justifyContent: 'center',
+            background: 'var(--mantine-color-black)',
+            '--rc-focus-color': 'var(--canopy-focus-ring)',
+          } as React.CSSProperties
+        }
       >
-        <Cropper
-          image={imageSrc}
-          crop={crop}
-          zoom={zoom}
+        <ReactCrop
+          crop={box}
           aspect={aspect}
-          initialCroppedAreaPercentages={initialCroppedAreaPercentages}
-          onCropChange={setCrop}
-          onZoomChange={setZoom}
-          onCropComplete={(croppedArea) => setPendingArea(croppedArea)}
-        />
+          minWidth={MIN_BOX_PX}
+          minHeight={MIN_BOX_PX}
+          keepSelection
+          ariaLabels={ARIA_LABELS}
+          onChange={(_pixels, percent) => setBox(percent)}
+        >
+          <img
+            src={imageSrc}
+            alt=""
+            style={{ maxHeight: PREVIEW_MAX_HEIGHT, maxWidth: '100%', display: 'block' }}
+            onLoad={handleImageLoad}
+            onError={() => setLoadFailed(true)}
+          />
+        </ReactCrop>
       </div>
-      <Group gap="sm" align="center">
-        <Text size="sm" w={50}>
-          Zoom
+      {loadFailed && (
+        <Text size="sm" c="var(--canopy-danger-text)" role="alert">
+          {"This image couldn't be loaded, so it can't be cropped."}
         </Text>
-        <Slider
-          style={{ flex: 1 }}
-          min={MIN_ZOOM}
-          max={MAX_ZOOM}
-          step={ZOOM_STEP}
-          value={zoom}
-          onChange={setZoom}
-          label={(value) => `${value.toFixed(2)}x`}
-        />
-      </Group>
+      )}
+      <Text size="sm" c="dimmed">
+        {aspect === undefined
+          ? 'Drag the box to move it, or its edges and corners to resize it. With a keyboard, arrow keys move it; Shift takes larger steps.'
+          : 'Drag the box to move it, or a corner to resize it. Its shape is fixed. With a keyboard, arrow keys move it; Shift takes larger steps.'}
+      </Text>
       <Group justify="flex-end">
         <Button size="sm" variant="default" onClick={onClose}>
           Cancel
         </Button>
         <Button
           size="sm"
-          onClick={handleConfirm}
-          disabled={!pendingArea}
+          onClick={() => rect && onConfirm(rect)}
+          disabled={!rect}
           data-testid="crop-step-apply"
         >
           Apply crop

@@ -87,9 +87,40 @@ export const AddRefused: Story = {
   ),
 }
 
+/** A branch that takes no writes: each row that would have a "…" menu draws a lock there on the hovered, focused or selected row. */
+export const LockedBranch: Story = {
+  render: () => (
+    <div className="w-80">
+      <EntryNavigator
+        selectedPath="posts/hello-world"
+        onSelect={(id) => alert(`Select ${id}`)}
+        onDeleteEntry={() => {}}
+        onRenameEntry={() => {}}
+        readOnly
+        readOnlyReason="This branch is in review. Withdraw it to make changes."
+        collections={[
+          {
+            path: unsafeAsLogicalPath('home'),
+            label: 'Home',
+            type: 'entry',
+            entries: entries,
+          },
+          {
+            path: unsafeAsLogicalPath('posts'),
+            label: 'Posts',
+            type: 'collection',
+            entries: posts,
+            onAdd: () => {},
+          },
+        ]}
+      />
+    </div>
+  ),
+}
+
 const noop = () => {}
 
-/** The navigator at the drawer's content width, with long titles, nesting, markers and every menu. */
+/** The navigator at the drawer's content width: long titles and types, a singleton, a missing entry, nesting, markers and every menu. */
 export const DrawerWidth: Story = {
   render: () => (
     <div
@@ -110,12 +141,17 @@ export const DrawerWidth: Story = {
             type: 'collection',
             onAdd: noop,
             onAddSubCollection: noop,
-            order: ['home00000001', 'guides000001', 'news00000001'],
+            order: ['settings0001', 'home00000001', 'guides000001', 'news00000001'],
             entries: [
+              {
+                path: unsafeAsLogicalPath('content/settings'),
+                label: 'Site settings',
+                contentId: unsafeAsContentId('settings0001'),
+              },
               {
                 path: unsafeAsLogicalPath('content/home'),
                 label: 'Home — the welcome page for every visitor to the research platform',
-                status: 'Page',
+                status: 'Landing page with hero, highlights and calls to action',
                 contentId: unsafeAsContentId('home00000001'),
               },
             ],
@@ -144,6 +180,13 @@ export const DrawerWidth: Story = {
                     status: 'Guide',
                     contentId: unsafeAsContentId('guide0000002'),
                     conflictNotice: true,
+                  },
+                  {
+                    path: unsafeAsLogicalPath('content/guides/retired'),
+                    label: 'Retired guide',
+                    status: 'Missing',
+                    missing: true,
+                    contentId: unsafeAsContentId('guide0000003'),
                   },
                 ],
                 children: [

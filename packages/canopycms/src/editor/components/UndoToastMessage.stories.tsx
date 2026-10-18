@@ -26,8 +26,3 @@ export const AfterRemove: Story = {}
 export const AfterRemoveWithComments: Story = {
   args: { note: 'Its 2 comments moved to "Comment on this entry".' },
 }
-
-/** An optional object's Clear. */
-export const AfterClear: Story = {
-  args: { label: '"SEO"', action: 'clear' },
-}

@@ -42,7 +42,7 @@ test.describe('Editor and preview images use the authenticated asset route', () 
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
     })
 
     let hash32 = ''

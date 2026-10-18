@@ -15,7 +15,7 @@ export interface BranchLockInput {
  * nothing offers a write the API would reject; `branchReadOnly` only picks the message, and
  * base-branch read-only takes precedence over a workflow status lock.
  */
-export function branchLockState({
+function branchLockState({
   branchStatus,
   branchReadOnly = false,
   branchWriteBlocked = false,
@@ -29,6 +29,32 @@ export function branchLockState({
   return { statusLocked, branchDataUnavailable }
 }
 
+/**
+ * Whether the banner renders; the top bar reads the same answer, so the two cannot drift.
+ * @internal Exported for tests.
+ */
+export function branchLockBannerShown(lock: BranchLockInput): boolean {
+  return !!lock.branchReadOnly || branchLockState(lock).statusLocked
+}
+
+/**
+ * Why the branch takes no writes, with the way forward; undefined when it does take them. The
+ * top bar's Save and the navigator's row locks say this; the banner describes the same lock.
+ */
+export function describeBranchLock(lock: BranchLockInput): string | undefined {
+  if (!branchLockBannerShown(lock)) return undefined
+  const { statusLocked, branchDataUnavailable } = branchLockState(lock)
+  if (lock.branchReadOnly) return 'The base branch is read-only. Create a branch to make changes.'
+  if (branchDataUnavailable)
+    return 'Branch details could not be loaded. Use "Switch branch…" to retry.'
+  if (!statusLocked) return undefined
+  if (lock.branchStatus === 'submitted')
+    return 'This branch is in review. Withdraw it to make changes.'
+  if (lock.branchStatus === 'approved')
+    return 'This branch is approved. Withdraw it to make changes.'
+  return `This branch is ${lock.branchStatus}. Its content is read-only.`
+}
+
 export interface BranchLockBannerProps extends BranchLockInput {
   branchName: string
   onBranchManagerOpen: () => void
@@ -40,8 +66,8 @@ export function BranchLockBanner({
   onBranchManagerOpen,
   ...lock
 }: BranchLockBannerProps) {
-  const { statusLocked, branchDataUnavailable } = branchLockState(lock)
-  if (!lock.branchReadOnly && !statusLocked) return null
+  const { branchDataUnavailable } = branchLockState(lock)
+  if (!branchLockBannerShown(lock)) return null
 
   const [testId, message, action] = lock.branchReadOnly
     ? [

@@ -1,6 +1,7 @@
 /**
- * The content panel: docked beside the panes in a wide side-by-side layout, otherwise an overlay on
- * the form pane; its open state and width persist, and a URL asking for no entry opens it. Also
+ * The content panel: docked in a wide window, beside the panes side by side and beside the form row
+ * stacked, otherwise an overlay on the form pane; its open state and width persist, and a URL
+ * asking for no entry opens it. Also
  * how a maximized preview gives way to what needs the form, Save all without an entry list, and
  * the browser tab's title.
  */
@@ -57,7 +58,21 @@ const okJson = (data: unknown) =>
 const stubApi = ({
   failingSlug,
   failingEntries,
-}: { failingSlug?: string; failingEntries?: boolean } = {}) => {
+  listed = [hello, second],
+  postType = {},
+  missingSlugs = [],
+  loadedTitle = 'Loaded title',
+}: {
+  failingSlug?: string
+  failingEntries?: boolean
+  listed?: EditorEntry[]
+  /** Extra settings for the post entry type, such as `maxItems: 1` to make it a singleton. */
+  postType?: { label?: string; maxItems?: number }
+  /** Slugs listed with `exists: false`. */
+  missingSlugs?: string[]
+  /** The title every post loads with. */
+  loadedTitle?: string
+} = {}) => {
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
@@ -96,7 +111,7 @@ const stubApi = ({
                 logicalPath: 'content/posts',
                 name: 'posts',
                 label: 'Posts',
-                entries: [{ name: 'post', format: 'json', schema }],
+                entries: [{ name: 'post', format: 'json', schema, ...postType }],
               },
               {
                 type: 'entry-type',
@@ -105,6 +120,7 @@ const stubApi = ({
                 parentPath: 'content/posts',
                 format: 'json',
                 schemaRef: 'postSchema',
+                ...postType,
               },
             ],
             entrySchemas: { postSchema: schema },
@@ -126,7 +142,7 @@ const stubApi = ({
                 order: [],
               },
             ],
-            entries: [hello, second].map((e) => ({
+            entries: listed.map((e) => ({
               logicalPath: e.path,
               contentId: e.contentId,
               collectionPath: e.collectionPath,
@@ -136,7 +152,7 @@ const stubApi = ({
               format: e.format,
               entryType: 'post',
               physicalPath: `/content/posts.abc123XYZ789/post.${e.slug}.${e.contentId}.json`,
-              exists: true,
+              exists: !missingSlugs.includes(e.slug ?? ''),
             })),
             pagination: { hasMore: false, limit: 50 },
           }),
@@ -146,7 +162,7 @@ const stubApi = ({
         return Promise.resolve(new Response('{}', { status: 500 }))
       }
       if (url.includes('/content/content/posts/')) {
-        return Promise.resolve(okJson({ title: 'Loaded title', version: 100 }))
+        return Promise.resolve(okJson({ title: loadedTitle, version: 100 }))
       }
       return Promise.resolve(okJson({}))
     }),
@@ -177,7 +193,10 @@ const storedLayout = (): Record<string, unknown> =>
 const renderEditor = ({
   renderPreview,
   entries = [hello, second],
-}: Partial<Pick<React.ComponentProps<typeof Editor>, 'renderPreview' | 'entries'>> = {}) =>
+  previewBaseByCollection,
+}: Partial<
+  Pick<React.ComponentProps<typeof Editor>, 'renderPreview' | 'entries' | 'previewBaseByCollection'>
+> = {}) =>
   render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000 }}>
       <ApiClientProvider>
@@ -188,6 +207,7 @@ const renderEditor = ({
           operatingMode="dev"
           themeOptions={{}}
           renderPreview={renderPreview}
+          previewBaseByCollection={previewBaseByCollection}
         />
       </ApiClientProvider>
     </SWRConfig>,
@@ -273,13 +293,13 @@ describe('content panel', () => {
   })
 
   it.each([
-    ['a narrow window', false, 'side'],
-    ['the stacked layout', true, 'stacked'],
+    ['a narrow side-by-side window', 'side'],
+    ['a narrow stacked window', 'stacked'],
   ])(
     'in %s, lays over the form pane only, and closes on select and on Escape',
-    async (_where, wide, layout) => {
+    async (_where, layout) => {
       storeLayout({ layout })
-      await setup(wide)
+      await setup(false)
       expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
       const formPane = panel()?.parentElement?.querySelector('[data-testid="form-pane"]')
       expect(formPane?.hasAttribute('inert')).toBe(true)
@@ -316,8 +336,12 @@ describe('content panel', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(document.activeElement).toBe(document.body)
 
-    fireEvent.click(screen.getAllByTestId('breadcrumb-segment')[0])
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter')))
+    fireEvent.click(screen.getByRole('button', { name: 'Posts' }))
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(
+        'collection:content/posts',
+      ),
+    )
   })
 
   it("opens the panel on a collection crumb's collection, its row focused", async () => {
@@ -339,13 +363,43 @@ describe('content panel', () => {
     expect(panel()).not.toBeNull()
   })
 
-  it('docks an open overlay open when the layout turns side by side', async () => {
+  it('docks beside the form row only in a wide stacked window, the preview keeping its row', async () => {
     storeLayout({ layout: 'stacked' })
     await setup(true)
-    expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
+    expect(panel()?.closest('[data-testid="form-aside"]')).not.toBeNull()
+    expect(document.querySelector('[data-canopy-region="panel"]')?.childElementCount).toBe(0)
+    const previewRow = screen.getByTestId('preview-pane').closest('[data-panel]')
+    expect(previewRow?.contains(panel())).toBe(false)
+    expect(screen.getByTestId('form-pane').hasAttribute('inert')).toBe(false)
+
+    fireEvent.click(await row('second'))
+    await waitFor(() =>
+      expect(screen.getByTestId('file-dropdown-button').textContent).toContain('second'),
+    )
+    escapeFromPanel()
+    expect(panel()).not.toBeNull()
+  })
+
+  it('stays docked, open and at its width as the layout changes', async () => {
+    await setup(true)
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize content panel' }), {
+      key: 'ArrowRight',
+    })
+    act(() => layoutButton().focus())
 
     fireEvent.click(layoutButton())
-    await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('docked'))
+    await waitFor(() => expect(splitOrientation()).toBe('horizontal'))
+    expect(panel()?.closest('[data-testid="form-aside"]')).not.toBeNull()
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
+    expect(panel()?.style.width).toBe('296px')
+    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(layoutButton())
+
+    fireEvent.click(layoutButton())
+    await waitFor(() => expect(splitOrientation()).toBe('vertical'))
+    expect(panel()?.closest('[data-canopy-region="panel"]')).not.toBeNull()
+    expect(panel()?.style.width).toBe('296px')
   })
 
   it('does not bring a closed docked panel back as an overlay', async () => {
@@ -362,26 +416,29 @@ describe('content panel', () => {
     expect(panel()).toBeNull()
   })
 
-  it('keeps a URL-opened overlay open when the stored layout is stacked', async () => {
+  it('docks a URL-opened panel open when the stored layout is stacked', async () => {
     storeLayout({ layout: 'stacked' })
     window.history.replaceState({}, '', '/?entry=')
     stubWindowWidth(true)
     stubApi()
     renderEditor()
     await loaded()
-    expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
+    expect(panel()?.closest('[data-testid="form-aside"]')).not.toBeNull()
   })
 
-  it('returns focus to the "All content" crumb when the overlay it opened closes', async () => {
-    storeLayout({ layout: 'stacked' })
-    stubWindowWidth(true)
+  it('returns focus to the collection crumb when the overlay it opened closes', async () => {
+    window.history.replaceState({}, '', `/?entry=${hello.path}`)
+    stubWindowWidth(false)
     stubApi()
     renderEditor()
-    const crumb = screen.getAllByTestId('breadcrumb-segment')[0]
+    const crumb = await screen.findByRole('button', { name: 'Posts' })
     crumb.focus()
     fireEvent.click(crumb)
-    await loaded()
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('entry-nav-filter')))
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(
+        'collection:content/posts',
+      ),
+    )
 
     escapeFromPanel()
     await waitFor(() => expect(panel()).toBeNull())
@@ -389,8 +446,7 @@ describe('content panel', () => {
   })
 
   it('uncovers the form when the preview asks to focus one of its fields', async () => {
-    storeLayout({ layout: 'stacked' })
-    await setup(true)
+    await setup(false)
     const formPane = screen.getByTestId('form-pane')
     expect(formPane.hasAttribute('inert')).toBe(true)
 
@@ -408,8 +464,7 @@ describe('content panel', () => {
   })
 
   it('leaves Mod+Alt+M to a form the overlay covers', async () => {
-    storeLayout({ layout: 'stacked' })
-    stubWindowWidth(true)
+    stubWindowWidth(false)
     stubApi()
     renderEditor()
     await screen.findByTestId('form-comments-menu-button')
@@ -435,14 +490,6 @@ describe('content panel', () => {
     expect(await screen.findByTestId('form-comments-menu')).toBeDefined()
   })
 
-  it('closes the overlay when the rail opens the first entry', async () => {
-    storeLayout({ layout: 'stacked' })
-    await setup(true)
-    fireEvent.click(screen.getByTestId('rail-home-button'))
-    await waitFor(() => expect(panel()).toBeNull())
-    expect(screen.getByTestId('form-pane').hasAttribute('inert')).toBe(false)
-  })
-
   it('does not restore an overlay open on load', async () => {
     storeLayout({ contentPanelOpen: true })
     stubWindowWidth(false)
@@ -464,6 +511,110 @@ describe('content panel', () => {
     renderEditor()
     await waitFor(() => expect(panel()).not.toBeNull())
     expect(panel()?.getAttribute('data-panel-mode')).toBe(wide ? 'docked' : 'overlay')
+  })
+
+  it('opens the home page, the entry routed at /, when the URL names no entry', async () => {
+    const index = entry('index', 'jkl012GHI789')
+    stubWindowWidth(true)
+    stubApi({ listed: [hello, second, index] })
+    renderEditor({
+      entries: [hello, second, index],
+      previewBaseByCollection: { 'content/posts': '/' },
+    })
+    await waitFor(() => expect(document.title).toBe('index · Test Editor'))
+    expect(new URL(window.location.href).searchParams.get('entry')).toBe(index.path)
+  })
+
+  it.each([
+    ['with a page, "Change URL"', undefined, 'Change URL'],
+    ['with none, "Change slug"', { 'content/posts': false as const }, 'Change slug'],
+  ])(
+    'names the entry menu item and dialog by what changes: %s',
+    async (_case, previewBaseByCollection, action) => {
+      stubWindowWidth(true)
+      stubApi()
+      renderEditor({ previewBaseByCollection })
+      await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+      fireEvent.click(screen.getByTestId('file-dropdown-button'))
+      const item = await screen.findByTestId('entry-menu-rename')
+      expect(item.textContent).toBe(`${action}…`)
+      fireEvent.click(item)
+      const dialog = await screen.findByRole('dialog', { name: action })
+      expect(dialog.textContent).toContain('which comes from its “Title” field')
+    },
+  )
+
+  it.each([
+    ['with a page, "Change URL"', undefined, 'Change URL'],
+    ['with none, "Change slug"', { 'content/posts': false as const }, 'Change slug'],
+  ])(
+    'names the content tree row menu item and its dialog by what changes: %s',
+    async (_case, previewBaseByCollection, action) => {
+      stubWindowWidth(true)
+      stubApi()
+      renderEditor({ previewBaseByCollection })
+      await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+      fireEvent.click(toggle())
+      fireEvent.click(await screen.findByTestId('entry-menu-second'))
+      const item = await screen.findByTestId('rename-entry-menu-item')
+      expect(item.textContent).toBe(`${action}…`)
+      fireEvent.click(item)
+      const dialog = await screen.findByRole('dialog', { name: action })
+      // Not open, so its value is not at hand: its schema's title field names it.
+      expect(dialog.textContent).toContain('which comes from its “Title” field')
+    },
+  )
+
+  it("reads the open entry's value: an empty title leaves its name to its slug", async () => {
+    stubWindowWidth(true)
+    stubApi({ loadedTitle: '' })
+    renderEditor()
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: /^Title/ })).toHaveProperty('value', ''),
+    )
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('entry-menu-rename'))
+    const dialog = await screen.findByRole('dialog', { name: 'Change URL' })
+    expect(dialog.textContent).toContain('with no title, its name follows the URL')
+  })
+
+  it('shows a missing entry as Missing, in error text, in the content tree', async () => {
+    stubWindowWidth(true)
+    stubApi({ missingSlugs: ['second'] })
+    renderEditor()
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+    fireEvent.click(toggle())
+    const row = await screen.findByTestId('entry-nav-item-second')
+    const type = row.querySelector('[data-testid="entry-nav-type"]')
+    expect(type?.textContent).toBe('Missing')
+    expect(type?.querySelector('p')?.getAttribute('style')).toContain('--canopy-danger-text')
+  })
+
+  it('finds a type-named entry in the content tree filter by its title', async () => {
+    stubWindowWidth(true)
+    // Its title shares no text with its slug or its type label.
+    const welcome = { ...hello, label: 'Welcome aboard' }
+    stubApi({ listed: [welcome], postType: { label: 'Featured', maxItems: 1 } })
+    renderEditor({ entries: [welcome] })
+    await waitFor(() => expect(document.title).toBe('Featured · Test Editor'))
+    fireEvent.click(toggle())
+    fireEvent.change(await screen.findByTestId('entry-nav-filter'), { target: { value: 'aboard' } })
+    expect(screen.queryByTestId('entry-nav-filter-empty')).toBeNull()
+    expect(screen.getByTestId('entry-nav-item-featured')).toBeTruthy()
+  })
+
+  it("names each entry's type and route under it in quick open", async () => {
+    stubWindowWidth(true)
+    stubApi()
+    renderEditor()
+    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
+    fireEvent.click(screen.getByTestId('rail-search-button'))
+    const details = await screen.findAllByTestId('quick-open-option-detail')
+    expect(details.map((detail) => detail.textContent)).toEqual([
+      'Post · /posts/hello',
+      'Post · /posts/second',
+    ])
   })
 })
 
@@ -544,8 +695,7 @@ describe('maximized preview', () => {
   })
 
   it('restores when the content overlay opens over the form', async () => {
-    storeLayout({ layout: 'stacked' })
-    stubWindowWidth(true)
+    stubWindowWidth(false)
     stubApi()
     renderEditor()
     await maximize()
@@ -556,21 +706,23 @@ describe('maximized preview', () => {
   })
 
   it('closes the content overlay when the preview maximizes, and keeps a docked one', async () => {
-    storeLayout({ layout: 'stacked' })
-    await setup(true)
+    await setup(false)
     expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay')
 
     await maximize()
-    expect(panel()).toBeNull()
+    await waitFor(() => expect(panel()).toBeNull())
     expect(toggle().getAttribute('aria-expanded')).toBe('false')
 
-    cleanup()
-    window.localStorage.clear()
-    await setup(true)
-    expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
-    await maximize()
-    expect(panel()).not.toBeNull()
-    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    for (const layout of ['side', 'stacked']) {
+      cleanup()
+      window.localStorage.clear()
+      storeLayout({ layout })
+      await setup(true)
+      expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
+      await maximize()
+      expect(panel()?.closest('[inert]')).toBeNull()
+      expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    }
   })
 
   it('shows the form while a maximized entry loads, and when its load fails', async () => {
@@ -616,8 +768,7 @@ describe('maximized preview', () => {
   })
 
   it('gives the content overlay its focus when it opens over a maximized preview', async () => {
-    storeLayout({ layout: 'stacked' })
-    stubWindowWidth(true)
+    stubWindowWidth(false)
     stubApi()
     renderEditor()
     await maximize()
@@ -629,7 +780,7 @@ describe('maximized preview', () => {
 })
 
 describe('entry menu', () => {
-  it('leaves no entry open once the open one is deleted, focus on "All content"', async () => {
+  it("leaves no entry open once the open one is deleted, focus on the rail's Content button", async () => {
     await setup(true)
     await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
@@ -639,9 +790,7 @@ describe('entry menu', () => {
     await waitFor(() =>
       expect(screen.getByTestId('file-dropdown-button').textContent).toBe('No entry open'),
     )
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getAllByTestId('breadcrumb-segment')[0]),
-    )
+    await waitFor(() => expect(document.activeElement).toBe(toggle()))
     expect(document.title).toBe('Test Editor')
   })
 

@@ -37,7 +37,7 @@ test.describe('Reference Fields', () => {
 
     await test.step('navigate to Home Page entry', async () => {
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
     })
 
@@ -68,7 +68,7 @@ test.describe('Reference Fields', () => {
 
     await test.step('navigate to Home Page', async () => {
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
     })
 
@@ -110,7 +110,7 @@ test.describe('Reference Fields', () => {
       await editorPage.waitForReady()
       await editorPage.createPost('clearable-post', 'Clearable Post')
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await editorPage.selectReferenceOption('relatedPost', 'Clearable Post')
       await editorPage.saveAndVerify()
@@ -141,7 +141,7 @@ test.describe('Reference Fields', () => {
 
     await test.step('navigate to Home Page', async () => {
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
     })
 
@@ -197,7 +197,7 @@ test.describe('Reference Fields', () => {
 
     await test.step('navigate to Home Page', async () => {
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
     })
 
@@ -219,7 +219,7 @@ test.describe('Reference Fields', () => {
       await editorPage.waitForReady()
       await editorPage.createPost('doomed-post', 'Doomed Post')
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await editorPage.selectReferenceOption('relatedPost', 'Doomed Post')
       await editorPage.saveAndVerify()

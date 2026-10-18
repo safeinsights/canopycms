@@ -38,8 +38,13 @@ entry replaces an earlier one's advice, the earlier one points to it.
 
 **int** is the first int prerelease carrying an entry, and each part of the entry is labelled
 `(int.N)` the same way; a number in parentheses after a change is a later int that added a part.
-**Action** says who must act; **Template first** means that with `workerCode: { source: 'parameter' }`,
-you deploy the stack template before CI rolls that int's bundle.
+**Action** says who must act. **Template first** means the int's CMS image or worker bundle needs
+something only the stack template adds (a grant, an environment variable, a resource or a unit
+setting): deploy the template, and any grant you write yourself for a bucket you bring, before CI
+rolls that int's image or, with `workerCode: { source: 'parameter' }`, its bundle. The
+worker-contract gate checks only the bundle, so for the image this label is the only signal. With
+the default `workerCode` and an image the stack builds, one `cdk deploy` moves all three
+together; an image or bundle that CI sets as a parameter keeps its value through `cdk deploy`.
 
 Nothing in this section is edited by hand: each entry is a `.changeset/` file, which a build
 assembles here and labels with the first int that carries it, and a stable release moves the

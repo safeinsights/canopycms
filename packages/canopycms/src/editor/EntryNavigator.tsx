@@ -39,7 +39,10 @@ import {
 
 import { calculatePathToEntry } from './editor-utils'
 import { matchesEntryQuery } from './entry-search'
+import { EDITOR_ACTIONS } from './copy'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
+import { UnsavedMark } from './components/UnsavedMark'
+import { BranchRowLock } from './components/BranchRowLock'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { UnavailableTypeMessage } from './components/UnavailableTypeMessage'
 
@@ -66,9 +69,16 @@ const AddRefusedRow: React.FC = () => (
 export interface EntryNavItem {
   path: LogicalPath
   label: string
+  /** The entry's title, matched by the filter where the label is a singleton's type label. */
+  title?: string
   /** Matched by the filter; the last segment of `path` when absent. */
   slug?: string
+  /** The row's second line: the entry's type, or "Missing" (`entryStatusLabel`). */
   status?: string
+  /** The entry's file is gone: its second line is error text. */
+  missing?: boolean
+  /** The entry has no page on the site, so its menu changes its slug rather than its URL. */
+  noPage?: boolean
   collectionPath?: LogicalPath
   contentId?: ContentId // 12-char embedded ID for ordering
   /** True when this entry's file conflicted during rebase */
@@ -109,7 +119,7 @@ export interface EntryNavigatorProps {
   onExpandedStateChange?: (state: Record<string, boolean>) => void
   /** Called when user requests to delete an entry */
   onDeleteEntry?: (path: LogicalPath) => void
-  /** Called when user requests to rename an entry */
+  /** Called when the user asks to change an entry's URL (its slug) */
   onRenameEntry?: (path: LogicalPath) => void
   /** Called when user reorders an entry within a collection */
   onReorderEntry?: (
@@ -122,12 +132,17 @@ export interface EntryNavigatorProps {
   /** When true and the tree is empty, show a loading indicator instead of "No content" */
   loading?: boolean
   /**
-   * When true, hides all entry/collection mutation affordances (create,
-   * rename, delete, reorder, add/edit collection) -- selection/navigation
-   * stays enabled. Set on a read-only protected base branch, where writes
-   * would only 403 after the fact. Default false.
+   * When true, replaces each row's mutation menu (create, rename, delete, reorder, add/edit
+   * collection) with a lock -- selection/navigation stays enabled. Set on a branch that takes no
+   * writes, where they would only 403 after the fact. An entry the user may not edit keeps its own
+   * lock and gets none here. Default false.
    */
   readOnly?: boolean
+  /**
+   * Why the branch takes no writes (`describeBranchLock`), the tooltip of each row's lock. While
+   * readOnly without one, the lock's slot stays empty.
+   */
+  readOnlyReason?: string
   /** Entry paths with unsaved changes; each shows a dot, and so does every collection holding one. */
   dirtyPaths?: ReadonlySet<string>
   /**
@@ -174,7 +189,8 @@ const filterTree = (nodes: TreeNodeData[], query: string): TreeNodeData[] => {
   for (const node of nodes) {
     const label = String(node.label ?? '')
     if (node.nodeProps?.isEntry) {
-      if (matchesEntryQuery({ label, slug: node.nodeProps.slug as string | undefined }, query)) {
+      const { slug, title } = node.nodeProps as { slug?: string; title?: string }
+      if (matchesEntryQuery({ label, title, slug }, query)) {
         kept.push(node)
       }
     } else if (matchesEntryQuery({ label }, query)) {
@@ -199,7 +215,11 @@ const firstEntryPath = (nodes: TreeNodeData[], query: string): string | undefine
   walk(nodes)
   const match = entries.find((node) =>
     matchesEntryQuery(
-      { label: String(node.label ?? ''), slug: node.nodeProps?.slug as string | undefined },
+      {
+        label: String(node.label ?? ''),
+        title: node.nodeProps?.title as string | undefined,
+        slug: node.nodeProps?.slug as string | undefined,
+      },
       query,
     ),
   )
@@ -207,14 +227,17 @@ const firstEntryPath = (nodes: TreeNodeData[], query: string): string | undefine
 }
 
 /**
- * A row's title, truncated with an ellipsis. Its full text shows in a tooltip, and only while the
- * text is cut: the width is measured when the pointer or focus enters the row, not on every render.
+ * A line of a row, truncated with an ellipsis. Its full text shows in a tooltip, and only while
+ * the text is cut: the width is measured when the pointer or focus enters the row, not on every
+ * render.
  */
-const TruncatedLabel: React.FC<{ label: string; highlight: string; fw: number }> = ({
-  label,
-  highlight,
-  fw,
-}) => {
+const TruncatedLabel: React.FC<{
+  label: string
+  highlight?: string
+  fw?: number
+  size?: 'sm' | 'xs'
+  c?: string
+}> = ({ label, highlight = '', fw, size = 'sm', c }) => {
   const elementRef = useRef<HTMLElement | null>(null)
   const [truncated, setTruncated] = useState(false)
   const setElement = useCallback((node: HTMLElement | null) => {
@@ -243,7 +266,7 @@ const TruncatedLabel: React.FC<{ label: string; highlight: string; fw: number }>
         <Highlight
           ref={setElement}
           highlight={highlight}
-          size="sm"
+          size={size}
           fw={fw}
           truncate="end"
           style={{ minWidth: 0 }}
@@ -251,7 +274,7 @@ const TruncatedLabel: React.FC<{ label: string; highlight: string; fw: number }>
           {label}
         </Highlight>
       ) : (
-        <Text ref={setElement} size="sm" fw={fw} truncate="end" style={{ minWidth: 0 }}>
+        <Text ref={setElement} size={size} fw={fw} c={c} truncate="end" style={{ minWidth: 0 }}>
           {label}
         </Text>
       )}
@@ -274,19 +297,7 @@ const stopTreeKeys = (event: React.KeyboardEvent) => {
 
 const UnsavedDot: React.FC<{ label: string }> = ({ label }) => (
   <Tooltip label={label} withinPortal>
-    <Box
-      component="span"
-      role="img"
-      aria-label={label}
-      data-testid="unsaved-dot"
-      style={{
-        flexShrink: 0,
-        width: 8,
-        height: 8,
-        borderRadius: '50%',
-        backgroundColor: 'var(--mantine-color-brand-6)',
-      }}
-    />
+    <UnsavedMark role="img" aria-label={label} data-testid="unsaved-dot" />
   </Tooltip>
 )
 
@@ -304,6 +315,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   hiddenRootPath,
   loading,
   readOnly = false,
+  readOnlyReason,
   dirtyPaths,
   revealCollection,
   onRevealed,
@@ -341,6 +353,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       label: entry.label,
       nodeProps: {
         status: entry.status,
+        title: entry.title,
+        missing: entry.missing,
+        noPage: entry.noPage,
         isEntry: true,
         entryPath: entry.path,
         slug: entry.slug ?? lastSegment(entry.path),
@@ -363,6 +378,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             label: entry?.label ?? col.label,
             nodeProps: {
               status: entry?.status,
+              title: entry?.title,
+              missing: entry?.missing,
+              noPage: entry?.noPage,
               isEntry: true,
               entryPath: entry?.path,
               collectionPath: col.path,
@@ -481,6 +499,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       label: item.label,
       nodeProps: {
         status: item.status,
+        title: item.title,
+        missing: item.missing,
+        noPage: item.noPage,
         isEntry: true,
         entryPath: item.path,
         slug: item.slug ?? lastSegment(item.path),
@@ -706,15 +727,18 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     level,
   }: RenderTreeNodePayload) => {
     const status = node.nodeProps?.status as string | undefined
-    // Collection-level mutation callbacks are nulled when readOnly, same as
-    // the entry-level ones above -- this removes the collection menu button
-    // entirely (hasCollectionMenu below) rather than leaving it enabled.
-    const onAdd = readOnly ? undefined : (node.nodeProps?.onAdd as (() => void) | undefined)
-    const onEdit = readOnly ? undefined : (node.nodeProps?.onEdit as (() => void) | undefined)
-    const onAddSubCollection = readOnly
-      ? undefined
-      : (node.nodeProps?.onAddSubCollection as (() => void) | undefined)
-    const onDelete = readOnly ? undefined : (node.nodeProps?.onDelete as (() => void) | undefined)
+    const entryMissing = !!(node.nodeProps?.missing as boolean | undefined)
+    const entryNoPage = !!(node.nodeProps?.noPage as boolean | undefined)
+    // Collection-level mutation callbacks are nulled when readOnly, same as the entry-level ones
+    // above, so hasCollectionMenu is false; a row that would have had a menu shows its lock.
+    const rawOnAdd = node.nodeProps?.onAdd as (() => void) | undefined
+    const rawOnEdit = node.nodeProps?.onEdit as (() => void) | undefined
+    const rawOnAddSubCollection = node.nodeProps?.onAddSubCollection as (() => void) | undefined
+    const rawOnDelete = node.nodeProps?.onDelete as (() => void) | undefined
+    const onAdd = readOnly ? undefined : rawOnAdd
+    const onEdit = readOnly ? undefined : rawOnEdit
+    const onAddSubCollection = readOnly ? undefined : rawOnAddSubCollection
+    const onDelete = readOnly ? undefined : rawOnDelete
     const entryPath = node.nodeProps?.entryPath as LogicalPath | undefined
     const contentId = node.nodeProps?.contentId as string | undefined
     const parentCollectionPath = node.nodeProps?.parentCollectionPath as LogicalPath | undefined
@@ -726,7 +750,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const unavailableSchemaRefs = node.nodeProps?.unavailableSchemaRefs as
       | readonly string[]
       | undefined
-    // A read-only navigator already says so once, in the branch banner.
+    // A read-only navigator already says writes are refused, so the add-refused line is not repeated.
     const addRefused = !readOnly && !!(node.nodeProps?.addRefused as boolean | undefined)
     const isLeaf = !hasChildren || isEntry
     const selected = node.value === selectedPath
@@ -738,8 +762,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     // collections to always be expandable
     const showChevron = hasChildren || Boolean(isCollection)
 
-    const canReorder =
-      onReorderEntry && contentId && parentCollectionPath && typeof childIndex === 'number'
+    const reorderPosition = contentId && parentCollectionPath && typeof childIndex === 'number'
+    const canReorder = onReorderEntry && reorderPosition
     const canMoveUp = canReorder && childIndex > 0
     const canMoveDown =
       canReorder && typeof totalChildrenCount === 'number' && childIndex < totalChildrenCount - 1
@@ -749,15 +773,35 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       isCollection && (onAdd || onEdit || onAddSubCollection || onDelete || canReorder)
     // An unavailable entry cannot be written, so its menu (rename, delete, reorder) is not offered.
     const entryUnavailable = node.nodeProps?.unavailable as boolean | undefined
-    // The same holds for an entry this user may not edit. A read-only navigator already says so
-    // once, in the branch banner, so only a lone read-only entry gets its own lock.
-    const entryLocked = !readOnly && !!(node.nodeProps?.itemReadOnly as boolean | undefined)
+    // The same holds for an entry this user may not edit, on any branch: its own lock stays, since a
+    // path rule, not the branch, refuses it, and the branch lock leaves that row's slot empty.
+    const entryLocked = !!(node.nodeProps?.itemReadOnly as boolean | undefined)
     const hasEntryMenu =
       isEntry &&
       entryPath &&
       !entryUnavailable &&
       !entryLocked &&
       (onDeleteEntry || onRenameEntry || onReorderEntry)
+
+    // The lock holds the slot where the menu would be, on exactly the rows that would otherwise have
+    // one, so rows never shift. The stylesheet reveals it on the hovered, focused or selected
+    // row (`data-nav-selected`), which keeps touch and keyboard users' route to the reason.
+    const wouldHaveCollectionMenu =
+      isCollection &&
+      !!(
+        rawOnAdd ||
+        rawOnEdit ||
+        rawOnAddSubCollection ||
+        rawOnDelete ||
+        (onReorderEntryProp && reorderPosition)
+      )
+    const wouldHaveEntryMenu =
+      isEntry &&
+      !!entryPath &&
+      !entryUnavailable &&
+      !entryLocked &&
+      !!(onDeleteEntryProp || onRenameEntryProp || onReorderEntryProp)
+    const showsLockSlot = readOnly && (wouldHaveCollectionMenu || wouldHaveEntryMenu)
 
     const showEntryDirtyDot = isEntry && !!entryPath && !!dirtyPaths?.has(entryPath)
     const showCollectionDirtyDot = !isEntry && dirtyCollections.has(node.value)
@@ -770,6 +814,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         {...elementProps}
         ref={selected ? selectedNodeRef : undefined}
         data-nav-row
+        data-nav-selected={selected ? '' : undefined}
         data-testid={`entry-nav-item-${testIdSuffix}`}
         onClick={(event) => {
           elementProps.onClick(event)
@@ -806,48 +851,57 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             >
               <Chevron expanded={expanded} visible={showChevron} />
             </Box>
-            <TruncatedLabel
-              label={label}
-              highlight={filtering ? query.trim() : ''}
-              fw={selected ? 600 : 500}
-            />
-            {showEntryDirtyDot && <UnsavedDot label="Unsaved changes" />}
-            {showCollectionDirtyDot && <UnsavedDot label="Contains unsaved changes" />}
-            {status && (
-              <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0, maxWidth: 96 }}>
-                {status}
-              </Badge>
-            )}
-            {conflictNotice && (
-              <Tooltip
-                label="This content was updated on the base branch — a reviewer will reconcile"
-                withArrow
-              >
-                <Badge
-                  size="xs"
-                  variant="light"
-                  color="orange"
-                  data-testid="conflict-badge"
-                  style={{ flexShrink: 0 }}
-                >
-                  Conflict
-                </Badge>
-              </Tooltip>
-            )}
-            {entryLocked && (
-              <Tooltip label="You can't edit this entry" withinPortal>
-                <Box
-                  component="span"
-                  role="img"
-                  aria-label="You can't edit this entry"
-                  data-testid="entry-lock"
-                  c="dimmed"
-                  style={{ display: 'inline-flex', flexShrink: 0 }}
-                >
-                  <IconLock size={14} aria-hidden />
+            <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
+              <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+                <TruncatedLabel
+                  label={label}
+                  highlight={filtering ? query.trim() : ''}
+                  fw={selected ? 600 : 500}
+                />
+                {showEntryDirtyDot && <UnsavedDot label="Unsaved changes" />}
+                {showCollectionDirtyDot && <UnsavedDot label="Contains unsaved changes" />}
+                {conflictNotice && (
+                  <Tooltip
+                    label="This content was updated on the base branch — a reviewer will reconcile"
+                    withArrow
+                  >
+                    <Badge
+                      size="xs"
+                      variant="light"
+                      color="orange"
+                      data-testid="conflict-badge"
+                      style={{ flexShrink: 0 }}
+                    >
+                      Conflict
+                    </Badge>
+                  </Tooltip>
+                )}
+                {entryLocked && (
+                  <Tooltip label="You can't edit this entry" withinPortal>
+                    <Box
+                      component="span"
+                      role="img"
+                      aria-label="You can't edit this entry"
+                      data-testid="entry-lock"
+                      c="dimmed"
+                      style={{ display: 'inline-flex', flexShrink: 0 }}
+                    >
+                      <IconLock size={14} aria-hidden />
+                    </Box>
+                  </Tooltip>
+                )}
+              </Group>
+              {status && (
+                <Box data-testid="entry-nav-type" style={{ minWidth: 0 }}>
+                  <TruncatedLabel
+                    label={status}
+                    size="xs"
+                    // A missing file is an error, in error text, not a dimmed type.
+                    c={entryMissing ? 'var(--canopy-danger-text)' : 'dimmed'}
+                  />
                 </Box>
-              </Tooltip>
-            )}
+              )}
+            </Stack>
           </Group>
           <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
             {hasCollectionMenu && (
@@ -943,6 +997,17 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                 </Menu.Dropdown>
               </Menu>
             )}
+            {showsLockSlot &&
+              (readOnlyReason ? (
+                <BranchRowLock
+                  label={isCollection ? 'Collection actions' : 'Entry actions'}
+                  reason={readOnlyReason}
+                />
+              ) : (
+                // The branch's state is still loading: hold the slot so rows do not shift. It draws
+                // nothing, so it needs no reveal.
+                <Box w={18} h={18} aria-hidden data-testid="branch-lock-pending" />
+              ))}
             {hasEntryMenu && (
               <Menu shadow="md" width={180} withinPortal position="bottom-end">
                 <Menu.Target>
@@ -967,7 +1032,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                       }}
                       data-testid="rename-entry-menu-item"
                     >
-                      Rename…
+                      {entryNoPage ? EDITOR_ACTIONS.changeSlug : EDITOR_ACTIONS.changeUrl}…
                     </Menu.Item>
                   )}
                   {onReorderEntry && contentId && parentCollectionPath && (

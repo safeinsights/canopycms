@@ -1664,6 +1664,25 @@ describe('useBranchManager', () => {
     expect(urlCall).toBeTruthy()
   })
 
+  it('leaves the URL alone once the page shown is not the editor', async () => {
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches, users: [] },
+    })
+    const location = window.location as unknown as { pathname: string }
+    location.pathname = '/edit'
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    await waitFor(() => expect(window.history.replaceState).toHaveBeenCalled())
+    vi.mocked(window.history.replaceState).mockClear()
+    location.pathname = '/docs/guide'
+
+    act(() => result.current.setBranchName('feature'))
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(window.history.replaceState).not.toHaveBeenCalled()
+  })
+
   it('loads branches on mount', async () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,

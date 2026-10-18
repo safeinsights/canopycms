@@ -33,15 +33,17 @@ test.describe('Save all', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry('Home Page')
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await editorPage.fillTextField('title', homeTitle)
       await editorPage.createPost(postSlug, postSavedTitle)
       await editorPage.fillTextField('title', postDraftTitle)
-      await expect(editorPage.branchUnsavedCount()).toHaveText('2 unsaved', {
-        timeout: SHORT_TIMEOUT,
-        useInnerText: true,
-      })
+      await expect(editorPage.branchUnsavedCount()).toContainText(
+        '2 entries with unsaved changes',
+        {
+          timeout: SHORT_TIMEOUT,
+        },
+      )
     })
 
     const failPostWrite = (route: import('@playwright/test').Route) =>
@@ -64,7 +66,7 @@ test.describe('Save all', () => {
       await expect(result.getByTestId('save-all-failure')).toContainText(
         `${postSavedTitle}: Save failed. Try again.`,
       )
-      await expect(editorPage.branchUnsavedCount()).toHaveText('1 unsaved', { useInnerText: true })
+      await expect(editorPage.branchUnsavedCount()).toContainText('1 entry with unsaved changes')
       // The post is open and keeps what was typed.
       await editorPage.verifyFieldValue('title', postDraftTitle)
     })
@@ -84,9 +86,9 @@ test.describe('Save all', () => {
       await editorPage.waitForReady()
       await editorPage.verifyFieldValue('title', postDraftTitle)
       await expect(editorPage.saveButton).toBeDisabled({ timeout: STANDARD_TIMEOUT })
-      // Its label is its title, so the saved title names it in the tree.
+      // A single-entry type is named by its type, so the saved title shows only in its form.
       await editorPage.openContentNavigator()
-      await editorPage.selectEntry(homeTitle)
+      await editorPage.selectEntry('Home')
       await editorPage.closeContentNavigator()
       await editorPage.verifyFieldValue('title', homeTitle)
       await expect(editorPage.saveButton).toBeDisabled({ timeout: STANDARD_TIMEOUT })

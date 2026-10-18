@@ -5,6 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 
 import type { PreviewWidth } from './hooks/useEditorLayout'
+import {
+  CANOPY_PREVIEW_ERROR,
+  CANOPY_PREVIEW_MARKS,
+  CANOPY_PREVIEW_MESSAGE,
+  CANOPY_PREVIEW_READY,
+} from './preview-bridge'
 import { PreviewPane, type PreviewPaneProps } from './PreviewPane'
 import { CanopyCMSProvider } from './theme'
 
@@ -331,5 +337,328 @@ describe('PreviewPane', () => {
       />,
     )
     expect(screen.getByTestId('preview-unmapped-chip').textContent).toBe('1 unmapped preview mark')
+  })
+
+  describe('while the next entry loads', () => {
+    const nextSrc = '/preview/posts/world?branch=feature-a'
+    const pane = (props: Partial<PreviewPaneProps>) => (
+      <PreviewPane
+        src={src}
+        data={{ title: 'Hello draft' }}
+        previewWidth="fit"
+        onPreviewWidthChange={vi.fn()}
+        mount={{ previewPrefix: '/preview' }}
+        {...props}
+      />
+    )
+    const iframe = () => document.querySelector('iframe') as HTMLIFrameElement
+    const sentDrafts = (spy: { mock: { calls: unknown[][] } }) =>
+      spy.mock.calls
+        .map(([message]) => message as { type?: string; path?: string; data?: unknown })
+        .filter((message) => message.type === CANOPY_PREVIEW_MESSAGE)
+    const ready = (from: HTMLIFrameElement) =>
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: CANOPY_PREVIEW_READY, path: from.getAttribute('src') },
+            origin: window.location.origin,
+            source: from.contentWindow,
+          }),
+        )
+      })
+
+    it('keeps the toolbar and the last page, dimmed, then frames the next with its own draft', () => {
+      const { rerender } = render(pane({}), { wrapper: Wrapper })
+      const toolbar = screen.getByTestId('preview-toolbar')
+      const first = iframe()
+      const firstPost = vi.spyOn(first.contentWindow as Window, 'postMessage')
+
+      // Data handed over while pending is not the next entry's draft yet, so the held page gets none.
+      rerender(pane({ src: nextSrc, data: { title: 'Not yet' }, pending: true }))
+      expect(screen.getByTestId('preview-toolbar')).toBe(toolbar)
+      expect(iframe()).toBe(first)
+      expect(first.getAttribute('src')).toBe(src)
+      expect(first.hasAttribute('inert')).toBe(true)
+      expect(first.parentElement?.getAttribute('aria-busy')).toBe('true')
+      expect(screen.getByRole('progressbar', { name: 'Loading the entry' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Copy path /posts/world' })).toBeTruthy()
+      ready(first)
+      expect(sentDrafts(firstPost)).toEqual([])
+
+      rerender(pane({ src: nextSrc, data: { title: 'World draft' } }))
+      expect(screen.getByTestId('preview-toolbar')).toBe(toolbar)
+      const next = iframe()
+      expect(next).not.toBe(first)
+      expect(next.getAttribute('src')).toBe(nextSrc)
+      expect(next.hasAttribute('inert')).toBe(false)
+      expect(screen.queryByRole('progressbar', { name: 'Loading the entry' })).toBeNull()
+      const nextPost = vi.spyOn(next.contentWindow as Window, 'postMessage')
+      ready(next)
+      expect(sentDrafts(nextPost)).toEqual([
+        expect.objectContaining({ path: nextSrc, data: { title: 'World draft' } }),
+      ])
+      expect(sentDrafts(firstPost)).toEqual([])
+    })
+
+    it('reports no marks from the page it holds', () => {
+      const onMarks = vi.fn()
+      const { rerender } = render(pane({ onMarks }), { wrapper: Wrapper })
+      const first = iframe()
+      rerender(pane({ src: nextSrc, data: undefined, pending: true, onMarks }))
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: CANOPY_PREVIEW_MARKS, count: 0 },
+            origin: window.location.origin,
+            source: first.contentWindow,
+          }),
+        )
+      })
+      expect(onMarks).not.toHaveBeenCalled()
+    })
+
+    it('holds a skeleton under the toolbar when no page has been framed yet', () => {
+      render(pane({ data: undefined, pending: true }), { wrapper: Wrapper })
+      expect(screen.getByTestId('preview-toolbar')).toBeTruthy()
+      expect(screen.getByTestId('preview-loading-skeleton')).toBeTruthy()
+      expect(iframe()).toBeNull()
+    })
+    it('passes on no error report from the page it holds', () => {
+      const onPreviewError = vi.fn()
+      const { rerender } = render(pane({ onPreviewError }), { wrapper: Wrapper })
+      const first = iframe()
+      rerender(pane({ src: nextSrc, data: undefined, pending: true, onPreviewError }))
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: CANOPY_PREVIEW_ERROR, path: src, message: 'Broken draft' },
+            origin: window.location.origin,
+            source: first.contentWindow,
+          }),
+        )
+      })
+      expect(onPreviewError).not.toHaveBeenCalled()
+    })
+
+    it('keeps the held page through a reload or the toggle, and applies them to the next', async () => {
+      const { rerender } = render(pane({ onSiteChromeChange: vi.fn() }), { wrapper: Wrapper })
+      const first = iframe()
+      rerender(pane({ src: nextSrc, data: undefined, pending: true, onSiteChromeChange: vi.fn() }))
+      await userEvent.click(screen.getByRole('button', { name: 'Reload preview' }))
+      rerender(
+        pane({
+          src: nextSrc,
+          data: undefined,
+          pending: true,
+          siteChrome: true,
+          onSiteChromeChange: vi.fn(),
+        }),
+      )
+      expect(iframe()).toBe(first)
+      expect(first.getAttribute('src')).toBe(src)
+
+      rerender(
+        pane({
+          src: nextSrc,
+          data: { title: 'World draft' },
+          siteChrome: true,
+          onSiteChromeChange: vi.fn(),
+        }),
+      )
+      expect(iframe()).not.toBe(first)
+      expect(iframe().getAttribute('src')).toBe(`${nextSrc}&chrome=1`)
+    })
+
+    it('holds the page a reload framed, not the one before it', async () => {
+      const { rerender } = render(pane({}), { wrapper: Wrapper })
+      await userEvent.click(screen.getByRole('button', { name: 'Reload preview' }))
+      const reloaded = iframe()
+      rerender(pane({ src: nextSrc, data: undefined, pending: true }))
+      expect(iframe()).toBe(reloaded)
+    })
+
+    it('applies a reload made while its own data reloads exactly once', async () => {
+      const { rerender } = render(pane({}), { wrapper: Wrapper })
+      const first = iframe()
+      rerender(pane({ data: undefined, pending: true }))
+      await userEvent.click(screen.getByRole('button', { name: 'Reload preview' }))
+      expect(iframe()).toBe(first)
+
+      rerender(pane({ data: { title: 'Hello again' } }))
+      const reloaded = iframe()
+      expect(reloaded).not.toBe(first)
+      rerender(pane({ data: { title: 'Hello edited' } }))
+      expect(iframe()).toBe(reloaded)
+    })
+  })
+
+  describe('the site header and footer', () => {
+    const pane = (props: Partial<PreviewPaneProps>) => (
+      <PreviewPane
+        src={src}
+        data={{ title: 'Draft' }}
+        previewWidth="fit"
+        onPreviewWidthChange={vi.fn()}
+        mount={{ previewPrefix: '/preview' }}
+        onSiteChromeChange={vi.fn()}
+        {...props}
+      />
+    )
+    const toggle = () => screen.queryByRole('button', { name: 'Show site header and footer' })
+    const sayReady = (siteChrome?: boolean) => {
+      const frame = document.querySelector('iframe') as HTMLIFrameElement
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: CANOPY_PREVIEW_READY,
+              path: frame.getAttribute('src'),
+              ...(siteChrome === undefined ? {} : { siteChrome }),
+            },
+            origin: window.location.origin,
+            source: frame.contentWindow,
+          }),
+        )
+      })
+    }
+
+    it('offers the toggle once the page says it renders them', async () => {
+      const onSiteChromeChange = vi.fn()
+      render(pane({ onSiteChromeChange }), { wrapper: Wrapper })
+      expect(toggle()).toBeNull()
+      sayReady(true)
+      expect(toggle()?.getAttribute('aria-pressed')).toBe('false')
+      await userEvent.click(toggle() as HTMLElement)
+      expect(onSiteChromeChange).toHaveBeenCalledWith(true)
+    })
+
+    it('offers no toggle when the page says nothing of them', () => {
+      render(pane({}), { wrapper: Wrapper })
+      sayReady()
+      expect(toggle()).toBeNull()
+    })
+
+    it("offers no toggle for a page outside the preview mount, which is the site's own", () => {
+      render(pane({ src: '/posts/hello?branch=feature-a', siteChrome: true }), {
+        wrapper: Wrapper,
+      })
+      sayReady(true)
+      expect(toggle()).toBeNull()
+      expect(document.querySelector('iframe')?.getAttribute('src')).toBe(
+        '/posts/hello?branch=feature-a',
+      )
+    })
+
+    it('frames and opens the page with chrome=1 while on, and shows its path without it', () => {
+      render(pane({ siteChrome: true }), { wrapper: Wrapper })
+      sayReady(true)
+      const chromeSrc = '/preview/posts/hello?branch=feature-a&chrome=1'
+      expect(document.querySelector('iframe')?.getAttribute('src')).toBe(chromeSrc)
+      expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
+      expect(
+        screen.getByRole('link', { name: 'Open saved version in a new tab' }).getAttribute('href'),
+      ).toBe(chromeSrc)
+      expect(screen.getByRole('button', { name: 'Copy path /posts/hello' })).toBeTruthy()
+    })
+
+    describe("when the page with them doesn't connect", () => {
+      const chromeSrc = '/preview/posts/hello?branch=feature-a&chrome=1'
+      const timeOut = () => {
+        fireEvent.load(document.querySelector('iframe') as HTMLIFrameElement)
+        act(() => {
+          vi.advanceTimersByTime(5_000)
+        })
+      }
+      const note = () => {
+        const id = toggle()?.getAttribute('aria-describedby')
+        return id ? document.getElementById(id)?.textContent : undefined
+      }
+
+      const frameSrc = () => document.querySelector('iframe')?.getAttribute('src')
+      const cue = () => screen.queryByText('Header and footer unavailable')
+
+      it('frames the page without them, keeps the toggle and says why, when on from the start', () => {
+        vi.useFakeTimers()
+        const onSiteChromeChange = vi.fn()
+        render(pane({ siteChrome: true, onSiteChromeChange }), { wrapper: Wrapper })
+        expect(frameSrc()).toBe(chromeSrc)
+        expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
+
+        timeOut()
+        expect(frameSrc()).toBe(src)
+        expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
+        // Not blamed on the header and footer until the page without them connects.
+        expect(note()).toBeUndefined()
+        expect(cue()).toBeNull()
+        sayReady(true)
+        expect(note()).toMatch(/couldn't show its header and footer, so the preview shows pages/)
+        expect(cue()).not.toBeNull()
+        expect(
+          screen
+            .getByRole('link', { name: 'Open saved version in a new tab' })
+            .getAttribute('href'),
+        ).toBe(src)
+        fireEvent.click(toggle() as HTMLElement)
+        expect(onSiteChromeChange).toHaveBeenCalledWith(false)
+      })
+
+      it('does the same when turned on and then never answered', () => {
+        vi.useFakeTimers()
+        const { rerender } = render(pane({}), { wrapper: Wrapper })
+        sayReady(true)
+        rerender(pane({ siteChrome: true }))
+        expect(frameSrc()).toBe(chromeSrc)
+
+        timeOut()
+        expect(frameSrc()).toBe(src)
+        sayReady(true)
+        expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
+        expect(note()).toMatch(/couldn't show its header and footer/)
+      })
+
+      it('frames every later entry without them at once', () => {
+        vi.useFakeTimers()
+        const nextSrc = '/preview/posts/world?branch=feature-a'
+        const { rerender } = render(pane({ siteChrome: true }), { wrapper: Wrapper })
+        timeOut()
+        sayReady(true)
+        rerender(pane({ siteChrome: true, src: nextSrc, data: undefined, pending: true }))
+        rerender(pane({ siteChrome: true, src: nextSrc, data: { title: 'World draft' } }))
+        expect(frameSrc()).toBe(nextSrc)
+        expect(cue()).not.toBeNull()
+      })
+
+      it('blames nothing when the page without them does not connect either', () => {
+        vi.useFakeTimers()
+        render(pane({ siteChrome: true }), { wrapper: Wrapper })
+        timeOut()
+        expect(frameSrc()).toBe(src)
+        timeOut()
+        expect(frameSrc()).toBe(src)
+        expect(toggle()?.getAttribute('aria-pressed')).toBe('true')
+        expect(note()).toBeUndefined()
+        expect(cue()).toBeNull()
+      })
+
+      it('tries them again when turned off and on', () => {
+        vi.useFakeTimers()
+        const { rerender } = render(pane({ siteChrome: true }), { wrapper: Wrapper })
+        timeOut()
+        fireEvent.click(toggle() as HTMLElement)
+        rerender(pane({ siteChrome: false }))
+        rerender(pane({ siteChrome: true }))
+        expect(frameSrc()).toBe(chromeSrc)
+      })
+
+      it('tries them again on Reload', () => {
+        vi.useFakeTimers()
+        render(pane({ siteChrome: true }), { wrapper: Wrapper })
+        timeOut()
+        sayReady(true)
+        fireEvent.click(screen.getByRole('button', { name: 'Reload preview' }))
+        expect(frameSrc()).toBe(chromeSrc)
+        expect(cue()).toBeNull()
+      })
+    })
   })
 })

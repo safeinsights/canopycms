@@ -850,7 +850,7 @@ describe('jumping to a thread on another entry', () => {
     await loaded()
 
     fireEvent.click(screen.getByTestId('comments-button'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Jump to field' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Jump to field/ }))
 
     // The popover of the thread opens on the field it highlights: the block's real place.
     expect(await screen.findByTestId('field-comment-blocks[1].headline-popover')).toBeTruthy()
@@ -873,7 +873,7 @@ describe('jumping to a thread on another entry', () => {
     await loaded()
 
     fireEvent.click(screen.getByTestId('comments-button'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Jump to field' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Jump to field/ }))
 
     const popover = await screen.findByTestId('entry-comment-button-popover')
     expect(within(popover).getByText('Check gone')).toBeTruthy()
@@ -920,7 +920,7 @@ describe('threads on another entry, in the comments panel', () => {
     // Open the other entry by jumping to its thread; the first stays loaded.
     fireEvent.click(screen.getByTestId('comments-button'))
     const onPageCard = await waitFor(() => card('On page'))
-    fireEvent.click(within(onPageCard).getByRole('button', { name: 'Jump to field' }))
+    fireEvent.click(within(onPageCard).getByRole('button', { name: /^Jump to field/ }))
     await waitFor(() =>
       expect(screen.getByTestId('field-comment-blocks[0].headline-popover')).toBeTruthy(),
     )
@@ -933,7 +933,7 @@ describe('threads on another entry, in the comments panel', () => {
     await waitFor(() =>
       expect(within(card('Team gone')).getByText('On a removed item')).toBeTruthy(),
     )
-    expect(within(card('Team gone')).getByRole('button', { name: 'Jump to entry' })).toBeTruthy()
+    expect(within(card('Team gone')).getByRole('button', { name: /^Jump to entry/ })).toBeTruthy()
     expect(heading('Team gone')).toBe('Field · hello › Team › Name, on a removed item')
   })
 })

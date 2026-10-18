@@ -28,14 +28,24 @@ const otherOverlayOpen = () =>
 /** Options rendered at once; the rest are reached by typing more. */
 const MAX_OPTIONS = 50
 
-/** @internal Exported for tests and stories. */
+/** One option: an entry, with the type and route its second line shows. */
 export interface QuickOpenEntry {
   path: string
   label: string
+  /** The entry's title, matched by the search where the label is a singleton's type label. */
+  title?: string
   slug?: string
   collectionPath?: string
   collectionName?: string
+  /** The entry's type (`entryTypeLine`); absent for a singleton, whose label already names it. */
+  typeLabel?: string
+  /** The entry's route on the site (`buildPreviewRoute`); absent when it has no page. */
+  route?: string
 }
+
+/** An option's second line: its type and its route, whichever it has. */
+const detailLine = (entry: QuickOpenEntry): string =>
+  [entry.typeLabel, entry.route].filter(Boolean).join(' · ')
 
 export interface QuickOpenPaletteProps {
   opened: boolean
@@ -150,19 +160,26 @@ export function QuickOpenPalette({
             ) : (
               groups.map((group, index) => (
                 <Combobox.Group label={group.heading || undefined} key={index}>
-                  {group.entries.map((entry) => (
-                    <Combobox.Option
-                      value={entry.path}
-                      key={entry.path}
-                      data-testid="quick-open-option"
-                    >
-                      <Highlight highlight={query.trim()} size="sm">
-                        {entry.label}
-                      </Highlight>
-                      {/* Inherits the option's colour, so it stays legible on the armed option's fill. */}
-                      {entry.slug && <Text size="xs">{entry.slug}</Text>}
-                    </Combobox.Option>
-                  ))}
+                  {group.entries.map((entry) => {
+                    const detail = detailLine(entry)
+                    return (
+                      <Combobox.Option
+                        value={entry.path}
+                        key={entry.path}
+                        data-testid="quick-open-option"
+                      >
+                        <Highlight highlight={query.trim()} size="sm">
+                          {entry.label}
+                        </Highlight>
+                        {/* Inherits the option's colour, so it stays legible on the armed option's fill. */}
+                        {detail && (
+                          <Text size="xs" data-testid="quick-open-option-detail">
+                            {detail}
+                          </Text>
+                        )}
+                      </Combobox.Option>
+                    )
+                  })}
                 </Combobox.Group>
               ))
             )}

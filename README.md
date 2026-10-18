@@ -513,7 +513,7 @@ Common options on any field:
   description: 'Hint',    // Optional: help text shown under the label in the editor
   required: true,         // Optional: validation requirement
   list: true,             // Optional: allow multiple values
-  isTitle: true,          // Optional: the entry's title in the editor sidebar
+  isTitle: true,          // Optional: names the entry (single-entry types use their label)
 }
 ```
 
@@ -1213,9 +1213,9 @@ import { assetUrl, assetSrcSet } from 'canopycms'
 />
 ```
 
-**`image` fields** hold `{ src, alt, width, height, crop? }`: alt text is enforced, and a crop is a directive, not a derived file. Passing the value to `assetUrl`/`assetSrcSet` applies its crop (`opts.crop` overrides). `width`/`height` are the uncropped original's; scale them by `crop.w`/`crop.h`. Declare an `aspect` (`'16:9'`, `'1:1'`) to enable the crop step, and `altOptional: true` for decorative images.
+**`image` fields** hold `{ src, alt, width, height, crop? }`: alt text is enforced, and a crop is a directive, not a derived file. Passing the value to `assetUrl`/`assetSrcSet` applies its crop (`opts.crop` overrides). `width`/`height` are the uncropped original's; scale them by `crop.w`/`crop.h`. An `aspect` (`'16:9'`) locks crops to that shape; without one, Crop is free-form. `altOptional: true` for decorative images.
 
-**Permissions** — any authenticated editor can upload and list assets. Deleting one from the library requires being an admin **or** the uploader, and removes only the library record; existing content references keep resolving.
+**Permissions** — any authenticated editor can upload and list assets. Removing one from the library requires being an admin **or** the uploader and only hides it, so content keeps resolving.
 
 > **The asset store is site-wide, not branch-scoped.** Assets are content-addressed and shared (which is what lets a branch merge avoid moving files), so branch and path ACLs do **not** apply to them: any authenticated editor can list and fetch every asset in the site, including images uploaded on branches they cannot otherwise access. Treat "uploaded to CanopyCMS" as visible to your whole editorial team — confidential material does not belong in the asset store.
 
@@ -1670,6 +1670,8 @@ export default createPreviewPage({ views: { post: PostPreview, doc: DocPreview }
 ```
 
 It reads from the editor's `?branch=` under the request's ACLs, never creating a branch. Anonymous requests, anything unreadable, an entry type with no view, and every request on a `deployedAs: 'static'` deployment are 404s. Public pages render the same `<PostPreview initialData={data} />`. Wrap views in a `'use client'` module, never in server code. Serve the route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY`, so the editor can frame it.
+
+**Site header and footer.** Views preview without your site's chrome. Pass `layout` to wrap every view, and render the chrome when `chrome` is true: `createPreviewPage({ layout: ({ children, chrome }) => (chrome ? <SiteChrome>{children}</SiteChrome> : children), views })`. The editor's "Show site header and footer" toggle sets it (`?chrome=1`, only under `previewPrefix`); without a `layout` the toggle never appears. If the layout fails, the editor previews without chrome and says so.
 
 Views on this route render after hydration, not on the server, so their images and those in `load`'s server components use the signed-in asset route from the first request. Server output rendered during a preview request carries that prefix; keep it out of cross-request caches (`unstable_cache`, module memos).
 

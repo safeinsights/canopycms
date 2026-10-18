@@ -11,8 +11,6 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
 )
 
 const defaultProps = (): EditorRailProps => ({
-  siteTitle: 'example site',
-  onHomeOpen: vi.fn(),
   contentPanelOpen: false,
   contentPanelId: 'content-panel',
   onContentToggle: vi.fn(),
@@ -48,11 +46,10 @@ afterEach(() => {
 })
 
 describe('EditorRail - buttons', () => {
-  it('names every activity, from the monogram down, and calls its action', async () => {
+  it('names every activity, from Content down, and calls its action', async () => {
     const props = renderRail()
 
     expect(toolbarButtons().map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Open the first entry of example site',
       'Content',
       'Open entry',
       'Branches',
@@ -61,16 +58,12 @@ describe('EditorRail - buttons', () => {
       'Switch to stacked layout (now side by side)',
       'Settings',
     ])
-    expect(screen.getByTestId('rail-home-button').textContent).toBe('E')
-
-    await userEvent.click(screen.getByTestId('rail-home-button'))
     await userEvent.click(screen.getByTestId('content-panel-toggle'))
     await userEvent.click(screen.getByTestId('rail-search-button'))
     await userEvent.click(screen.getByTestId('rail-branches-button'))
     await userEvent.click(screen.getByTestId('comments-button'))
     await userEvent.click(screen.getByTestId('media-library-button'))
     for (const action of [
-      props.onHomeOpen,
       props.onContentToggle,
       props.onQuickOpen,
       props.onBranchesOpen,
@@ -171,7 +164,7 @@ describe('EditorRail - keyboard', () => {
 
     rerender(<EditorRail {...props} onCommentsOpen={undefined} />)
     expect(toolbarButtons().filter((button) => button.tabIndex === 0)).toEqual([
-      screen.getByTestId('rail-home-button'),
+      screen.getByTestId('content-panel-toggle'),
     ])
   })
 })

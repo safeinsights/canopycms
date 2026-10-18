@@ -40,6 +40,7 @@ import '@mantine/core/styles.css'
 import '@mantine/dates/styles.css'
 import '@mantine/notifications/styles.css'
 import '@mantine/dropzone/styles.css'
+import 'react-image-crop/dist/ReactCrop.css'
 import '@mdxeditor/editor/style.css'
 
 export type CanopyColorInput = MantineColorsTuple | string
@@ -328,6 +329,7 @@ const primaryFill = (theme: MantineTheme, scheme: 'light' | 'dark') => {
  * dark, at 3:1 on gray.1 or dark.5. Mantine draws focus rings, focused borders and a checked
  * Switch in `--mantine-primary-color-filled`, so that becomes the ring; `canopyComponents` points
  * Checkbox, Radio and Tabs at it. A tick on it is white, or black where white is under 3:1.
+ * `--canopy-unsaved-mark` is the same colour, named for the dot that marks unsaved changes.
  */
 const focusRing = (theme: MantineTheme, scheme: 'light' | 'dark') => {
   const scale = theme.colors[theme.primaryColor]
@@ -350,6 +352,7 @@ const focusRing = (theme: MantineTheme, scheme: 'light' | 'dark') => {
           ? ring.value
           : `var(--mantine-color-${theme.primaryColor}-${ring.shade})`,
     '--canopy-focus-ring-contrast': contrast,
+    '--canopy-unsaved-mark': 'var(--canopy-focus-ring)',
     '--mantine-primary-color-filled': 'var(--canopy-focus-ring)',
   }
 }
@@ -401,7 +404,12 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
  * What Mantine draws from class rules, out of the theme variables' reach: unchecked control borders,
  * Switch thumbs, white text on the primary colour (moved to the fill), and dimmed text Mantine
  * draws itself (a blocked menu item, a combobox's empty message, outside days). Outside days lose
- * Mantine's half opacity, under 4.5:1.
+ * Mantine's half opacity, under 4.5:1. The crop box and its handles sit on an arbitrary image, where
+ * no single colour holds 3:1, so they take a white and black pair. A navigator row's lock is
+ * drawn only while its row is hovered, focused (Mantine's Tree focuses the `li` around the row, on click and arrow keys), has focus
+ * within, or is selected. It hides by opacity alone, so it keeps its place and stays in the tab order
+ * and the accessibility tree; while hidden it takes no pointer events, so a tap on its slot reaches
+ * the row.
  */
 const CANOPY_STYLES = `
 .mantine-Checkbox-input:not(:checked, :disabled, [data-indeterminate], [data-error]),
@@ -419,6 +427,37 @@ const CANOPY_STYLES = `
 .mantine-Switch-input:checked:not(:disabled, [data-disabled]) + .mantine-Switch-track > .mantine-Switch-thumb {
   --switch-thumb-bg: var(--canopy-switch-thumb-on, var(--mantine-color-white));
   --switch-thumb-bd: var(--canopy-switch-thumb-on, var(--mantine-color-white));
+}
+.ReactCrop .ReactCrop__crop-selection:focus {
+  outline: 2px solid var(--mantine-color-white);
+  outline-offset: 0;
+  box-shadow: 0 0 0 4px var(--mantine-color-black);
+}
+.ReactCrop .ReactCrop__drag-handle {
+  --rc-drag-handle-bg-colour: var(--mantine-color-white);
+  border-color: var(--mantine-color-black);
+}
+.ReactCrop .ReactCrop__drag-handle:focus {
+  background: var(--canopy-focus-ring);
+  outline: 2px solid var(--mantine-color-white);
+  box-shadow: 0 0 0 4px var(--mantine-color-black);
+}
+[data-nav-row] [data-row-lock] {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+[data-nav-row]:hover [data-row-lock],
+[data-nav-row]:focus-within [data-row-lock],
+[role='treeitem']:focus > [data-nav-row] [data-row-lock],
+[data-nav-row][data-nav-selected] [data-row-lock] {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-nav-row] [data-row-lock] {
+    transition: none;
+  }
 }
 [data-combobox-selected] {
   --mantine-primary-color-filled: var(--canopy-primary-fill);

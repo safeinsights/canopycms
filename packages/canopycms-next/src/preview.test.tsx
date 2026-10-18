@@ -90,6 +90,22 @@ describe('withCanopyPreview', () => {
       expect(element.props).toEqual({ ...state, extras: undefined })
     })
 
+    it("tells the bridge the route's layout can show the site header and footer", () => {
+      vi.mocked(useCanopyPreview).mockReturnValue({ data: { title: 'Saved' } } as never)
+      const Preview = withCanopyPreview<{ title: string }>(() => null)
+
+      ;(Preview as (props: typeof routeProps & { previewSiteChrome: boolean }) => unknown)({
+        ...routeProps,
+        previewSiteChrome: true,
+      })
+
+      expect(useCanopyPreview).toHaveBeenLastCalledWith({
+        initialData: { title: 'Saved' },
+        editorOrigin: undefined,
+        siteChrome: true,
+      })
+    })
+
     it('keeps the asset base out of the props adopter code writes against', () => {
       const Preview = withCanopyPreview<{ title: string }>(() => null)
       expect(() =>
