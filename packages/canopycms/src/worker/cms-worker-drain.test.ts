@@ -28,6 +28,7 @@ import type { WorkerStatusReport } from '../types'
 
 type DrainInternals = {
   running: boolean
+  shutdownController: AbortController
   acquireLock(): Promise<void>
   trackOperation(label: string, operation: Promise<void>): Promise<void>
   executeTask(task: Task, signal: AbortSignal): Promise<Record<string, unknown>>
@@ -35,6 +36,19 @@ type DrainInternals = {
 }
 
 const internals = (worker: CmsWorker) => worker as unknown as DrainInternals
+
+/**
+ * In flight until the drain aborts it, like a git command the shutdown signal kills. Work that
+ * ignores the signal keeps the drain, and its logging, running past the end of the test.
+ */
+const trackAbortable = (worker: CmsWorker) => {
+  const w = internals(worker)
+  const { signal } = w.shutdownController
+  void w.trackOperation(
+    'task queue',
+    new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve())),
+  )
+}
 
 /** Wait for `predicate`, or give up — so a failure reads as a timeout, not a hang. */
 const waitFor = async (predicate: () => boolean, timeoutMs = 2000): Promise<boolean> => {
@@ -224,29 +238,30 @@ describe('CmsWorker.stop() drains the task queue', () => {
     const w = internals(worker)
     await w.acquireLock()
     w.running = true
-    void w.trackOperation('task queue', new Promise<void>(() => {}))
+    trackAbortable(worker)
 
     // The heartbeat's next refresh finds the lock gone.
     await fs.rm(path.join(taskDir, '.worker-lock'), { recursive: true, force: true })
 
-    expect(
-      await waitFor(
-        () => consoleSpy.all().warn.some((line) => line.includes('Drain deadline (0s) hit')),
-        5000,
-      ),
-    ).toBe(true)
+    // selfStopped settles once the drain and its record are done: well inside the 60s deadline.
+    const stopped = await Promise.race([
+      worker.selfStopped,
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 10_000)),
+    ])
+    expect(stopped).toEqual({ reason: 'the worker lost its lock on the shared workspace' })
+    expect(consoleSpy).toHaveWarned('Drain deadline (0s) hit')
   })
 
   it('a compromise during a drain already under way aborts it at once', async () => {
     const worker = makeWorker(60_000)
-    void internals(worker).trackOperation('task queue', new Promise<void>(() => {}))
-    const signal = (worker as unknown as { shutdownController: AbortController }).shutdownController
-      .signal
+    trackAbortable(worker)
+    const { signal } = internals(worker).shutdownController
 
-    void worker.stop({ reason: 'SIGTERM' })
+    const draining = worker.stop({ reason: 'SIGTERM' })
     expect(signal.aborted).toBe(false)
     void worker.stop({ reason: 'worker lock compromised', deadlineMs: 0 })
     expect(signal.aborted).toBe(true)
+    await draining
   })
 
   it('start() after a finished stop() takes no lock', async () => {
