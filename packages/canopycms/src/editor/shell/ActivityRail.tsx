@@ -12,7 +12,6 @@ import React, {
 } from 'react'
 import { ActionIcon, Box, Divider, Indicator, Stack, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useElementSize, useMergedRef } from '@mantine/hooks'
-import { UnsavedMark } from '../components/UnsavedMark'
 
 const ACTIVITY_RAIL_WIDTH = 44
 
@@ -139,8 +138,8 @@ export interface RailButtonProps extends Omit<ComponentPropsWithoutRef<'button'>
   shortcut?: string
   /** A count badge, hidden at zero; the label should say it too. */
   count?: number
-  /** The unsaved dot at the button's corner; the label should say it too. */
-  unsavedMark?: boolean
+  /** A mark at the button's top-right corner, such as an unsaved dot; the label should say it too. */
+  corner?: ReactNode
   countTestId?: string
   tooltipDisabled?: boolean
   /** Disables the button, which stays focusable, and its tooltip gives this reason instead. */
@@ -161,7 +160,7 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
     active = false,
     shortcut,
     count = 0,
-    unsavedMark = false,
+    corner,
     countTestId,
     tooltipDisabled,
     disabledReason,
@@ -222,7 +221,7 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
         }}
       >
         {button}
-        {unsavedMark && (
+        {corner && (
           <Box
             component="span"
             aria-hidden
@@ -236,7 +235,7 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
               boxShadow: '0 0 0 2px var(--mantine-color-body)',
             }}
           >
-            <UnsavedMark aria-hidden data-testid="rail-unsaved-mark" />
+            {corner}
           </Box>
         )}
       </Indicator>

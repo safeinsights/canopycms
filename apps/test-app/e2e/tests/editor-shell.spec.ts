@@ -32,14 +32,16 @@ test.describe('Editor shell', () => {
   })
 
   test('the rail runs Content, Comments, Media, a divider and the layout toggle', async () => {
-    expect(await editorPage.railItems()).toEqual([
-      'Content',
-      'Comments',
-      'Media library',
-      'separator',
-      'Switch to stacked layout (now side by side)',
-      'Settings',
-    ])
+    await expect
+      .poll(() => editorPage.railItems())
+      .toEqual([
+        'Content',
+        'Comments',
+        'Media library',
+        'separator',
+        'Switch to stacked layout (now side by side)',
+        'Settings',
+      ])
   })
 
   test('Content carries an unsaved dot while its panel is closed', async () => {

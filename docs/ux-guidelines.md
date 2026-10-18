@@ -89,7 +89,7 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
 - **Disabled says why.** A control that can't act stays visible, disabled, with a Tooltip
   giving a full-sentence reason with the way forward ("This branch is in review.
   Withdraw it to make changes."). One reason blocking controls with different verbs names the
-  condition, not a verb. It opens clear of its control and any control stacked beside it.
+  condition, not a verb. The Tooltip opens clear of its control and any control stacked beside it.
   Mantine's `data-disabled` keeps the Tooltip working on focus and touch. A control with text
   needs only the Tooltip; an icon-only one adds an `aria-label` for its name and the reason as
   visually hidden text.
@@ -133,7 +133,7 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
 
 Every field's label row has the same anatomy, rendered by
 `packages/canopycms/src/editor/fields/FieldLabel.tsx`: label, required marker and comment
-control on the left, field actions on the right, and the description beneath. A read-only
+control on the left, field actions on the right, and the description beneath. No hand-rolled label styles. A read-only
 form's inputs are read-only, not disabled; one notice explains once; no lock icon per field, row
 drag handle or item menu. List and block rows collapse, take their title from the content, and
 carry a drag handle and a "…" menu (Move up, Move down, Duplicate, Remove). Validation shows
@@ -156,7 +156,7 @@ field (`comments/form-comments.tsx`), reaches comments instead.
   `tagsToIgnore` and `true` as `triggerOnContentEditable`.
 - Taken: Mod+P finds entries, opening a closed content panel until Enter, Esc or focus leaves;
   Mod+Alt+M comments; Esc closes the topmost overlay (not a docked panel it didn't open), else
-  restores a maximized preview. Never bind Mod+K (MDXEditor's link), formatting keys, or the
+  restores a maximized preview. Planned: Mod+S save, Mod+Shift+L layout. Never bind Mod+K (MDXEditor's link), formatting keys, or the
   browser's own (Mod+W, T, R, L, F).
 - An overlay panel makes what it covers `inert` (`formInert` in
   `packages/canopycms/src/editor/shell/PaneLayout.tsx`), and anything that targets the covered
@@ -194,10 +194,8 @@ never a fixed shade outside the theme (`gray.0`, `dark.7`, `bg="white"`). The th
 included:
 
 - `--mantine-color-dimmed`, the only dimmed colour. Dark dimmed text also differs in size or
-  style (italic, `--canopy-dimmed-font-style`): on `dark.4`, a hovered menu item, no colour
-  is both 4.5:1 and visibly dimmer than body text.
-- `--mantine-color-placeholder`, at least 4.5:1, and at least 1.7:1 from the text colour so it
-  never passes for a value.
+  style (italic, `--canopy-dimmed-font-style`).
+- `--mantine-color-placeholder`, at least 4.5:1, and at least 1.7:1 from the text colour.
 - `--canopy-danger-text`, for all destructive and error text, menu items included: `red.9` in
   light mode and `red.3` in dark.
 - `--canopy-input-border` (3:1), for inputs and the borders and tracks of Checkbox, Radio and
@@ -206,10 +204,10 @@ included:
   checked controls; white on the primary colour sits on `--canopy-primary-fill`.
 
 Pass a plain colour; the theme brings its text and light variant to 4.5:1, at which dark mode's
-light status badges look alike. Success text is the default colour beside a green icon.
-A light yellow `Alert`'s title, icon and close button take the text colour; yellow on its own
-tint is under 2:1. Filled destructive buttons are `red.8`, 4.5:1 under white; no orange shade
-reaches that, so filled orange buttons are `orange.6` with black text. Nothing else but the
+light status badges look alike. Success text is the default colour beside a green icon. Count badges put text colour on a tinted
+background.
+A light yellow `Alert`'s title, icon and close button take the text colour. Filled
+destructive buttons are `red.8`; filled orange buttons are `orange.6` with black text. Nothing else but the
 primary is filled: other badges, icons and indicators take their colour's light variant.
 
 ## People
@@ -224,12 +222,13 @@ primary is filled: other badges, icons and indicators take their colour's light 
 ## Shell regions
 
 The editor fills the window as one grid: **top bar** (branch pill and status, unsaved count, Save
-all or the way forward, Submit or Withdraw, split below `md`), **rail** (Content, Comments, Media,
-a divider, the layout toggle; Settings and Account below), **panel** (content tree: docked, in the
-stacked form row, or over the form), **main** (entry header, keeping Save above a maximized
-preview; preview and form) and **overlays** (drawers, modals, toasts). Regions are layout only;
-adding one is a design decision. The pill's Switch branch… opens the Branches drawer. Unsaved is
-one dot (`UnsavedMark`), also on Content while its panel is closed.
+all or the way forward, Submit or Withdraw, split below `md`), **rail** (Content, Comments when the
+branch has them, Media, a divider, the layout toggle; Settings and Account below), **panel**
+(content tree: docked, in the stacked form row, or over the form), **main** (entry header, keeping
+Save above a maximized preview; preview and form) and **overlays** (drawers, modals, toasts).
+Regions are layout only. New UI joins an existing region; adding one is a design decision. The
+pill's Switch branch…, or the bar's way forward, opens the Branches drawer. Unsaved is one dot
+(`UnsavedMark`), also on Content while its panel is closed.
 
 ## Enforcement
 

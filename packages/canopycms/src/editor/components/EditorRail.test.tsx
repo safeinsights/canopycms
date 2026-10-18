@@ -129,10 +129,28 @@ describe('EditorRail - unsaved mark', () => {
     expect(toggle().getAttribute('aria-label')).toBe('Content')
   })
 
-  it('keeps the comments badge a count, not a mark', () => {
-    renderRail({ unresolvedCommentCount: 2 })
+  it('puts the mark under Content, and the comments count under Comments', () => {
+    renderRail({ unresolvedCommentCount: 2, unsavedCount: 3 })
     expect(screen.getByTestId('comments-unresolved-count').textContent).toBe('2')
+    expect(toggle().parentElement?.contains(mark())).toBe(true)
+    expect(screen.getByTestId('comments-button').parentElement?.contains(mark())).toBe(false)
+  })
+
+  it('keeps the focused Content button mounted as the mark comes and goes', () => {
+    const props = defaultProps()
+    const { rerender } = render(<EditorRail {...props} />, { wrapper: Wrapper })
+    const button = toggle()
+    act(() => button.focus())
+
+    rerender(<EditorRail {...props} unsavedCount={2} />)
+    expect(mark()).not.toBeNull()
+    expect(toggle()).toBe(button)
+    expect(document.activeElement).toBe(button)
+
+    rerender(<EditorRail {...props} unsavedCount={2} contentPanelOpen />)
     expect(mark()).toBeNull()
+    expect(toggle()).toBe(button)
+    expect(document.activeElement).toBe(button)
   })
 })
 

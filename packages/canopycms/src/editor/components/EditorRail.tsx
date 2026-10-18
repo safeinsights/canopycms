@@ -19,6 +19,7 @@ import {
 import { ActivityRail, RailButton, RailDivider } from '../shell/ActivityRail'
 import type { PaneArrangement } from '../shell/PaneLayout'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
+import { UnsavedMark } from './UnsavedMark'
 import { CANOPYCMS_VERSION } from '../../version'
 
 const ABOUT_URL = 'https://github.com/safeinsights/canopycms'
@@ -235,7 +236,9 @@ export function EditorRail({
           <RailButton
             railId="content"
             label={contentLabel}
-            unsavedMark={unsaved}
+            corner={
+              unsaved ? <UnsavedMark aria-hidden data-testid="rail-unsaved-mark" /> : undefined
+            }
             icon={<IconFiles size={20} />}
             active={contentPanelOpen}
             aria-expanded={contentPanelOpen}
