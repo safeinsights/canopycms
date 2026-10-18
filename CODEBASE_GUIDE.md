@@ -590,7 +590,8 @@ Field components, in `editor/fields/`:
 
 Components, in `editor/components/`:
 
-- `EditorHeader.tsx` — the top bar: `EntryBreadcrumb` and its entry menu, `BranchPill`, Submit/Withdraw, `SaveSplitButton` (Saving…/Saved); `SaveAllResult` is Save all's toast
+- `EditorHeader.tsx` — the top bar: `BranchPill`, Submit/Withdraw, `SaveAllButton.tsx`; `SaveAllResult` is Save all's toast
+- `EntryHeader.tsx` — above the panes: `EntryBreadcrumb`, `EntrySaveButton.tsx`
 - `UnsavedMark.tsx` — the unsaved dot
 - `BranchLockBanner.tsx` — read-only banners, `describeBranchLock`
 - `EditorRail.tsx` — the rail's buttons and Settings menu
@@ -718,7 +719,7 @@ Enforced at five layers, all keyed off `getBranchProtection` (`authorization/pro
 - Workflow permission — `canPerformWorkflowAction` drops the system-branch grant on the base branch
 - Branch delete — `deleteBranchHandler` rejects deleting it, since it is the prod serving clone
 - Branch listing — `BranchListItem` carries `isProtected` / `readOnly`, computed server-side per request
-- Editor UI — `BranchManager.tsx` hides Submit and badges the branch; `EditorHeader.tsx` disables Save and Submit
+- Editor UI — `BranchManager.tsx` hides Submit and badges the branch; both headers disable Save and Submit
 
 Why it is read-only in prod but editable in dev is in
 [ARCHITECTURE.md](ARCHITECTURE.md#protected-base-branch).
