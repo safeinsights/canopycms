@@ -21,6 +21,34 @@ export interface SaveAllButtonProps {
   busy: boolean
 }
 
+/**
+ * Every label in one grid cell, only `shown` visible, so the button keeps the widest one's width
+ * and the top bar doesn't shift as the count or progress changes.
+ */
+function SaveAllLabels({ shown, labels }: { shown: number; labels: React.ReactNode[] }) {
+  return (
+    <Box component="span" style={{ display: 'inline-grid' }}>
+      {labels.map((label, index) => (
+        <Box
+          key={index}
+          component="span"
+          aria-hidden={index === shown ? undefined : true}
+          style={{
+            gridArea: '1 / 1',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            visibility: index === shown ? 'visible' : 'hidden',
+          }}
+        >
+          {label}
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
 /** Saves every unsaved entry on the branch; the result is a toast (`SaveAllResult`). */
 export function SaveAllButton({
   onSaveAll,
@@ -44,6 +72,19 @@ export function SaveAllButton({
             : undefined))
   // Blocked, it stays focusable (`aria-disabled`, not `disabled`), so its reason opens on focus.
   const blocked = !!reason || !!saveAllProgress
+  // The widest each label gets for this many entries, held in place while another shows.
+  const total = saveAllProgress?.total ?? Math.max(unsavedCount, 1)
+  const progressText = (done: number) => `Saving ${Math.min(done + 1, total)} of ${total}…`
+  const labels = [
+    unsavedCount > 0 ? `${EDITOR_ACTIONS.saveAll} (${unsavedCount})` : EDITOR_ACTIONS.saveAll,
+    `${EDITOR_ACTIONS.saveAll} (${Math.max(unsavedCount, 1)})`,
+    <>
+      <Box component="span" display="inline-flex" w={14}>
+        {saveAllProgress && !reducedMotion && <Loader size={14} color="currentColor" />}
+      </Box>
+      {progressText(saveAllProgress ? saveAllProgress.done : total)}
+    </>,
+  ]
 
   return (
     <>
@@ -52,18 +93,20 @@ export function SaveAllButton({
           ? `Saving ${saveAllProgress.total} ${saveAllProgress.total === 1 ? 'entry' : 'entries'}…`
           : ''}
       </VisuallyHidden>
-      <Tooltip label={reason} disabled={!reason} multiline maw={300}>
+      <Tooltip
+        label={reason}
+        disabled={!reason}
+        multiline
+        maw={300}
+        // Down, beside the entry header's Save, whose reasons also open down.
+        position="bottom-end"
+      >
         <Button
           data-testid="save-all-button"
           // The open entry's Save is the editor's one filled primary.
           variant="light"
           size="sm"
           style={{ flexShrink: 0 }}
-          leftSection={
-            saveAllProgress && !reducedMotion ? (
-              <Loader size={14} color="currentColor" />
-            ) : undefined
-          }
           onClick={() => {
             if (!blocked) onSaveAll()
           }}
@@ -71,11 +114,7 @@ export function SaveAllButton({
           data-disabled={reason ? true : undefined}
           aria-disabled={blocked ? true : undefined}
         >
-          {saveAllProgress
-            ? `Saving ${Math.min(saveAllProgress.done + 1, saveAllProgress.total)} of ${saveAllProgress.total}…`
-            : unsavedCount > 0
-              ? `${EDITOR_ACTIONS.saveAll} (${unsavedCount})`
-              : EDITOR_ACTIONS.saveAll}
+          <SaveAllLabels shown={saveAllProgress ? 2 : 0} labels={labels} />
         </Button>
       </Tooltip>
     </>

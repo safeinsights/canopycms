@@ -53,7 +53,9 @@ const defaultProps: HeadersProps = {
 
 const Headers = (props: HeadersProps) => (
   <>
-    <EditorHeader {...props} />
+    <header data-canopy-region="topbar">
+      <EditorHeader {...props} />
+    </header>
     <BranchLockBanner {...props} />
     <EntryHeader {...props} saveAllRunning={!!props.saveAllProgress} />
   </>
@@ -634,8 +636,9 @@ describe('EditorHeader - unsaved changes kept on this device', () => {
 
   it('sits in the top bar, not in the entry header', () => {
     renderHeader({ hasUnsavedChanges: true, modifiedCount: 1, draftStorageFailed: true })
-    const header = screen.getByRole('region', { name: 'Entry' })
-    expect(header.contains(screen.getByTestId('unsaved-indicator'))).toBe(false)
+    const indicator = screen.getByTestId('unsaved-indicator')
+    expect(indicator.closest('[data-canopy-region="topbar"]')).not.toBeNull()
+    expect(screen.getByRole('region', { name: 'Entry' }).contains(indicator)).toBe(false)
   })
 
   it('shows no warning with nothing unsaved on the branch', () => {
@@ -876,6 +879,16 @@ describe('EditorHeader - entry header', () => {
     }
   })
 
+  it('shows a placeholder crumb, and no reason on Save, while the entry is still loading', async () => {
+    renderHeader({ currentEntry: undefined, entryLoading: true, hasUnsavedChanges: false })
+    expect(screen.getByTestId('entry-crumb-loading')).toBeTruthy()
+    expect(screen.queryByText('No entry open')).toBeNull()
+    const save = screen.getByTestId('save-button')
+    expect(save.getAttribute('aria-disabled')).toBe('true')
+    act(() => save.focus())
+    await expect(screen.findByRole('tooltip', {}, { timeout: 300 })).rejects.toThrow()
+  })
+
   it('keeps Save in place, blocked, with no entry open', () => {
     renderHeader({ currentEntry: undefined, hasUnsavedChanges: false })
     const save = within(screen.getByRole('region', { name: 'Entry' })).getByTestId('save-button')
@@ -897,7 +910,7 @@ describe('EditorHeader - Save all', () => {
   it('offers Save all in the top bar with the unsaved count, and runs it', async () => {
     const onSaveAll = vi.fn()
     renderHeader({ modifiedCount: 3, onSaveAll })
-    expect(saveAll().textContent).toBe('Save all (3)')
+    expect(saveAll()).toBe(screen.getByRole('button', { name: 'Save all (3)' }))
     await userEvent.click(saveAll())
     expect(onSaveAll).toHaveBeenCalledTimes(1)
   })
@@ -955,7 +968,7 @@ describe('EditorHeader - Save all', () => {
       onSave,
       onSaveAll,
     })
-    expect(saveAll().textContent).toBe('Saving 2 of 3…')
+    expect(saveAll()).toBe(screen.getByRole('button', { name: 'Saving 2 of 3…' }))
     expect(saveAll().getAttribute('aria-disabled')).toBe('true')
     // The progress label stays readable: no disabled styling.
     expect(saveAll().hasAttribute('data-disabled')).toBe(false)
@@ -973,6 +986,17 @@ describe('EditorHeader - Save all', () => {
     expect(announced).toEqual(['Saving 3 entries…'])
   })
 
+  it('keeps one width whichever label shows, so the top bar does not shift', () => {
+    renderHeader({ modifiedCount: 0, hasUnsavedChanges: false })
+    const labels = [...saveAll().querySelectorAll('[style*="grid-area"]')]
+    expect(labels.map((label) => label.textContent)).toEqual([
+      'Save all',
+      'Save all (1)',
+      'Saving 1 of 1…',
+    ])
+    expect(labels.filter((label) => label.getAttribute('aria-hidden') === null)).toHaveLength(1)
+  })
+
   it('keeps its progress readable and reasonless when a lock arrives mid-run', async () => {
     renderHeader({
       modifiedCount: 3,
@@ -980,7 +1004,7 @@ describe('EditorHeader - Save all', () => {
       branchWriteBlocked: true,
       saveAllProgress: { done: 1, total: 3 },
     })
-    expect(saveAll().textContent).toBe('Saving 2 of 3…')
+    expect(saveAll()).toBe(screen.getByRole('button', { name: 'Saving 2 of 3…' }))
     expect(saveAll().getAttribute('aria-disabled')).toBe('true')
     expect(saveAll().hasAttribute('data-disabled')).toBe(false)
     act(() => saveAll().focus())

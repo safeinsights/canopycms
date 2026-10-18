@@ -128,7 +128,7 @@ export function EntrySaveButton({
   }
   if (savedSignal !== undefined && savedSignal > seenSignal) {
     setSeenSignal(savedSignal)
-    setFlashing(savedHere ? savedSignal : undefined)
+    setFlashing(savedHere && !saveAllRunning ? savedSignal : undefined)
   }
   useEffect(() => {
     if (flashing === undefined) return
@@ -169,6 +169,8 @@ export function EntrySaveButton({
         disabled={!saveTooltip || label !== 'save' || (busy && !saveAllRunning)}
         multiline
         maw={280}
+        // Down, away from the top bar, whose Save all a reason opening upward would cover.
+        position="bottom-end"
       >
         <Button
           data-testid="save-button"

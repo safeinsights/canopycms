@@ -160,6 +160,16 @@ export const UnsavedNotKept: Story = {
   args: { draftStorageFailed: true },
 }
 
+/** Entries still loading: a placeholder crumb, and Save blocked without a reason yet. */
+export const EntryLoading: Story = {
+  args: {
+    currentEntry: undefined,
+    entryLoading: true,
+    breadcrumbSegments: [],
+    hasUnsavedChanges: false,
+  },
+}
+
 /** No entry open: Save stays in place, blocked, saying to open one. */
 export const NoEntryOpen: Story = {
   args: {

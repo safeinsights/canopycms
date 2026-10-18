@@ -2084,6 +2084,8 @@ const EditorContent: React.FC<EditorProps> = ({
             <Box h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
               <EntryHeader
                 currentEntry={currentEntry}
+                // As the form's "Setting up…" and "Loading content…" messages.
+                entryLoading={!currentEntry && ((!branchNameState && busy) || entriesInitializing)}
                 branchName={branchNameState}
                 busy={busy}
                 breadcrumbSegments={breadcrumbSegments}

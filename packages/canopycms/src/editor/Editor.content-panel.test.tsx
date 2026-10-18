@@ -824,6 +824,26 @@ describe('entry menu', () => {
   })
 })
 
+describe('entry header while loading', () => {
+  it('shows a placeholder crumb, not "No entry open", until the entries arrive', async () => {
+    stubWindowWidth(true)
+    stubApi()
+    const answered = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/entries')) await held
+      return answered(input, init)
+    })
+    renderEditor({ entries: [] })
+    expect(await screen.findByTestId('entry-crumb-loading')).toBeTruthy()
+    expect(screen.queryByText('No entry open')).toBeNull()
+
+    await act(async () => release())
+    await waitFor(() => expect(screen.queryByTestId('entry-crumb-loading')).toBeNull())
+  })
+})
+
 describe('saving', () => {
   it('says "Saving…" on the entry being saved only', async () => {
     await setup(true)
@@ -900,7 +920,7 @@ describe('saving', () => {
     await screen.findByText('Could not load content')
 
     const saveAll = screen.getByTestId('save-all-button')
-    expect(saveAll.textContent).toBe('Save all (1)')
+    expect(saveAll).toBe(screen.getByRole('button', { name: 'Save all (1)' }))
     expect(saveAll.getAttribute('aria-disabled')).toBe('true')
     act(() => saveAll.focus())
     expect((await screen.findByRole('tooltip')).textContent).toContain(

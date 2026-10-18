@@ -18,7 +18,11 @@ const Placeholder = ({ name, minWidth }: { name: string; minWidth?: number }) =>
     h="100%"
     p="sm"
     miw={minWidth}
-    style={{ border: '1px dashed var(--mantine-color-default-border)' }}
+    // Opaque, so a maximized preview visibly covers the form.
+    style={{
+      border: '1px dashed var(--mantine-color-default-border)',
+      background: 'var(--mantine-color-body)',
+    }}
   >
     <Text size="sm" c="dimmed">
       {name}

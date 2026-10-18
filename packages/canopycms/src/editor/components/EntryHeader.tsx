@@ -14,6 +14,8 @@ const ENTRY_HEADER_HEIGHT = 48
 
 export interface EntryHeaderProps {
   currentEntry: EditorEntry | undefined
+  /** No entry yet because the branch or its entries are still loading. */
+  entryLoading?: boolean
   branchName: string
   /** Whether operations are currently in progress. */
   busy: boolean
@@ -62,6 +64,7 @@ export interface EntryHeaderProps {
 /** The open entry's breadcrumb, menu, unsaved dot and "Read-only" chip, then Save, over the panes. */
 export function EntryHeader({
   currentEntry,
+  entryLoading = false,
   branchName,
   busy,
   breadcrumbSegments,
@@ -121,6 +124,7 @@ export function EntryHeader({
         <EntryBreadcrumb
           segments={breadcrumbSegments}
           entryLabel={currentEntry ? (currentEntry.label ?? currentEntry.slug) : undefined}
+          entryLoading={entryLoading}
           entryDirty={hasUnsavedChanges}
           // BranchLockBanner already says why a locked branch is read-only, so the chip carries
           // only the entry's own reason, even beside the banner: "Withdraw it" would not unlock it.
@@ -149,7 +153,8 @@ export function EntryHeader({
       <EntrySaveButton
         onSave={onSave}
         saveBlockedReason={saveBlockedReason}
-        busy={busy}
+        // Loading, "Open an entry to save it." would claim an empty state too soon.
+        busy={busy || entryLoading}
         saveAllRunning={saveAllRunning}
         saving={saving}
         savedSignal={savedSignal}
