@@ -969,6 +969,9 @@ describe('EditorHeader - Save all', () => {
       onSaveAll,
     })
     expect(saveAll()).toBe(screen.getByRole('button', { name: 'Saving 2 of 3…' }))
+    expect(saveAll().querySelector('[style*="grid-area"]:not([aria-hidden])')?.textContent).toBe(
+      '2 of 3…',
+    )
     expect(saveAll().getAttribute('aria-disabled')).toBe('true')
     // The progress label stays readable: no disabled styling.
     expect(saveAll().hasAttribute('data-disabled')).toBe(false)
@@ -996,6 +999,19 @@ describe('EditorHeader - Save all', () => {
       '1 of 1…',
     ])
     expect(labels.filter((label) => label.getAttribute('aria-hidden') === null)).toHaveLength(1)
+  })
+
+  it("keeps the largest count's width on the branch, and starts over on another", () => {
+    const reserved = () =>
+      [...saveAll().querySelectorAll('[style*="grid-area"][aria-hidden]')].map(
+        (label) => label.textContent,
+      )
+    const view = renderHeader({ modifiedCount: 12 })
+    view.rerender(<Headers {...defaultProps} modifiedCount={3} />)
+    expect(reserved()).toContain('Save all (12)')
+    view.rerender(<Headers {...defaultProps} modifiedCount={3} branchName="feature/y" />)
+    expect(reserved()).toContain('Save all (3)')
+    expect(reserved()).not.toContain('Save all (12)')
   })
 
   it('keeps its progress readable and reasonless when a lock arrives mid-run', async () => {

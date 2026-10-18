@@ -140,6 +140,8 @@ export function EditorHeader({
           />
           <DraftStorageWarning shown={draftStorageFailed && modifiedCount > 0} />
           <SaveAllButton
+            // Its reserved width follows this branch's counts, not the session's largest.
+            key={branchName}
             onSaveAll={onSaveAll}
             unsavedCount={modifiedCount}
             blockedReason={
