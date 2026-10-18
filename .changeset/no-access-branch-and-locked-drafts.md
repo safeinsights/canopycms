@@ -14,7 +14,7 @@ row: No-access empty states; locked-branch unsaved tooltip
 read-only" in the bar), once its content fails to load, the content panel and the form pane say
 "You don't have access to this branch, or it no longer exists." and offer Switch branch…, which
 opens Branches; the preview pane says the same. They used to read "No content" and "Select an
-item to start editing.". No failed load is toasted on that branch. On any other branch, a failed
+item to start editing." No failed load is toasted on that branch. On any other branch, a failed
 content load keeps its "Could not load content" toast with Retry, now in plain words, with any
 diagnostic behind a "Details" disclosure. On a locked branch, the bar's "N unsaved" tooltip says
 the edits are in this browser and what lets them be saved: "Withdraw to save them." in review or
