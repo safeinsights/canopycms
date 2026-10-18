@@ -1620,6 +1620,27 @@ describe('EditorHeader - branch bar', () => {
     expect(onWithdraw).not.toHaveBeenCalled()
   })
 
+  it('below md, names the Save all split button by its two parts', () => {
+    stubNarrowWindow()
+    renderHeader({ ...owner, modifiedCount: 2 })
+    const group = screen.getByRole('group', { name: 'Save all and branch actions' })
+    expect(within(group).getByTestId('save-all-button')).toBeTruthy()
+    expect(within(group).getByRole('button', { name: 'Branch actions' })).toBeTruthy()
+  })
+
+  it("below md, names the way forward's split button apart from its caret", () => {
+    stubNarrowWindow()
+    renderHeader({ ...owner, branchStatus: 'archived', branchWriteBlocked: true })
+    const group = screen.getByRole('group', { name: 'Branch controls' })
+    expect(within(group).getByTestId('switch-branch-button')).toBeTruthy()
+    expect(within(group).getByRole('button', { name: 'Branch actions' })).toBeTruthy()
+  })
+
+  it('draws no group around a button without a caret', () => {
+    renderHeader({ ...owner, modifiedCount: 2 })
+    expect(screen.queryByRole('group')).toBeNull()
+  })
+
   it('below md, makes New branch… the default on the protected base branch', () => {
     stubNarrowWindow()
     renderHeader({
