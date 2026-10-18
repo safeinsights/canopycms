@@ -1,6 +1,6 @@
-import React, { useRef, type Ref } from 'react'
+import React, { useCallback, useLayoutEffect, useRef, type Ref } from 'react'
 import { Button, Menu, Tooltip, em, getBreakpointValue, useMantineTheme } from '@mantine/core'
-import { useMediaQuery } from '@mantine/hooks'
+import { useMediaQuery, useMergedRef } from '@mantine/hooks'
 import { IconChevronDown } from '@tabler/icons-react'
 import type { OperatingMode } from '../../operating-mode'
 import type { BranchStatus } from '../../types'
@@ -134,6 +134,29 @@ export function EditorHeader({
   })
   const split = narrow && editable
 
+  // The workflow control is the caret or a button by turns, as a submit locks the branch or a
+  // withdraw unlocks it; focus on the outgoing one moves to the incoming one, not to the page.
+  const workflowEl = useRef<HTMLButtonElement | null>(null)
+  const handOffFocus = useRef(false)
+  const workflowRef = useCallback((el: HTMLButtonElement | null) => {
+    if (!el && workflowEl.current && workflowEl.current === document.activeElement) {
+      handOffFocus.current = true
+    }
+    workflowEl.current = el
+  }, [])
+  useLayoutEffect(() => {
+    if (!handOffFocus.current) return
+    handOffFocus.current = false
+    workflowEl.current?.focus({ preventScroll: true })
+  })
+  // Whichever control is mounted when the confirm dialog closes: its opener may be gone.
+  const workflowControl = {
+    onSubmit,
+    onWithdraw,
+    controlRef: workflowRef,
+    returnFocusTo: () => workflowEl.current,
+  }
+
   return (
     <TopBar
       leading={
@@ -171,13 +194,11 @@ export function EditorHeader({
             busy={busy}
             caret={
               split && workflow ? (
-                <WorkflowCaret action={workflow} onSubmit={onSubmit} onWithdraw={onWithdraw} />
+                <WorkflowCaret {...workflowControl} action={workflow} />
               ) : undefined
             }
           />
-          {!split && workflow && (
-            <WorkflowButton action={workflow} onSubmit={onSubmit} onWithdraw={onWithdraw} />
-          )}
+          {!split && workflow && <WorkflowButton {...workflowControl} action={workflow} />}
         </>
       }
     />
@@ -271,16 +292,26 @@ function workflowAction({
 
 interface WorkflowControlProps {
   action: WorkflowAction
-  /** `returnFocusTo` names the control the confirm dialog returns focus to, when not its opener. */
   onSubmit: EditorHeaderProps['onSubmit']
   onWithdraw: EditorHeaderProps['onWithdraw']
+  /** The control's own button: the wide button, or the caret. */
+  controlRef: (el: HTMLButtonElement | null) => void
+  /** Where the confirm dialog returns focus once it closes. */
+  returnFocusTo: () => HTMLElement | null
 }
 
-function WorkflowButton({ action, onSubmit, onWithdraw }: WorkflowControlProps) {
+function WorkflowButton({
+  action,
+  onSubmit,
+  onWithdraw,
+  controlRef,
+  returnFocusTo,
+}: WorkflowControlProps) {
   const withdraw = action.kind === 'withdraw'
   return (
     <Tooltip label={action.reason} disabled={!action.reason} multiline maw={320}>
       <Button
+        ref={controlRef}
         size="sm"
         // The entry's Save is the one filled primary; the rest take their colour's light variant.
         variant="light"
@@ -288,8 +319,8 @@ function WorkflowButton({ action, onSubmit, onWithdraw }: WorkflowControlProps) 
         style={{ flexShrink: 0 }}
         onClick={() => {
           if (action.blocked) return
-          if (withdraw) onWithdraw()
-          else onSubmit()
+          if (withdraw) onWithdraw(returnFocusTo)
+          else onSubmit(returnFocusTo)
         }}
         // Blocked, it stays focusable (`aria-disabled`), so its reason opens on focus.
         data-disabled={action.blocked ? true : undefined}
@@ -303,18 +334,23 @@ function WorkflowButton({ action, onSubmit, onWithdraw }: WorkflowControlProps) 
 }
 
 /** Save all's caret below `md`, holding the workflow action. */
-function WorkflowCaret({ action, onSubmit, onWithdraw }: WorkflowControlProps) {
+function WorkflowCaret({
+  action,
+  onSubmit,
+  onWithdraw,
+  controlRef,
+  returnFocusTo,
+}: WorkflowControlProps) {
   const caret = useRef<HTMLButtonElement>(null)
+  const caretRef = useMergedRef(caret, controlRef)
   const menuFocus = useMenuItemFocusReturn(caret)
   const withdraw = action.kind === 'withdraw'
-  // The item has unmounted with its menu by the time the confirm dialog closes.
-  const returnFocusTo = () => caret.current
   return (
     <Menu withinPortal shadow="sm" position="bottom-end" {...menuFocus.menu}>
       <Tooltip label="Branch actions" events={{ hover: true, focus: true, touch: false }}>
         <Menu.Target>
           <Button
-            ref={caret}
+            ref={caretRef}
             variant="light"
             size="sm"
             px={8}

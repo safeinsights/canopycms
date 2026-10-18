@@ -39,8 +39,9 @@ export function TopBar({ leading, trailing }: TopBarProps) {
         wrap="wrap"
         align="center"
         justify="flex-end"
-        // Growing into the row's rest, its own or the pill's, keeps the actions at the end.
-        flex="1 0 auto"
+        // Growing into the row's rest, its own or the pill's, keeps the actions at the end; on a
+        // row of its own it shrinks, so its controls wrap rather than overflow.
+        flex="1 1 auto"
         miw={0}
       >
         {trailing}

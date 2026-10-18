@@ -108,8 +108,12 @@ export function SaveAllButton({
           ? `Saving ${saveAllProgress.total} ${saveAllProgress.total === 1 ? 'entry' : 'entries'}…`
           : ''}
       </VisuallyHidden>
-      {/* Grouped even alone, so a caret coming or going never remounts the focused button. */}
-      <Button.Group style={{ flexShrink: 0 }}>
+      {/* Grouped even alone, so a caret coming or going never remounts the focused button; a
+          group of one is no group to assistive technology. */}
+      <Button.Group
+        style={{ flexShrink: 0 }}
+        renderRoot={(props) => <div {...props} role={caret ? 'group' : undefined} />}
+      >
         <Tooltip
           label={reason}
           disabled={!reason}
