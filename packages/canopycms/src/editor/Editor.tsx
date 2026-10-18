@@ -86,7 +86,13 @@ import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
-import { BranchLockBanner, describeBranchLock, EditorHeader, EditorRail } from './components'
+import {
+  BranchLockBanner,
+  describeBranchLock,
+  EditorHeader,
+  EditorRail,
+  EntryHeader,
+} from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { QuickOpenPalette, type QuickOpenEntry } from './components/QuickOpenPalette'
@@ -1977,25 +1983,19 @@ const EditorContent: React.FC<EditorProps> = ({
         <EditorShell
           topBar={
             <EditorHeader
-              currentEntry={currentEntry}
               branchName={branchNameState}
               operatingMode={operatingMode}
               branchStatus={currentBranch?.status}
               busy={busy}
-              breadcrumbSegments={breadcrumbSegments}
               editedFiles={editedFiles}
               modifiedCount={modifiedCount}
-              // A draft kept for an unavailable entry stays in storage but cannot be saved.
-              hasUnsavedChanges={!currentEntryUnavailable && !contentReadOnly && isSelectedDirty()}
-              entryHasDraft={isSelectedDirty()}
-              entryReadOnly={currentEntry?.canEdit === false}
               draftStorageFailed={draftStorageFailed}
               userContext={userContext}
               branchCreatedBy={currentBranch?.createdBy}
               branchAccess={currentBranch?.access}
               // Fail-closed for the same reason branchContentLocked above is:
-              // isProtected/writeBlocked gate real actions in EditorHeader (hiding
-              // Submit, disabling Save), so a missing wire value must read as
+              // isProtected/writeBlocked gate real actions in EditorHeader and EntryHeader
+              // (hiding Submit, disabling Save and Save all), so a missing wire value must read as
               // "protected"/"blocked", not "unprotected"/"unblocked".
               // branchWriteBlocked reuses branchContentLocked itself rather than
               // re-deriving `?? true` a second time here, so there is exactly one
@@ -2005,14 +2005,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchWriteBlocked={branchContentLocked}
               // A failed fetch leaves the list empty too; the banner says that one.
               branchLoading={branchLoading}
-              onCollectionOpen={revealCollection}
-              navigatorToggleRef={navigatorToggleRef}
               branchToggleRef={branchToggleRef}
-              onFileReload={() => handleReload(() => navigatorToggleRef.current)}
-              onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
-              onEntryRename={() => currentEntry && handleRenameEntry(currentEntry.path, true)}
-              onEntryDelete={() => currentEntry && handleDeleteEntry(currentEntry.path, true)}
-              entryUnavailable={currentEntryUnavailable}
               onEntrySelect={openEntry}
               onBranchReloadData={() => {
                 void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
@@ -2021,28 +2014,20 @@ const EditorContent: React.FC<EditorProps> = ({
               }}
               onBranchDiscardDrafts={() => handleDiscardDrafts(() => branchToggleRef.current)}
               onBranchManagerOpen={openBranchManager}
-              onSave={currentEntryUnavailable ? noop : handleSave}
               onSaveAll={runSaveAll}
               saveAllProgress={saveAllProgress}
-              saving={
-                singleSaving?.branch === branchNameState &&
-                singleSaving.contentId === currentEntry?.contentId
-              }
-              savedSignal={lastSaved?.seq}
-              savedHere={
-                lastSaved?.branch === branchNameState &&
-                lastSaved.contentId === currentEntry?.contentId
-              }
+              // On any entry: EntryHeader's `saving` is the open entry's alone.
+              singleSaving={singleSaving !== null}
               // Save all finds each draft's entry in the list, so with none listed it would save nothing.
               entryListFailed={entriesLoadFailed && entriesState.length === 0}
-              onSubmit={() => {
+              onSubmit={(returnFocusTo) => {
                 if (branchNameState && !isSaveAllRunning()) {
-                  handleSubmit(branchNameState).catch(console.error)
+                  handleSubmit(branchNameState, returnFocusTo).catch(console.error)
                 }
               }}
-              onWithdraw={() => {
+              onWithdraw={(returnFocusTo) => {
                 if (branchNameState && !isSaveAllRunning()) {
-                  handleWithdraw(branchNameState).catch(console.error)
+                  handleWithdraw(branchNameState, returnFocusTo).catch(console.error)
                 }
               }}
             />
@@ -2096,141 +2081,181 @@ const EditorContent: React.FC<EditorProps> = ({
           }
           panel={contentPanelDocked && layout === 'side' ? contentPanel : undefined}
           main={
-            <Box h="100%">
-              <PaneLayout
-                formAside={contentPanelDocked && layout === 'stacked' ? contentPanel : undefined}
-                formOverlay={contentPanelDocked ? undefined : contentPanel}
-                formInert={contentOverlayShown}
-                previewMaximized={previewShownMaximized}
-                // Sizing the pane, by pointer or key, gives the page the pane's width.
-                onSeparatorDrag={(dragging) => {
-                  setPaneResizing(dragging)
-                  if (dragging) setPreviewWidth('fit')
-                }}
-                arrangement={layout}
-                sideSplitPercent={sideSplitPercent}
-                stackedSplitPercent={stackedSplitPercent}
-                onSplitPercentChange={(arrangement, percent) => {
-                  setSplitPercent(arrangement, percent)
-                  setPreviewWidth('fit')
-                }}
-                preview={
-                  renderPreview && currentEntry && !currentEntryUnavailable
-                    ? renderPreview(currentEntry, displayValue)
-                    : defaultPreview
+            <Box h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
+              <EntryHeader
+                currentEntry={currentEntry}
+                // True exactly while the form below shows "Setting up…" or "Loading content…".
+                entryLoading={!currentEntry && ((!branchNameState && busy) || entriesInitializing)}
+                branchName={branchNameState}
+                busy={busy}
+                breadcrumbSegments={breadcrumbSegments}
+                // A draft kept for an unavailable entry stays in storage but cannot be saved.
+                hasUnsavedChanges={
+                  !currentEntryUnavailable && !contentReadOnly && isSelectedDirty()
                 }
-                form={
-                  !currentEntry ? (
-                    <CenteredMessage>
-                      {!branchNameState && busy
-                        ? 'Setting up your branch workspace…'
-                        : entriesInitializing
-                          ? 'Loading content…'
-                          : 'Select an item to start editing.'}
-                    </CenteredMessage>
-                  ) : currentEntryUnavailable ? (
-                    <UnavailableEntryNotice
-                      schemaRefs={
-                        currentEntry.unavailable ? [currentEntry.unavailable.schemaRef] : []
-                      }
-                    />
-                  ) : currentEntry.canEdit === false ? (
-                    <NoEditPermissionNotice entryLabel={currentEntry.label} />
-                  ) : schema.length > 0 && displayValue ? (
-                    <EntryLinkContext.Provider value={entryLinkContextValue}>
-                      <SiteMdxAllowContext.Provider value={mdxAllow}>
-                        <FormRenderer
-                          notice={
-                            hiddenDraftNotice && (
-                              <ReadOnlyDraftNotice
-                                permanentlyReadOnly={
-                                  (currentBranch?.isProtected ?? true) ||
-                                  currentBranch?.status === 'archived'
-                                }
-                                // A hidden draft's discard changes nothing on screen, so it says so.
-                                onDiscard={() =>
-                                  handleDiscardFileDraft(() => navigatorToggleRef.current, {
-                                    announce: true,
-                                  })
-                                }
-                              />
-                            )
-                          }
-                          fields={schema}
-                          value={displayValue}
-                          readOnly={contentReadOnly}
-                          onRemoved={handleFieldRemoved}
-                          savedValue={loadedValue}
-                          commentBlockedReason={commentBlockedReason}
-                          removedItemFieldLabel={commentFieldLabel}
-                          onGetUserMetadata={getCommentUserMetadata}
-                          header={{
-                            title: currentEntry.label,
-                            typeLabel: entryTypeLabel(activeCollections, currentEntry),
-                          }}
-                          // The one writer of drafts. Read-only content gets none, whatever a
-                          // field emits (MDXEditor's mount-time normalisation included).
-                          onChange={(next) => {
-                            const contentId = currentEntry?.contentId
-                            if (contentId && !contentReadOnlyRef.current) {
-                              // Every list item keeps a key, whatever field made it.
-                              const keyed = withItemKeys(schema, next, 'random')
-                              setDrafts((prev) => ({ ...prev, [contentId]: keyed }))
-                            }
-                          }}
-                          customRenderers={customRenderers}
-                          branch={branchNameState}
-                          comments={displayComments}
-                          currentEntryPath={selectedPath}
-                          currentUserId={commentUserId}
-                          canResolve={canResolveAnyComment}
-                          focusedFieldPath={focusedFieldPath}
-                          highlightThreadId={highlightThreadId}
-                          onAddComment={handleAddDisplayedComment}
-                          onResolveThread={handleResolveThread}
-                          fieldErrors={fieldErrors}
-                          format={currentEntry.format}
-                          conflictNotice={
-                            !!(
-                              currentEntry?.contentId &&
-                              currentBranch?.conflictFiles?.includes(currentEntry.contentId)
-                            )
-                          }
-                        />
-                      </SiteMdxAllowContext.Provider>
-                    </EntryLinkContext.Provider>
-                  ) : schema.length === 0 ? (
-                    <CenteredMessage>No fields to edit.</CenteredMessage>
-                  ) : loadFailedKey !== `${branchNameState}:${currentEntry.contentId}` ? (
-                    <Stack gap="lg" p="md" data-testid="entry-loading-skeleton">
-                      {[0, 1, 2].map((row) => (
-                        <Stack key={row} gap={6}>
-                          <Skeleton h={12} w={120} />
-                          <Skeleton h={36} />
-                        </Stack>
-                      ))}
-                    </Stack>
-                  ) : (
-                    <Alert
-                      color="red"
-                      variant="light"
-                      m="md"
-                      title="This entry couldn't be loaded."
-                      data-testid="entry-load-failed"
-                    >
-                      <Button
-                        variant="default"
-                        onClick={() => {
-                          setLoadFailedKey(null)
-                          setLoadAttempt((attempt) => attempt + 1)
-                        }}
-                      >
-                        Retry
-                      </Button>
-                    </Alert>
-                  )
+                entryHasDraft={isSelectedDirty()}
+                entryReadOnly={currentEntry?.canEdit === false}
+                entryUnavailable={currentEntryUnavailable}
+                draftStorageFailed={draftStorageFailed}
+                branchStatus={currentBranch?.status}
+                branchReadOnly={currentBranch?.readOnly}
+                branchWriteBlocked={branchContentLocked}
+                branchLoading={branchLoading}
+                onCollectionOpen={revealCollection}
+                navigatorToggleRef={navigatorToggleRef}
+                onFileReload={() => handleReload(() => navigatorToggleRef.current)}
+                onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
+                onEntryRename={() => currentEntry && handleRenameEntry(currentEntry.path, true)}
+                onEntryDelete={() => currentEntry && handleDeleteEntry(currentEntry.path, true)}
+                onSave={currentEntryUnavailable ? noop : handleSave}
+                saveAllRunning={!!saveAllProgress}
+                saving={
+                  singleSaving?.branch === branchNameState &&
+                  singleSaving.contentId === currentEntry?.contentId
+                }
+                savedSignal={lastSaved?.seq}
+                savedHere={
+                  lastSaved?.branch === branchNameState &&
+                  lastSaved.contentId === currentEntry?.contentId
                 }
               />
+              {/* A maximized preview covers the panes only, so the entry header stays above it. */}
+              <Box style={{ flex: '1 1 0%', minHeight: 0 }}>
+                <PaneLayout
+                  formAside={contentPanelDocked && layout === 'stacked' ? contentPanel : undefined}
+                  formOverlay={contentPanelDocked ? undefined : contentPanel}
+                  formInert={contentOverlayShown}
+                  previewMaximized={previewShownMaximized}
+                  // Sizing the pane, by pointer or key, gives the page the pane's width.
+                  onSeparatorDrag={(dragging) => {
+                    setPaneResizing(dragging)
+                    if (dragging) setPreviewWidth('fit')
+                  }}
+                  arrangement={layout}
+                  sideSplitPercent={sideSplitPercent}
+                  stackedSplitPercent={stackedSplitPercent}
+                  onSplitPercentChange={(arrangement, percent) => {
+                    setSplitPercent(arrangement, percent)
+                    setPreviewWidth('fit')
+                  }}
+                  preview={
+                    renderPreview && currentEntry && !currentEntryUnavailable
+                      ? renderPreview(currentEntry, displayValue)
+                      : defaultPreview
+                  }
+                  form={
+                    !currentEntry ? (
+                      <CenteredMessage>
+                        {!branchNameState && busy
+                          ? 'Setting up your branch workspace…'
+                          : entriesInitializing
+                            ? 'Loading content…'
+                            : 'Select an item to start editing.'}
+                      </CenteredMessage>
+                    ) : currentEntryUnavailable ? (
+                      <UnavailableEntryNotice
+                        schemaRefs={
+                          currentEntry.unavailable ? [currentEntry.unavailable.schemaRef] : []
+                        }
+                      />
+                    ) : currentEntry.canEdit === false ? (
+                      <NoEditPermissionNotice entryLabel={currentEntry.label} />
+                    ) : schema.length > 0 && displayValue ? (
+                      <EntryLinkContext.Provider value={entryLinkContextValue}>
+                        <SiteMdxAllowContext.Provider value={mdxAllow}>
+                          <FormRenderer
+                            notice={
+                              hiddenDraftNotice && (
+                                <ReadOnlyDraftNotice
+                                  permanentlyReadOnly={
+                                    (currentBranch?.isProtected ?? true) ||
+                                    currentBranch?.status === 'archived'
+                                  }
+                                  // A hidden draft's discard changes nothing on screen, so it says so.
+                                  onDiscard={() =>
+                                    handleDiscardFileDraft(() => navigatorToggleRef.current, {
+                                      announce: true,
+                                    })
+                                  }
+                                />
+                              )
+                            }
+                            fields={schema}
+                            value={displayValue}
+                            readOnly={contentReadOnly}
+                            onRemoved={handleFieldRemoved}
+                            savedValue={loadedValue}
+                            commentBlockedReason={commentBlockedReason}
+                            removedItemFieldLabel={commentFieldLabel}
+                            onGetUserMetadata={getCommentUserMetadata}
+                            header={{
+                              title: currentEntry.label,
+                              typeLabel: entryTypeLabel(activeCollections, currentEntry),
+                            }}
+                            // The one writer of drafts. Read-only content gets none, whatever a
+                            // field emits (MDXEditor's mount-time normalisation included).
+                            onChange={(next) => {
+                              const contentId = currentEntry?.contentId
+                              if (contentId && !contentReadOnlyRef.current) {
+                                // Every list item keeps a key, whatever field made it.
+                                const keyed = withItemKeys(schema, next, 'random')
+                                setDrafts((prev) => ({ ...prev, [contentId]: keyed }))
+                              }
+                            }}
+                            customRenderers={customRenderers}
+                            branch={branchNameState}
+                            comments={displayComments}
+                            currentEntryPath={selectedPath}
+                            currentUserId={commentUserId}
+                            canResolve={canResolveAnyComment}
+                            focusedFieldPath={focusedFieldPath}
+                            highlightThreadId={highlightThreadId}
+                            onAddComment={handleAddDisplayedComment}
+                            onResolveThread={handleResolveThread}
+                            fieldErrors={fieldErrors}
+                            format={currentEntry.format}
+                            conflictNotice={
+                              !!(
+                                currentEntry?.contentId &&
+                                currentBranch?.conflictFiles?.includes(currentEntry.contentId)
+                              )
+                            }
+                          />
+                        </SiteMdxAllowContext.Provider>
+                      </EntryLinkContext.Provider>
+                    ) : schema.length === 0 ? (
+                      <CenteredMessage>No fields to edit.</CenteredMessage>
+                    ) : loadFailedKey !== `${branchNameState}:${currentEntry.contentId}` ? (
+                      <Stack gap="lg" p="md" data-testid="entry-loading-skeleton">
+                        {[0, 1, 2].map((row) => (
+                          <Stack key={row} gap={6}>
+                            <Skeleton h={12} w={120} />
+                            <Skeleton h={36} />
+                          </Stack>
+                        ))}
+                      </Stack>
+                    ) : (
+                      <Alert
+                        color="red"
+                        variant="light"
+                        m="md"
+                        title="This entry couldn't be loaded."
+                        data-testid="entry-load-failed"
+                      >
+                        <Button
+                          variant="default"
+                          onClick={() => {
+                            setLoadFailedKey(null)
+                            setLoadAttempt((attempt) => attempt + 1)
+                          }}
+                        >
+                          Retry
+                        </Button>
+                      </Alert>
+                    )
+                  }
+                />
+              </Box>
             </Box>
           }
           overlays={

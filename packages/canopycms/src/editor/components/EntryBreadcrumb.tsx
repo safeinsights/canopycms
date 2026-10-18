@@ -1,7 +1,17 @@
 'use client'
 
 import React, { useEffect, useRef, useState, type ReactElement, type Ref } from 'react'
-import { Badge, Box, Button, Group, Menu, Text, Tooltip, VisuallyHidden } from '@mantine/core'
+import {
+  Badge,
+  Box,
+  Button,
+  Group,
+  Menu,
+  Skeleton,
+  Text,
+  Tooltip,
+  VisuallyHidden,
+} from '@mantine/core'
 import { useMergedRef } from '@mantine/hooks'
 import { IconChevronDown, IconChevronRight, IconLock } from '@tabler/icons-react'
 import type { BreadcrumbSegment } from '../editor-utils'
@@ -16,6 +26,8 @@ export interface EntryBreadcrumbProps {
   segments: BreadcrumbSegment[]
   /** The open entry's label; undefined when no entry is open. */
   entryLabel: string | undefined
+  /** No entry yet because the branch or its entries are still loading: a placeholder crumb shows. */
+  entryLoading?: boolean
   /** The open entry has unsaved changes. */
   entryDirty: boolean
   /** Why the open entry is read-only; set, the "Read-only" chip shows. */
@@ -116,6 +128,7 @@ const separator = (
 export function EntryBreadcrumb({
   segments,
   entryLabel,
+  entryLoading = false,
   entryDirty,
   readOnlyReason,
   onCollection,
@@ -175,7 +188,11 @@ export function EntryBreadcrumb({
           ))}
           <Group component="li" gap={2} wrap="nowrap" miw={64} style={{ flex: '0 1 auto' }}>
             {segments.length > 0 && separator}
-            {entryLabel === undefined ? (
+            {entryLabel === undefined && entryLoading ? (
+              <Skeleton height={16} width={120} mx={4} data-testid="entry-crumb-loading">
+                <VisuallyHidden>Loading…</VisuallyHidden>
+              </Skeleton>
+            ) : entryLabel === undefined ? (
               <Text size="sm" c="dimmed" px={4} data-testid="file-dropdown-button">
                 No entry open
               </Text>

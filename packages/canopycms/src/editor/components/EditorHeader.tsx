@@ -1,10 +1,10 @@
-import React, { type Ref } from 'react'
-import { Button, Tooltip } from '@mantine/core'
+import React, { useCallback, useLayoutEffect, useRef, type Ref } from 'react'
+import { Button, Menu, Tooltip, em, getBreakpointValue, useMantineTheme } from '@mantine/core'
+import { useMediaQuery, useMergedRef } from '@mantine/hooks'
+import { IconChevronDown } from '@tabler/icons-react'
 import type { OperatingMode } from '../../operating-mode'
 import type { BranchStatus } from '../../types'
-import type { EditorEntry } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
-import type { BreadcrumbSegment } from '../editor-utils'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { clientOperatingStrategy } from '../../operating-mode/client'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
@@ -14,62 +14,39 @@ import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
 import { describeBranchLock } from './BranchLockBanner'
 import { BranchPill } from './BranchPill'
-import { EntryBreadcrumb } from './EntryBreadcrumb'
-import { SaveSplitButton } from './SaveSplitButton'
+import { ReasonedMenuItem } from './ReasonedMenuItem'
+import { DraftStorageWarning, SaveAllButton } from './SaveAllButton'
+import { ENTRY_HEADER_HEIGHT } from './EntryHeader'
+import { useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
-  currentEntry: EditorEntry | undefined
   branchName: string
   operatingMode: OperatingMode
   /** Whether operations are currently in progress. */
   busy: boolean
-  /** The crumbs before the open entry's own. */
-  breadcrumbSegments: BreadcrumbSegment[]
   /** The listed entries with unsaved changes on the branch. */
   editedFiles: Array<{ path: LogicalPath; label: string }>
   /** Entries with unsaved changes on the branch. */
   modifiedCount: number
-  /** Opens the content panel on a collection. */
-  onCollectionOpen: (collectionPath: string) => void
-  /** The entry menu's trigger. */
-  navigatorToggleRef?: Ref<HTMLButtonElement>
   /** The branch pill. */
   branchToggleRef?: Ref<HTMLButtonElement>
-  /** Replaces the open entry with the server's copy. */
-  onFileReload: () => void
-  onFileDiscardDraft: () => void
-  /** Opens the open entry's "Change URL" dialog. */
-  onEntryRename: () => void
-  /** Asks to delete the open entry. */
-  onEntryDelete: () => void
   onEntrySelect: (path: LogicalPath) => void
   /** Re-reads the branch and its entry list, keeping drafts. */
   onBranchReloadData: () => void
   onBranchDiscardDrafts: () => void
   onBranchManagerOpen: () => void
-  onSave: () => void
   onSaveAll: () => void
   saveAllProgress: SaveAllProgress | null
-  /** A Save of the open entry is in flight. */
-  saving?: boolean
-  /** Rises each time a single Save lands, whichever entry it saved. */
-  savedSignal?: number
-  /** The last Save that landed saved the open entry. */
-  savedHere?: boolean
+  /** A single Save is in flight, on any entry. */
+  singleSaving?: boolean
   /** The branch's entry list failed to load and none is held. */
   entryListFailed?: boolean
-  onSubmit: () => void
-  onWithdraw: () => void
-  /** The open entry has unsaved changes it could save. */
-  hasUnsavedChanges: boolean
-  /** The open entry has a draft, savable or not (a read-only branch's still discards). */
-  entryHasDraft?: boolean
+  /** Opens the submit dialog, which returns focus to `returnFocusTo()` when given. */
+  onSubmit: (returnFocusTo?: () => HTMLElement | null) => void
+  /** Opens the withdraw dialog, which returns focus to `returnFocusTo()` when given. */
+  onWithdraw: (returnFocusTo?: () => HTMLElement | null) => void
   /** Writing drafts to localStorage failed, so they live only in this tab. */
   draftStorageFailed?: boolean
-  /** The open entry can't be edited by this user (a path rule). */
-  entryReadOnly?: boolean
-  /** The open entry's type has no schema in the running code. */
-  entryUnavailable?: boolean
   /** Current branch status (undefined if unknown). */
   branchStatus: BranchStatus | undefined
   /** Current user context for permission checks. */
@@ -82,58 +59,40 @@ export interface EditorHeaderProps {
   }
   /**
    * Whether the current branch is the protected base branch (see
-   * authorization/protected-branch.ts). Hides the Submit button (Withdraw
-   * stays, as the recovery path). Default false.
+   * authorization/protected-branch.ts). Hides Submit, as a button or in the caret
+   * (Withdraw stays, as the recovery path). Default false.
    */
   branchIsProtected?: boolean
-  /** Whether the current branch is read-only (protected base branch in prod); disables Save. */
+  /** Whether the current branch is read-only (protected base branch in prod); disables Save all. */
   branchReadOnly?: boolean
   /** Server-computed: content writes are rejected on this branch; see `branchLockState`. */
   branchWriteBlocked?: boolean
-  /**
-   * No branch details yet (loading, or the list failed and the banner says so): the fail-closed
-   * lock defaults are guesses, so neither the chip nor the status names them.
-   */
+  /** No branch details yet: the fail-closed lock defaults are guesses the status doesn't name. */
   branchLoading?: boolean
 }
 
 /**
- * The top bar's contents: the breadcrumb with the entry menu and "Read-only" chip, then the branch
- * pill, Submit or Withdraw, and Save with Save all.
+ * The branch bar's contents: the branch pill at its start; the draft-storage warning, Save all and
+ * Submit or Withdraw at its end. The open entry's own controls are in `EntryHeader`.
  */
 export function EditorHeader({
-  currentEntry,
   branchName,
   operatingMode,
   busy,
-  breadcrumbSegments,
   editedFiles,
   modifiedCount,
-  onCollectionOpen,
-  navigatorToggleRef,
   branchToggleRef,
-  onFileReload,
-  onFileDiscardDraft,
-  onEntryRename,
-  onEntryDelete,
   onEntrySelect,
   onBranchReloadData,
   onBranchDiscardDrafts,
   onBranchManagerOpen,
-  onSave,
   onSaveAll,
   saveAllProgress,
-  saving = false,
-  savedSignal,
-  savedHere = false,
+  singleSaving = false,
   entryListFailed = false,
   onSubmit,
   onWithdraw,
-  hasUnsavedChanges,
-  entryHasDraft = hasUnsavedChanges,
   draftStorageFailed = false,
-  entryReadOnly = false,
-  entryUnavailable = false,
   branchStatus,
   userContext,
   branchCreatedBy,
@@ -143,19 +102,8 @@ export function EditorHeader({
   branchWriteBlocked = false,
   branchLoading = false,
 }: EditorHeaderProps) {
-  // Shared by Save and Save all; set exactly when BranchLockBanner renders.
+  // Set exactly when BranchLockBanner renders.
   const branchLockReason = describeBranchLock({ branchStatus, branchReadOnly, branchWriteBlocked })
-  const entryLockReason = entryReadOnly
-    ? "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it."
-    : undefined
-  // The Tooltip hides it while the editor is busy.
-  const saveBlockedReason =
-    branchLockReason ??
-    (!branchName
-      ? 'Open a branch first.'
-      : !currentEntry
-        ? 'Open an entry to save it.'
-        : (entryLockReason ?? (!hasUnsavedChanges ? 'No changes to save.' : '')))
 
   const presentation = branchBarStatusPresentation(branchStatus, branchIsProtected)
   const status =
@@ -169,70 +117,76 @@ export function EditorHeader({
         }
       : undefined
 
+  // Below `md` on an editable branch, the workflow action joins Save all as its caret.
+  const theme = useMantineTheme()
+  // Mantine's own below-`md` query, the one `visibleFrom="md"` hides under.
+  const belowMd = `(max-width: ${em(getBreakpointValue('md', theme.breakpoints) - 0.1)})`
+  const narrow = useMediaQuery(belowMd, false, { getInitialValueInEffect: false }) === true
+  const editable = !!branchName && !branchLoading && !branchLockReason
+  const workflow = workflowAction({
+    branchName,
+    busy,
+    branchStatus,
+    userContext,
+    branchCreatedBy,
+    branchAccess,
+    branchIsProtected,
+    savingAll: !!saveAllProgress,
+  })
+  const split = narrow && editable
+
+  // The workflow control is the caret or a button by turns, as a submit locks the branch or a
+  // withdraw unlocks it; focus on the outgoing one, or in its open menu, moves to the incoming one.
+  const workflowEl = useRef<HTMLButtonElement | null>(null)
+  const handOffFocus = useRef(false)
+  // Focused on attach, so a detach and re-attach of the same button (React's dev StrictMode)
+  // cancel out; a commit that mounts no control clears the hand-off in the layout effect.
+  const workflowRef = useCallback((el: HTMLButtonElement | null) => {
+    if (el) {
+      if (handOffFocus.current) {
+        handOffFocus.current = false
+        el.focus({ preventScroll: true })
+      }
+    } else if (workflowEl.current && holdsFocus(workflowEl.current)) {
+      handOffFocus.current = true
+    }
+    workflowEl.current = el
+  }, [])
+  useLayoutEffect(() => {
+    handOffFocus.current = false
+  })
+  const workflowControl = {
+    onSubmit,
+    onWithdraw,
+    controlRef: workflowRef,
+    returnFocusTo: () => workflowEl.current,
+  }
+
   return (
     <TopBar
       leading={
-        <EntryBreadcrumb
-          segments={breadcrumbSegments}
-          entryLabel={currentEntry ? (currentEntry.label ?? currentEntry.slug) : undefined}
-          entryDirty={hasUnsavedChanges}
-          // BranchLockBanner already says why a locked branch is read-only, so the chip carries
-          // only the entry's own reason, even beside the banner: "Withdraw it" would not unlock it.
-          readOnlyReason={
-            branchLoading ? undefined : currentEntry || branchName ? entryLockReason : undefined
-          }
-          onCollection={onCollectionOpen}
-          onRefresh={onFileReload}
-          onDiscard={onFileDiscardDraft}
-          // A path rule's refusal hides them, as the content tree hides that entry's "…" menu.
-          onRename={entryReadOnly ? undefined : onEntryRename}
-          // An entry with a page has a preview `src`; one without changes only its slug.
-          entryNoPage={!!currentEntry && !currentEntry.previewSrc}
-          onDelete={entryReadOnly ? undefined : onEntryDelete}
-          refreshBlockedReason={branchName ? undefined : 'Open a branch first.'}
-          discardBlockedReason={entryHasDraft ? undefined : 'This entry has no unsaved changes.'}
-          changeBlockedReason={
-            branchLockReason ??
-            (entryUnavailable
-              ? "This entry's content type isn't known to this editor version yet. Reload in a few minutes."
-              : undefined)
-          }
-          entryMenuRef={navigatorToggleRef}
+        <BranchPill
+          branchName={branchName}
+          loading={busy}
+          status={status}
+          unsavedCount={modifiedCount}
+          unsavedEntries={editedFiles}
+          onSwitchBranch={onBranchManagerOpen}
+          onRefreshBranch={onBranchReloadData}
+          onDiscardAll={onBranchDiscardDrafts}
+          onEntrySelect={onEntrySelect}
+          pillRef={branchToggleRef}
         />
       }
       trailing={
         <>
-          <BranchPill
-            branchName={branchName}
-            loading={busy}
-            status={status}
-            unsavedCount={modifiedCount}
-            unsavedEntries={editedFiles}
-            onSwitchBranch={onBranchManagerOpen}
-            onRefreshBranch={onBranchReloadData}
-            onDiscardAll={onBranchDiscardDrafts}
-            onEntrySelect={onEntrySelect}
-            pillRef={branchToggleRef}
-          />
-          <WorkflowButton
-            branchName={branchName}
-            busy={busy}
-            branchStatus={branchStatus}
-            userContext={userContext}
-            branchCreatedBy={branchCreatedBy}
-            branchAccess={branchAccess}
-            branchIsProtected={branchIsProtected}
-            onSubmit={onSubmit}
-            onWithdraw={onWithdraw}
-            savingAll={!!saveAllProgress}
-          />
-          <SaveSplitButton
-            onSave={onSave}
-            saveBlockedReason={saveBlockedReason}
-            busy={busy}
+          <DraftStorageWarning shown={draftStorageFailed && modifiedCount > 0} />
+          <SaveAllButton
+            // Its reserved width follows this branch's counts, not the session's largest.
+            key={branchName}
             onSaveAll={onSaveAll}
             unsavedCount={modifiedCount}
-            saveAllBlockedReason={
+            blockedReason={
               branchLockReason ??
               (!branchName
                 ? 'Open a branch first.'
@@ -241,32 +195,44 @@ export function EditorHeader({
                   : undefined)
             }
             saveAllProgress={saveAllProgress}
-            saving={saving}
-            savedSignal={savedSignal}
-            savedHere={savedHere}
-            entryDirty={hasUnsavedChanges}
-            draftStorageFailed={draftStorageFailed}
+            singleSaving={singleSaving}
+            busy={busy}
+            caret={
+              split && workflow ? (
+                <WorkflowCaret {...workflowControl} action={workflow} />
+              ) : undefined
+            }
           />
+          {!split && workflow && <WorkflowButton {...workflowControl} action={workflow} />}
         </>
       }
     />
   )
 }
 
-type WorkflowButtonProps = Pick<
+/** `el` has focus, or the open menu it controls (`aria-controls`) does. */
+function holdsFocus(el: HTMLElement): boolean {
+  const active = document.activeElement
+  const menuId = el.getAttribute('aria-controls')
+  return active === el || (!!menuId && !!document.getElementById(menuId)?.contains(active))
+}
+
+/** The branch's review action, as both the wide button and the narrow caret offer it. */
+interface WorkflowAction {
+  kind: 'submit' | 'withdraw'
+  /** It can't act now. */
+  blocked: boolean
+  /** Why it can't; empty when it can, or when only a load, a save or a missing branch holds it. */
+  reason: string
+}
+
+type WorkflowActionInput = Pick<
   EditorHeaderProps,
-  | 'branchName'
-  | 'busy'
-  | 'branchStatus'
-  | 'userContext'
-  | 'branchCreatedBy'
-  | 'branchAccess'
-  | 'onSubmit'
-  | 'onWithdraw'
+  'branchName' | 'busy' | 'branchStatus' | 'userContext' | 'branchCreatedBy' | 'branchAccess'
 > & { branchIsProtected: boolean; savingAll: boolean }
 
-/** Submit for review, or Withdraw from review once submitted or approved. */
-function WorkflowButton({
+/** Submit for review, or Withdraw from review once submitted or approved; null when neither shows. */
+function workflowAction({
   branchName,
   busy,
   branchStatus,
@@ -274,10 +240,8 @@ function WorkflowButton({
   branchCreatedBy,
   branchAccess,
   branchIsProtected,
-  onSubmit,
-  onWithdraw,
   savingAll,
-}: WorkflowButtonProps) {
+}: WorkflowActionInput): WorkflowAction | null {
   const isSubmitted = branchStatus === 'submitted'
   const isEditing = branchStatus === 'editing'
   // 'approved' withdraws too -- it is that status's only
@@ -316,49 +280,122 @@ function WorkflowButton({
   // sent people to an admin to fix a non-permissions problem.
   const statusHasAction = isEditing || isWithdrawable
   const canPerformAction = userHasPermission && statusHasAction
-  // Blocked, it stays focusable (`aria-disabled`), so its reason opens on focus.
-  // `busy` alone can't hold it: an entry load clears that shared flag mid-run.
-  const actionBlocked = !branchName || busy || savingAll || !canPerformAction
-  const waitReason = savingAll ? 'Wait for Save all to finish.' : undefined
 
-  return (
-    <Tooltip
-      label={
-        // No branch data (`branchStatus === undefined`) must not be
+  return {
+    kind: isWithdrawable ? 'withdraw' : 'submit',
+    // `busy` alone can't hold it: an entry load clears that shared flag mid-run.
+    blocked: !branchName || busy || savingAll || !canPerformAction,
+    reason: savingAll
+      ? 'Wait for Save all to finish.'
+      : // No branch data (`branchStatus === undefined`) must not be
         // interpolated raw into this label. Guarded explicitly here rather
-        // than left to the early return above, which hides this button
+        // than left to the early return above, which hides the action
         // today only as a side effect of `branchIsProtected`'s `?? true`
         // default -- not a guarantee this arm stays unreachable.
-        waitReason ??
-        (branchStatus === undefined
-          ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
-          : !statusHasAction
-            ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
-            : !userHasPermission
-              ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
-              : '')
-      }
-      disabled={canPerformAction && !waitReason}
-      multiline
-      maw={320}
-    >
+        branchStatus === undefined
+        ? 'Branch details could not be loaded. Use "Switch branch…" to retry.'
+        : !statusHasAction
+          ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
+          : !userHasPermission
+            ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
+            : '',
+  }
+}
+
+interface WorkflowControlProps {
+  action: WorkflowAction
+  onSubmit: EditorHeaderProps['onSubmit']
+  onWithdraw: EditorHeaderProps['onWithdraw']
+  /** The control's own button: the wide button, or the caret. */
+  controlRef: (el: HTMLButtonElement | null) => void
+  /** Where the confirm dialog returns focus: whichever control is mounted as it closes. */
+  returnFocusTo: () => HTMLElement | null
+}
+
+function WorkflowButton({
+  action,
+  onSubmit,
+  onWithdraw,
+  controlRef,
+  returnFocusTo,
+}: WorkflowControlProps) {
+  const withdraw = action.kind === 'withdraw'
+  return (
+    <Tooltip label={action.reason} disabled={!action.reason} multiline maw={320}>
       <Button
+        ref={controlRef}
         size="sm"
-        // Save is the top bar's one filled primary; the rest take their colour's light variant.
+        // The entry's Save is the one filled primary; the rest take their colour's light variant.
         variant="light"
-        color={isWithdrawable ? 'orange' : undefined}
+        color={withdraw ? 'orange' : undefined}
         style={{ flexShrink: 0 }}
         onClick={() => {
-          if (actionBlocked) return
-          if (isWithdrawable) onWithdraw()
-          else onSubmit()
+          if (action.blocked) return
+          if (withdraw) onWithdraw(returnFocusTo)
+          else onSubmit(returnFocusTo)
         }}
-        data-disabled={actionBlocked ? true : undefined}
-        aria-disabled={actionBlocked ? true : undefined}
-        data-testid={isWithdrawable ? 'withdraw-button' : 'submit-button'}
+        // Blocked, it stays focusable (`aria-disabled`), so its reason opens on focus.
+        data-disabled={action.blocked ? true : undefined}
+        aria-disabled={action.blocked ? true : undefined}
+        data-testid={withdraw ? 'withdraw-button' : 'submit-button'}
       >
-        {isWithdrawable ? EDITOR_ACTIONS.withdrawFromReview : EDITOR_ACTIONS.submitForReview}
+        {withdraw ? EDITOR_ACTIONS.withdrawFromReview : EDITOR_ACTIONS.submitForReview}
       </Button>
     </Tooltip>
+  )
+}
+
+/** Save all's caret below `md`, holding the workflow action. */
+function WorkflowCaret({
+  action,
+  onSubmit,
+  onWithdraw,
+  controlRef,
+  returnFocusTo,
+}: WorkflowControlProps) {
+  const caret = useRef<HTMLButtonElement>(null)
+  const caretRef = useMergedRef(caret, controlRef)
+  const menuFocus = useMenuItemFocusReturn(caret)
+  const withdraw = action.kind === 'withdraw'
+  return (
+    // Bounded, so a blocked item's reason wraps on a phone rather than run off the screen.
+    <Menu withinPortal shadow="sm" position="bottom-end" width={280} {...menuFocus.menu}>
+      <Tooltip
+        label="Branch actions"
+        events={{ hover: true, focus: true, touch: false }}
+        position="bottom-end"
+        offset={ENTRY_HEADER_HEIGHT + 8}
+      >
+        <Menu.Target>
+          <Button
+            ref={caretRef}
+            variant="light"
+            size="sm"
+            px={8}
+            aria-label="Branch actions"
+            data-testid="branch-actions-button"
+            style={{ borderInlineStart: '1px solid var(--canopy-input-border)' }}
+          >
+            <IconChevronDown size={14} aria-hidden="true" />
+          </Button>
+        </Menu.Target>
+      </Tooltip>
+      <Menu.Dropdown {...menuFocus.dropdown}>
+        <ReasonedMenuItem
+          data-testid={withdraw ? 'withdraw-menu-item' : 'submit-menu-item'}
+          blockedReason={
+            action.blocked
+              ? action.reason || 'Wait for the current save or load to finish.'
+              : undefined
+          }
+          onClick={() => {
+            if (withdraw) onWithdraw(returnFocusTo)
+            else onSubmit(returnFocusTo)
+          }}
+        >
+          {withdraw ? EDITOR_ACTIONS.withdrawFromReview : EDITOR_ACTIONS.submitForReview}
+        </ReasonedMenuItem>
+      </Menu.Dropdown>
+    </Menu>
   )
 }

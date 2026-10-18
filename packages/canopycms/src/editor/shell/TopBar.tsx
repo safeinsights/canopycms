@@ -7,15 +7,15 @@ import { SHELL_REGION_BORDER } from './EditorShell'
 const TOP_BAR_HEIGHT = 48
 
 export interface TopBarProps {
-  /** Where you are: the breadcrumb and anything that describes the open entry. */
+  /** The branch, at the bar's inline start. */
   leading: ReactNode
-  /** What you can do: the branch and the actions on it. */
+  /** The actions on the branch, at its inline end. */
   trailing: ReactNode
 }
 
 /**
- * The shell's top bar: one 48px row from `md` up. Narrower, `leading` takes a row of its own
- * above `trailing`, which wraps rather than clip a control. Layout only.
+ * The shell's top bar, the branch bar: one 48px row while both sides fit. Narrower, `trailing`
+ * controls that don't fit beside the branch wrap to a second row at the inline end. Layout only.
  */
 export function TopBar({ leading, trailing }: TopBarProps) {
   return (
@@ -31,7 +31,7 @@ export function TopBar({ leading, trailing }: TopBarProps) {
         background: 'var(--mantine-color-body)',
       }}
     >
-      <Box flex={{ base: '1 0 100%', md: '1 1 0%' }} miw={0}>
+      <Box flex="0 1 auto" miw={0}>
         {leading}
       </Box>
       <Group
@@ -39,8 +39,10 @@ export function TopBar({ leading, trailing }: TopBarProps) {
         wrap="wrap"
         align="center"
         justify="flex-end"
-        flex={{ base: '1 0 100%', md: '0 1 auto' }}
-        miw={0}
+        // It shares the pill's row while its widest control fits there, and then only the controls
+        // that don't fit wrap, still at the end; narrower, it takes a row of its own.
+        flex="1 1 0%"
+        miw="min-content"
       >
         {trailing}
       </Group>

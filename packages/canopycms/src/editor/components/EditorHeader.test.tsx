@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, render, screen, cleanup, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
+import { EntryHeader, type EntryHeaderProps } from './EntryHeader'
 import { BranchLockBanner, branchLockBannerShown } from './BranchLockBanner'
 import { UnsavedMark } from './UnsavedMark'
 import { CanopyCMSProvider } from '../theme'
@@ -21,7 +22,10 @@ const currentEntry: EditorEntry = {
   previewSrc: '/posts/hello',
 }
 
-const defaultProps: EditorHeaderProps = {
+/** Both headers' props, as Editor.tsx passes them; the entry header's Save all flag follows. */
+type HeadersProps = EditorHeaderProps & Omit<EntryHeaderProps, 'saveAllRunning'>
+
+const defaultProps: HeadersProps = {
   currentEntry,
   branchName: 'feature/x',
   operatingMode: 'prod',
@@ -47,17 +51,19 @@ const defaultProps: EditorHeaderProps = {
   onWithdraw: vi.fn(),
 }
 
-/** The header with the lock banner Editor.tsx renders under it from the same branch props. */
-const renderHeader = (overrides: Partial<EditorHeaderProps> = {}) => {
-  const props = { ...defaultProps, ...overrides }
-  return render(
-    <>
+const Headers = (props: HeadersProps) => (
+  <>
+    <header data-canopy-region="topbar">
       <EditorHeader {...props} />
-      <BranchLockBanner {...props} />
-    </>,
-    { wrapper: Wrapper },
-  )
-}
+    </header>
+    <BranchLockBanner {...props} />
+    <EntryHeader {...props} saveAllRunning={!!props.saveAllProgress} />
+  </>
+)
+
+/** The top bar, the lock banner and the entry header, as Editor.tsx renders them from one state. */
+const renderHeader = (overrides: Partial<HeadersProps> = {}) =>
+  render(<Headers {...defaultProps} {...overrides} />, { wrapper: Wrapper })
 
 describe('EditorHeader - review lock', () => {
   afterEach(() => {
@@ -201,7 +207,7 @@ describe('EditorHeader - locked-down branch', () => {
     branchIsProtected: false,
     branchCreatedBy: 'maker',
     branchAccess: { allowedUsers: ['maker', 'invited'], managerOrAdminAllowed: true },
-  } satisfies Partial<EditorHeaderProps>
+  } satisfies Partial<HeadersProps>
 
   it.each(['maker', 'invited'])('blocks Withdraw for %s, whom only the ACL admits', (userId) => {
     renderHeader({ ...lockedProps, userContext: { userId, groups: [] } })
@@ -608,8 +614,8 @@ describe('EditorHeader - unsaved changes kept on this device', () => {
     expect(save.getAttribute('aria-describedby')).toBe(tooltip.id)
   })
 
-  it('keeps a warning in the bar when storing drafts failed', () => {
-    renderHeader({ hasUnsavedChanges: true, draftStorageFailed: true })
+  it('keeps a warning in the top bar when storing drafts failed', () => {
+    renderHeader({ hasUnsavedChanges: true, modifiedCount: 1, draftStorageFailed: true })
     const indicator = screen.getByTestId('unsaved-indicator')
     expect(indicator.textContent).toContain('Unsaved · not kept on this device')
     // The tooltip's consequence is mouse-only, so the status text carries it too.
@@ -621,8 +627,22 @@ describe('EditorHeader - unsaved changes kept on this device', () => {
     expect(document.body.textContent).not.toContain(KEPT)
   })
 
-  it('shows no warning with nothing unsaved', () => {
-    renderHeader({ hasUnsavedChanges: false, draftStorageFailed: true })
+  it('warns for unsaved changes on another entry, the open one clean', () => {
+    renderHeader({ hasUnsavedChanges: false, modifiedCount: 2, draftStorageFailed: true })
+    expect(screen.getByTestId('unsaved-indicator').textContent).toContain(
+      'Unsaved · not kept on this device',
+    )
+  })
+
+  it('sits in the top bar, not in the entry header', () => {
+    renderHeader({ hasUnsavedChanges: true, modifiedCount: 1, draftStorageFailed: true })
+    const indicator = screen.getByTestId('unsaved-indicator')
+    expect(indicator.closest('[data-canopy-region="topbar"]')).not.toBeNull()
+    expect(screen.getByRole('region', { name: 'Entry' }).contains(indicator)).toBe(false)
+  })
+
+  it('shows no warning with nothing unsaved on the branch', () => {
+    renderHeader({ hasUnsavedChanges: false, modifiedCount: 0, draftStorageFailed: true })
     expect(screen.queryByTestId('unsaved-indicator')).toBeNull()
   })
 })
@@ -843,32 +863,64 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
   })
 })
 
+describe('EditorHeader - entry header', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it("holds the entry's breadcrumb, menu, chip and Save, and leaves the branch's controls to the top bar", () => {
+    renderHeader({ entryReadOnly: true, modifiedCount: 1 })
+    const header = screen.getByRole('region', { name: 'Entry' })
+    for (const testId of ['file-dropdown-button', 'read-only-chip', 'save-button']) {
+      expect(header.contains(screen.getByTestId(testId))).toBe(true)
+    }
+    for (const testId of ['save-all-button', 'submit-button', 'branch-dropdown-button']) {
+      expect(header.contains(screen.getByTestId(testId))).toBe(false)
+    }
+  })
+
+  it('shows a placeholder crumb, and no reason on Save, while the entry is still loading', async () => {
+    renderHeader({ currentEntry: undefined, entryLoading: true, hasUnsavedChanges: false })
+    expect(screen.getByTestId('entry-crumb-loading')).toBeTruthy()
+    expect(screen.queryByText('No entry open')).toBeNull()
+    const save = screen.getByTestId('save-button')
+    expect(save.getAttribute('aria-disabled')).toBe('true')
+    act(() => save.focus())
+    await expect(screen.findByRole('tooltip', {}, { timeout: 300 })).rejects.toThrow()
+  })
+
+  it('keeps Save in place, blocked, with no entry open', () => {
+    renderHeader({ currentEntry: undefined, hasUnsavedChanges: false })
+    const save = within(screen.getByRole('region', { name: 'Entry' })).getByTestId('save-button')
+    expect(save.getAttribute('aria-disabled')).toBe('true')
+  })
+})
+
 describe('EditorHeader - Save all', () => {
   afterEach(() => {
     cleanup()
   })
 
-  const openSaveOptions = async () => {
-    await userEvent.click(screen.getByRole('button', { name: 'Save options' }))
-    return screen.findByTestId('save-all-menu-item')
+  const saveAll = () => screen.getByTestId('save-all-button')
+  const focusReason = async () => {
+    act(() => saveAll().focus())
+    return (await screen.findByRole('tooltip')).textContent
   }
 
-  it('offers Save all with the unsaved count, and runs it', async () => {
+  it('offers Save all in the top bar with the unsaved count, and runs it', async () => {
     const onSaveAll = vi.fn()
     renderHeader({ modifiedCount: 3, onSaveAll })
-    const item = await openSaveOptions()
-    expect(item.textContent).toBe('Save all (3)')
-    await userEvent.click(item)
+    expect(saveAll()).toBe(screen.getByRole('button', { name: 'Save all (3)' }))
+    await userEvent.click(saveAll())
     expect(onSaveAll).toHaveBeenCalledTimes(1)
   })
 
   it('blocks Save all with a reason when nothing on the branch is unsaved', async () => {
     const onSaveAll = vi.fn()
     renderHeader({ modifiedCount: 0, hasUnsavedChanges: false, onSaveAll })
-    const item = await openSaveOptions()
-    expect(item.getAttribute('aria-disabled')).toBe('true')
-    expect(item.textContent).toContain('No entry on this branch has unsaved changes.')
-    await userEvent.click(item)
+    expect(saveAll().getAttribute('aria-disabled')).toBe('true')
+    expect(await focusReason()).toBe('No entry on this branch has unsaved changes.')
+    await userEvent.click(saveAll())
     expect(onSaveAll).not.toHaveBeenCalled()
   })
 
@@ -880,33 +932,53 @@ describe('EditorHeader - Save all', () => {
       branchWriteBlocked: true,
       onSaveAll,
     })
-    const item = await openSaveOptions()
-    expect(item.textContent).toContain('This branch is in review. Withdraw it to make changes.')
-    await userEvent.click(item)
+    expect(await focusReason()).toBe('This branch is in review. Withdraw it to make changes.')
+    await userEvent.click(saveAll())
     expect(onSaveAll).not.toHaveBeenCalled()
   })
 
   it("blocks Save all with a way to retry when the branch's entry list didn't load", async () => {
     const onSaveAll = vi.fn()
     renderHeader({ modifiedCount: 2, entryListFailed: true, onSaveAll })
-    const item = await openSaveOptions()
-    expect(item.getAttribute('aria-disabled')).toBe('true')
-    expect(item.textContent).toContain('Choose "Refresh branch" in the branch menu to try again.')
-    await userEvent.click(item)
+    expect(saveAll().getAttribute('aria-disabled')).toBe('true')
+    expect(await focusReason()).toContain(
+      'Choose "Refresh branch" in the branch menu to try again.',
+    )
+    await userEvent.click(saveAll())
     expect(onSaveAll).not.toHaveBeenCalled()
   })
 
-  it('shows progress on Save, blocks it, and announces the run once', async () => {
+  it("waits for a save in flight on any entry, the open one's or another's", async () => {
+    const onSaveAll = vi.fn()
+    renderHeader({ modifiedCount: 2, singleSaving: true, saving: false, onSaveAll })
+    expect(saveAll().getAttribute('aria-disabled')).toBe('true')
+    expect(await focusReason()).toBe('Wait for the save to finish.')
+    await userEvent.click(saveAll())
+    expect(onSaveAll).not.toHaveBeenCalled()
+  })
+
+  it('shows progress on Save all, blocks both buttons, and announces the run once', async () => {
     const onSave = vi.fn()
+    const onSaveAll = vi.fn()
     renderHeader({
       modifiedCount: 3,
-      hasUnsavedChanges: false,
+      hasUnsavedChanges: true,
       busy: true,
       saveAllProgress: { done: 1, total: 3 },
       onSave,
+      onSaveAll,
     })
+    expect(saveAll()).toBe(screen.getByRole('button', { name: 'Saving 2 of 3…' }))
+    expect(saveAll().querySelector('[style*="grid-area"]:not([aria-hidden])')?.textContent).toBe(
+      '2 of 3…',
+    )
+    expect(saveAll().getAttribute('aria-disabled')).toBe('true')
+    // The progress label stays readable: no disabled styling.
+    expect(saveAll().hasAttribute('data-disabled')).toBe(false)
+    await userEvent.click(saveAll())
+    expect(onSaveAll).not.toHaveBeenCalled()
     const save = screen.getByTestId('save-button')
-    expect(save.textContent).toBe('Saving 2 of 3…')
+    expect(save).toBe(screen.getByRole('button', { name: 'Save' }))
     expect(save.getAttribute('aria-disabled')).toBe('true')
     await userEvent.click(save)
     expect(onSave).not.toHaveBeenCalled()
@@ -915,6 +987,51 @@ describe('EditorHeader - Save all', () => {
       .map((region) => region.textContent)
       .filter(Boolean)
     expect(announced).toEqual(['Saving 3 entries…'])
+  })
+
+  it('keeps one width whichever label shows, so the top bar does not shift', () => {
+    renderHeader({ modifiedCount: 0, hasUnsavedChanges: false })
+    const labels = [...saveAll().querySelectorAll('[style*="grid-area"]')]
+    expect(labels.map((label) => label.textContent)).toEqual([
+      'Save all',
+      '1 of 1…',
+      'Save all (1)',
+      '1 of 1…',
+    ])
+    expect(labels.filter((label) => label.getAttribute('aria-hidden') === null)).toHaveLength(1)
+  })
+
+  it("keeps the largest count's width on the branch, and starts over on another", () => {
+    const reserved = () =>
+      [...saveAll().querySelectorAll('[style*="grid-area"][aria-hidden]')].map(
+        (label) => label.textContent,
+      )
+    const view = renderHeader({ modifiedCount: 12 })
+    view.rerender(<Headers {...defaultProps} modifiedCount={3} />)
+    expect(reserved()).toContain('Save all (12)')
+    view.rerender(<Headers {...defaultProps} modifiedCount={3} branchName="feature/y" />)
+    expect(reserved()).toContain('Save all (3)')
+    expect(reserved()).not.toContain('Save all (12)')
+  })
+
+  it('keeps its progress readable and reasonless when a lock arrives mid-run', async () => {
+    renderHeader({
+      modifiedCount: 3,
+      branchStatus: 'submitted',
+      branchWriteBlocked: true,
+      saveAllProgress: { done: 1, total: 3 },
+    })
+    expect(saveAll()).toBe(screen.getByRole('button', { name: 'Saving 2 of 3…' }))
+    expect(saveAll().getAttribute('aria-disabled')).toBe('true')
+    expect(saveAll().hasAttribute('data-disabled')).toBe(false)
+    act(() => saveAll().focus())
+    await expect(screen.findByRole('tooltip', {}, { timeout: 300 })).rejects.toThrow()
+  })
+
+  it("says why Save waits during Save all, though the run's reloads leave the editor busy", async () => {
+    renderHeader({ hasUnsavedChanges: true, busy: true, saveAllProgress: { done: 0, total: 2 } })
+    act(() => screen.getByTestId('save-button').focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Wait for Save all to finish.')
   })
 })
 
@@ -925,10 +1042,9 @@ describe('EditorHeader - Save says how it went', () => {
   })
 
   const saveButton = () => screen.getByTestId('save-button')
-  const renderSave = (props: Partial<EditorHeaderProps>) => {
-    const view = render(<EditorHeader {...defaultProps} {...props} />, { wrapper: Wrapper })
-    return (next: Partial<EditorHeaderProps>) =>
-      view.rerender(<EditorHeader {...defaultProps} {...next} />)
+  const renderSave = (props: Partial<HeadersProps>) => {
+    const view = render(<Headers {...defaultProps} {...props} />, { wrapper: Wrapper })
+    return (next: Partial<HeadersProps>) => view.rerender(<Headers {...defaultProps} {...next} />)
   }
   const statuses = () =>
     screen
@@ -979,6 +1095,17 @@ describe('EditorHeader - Save says how it went', () => {
     expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
   })
 
+  it('says nothing again for an earlier save once a Save all ends inside its window', () => {
+    const rerender = renderSave({ hasUnsavedChanges: false, savedSignal: 0, modifiedCount: 2 })
+    rerender({ hasUnsavedChanges: false, savedSignal: 1, savedHere: true, modifiedCount: 2 })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Saved' }))
+    const run = { hasUnsavedChanges: false, savedSignal: 1, savedHere: true }
+    rerender({ ...run, saveAllProgress: { done: 0, total: 2 } })
+    rerender({ ...run, saveAllProgress: null })
+    expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
+    expect(statuses()).toEqual([])
+  })
+
   it('says nothing for a save that landed before it was shown', () => {
     renderHeader({ hasUnsavedChanges: false, savedSignal: 3, savedHere: true })
     expect(saveButton()).toBe(screen.getByRole('button', { name: 'Save' }))
@@ -1017,16 +1144,15 @@ describe('EditorHeader - emphasis', () => {
     cleanup()
   })
 
-  it('lightens the caret beside a greyed Save, so no half of a blocked split button is filled', () => {
+  it('greys a blocked Save', () => {
     renderHeader({ hasUnsavedChanges: false })
     expect(screen.getByTestId('save-button').hasAttribute('data-disabled')).toBe(true)
-    expect(screen.getByTestId('save-options-button').getAttribute('data-variant')).toBe('light')
   })
 
-  it('fills Save and its caret as the one primary, and leaves Submit and Withdraw secondary', () => {
-    renderHeader({ userContext: { userId: 'u1' }, branchCreatedBy: 'u1' })
+  it("fills the entry's Save as the one primary, and leaves Save all, Submit and Withdraw secondary", () => {
+    renderHeader({ modifiedCount: 1, userContext: { userId: 'u1' }, branchCreatedBy: 'u1' })
     expect(screen.getByTestId('save-button').getAttribute('data-variant')).toBe('filled')
-    expect(screen.getByTestId('save-options-button').getAttribute('data-variant')).toBe('filled')
+    expect(screen.getByTestId('save-all-button').getAttribute('data-variant')).toBe('light')
     expect(screen.getByTestId('submit-button').getAttribute('data-variant')).toBe('light')
     cleanup()
     renderHeader({
@@ -1056,7 +1182,7 @@ describe('EditorHeader - during Save all', () => {
     cleanup()
   })
 
-  it('says why Submit waits, and keeps the progress label out of disabled styling', async () => {
+  it('says why Submit waits', async () => {
     renderHeader({
       busy: true,
       saveAllProgress: { done: 0, total: 2 },
@@ -1069,10 +1195,6 @@ describe('EditorHeader - during Save all', () => {
       submit.focus()
     })
     expect(await screen.findByText('Wait for Save all to finish.')).toBeTruthy()
-
-    const save = screen.getByTestId('save-button')
-    expect(save.getAttribute('aria-disabled')).toBe('true')
-    expect(save.hasAttribute('data-disabled')).toBe(false)
   })
 
   it('holds Submit even when an entry load has cleared the shared busy flag', async () => {
@@ -1088,5 +1210,190 @@ describe('EditorHeader - during Save all', () => {
     expect(submit.getAttribute('aria-disabled')).toBe('true')
     await userEvent.click(submit)
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+})
+
+describe('EditorHeader - branch bar', () => {
+  const originalMatchMedia = window.matchMedia
+  /** A window below `md`: max-width queries match, min-width ones don't. */
+  const stubNarrowWindow = () => {
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query.startsWith('(max-width:'),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList
+  }
+  const owner = { userContext: { userId: 'u1' }, branchCreatedBy: 'u1' }
+  const follows = (a: Element, b: Element) =>
+    !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+    cleanup()
+  })
+
+  it('puts the pill first, then Save all, then Submit', () => {
+    renderHeader({ ...owner, modifiedCount: 2 })
+    const pill = screen.getByTestId('branch-dropdown-button')
+    const saveAll = screen.getByTestId('save-all-button')
+    const submit = screen.getByTestId('submit-button')
+    expect(follows(pill, saveAll)).toBe(true)
+    expect(follows(saveAll, submit)).toBe(true)
+    expect(screen.queryByTestId('branch-actions-button')).toBeNull()
+  })
+
+  it('below md, joins Submit to Save all as its caret on an editable branch', async () => {
+    stubNarrowWindow()
+    const onSubmit = vi.fn()
+    renderHeader({ ...owner, modifiedCount: 2, onSubmit })
+    expect(screen.queryByTestId('submit-button')).toBeNull()
+    const caret = screen.getByTestId('branch-actions-button')
+    expect(caret.closest('.mantine-Button-group')).toBe(
+      screen.getByTestId('save-all-button').closest('.mantine-Button-group'),
+    )
+    await userEvent.click(caret)
+    await userEvent.click(await screen.findByTestId('submit-menu-item'))
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    const returnFocusTo = onSubmit.mock.calls[0][0] as () => HTMLElement | null
+    expect(returnFocusTo()).toBe(caret)
+  })
+
+  it('below md, offers Withdraw in the caret when the branch can be withdrawn', async () => {
+    stubNarrowWindow()
+    const onWithdraw = vi.fn()
+    renderHeader({ ...owner, branchStatus: 'approved', onWithdraw })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const item = await screen.findByTestId('withdraw-menu-item')
+    expect(item.textContent).toBe('Withdraw from review')
+    await userEvent.click(item)
+    expect(onWithdraw).toHaveBeenCalledTimes(1)
+  })
+
+  it('below md, says in the caret why Submit is blocked and does not run it', async () => {
+    stubNarrowWindow()
+    const onSubmit = vi.fn()
+    renderHeader({ userContext: { userId: 'someone-else' }, branchCreatedBy: 'u1', onSubmit })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const item = await screen.findByTestId('submit-menu-item')
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.textContent).toContain('You do not have permission to submit this branch')
+    await userEvent.click(item)
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('below md, draws no caret when the branch has no workflow action', () => {
+    stubNarrowWindow()
+    renderHeader({ ...owner, modifiedCount: 1 })
+    expect(screen.getByTestId('branch-actions-button')).toBeTruthy()
+    cleanup()
+    // A protected branch that is writable, as in dev mode: Submit never shows on it.
+    renderHeader({ ...owner, branchIsProtected: true, modifiedCount: 1 })
+    expect(screen.getByTestId('save-all-button')).toBeTruthy()
+    expect(screen.queryByTestId('branch-actions-button')).toBeNull()
+    expect(screen.queryByTestId('submit-button')).toBeNull()
+  })
+
+  it('below md, moves focus from the caret to Withdraw when a submit locks the branch', () => {
+    stubNarrowWindow()
+    const onSubmit = vi.fn()
+    const props: HeadersProps = { ...defaultProps, ...owner, onSubmit }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    act(() => screen.getByTestId('branch-actions-button').focus())
+    rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
+    const withdraw = screen.getByTestId('withdraw-button')
+    expect(document.activeElement).toBe(withdraw)
+  })
+
+  it('below md, moves focus from the open caret menu to Withdraw when a submit locks the branch', async () => {
+    stubNarrowWindow()
+    const props: HeadersProps = { ...defaultProps, ...owner }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const menu = await screen.findByRole('menu')
+    act(() => within(menu).getByTestId('submit-menu-item').focus())
+    expect(menu.contains(document.activeElement)).toBe(true)
+    rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
+    expect(document.activeElement).toBe(screen.getByTestId('withdraw-button'))
+  })
+
+  it('below md, leaves focus where it is when the swapped control did not have it', () => {
+    stubNarrowWindow()
+    const props: HeadersProps = { ...defaultProps, ...owner, modifiedCount: 1 }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    const saveAll = screen.getByTestId('save-all-button')
+    act(() => saveAll.focus())
+    rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
+    expect(screen.getByTestId('withdraw-button')).toBeTruthy()
+    expect(document.activeElement).toBe(saveAll)
+  })
+
+  it('below md, moves focus from Withdraw to the caret when a withdraw unlocks the branch', () => {
+    stubNarrowWindow()
+    const props: HeadersProps = {
+      ...defaultProps,
+      ...owner,
+      branchStatus: 'submitted',
+      branchWriteBlocked: true,
+    }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    act(() => screen.getByTestId('withdraw-button').focus())
+    rerender(<Headers {...props} branchStatus="editing" branchWriteBlocked={false} />)
+    expect(document.activeElement).toBe(screen.getByTestId('branch-actions-button'))
+  })
+
+  it("returns a dialog's focus to whichever workflow control is mounted when it closes", async () => {
+    stubNarrowWindow()
+    const onSubmit = vi.fn()
+    const props: HeadersProps = { ...defaultProps, ...owner, onSubmit }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    await userEvent.click(await screen.findByTestId('submit-menu-item'))
+    const returnFocusTo = onSubmit.mock.calls[0][0] as () => HTMLElement | null
+    rerender(<Headers {...props} branchStatus="submitted" branchWriteBlocked />)
+    expect(returnFocusTo()).toBe(screen.getByTestId('withdraw-button'))
+  })
+
+  it('gives the wide button itself as where its dialog returns focus', async () => {
+    const onSubmit = vi.fn()
+    renderHeader({ ...owner, onSubmit })
+    const submit = screen.getByTestId('submit-button')
+    await userEvent.click(submit)
+    const returnFocusTo = onSubmit.mock.calls[0][0] as () => HTMLElement | null
+    expect(returnFocusTo()).toBe(submit)
+  })
+
+  it('below md, says in the caret that Submit waits for a load or save', async () => {
+    stubNarrowWindow()
+    renderHeader({ ...owner, busy: true })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const item = await screen.findByTestId('submit-menu-item')
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.textContent).toContain('Wait for the current save or load to finish.')
+  })
+
+  it('groups Save all only when the caret joins it', () => {
+    renderHeader({ ...owner, modifiedCount: 1 })
+    expect(screen.getByTestId('save-all-button').closest('[role="group"]')).toBeNull()
+    cleanup()
+    stubNarrowWindow()
+    renderHeader({ ...owner, modifiedCount: 1 })
+    const group = screen.getByTestId('save-all-button').closest('[role="group"]')
+    expect(group?.contains(screen.getByTestId('branch-actions-button'))).toBe(true)
+  })
+
+  it.each([
+    ['a locked branch', { branchStatus: 'submitted', branchWriteBlocked: true }, 'withdraw-button'],
+    ['a branch still loading', { branchLoading: true }, 'submit-button'],
+  ] as const)('below md, keeps separate buttons on %s', (_label, overrides, testId) => {
+    stubNarrowWindow()
+    renderHeader({ ...owner, ...overrides })
+    expect(screen.queryByTestId('branch-actions-button')).toBeNull()
+    expect(follows(screen.getByTestId('save-all-button'), screen.getByTestId(testId))).toBe(true)
   })
 })

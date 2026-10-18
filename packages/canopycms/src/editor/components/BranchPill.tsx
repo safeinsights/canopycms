@@ -57,7 +57,7 @@ export function BranchPill({
   const name = branchName || (loading ? 'Loading branches…' : 'No branch open')
 
   return (
-    <Menu withinPortal shadow="sm" position="bottom-end" {...menuFocus.menu}>
+    <Menu withinPortal shadow="sm" position="bottom-start" {...menuFocus.menu}>
       <Tooltip
         label={status ? `${name} · ${status.label}` : name}
         disabled={wide}
@@ -70,7 +70,7 @@ export function BranchPill({
             size="sm"
             miw={0}
             px={{ base: 8, sm: 14 }}
-            // The count is the bar's one branch-wide unsaved signal: the row wraps before it clips.
+            // The bar's row wraps before the pill's name or count clips.
             style={{ flexShrink: 0 }}
             leftSection={<IconGitBranch size={16} aria-hidden="true" />}
             rightSection={wide ? <IconChevronDown size={14} aria-hidden="true" /> : undefined}

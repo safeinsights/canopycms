@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 
-import { EditorHeader } from './EditorHeader'
+import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
+import { EntryHeader, type EntryHeaderProps } from './EntryHeader'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 
 const noop = () => {}
@@ -13,9 +14,21 @@ const phone = {
   },
 }
 
-const meta: Meta<typeof EditorHeader> = {
+type HeadersProps = EditorHeaderProps & Omit<EntryHeaderProps, 'saveAllRunning'>
+
+/** The top bar over the entry header, as the shell stacks them. */
+function Headers(props: HeadersProps) {
+  return (
+    <>
+      <EditorHeader {...props} />
+      <EntryHeader {...props} saveAllRunning={!!props.saveAllProgress} />
+    </>
+  )
+}
+
+const meta: Meta<typeof Headers> = {
   title: 'Editor/EditorHeader',
-  component: EditorHeader,
+  component: Headers,
   parameters: { layout: 'fullscreen' },
   args: {
     currentEntry: {
@@ -56,7 +69,7 @@ const meta: Meta<typeof EditorHeader> = {
 }
 
 export default meta
-type Story = StoryObj<typeof EditorHeader>
+type Story = StoryObj<typeof Headers>
 
 /** Three entries unsaved, the open one among them: its dot, the pill's count and Save all (3). */
 export const Unsaved: Story = {}
@@ -65,7 +78,10 @@ export const Saved: Story = {
   args: { hasUnsavedChanges: false, editedFiles: [], modifiedCount: 0 },
 }
 
-/** In review: Submit becomes Withdraw and Save is blocked. The lock banner, not shown here, says why. */
+/**
+ * In review: Submit becomes Withdraw, and Save and Save all are blocked. The lock banner, not
+ * shown here, says why.
+ */
 export const InReview: Story = {
   args: {
     branchStatus: 'submitted',
@@ -107,13 +123,13 @@ export const EntryReadOnlyInReview: Story = {
   },
 }
 
-/** At 390px the breadcrumb takes its own row, so "Withdraw from review" is never clipped. */
+/** At 390px a locked branch keeps Withdraw apart from Save all; the bar wraps rather than clip it. */
 export const Narrow: Story = {
   parameters: phone,
   args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
 }
 
-/** On a phone the bar adds only the entry's dot and the pill's count for unsaved changes. */
+/** Below `md` an editable branch's Save all and Submit share one split button. */
 export const NarrowUnsaved: Story = {
   parameters: phone,
 }
@@ -134,15 +150,27 @@ export const BranchLoading: Story = {
   args: { branchLoading: true, branchWriteBlocked: true, hasUnsavedChanges: false },
 }
 
+/** Save all shows its progress; the entry's Save waits for it, and says so on focus. */
 export const SaveAllInProgress: Story = {
   args: { busy: true, saveAllProgress: { done: 1, total: 3 } },
 }
 
-/** The browser refused to store drafts: a warning joins the bar, an icon below `lg`. */
+/** The browser refused to store drafts: a warning joins the top bar, an icon below `lg`. */
 export const UnsavedNotKept: Story = {
   args: { draftStorageFailed: true },
 }
 
+/** Entries still loading: a placeholder crumb, and Save blocked without a reason yet. */
+export const EntryLoading: Story = {
+  args: {
+    currentEntry: undefined,
+    entryLoading: true,
+    breadcrumbSegments: [],
+    hasUnsavedChanges: false,
+  },
+}
+
+/** No entry open: Save stays in place, blocked, saying to open one. */
 export const NoEntryOpen: Story = {
   args: {
     currentEntry: undefined,
@@ -151,20 +179,32 @@ export const NoEntryOpen: Story = {
   },
 }
 
+const until = async (found: () => Element | null) => {
+  for (let i = 0; i < 50 && !found(); i++) await new Promise((r) => setTimeout(r, 50))
+}
+const byTestId = (canvasElement: HTMLElement, testId: string) => () =>
+  canvasElement.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)
+
 /** Clicks `testId` once it has rendered, then waits for the menu it opens. */
 const openMenu =
   (testId: string): Story['play'] =>
   async ({ canvasElement }) => {
-    const until = async (found: () => Element | null) => {
-      for (let i = 0; i < 50 && !found(); i++) await new Promise((r) => setTimeout(r, 50))
-    }
-    const trigger = () =>
-      canvasElement.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)
+    const trigger = byTestId(canvasElement, testId)
     await until(trigger)
     trigger()?.click()
     await until(() => document.querySelector('[role="menu"]'))
   }
 const openEntryMenu = openMenu('file-dropdown-button')
+
+/** Focuses `testId` once it has rendered, then waits for the Tooltip giving its reason. */
+const focusReason =
+  (testId: string): Story['play'] =>
+  async ({ canvasElement }) => {
+    const control = byTestId(canvasElement, testId)
+    await until(control)
+    control()?.focus()
+    await until(() => document.querySelector('[role="tooltip"]'))
+  }
 
 /** The entry menu: refresh, discard, then Change URL… and the destructive Delete entry. */
 export const EntryMenu: Story = {
@@ -190,12 +230,38 @@ export const JustSaved: Story = {
     // Only a signal that rises after mount shows "Saved".
     const [signal, setSignal] = useState(0)
     useEffect(() => setSignal(1), [])
-    return <EditorHeader {...args} savedSignal={signal} savedHere />
+    return <Headers {...args} savedSignal={signal} savedHere />
   },
 }
 
 /** The branch's entry list failed to load, so Save all can't match drafts to entries. */
 export const SaveAllEntryListFailed: Story = {
   args: { entryListFailed: true },
-  play: openMenu('save-options-button'),
+  play: focusReason('save-all-button'),
+}
+
+/** Another entry's Save is in flight, so Save all waits for it. */
+export const SaveAllWaitsForSave: Story = {
+  args: { singleSaving: true },
+  play: focusReason('save-all-button'),
+}
+
+/** The split button's caret, holding Submit for review. */
+export const NarrowBranchActions: Story = {
+  parameters: phone,
+  play: openMenu('branch-actions-button'),
+}
+
+/** Submit in the caret, blocked for someone without access: its reason wraps within the menu. */
+export const NarrowBranchActionsBlocked: Story = {
+  parameters: phone,
+  args: { branchCreatedBy: 'someone-else' },
+  play: openMenu('branch-actions-button'),
+}
+
+/** Withdraw in the caret, for a branch in review that is still writable. */
+export const NarrowBranchActionsWithdraw: Story = {
+  parameters: phone,
+  args: { branchStatus: 'approved' },
+  play: openMenu('branch-actions-button'),
 }
