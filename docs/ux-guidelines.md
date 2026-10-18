@@ -222,13 +222,13 @@ primary is filled: other badges, icons and indicators take their colour's light 
 ## Shell regions
 
 The editor fills the window as one grid: **top bar** (branch pill and status, unsaved count, Save
-all or the way forward, Submit or Withdraw, split below `md`), **rail** (Content, Comments when the
-branch has them, Media, a divider, the layout toggle; Settings and Account below), **panel**
+all or the way forward, Submit or Withdraw, split below `md`), **rail** (Content, Comments while a
+branch is open, Media, a divider, the layout toggle; Settings and Account below), **panel**
 (content tree: docked, in the stacked form row, or over the form), **main** (entry header, keeping
 Save above a maximized preview; preview and form) and **overlays** (drawers, modals, toasts).
-Regions are layout only. New UI joins an existing region; adding one is a design decision. The
-pill's Switch branch…, or the bar's way forward, opens the Branches drawer. Unsaved is one dot
-(`UnsavedMark`), also on Content while its panel is closed.
+Regions are layout only. New UI joins an existing region; adding one is a design decision.
+Switch branch… and New branch… open the Branches drawer. Unsaved is one dot (`UnsavedMark`), also
+on Content while its panel is closed.
 
 ## Enforcement
 
