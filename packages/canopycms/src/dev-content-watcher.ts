@@ -242,7 +242,14 @@ export function startDevContentWatcher(
     }
   }
 
-  const watcher = chokidar.watch(workingTreeContentDir, { ignoreInitial: true })
+  // A save can truncate and then write. chokidar's 50 ms per-path throttle passes only the first
+  // `change`, which can land between the two steps: a check then reads a half-written file and
+  // reports a divergence nothing retracts. `awaitWriteFinish` emits only once the file's size has
+  // held still, and bypasses that throttle.
+  const watcher = chokidar.watch(workingTreeContentDir, {
+    ignoreInitial: true,
+    awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 25 },
+  })
   watcher.on('add', () => void check())
   watcher.on('change', () => void check())
   watcher.on('unlink', () => void check())

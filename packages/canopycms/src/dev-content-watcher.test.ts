@@ -204,5 +204,30 @@ describe('startDevContentWatcher', () => {
       }
       expect(syncedCalls(warn)).toHaveLength(1)
     })
+
+    it('reads a save only once it has finished, never the half-written file', async () => {
+      await fs.writeFile(path.join(branchContentDir, 'a.md'), 'from working tree')
+      const warn = vi.fn()
+      dispose = startDevContentWatcher(services, { warn })
+      await settle()
+      expect(divergenceCalls(warn)).toHaveLength(0)
+
+      // A save that truncates, then writes the same bytes after a pause long enough for a check to
+      // read the empty file, yet inside the watcher's stability window. Read between the two steps,
+      // the empty file differs from the clone.
+      const handle = await fs.open(path.join(workingTreeContentDir, 'a.md'), 'r+')
+      await handle.truncate(0)
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      await handle.write('from working tree', 0)
+      await handle.close()
+      await settle()
+
+      expect(divergenceCalls(warn)).toHaveLength(0)
+
+      // The silence is the watcher's choice, not a watcher that saw nothing: a real change is reported.
+      await fs.writeFile(path.join(workingTreeContentDir, 'b.md'), 'only in the working tree')
+      await vi.waitFor(() => expect(divergenceCalls(warn).length).toBe(1), { timeout: 2000 })
+      expect(divergenceCalls(warn)[0]).toContain('b.md')
+    })
   })
 })
