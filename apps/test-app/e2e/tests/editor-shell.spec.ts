@@ -31,6 +31,30 @@ test.describe('Editor shell', () => {
     expect(await page.evaluate(() => window.scrollY)).toBe(0)
   })
 
+  test('the rail runs Content, Comments, Media, a divider and the layout toggle', async () => {
+    expect(await editorPage.railItems()).toEqual([
+      'Content',
+      'Comments',
+      'Media library',
+      'separator',
+      'Switch to stacked layout (now side by side)',
+      'Settings',
+    ])
+  })
+
+  test('Content carries an unsaved dot while its panel is closed', async () => {
+    await editorPage.openContentNavigator()
+    await editorPage.selectEntry('Home')
+    await editorPage.fillTextField('title', 'Home, edited')
+    await editorPage.closeContentNavigator()
+    await expect(editorPage.contentPanelToggle).toHaveAccessibleName('Content, 1 unsaved')
+    await expect(editorPage.railUnsavedMark()).toBeVisible()
+
+    await editorPage.openContentNavigator()
+    await expect(editorPage.contentPanelToggle).toHaveAccessibleName('Content')
+    await expect(editorPage.railUnsavedMark()).toHaveCount(0)
+  })
+
   test('a drag across the preview resizes the split, and the size survives a reload', async ({
     page,
   }) => {

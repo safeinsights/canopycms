@@ -10,8 +10,9 @@ import React, {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import { ActionIcon, Indicator, Stack, Tooltip, VisuallyHidden } from '@mantine/core'
+import { ActionIcon, Box, Divider, Indicator, Stack, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useElementSize, useMergedRef } from '@mantine/hooks'
+import { UnsavedMark } from '../components/UnsavedMark'
 
 const ACTIVITY_RAIL_WIDTH = 44
 
@@ -138,10 +139,17 @@ export interface RailButtonProps extends Omit<ComponentPropsWithoutRef<'button'>
   shortcut?: string
   /** A count badge, hidden at zero; the label should say it too. */
   count?: number
+  /** The unsaved dot at the button's corner; the label should say it too. */
+  unsavedMark?: boolean
   countTestId?: string
   tooltipDisabled?: boolean
   /** Disables the button, which stays focusable, and its tooltip gives this reason instead. */
   disabledReason?: string
+}
+
+/** Sets the buttons after it apart. It carries no `data-rail-item`, so the arrow keys skip it. */
+export function RailDivider() {
+  return <Divider w={24} my={2} />
 }
 
 /** A rail button: icon only, named by `label`, which its tooltip repeats on hover and focus. */
@@ -153,6 +161,7 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
     active = false,
     shortcut,
     count = 0,
+    unsavedMark = false,
     countTestId,
     tooltipDisabled,
     disabledReason,
@@ -213,6 +222,23 @@ export const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(functio
         }}
       >
         {button}
+        {unsavedMark && (
+          <Box
+            component="span"
+            aria-hidden
+            pos="absolute"
+            top={5}
+            right={5}
+            style={{
+              pointerEvents: 'none',
+              lineHeight: 0,
+              borderRadius: '50%',
+              boxShadow: '0 0 0 2px var(--mantine-color-body)',
+            }}
+          >
+            <UnsavedMark aria-hidden data-testid="rail-unsaved-mark" />
+          </Box>
+        )}
       </Indicator>
     </Tooltip>
   )

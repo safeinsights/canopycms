@@ -2142,8 +2142,7 @@ const EditorContent: React.FC<EditorProps> = ({
               }
               contentToggleRef={contentToggleRef}
               contentShortcut={findShortcut}
-              branchesOpen={branchManagerOpen}
-              onBranchesOpen={openBranchManager}
+              unsavedCount={modifiedCount}
               onCommentsOpen={
                 clientOperatingStrategy(operatingMode ?? 'prod').supportsComments() &&
                 branchNameState

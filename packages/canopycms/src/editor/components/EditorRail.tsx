@@ -7,7 +7,6 @@ import {
   IconActivity,
   IconExternalLink,
   IconFiles,
-  IconGitBranch,
   IconInfoCircle,
   IconLayoutColumns,
   IconLayoutRows,
@@ -17,7 +16,7 @@ import {
   IconSettings,
   IconUserCircle,
 } from '@tabler/icons-react'
-import { ActivityRail, RailButton } from '../shell/ActivityRail'
+import { ActivityRail, RailButton, RailDivider } from '../shell/ActivityRail'
 import type { PaneArrangement } from '../shell/PaneLayout'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 import { CANOPYCMS_VERSION } from '../../version'
@@ -33,8 +32,8 @@ export interface EditorRailProps {
   contentToggleRef?: Ref<HTMLButtonElement>
   /** The shortcut that opens the panel at its search field: "⌘P", and "Meta+P" for `aria-keyshortcuts`. */
   contentShortcut: { label: string; keys: string }
-  branchesOpen: boolean
-  onBranchesOpen: () => void
+  /** Entries with unsaved changes: the Content button marks them while its panel is closed. */
+  unsavedCount: number
   /** Without it, the Comments button is not offered (no branch, or a mode without comments). */
   onCommentsOpen?: () => void
   commentsOpen: boolean
@@ -154,8 +153,7 @@ export function EditorRail({
   onContentToggle,
   contentToggleRef,
   contentShortcut,
-  branchesOpen,
-  onBranchesOpen,
+  unsavedCount,
   onCommentsOpen,
   commentsOpen,
   unresolvedCommentCount,
@@ -225,6 +223,8 @@ export function EditorRail({
       <VisuallyHidden component="span"> (opens in a new tab)</VisuallyHidden>
     </Menu.Item>,
   ]
+  const unsaved = !contentPanelOpen && unsavedCount > 0
+  const contentLabel = unsaved ? `Content, ${unsavedCount} unsaved` : 'Content'
   const commentsLabel =
     unresolvedCommentCount > 0 ? `Comments, ${unresolvedCommentCount} unresolved` : 'Comments'
 
@@ -234,7 +234,8 @@ export function EditorRail({
         <>
           <RailButton
             railId="content"
-            label="Content"
+            label={contentLabel}
+            unsavedMark={unsaved}
             icon={<IconFiles size={20} />}
             active={contentPanelOpen}
             aria-expanded={contentPanelOpen}
@@ -244,15 +245,6 @@ export function EditorRail({
             data-testid="content-panel-toggle"
             ref={contentToggleRef}
             onClick={onContentToggle}
-          />
-          <RailButton
-            railId="branches"
-            label="Branches"
-            icon={<IconGitBranch size={20} />}
-            active={branchesOpen}
-            aria-haspopup="dialog"
-            data-testid="rail-branches-button"
-            onClick={onBranchesOpen}
           />
           {onCommentsOpen && (
             <RailButton
@@ -277,14 +269,11 @@ export function EditorRail({
             ref={mediaButtonRef}
             onClick={onMediaLibraryOpen}
           />
-        </>
-      }
-      bottom={
-        <>
+          <RailDivider />
           <LayoutButton layout={layout} onChange={onLayoutChange} blocked={layoutBlocked} />
-          <SettingsMenu items={settingsItems} toggleRef={settingsToggleRef} />
         </>
       }
+      bottom={<SettingsMenu items={settingsItems} toggleRef={settingsToggleRef} />}
       account={
         AccountComponent ? (
           <AccountComponent />

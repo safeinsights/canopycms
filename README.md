@@ -1852,7 +1852,7 @@ How the CanopyCMS editor works from a content editor's perspective.
 
 ### Getting Started
 
-Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a branch to work on.
+Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a branch to work on. The branch is your workspace: the branch bar holds the pill, status, unsaved count, "Save all" and "Submit for review"; the entry header holds the open entry's name and "Save".
 
 > In production the editor opens on the base branch by default. That branch is browsable but read-only — click "New branch…" in the branch bar to start editing. See [Submitting for Review](#submitting-for-review).
 
@@ -1864,21 +1864,21 @@ Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a bran
 >
 > Seven names are reserved because they collide with a static top-level API route: `admin`, `assets`, `branches`, `groups`, `permissions`, `users`, `whoami`. Creating one is rejected with a 400 explaining the collision. Matching is exact and case-sensitive, so `Admin` and `admin-docs` are unaffected.
 
-**Switching branches:** click the branch pill, then "Switch branch…". The base branch is marked with a "Protected" badge — it cannot be submitted for review, and in production it cannot be edited directly. The Branches panel also shows `syncing`, `sync-failed` and `conflict` badges alongside `Merged` and `PR closed`.
+**Switching branches:** click the branch pill, then "Switch branch…". The base branch is marked with a "Protected" badge. The Branches drawer also shows `syncing`, `sync-failed` and `conflict` badges alongside `Merged` and `PR closed`.
 
 **Deleting a branch** also deletes its GitHub branch if the CMS pushed it there, which closes any open PR.
 
 ### Editing Content
 
-Browse collections in the content panel and click an entry to open it; create new entries with the "+" button (disabled for an entry type with `maxItems: 1` when one already exists). Edit fields in the form on the left and watch the live preview on the right. "Save" persists changes to your branch — **not** committed yet — and clears your local unsaved draft for that file. "Discard" reverts unsaved changes to the last saved state, confirming first.
+Browse collections in the content panel and click an entry to open it, or find one with "Find entries" (⌘P, Ctrl+P elsewhere), which opens the panel if it is closed. "All / Changed", or "N unsaved" in the branch bar, narrows the tree to unsaved entries. Create new entries with the "+" button (disabled for an entry type with `maxItems: 1` when one already exists). Edit fields in the form on the left and watch the live preview on the right. "Save" persists changes to your branch — **not** committed yet — and clears your local unsaved draft for that file. "Discard" reverts unsaved changes to the last saved state, confirming first.
 
 ### Submitting for Review
 
-When your changes are ready, click "Submit for review" in the top bar: that commits them and creates a GitHub PR, reviewable with standard GitHub workflows. Once it is merged, CanopyCMS detects it automatically within one worker sync cycle and marks the branch "Merged" in the Branches panel, and your changes deploy with the next site build. Submit refuses a branch whose saved content matches its base ("Nothing to submit yet").
+When your changes are ready, click "Submit for review" in the branch bar: that commits them and creates a GitHub PR. Once it is merged, CanopyCMS detects it automatically within one worker sync cycle and marks the branch "Merged" in the Branches drawer, and your changes deploy with the next site build. Submit refuses a branch whose saved content matches its base ("Nothing to submit yet").
 
-**A submitted branch is locked for content editing.** The editor disables Save and other write actions and marks the branch "In review · read-only" — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw from review" in the top bar or Branches panel, which converts the PR back to a draft and returns the branch to `editing` status. A reviewer's "Request changes" returns it to `editing` too, after a confirmation, leaving the PR alone.
+**A submitted branch is locked for content editing.** The editor disables Save and other write actions and marks the branch "In review · read-only" — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw from review" in the branch bar or Branches drawer, which converts the PR back to a draft and returns the branch to `editing` status. A reviewer's "Request changes" returns it to `editing` too, after a confirmation, leaving the PR alone.
 
-The base branch (the PR target, usually `main`) can never be submitted — a branch cannot be reviewed against itself — so the "Submit for review" button is hidden whenever you are viewing it, in both dev and production. In production it is also read-only in the editor: you can browse it, but changes require creating a branch first (the branch bar offers "New branch…"). In dev mode it stays fully editable, since local development typically starts there, but you still need to move your work to a branch before it can be submitted.
+The base branch (the PR target, usually `main`) can never be submitted, so "Submit for review" is hidden whenever you are viewing it. In production it is read-only (see [Getting Started](#getting-started)); in dev mode it stays editable, but your work must move to a branch before it can be submitted.
 
 ### Drafts and Unpublishing
 

@@ -496,7 +496,7 @@ Top-level components and helpers:
 - `Editor.tsx` — the composition root
 - `shell/EditorShell.tsx` — the full-window grid of regions over the host page
 - `shell/PaneLayout.tsx` — the resizable preview/form split
-- `shell/ActivityRail.tsx` — the left rail, one roving Tab stop
+- `shell/ActivityRail.tsx` — the left rail, one roving Tab stop; `RailDivider`
 - `shell/SidePanelHost.tsx` — a resizable side panel, docked or over the form
 - `shell/TopBar.tsx` — the 48px top bar, wrapping when full
 - `shell/OverlayHeader.tsx` — `OverlayDrawer`, the drawers' compact header
