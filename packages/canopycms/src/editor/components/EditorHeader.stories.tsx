@@ -40,18 +40,13 @@ const meta: Meta<typeof Headers> = {
     branchName: 'feature/landing',
     busy: false,
     breadcrumbSegments: [{ label: 'Posts', collectionPath: 'content/posts' }],
-    editedFiles: [
-      { path: unsafeAsLogicalPath('content/posts/hello'), label: 'Hello' },
-      { path: unsafeAsLogicalPath('content/pages/about'), label: 'About us' },
-      { path: unsafeAsLogicalPath('content/pages/team'), label: 'Our team' },
-    ],
     modifiedCount: 3,
+    onShowUnsaved: noop,
     onCollectionOpen: noop,
     onFileReload: noop,
     onFileDiscardDraft: noop,
     onEntryRename: noop,
     onEntryDelete: noop,
-    onEntrySelect: noop,
     onBranchReloadData: noop,
     onBranchDiscardDrafts: noop,
     onBranchManagerOpen: noop,
@@ -70,11 +65,11 @@ const meta: Meta<typeof Headers> = {
 export default meta
 type Story = StoryObj<typeof Headers>
 
-/** Three entries unsaved, the open one among them: its dot, the pill's count and Save all (3). */
+/** Three entries unsaved, the open one among them: its dot, and "3 unsaved" beside the pill. */
 export const Unsaved: Story = {}
 
 export const Saved: Story = {
-  args: { hasUnsavedChanges: false, editedFiles: [], modifiedCount: 0 },
+  args: { hasUnsavedChanges: false, modifiedCount: 0 },
 }
 
 /** In review: the status says so beside the pill, Submit becomes Withdraw, and saves are blocked. */
@@ -83,7 +78,7 @@ export const InReview: Story = {
     branchStatus: 'submitted',
     branchWriteBlocked: true,
     hasUnsavedChanges: false,
-    editedFiles: [],
+
     modifiedCount: 0,
   },
 }
@@ -97,7 +92,7 @@ export const ReadOnly: Story = {
     branchReadOnly: true,
     branchWriteBlocked: true,
     hasUnsavedChanges: false,
-    editedFiles: [],
+
     modifiedCount: 0,
   },
 }

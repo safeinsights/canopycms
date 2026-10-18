@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 
 import { EntryNavigator } from './EntryNavigator'
@@ -240,4 +241,55 @@ export const DrawerWidth: Story = {
       />
     </div>
   ),
+}
+
+/** Changed on: only the unsaved entries, under the collections that hold them, and one not listed yet. */
+export const Changed: Story = {
+  render: function ChangedStory() {
+    const [changedOnly, setChangedOnly] = useState(true)
+    return (
+      <div style={{ width: 328, height: 360 }}>
+        <EntryNavigator
+          onSelect={noop}
+          changedOnly={changedOnly}
+          onChangedOnlyChange={setChangedOnly}
+          dirtyPaths={new Set(['posts/hello-world', 'home'])}
+          unsavedCount={3}
+          collections={[
+            { path: unsafeAsLogicalPath('home'), label: 'Home', type: 'entry', entries },
+            {
+              path: unsafeAsLogicalPath('posts'),
+              label: 'Posts',
+              type: 'collection',
+              entries: posts,
+            },
+          ]}
+        />
+      </div>
+    )
+  },
+}
+
+/** Changed on with nothing unsaved: it says so and offers All. */
+export const ChangedNothingUnsaved: Story = {
+  render: function ChangedNothingUnsavedStory() {
+    const [changedOnly, setChangedOnly] = useState(true)
+    return (
+      <div style={{ width: 328, height: 240 }}>
+        <EntryNavigator
+          onSelect={noop}
+          changedOnly={changedOnly}
+          onChangedOnlyChange={setChangedOnly}
+          collections={[
+            {
+              path: unsafeAsLogicalPath('posts'),
+              label: 'Posts',
+              type: 'collection',
+              entries: posts,
+            },
+          ]}
+        />
+      </div>
+    )
+  },
 }

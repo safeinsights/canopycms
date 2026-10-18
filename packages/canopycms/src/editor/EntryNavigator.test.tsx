@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import React from 'react'
+import React, { useState } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -2189,7 +2189,7 @@ describe('EntryNavigator - revealing a collection', () => {
         <EntryNavigator
           {...props}
           collections={nested}
-          revealCollection={{ path: 'content/docs/guides', seq: 1 }}
+          reveal={{ kind: 'collection', path: 'content/docs/guides', seq: 1 }}
           onRevealed={onRevealed}
         />
       </CanopyCMSProvider>,
@@ -2214,7 +2214,7 @@ describe('EntryNavigator - revealing a collection', () => {
         <EntryNavigator
           {...props}
           collections={nested}
-          revealCollection={{ path: 'content/docs/guides', seq: 1 }}
+          reveal={{ kind: 'collection', path: 'content/docs/guides', seq: 1 }}
           onRevealed={onRevealed}
         />
       </CanopyCMSProvider>,
@@ -2232,7 +2232,409 @@ describe('EntryNavigator - revealing a collection', () => {
     const onRevealed = vi.fn()
     renderEntryNavigator({
       collections: nested,
-      revealCollection: { path: 'content/missing', seq: 1 },
+      reveal: { kind: 'collection', path: 'content/missing', seq: 1 },
+      onRevealed,
+    })
+    await waitFor(() => expect(onRevealed).toHaveBeenCalledTimes(1))
+    expect(document.activeElement).toBe(document.body)
+  })
+})
+
+describe('EntryNavigator - the Changed filter', () => {
+  const lp = unsafeAsLogicalPath
+  const collections = (): EntryNavCollection[] => [
+    {
+      path: lp('content/guides'),
+      label: 'Guides',
+      type: 'collection',
+      entries: [
+        { path: lp('content/guides/getting-started'), label: 'Getting started' },
+        { path: lp('content/guides/privacy'), label: 'Privacy' },
+      ],
+    },
+    {
+      path: lp('content/news'),
+      label: 'News',
+      type: 'collection',
+      entries: [{ path: lp('content/news/launch'), label: 'Launch day' }],
+    },
+    {
+      path: lp('content/reference'),
+      label: 'Reference',
+      type: 'collection',
+      children: [
+        {
+          path: lp('content/reference/api'),
+          label: 'API',
+          type: 'collection',
+          entries: [
+            { path: lp('content/reference/api/auth'), label: 'Authentication' },
+            { path: lp('content/reference/api/guides-index'), label: 'Guides index' },
+          ],
+        },
+      ],
+    },
+  ]
+  const dirty = new Set(['content/guides/privacy', 'content/reference/api/auth'])
+
+  type Props = Partial<React.ComponentProps<typeof EntryNavigator>> & {
+    initialChanged?: boolean
+    onChange?: (changedOnly: boolean) => void
+  }
+  /** The navigator with its Changed state held as the editor holds it. */
+  function Harness({ initialChanged = false, onChange, ...props }: Props) {
+    const [changedOnly, setChangedOnly] = useState(initialChanged)
+    return (
+      <EntryNavigator
+        onSelect={() => {}}
+        collections={collections()}
+        dirtyPaths={dirty}
+        unsavedCount={dirty.size}
+        {...props}
+        changedOnly={changedOnly}
+        onChangedOnlyChange={(next) => {
+          onChange?.(next)
+          setChangedOnly(next)
+        }}
+      />
+    )
+  }
+  const renderHarness = (props: Props = {}) =>
+    render(
+      <CanopyCMSProvider>
+        <Harness {...props} />
+      </CanopyCMSProvider>,
+    )
+  const shown = (testId: string) => screen.queryByTestId(testId) !== null
+  const changed = () => screen.getByRole('radio', { name: /^Changed/ })
+  const filterInput = () => screen.getByTestId('entry-nav-filter') as HTMLInputElement
+
+  it('shows no control without a handler for it', () => {
+    renderEntryNavigator({ collections: collections(), dirtyPaths: dirty, unsavedCount: 2 })
+    expect(screen.queryByTestId('entry-nav-changed-filter')).toBeNull()
+  })
+
+  it('offers All and Changed with the unsaved count, All first', () => {
+    renderHarness()
+    const group = screen.getByRole('radiogroup', { name: 'Entries shown' })
+    expect(
+      within(group)
+        .getAllByRole('radio')
+        .map((radio) => radio.getAttribute('value')),
+    ).toEqual(['all', 'changed'])
+    expect(changed().closest('div')?.textContent).toBe('Changed 2')
+    expect(shown('entry-nav-item-news')).toBe(true)
+  })
+
+  it('lists only the changed entries, under only the collections that hold them', async () => {
+    renderHarness()
+    await userEvent.click(changed())
+
+    expect(shown('entry-nav-item-privacy')).toBe(true)
+    expect(shown('entry-nav-item-authentication')).toBe(true)
+    expect(shown('entry-nav-item-api')).toBe(true)
+    expect(shown('entry-nav-item-getting-started')).toBe(false)
+    expect(shown('entry-nav-item-guides-index')).toBe(false)
+    expect(shown('entry-nav-item-news')).toBe(false)
+    expect(shown('entry-nav-item-launch-day')).toBe(false)
+  })
+
+  it("keeps only a matching collection's changed entries when a query is on too", async () => {
+    renderHarness({ initialChanged: true })
+    await userEvent.type(filterInput(), 'guides')
+
+    // "Guides" matches by its own title, yet its unchanged entry stays hidden.
+    expect(shown('entry-nav-item-privacy')).toBe(true)
+    expect(shown('entry-nav-item-getting-started')).toBe(false)
+    // "Guides index" matches the query but has no unsaved changes.
+    expect(shown('entry-nav-item-guides-index')).toBe(false)
+    expect(shown('entry-nav-item-authentication')).toBe(false)
+  })
+
+  it('opens the first changed entry on Enter with an empty query', async () => {
+    const onSelect = vi.fn()
+    renderHarness({ initialChanged: true, onSelect })
+    filterInput().focus()
+    await userEvent.keyboard('{Enter}')
+    expect(onSelect).toHaveBeenCalledWith('content/guides/privacy')
+  })
+
+  it('keeps Changed on when Escape clears the query', async () => {
+    const onChange = vi.fn()
+    renderHarness({ initialChanged: true, onChange })
+    await userEvent.type(filterInput(), 'auth{Escape}')
+    expect(filterInput().value).toBe('')
+    await userEvent.keyboard('{Escape}')
+    expect(onChange).not.toHaveBeenCalled()
+    expect(changed()).toHaveProperty('checked', true)
+  })
+
+  it('puts back the folders that were closed once All is chosen again', async () => {
+    renderHarness()
+    expect(shown('entry-nav-item-authentication')).toBe(false)
+    await userEvent.click(changed())
+    expect(shown('entry-nav-item-authentication')).toBe(true)
+    await userEvent.click(screen.getByRole('radio', { name: 'All' }))
+    await waitFor(() => expect(shown('entry-nav-item-authentication')).toBe(false))
+  })
+
+  it('says nothing is unsaved, with a way back to All', async () => {
+    const onChange = vi.fn()
+    renderHarness({ initialChanged: true, dirtyPaths: new Set(), unsavedCount: 0, onChange })
+    const empty = screen.getByTestId('entry-nav-changed-none')
+    expect(empty.textContent).toContain('No unsaved changes on this branch.')
+    expect(changed().closest('div')?.textContent).toBe('Changed')
+    await userEvent.click(within(empty).getByRole('button', { name: 'Show all entries' }))
+    expect(onChange).toHaveBeenCalledWith(false)
+    expect(document.activeElement).toBe(filterInput())
+    expect(shown('entry-nav-changed-none')).toBe(false)
+    expect(shown('entry-nav-item-news')).toBe(true)
+  })
+
+  it('keeps a folder closed under Changed while the unsaved set only changes identity', async () => {
+    const { rerender } = render(
+      <CanopyCMSProvider>
+        <Harness initialChanged dirtyPaths={new Set(dirty)} />
+      </CanopyCMSProvider>,
+    )
+    expect(shown('entry-nav-item-privacy')).toBe(true)
+    await userEvent.click(screen.getByTestId('entry-nav-item-guides'))
+    await waitFor(() => expect(shown('entry-nav-item-privacy')).toBe(false))
+
+    rerender(
+      <CanopyCMSProvider>
+        <Harness initialChanged dirtyPaths={new Set(dirty)} />
+      </CanopyCMSProvider>,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(shown('entry-nav-item-privacy')).toBe(false)
+  })
+
+  it('opens a folder the user closed again once the query changes', async () => {
+    renderHarness()
+    await userEvent.type(filterInput(), 'auth')
+    expect(shown('entry-nav-item-authentication')).toBe(true)
+    await userEvent.click(screen.getByTestId('entry-nav-item-api'))
+    await waitFor(() => expect(shown('entry-nav-item-authentication')).toBe(false))
+
+    await userEvent.type(filterInput(), 'e')
+
+    await waitFor(() => expect(shown('entry-nav-item-authentication')).toBe(true))
+  })
+
+  it('says the list failed under a query too, when the tree still shows its collections', async () => {
+    renderHarness({ initialChanged: true, dirtyPaths: new Set(), entryListFailed: true })
+    await userEvent.type(filterInput(), 'zzz')
+    expect(shown('entry-nav-changed-failed')).toBe(true)
+    expect(shown('entry-nav-changed-no-match')).toBe(false)
+  })
+
+  it('offers an unsaved entry with no row that matches the query, and opens it on Enter', async () => {
+    const onSelect = vi.fn()
+    renderHarness({
+      initialChanged: true,
+      onSelect,
+      unsavedCount: 4,
+      unsavedEntries: [
+        { path: 'content/elsewhere/orphan', label: 'Orphan page' },
+        { path: 'content/elsewhere/stray', label: 'Stray note' },
+      ],
+    })
+    await userEvent.type(filterInput(), 'orphan')
+
+    const outside = screen.getByTestId('entry-nav-changed-outside')
+    expect(
+      within(outside)
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Orphan page'])
+    expect(shown('entry-nav-changed-no-match')).toBe(false)
+    await userEvent.keyboard('{Enter}')
+    expect(onSelect).toHaveBeenCalledWith('content/elsewhere/orphan')
+  })
+
+  it('says no unsaved entry matches a query, and offers to search them all', async () => {
+    const onChange = vi.fn()
+    renderHarness({ initialChanged: true, onChange })
+    await userEvent.type(filterInput(), 'launch')
+
+    const empty = screen.getByTestId('entry-nav-changed-no-match')
+    expect(empty.textContent).toContain('No unsaved entries match “launch”.')
+    expect(shown('entry-nav-filter-empty')).toBe(false)
+    await userEvent.click(within(empty).getByRole('button', { name: 'Search all entries' }))
+    expect(onChange).toHaveBeenCalledWith(false)
+    expect(filterInput().value).toBe('launch')
+    expect(document.activeElement).toBe(filterInput())
+    expect(shown('entry-nav-item-launch-day')).toBe(true)
+  })
+
+  it('offers an unsaved entry the tree has no row for, which opens it', async () => {
+    const onSelect = vi.fn()
+    renderHarness({
+      initialChanged: true,
+      onSelect,
+      unsavedCount: 3,
+      unsavedEntries: [{ path: 'content/elsewhere/orphan', label: 'Orphan page' }],
+    })
+    const outside = screen.getByTestId('entry-nav-changed-outside')
+    expect(shown('entry-nav-changed-unlisted')).toBe(false)
+    await userEvent.click(within(outside).getByRole('button', { name: 'Orphan page' }))
+    expect(onSelect).toHaveBeenCalledWith('content/elsewhere/orphan')
+  })
+
+  it('says the list failed, never that nothing changed, when it could not load', () => {
+    renderHarness({
+      initialChanged: true,
+      collections: [],
+      dirtyPaths: new Set(),
+      unsavedCount: 2,
+      entryListFailed: true,
+    })
+    expect(screen.getByTestId('entry-nav-changed-filter')).toBeTruthy()
+    expect(screen.getByTestId('entry-nav-changed-failed').textContent).toContain(
+      "The list of entries couldn't be loaded",
+    )
+    expect(shown('entry-nav-changed-none')).toBe(false)
+    expect(screen.queryByText('No content')).toBeNull()
+  })
+
+  it('names the unsaved entries the tree does not list yet after the ones it does', () => {
+    renderHarness({ initialChanged: true, unsavedCount: 4 })
+    const notice = screen.getByTestId('entry-nav-changed-unlisted')
+    expect(notice.textContent).toBe('2 more: loading their names…')
+    expect(shown('entry-nav-item-privacy')).toBe(true)
+  })
+
+  it('says how many are unsaved while none of them is listed yet', () => {
+    renderHarness({ initialChanged: true, dirtyPaths: new Set(), unsavedCount: 1 })
+    expect(screen.getByTestId('entry-nav-changed-unlisted').textContent).toBe(
+      '1 unsaved entry: loading its name…',
+    )
+    expect(shown('entry-nav-changed-none')).toBe(false)
+  })
+})
+
+describe('EntryNavigator - revealing an entry', () => {
+  const lp = unsafeAsLogicalPath
+  const tree: EntryNavCollection[] = [
+    {
+      path: lp('content/docs'),
+      label: 'Docs',
+      type: 'collection',
+      entries: [{ path: lp('content/docs/intro'), label: 'Intro' }],
+      children: [
+        {
+          path: lp('content/docs/guides'),
+          label: 'Guides',
+          type: 'collection',
+          entries: [{ path: lp('content/docs/guides/setup'), label: 'Setup' }],
+        },
+      ],
+    },
+    {
+      path: lp('content/news'),
+      label: 'News',
+      type: 'collection',
+      entries: [{ path: lp('content/news/launch'), label: 'Launch day' }],
+    },
+  ]
+
+  it('switches Changed to All, clears the query, opens its folders and focuses its row', async () => {
+    const onRevealed = vi.fn()
+    const onChangedOnlyChange = vi.fn()
+    const props = {
+      onSelect: vi.fn(),
+      collections: tree,
+      dirtyPaths: new Set(['content/news/launch']),
+      unsavedCount: 1,
+      onChangedOnlyChange,
+      onRevealed,
+    }
+    const { rerender } = render(
+      <CanopyCMSProvider>
+        <EntryNavigator {...props} changedOnly />
+      </CanopyCMSProvider>,
+    )
+    fireEvent.change(screen.getByTestId('entry-nav-filter'), { target: { value: 'launch' } })
+    const reveal = { kind: 'entry' as const, path: 'content/docs/guides/setup', seq: 1 }
+    rerender(
+      <CanopyCMSProvider>
+        <EntryNavigator {...props} changedOnly reveal={reveal} />
+      </CanopyCMSProvider>,
+    )
+    await waitFor(() => expect(onChangedOnlyChange).toHaveBeenCalledWith(false))
+    expect((screen.getByTestId('entry-nav-filter') as HTMLInputElement).value).toBe('')
+    expect(onRevealed).not.toHaveBeenCalled()
+
+    rerender(
+      <CanopyCMSProvider>
+        <EntryNavigator {...props} changedOnly={false} reveal={reveal} />
+      </CanopyCMSProvider>,
+    )
+    await waitFor(() => expect(onRevealed).toHaveBeenCalledTimes(1))
+    const row = document.activeElement as HTMLElement
+    expect(row.getAttribute('role')).toBe('treeitem')
+    expect(row.dataset.value).toBe('content/docs/guides/setup')
+    // News held the filter's match, but was closed before the filter and is again.
+    expect(screen.queryByTestId('entry-nav-item-launch-day')).toBeNull()
+  })
+
+  it('waits for a loading tree, then focuses the row', async () => {
+    const onRevealed = vi.fn()
+    const reveal = { kind: 'entry' as const, path: 'content/news/launch', seq: 1 }
+    const { rerender } = render(
+      <CanopyCMSProvider>
+        <EntryNavigator
+          onSelect={vi.fn()}
+          collections={[]}
+          loading
+          reveal={reveal}
+          onRevealed={onRevealed}
+        />
+      </CanopyCMSProvider>,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(onRevealed).not.toHaveBeenCalled()
+
+    rerender(
+      <CanopyCMSProvider>
+        <EntryNavigator
+          onSelect={vi.fn()}
+          collections={tree}
+          reveal={reveal}
+          onRevealed={onRevealed}
+        />
+      </CanopyCMSProvider>,
+    )
+    await waitFor(() => expect(onRevealed).toHaveBeenCalledTimes(1))
+    expect((document.activeElement as HTMLElement).dataset.value).toBe('content/news/launch')
+  })
+
+  it('clears the query for the unsaved entries, leaving Changed to its owner', async () => {
+    const onRevealed = vi.fn()
+    const onChangedOnlyChange = vi.fn()
+    const props = { onSelect: vi.fn(), collections: tree, onChangedOnlyChange, onRevealed }
+    const { rerender } = render(
+      <CanopyCMSProvider>
+        <EntryNavigator {...props} />
+      </CanopyCMSProvider>,
+    )
+    fireEvent.change(screen.getByTestId('entry-nav-filter'), { target: { value: 'intro' } })
+    rerender(
+      <CanopyCMSProvider>
+        <EntryNavigator {...props} changedOnly reveal={{ kind: 'changed', seq: 1 }} />
+      </CanopyCMSProvider>,
+    )
+    await waitFor(() => expect(onRevealed).toHaveBeenCalledTimes(1))
+    expect((screen.getByTestId('entry-nav-filter') as HTMLInputElement).value).toBe('')
+    expect(onChangedOnlyChange).not.toHaveBeenCalled()
+  })
+
+  it('reports an entry the tree does not show as done, moving no focus', async () => {
+    const onRevealed = vi.fn()
+    renderEntryNavigator({
+      collections: tree,
+      reveal: { kind: 'entry', path: 'content/docs/missing', seq: 1 },
       onRevealed,
     })
     await waitFor(() => expect(onRevealed).toHaveBeenCalledTimes(1))

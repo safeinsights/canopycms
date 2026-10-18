@@ -10,7 +10,7 @@ import { ENTRY_HEADER_HEIGHT } from './EntryHeader'
 
 export interface SaveAllButtonProps {
   onSaveAll: () => void
-  /** Entries on the branch with unsaved changes. */
+  /** Entries on the branch with unsaved changes; the branch bar shows the count. */
   unsavedCount: number
   /** Why Save all can't act now, other than its own run, a save in flight or nothing unsaved. */
   blockedReason?: string
@@ -78,7 +78,7 @@ export function SaveAllButton({
             : undefined))
   // Blocked, it stays focusable (`aria-disabled`, not `disabled`), so its reason opens on focus.
   const blocked = !!reason || !!saveAllProgress
-  // The branch's largest count yet sizes every label, so the width grows only as a digit is added.
+  // The branch's largest count yet sizes the progress, so the width grows only as a digit is added.
   const count = Math.max(unsavedCount, saveAllProgress?.total ?? 0, 1)
   const [widest, setWidest] = useState(count)
   if (count > widest) setWidest(count)
@@ -95,11 +95,10 @@ export function SaveAllButton({
       {`${Math.min(done + 1, total)} of ${total}…`}
     </>
   )
-  // Progress reads "2 of 3…" beside the spinner, no wider than the count it replaces.
+  // Progress reads "2 of 3…" beside the spinner.
   const labels = [
-    unsavedCount > 0 ? `${EDITOR_ACTIONS.saveAll} (${unsavedCount})` : EDITOR_ACTIONS.saveAll,
+    EDITOR_ACTIONS.saveAll,
     saveAllProgress ? progress(saveAllProgress.done, saveAllProgress.total) : progress(0, 1),
-    `${EDITOR_ACTIONS.saveAll} (${widest})`,
     progress(widest, widest),
   ]
 

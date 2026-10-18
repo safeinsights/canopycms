@@ -14,7 +14,6 @@ import {
 import { useMediaQuery, useMergedRef } from '@mantine/hooks'
 import { IconChevronDown, IconLock } from '@tabler/icons-react'
 import type { BranchStatus } from '../../types'
-import type { LogicalPath } from '../../paths/types'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
@@ -23,6 +22,7 @@ import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
 import { BranchPill } from './BranchPill'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
+import { UnsavedMark } from './UnsavedMark'
 import { DraftStorageWarning, HIDDEN_STYLE, SaveAllButton } from './SaveAllButton'
 import { ENTRY_HEADER_HEIGHT } from './EntryHeader'
 import { useFocusHandOff, useMenuItemFocusReturn } from '../utils/focus-return'
@@ -31,13 +31,12 @@ export interface EditorHeaderProps {
   branchName: string
   /** Whether operations are currently in progress. */
   busy: boolean
-  /** The listed entries with unsaved changes on the branch. */
-  editedFiles: Array<{ path: LogicalPath; label: string }>
   /** Entries with unsaved changes on the branch. */
   modifiedCount: number
+  /** Lists the unsaved entries: the content panel, filtered to Changed. */
+  onShowUnsaved: () => void
   /** The branch pill. */
   branchToggleRef?: Ref<HTMLButtonElement>
-  onEntrySelect: (path: LogicalPath) => void
   /** Re-reads the branch and its entry list, keeping drafts. */
   onBranchReloadData: () => void
   onBranchDiscardDrafts: () => void
@@ -87,16 +86,16 @@ export interface EditorHeaderProps {
 }
 
 /**
- * The branch bar: the pill and the branch's status, then the draft-storage warning, Save all, the
- * way forward and Submit or Withdraw. The open entry's own controls are in `EntryHeader`.
+ * The branch bar: the pill, the branch's status and its unsaved count, then the draft-storage
+ * warning, Save all, the way forward and Submit or Withdraw. The open entry's own controls are in
+ * `EntryHeader`.
  */
 export function EditorHeader({
   branchName,
   busy,
-  editedFiles,
   modifiedCount,
+  onShowUnsaved,
   branchToggleRef,
-  onEntrySelect,
   onBranchReloadData,
   onBranchDiscardDrafts,
   onBranchManagerOpen,
@@ -173,17 +172,36 @@ export function EditorHeader({
             branchName={branchName}
             loading={busy}
             unsavedCount={modifiedCount}
-            unsavedEntries={editedFiles}
             onSwitchBranch={onBranchManagerOpen}
             onRefreshBranch={onBranchReloadData}
             onDiscardAll={onBranchDiscardDrafts}
-            onEntrySelect={onEntrySelect}
             pillRef={branchToggleRef}
           />
           <BranchStatusLabel
             status={branchName ? status : { value: 'none', readOnly: false }}
             reason={branchLockReason}
           />
+          {modifiedCount > 0 && (
+            <Tooltip
+              label="Show them in the content panel"
+              events={TOOLTIP_EVENTS}
+              // Past the entry header, as Save all's goes, so it covers no crumb.
+              position="bottom-start"
+              offset={ENTRY_HEADER_HEIGHT + 8}
+            >
+              <Button
+                variant="subtle"
+                color="gray"
+                size="compact-sm"
+                style={{ flexShrink: 0 }}
+                leftSection={<UnsavedMark aria-hidden="true" />}
+                onClick={onShowUnsaved}
+                data-testid="branch-unsaved-count"
+              >
+                {`${modifiedCount} unsaved`}
+              </Button>
+            </Tooltip>
+          )}
         </Group>
       }
       trailing={
@@ -241,6 +259,8 @@ export function EditorHeader({
     />
   )
 }
+
+const TOOLTIP_EVENTS = { hover: true, focus: true, touch: false }
 
 /** The branch's state beside the pill, heard in words with its reason, but not while it loads. */
 function BranchStatusLabel({ status, reason }: { status: BranchBarStatus; reason?: string }) {

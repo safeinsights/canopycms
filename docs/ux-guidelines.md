@@ -225,9 +225,9 @@ primary is filled: other badges, icons and indicators take their colour's light 
 The editor fills the window as one grid: **top bar** (branch pill and status, then Save all or the
 way forward, and Submit or Withdraw, split below `md`), **rail** (activity icons, layout, settings),
 **panel** (content tree: docked, in the stacked form row, or over the form), **main** (entry header,
-keeping Save above a maximized preview, then preview and form) and **overlays** (drawers, quick
-open, modals, toasts). Regions are layout only. New UI joins an existing region; adding one is a
-design decision. Unsaved shows as one dot (`UnsavedMark`), counted on the pill.
+keeping Save above a maximized preview, then preview and form) and **overlays** (drawers, modals,
+toasts). Regions are layout only. New UI joins an existing region; adding one is a design
+decision. Unsaved is one dot (`UnsavedMark`), counted in the bar, listed under Changed.
 
 ## Enforcement
 

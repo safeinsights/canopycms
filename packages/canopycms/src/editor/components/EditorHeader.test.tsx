@@ -30,14 +30,13 @@ const defaultProps: HeadersProps = {
   branchName: 'feature/x',
   busy: false,
   breadcrumbSegments: [{ label: 'Posts', collectionPath: 'content/posts' }],
-  editedFiles: [],
   modifiedCount: 0,
+  onShowUnsaved: vi.fn(),
   onCollectionOpen: vi.fn(),
   onFileReload: vi.fn(),
   onFileDiscardDraft: vi.fn(),
   onEntryRename: vi.fn(),
   onEntryDelete: vi.fn(),
-  onEntrySelect: vi.fn(),
   onBranchReloadData: vi.fn(),
   onBranchDiscardDrafts: vi.fn(),
   onBranchManagerOpen: vi.fn(),
@@ -229,40 +228,24 @@ describe('EditorHeader - branch pill unsaved count', () => {
     expect(label.className).not.toMatch(/hidden-from/)
   })
 
-  it('shows the unsaved count on the pill and names each entry in its menu', async () => {
-    const onEntrySelect = vi.fn()
-    renderHeader({
-      modifiedCount: 2,
-      editedFiles: [
-        { path: unsafeAsLogicalPath('posts/a'), label: 'Post A' },
-        { path: unsafeAsLogicalPath('posts/b'), label: 'Post B' },
-      ],
-      onEntrySelect,
-    })
-    // The mark and the number show; the words are for assistive tech.
+  it('shows the unsaved count in the bar, apart from the pill, and lists them on click', async () => {
+    const onShowUnsaved = vi.fn()
+    renderHeader({ modifiedCount: 2, onShowUnsaved })
     const count = screen.getByTestId('branch-unsaved-count')
-    expect(within(count).getByText('2').getAttribute('aria-hidden')).toBe('true')
-    expect(count.querySelector('[aria-hidden="true"]:empty')).toBeTruthy()
-    expect(within(count).getByText(/2 entries with unsaved changes/)).toBeTruthy()
-    // Content names the pill, so the count is part of it; "unsaved" is no longer visible text.
-    expect(screen.getByTestId('branch-dropdown-button').textContent).toContain(
-      '2 entries with unsaved changes',
-    )
-    expect(screen.queryByText('2 unsaved')).toBeNull()
+    expect(count).toBe(screen.getByRole('button', { name: '2 unsaved' }))
+    expect(count.closest('[data-canopy-region="topbar"]')).not.toBeNull()
+    expect(screen.getByTestId('branch-dropdown-button').contains(count)).toBe(false)
+    expect(within(screen.getByTestId('branch-dropdown-button')).queryByText(/\b2\b/)).toBeNull()
+
+    act(() => count.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Show them in the content panel')
+    await userEvent.click(count)
+    expect(onShowUnsaved).toHaveBeenCalledTimes(1)
 
     await userEvent.click(screen.getByTestId('branch-dropdown-button'))
     expect((await screen.findByTestId('discard-all-drafts-menu-item')).textContent).toBe(
       'Discard all changes (2 entries)',
     )
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'Post B' }))
-    expect(onEntrySelect).toHaveBeenCalledWith('posts/b')
-  })
-
-  it('names a single entry in the singular', () => {
-    renderHeader({ modifiedCount: 1, editedFiles: [] })
-    expect(
-      within(screen.getByTestId('branch-unsaved-count')).getByText(/^, 1 entry with unsaved/),
-    ).toBeTruthy()
   })
 
   it('draws the count and the breadcrumb dot as the same mark as the tree', () => {
@@ -272,42 +255,42 @@ describe('EditorHeader - branch pill unsaved count', () => {
     ).getByTestId('reference-mark')
     const style = reference.getAttribute('style')
     expect(style).toContain('--canopy-unsaved-mark')
-    const pillDot = screen
+    const countDot = screen
       .getByTestId('branch-unsaved-count')
       .querySelector('[aria-hidden="true"]:empty')
-    expect(pillDot?.getAttribute('style')).toBe(style)
+    expect(countDot?.getAttribute('style')).toBe(style)
     expect(screen.getByTestId('entry-unsaved-dot').getAttribute('style')).toBe(style)
   })
 
   it('shows no count with nothing unsaved', () => {
-    renderHeader({ modifiedCount: 0, editedFiles: [] })
+    renderHeader({ modifiedCount: 0 })
     expect(screen.queryByTestId('branch-unsaved-count')).toBeNull()
   })
 })
 
-describe('EditorHeader - branch menu with no edits', () => {
+describe('EditorHeader - branch menu', () => {
   afterEach(() => {
     cleanup()
   })
 
-  it('shows the empty list as plain text that arrow keys skip, and blocks Discard all with a reason', async () => {
+  it('holds the branch actions only, not the unsaved entries', async () => {
+    renderHeader({ modifiedCount: 1 })
+    await userEvent.click(screen.getByTestId('branch-dropdown-button'))
+    const menu = await screen.findByTestId('branch-menu')
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual(['Switch branch…', 'Refresh branch', 'Discard all changes (1 entry)'])
+    expect(within(menu).queryByText('Unsaved changes')).toBeNull()
+  })
+
+  it('blocks Discard all with a reason when nothing is unsaved', async () => {
     const onBranchDiscardDrafts = vi.fn()
-    renderHeader({ modifiedCount: 0, editedFiles: [], onBranchDiscardDrafts })
+    renderHeader({ modifiedCount: 0, onBranchDiscardDrafts })
 
     await userEvent.click(screen.getByTestId('branch-dropdown-button'))
-
-    const empty = await screen.findByTestId('edited-entries-empty')
-    expect(empty.textContent).toBe('No unsaved changes on this branch.')
-    expect(empty.getAttribute('role')).toBeNull()
-    expect(empty.hasAttribute('aria-disabled')).toBe(false)
-    expect(screen.queryByText(/with unsaved changes/)).toBeNull()
-
-    screen.getByTestId('manage-branches-menu-item').focus()
-    await userEvent.keyboard('{ArrowDown}{ArrowDown}')
-    expect(empty.contains(document.activeElement)).toBe(false)
-    expect(document.activeElement?.getAttribute('role')).toBe('menuitem')
-
-    const discard = screen.getByTestId('discard-all-drafts-menu-item')
+    const discard = await screen.findByTestId('discard-all-drafts-menu-item')
     expect(discard.getAttribute('aria-disabled')).toBe('true')
     expect(discard.textContent).toBe('Discard all changesNothing to discard.')
     await userEvent.click(discard)
@@ -689,24 +672,6 @@ describe('EditorHeader - unsaved changes kept on this device', () => {
   })
 })
 
-describe('EditorHeader - modified-file menus only select', () => {
-  afterEach(() => {
-    cleanup()
-  })
-
-  const editedFiles = [{ path: unsafeAsLogicalPath('posts/draft'), label: 'Draft post' }]
-
-  it('opens the entry from the branch menu', async () => {
-    const onEntrySelect = vi.fn()
-    renderHeader({ editedFiles, modifiedCount: 1, onEntrySelect })
-
-    await userEvent.click(screen.getByTestId('branch-dropdown-button'))
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'Draft post' }))
-
-    expect(onEntrySelect).toHaveBeenCalledWith('posts/draft')
-  })
-})
-
 describe('EditorHeader - vocabulary', () => {
   afterEach(() => {
     cleanup()
@@ -1028,10 +993,10 @@ describe('EditorHeader - Save all', () => {
     return (await screen.findByRole('tooltip')).textContent
   }
 
-  it('offers Save all in the top bar with the unsaved count, and runs it', async () => {
+  it('offers Save all in the top bar, the count left to the bar, and runs it', async () => {
     const onSaveAll = vi.fn()
     renderHeader({ modifiedCount: 3, onSaveAll })
-    expect(saveAll()).toBe(screen.getByRole('button', { name: 'Save all (3)' }))
+    expect(saveAll()).toBe(screen.getByRole('button', { name: 'Save all' }))
     await userEvent.click(saveAll())
     expect(onSaveAll).toHaveBeenCalledTimes(1)
   })
@@ -1113,12 +1078,7 @@ describe('EditorHeader - Save all', () => {
   it('keeps one width whichever label shows, so the top bar does not shift', () => {
     renderHeader({ modifiedCount: 0, hasUnsavedChanges: false })
     const labels = [...saveAll().querySelectorAll('[style*="grid-area"]')]
-    expect(labels.map((label) => label.textContent)).toEqual([
-      'Save all',
-      '1 of 1…',
-      'Save all (1)',
-      '1 of 1…',
-    ])
+    expect(labels.map((label) => label.textContent)).toEqual(['Save all', '1 of 1…', '1 of 1…'])
     expect(labels.filter((label) => label.getAttribute('aria-hidden') === null)).toHaveLength(1)
   })
 
@@ -1129,10 +1089,10 @@ describe('EditorHeader - Save all', () => {
       )
     const view = renderHeader({ modifiedCount: 12 })
     view.rerender(<Headers {...defaultProps} modifiedCount={3} />)
-    expect(reserved()).toContain('Save all (12)')
+    expect(reserved()).toContain('12 of 12…')
     view.rerender(<Headers {...defaultProps} modifiedCount={3} branchName="feature/y" />)
-    expect(reserved()).toContain('Save all (3)')
-    expect(reserved()).not.toContain('Save all (12)')
+    expect(reserved()).toContain('3 of 3…')
+    expect(reserved()).not.toContain('12 of 12…')
   })
 
   it('keeps its progress readable and reasonless when a lock arrives mid-run', async () => {
