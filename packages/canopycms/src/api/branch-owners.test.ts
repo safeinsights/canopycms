@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthPlugin } from '../auth/plugin'
 import type { UserSearchResult } from '../auth/types'
 import { RESERVED_GROUPS } from '../authorization'
+import { createCheckBranchAccess } from '../authorization/branch'
 import type { BranchRegistry } from '../branch-registry'
 import type { CanopyConfig } from '../config'
 import { SYSTEM_USER_ID } from '../system-users'
@@ -61,11 +62,15 @@ const registry = createMockRegistry([
 let ctx: ApiContext
 let getUsersMetadata: ReturnType<typeof vi.fn<NonNullable<AuthPlugin['getUsersMetadata']>>>
 
+const config = { defaultBaseBranch: 'main', mode: 'prod' } as unknown as CanopyConfig
+
+// The list filters with services.checkBranchAccess; bind the real check, as services.ts does.
 const buildContext = (authPlugin: AuthPlugin | undefined): ApiContext =>
   createMockApiContext({
     services: {
       registry: registry as unknown as BranchRegistry,
-      config: { defaultBaseBranch: 'main', mode: 'prod' } as unknown as CanopyConfig,
+      config,
+      checkBranchAccess: createCheckBranchAccess('deny', config),
     },
     authPlugin,
   })

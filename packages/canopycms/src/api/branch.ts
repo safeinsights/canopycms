@@ -131,7 +131,6 @@ const updateBranchAccessBodySchema = z.object({
 import {
   isPrivileged,
   isAdmin,
-  isLockedOutOfBranch,
   loadPathPermissions,
   getBranchProtection,
   getBranchWriteProtection,
@@ -579,41 +578,11 @@ export const listBranchesHandler = async (
     ctx.services.config.defaultActiveBranch ?? baseBranchOf(ctx.services.config),
   )
 
-  // Admins and Reviewers see all branches
-  if (isPrivileged(req.user.groups)) {
-    return branchListResponse(ctx, req, allBranches, defaultBranch)
-  }
-
-  // Regular users see the base branch and the branches they created or were given access to
-  const visibleBranches = allBranches.filter((context) => {
-    const branch = context.branch
-    // Ahead of every grant below, as in checkBranchAccessWithDefault.
-    if (isLockedOutOfBranch(branch.access, req.user.groups)) {
-      return false
-    }
-    // The protected base branch is where every user lands by default; always
-    // show it (read-only) so the editor can render its protected state.
-    if (getBranchProtection(ctx.services.config, branch.name, branch.baseBranch).isProtected) {
-      return true
-    }
-    // User created the branch
-    if (branch.createdBy === req.user.userId) {
-      return true
-    }
-    // User is in allowedUsers
-    if (branch.access?.allowedUsers?.includes(req.user.userId)) {
-      return true
-    }
-    // User's group is in allowedGroups
-    if (
-      branch.access?.allowedGroups?.some((groupId) =>
-        (req.user.groups as readonly string[])?.includes(groupId),
-      )
-    ) {
-      return true
-    }
-    return false
-  })
+  // The access check is the rule: the list shows exactly the branches it grants, so the editor
+  // never lists a branch it cannot open, nor leaves out one it can.
+  const visibleBranches = allBranches.filter(
+    (context) => ctx.services.checkBranchAccess(context, req.user).allowed,
+  )
 
   return branchListResponse(ctx, req, visibleBranches, defaultBranch)
 }
