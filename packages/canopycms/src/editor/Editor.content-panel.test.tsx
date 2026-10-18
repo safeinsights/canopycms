@@ -62,7 +62,10 @@ const stubApi = ({
   postType = {},
   missingSlugs = [],
   loadedTitle = 'Loaded title',
+  branchNames = ['main'],
 }: {
+  /** The branches listed, each editable. */
+  branchNames?: string[]
   failingSlug?: string
   failingEntries?: boolean
   listed?: EditorEntry[]
@@ -82,20 +85,18 @@ const stubApi = ({
       if (url.endsWith('/api/canopycms/branches')) {
         return Promise.resolve(
           okJson({
-            branches: [
-              {
-                name: 'main',
-                status: 'editing',
-                access: {},
-                createdBy: 'user-1',
-                createdAt: '2024-01-01',
-                updatedAt: '2024-01-01',
-                isProtected: false,
-                readOnly: false,
-                writeBlocked: false,
-                submitBlocked: false,
-              },
-            ],
+            branches: branchNames.map((name) => ({
+              name,
+              status: 'editing',
+              access: {},
+              createdBy: 'user-1',
+              createdAt: '2024-01-01',
+              updatedAt: '2024-01-01',
+              isProtected: false,
+              readOnly: false,
+              writeBlocked: false,
+              submitBlocked: false,
+            })),
             defaultBranch: 'main',
             users: [],
           }),
@@ -272,6 +273,17 @@ describe('content panel', () => {
         'collection:content/posts',
       ),
     )
+  })
+
+  it('stays open on Escape from a tree row while docked for good', async () => {
+    await setup(true)
+    const item = (await row('second')).closest<HTMLElement>('[role="treeitem"]')
+    act(() => item?.focus())
+
+    fireEvent.keyDown(item as HTMLElement, { key: 'Escape' })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    expect(panel()).not.toBeNull()
   })
 
   it('keeps its open state and width across a reload', async () => {
@@ -586,9 +598,9 @@ describe('content panel', () => {
     await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
     fireEvent.click(toggle())
     const row = await screen.findByTestId('entry-nav-item-second')
-    const type = row.querySelector('[data-testid="entry-nav-type"]')
-    expect(type?.textContent).toBe('Missing')
-    expect(type?.querySelector('p')?.getAttribute('style')).toContain('--canopy-danger-text')
+    const detail = row.querySelector('[data-testid="entry-nav-detail"]')
+    expect(detail?.textContent).toBe('Missing')
+    expect(detail?.querySelector('p')?.getAttribute('style')).toContain('--canopy-danger-text')
   })
 
   it('finds a type-named entry in the content tree filter by its title', async () => {
@@ -604,17 +616,427 @@ describe('content panel', () => {
     expect(screen.getByTestId('entry-nav-item-featured')).toBeTruthy()
   })
 
-  it("names each entry's type and route under it in quick open", async () => {
-    stubWindowWidth(true)
-    stubApi()
-    renderEditor()
-    await waitFor(() => expect(document.title).toBe('hello · Test Editor'))
-    fireEvent.click(screen.getByTestId('rail-search-button'))
-    const details = await screen.findAllByTestId('quick-open-option-detail')
+  it("names each entry's type and route under it in the content tree", async () => {
+    await setup(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Posts' }))
+    const details = await screen.findAllByTestId('entry-nav-detail')
     expect(details.map((detail) => detail.textContent)).toEqual([
       'Post · /posts/hello',
       'Post · /posts/second',
     ])
+  })
+})
+
+describe('finding an entry with Mod+P', () => {
+  const gone = entry('gone', 'jkl012GHI789')
+  const titleField = () => screen.getByRole('textbox', { name: /^Title/ })
+  const filter = () => screen.getByTestId('entry-nav-filter') as HTMLInputElement
+  /** Presses Ctrl+P where focus is; false when the press's default (Print) was prevented. */
+  const modP = (target: Element = document.activeElement ?? document.body) =>
+    fireEvent.keyDown(target, { key: 'p', ctrlKey: true })
+  const pause = () => act(() => new Promise((resolve) => setTimeout(resolve, 30)))
+  /** A wide window with the docked panel stored closed, and focus in the open entry's form. */
+  const closedWide = async () => {
+    stubWindowWidth(true)
+    storeLayout({ contentPanelOpen: false })
+    stubApi({ failingSlug: 'gone', listed: [hello, second, gone] })
+    renderEditor({ entries: [hello, second, gone] })
+    await waitFor(() => expect(titleField()).toHaveProperty('value', 'Loaded title'))
+    expect(panel()).toBeNull()
+    act(() => titleField().focus())
+  }
+  const transientOpen = async () => {
+    await closedWide()
+    expect(modP()).toBe(false)
+    await waitFor(() => expect(document.activeElement).toBe(filter()))
+  }
+  const openWithEnter = (slug: string) => {
+    fireEvent.change(filter(), { target: { value: slug } })
+    fireEvent.keyDown(filter(), { key: 'Enter' })
+  }
+
+  it('opens a closed docked panel at its field, storing nothing, and keeps Print shut', async () => {
+    await transientOpen()
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
+    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    expect(storedLayout().contentPanelOpen).toBe(false)
+    expect(filter().getAttribute('aria-keyshortcuts')).toBe('Control+P')
+    expect(screen.getByTestId('entry-nav-filter-shortcut').textContent).toBe('Ctrl+P')
+    expect(toggle().getAttribute('aria-keyshortcuts')).toBe('Control+P')
+  })
+
+  it("on Enter, opens the first match, closes, and focuses the entry's first field", async () => {
+    await transientOpen()
+    // With no opener to go back to, a focus return would land on the entry menu.
+    act(() => filter().blur())
+    act(() => filter().focus())
+
+    openWithEnter('second')
+
+    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+    await waitFor(() => expect(panel()).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(titleField()))
+    expect(storedLayout().contentPanelOpen).toBe(false)
+  })
+
+  it('on Enter, focuses the form pane when the entry fails to load', async () => {
+    const consoleSpy = mockConsole()
+    onTestFinished(() => consoleSpy.restore())
+    // Toasts are global; its "Failed to load entry" would hold later tests' toasts in the queue.
+    onTestFinished(() => notifications.clean())
+    await transientOpen()
+
+    openWithEnter('gone')
+
+    await screen.findByTestId('entry-load-failed')
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('form-pane')))
+    expect(screen.getByRole('region', { name: 'Form' })).toBe(screen.getByTestId('form-pane'))
+  })
+
+  it('on Enter, leaves focus the user moved before the form rendered', async () => {
+    await transientOpen()
+
+    openWithEnter('second')
+    act(() => toggle().focus())
+
+    await waitFor(() => expect(titleField()).toHaveProperty('value', 'Loaded title'))
+    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+    await pause()
+    expect(document.activeElement).toBe(toggle())
+  })
+
+  it('on Enter over a maximized preview, restores it and focuses the field', async () => {
+    await closedWide()
+    fireEvent.click(await screen.findByRole('button', { name: 'Maximize preview' }))
+    await screen.findByRole('button', { name: 'Restore' })
+    modP(document.body)
+    await waitFor(() => expect(document.activeElement).toBe(filter()))
+
+    openWithEnter('second')
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(titleField()))
+  })
+
+  it('on Escape in its empty field, closes and returns focus to where Mod+P was pressed', async () => {
+    await transientOpen()
+    fireEvent.change(filter(), { target: { value: 'sec' } })
+    fireEvent.keyDown(filter(), { key: 'Escape' })
+    expect(panel()).not.toBeNull()
+
+    fireEvent.keyDown(filter(), { key: 'Escape' })
+
+    await waitFor(() => expect(panel()).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(titleField()))
+  })
+
+  it('on Escape from a tree row, closes and returns focus to where Mod+P was pressed', async () => {
+    await transientOpen()
+    const item = (await row('second')).closest<HTMLElement>('[role="treeitem"]')
+    act(() => item?.focus())
+
+    fireEvent.keyDown(item as HTMLElement, { key: 'Escape' })
+
+    await waitFor(() => expect(panel()).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(titleField()))
+    expect(storedLayout().contentPanelOpen).toBe(false)
+  })
+
+  it('on Escape from a tree row over a maximized preview, closes and leaves it maximized', async () => {
+    await closedWide()
+    fireEvent.click(await screen.findByRole('button', { name: 'Maximize preview' }))
+    await screen.findByRole('button', { name: 'Restore' })
+    modP(document.body)
+    await waitFor(() => expect(document.activeElement).toBe(filter()))
+    const item = (await row('second')).closest<HTMLElement>('[role="treeitem"]')
+    act(() => item?.focus())
+
+    fireEvent.keyDown(item as HTMLElement, { key: 'Escape' })
+
+    await waitFor(() => expect(panel()).toBeNull())
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeTruthy()
+  })
+
+  it('on Escape over a maximized preview, closes and leaves the preview maximized', async () => {
+    await closedWide()
+    fireEvent.click(await screen.findByRole('button', { name: 'Maximize preview' }))
+    await screen.findByRole('button', { name: 'Restore' })
+    modP(document.body)
+    await waitFor(() => expect(document.activeElement).toBe(filter()))
+
+    // Dispatched as a browser does, to the window's capture listeners first.
+    fireEvent.keyDown(filter(), { key: 'Escape' })
+
+    await waitFor(() => expect(panel()).toBeNull())
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeTruthy()
+  })
+
+  it('keeps where focus returns when pressed again after focus dropped to nothing', async () => {
+    await transientOpen()
+    act(() => filter().blur())
+
+    expect(modP(document.body)).toBe(false)
+    await waitFor(() => expect(document.activeElement).toBe(filter()))
+    fireEvent.keyDown(filter(), { key: 'Escape' })
+
+    await waitFor(() => expect(panel()).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(titleField()))
+  })
+
+  it('closes when focus moves out of it, not when focus drops to nothing', async () => {
+    await transientOpen()
+    act(() => filter().blur())
+    await pause()
+    expect(panel()).not.toBeNull()
+
+    act(() => filter().focus())
+    act(() => titleField().focus())
+
+    await waitFor(() => expect(panel()).toBeNull())
+    expect(document.activeElement).toBe(titleField())
+    expect(storedLayout().contentPanelOpen).toBe(false)
+  })
+
+  it('opens for good once a row menu opens', async () => {
+    await transientOpen()
+    fireEvent.change(filter(), { target: { value: 'second' } })
+    fireEvent.click(await screen.findByTestId('entry-menu-second'))
+    await screen.findByRole('menu')
+
+    await waitFor(() => expect(storedLayout().contentPanelOpen).toBe(true))
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    act(() => titleField().focus())
+    await pause()
+    expect(panel()).not.toBeNull()
+  })
+
+  it('opens for good when the Content button is pressed', async () => {
+    await transientOpen()
+    act(() => toggle().focus())
+    fireEvent.click(toggle())
+    await pause()
+
+    expect(panel()).not.toBeNull()
+    expect(storedLayout().contentPanelOpen).toBe(true)
+    act(() => titleField().focus())
+    await pause()
+    expect(panel()).not.toBeNull()
+  })
+
+  it('selects the text of its field when pressed there', async () => {
+    await transientOpen()
+    fireEvent.change(filter(), { target: { value: 'sec' } })
+    filter().setSelectionRange(3, 3)
+
+    expect(modP(filter())).toBe(false)
+
+    expect([filter().selectionStart, filter().selectionEnd]).toEqual([0, 3])
+    expect(panel()).not.toBeNull()
+  })
+
+  it('opens nothing over a modal dialog, and still keeps Print shut', async () => {
+    await closedWide()
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('entry-menu-rename'))
+    const dialog = await screen.findByRole('dialog', { name: 'Change URL' })
+
+    expect(modP(dialog)).toBe(false)
+    await pause()
+    expect(panel()).toBeNull()
+  })
+
+  it('takes ⌘P only on macOS, where Ctrl+P moves the caret', async () => {
+    const platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel')
+    onTestFinished(() => platform.mockRestore())
+    await closedWide()
+
+    expect(modP()).toBe(true)
+    await pause()
+    expect(panel()).toBeNull()
+
+    expect(fireEvent.keyDown(titleField(), { key: 'p', metaKey: true })).toBe(false)
+    await waitFor(() => expect(document.activeElement).toBe(filter()))
+    expect(screen.getByTestId('entry-nav-filter-shortcut').textContent).toBe('⌘P')
+  })
+
+  it('pressed inside the rail-opened overlay, keeps the Content button as where focus returns', async () => {
+    await setup(false)
+    const collapse = screen.getByRole('button', { name: 'Collapse all folders' })
+    act(() => collapse.focus())
+
+    modP(collapse)
+    await waitFor(() => expect(document.activeElement).toBe(filter()))
+    escapeFromPanel()
+
+    await waitFor(() => expect(panel()).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(toggle()))
+  })
+
+  it('in a narrow window, opens the content overlay at its field', async () => {
+    stubWindowWidth(false)
+    stubApi()
+    renderEditor()
+    await waitFor(() => expect(titleField()).toHaveProperty('value', 'Loaded title'))
+    act(() => titleField().focus())
+
+    modP()
+
+    await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay'))
+    await waitFor(() => expect(document.activeElement).toBe(filter()))
+  })
+})
+
+describe('unsaved entries', () => {
+  const keepDraft = (...entries: EditorEntry[]) =>
+    window.localStorage.setItem(
+      'canopycms:drafts:main',
+      JSON.stringify({
+        v: 2,
+        drafts: Object.fromEntries(entries.map((e) => [e.contentId, { title: 'Kept' }])),
+        baseVersions: {},
+      }),
+    )
+  const unsaved = () => screen.findByTestId('branch-unsaved-count', {}, { timeout: 3000 })
+  const changedRadio = () => screen.getByRole('radio', { name: /^Changed/ }) as HTMLInputElement
+  const allRadio = () => screen.getByRole('radio', { name: 'All' }) as HTMLInputElement
+  const shown = (slug: string) => screen.queryByTestId(`entry-nav-item-${slug}`) !== null
+  const openedOn = async (wide: boolean, layout: Record<string, unknown> = {}) => {
+    window.history.replaceState({}, '', `/?entry=${hello.path}`)
+    stubWindowWidth(wide)
+    storeLayout(layout)
+    stubApi()
+    renderEditor()
+    await waitFor(() =>
+      expect(screen.getByTestId('file-dropdown-button').textContent).toContain('hello'),
+    )
+  }
+
+  it("lists them in a closed docked panel, filtered to Changed, from the bar's count", async () => {
+    keepDraft(second)
+    await openedOn(true, { contentPanelOpen: false })
+    expect(panel()).toBeNull()
+
+    fireEvent.click(await unsaved())
+
+    await waitFor(() => expect(changedRadio().checked).toBe(true))
+    expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
+    expect(storedLayout().contentPanelOpen).toBe(true)
+    await waitFor(() => expect(shown('second')).toBe(true))
+    expect(shown('hello')).toBe(false)
+  })
+
+  it('opens the narrow overlay with Changed already set', async () => {
+    keepDraft(second)
+    await openedOn(false)
+
+    fireEvent.click(await unsaved())
+
+    await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay'))
+    expect(changedRadio().checked).toBe(true)
+    await waitFor(() => expect(shown('second')).toBe(true))
+    expect(shown('hello')).toBe(false)
+  })
+
+  it('says the list failed to load, not that nothing changed, when it did', async () => {
+    const consoleSpy = mockConsole()
+    onTestFinished(() => consoleSpy.restore())
+    keepDraft(hello)
+    stubWindowWidth(true)
+    stubApi({ failingEntries: true })
+    renderEditor({ entries: [] })
+    await screen.findByText('Could not load content')
+
+    fireEvent.click(await unsaved())
+
+    expect((await screen.findByTestId('entry-nav-changed-failed')).textContent).toContain(
+      "The list of entries couldn't be loaded",
+    )
+    expect(screen.queryByTestId('entry-nav-changed-none')).toBeNull()
+    expect(consoleSpy).toHaveErrored(/500/)
+  })
+
+  it("shows the open entry's row from its menu: All again, its row focused", async () => {
+    keepDraft(second)
+    await openedOn(true)
+    fireEvent.click(await unsaved())
+    await waitFor(() => expect(shown('hello')).toBe(false))
+
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('entry-menu-reveal'))
+
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(hello.path),
+    )
+    expect(allRadio().checked).toBe(true)
+    expect(shown('second')).toBe(true)
+  })
+
+  it("clears a standing query when the bar's count lists them", async () => {
+    keepDraft(second)
+    await openedOn(true, { contentPanelOpen: true })
+    await loaded()
+    fireEvent.change(screen.getByTestId('entry-nav-filter'), { target: { value: 'hello' } })
+
+    fireEvent.click(await unsaved())
+
+    await waitFor(() => expect(screen.getByTestId('entry-nav-filter')).toHaveProperty('value', ''))
+    expect(changedRadio().checked).toBe(true)
+    await waitFor(() => expect(shown('second')).toBe(true))
+  })
+
+  it('switches back to All when Mod+P finds an entry', async () => {
+    keepDraft(second)
+    await openedOn(true)
+    fireEvent.click(await unsaved())
+    await waitFor(() => expect(changedRadio().checked).toBe(true))
+
+    fireEvent.keyDown(document.body, { key: 'p', ctrlKey: true })
+
+    await waitFor(() => expect(allRadio().checked).toBe(true))
+  })
+
+  it('switches back to All on another branch, whose unsaved entries are its own', async () => {
+    // Nothing unsaved, so the switch asks no confirm (`useBranchActions`); Changed is chosen in the panel.
+    window.history.replaceState({}, '', `/?branch=main&entry=${hello.path}`)
+    stubWindowWidth(true)
+    storeLayout({ contentPanelOpen: true })
+    stubApi({ branchNames: ['main', 'feature'] })
+    renderEditor()
+    await loaded()
+    fireEvent.click(changedRadio())
+    await waitFor(() => expect(changedRadio().checked).toBe(true))
+
+    window.history.replaceState(null, '', `/?branch=feature&entry=${hello.path}`)
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-dropdown-button').textContent).toContain('feature'),
+    )
+    await waitFor(() => expect(allRadio().checked).toBe(true))
+  })
+
+  it('opens a Mod+P panel for good when it shows the open entry', async () => {
+    await openedOn(true, { contentPanelOpen: false })
+    const title = screen.getByRole('textbox', { name: /^Title/ })
+    await waitFor(() => expect(title).toHaveProperty('value', 'Loaded title'))
+    act(() => title.focus())
+    fireEvent.keyDown(title, { key: 'p', ctrlKey: true })
+    await waitFor(() => expect(panel()).not.toBeNull())
+    expect(storedLayout().contentPanelOpen).toBe(false)
+
+    act(() => screen.getByTestId('file-dropdown-button').focus())
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('entry-menu-reveal'))
+
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(hello.path),
+    )
+    expect(storedLayout().contentPanelOpen).toBe(true)
+    act(() => title.focus())
+    await act(() => new Promise((resolve) => setTimeout(resolve, 30)))
+    expect(panel()).not.toBeNull()
   })
 })
 
@@ -653,6 +1075,19 @@ describe('maximized preview', () => {
     await screen.findByRole('button', { name: 'Restore' })
   }
   const formPanel = () => screen.getByTestId('form-pane').parentElement as HTMLElement
+
+  it('leaves the entry header and its Save out of the maximized panes, in reach', async () => {
+    await setup(true)
+    await maximize()
+    const header = screen.getByRole('region', { name: 'Entry' })
+    const preview = screen.getByTestId('preview-pane')
+    expect(header.contains(screen.getByTestId('save-button'))).toBe(true)
+    // In `main`, beside the box holding the panes, where the preview's absolute inset can't reach.
+    expect(header.closest('[data-canopy-region="main"]')).not.toBeNull()
+    expect(header.nextElementSibling?.contains(preview)).toBe(true)
+    expect(header.contains(preview)).toBe(false)
+    expect(header.closest('[inert]')).toBeNull()
+  })
 
   it('blocks the layout button while maximized, and frees it on restore', async () => {
     await setup(true)
@@ -761,8 +1196,7 @@ describe('maximized preview', () => {
     })
     await maximize()
 
-    fireEvent.click(screen.getByTestId('save-options-button'))
-    fireEvent.click(await screen.findByTestId('save-all-menu-item'))
+    fireEvent.click(screen.getByTestId('save-all-button'))
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull())
     expect(formPanel().hasAttribute('inert')).toBe(false)
   })
@@ -812,6 +1246,28 @@ describe('entry menu', () => {
   })
 })
 
+describe('entry header while loading', () => {
+  it('shows a placeholder crumb, not "No entry open", until the entries arrive', async () => {
+    stubWindowWidth(true)
+    stubApi()
+    const answered = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/entries')) await held
+      return answered(input, init)
+    })
+    renderEditor({ entries: [] })
+    expect(await screen.findByTestId('entry-crumb-loading')).toBeTruthy()
+    expect(screen.queryByText('No entry open')).toBeNull()
+
+    await act(async () => release())
+    await waitFor(() => expect(screen.queryByTestId('entry-crumb-loading')).toBeNull())
+    // The entry the editor opens, or "No entry open": a crumb either way, never a blank.
+    expect(await screen.findByTestId('file-dropdown-button')).toBeTruthy()
+  })
+})
+
 describe('saving', () => {
   it('says "Saving…" on the entry being saved only', async () => {
     await setup(true)
@@ -831,6 +1287,31 @@ describe('saving', () => {
     fireEvent.click(await row('second'))
     await waitFor(() => expect(document.title).toBe('second · Test Editor'))
     expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull()
+    await act(async () => release())
+  })
+
+  it("holds Save all while another entry's save is in flight", async () => {
+    await setup(true)
+    const answered = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (init?.method === 'PUT') await held
+      return answered(input, init)
+    })
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Title/ }), {
+      target: { value: 'Edited' },
+    })
+    fireEvent.click(screen.getByTestId('save-button'))
+    await screen.findByRole('button', { name: 'Saving…' })
+
+    fireEvent.click(await row('second'))
+    await waitFor(() => expect(document.title).toBe('second · Test Editor'))
+    const saveAll = screen.getByTestId('save-all-button')
+    expect(saveAll.getAttribute('aria-disabled')).toBe('true')
+    act(() => saveAll.focus())
+    const reason = await screen.findByText('Wait for the save to finish.')
+    expect(saveAll.getAttribute('aria-describedby')).toBe(reason.closest('[role="tooltip"]')?.id)
     await act(async () => release())
   })
 
@@ -862,11 +1343,13 @@ describe('saving', () => {
     renderEditor({ entries: [] })
     await screen.findByText('Could not load content')
 
-    fireEvent.click(screen.getByTestId('save-options-button'))
-    const item = await screen.findByTestId('save-all-menu-item')
-    expect(item.textContent).toContain('Save all (1)')
-    expect(item.getAttribute('aria-disabled')).toBe('true')
-    expect(item.textContent).toContain('Choose "Refresh branch" in the branch menu to try again.')
+    const saveAll = screen.getByTestId('save-all-button')
+    expect(saveAll).toBe(screen.getByRole('button', { name: 'Save all' }))
+    expect(saveAll.getAttribute('aria-disabled')).toBe('true')
+    act(() => saveAll.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toContain(
+      'Choose "Refresh branch" in the branch menu to try again.',
+    )
     expect(consoleSpy).toHaveErrored(/500/)
   })
 })

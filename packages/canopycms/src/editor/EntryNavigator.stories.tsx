@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 
 import { EntryNavigator } from './EntryNavigator'
@@ -120,7 +121,7 @@ export const LockedBranch: Story = {
 
 const noop = () => {}
 
-/** The navigator at the drawer's content width: long titles and types, a singleton, a missing entry, nesting, markers and every menu. */
+/** The navigator at the drawer's content width: long titles, types and routes, a singleton, a missing entry, nesting, markers and every menu. */
 export const DrawerWidth: Story = {
   render: () => (
     <div
@@ -134,6 +135,7 @@ export const DrawerWidth: Story = {
         onReorderEntry={noop}
         hiddenRootPath="content"
         dirtyPaths={new Set(['content/guides/data-access'])}
+        filterShortcut={{ label: '⌘P', keys: 'Meta+P' }}
         collections={[
           {
             path: unsafeAsLogicalPath('content'),
@@ -146,12 +148,14 @@ export const DrawerWidth: Story = {
               {
                 path: unsafeAsLogicalPath('content/settings'),
                 label: 'Site settings',
+                noPage: true,
                 contentId: unsafeAsContentId('settings0001'),
               },
               {
                 path: unsafeAsLogicalPath('content/home'),
                 label: 'Home — the welcome page for every visitor to the research platform',
                 status: 'Landing page with hero, highlights and calls to action',
+                route: '/',
                 contentId: unsafeAsContentId('home00000001'),
               },
             ],
@@ -172,12 +176,14 @@ export const DrawerWidth: Story = {
                     ),
                     label: 'Getting started with a very long guide title that never ends',
                     status: 'Guide',
+                    route: '/guides/getting-started-with-a-very-long-guide-title',
                     contentId: unsafeAsContentId('guide0000001'),
                   },
                   {
                     path: unsafeAsLogicalPath('content/guides/data-access'),
                     label: 'Data access',
                     status: 'Guide',
+                    route: '/guides/data-access',
                     contentId: unsafeAsContentId('guide0000002'),
                     conflictNotice: true,
                   },
@@ -185,6 +191,7 @@ export const DrawerWidth: Story = {
                     path: unsafeAsLogicalPath('content/guides/retired'),
                     label: 'Retired guide',
                     status: 'Missing',
+                    route: '/guides/retired',
                     missing: true,
                     contentId: unsafeAsContentId('guide0000003'),
                   },
@@ -201,6 +208,7 @@ export const DrawerWidth: Story = {
                         path: unsafeAsLogicalPath('content/guides/advanced/enclave'),
                         label: 'Working inside a secure enclave',
                         status: 'Guide',
+                        route: '/guides/advanced/enclave',
                         contentId: unsafeAsContentId('adv000000002'),
                       },
                     ],
@@ -221,6 +229,7 @@ export const DrawerWidth: Story = {
                     path: unsafeAsLogicalPath('content/news/launch'),
                     label: 'Launch announcement',
                     status: 'Post',
+                    route: '/news/launch',
                     contentId: unsafeAsContentId('news00000002'),
                     readOnly: true,
                   },
@@ -232,4 +241,55 @@ export const DrawerWidth: Story = {
       />
     </div>
   ),
+}
+
+/** Changed on: only the unsaved entries, under the collections that hold them, and one not listed yet. */
+export const Changed: Story = {
+  render: function ChangedStory() {
+    const [changedOnly, setChangedOnly] = useState(true)
+    return (
+      <div style={{ width: 328, height: 360 }}>
+        <EntryNavigator
+          onSelect={noop}
+          changedOnly={changedOnly}
+          onChangedOnlyChange={setChangedOnly}
+          dirtyPaths={new Set(['posts/hello-world', 'home'])}
+          unsavedCount={3}
+          collections={[
+            { path: unsafeAsLogicalPath('home'), label: 'Home', type: 'entry', entries },
+            {
+              path: unsafeAsLogicalPath('posts'),
+              label: 'Posts',
+              type: 'collection',
+              entries: posts,
+            },
+          ]}
+        />
+      </div>
+    )
+  },
+}
+
+/** Changed on with nothing unsaved: it says so and offers All. */
+export const ChangedNothingUnsaved: Story = {
+  render: function ChangedNothingUnsavedStory() {
+    const [changedOnly, setChangedOnly] = useState(true)
+    return (
+      <div style={{ width: 328, height: 240 }}>
+        <EntryNavigator
+          onSelect={noop}
+          changedOnly={changedOnly}
+          onChangedOnlyChange={setChangedOnly}
+          collections={[
+            {
+              path: unsafeAsLogicalPath('posts'),
+              label: 'Posts',
+              type: 'collection',
+              entries: posts,
+            },
+          ]}
+        />
+      </div>
+    )
+  },
 }

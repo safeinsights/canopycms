@@ -8,7 +8,7 @@ export interface NoEditPermissionNoticeProps {
 /**
  * Explains why an entry cannot be edited and whom to ask. An entry's `canEdit` is false only
  * when a path rule (or `defaultPathAccess`) denies edit, so that is the reason it gives. A locked
- * or protected branch instead shows its banner in the header over a read-only form, the rule
+ * or protected branch instead says so in the branch bar's status over a read-only form, the rule
  * `contentReadOnly` in `Editor.tsx` holds.
  */
 export function NoEditPermissionNotice({ entryLabel }: NoEditPermissionNoticeProps) {

@@ -1,17 +1,13 @@
-/** Entry search shared by the navigator filter and the quick-open palette. */
-
-export interface SearchableEntry {
-  label: string
-  /** The entry's title, when its label is something else (a singleton's type label). */
-  title?: string
-  slug?: string
-  collectionPath?: string
-  collectionName?: string
-}
+/** Entry search and the detail line shared by the content tree's rows. */
 
 /** Case-insensitive substring match over label, title and slug; an empty query matches everything. */
 export function matchesEntryQuery(
-  entry: Pick<SearchableEntry, 'label' | 'title' | 'slug'>,
+  entry: {
+    label: string
+    /** The entry's title, when its label is something else (a singleton's type label). */
+    title?: string
+    slug?: string
+  },
   query: string,
 ): boolean {
   const needle = query.trim().toLowerCase()
@@ -19,41 +15,14 @@ export function matchesEntryQuery(
   return [entry.label, entry.title, entry.slug].some((text) => text?.toLowerCase().includes(needle))
 }
 
-export function filterEntries<T extends SearchableEntry>(
-  entries: readonly T[],
-  query: string,
-): T[] {
-  return entries.filter((entry) => matchesEntryQuery(entry, query))
-}
-
-export interface EntryGroup<T> {
-  heading: string
-  entries: T[]
-}
-
 /**
- * Groups entries by collection, in first-seen order, each under its display heading:
- * `labelFor(collectionPath)`, else the collection name or path, else `Root`. Two collections
- * that share a heading stay separate groups.
+ * An entry's detail line, "type · route", with whichever of the two it has: a singleton's label
+ * already names its type, and an entry with no page has no route.
  */
-export function groupEntriesByCollection<T extends SearchableEntry>(
-  entries: readonly T[],
-  labelFor?: (collectionPath: string) => string | undefined,
-): EntryGroup<T>[] {
-  const groups = new Map<string, EntryGroup<T>>()
-  for (const entry of entries) {
-    const key = entry.collectionPath ?? entry.collectionName ?? ''
-    const group = groups.get(key)
-    if (group) {
-      group.entries.push(entry)
-      continue
-    }
-    const heading =
-      (entry.collectionPath ? labelFor?.(entry.collectionPath) : undefined) ??
-      entry.collectionName ??
-      entry.collectionPath ??
-      'Root'
-    groups.set(key, { heading, entries: [entry] })
-  }
-  return [...groups.values()]
-}
+export const entryDetailLine = ({
+  typeLabel,
+  route,
+}: {
+  typeLabel?: string
+  route?: string
+}): string => [typeLabel, route].filter(Boolean).join(' · ')

@@ -77,8 +77,15 @@ export interface SidePanelHostProps {
    * focus in. Opening alone never does, as a panel also opens when stored state loads.
    */
   focusRequest?: number
+  /**
+   * Escape from inside a docked panel closes it, as an overlay's always does. It also marks the
+   * panel, so a maximized preview's Escape leaves the key to it.
+   */
+  closeOnEscape?: boolean
   /** Where focus goes when the panel closes with focus inside it. */
   returnFocusTo?: () => HTMLElement | null
+  /** Focus landed on `target`, outside the panel and what it portals; dropping to nothing isn't. */
+  onFocusLeave?: (target: Element) => void
   /** Controls beside the title, before the close button. */
   actions?: ReactNode
   children: ReactNode
@@ -92,9 +99,9 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
  * A titled side panel, resizable from its inline-end edge. Docked, it pushes its neighbours aside
  * and opens and closes at once: a sliding width would reflow the preview's page on every frame.
  * As an overlay it covers the form pane only, so the preview stays in view, slides in and out as
- * the drawers do unless the user prefers reduced motion, and Escape closes it. A `focusRequest`
- * moves focus to its `data-autofocus` element, else to the panel; closing with focus inside
- * returns focus to `returnFocusTo`.
+ * the drawers do unless the user prefers reduced motion, and Escape closes it, as it does a docked
+ * panel given `closeOnEscape`. A `focusRequest` moves focus to its `data-autofocus` element, else
+ * to the panel; closing with focus inside returns focus to `returnFocusTo`.
  */
 export function SidePanelHost({
   title,
@@ -106,7 +113,9 @@ export function SidePanelHost({
   onWidthChange,
   onClose,
   focusRequest = 0,
+  closeOnEscape = false,
   returnFocusTo,
+  onFocusLeave,
   actions,
   children,
   id,
@@ -118,6 +127,82 @@ export function SidePanelHost({
   // State, not a ref: an overlay's section mounts a frame after `opened`, as its slide starts.
   const [panel, setPanel] = useState<HTMLElement | null>(null)
   const focusInside = useRef(false)
+  // Drops a leave the watcher below has not reported yet; the panel's own `onFocus` runs it.
+  const cancelFocusLeave = useRef<() => void>(undefined)
+  const onFocusLeaveRef = useRef(onFocusLeave)
+  useEffect(() => {
+    onFocusLeaveRef.current = onFocusLeave
+  })
+  const watchFocus = opened && !!onFocusLeave
+  // Watched on the document, not the panel's blur: focus can drop to nothing first (a click on
+  // text, or on a button in Safari) and then land elsewhere with no blur left to report it.
+  useEffect(() => {
+    if (!watchFocus || !panel) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let pressing = false
+    let pending: Element | null = null
+    let frame: Element | null = null
+    const report = (target: Element) => {
+      clearTimeout(timer)
+      timer = setTimeout(() => onFocusLeaveRef.current?.(target), 0)
+    }
+    // A caller that closes the panel reflows what the press landed on, losing its click, so a
+    // press waits for its release. The 0ms timer then runs after the click.
+    const leave = (target: Element) => {
+      if (pressing) pending = target
+      else report(target)
+    }
+    const release = () => {
+      pressing = false
+      if (pending) report(pending)
+      pending = null
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button === 0) pressing = true
+    }
+    // A press inside a frame never reaches this document, so a frame's leave waits for the pointer
+    // to come back anywhere but the panel, which it may be reaching for; a release outside the
+    // window shows here as a move with no button held.
+    const onPointerMove = (event: PointerEvent) => {
+      if (pressing && event.buttons === 0) release()
+      if (!frame || (event.target instanceof Node && panel.contains(event.target))) return
+      leave(frame)
+      frame = null
+    }
+    // Captured, so it runs before React's bubbling `onFocus`, which cancels it for a portaled descendant.
+    const onFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof Element && !panel.contains(event.target)) leave(event.target)
+    }
+    // Focus moving into a frame, such as the preview, reaches this document only as a blur.
+    const onWindowBlur = () =>
+      setTimeout(() => {
+        const active = document.activeElement
+        if (active instanceof HTMLIFrameElement && !panel.contains(active)) frame = active
+      }, 0)
+    cancelFocusLeave.current = () => {
+      clearTimeout(timer)
+      pending = null
+      frame = null
+    }
+    const listeners = [
+      [document, 'pointerdown', onPointerDown],
+      [document, 'pointerup', release],
+      [document, 'pointercancel', release],
+      [document, 'pointermove', onPointerMove],
+      [document, 'focusin', onFocusIn],
+      [window, 'blur', onWindowBlur],
+    ] as const
+    for (const [target, type, listener] of listeners) {
+      target.addEventListener(type, listener as EventListener, true)
+    }
+    return () => {
+      for (const [target, type, listener] of listeners) {
+        target.removeEventListener(type, listener as EventListener, true)
+      }
+      clearTimeout(timer)
+      cancelFocusLeave.current = undefined
+    }
+  }, [watchFocus, panel])
   const closingWithFocus = useRef(false)
   const wasOpened = useRef(opened)
   const servedFocusRequest = useRef(focusRequest)
@@ -183,12 +268,15 @@ export function SidePanelHost({
   }, [opened, returnFocusTo])
 
   // On the window, not the panel: a dialog portalled from the panel would bubble its Escape here
-  // through React, so only a key from inside the panel's own DOM closes it.
+  // through React, so only a key from inside the panel's own DOM closes it. An Escape that ends
+  // an IME composition only cancels the composition; Safari reports it as keyCode 229.
   useWindowEvent('keydown', (event) => {
     if (
       opened &&
-      mode === 'overlay' &&
+      (mode === 'overlay' || closeOnEscape) &&
       event.key === 'Escape' &&
+      !event.isComposing &&
+      event.keyCode !== 229 &&
       !event.defaultPrevented &&
       event.target instanceof Node &&
       panel?.contains(event.target)
@@ -290,11 +378,13 @@ export function SidePanelHost({
             tabIndex={-1}
             data-testid={testId}
             data-panel-mode={mode}
+            data-mantine-stop-propagation={closeOnEscape ? 'true' : undefined}
             // While it slides out, focus left inside it counts as idle, so it can still go back.
             {...{ [FOCUS_RETURN_ATTR]: opened ? undefined : '' }}
             style={{ ...style, ...transitionStyles }}
             onFocus={() => {
               focusInside.current = true
+              cancelFocusLeave.current?.()
             }}
             onBlur={(event) => {
               if (!event.currentTarget.contains(event.relatedTarget)) focusInside.current = false

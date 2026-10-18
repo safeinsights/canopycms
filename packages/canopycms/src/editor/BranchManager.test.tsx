@@ -776,6 +776,18 @@ describe('BranchManager', () => {
       })
     })
 
+    it('opens on the new-branch form, its name field marked to take focus, when asked to', () => {
+      renderBranchManager({ branches: baseBranches, mode: 'prod', startCreating: true })
+      expect(screen.getByTestId('create-branch-button').textContent).toBe('Cancel')
+      expect(screen.getByTestId('branch-name-input').hasAttribute('data-autofocus')).toBe(true)
+    })
+
+    it('opens with the new-branch form closed by default', () => {
+      renderBranchManager({ branches: baseBranches, mode: 'prod' })
+      expect(screen.getByTestId('create-branch-button').textContent).toBe('New branch…')
+      expect(screen.getByTestId('branch-name-input').hasAttribute('data-autofocus')).toBe(false)
+    })
+
     it('resets and closes the form when the create resolves true', async () => {
       const pending = deferred()
       const onCreate = vi.fn(() => pending.promise)

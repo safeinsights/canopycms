@@ -730,7 +730,7 @@ describe('branch api', () => {
     expect(byName('feature/archived')?.writeBlocked).toBe(true)
 
     // readOnly stays purely about base-branch protection -- it is what the
-    // editor uses to pick WHICH lock banner to show.
+    // editor uses to pick WHICH lock its status names.
     expect(byName('feature/submitted')?.readOnly).toBe(false)
     expect(byName('feature/submitted')?.isProtected).toBe(false)
   })

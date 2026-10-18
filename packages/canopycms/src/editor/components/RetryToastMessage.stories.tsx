@@ -27,3 +27,11 @@ type Story = StoryObj<typeof RetryToastMessage>
 
 /** As the content tree's load-failure toast shows a timed-out load. */
 export const TimedOut: Story = {}
+
+/** A server failure: plain words, with the raw diagnostic behind "Details". */
+export const WithDetails: Story = {
+  args: {
+    message: "The editor couldn't fetch this branch's entries.",
+    details: 'Schema fetch failed: 502 — Bad Gateway',
+  },
+}

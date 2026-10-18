@@ -16,7 +16,6 @@ export const EDITOR_ACTIONS = {
   restore: 'Restore',
   clear: 'Clear',
   undoClear: 'Undo clear',
-  openEntry: 'Open entry',
   changeUrl: 'Change URL',
   changeSlug: 'Change slug',
 } as const

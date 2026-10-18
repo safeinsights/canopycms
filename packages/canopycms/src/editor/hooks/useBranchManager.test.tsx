@@ -413,7 +413,7 @@ describe('useBranchManager', () => {
     // Absent case, asserted specifically (not just "always sends the field"):
     // isProtected/writeBlocked/submitBlocked gate real mutating actions, so
     // they must fail CLOSED (true) when missing. readOnly only picks WHICH
-    // lock banner to show once something is already locked, so it alone
+    // lock the status names once something is already locked, so it alone
     // stays `false` (unlocked-looking) when absent -- see the comment beside
     // its default in useBranchManager.tsx.
     expect(result.current.branchSummaries[1]).toMatchObject({
@@ -1720,6 +1720,8 @@ describe('useBranchManager', () => {
       onConfirm?: () => void
       onCancel?: () => void
       onClose?: () => void
+      returnFocus?: boolean
+      onExitTransitionEnd?: () => void
     }
 
     // Holds each confirm open until the test acts on it, the way a user leaves one on screen.
@@ -1889,6 +1891,48 @@ describe('useBranchManager', () => {
       })
       expect(opened[1].children?.props.children).toContain('Convert pull request #7 to a draft')
       act(() => opened[1].onClose?.())
+    })
+
+    describe('focus after the dialog', () => {
+      const control = () => {
+        const button = document.createElement('button')
+        document.body.append(button)
+        return button
+      }
+
+      afterEach(() => {
+        document.body.replaceChildren()
+      })
+
+      it.each([
+        ['submit', editingFeature],
+        ['withdraw', mockBranches],
+      ] as const)('returns %s focus to the control it is given', async (action, branches) => {
+        const opened = await holdConfirms()
+        const { result } = await renderLoaded([...branches])
+        const target = control()
+        act(() => {
+          if (action === 'submit') void result.current.handleSubmit('feature', () => target)
+          else void result.current.handleWithdraw('feature', () => target)
+        })
+        await waitFor(() => expect(opened).toHaveLength(1))
+        expect(opened[0].returnFocus).toBe(false)
+        act(() => opened[0].onClose?.())
+        opened[0].onExitTransitionEnd?.()
+        expect(document.activeElement).toBe(target)
+      })
+
+      it("keeps Mantine's own focus return without one", async () => {
+        const opened = await holdConfirms()
+        const { result } = await renderLoaded()
+        act(() => {
+          void result.current.handleSubmit('feature')
+        })
+        await waitFor(() => expect(opened).toHaveLength(1))
+        expect(opened[0].returnFocus).toBeUndefined()
+        expect(opened[0].onExitTransitionEnd).toBeUndefined()
+        act(() => opened[0].onClose?.())
+      })
     })
 
     describe('withdraw copy', () => {

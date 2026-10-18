@@ -1,13 +1,13 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { useState } from 'react'
-import { Center, Stack, Text } from '@mantine/core'
+import { Box, Center, Stack, Text } from '@mantine/core'
 
 import { EditorShell, type EditorShellProps } from './EditorShell'
 import { PaneLayout, type PaneArrangement } from './PaneLayout'
 import { SidePanelHost, type SidePanelHostProps } from './SidePanelHost'
-import { BranchLockBanner } from '../components/BranchLockBanner'
 import { EditorHeader, type EditorHeaderProps } from '../components/EditorHeader'
 import { EditorRail } from '../components/EditorRail'
+import { EntryHeader, type EntryHeaderProps } from '../components/EntryHeader'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 
 const noop = () => {}
@@ -17,7 +17,11 @@ const Placeholder = ({ name, minWidth }: { name: string; minWidth?: number }) =>
     h="100%"
     p="sm"
     miw={minWidth}
-    style={{ border: '1px dashed var(--mantine-color-default-border)' }}
+    // Opaque, so a maximized preview visibly covers the form.
+    style={{
+      border: '1px dashed var(--mantine-color-default-border)',
+      background: 'var(--mantine-color-body)',
+    }}
   >
     <Text size="sm" c="dimmed">
       {name}
@@ -25,7 +29,9 @@ const Placeholder = ({ name, minWidth }: { name: string; minWidth?: number }) =>
   </Center>
 )
 
-const headerProps: EditorHeaderProps = {
+type HeadersProps = EditorHeaderProps & EntryHeaderProps
+
+const headerProps: HeadersProps = {
   currentEntry: {
     path: unsafeAsLogicalPath('posts/hello'),
     contentId: unsafeAsContentId('abc123def456'),
@@ -33,23 +39,22 @@ const headerProps: EditorHeaderProps = {
     schema: [],
   },
   branchName: 'feature/landing',
-  operatingMode: 'prod',
   busy: false,
   breadcrumbSegments: [{ label: 'Posts', collectionPath: 'content/posts' }],
-  editedFiles: [],
   modifiedCount: 0,
+  onShowUnsaved: noop,
   onCollectionOpen: noop,
   onFileReload: noop,
   onFileDiscardDraft: noop,
   onEntryRename: noop,
   onEntryDelete: noop,
-  onEntrySelect: noop,
   onBranchReloadData: noop,
   onBranchDiscardDrafts: noop,
   onBranchManagerOpen: noop,
   onSave: noop,
   onSaveAll: noop,
   saveAllProgress: null,
+  saveAllRunning: false,
   onSubmit: noop,
   onWithdraw: noop,
   hasUnsavedChanges: false,
@@ -61,10 +66,12 @@ const headerProps: EditorHeaderProps = {
 const EditorChrome = ({
   arrangement = 'side',
   panelMode,
+  previewMaximized = false,
   ...header
-}: Partial<EditorHeaderProps> & {
+}: Partial<HeadersProps> & {
   arrangement?: PaneArrangement
   panelMode?: SidePanelHostProps['mode']
+  previewMaximized?: boolean
 }) => {
   const props = { ...headerProps, ...header }
   const [layout, setLayout] = useState(arrangement)
@@ -95,17 +102,13 @@ const EditorChrome = ({
   return (
     <EditorShell
       topBar={<EditorHeader {...props} />}
-      banner={<BranchLockBanner {...props} />}
       rail={
         <EditorRail
           contentPanelOpen={panelOpen}
           contentPanelId="story-content-panel"
           onContentToggle={() => setPanelOpen((open) => !open)}
-          onQuickOpen={noop}
-          quickOpenShortcut="⌘P"
-          quickOpenKeys="Meta+P"
-          branchesOpen={false}
-          onBranchesOpen={noop}
+          contentShortcut={{ label: '⌘P', keys: 'Meta+P' }}
+          unsavedCount={props.modifiedCount}
           onCommentsOpen={noop}
           commentsOpen={false}
           unresolvedCommentCount={2}
@@ -118,13 +121,19 @@ const EditorChrome = ({
       }
       panel={mode === 'docked' && layout === 'side' ? panel : undefined}
       main={
-        <PaneLayout
-          arrangement={layout}
-          preview={<Placeholder name="Preview" />}
-          form={<Placeholder name="Form" />}
-          formAside={mode === 'docked' && layout === 'stacked' ? panel : undefined}
-          formOverlay={mode === 'overlay' ? panel : undefined}
-        />
+        <Box h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
+          <EntryHeader {...props} />
+          <Box style={{ flex: '1 1 0%', minHeight: 0 }}>
+            <PaneLayout
+              arrangement={layout}
+              preview={<Placeholder name="Preview" />}
+              form={<Placeholder name="Form" />}
+              formAside={mode === 'docked' && layout === 'stacked' ? panel : undefined}
+              formOverlay={mode === 'overlay' ? panel : undefined}
+              previewMaximized={previewMaximized}
+            />
+          </Box>
+        </Box>
       }
     />
   )
@@ -143,7 +152,6 @@ type Story = StoryObj<typeof EditorShell>
 export const Regions: Story = {
   args: {
     topBar: <Placeholder name="Top bar" />,
-    banner: <Placeholder name="Banner" />,
     panel: <Placeholder name="Panel" minWidth={240} />,
     main: <Placeholder name="Main" />,
     rail: <Placeholder name="Rail" minWidth={44} />,
@@ -156,6 +164,11 @@ export const Editing: Story = {
 
 export const Stacked: Story = {
   render: () => <EditorChrome arrangement="stacked" />,
+}
+
+/** A maximized preview covers the panes only: the entry header, and its Save, stay above it. */
+export const PreviewMaximized: Story = {
+  render: () => <EditorChrome previewMaximized hasUnsavedChanges modifiedCount={1} />,
 }
 
 /** The content panel docked beside the panes, resizable from its edge. */
@@ -184,8 +197,15 @@ export const ContentPanelNarrow: Story = {
   render: () => <EditorChrome arrangement="stacked" panelMode="overlay" />,
 }
 
+/** In review: the bar's status says so beside the pill, and Withdraw is the way forward. */
 export const InReview: Story = {
   render: () => <EditorChrome branchStatus="submitted" branchWriteBlocked />,
+}
+
+/** In review at phone width: Withdraw alone, with no Save all, which couldn't apply. */
+export const InReviewNarrow: Story = {
+  parameters: ContentPanelNarrow.parameters,
+  render: () => <EditorChrome arrangement="stacked" branchStatus="submitted" branchWriteBlocked />,
 }
 
 export const ProtectedBaseBranch: Story = {
@@ -193,6 +213,7 @@ export const ProtectedBaseBranch: Story = {
     <EditorChrome
       branchName="main"
       branchIsProtected
+      branchServerProtected
       branchReadOnly
       branchWriteBlocked
       branchStatus="editing"

@@ -38,12 +38,23 @@ test.describe('Save all', () => {
       await editorPage.fillTextField('title', homeTitle)
       await editorPage.createPost(postSlug, postSavedTitle)
       await editorPage.fillTextField('title', postDraftTitle)
-      await expect(editorPage.branchUnsavedCount()).toContainText(
-        '2 entries with unsaved changes',
-        {
-          timeout: SHORT_TIMEOUT,
-        },
-      )
+      await expect(editorPage.branchUnsavedCount()).toHaveText('2 unsaved', {
+        timeout: SHORT_TIMEOUT,
+      })
+    })
+
+    await test.step('"2 unsaved" lists the two under Changed, and the open one shows under All', async () => {
+      await editorPage.showUnsavedEntries()
+      await expect(editorPage.changedFilterOption('Changed')).toBeChecked()
+      await expect(editorPage.navigatorItem('Home')).toBeVisible()
+      await expect(editorPage.navigatorItem(postSavedTitle)).toBeVisible()
+      await expect(editorPage.navigatorItem('Settings')).toHaveCount(0)
+
+      await editorPage.showInContentPanel()
+      await expect(editorPage.changedFilterOption('All')).toBeChecked()
+      await expect(editorPage.navigatorItem('Settings')).toBeVisible()
+      await expect(page.locator(':focus')).toHaveAttribute('data-value', /\/e2e-save-all-/)
+      await editorPage.closeContentNavigator()
     })
 
     const failPostWrite = (route: import('@playwright/test').Route) =>
@@ -66,7 +77,7 @@ test.describe('Save all', () => {
       await expect(result.getByTestId('save-all-failure')).toContainText(
         `${postSavedTitle}: Save failed. Try again.`,
       )
-      await expect(editorPage.branchUnsavedCount()).toContainText('1 entry with unsaved changes')
+      await expect(editorPage.branchUnsavedCount()).toHaveText('1 unsaved')
       // The post is open and keeps what was typed.
       await editorPage.verifyFieldValue('title', postDraftTitle)
     })
@@ -98,9 +109,11 @@ test.describe('Save all', () => {
   test('says why it cannot run when nothing on the branch is unsaved', async ({ page }) => {
     await editorPage.goto()
     await editorPage.waitForReady()
-    await page.getByTestId('save-options-button').click()
-    const item = page.getByTestId('save-all-menu-item')
-    await expect(item).toHaveAttribute('aria-disabled', 'true')
-    await expect(item).toContainText('No entry on this branch has unsaved changes.')
+    const saveAll = editorPage.saveAllButton()
+    await expect(saveAll).toHaveAttribute('aria-disabled', 'true')
+    await saveAll.focus()
+    await expect(page.getByRole('tooltip')).toHaveText(
+      'No entry on this branch has unsaved changes.',
+    )
   })
 })

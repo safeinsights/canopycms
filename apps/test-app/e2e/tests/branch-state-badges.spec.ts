@@ -171,7 +171,7 @@ test.describe('Branch State Badges', () => {
     })
   })
 
-  test('status lock: submitted branch shows locked banner + disabled save; server 403s writes; withdraw restores editing (B6/B7)', async ({
+  test('status lock: submitted branch shows its read-only status + disabled save; server 403s writes; withdraw restores editing (B6/B7)', async ({
     page,
   }) => {
     const branchName = `status-lock-${Date.now()}`
@@ -195,12 +195,9 @@ test.describe('Branch State Badges', () => {
       await editorPage.waitForReady()
     })
 
-    await test.step('status-locked banner is visible and save is disabled', async () => {
-      const banner = editorPage.statusLockedBanner()
-      await expect(banner).toBeVisible()
-      await expect(banner).toContainText(
-        `Branch "${branchName}" is submitted for review and locked for edits`,
-      )
+    await test.step('the bar says the branch is in review and save is disabled', async () => {
+      await expect(editorPage.branchStatus()).toHaveText('In review · read-only')
+      await expect(page.getByTestId('withdraw-button')).toBeVisible()
       await expect(editorPage.saveButton).toBeDisabled()
     })
 
@@ -232,7 +229,8 @@ test.describe('Branch State Badges', () => {
       await page.reload()
       await editorPage.waitForReady()
 
-      await expect(editorPage.statusLockedBanner()).not.toBeVisible()
+      await expect(page.getByTestId('submit-button')).toBeVisible()
+      await expect(editorPage.branchStatus()).toHaveCount(0)
       // NOTE: save-button stays disabled right after reload regardless of
       // the status lock -- it's also gated on `hasUnsavedChanges` and
       // `currentEntry`, neither of which survives a reload (see
@@ -240,7 +238,7 @@ test.describe('Branch State Badges', () => {
       // provable from the button's disabled state alone; prove it by
       // actually editing and saving below.
 
-      // Prove editing genuinely works again, not just that the banner is gone.
+      // Prove editing genuinely works again, not just that the status is gone.
       await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home')
       await editorPage.fillTextField('title', `Restored-${Date.now()}`)

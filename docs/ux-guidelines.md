@@ -27,7 +27,8 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Content**               | The panel of collections and entries                           | All entries                                 |
 | **Change URL**            | Changing an entry's slug; "Change slug" without a page         | Rename                                      |
 
-Branch status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`.
+Status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`, lock labels
+from `packages/canopycms/src/editor/branch-lock.ts`.
 
 ## Copy
 
@@ -61,7 +62,7 @@ Branch status labels and colours come from `packages/canopycms/src/editor/branch
 | A list or task worked alongside the content: branches, comments, media | Drawer or panel       |
 | Context for one control: a field's comments, a picker, a short note    | Popover               |
 | The result of an action that is not otherwise visible                  | Toast                 |
-| A branch's lasting state: read-only, protected, conflict               | Banner                |
+| A branch's lasting state: read-only, protected                         | Branch bar status     |
 | One entry's lasting state, such as a read-only draft                   | Notice above its form |
 
 Never open a modal from a modal. A popover anchored to a field never covers its input; a short field's opens below it
@@ -88,9 +89,10 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
 - **Disabled says why.** A control that can't act stays visible, disabled, with a Tooltip
   giving a full-sentence reason with the way forward ("This branch is in review.
   Withdraw it to make changes."). One reason blocking controls with different verbs names the
-  condition, not a verb. Mantine's `data-disabled` keeps the Tooltip working on focus
-  and touch. A control with text needs only the Tooltip; an icon-only one adds an
-  `aria-label` for its name and the reason as visually hidden text.
+  condition, not a verb. The Tooltip opens clear of its control and any control stacked beside it.
+  Mantine's `data-disabled` keeps the Tooltip working on focus and touch. A control with text
+  needs only the Tooltip; an icon-only one adds an `aria-label` for its name and the reason as
+  visually hidden text.
 - No reason for a submit disabled only by an empty adjacent input (Reply) or a busy dialog's
   close button.
 - An action blocked only by unsaved state shows the reason first, allows drafting, and disables
@@ -103,7 +105,7 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
   the per-item "…" actions and show one collection-level line saying why ("You can't add entries
   here").
 - A locked branch keeps each row's "…" slot and draws a lock there on the hovered, focused or
-  selected row, by opacity; its Tooltip gives the top bar's reason.
+  selected row, by opacity; its Tooltip says why.
 
 ## Loading, empty and error states
 
@@ -124,15 +126,16 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
   to check, quoted. Keep the input, unless a retry could duplicate the write (a create): then
   close, saying where to check, and prefill that dialog's next open with what was typed.
 - An inline alert about a list sits above the list, under its heading.
-- A placeholder takes the height of what replaces it, so nothing shifts.
+- A placeholder takes the height of what replaces it, and a wrapping bar reserves its controls'
+  widest label width, so nothing shifts.
 
 ## Fields
 
 Every field's label row has the same anatomy, rendered by
 `packages/canopycms/src/editor/fields/FieldLabel.tsx`: label, required marker and comment
-control on the left, field actions on the right, and the description beneath. No hand-rolled
-label styles. A read-only form's inputs are read-only, not disabled; one notice explains once;
-no lock icon per field, row drag handle or item menu. List and block rows collapse, take their title from the content, and
+control on the left, field actions on the right, and the description beneath. No hand-rolled label styles. A read-only
+form's inputs are read-only, not disabled; one notice explains once; no lock icon per field, row
+drag handle or item menu. List and block rows collapse, take their title from the content, and
 carry a drag handle and a "…" menu (Move up, Move down, Duplicate, Remove). Validation shows
 inline and in a summary of labelled breadcrumbs that focus the field. A date-time input takes
 12- or 24-hour time from the locale and shows the time zone; a date-only value is read as local
@@ -149,18 +152,18 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 ## Keyboard
 
 - Bind shortcuts with Mantine's `useHotkeys` as `mod+…`, which is ⌘ on macOS and Ctrl
-  elsewhere, scoped to the editor root. A shortcut that must work while typing, such as Save,
-  passes `[]` as `tagsToIgnore` and `true` as `triggerOnContentEditable`.
-- Taken: Mod+P quick open, Mod+Alt+M comments, Esc closes the topmost overlay, else restores a
-  maximized preview; a docked panel stays open. Planned for WS8:
-  Mod+S save, Mod+. content panel, Mod+Shift+L layout. Never bind Mod+K (MDXEditor's link), the formatting keys, or the browser's own
-  (Mod+W, T, R, L, F).
+  elsewhere, scoped to the editor root. A shortcut that must work while typing passes `[]` as
+  `tagsToIgnore` and `true` as `triggerOnContentEditable`.
+- Taken: Mod+P finds entries, opening a closed content panel until Enter, Esc or focus leaves;
+  Mod+Alt+M comments; Esc closes the topmost overlay (not a docked panel it didn't open), else
+  restores a maximized preview. Planned: Mod+S save, Mod+Shift+L layout. Never bind Mod+K (MDXEditor's link), formatting keys, or the
+  browser's own (Mod+W, T, R, L, F).
 - An overlay panel makes what it covers `inert` (`formInert` in
   `packages/canopycms/src/editor/shell/PaneLayout.tsx`), and anything that targets the covered
   part closes it first (`revealForm` in `packages/canopycms/src/editor/Editor.tsx`).
-- Tooltips and the shortcut sheet show the platform's modifier.
+- Tooltips and hints show the platform's modifier.
 - Every action is reachable by keyboard, focus follows visual order, and closing an overlay
-  returns focus to the control that opened it. A menu item is gone once it acts, so its menu's
+  returns focus to its opener. A menu item is gone once it acts, so its menu's
   trigger stands in (`packages/canopycms/src/editor/utils/focus-return.ts`). Any other opener that
   is gone hands focus to the menu trigger offering the same action (`returnTarget`), else the
   nearest heading.
@@ -191,23 +194,20 @@ never a fixed shade outside the theme (`gray.0`, `dark.7`, `bg="white"`). The th
 included:
 
 - `--mantine-color-dimmed`, the only dimmed colour. Dark dimmed text also differs in size or
-  style (italic, `--canopy-dimmed-font-style`): on `dark.4`, a hovered menu item, no colour
-  is both 4.5:1 and visibly dimmer than body text.
-- `--mantine-color-placeholder`, at least 4.5:1, and at least 1.7:1 from the text colour so it
-  never passes for a value.
+  style (italic, `--canopy-dimmed-font-style`).
+- `--mantine-color-placeholder`, at least 4.5:1, and at least 1.7:1 from the text colour.
 - `--canopy-danger-text`, for all destructive and error text, menu items included: `red.9` in
-  light mode and `red.3` in dark, since `red.8` is 4.3:1 on `gray.0` and `red.4` 4.3:1 on `dark.4`.
+  light mode and `red.3` in dark.
 - `--canopy-input-border` (3:1), for inputs and the borders and tracks of Checkbox, Radio and
   Switch; `--canopy-surface-subtle` and `--canopy-surface-muted`.
 - `--canopy-focus-ring` (3:1 on its surface for any brand) for focus rings, focused borders and
   checked controls; white on the primary colour sits on `--canopy-primary-fill`.
 
 Pass a plain colour; the theme brings its text and light variant to 4.5:1, at which dark mode's
-light status badges look alike. Success text is the default colour beside a green icon;
-`green.8` and `green.9` miss 4.5:1 on white. Count badges put text colour on a tinted background.
-A light yellow `Alert`'s title, icon and close button take the text colour; yellow on its own
-tint is under 2:1. Filled destructive buttons are `red.8`, 4.5:1 under white; no orange shade
-reaches that, so filled orange buttons are `orange.6` with black text. Nothing else but the
+light status badges look alike. Success text is the default colour beside a green icon. Count badges put text colour on a tinted
+background.
+A light yellow `Alert`'s title, icon and close button take the text colour. Filled
+destructive buttons are `red.8`; filled orange buttons are `orange.6` with black text. Nothing else but the
 primary is filled: other badges, icons and indicators take their colour's light variant.
 
 ## People
@@ -221,13 +221,14 @@ primary is filled: other badges, icons and indicators take their colour's light 
 
 ## Shell regions
 
-The editor fills the window as one grid: **top bar** (breadcrumb and entry menu, branch pill,
-Submit or Withdraw, Save and Save all), **banner** (branch-wide notices), **rail** (activity icons,
-layout, settings), **panel** (content tree, docked when wide, in the form row when stacked, else
-over the form), **main** (preview and form) and **overlays** (drawers, quick open, modals,
-toasts). The regions are layout only; features plug into them. New UI goes into an existing
-region, and adding a region is a design decision. Unsaved shows as one dot (`UnsavedMark`),
-counted on the pill.
+The editor fills the window as one grid: **top bar** (branch pill and status, unsaved count, Save
+all or the way forward, Submit or Withdraw, split below `md`), **rail** (Content, Comments while a
+branch is open, Media, a divider, the layout toggle; Settings and Account below), **panel**
+(content tree: docked, in the stacked form row, or over the form), **main** (entry header, keeping
+Save above a maximized preview; preview and form) and **overlays** (drawers, modals, toasts).
+Regions are layout only. New UI joins an existing region; adding one is a design decision.
+Switch branch… and New branch… open the Branches drawer. Unsaved is one dot (`UnsavedMark`), also
+on Content while its panel is closed.
 
 ## Enforcement
 

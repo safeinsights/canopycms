@@ -245,19 +245,15 @@ export class EditorPage {
   }
 
   /**
-   * Open an entry through the Mod+P palette: type `query` and take its first match.
-   * Works from wherever focus is, the form's inputs included.
+   * Open an entry with Mod+P: type `query` into the content panel's field and take its first
+   * match with Enter. Works from wherever focus is, the form's inputs included.
    */
-  async quickOpen(query: string): Promise<void> {
+  async findEntry(query: string): Promise<void> {
     await this.page.keyboard.press('ControlOrMeta+P')
-    const input = this.page.locator('[data-testid="quick-open-input"]')
-    await expect(input).toBeVisible({ timeout: STANDARD_TIMEOUT })
+    const input = this.page.locator('[data-testid="entry-nav-filter"]')
+    await expect(input).toBeFocused({ timeout: STANDARD_TIMEOUT })
     await input.fill(query)
-    await expect(this.page.locator('[data-testid="quick-open-option"]').first()).toBeVisible({
-      timeout: STANDARD_TIMEOUT,
-    })
     await input.press('Enter')
-    await expect(input).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
   /**
@@ -406,11 +402,11 @@ export class EditorPage {
   }
 
   /**
-   * The banner shown while the branch's content is locked: by a workflow status such as submitted,
-   * or until the branch's details load.
+   * The branch bar's status, beside the pill: "In review · read-only" and the like, absent on an
+   * editable branch.
    */
-  statusLockedBanner(): Locator {
-    return this.page.locator('[data-testid="status-locked-banner"]')
+  branchStatus(): Locator {
+    return this.page.locator('[data-testid="branch-status"]')
   }
 
   /**
@@ -556,6 +552,26 @@ export class EditorPage {
     return this.page.locator('[data-testid="rail-layout-button"]')
   }
 
+  /**
+   * The rail's buttons and dividers from the top, each by its accessible name; a divider is
+   * "separator". Settings opens a menu, so its name is the button's.
+   */
+  async railItems(): Promise<(string | null)[]> {
+    return this.page
+      .getByRole('toolbar', { name: 'Activities' })
+      .locator('[data-rail-item], [role="separator"]')
+      .evaluateAll((items) =>
+        items.map((item) =>
+          item.getAttribute('role') === 'separator' ? 'separator' : item.getAttribute('aria-label'),
+        ),
+      )
+  }
+
+  /** The unsaved dot on the rail's Content button, present while its panel is closed. */
+  railUnsavedMark(): Locator {
+    return this.page.getByTestId('rail-unsaved-mark')
+  }
+
   maximizePreviewButton(): Locator {
     return this.page.locator('[data-testid="preview-maximize-button"]')
   }
@@ -642,14 +658,19 @@ export class EditorPage {
     await this.saveButton.click()
   }
 
-  /**
-   * Run "Save all" from the caret beside Save.
-   */
+  /** Run "Save all" from the top bar. */
   async saveAll(): Promise<void> {
-    await this.page.getByTestId('save-options-button').click()
-    const item = this.page.getByTestId('save-all-menu-item')
-    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-    await item.click()
+    await this.saveAllButton().click()
+  }
+
+  /** The top bar's "Save all". */
+  saveAllButton(): Locator {
+    return this.page.getByTestId('save-all-button')
+  }
+
+  /** The open entry's header over the panes: breadcrumb, entry menu, chip and Save. */
+  entryHeader(): Locator {
+    return this.page.getByRole('region', { name: 'Entry' })
   }
 
   /** The toast listing what a Save all could not save. */
@@ -657,9 +678,26 @@ export class EditorPage {
     return this.page.getByTestId('save-all-result')
   }
 
-  /** The branch pill's unsaved count, a dot and a number named "N entries with unsaved changes", absent with nothing unsaved. */
+  /** The branch bar's "N unsaved" button, absent with nothing unsaved. */
   branchUnsavedCount(): Locator {
     return this.page.getByTestId('branch-unsaved-count')
+  }
+
+  /** Lists the unsaved entries: "N unsaved" opens the content panel filtered to Changed. */
+  async showUnsavedEntries(): Promise<void> {
+    await this.branchUnsavedCount().click()
+    await this.contentNavigator.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+  }
+
+  /** The content panel's All / Changed choice, by its label ("All", or "Changed" and its count). */
+  changedFilterOption(label: 'All' | 'Changed'): Locator {
+    return this.contentNavigator.getByRole('radio', { name: new RegExp(`^${label}`) })
+  }
+
+  /** The entry menu's "Show in content panel": the panel opens on All, the entry's row focused. */
+  async showInContentPanel(): Promise<void> {
+    await this.openFileMenuItem('entry-menu-reveal')
+    await this.contentNavigator.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
   }
 
   /**

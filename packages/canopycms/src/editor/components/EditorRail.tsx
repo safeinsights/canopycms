@@ -7,22 +7,20 @@ import {
   IconActivity,
   IconExternalLink,
   IconFiles,
-  IconGitBranch,
   IconInfoCircle,
   IconLayoutColumns,
   IconLayoutRows,
   IconLogout,
   IconMessageCircle,
   IconPhoto,
-  IconSearch,
   IconSettings,
   IconUserCircle,
 } from '@tabler/icons-react'
-import { ActivityRail, RailButton } from '../shell/ActivityRail'
+import { ActivityRail, RailButton, RailDivider } from '../shell/ActivityRail'
 import type { PaneArrangement } from '../shell/PaneLayout'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
+import { UnsavedMark } from './UnsavedMark'
 import { CANOPYCMS_VERSION } from '../../version'
-import { EDITOR_ACTIONS } from '../copy'
 
 const ABOUT_URL = 'https://github.com/safeinsights/canopycms'
 
@@ -33,13 +31,10 @@ export interface EditorRailProps {
   onContentToggle: () => void
   /** The Content button, which takes focus when the open entry it was reached from is gone. */
   contentToggleRef?: Ref<HTMLButtonElement>
-  onQuickOpen: () => void
-  /** The quick open shortcut as the platform writes it, such as "⌘P". */
-  quickOpenShortcut: string
-  /** The same shortcut for `aria-keyshortcuts`, such as "Meta+P". */
-  quickOpenKeys: string
-  branchesOpen: boolean
-  onBranchesOpen: () => void
+  /** The shortcut that opens the panel at its search field: "⌘P", and "Meta+P" for `aria-keyshortcuts`. */
+  contentShortcut: { label: string; keys: string }
+  /** Entries with unsaved changes: the Content button marks them while its panel is closed. */
+  unsavedCount: number
   /** Without it, the Comments button is not offered (no branch, or a mode without comments). */
   onCommentsOpen?: () => void
   commentsOpen: boolean
@@ -158,11 +153,8 @@ export function EditorRail({
   contentPanelId,
   onContentToggle,
   contentToggleRef,
-  onQuickOpen,
-  quickOpenShortcut,
-  quickOpenKeys,
-  branchesOpen,
-  onBranchesOpen,
+  contentShortcut,
+  unsavedCount,
   onCommentsOpen,
   commentsOpen,
   unresolvedCommentCount,
@@ -232,6 +224,8 @@ export function EditorRail({
       <VisuallyHidden component="span"> (opens in a new tab)</VisuallyHidden>
     </Menu.Item>,
   ]
+  const unsaved = !contentPanelOpen && unsavedCount > 0
+  const contentLabel = unsaved ? `Content, ${unsavedCount} unsaved` : 'Content'
   const commentsLabel =
     unresolvedCommentCount > 0 ? `Comments, ${unresolvedCommentCount} unresolved` : 'Comments'
 
@@ -241,33 +235,19 @@ export function EditorRail({
         <>
           <RailButton
             railId="content"
-            label="Content"
+            label={contentLabel}
+            corner={
+              unsaved ? <UnsavedMark aria-hidden data-testid="rail-unsaved-mark" /> : undefined
+            }
             icon={<IconFiles size={20} />}
             active={contentPanelOpen}
             aria-expanded={contentPanelOpen}
             aria-controls={contentPanelOpen ? contentPanelId : undefined}
+            shortcut={contentShortcut.label}
+            aria-keyshortcuts={contentShortcut.keys}
             data-testid="content-panel-toggle"
             ref={contentToggleRef}
             onClick={onContentToggle}
-          />
-          <RailButton
-            railId="search"
-            label={EDITOR_ACTIONS.openEntry}
-            shortcut={quickOpenShortcut}
-            aria-keyshortcuts={quickOpenKeys}
-            icon={<IconSearch size={20} />}
-            aria-haspopup="dialog"
-            data-testid="rail-search-button"
-            onClick={onQuickOpen}
-          />
-          <RailButton
-            railId="branches"
-            label="Branches"
-            icon={<IconGitBranch size={20} />}
-            active={branchesOpen}
-            aria-haspopup="dialog"
-            data-testid="rail-branches-button"
-            onClick={onBranchesOpen}
           />
           {onCommentsOpen && (
             <RailButton
@@ -292,14 +272,11 @@ export function EditorRail({
             ref={mediaButtonRef}
             onClick={onMediaLibraryOpen}
           />
-        </>
-      }
-      bottom={
-        <>
+          <RailDivider />
           <LayoutButton layout={layout} onChange={onLayoutChange} blocked={layoutBlocked} />
-          <SettingsMenu items={settingsItems} toggleRef={settingsToggleRef} />
         </>
       }
+      bottom={<SettingsMenu items={settingsItems} toggleRef={settingsToggleRef} />}
       account={
         AccountComponent ? (
           <AccountComponent />

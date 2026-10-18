@@ -47,8 +47,15 @@ const okJson = (data: unknown) =>
     headers: { 'Content-Type': 'application/json' },
   })
 
-const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unknown[] } = {}) => {
-  const { groups = [], locked = false, threads = [] } = options
+const stubApi = (
+  options: {
+    groups?: string[]
+    locked?: boolean
+    readOnlyBase?: boolean
+    threads?: unknown[]
+  } = {},
+) => {
+  const { groups = [], locked = false, readOnlyBase = false, threads = [] } = options
   // The one entry, until a delete removes it or a rename moves it to `hello-two`.
   let deleted = false
   let renamed = false
@@ -70,14 +77,15 @@ const stubApi = (options: { groups?: string[]; locked?: boolean; threads?: unkno
             branches: [
               {
                 name: 'main',
-                status: locked ? 'submitted' : 'editing',
+                // Archived, so the bar offers Switch branch… as the way forward.
+                status: locked ? 'archived' : 'editing',
                 access: {},
                 createdBy: 'user-1',
                 createdAt: '2024-01-01',
                 updatedAt: '2024-01-01',
-                isProtected: false,
-                readOnly: false,
-                writeBlocked: locked,
+                isProtected: readOnlyBase,
+                readOnly: readOnlyBase,
+                writeBlocked: locked || readOnlyBase,
                 submitBlocked: false,
               },
             ],
@@ -353,13 +361,15 @@ describe('Change URL… and Delete entry (file menu)', () => {
   it('blocks both on a locked branch, saying why, and opens neither', async () => {
     stubApi({ locked: true })
     renderEditor()
-    await waitFor(() => expect(screen.getByTestId('status-locked-banner')).toBeTruthy())
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-status').textContent).toBe('Archived · read-only'),
+    )
 
     await userEvent.click(fileTrigger())
     for (const id of ['entry-menu-rename', 'entry-menu-delete']) {
       const item = await screen.findByTestId(id)
       expect(item.getAttribute('aria-disabled')).toBe('true')
-      expect(item.textContent).toContain('This branch is in review. Withdraw it to make changes.')
+      expect(item.textContent).toContain('This branch is archived. Its content is read-only.')
       await userEvent.click(item)
     }
     expect(screen.queryByTestId('rename-entry-modal')).toBeNull()
@@ -394,13 +404,11 @@ describe('Switch branch… (branch menu)', () => {
     },
   )
 
-  it('returns focus to the banner button that opened it, not to the menu button', async () => {
+  it("returns focus to the bar's Switch branch… that opened it, not to the menu button", async () => {
     stubApi({ locked: true })
     renderEditor()
     await loaded()
-    const banner = await screen.findByTestId('status-locked-banner')
-    const opener = banner.querySelector('button')
-    if (!opener) throw new Error('no banner button')
+    const opener = await screen.findByTestId('switch-branch-button')
 
     focusEl(opener)
     await userEvent.keyboard('{Enter}')
@@ -409,6 +417,42 @@ describe('Switch branch… (branch menu)', () => {
 
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(opener))
+  })
+
+  it('opens Branches from "Open branch discussion" without the form an earlier New branch… left open', async () => {
+    stubApi({
+      readOnlyBase: true,
+      threads: [
+        {
+          id: 'thread-1',
+          type: 'branch',
+          resolved: false,
+          authorId: 'user-1',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          comments: [
+            {
+              id: 'c1',
+              threadId: 'thread-1',
+              userId: 'user-1',
+              timestamp: '2024-01-01T00:00:00.000Z',
+              text: 'Branch note',
+            },
+          ],
+        },
+      ],
+    })
+    renderEditor()
+    await loaded()
+    await userEvent.click(await screen.findByTestId('new-branch-button'))
+    await screen.findByRole('heading', { name: 'Branches' })
+    expect(screen.getByTestId('create-branch-button').textContent).toBe('Cancel')
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Branches' })).toBeNull())
+
+    await userEvent.click(screen.getByTestId('comments-button'))
+    await userEvent.click(await screen.findByRole('button', { name: /^Open branch discussion/ }))
+    await screen.findByRole('heading', { name: 'Branches' })
+    expect(screen.getByTestId('create-branch-button').textContent).toBe('New branch…')
   })
 
   it('returns focus to the branch menu button after "Open branch discussion", not to an earlier opener', async () => {
@@ -435,11 +479,9 @@ describe('Switch branch… (branch menu)', () => {
     })
     renderEditor()
     await loaded()
-    const banner = await screen.findByTestId('status-locked-banner')
-    const bannerOpener = banner.querySelector('button')
-    if (!bannerOpener) throw new Error('no banner button')
+    const barOpener = await screen.findByTestId('switch-branch-button')
 
-    focusEl(bannerOpener)
+    focusEl(barOpener)
     await userEvent.keyboard('{Enter}')
     await screen.findByRole('heading', { name: 'Branches' })
     await userEvent.keyboard('{Escape}')
@@ -471,18 +513,18 @@ describe('Focus once a menu has closed', () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger()))
   })
 
-  it('picking an unsaved entry leaves focus on the branch pill', async () => {
+  it("Show in content panel leaves focus on the entry's row, not on its menu button", async () => {
     stubApi()
     renderEditor()
     await loaded()
-    await editTitle()
 
-    await activateByKeyboard(branchTrigger(), async () => {
-      const items = await screen.findAllByRole('menuitem', { name: 'Hello' })
-      return items[0]
-    })
+    await activateByKeyboard(fileTrigger(), byTestId('entry-menu-reveal'))
 
-    await waitFor(() => expect(document.activeElement).toBe(branchTrigger()))
+    await waitFor(() =>
+      expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(hello.path),
+    )
+    await settled()
+    expect((document.activeElement as HTMLElement | null)?.dataset.value).toBe(hello.path)
   })
 
   it('leaves focus in the drawer that Switch branch… opened', async () => {
