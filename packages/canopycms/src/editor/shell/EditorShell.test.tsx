@@ -4,8 +4,7 @@ import { createPortal } from 'react-dom'
 import { Modal } from '@mantine/core'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { EditorShell, SHELL_REGION_BORDER } from './EditorShell'
-import { BranchLockBanner } from '../components/BranchLockBanner'
+import { EditorShell } from './EditorShell'
 import { CanopyCMSProvider } from '../theme'
 
 const foreignRoots: HTMLElement[] = []
@@ -27,7 +26,6 @@ const Shell = ({ overlays }: { overlays?: React.ReactNode }) => (
   <CanopyCMSProvider>
     <EditorShell
       topBar={<button>Top bar</button>}
-      banner={<div>Banner</div>}
       main={<button>Main</button>}
       rail={<button>Rail</button>}
       overlays={overlays}
@@ -52,9 +50,11 @@ describe('EditorShell', () => {
 
     await waitFor(() => expect(shell()).not.toBeNull())
     expect(shell().parentElement?.parentElement).toBe(document.body)
-    for (const area of ['topbar', 'banner', 'panel', 'main', 'rail', 'overlays']) {
+    for (const area of ['topbar', 'panel', 'main', 'rail', 'overlays']) {
       expect(shell().querySelector(`[data-canopy-region="${area}"]`)).not.toBeNull()
     }
+    // A branch's lasting state is the branch bar's status, so no region sits between bar and rail.
+    expect(shell().querySelector('[data-canopy-region="banner"]')).toBeNull()
     expect(container.contains(shell())).toBe(false)
     expect(container.querySelector('[data-canopy-shell-anchor]')).not.toBeNull()
   })
@@ -164,34 +164,5 @@ describe('EditorShell', () => {
     expect(shell().querySelector('header')).toBeNull()
     expect(shell().querySelector('aside')).toBeNull()
     expect(screen.getByRole('main').textContent).toBe('Main')
-  })
-
-  it('draws a line under the banner region only while a banner shows', async () => {
-    const withBanner = (branchReadOnly: boolean) => (
-      <CanopyCMSProvider>
-        <EditorShell
-          banner={
-            <BranchLockBanner
-              branchName="main"
-              branchStatus="editing"
-              branchReadOnly={branchReadOnly}
-              onBranchManagerOpen={() => {}}
-            />
-          }
-          main={<p>Main</p>}
-        />
-      </CanopyCMSProvider>
-    )
-    const { rerender } = render(withBanner(false))
-    await waitFor(() => expect(shell()).not.toBeNull())
-    const line = () =>
-      getComputedStyle(
-        shell().querySelector('[data-canopy-region="banner"]') as HTMLElement,
-      ).getPropertyValue('border-block-end')
-    expect(line()).toBe('')
-
-    rerender(withBanner(true))
-    expect(screen.getByTestId('protected-branch-banner')).toBeDefined()
-    expect(line()).toBe(SHELL_REGION_BORDER)
   })
 })

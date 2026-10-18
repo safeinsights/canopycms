@@ -406,11 +406,11 @@ export class EditorPage {
   }
 
   /**
-   * The banner shown while the branch's content is locked: by a workflow status such as submitted,
-   * or until the branch's details load.
+   * The branch bar's status, beside the pill: "In review · read-only" and the like, absent on an
+   * editable branch.
    */
-  statusLockedBanner(): Locator {
-    return this.page.locator('[data-testid="status-locked-banner"]')
+  branchStatus(): Locator {
+    return this.page.locator('[data-testid="branch-status"]')
   }
 
   /**

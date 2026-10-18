@@ -1,4 +1,13 @@
-import { useEffect, useRef, useState, type MouseEvent, type RefObject } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type RefObject,
+} from 'react'
 
 /**
  * Mantine's own `returnFocus` records the focused element at open, and a menu item has unmounted
@@ -125,4 +134,44 @@ export function useFocusAfterRemove<L extends HTMLElement = HTMLDivElement>() {
     focusAfterRemove: (index: number, fallback: RefObject<HTMLElement | null>) =>
       setPending({ index, fallback }),
   }
+}
+
+/** `el` has focus, or the open menu it controls (`aria-controls`) does. */
+function holdsFocus(el: HTMLElement): boolean {
+  const active = document.activeElement
+  const menuId = el.getAttribute('aria-controls')
+  return active === el || (!!menuId && !!document.getElementById(menuId)?.contains(active))
+}
+
+/**
+ * Refs for `slots` controls that come and go by turns. Focus dropped by one leaving the page, or by
+ * its menu, moves to its slot's newcomer, else the first slot filled (`target`, which a dialog may
+ * return focus to too); a StrictMode re-attach stays.
+ */
+export function useFocusHandOff(
+  slots: number,
+): [Array<(el: HTMLButtonElement | null) => void>, (slot: number) => HTMLButtonElement | null] {
+  const controls = useRef<Array<HTMLButtonElement | null>>([])
+  const outgoing = useRef<{ el: HTMLElement; slot: number } | undefined>(undefined)
+  const target = useCallback(
+    (slot: number) => controls.current[slot] ?? controls.current.find(Boolean) ?? null,
+    [],
+  )
+  const refs = useMemo(
+    () =>
+      Array.from({ length: slots }, (_, slot) => (el: HTMLButtonElement | null) => {
+        const current = controls.current[slot]
+        if (!el && current && holdsFocus(current)) outgoing.current = { el: current, slot }
+        controls.current[slot] = el
+      }),
+    [slots],
+  )
+  useLayoutEffect(() => {
+    const left = outgoing.current
+    outgoing.current = undefined
+    const active = document.activeElement
+    if (!left || left.el.isConnected || (active && active !== document.body)) return
+    target(left.slot)?.focus({ preventScroll: true })
+  })
+  return [refs, target]
 }

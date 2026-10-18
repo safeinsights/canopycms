@@ -32,7 +32,7 @@ describe('NoEditPermissionNotice', () => {
   afterEach(cleanup)
 
   // canEdit is false only when a path rule denies edit, so the notice names that and whom to
-  // ask; a locked or protected branch is reported by the header banner instead.
+  // ask; a locked or protected branch is reported by the branch bar's status instead.
   it('names the entry by its label, whom to ask, and where to grant access', () => {
     renderNotice()
 

@@ -309,7 +309,7 @@ interface BranchSummary {
   /**
    * Server-computed: content writes are rejected, because the branch is the
    * read-only base branch OR its status is past 'editing'. `readOnly` still
-   * says WHICH, for banner copy.
+   * says WHICH, for the status copy.
    */
   writeBlocked: boolean
   /**
@@ -351,6 +351,8 @@ export interface UseBranchManagerReturn {
   currentBranch: BranchListItem | undefined
   /** The listing failed and nothing earlier stands in for it. */
   branchesLoadFailed: boolean
+  /** A listing has arrived, so a branch missing from it is not still loading. */
+  branchesLoaded: boolean
   /** Shows a branch the server just created before any listing includes it. */
   addCreatedBranch: (branch: BranchListItem) => void
   /** Confirms first; the dialog returns focus to `returnFocusTo()` when given, else its opener. */
@@ -513,11 +515,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         // (see Editor.tsx's `branchContentLocked` for the full rationale, which
         // applies identically here).
         isProtected: b.isProtected ?? true,
-        // NOT flipped to `?? true`: `readOnly` only selects WHICH lock banner
-        // to show (base-branch read-only vs. status lock) once something is
+        // NOT flipped to `?? true`: `readOnly` only selects WHICH lock the status
+        // names (base-branch read-only vs. status lock) once something is
         // already known to be locked via `writeBlocked`/`submitBlocked` --
         // it never gates a write by itself. Defaulting it true on missing data
-        // would mislabel a status lock as a base-branch lock (wrong banner
+        // would mislabel a status lock as a base-branch lock (wrong status
         // copy), not under-lock anything, so `?? false` stays correct here.
         readOnly: b.readOnly ?? false,
         writeBlocked: b.writeBlocked ?? true,
@@ -857,6 +859,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branchSummaries,
     currentBranch,
     branchesLoadFailed: !!branchesError && !branchesData,
+    branchesLoaded: !!branchesData,
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,

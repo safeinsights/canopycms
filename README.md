@@ -1854,7 +1854,7 @@ How the CanopyCMS editor works from a content editor's perspective.
 
 Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a branch to work on.
 
-> In production the editor opens on the base branch by default. That branch is browsable but read-only — click "Create a branch" in the banner to start editing. See [Submitting for Review](#submitting-for-review).
+> In production the editor opens on the base branch by default. That branch is browsable but read-only — click "New branch…" in the branch bar to start editing. See [Submitting for Review](#submitting-for-review).
 
 ### Working with Branches
 
@@ -1876,9 +1876,9 @@ Browse collections in the content panel and click an entry to open it; create ne
 
 When your changes are ready, click "Submit for review" in the top bar: that commits them and creates a GitHub PR, reviewable with standard GitHub workflows. Once it is merged, CanopyCMS detects it automatically within one worker sync cycle and marks the branch "Merged" in the Branches panel, and your changes deploy with the next site build. Submit refuses a branch whose saved content matches its base ("Nothing to submit yet").
 
-**A submitted branch is locked for content editing.** The editor disables Save and other write actions and shows a banner explaining why — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw from review" in the top bar or Branches panel, which converts the PR back to a draft and returns the branch to `editing` status. A reviewer's "Request changes" returns it to `editing` too, after a confirmation, leaving the PR alone.
+**A submitted branch is locked for content editing.** The editor disables Save and other write actions and marks the branch "In review · read-only" — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw from review" in the top bar or Branches panel, which converts the PR back to a draft and returns the branch to `editing` status. A reviewer's "Request changes" returns it to `editing` too, after a confirmation, leaving the PR alone.
 
-The base branch (the PR target, usually `main`) can never be submitted — a branch cannot be reviewed against itself — so the "Submit for review" button is hidden whenever you are viewing it, in both dev and production. In production it is also read-only in the editor: you can browse it, but changes require creating a branch first (the editor shows a banner with a "Create a branch" button). In dev mode it stays fully editable, since local development typically starts there, but you still need to move your work to a branch before it can be submitted.
+The base branch (the PR target, usually `main`) can never be submitted — a branch cannot be reviewed against itself — so the "Submit for review" button is hidden whenever you are viewing it, in both dev and production. In production it is also read-only in the editor: you can browse it, but changes require creating a branch first (the branch bar offers "New branch…"). In dev mode it stays fully editable, since local development typically starts there, but you still need to move your work to a branch before it can be submitted.
 
 ### Drafts and Unpublishing
 

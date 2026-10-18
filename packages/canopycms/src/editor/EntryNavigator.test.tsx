@@ -364,7 +364,7 @@ describe('EntryNavigator', () => {
       ).toBeTruthy()
     })
 
-    it('leaves it to the branch banner in a read-only navigator', () => {
+    it("leaves it to the branch bar's status in a read-only navigator", () => {
       renderEntryNavigator({ collections: [posts({ addRefused: true })], readOnly: true })
 
       expect(screen.queryByTestId('add-refused-message')).toBeNull()

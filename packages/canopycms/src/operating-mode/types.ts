@@ -38,8 +38,6 @@ export interface ClientSafeStrategy {
   /** Whether this mode supports multiple branch workspaces */
   supportsBranching(): boolean
 
-  supportsStatusBadge(): boolean
-
   supportsComments(): boolean
 
   supportsPullRequests(): boolean
@@ -50,10 +48,8 @@ export interface ClientSafeStrategy {
   /** Get the groups file name (e.g., 'groups.json' or 'groups.local.json') */
   getGroupsFileName(): string
 
-  /** Whether git commits should be made in this mode */
   shouldCommit(): boolean
 
-  /** Whether git pushes should be made in this mode */
   shouldPush(): boolean
 }
 

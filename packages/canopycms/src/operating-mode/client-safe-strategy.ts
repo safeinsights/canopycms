@@ -13,10 +13,6 @@ export class ProdClientSafeStrategy implements ClientSafeStrategy {
     return true
   }
 
-  supportsStatusBadge(): boolean {
-    return true
-  }
-
   supportsComments(): boolean {
     return true
   }
@@ -46,10 +42,6 @@ export class DevClientSafeStrategy implements ClientSafeStrategy {
   readonly mode: OperatingMode = 'dev'
 
   supportsBranching(): boolean {
-    return true
-  }
-
-  supportsStatusBadge(): boolean {
     return true
   }
 
@@ -107,10 +99,7 @@ export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy
   return strategy
 }
 
-/**
- * Mainly for testing.
- * @internal Exported for tests.
- */
+/** @internal Exported for tests. */
 export function clearClientStrategyCache(): void {
   clientStrategyCache.clear()
 }

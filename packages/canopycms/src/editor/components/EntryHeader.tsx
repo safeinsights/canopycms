@@ -6,7 +6,7 @@ import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
 import type { BreadcrumbSegment } from '../editor-utils'
 import { SHELL_REGION_BORDER } from '../shell/EditorShell'
-import { describeBranchLock } from './BranchLockBanner'
+import { describeBranchLock } from '../branch-lock'
 import { EntryBreadcrumb } from './EntryBreadcrumb'
 import { EntrySaveButton } from './EntrySaveButton'
 
@@ -59,6 +59,10 @@ export interface EntryHeaderProps {
   branchWriteBlocked?: boolean
   /** No branch details yet: the fail-closed lock defaults are guesses the chip doesn't name. */
   branchLoading?: boolean
+  /** The branch list is still being fetched, so Save waits rather than naming a failure. */
+  branchPending?: boolean
+  /** The branch list answered without this branch. */
+  branchMissing?: boolean
 }
 
 /** The open entry's breadcrumb, menu, unsaved dot and "Read-only" chip, then Save, over the panes. */
@@ -88,9 +92,16 @@ export function EntryHeader({
   branchReadOnly = false,
   branchWriteBlocked = false,
   branchLoading = false,
+  branchPending = false,
+  branchMissing = false,
 }: EntryHeaderProps) {
-  // Set exactly when BranchLockBanner renders.
-  const branchLockReason = describeBranchLock({ branchStatus, branchReadOnly, branchWriteBlocked })
+  const branchLockReason = describeBranchLock({
+    branchStatus,
+    branchReadOnly,
+    branchWriteBlocked,
+    branchPending,
+    branchMissing,
+  })
   const entryLockReason = entryReadOnly
     ? "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it."
     : undefined
@@ -126,8 +137,8 @@ export function EntryHeader({
           entryLabel={currentEntry ? (currentEntry.label ?? currentEntry.slug) : undefined}
           entryLoading={entryLoading}
           entryDirty={hasUnsavedChanges}
-          // BranchLockBanner already says why a locked branch is read-only, so the chip carries
-          // only the entry's own reason, even beside the banner: "Withdraw it" would not unlock it.
+          // The branch bar's status already says a locked branch is read-only, so the chip carries
+          // only the entry's own reason: "Withdraw it" would not unlock the entry.
           readOnlyReason={
             branchLoading ? undefined : currentEntry || branchName ? entryLockReason : undefined
           }

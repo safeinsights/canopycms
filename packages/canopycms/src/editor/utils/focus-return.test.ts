@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { renderHook } from '@testing-library/react'
 
 import {
   FOCUS_RETURN_ATTR,
@@ -7,6 +8,7 @@ import {
   focusReturnProps,
   rememberOpener,
   returnTarget,
+  useFocusHandOff,
 } from './focus-return'
 
 const add = <T extends HTMLElement>(el: T, parent: HTMLElement = document.body): T => {
@@ -169,5 +171,79 @@ describe('focusReturnProps', () => {
     expect(props[FOCUS_RETURN_ATTR]).toBe(true)
     props.onExitTransitionEnd?.()
     expect(document.activeElement).toBe(target)
+  })
+})
+
+describe('useFocusHandOff', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  const button = (name: string) => {
+    const el = add(document.createElement('button'))
+    el.textContent = name
+    return el
+  }
+
+  it('moves focus to the control filling the slot the focused one left', () => {
+    const { result, rerender } = renderHook(() => useFocusHandOff(2))
+    const [[first, second]] = result.current
+    const caret = button('Caret')
+    const saveAll = button('Save all')
+    first(saveAll)
+    second(caret)
+    caret.focus()
+    second(null)
+    caret.remove()
+    const withdraw = button('Withdraw')
+    second(withdraw)
+    rerender()
+    expect(document.activeElement).toBe(withdraw)
+  })
+
+  it('falls back to the first slot filled when the focused control has no counterpart', () => {
+    const { result, rerender } = renderHook(() => useFocusHandOff(2))
+    const [[first, second]] = result.current
+    const saveAll = button('Save all')
+    const way = button('Switch branch…')
+    first(saveAll)
+    second(way)
+    way.focus()
+    second(null)
+    way.remove()
+    rerender()
+    expect(document.activeElement).toBe(saveAll)
+  })
+
+  it('hands nothing off when a ref detaches and re-attaches the same button, as StrictMode does', () => {
+    const { result, rerender } = renderHook(() => useFocusHandOff(2))
+    const [[first, second]] = result.current
+    const saveAll = button('Save all')
+    const withdraw = button('Withdraw')
+    first(saveAll)
+    second(withdraw)
+    withdraw.focus()
+    second(null)
+    second(withdraw)
+    // Focus later drops to the page, as a click on its background leaves it.
+    withdraw.blur()
+    rerender()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('leaves focus the user has moved elsewhere', () => {
+    const { result, rerender } = renderHook(() => useFocusHandOff(2))
+    const [[first, second]] = result.current
+    const saveAll = button('Save all')
+    const caret = button('Caret')
+    first(saveAll)
+    second(caret)
+    caret.focus()
+    second(null)
+    const field = button('A form field')
+    field.focus()
+    caret.remove()
+    rerender()
+    expect(document.activeElement).toBe(field)
   })
 })

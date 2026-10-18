@@ -27,7 +27,8 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Content**               | The panel of collections and entries                           | All entries                                 |
 | **Change URL**            | Changing an entry's slug; "Change slug" without a page         | Rename                                      |
 
-Branch status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`.
+Status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`, lock labels
+from `packages/canopycms/src/editor/branch-lock.ts`.
 
 ## Copy
 
@@ -61,7 +62,7 @@ Branch status labels and colours come from `packages/canopycms/src/editor/branch
 | A list or task worked alongside the content: branches, comments, media | Drawer or panel       |
 | Context for one control: a field's comments, a picker, a short note    | Popover               |
 | The result of an action that is not otherwise visible                  | Toast                 |
-| A branch's lasting state: read-only, protected, conflict               | Banner                |
+| A branch's lasting state: read-only, protected                         | Branch bar status     |
 | One entry's lasting state, such as a read-only draft                   | Notice above its form |
 
 Never open a modal from a modal. A popover anchored to a field never covers its input; a short field's opens below it
@@ -103,7 +104,7 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
   the per-item "…" actions and show one collection-level line saying why ("You can't add entries
   here").
 - A locked branch keeps each row's "…" slot and draws a lock there on the hovered, focused or
-  selected row, by opacity; its Tooltip gives the top bar's reason.
+  selected row, by opacity; its Tooltip says why.
 
 ## Loading, empty and error states
 
@@ -221,13 +222,12 @@ primary is filled: other badges, icons and indicators take their colour's light 
 
 ## Shell regions
 
-The editor fills the window as one grid: **top bar** (branch pill first, then Save all and
-Submit or Withdraw, split below `md` when editable), **banner** (branch-wide notices), **rail**
-(activity icons, layout, settings), **panel** (content tree: docked, in the stacked form row,
-or over the form), **main** (entry header, keeping Save above a maximized preview, then preview
-and form) and **overlays** (drawers, quick open, modals, toasts). Regions are layout only. New
-UI joins an existing region; adding one is a design decision. Unsaved shows as one dot
-(`UnsavedMark`), counted on the pill.
+The editor fills the window as one grid: **top bar** (branch pill and status, then Save all or the
+way forward, and Submit or Withdraw, split below `md`), **rail** (activity icons, layout, settings),
+**panel** (content tree: docked, in the stacked form row, or over the form), **main** (entry header,
+keeping Save above a maximized preview, then preview and form) and **overlays** (drawers, quick
+open, modals, toasts). Regions are layout only. New UI joins an existing region; adding one is a
+design decision. Unsaved shows as one dot (`UnsavedMark`), counted on the pill.
 
 ## Enforcement
 

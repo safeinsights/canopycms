@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, type ReactNode } from 'react'
+import React, { useState, type ReactNode, type Ref } from 'react'
 import { Box, Button, Loader, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 import { useReducedMotion } from '@mantine/hooks'
 import { IconAlertTriangle, IconLoader2 } from '@tabler/icons-react'
@@ -22,6 +22,7 @@ export interface SaveAllButtonProps {
   busy: boolean
   /** A caret menu joined to the button, making it a split button. */
   caret?: ReactNode
+  buttonRef?: Ref<HTMLButtonElement>
 }
 
 /**
@@ -61,6 +62,7 @@ export function SaveAllButton({
   singleSaving,
   busy,
   caret,
+  buttonRef,
 }: SaveAllButtonProps) {
   const reducedMotion = useReducedMotion()
   // A running Save all shows only its progress: a lock arriving mid-run would grey it.
@@ -125,6 +127,7 @@ export function SaveAllButton({
           offset={ENTRY_HEADER_HEIGHT + 8}
         >
           <Button
+            ref={buttonRef}
             data-testid="save-all-button"
             // The open entry's Save is the editor's one filled primary.
             variant="light"
@@ -154,7 +157,7 @@ export function SaveAllButton({
 const STORAGE_FAILED_TEXT = 'Unsaved · not kept on this device'
 const STORAGE_FAILED_HINT = "Save before you leave or reload, or they'll be lost."
 // Visually hidden, as Mantine's VisuallyHidden, for a region that must stay mounted.
-const HIDDEN_STYLE: React.CSSProperties = {
+export const HIDDEN_STYLE: React.CSSProperties = {
   position: 'absolute',
   width: 1,
   height: 1,

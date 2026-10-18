@@ -86,13 +86,8 @@ import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
-import {
-  BranchLockBanner,
-  describeBranchLock,
-  EditorHeader,
-  EditorRail,
-  EntryHeader,
-} from './components'
+import { describeBranchLock } from './branch-lock'
+import { EditorHeader, EditorRail, EntryHeader } from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { QuickOpenPalette, type QuickOpenEntry } from './components/QuickOpenPalette'
@@ -287,6 +282,13 @@ const EditorContent: React.FC<EditorProps> = ({
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
+  // Each opening remounts Branches; one from New branch… starts on its new-branch form.
+  const [branchManagerOpening, setBranchManagerOpening] = useState({ seq: 0, create: false })
+  const openBranchesDrawer = (create: boolean) => {
+    branchOpenerRef.current = rememberOpener()
+    setBranchManagerOpening(({ seq }) => ({ seq: seq + 1, create }))
+    setBranchManagerOpen(true)
+  }
   const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false)
   const [systemHealthOpen, setSystemHealthOpen] = useState(false)
 
@@ -408,6 +410,7 @@ const EditorContent: React.FC<EditorProps> = ({
     branchSummaries,
     currentBranch,
     branchesLoadFailed,
+    branchesLoaded,
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,
@@ -439,9 +442,10 @@ const EditorContent: React.FC<EditorProps> = ({
   const branchContentLocked = currentBranch?.writeBlocked ?? true
 
   const branchLoading = !currentBranch && (branchesLoading || branchSummaries.length === 0)
-  // A row's lock reason on an unanswered branch would be "details could not be loaded", which is
-  // not yet true; once the fetch has failed it is, and the lock says so.
-  const branchRowsPending = branchLoading && !branchesLoadFailed
+  // No lock reason is true yet while the list is unanswered; once it has failed, or answered
+  // without this branch, the lock says which.
+  const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
+  const branchMissing = !currentBranch && branchesLoaded
 
   // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
   const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
@@ -681,10 +685,8 @@ const EditorContent: React.FC<EditorProps> = ({
     currentUser: commentUserId,
     canResolveComments: canResolveAnyComment,
     setSelectedPath,
-    setBranchManagerOpen: (open) => {
-      if (open) branchOpenerRef.current = rememberOpener()
-      setBranchManagerOpen(open)
-    },
+    setBranchManagerOpen: (open) =>
+      open ? openBranchesDrawer(false) : setBranchManagerOpen(false),
     onCommentsChange: setCommentsForBranchSummaries,
     onRevealForm: revealForm,
   })
@@ -1833,9 +1835,8 @@ const EditorContent: React.FC<EditorProps> = ({
     writtenTitleRef.current = tabTitle
   }, [tabTitle])
 
-  const openBranchManager = () => {
-    branchOpenerRef.current = rememberOpener()
-    setBranchManagerOpen(true)
+  const openBranchManager = (options?: { create?: boolean }) => {
+    openBranchesDrawer(options?.create === true)
     // Always retry, not only when branchless. Opening the manager is
     // the one in-app retry for a failed branches fetch, and the fetch
     // is terminal on its own: SWRProvider sets shouldRetryOnError and
@@ -1961,12 +1962,13 @@ const EditorContent: React.FC<EditorProps> = ({
           loading={entriesInitializing}
           readOnly={branchContentLocked}
           readOnlyReason={
-            branchRowsPending
+            branchPending
               ? undefined
               : describeBranchLock({
                   branchStatus: currentBranch?.status,
                   branchReadOnly: currentBranch?.readOnly,
                   branchWriteBlocked: branchContentLocked,
+                  branchMissing,
                 })
           }
           dirtyPaths={dirtyPaths}
@@ -1984,7 +1986,6 @@ const EditorContent: React.FC<EditorProps> = ({
           topBar={
             <EditorHeader
               branchName={branchNameState}
-              operatingMode={operatingMode}
               branchStatus={currentBranch?.status}
               busy={busy}
               editedFiles={editedFiles}
@@ -2001,10 +2002,12 @@ const EditorContent: React.FC<EditorProps> = ({
               // re-deriving `?? true` a second time here, so there is exactly one
               // fail-closed computation of "are writes blocked" in this component.
               branchIsProtected={currentBranch?.isProtected ?? true}
+              branchServerProtected={currentBranch?.isProtected}
               branchReadOnly={currentBranch?.readOnly}
               branchWriteBlocked={branchContentLocked}
-              // A failed fetch leaves the list empty too; the banner says that one.
               branchLoading={branchLoading}
+              branchPending={branchPending}
+              branchMissing={branchMissing}
               branchToggleRef={branchToggleRef}
               onEntrySelect={openEntry}
               onBranchReloadData={() => {
@@ -2014,6 +2017,7 @@ const EditorContent: React.FC<EditorProps> = ({
               }}
               onBranchDiscardDrafts={() => handleDiscardDrafts(() => branchToggleRef.current)}
               onBranchManagerOpen={openBranchManager}
+              onNewBranch={() => openBranchManager({ create: true })}
               onSaveAll={runSaveAll}
               saveAllProgress={saveAllProgress}
               // On any entry: EntryHeader's `saving` is the open entry's alone.
@@ -2030,15 +2034,6 @@ const EditorContent: React.FC<EditorProps> = ({
                   handleWithdraw(branchNameState, returnFocusTo).catch(console.error)
                 }
               }}
-            />
-          }
-          banner={
-            <BranchLockBanner
-              branchName={branchNameState}
-              branchStatus={currentBranch?.status}
-              branchReadOnly={currentBranch?.readOnly}
-              branchWriteBlocked={branchContentLocked}
-              onBranchManagerOpen={openBranchManager}
             />
           }
           rail={
@@ -2101,6 +2096,8 @@ const EditorContent: React.FC<EditorProps> = ({
                 branchReadOnly={currentBranch?.readOnly}
                 branchWriteBlocked={branchContentLocked}
                 branchLoading={branchLoading}
+                branchPending={branchPending}
+                branchMissing={branchMissing}
                 onCollectionOpen={revealCollection}
                 navigatorToggleRef={navigatorToggleRef}
                 onFileReload={() => handleReload(() => navigatorToggleRef.current)}
@@ -2279,6 +2276,8 @@ const EditorContent: React.FC<EditorProps> = ({
                 returnFocusTo={branchReturnTarget}
               >
                 <BranchManager
+                  key={branchManagerOpening.seq}
+                  startCreating={branchManagerOpening.create}
                   branches={branchSummaries}
                   mode={operatingMode}
                   user={userContext}
