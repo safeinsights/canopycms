@@ -43,12 +43,13 @@ const PANE_STYLES = `
 .canopy-pane-separator:focus-visible {
   outline: 2px solid var(--canopy-focus-ring);
 }
-#${FORM_PANE_ID}:focus-visible,
-.canopy-form-panel:has(> #${FORM_PANE_ID}:focus-visible)::after {
+#${FORM_PANE_ID}:focus-visible {
   outline: 2px solid var(--canopy-focus-ring);
   outline-offset: -2px;
 }
 .canopy-form-panel:has(> #${FORM_PANE_ID}:focus-visible)::after {
+  outline: 2px solid var(--canopy-focus-ring);
+  outline-offset: -2px;
   content: '';
   position: absolute;
   inset: 0;

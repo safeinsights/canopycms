@@ -350,9 +350,12 @@ const RowDetailTip: React.FC<{ detail?: string; children: React.ReactElement }> 
     if (!row || !item || !detail) return
     let timer: ReturnType<typeof setTimeout> | undefined
     let open = false
+    // While shown it also marks the row, so PreviewPane's Escape leaves the key to it.
     const show = (next: boolean) => {
       open = next
       setShown(next)
+      if (next) item.setAttribute('data-mantine-stop-propagation', 'true')
+      else item.removeAttribute('data-mantine-stop-propagation')
     }
     const cutOff = () => {
       const line = row.querySelector('[data-testid="entry-nav-detail"] > *')
@@ -361,7 +364,8 @@ const RowDetailTip: React.FC<{ detail?: string; children: React.ReactElement }> 
     const onFocusIn = (event: Event) => {
       if (event.target !== item) return
       clearTimeout(timer)
-      timer = setTimeout(() => show(cutOff()), TOOLTIP_DELAY)
+      // Not after a click, which focuses the treeitem too and would pin it over the next row.
+      timer = setTimeout(() => show(item.matches(':focus-visible') && cutOff()), TOOLTIP_DELAY)
     }
     const onFocusOut = (event: Event) => {
       if (event.target !== item) return
@@ -384,13 +388,15 @@ const RowDetailTip: React.FC<{ detail?: string; children: React.ReactElement }> 
       item.removeEventListener('focusout', onFocusOut)
       item.removeEventListener('keydown', onKeyDown as EventListener)
       clearTimeout(timer)
+      show(false)
     }
   }, [detail])
-  if (!detail) return children
+  // Rendered without a detail too, so the row keeps its place in the tree as one arrives.
   return (
     <Tooltip
       ref={rowRef}
-      label={detail}
+      label={detail ?? ''}
+      disabled={!detail}
       opened={shown}
       position="bottom-start"
       // Clears the row's 2px focus ring and its 2px offset.
