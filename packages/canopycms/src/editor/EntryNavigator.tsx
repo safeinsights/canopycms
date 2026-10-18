@@ -334,8 +334,8 @@ const TruncatedLabel: React.FC<{
 }
 
 /**
- * A row's cut-off detail line in full while keyboard focus rests on the row, after the hover
- * tooltip's delay. Anchored to the whole row, below its focus ring or, without room, above it, so
+ * A row's cut-off detail line in full once keyboard focus has rested on the row for
+ * `TOOLTIP_DELAY`. Anchored to the whole row, below its focus ring or, without room, above it, so
  * it never covers the row's title; Escape hides it until focus next arrives (WCAG 1.4.13).
  */
 const RowDetailTip: React.FC<{ detail?: string; children: React.ReactElement }> = ({
