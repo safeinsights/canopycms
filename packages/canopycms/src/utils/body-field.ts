@@ -1,5 +1,6 @@
-import type { FieldConfig } from '../config'
+import type { ContentFormat, FieldConfig } from '../config'
 import { flattenGroupFields } from './flatten-group-fields'
+import { isDataOnlyFormat } from './format'
 
 const BODY_FIELD_TYPES = new Set(['markdown', 'mdx'])
 
@@ -17,10 +18,32 @@ export function countBodyFields(fields: readonly FieldConfig[]): number {
 
 /** Name of the `isBody: true` field, or `'body'`; maps the file's markdown onto a data field. */
 export function findBodyFieldName(fields: readonly FieldConfig[]): string {
+  return findExplicitBodyFieldName(fields) ?? 'body'
+}
+
+/** Name of the `isBody: true` field, or `undefined`: no `'body'` fallback. */
+export function findExplicitBodyFieldName(fields: readonly FieldConfig[]): string | undefined {
   for (const field of flattenGroupFields(fields)) {
     if ('isBody' in field && field.isBody) return field.name
   }
-  return 'body'
+  return undefined
+}
+
+/**
+ * The data a link-only reference (`includeBody` unset) carries for its target. A json/yaml
+ * entry's `isBody` field is its prose, so it is left out, as an md/mdx target's body is. Only an
+ * explicit `isBody` counts: a field merely named `body` is ordinary data.
+ */
+export function linkOnlyReferenceData(
+  data: Record<string, unknown>,
+  format: ContentFormat,
+  fields: readonly FieldConfig[] | undefined,
+): Record<string, unknown> {
+  const bodyFieldName =
+    isDataOnlyFormat(format) && fields ? findExplicitBodyFieldName(fields) : undefined
+  if (bodyFieldName === undefined || !(bodyFieldName in data)) return data
+  const { [bodyFieldName]: _body, ...rest } = data
+  return rest
 }
 
 /**

@@ -231,6 +231,43 @@ describe('TypeFromEntrySchema', () => {
     })
   })
 
+  describe("a resolved target's isBody field", () => {
+    it('is optional unless the reference sets includeBody, and the entry type keeps it required', () => {
+      const articleSchema = defineEntrySchema([
+        { name: 'title', type: 'string' },
+        defineInlineFieldGroup({
+          name: 'details',
+          fields: [{ name: 'prose', type: 'mdx', isBody: true }],
+        }),
+      ])
+
+      const pageSchema = defineEntrySchema([
+        { name: 'featured', type: 'reference', resolvedSchema: articleSchema },
+        { name: 'embedded', type: 'reference', resolvedSchema: articleSchema, includeBody: true },
+        { name: 'related', type: 'reference', list: true, resolvedSchema: articleSchema },
+      ])
+
+      type Page = TypeFromEntrySchema<typeof pageSchema>
+      type Resolved<T> = Exclude<NonNullable<T>, UnavailableReference>
+
+      expectTypeOf<Resolved<Page['featured']>>().toEqualTypeOf<
+        { title: string; prose?: string } & ResolvedReferenceMeta & { unavailable?: undefined }
+      >()
+      expectTypeOf<Resolved<Page['related'][number]>>().toEqualTypeOf<
+        { title: string; prose?: string } & ResolvedReferenceMeta & { unavailable?: undefined }
+      >()
+      expectTypeOf<Resolved<Page['embedded']>>().toEqualTypeOf<
+        { title: string; prose: string } & ResolvedReferenceMeta & { unavailable?: undefined }
+      >()
+      expectTypeOf<TypeFromEntrySchema<typeof articleSchema>>().toEqualTypeOf<{
+        title: string
+        prose: string
+      }>()
+
+      void pageSchema
+    })
+  })
+
   describe('reference without resolvedSchema', () => {
     it('infers string | null for the raw reference ID', () => {
       const schema = defineEntrySchema([

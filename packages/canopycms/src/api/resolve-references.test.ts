@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
+import { afterEach, beforeEach, describe, it, expect } from 'vitest'
 import { RESOLVE_REFERENCES_ROUTES } from './resolve-references'
+import { flattenSchema, type RootCollectionConfig } from '../config'
+import { ContentStore } from '../content-store'
+import { createMockApiContext, createMockBranchContext } from '../test-utils'
+import { unsafeAsBranchName, unsafeAsLogicalPath, unsafeAsSlug } from '../paths/test-utils'
 
 const endpoint = RESOLVE_REFERENCES_ROUTES.post
 
@@ -24,5 +32,66 @@ describe('resolveReferences params/body bounds (API-M1)', () => {
   it('rejects an empty ids array', () => {
     const result = endpoint.validate({ params: { branch: 'main' }, body: { ids: [] } })
     expect(result.ok).toBe(false)
+  })
+})
+
+describe('resolveReferences for a json/yaml target', () => {
+  const schema: RootCollectionConfig = {
+    collections: [
+      {
+        name: 'library',
+        path: 'library',
+        entries: [
+          {
+            name: 'article',
+            format: 'yaml',
+            schema: [
+              { name: 'title', type: 'string' },
+              { name: 'prose', type: 'mdx', isBody: true },
+            ],
+          },
+        ],
+      },
+    ],
+  }
+  let root: string
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-resolve-references-'))
+  })
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  it("resolves as a link-only reference does, without the target's isBody field", async () => {
+    const flatSchema = flattenSchema(schema, 'content')
+    const store = new ContentStore(root, flatSchema)
+    const library = unsafeAsLogicalPath('content/library')
+    await store.write(library, unsafeAsSlug('long-read'), {
+      format: 'yaml',
+      data: { title: 'A long read', prose: 'THE ARTICLE PROSE' },
+    })
+    const id = await store.getIdForEntry(library, unsafeAsSlug('long-read'))
+    if (!id) throw new Error('expected an id for the article')
+
+    const ctx = createMockApiContext({
+      branchContext: {
+        ...createMockBranchContext({ branchName: 'main', baseRoot: root, branchRoot: root }),
+        flatSchema,
+      },
+    })
+    const res = await endpoint.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('main') },
+      { ids: [id] },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.resolved[id]).toMatchObject({
+      title: 'A long read',
+      urlPath: '/library/long-read',
+    })
+    expect(res.data?.resolved[id]).not.toHaveProperty('prose')
   })
 })
