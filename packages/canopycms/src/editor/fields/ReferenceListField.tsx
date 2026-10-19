@@ -186,6 +186,7 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
       aria-label={label}
       data-removal-focus
       tabIndex={-1}
+      data-canopy-field={canopyPath}
       data-testid={`reference-list-${canopyPath}`}
     >
       <Stack gap="sm">

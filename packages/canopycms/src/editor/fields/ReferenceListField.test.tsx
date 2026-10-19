@@ -509,6 +509,11 @@ describe('a list reference in a form', () => {
     await waitFor(() => expect(expandedStates()).toEqual(['false', 'true', 'false', 'false']))
   })
 
+  it("targets the list itself by the list's own path", () => {
+    render(<FormHarness fields={[featured]} initial={{ featured: ['post-spring'] }} />)
+    expect(findFieldTarget('featured')?.element).toBe(screen.getByTestId('reference-list-featured'))
+  })
+
   it('reports a Remove that Undo puts back at its place', async () => {
     const user = userEvent.setup()
     const onRemoved = vi.fn()
