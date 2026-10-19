@@ -89,7 +89,8 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
   const ids = value.map(extractId)
   const keysFor = useListItemKeys()
   const itemKeys = keysFor(ids, 'references')
-  const expansion = useItemExpansion(itemKeys, resetKey)
+  // A collapsed row already names its entry; it opens only to swap that entry.
+  const expansion = useItemExpansion(itemKeys, resetKey, { rowsStartOpen: false })
   const [announcement, setAnnouncement] = useState<{ message: string }>()
   const [addSearch, setAddSearch] = useState('')
 
@@ -212,6 +213,7 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
                 }}
                 error={itemError?.(idx)}
                 searchable
+                selectFirstOptionOnChange
                 allowDeselect={false}
                 nothingFoundMessage="No entries match"
                 size="sm"
@@ -244,6 +246,8 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
                 if (next) add(next)
               }}
               searchable
+              // So typing part of a title and pressing Enter picks it.
+              selectFirstOptionOnChange
               nothingFoundMessage={
                 options.length > 0 && options.every((option) => picked.has(option.value))
                   ? 'Every entry is already picked'

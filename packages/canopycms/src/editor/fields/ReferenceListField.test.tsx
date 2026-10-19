@@ -99,6 +99,16 @@ describe('ReferenceListField', () => {
     expect(rowTitles()).toEqual(['Autumn preview', 'Spring launch', 'Winter notes'])
   })
 
+  it('starts every row shut, an added one too, since a row title names its entry', async () => {
+    const user = userEvent.setup()
+    render(<Harness initial={['post-spring', 'post-summer']} />)
+    expect(expandedStates()).toEqual(['false', 'false'])
+
+    await user.click(addInput())
+    await user.click(screen.getByRole('option', { name: 'Winter notes' }))
+    expect(expandedStates()).toEqual(['false', 'false', 'false'])
+  })
+
   it('reorders the value with Move up and Move down', async () => {
     const user = userEvent.setup()
     render(<Harness initial={['post-spring', 'post-summer', 'post-autumn']} />)
@@ -147,8 +157,8 @@ describe('ReferenceListField', () => {
 
   it("keeps a moved row open and its menu's focus, with the other rows as they were", async () => {
     const user = userEvent.setup()
-    // Four rows: the first starts open, the rest shut.
     render(<Harness initial={['post-spring', 'post-summer', 'post-autumn', 'post-winter']} />)
+    await user.click(toggleOf(rows()[0]))
     expect(expandedStates()).toEqual(['true', 'false', 'false', 'false'])
 
     await chooseFromRowMenu(user, rows()[0], /^Move down/)
@@ -169,8 +179,9 @@ describe('ReferenceListField', () => {
         initial={['post-spring', 'post-summer', 'post-autumn', 'post-winter', 'post-review']}
       />,
     )
-    await user.click(toggleOf(rows()[2]))
-    expect(expandedStates()).toEqual(['true', 'false', 'true', 'false', 'false'])
+    await user.click(toggleOf(rows()[1]))
+    await user.click(toggleOf(rows()[3]))
+    expect(expandedStates()).toEqual(['false', 'true', 'false', 'true', 'false'])
 
     await chooseFromRowMenu(user, rows()[0], 'Remove')
 
@@ -180,7 +191,7 @@ describe('ReferenceListField', () => {
       'Winter notes',
       'Year in review',
     ])
-    expect(expandedStates()).toEqual(['false', 'true', 'false', 'false'])
+    expect(expandedStates()).toEqual(['true', 'false', 'true', 'false'])
   })
 
   it('reports a Remove with the pick and its title, and offers no Duplicate', async () => {
@@ -216,11 +227,12 @@ describe('ReferenceListField', () => {
       ),
     )
 
-    // A second pick straight after, with no trip back to the field.
+    // A second pick straight after, by keyboard alone: Enter takes the first match.
     await user.click(addInput())
     expect(optionNames()).toEqual(['Autumn preview', 'Year in review'])
-    await user.click(screen.getByRole('option', { name: 'Year in review' }))
+    await user.type(addInput(), 'year{Enter}')
     expect(stored()).toEqual(['post-spring', 'post-summer', 'post-winter', 'post-review'])
+    expect(document.activeElement).toBe(addInput())
   })
 
   it('replaces Add with a note on how to swap or remove at maxItems', () => {
@@ -258,13 +270,14 @@ describe('ReferenceListField', () => {
     expect(screen.queryByTestId('reference-list-cap')).toBeNull()
 
     await user.click(toggleOf(rows()[0]))
-    expect(expandedStates()).toEqual(['false', 'true'])
+    expect(expandedStates()).toEqual(['true', 'false'])
   })
 
   it('repoints a row in place, offering only entries no other row holds', async () => {
     const user = userEvent.setup()
     render(<Harness initial={['post-spring', 'post-summer', 'post-autumn']} />)
 
+    await user.click(toggleOf(rows()[1]))
     const select = within(rows()[1]).getByRole('textbox', { name: 'Entry' })
     await user.click(select)
     expect(optionNames()).toEqual(['Summer recap', 'Winter notes', 'Year in review'])
@@ -439,14 +452,14 @@ describe('a list reference in a form', () => {
         initial={valueOf(['post-spring', 'post-summer', 'post-autumn', 'post-winter'])}
       />,
     )
-    expect(expandedStates()).toEqual(['true', 'false', 'false', 'false'])
+    expect(expandedStates()).toEqual(['false', 'false', 'false', 'false'])
 
     const target = findFieldTarget(path)
     expect(target?.path).toBe(path)
     act(() => {
       revealField(target!.element)
     })
-    await waitFor(() => expect(expandedStates()).toEqual(['true', 'true', 'false', 'false']))
+    await waitFor(() => expect(expandedStates()).toEqual(['false', 'true', 'false', 'false']))
   })
 
   it('reports a Remove that Undo puts back at its place', async () => {
