@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Alert, Button, Paper, Select, Skeleton, Stack, Text } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
@@ -138,7 +138,12 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
           const fieldLabel = hiddenField.get(pick)
           return fieldLabel ? [{ label: labels.get(pick) ?? pick, fieldLabel }] : []
         })
-  const renderOption = referenceOptionRenderer(loading || error ? [] : options)
+  // Stable between renders: a new `renderOption` makes Mantine drop the option that typing
+  // highlighted, so Enter after a search would add nothing.
+  const renderOption = useMemo(
+    () => referenceOptionRenderer(loading || error ? [] : options),
+    [options, loading, error],
+  )
   const atCap = maxItems !== undefined && ids.length >= maxItems
 
   /** Row `index`'s choices: every option no other row holds, plus its own pick. */

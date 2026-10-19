@@ -602,7 +602,10 @@ describe('a list reference in a form', () => {
       render(<Harness initial={['post-spring']} options={WITH_HIDDEN} />)
       await user.click(addInput())
       const option = screen.getByRole('option', { name: /Winter notes/ })
-      expect(within(option).getByText('Hidden from search')).toBeTruthy()
+      // Marked so a highlighted option recolours it (theme.tsx).
+      expect(
+        within(option).getByText('Hidden from search').closest('[data-canopy-option-badge]'),
+      ).toBeTruthy()
       expect(
         within(screen.getByRole('option', { name: /Autumn preview/ })).queryByText(
           'Hidden from search',

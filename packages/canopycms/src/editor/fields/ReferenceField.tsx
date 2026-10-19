@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useId } from 'react'
+import React, { useId, useMemo } from 'react'
 
 import { Alert, Button, Group, Select, Stack, Text, Loader } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
@@ -80,6 +80,8 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   const commentControl = useFieldCommentControl(dataCanopyField)
 
   const settled = !loading && !error
+  // Stable between renders, as in ReferenceListField.
+  const renderOption = useMemo(() => referenceOptionRenderer(options), [options])
   const pickedOption = options.find((option) => option.value === normalizedValue)
   const hidden = settled && pickedOption?.noindex ? pickedOption : undefined
 
@@ -129,7 +131,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
             aria-label={label}
             description={description}
             data={data}
-            renderOption={referenceOptionRenderer(options)}
+            renderOption={renderOption}
             inputContainer={(input) =>
               hidden ? (
                 <Group gap="xs" wrap="nowrap">

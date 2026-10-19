@@ -10,8 +10,16 @@ import type { ReferenceOption } from './use-reference-options'
 /** The badge on a picked or offered entry whose own form hides it from search. */
 export const HIDDEN_FROM_SEARCH = 'Hidden from search'
 
-export const HiddenFromSearchBadge: React.FC = () => (
-  <Badge variant="light" color="yellow" size="sm" tt="none" style={{ flexShrink: 0 }}>
+/** `inOption` lets a highlighted option's fill recolour it (theme.tsx), so it stays legible. */
+export const HiddenFromSearchBadge: React.FC<{ inOption?: boolean }> = ({ inOption }) => (
+  <Badge
+    variant="light"
+    color="yellow"
+    size="sm"
+    tt="none"
+    style={{ flexShrink: 0 }}
+    {...(inOption && { 'data-canopy-option-badge': true })}
+  >
     {HIDDEN_FROM_SEARCH}
   </Badge>
 )
@@ -34,7 +42,7 @@ export function referenceOptionRenderer(options: readonly ReferenceOption[]) {
       <Group gap={6} wrap="nowrap" w="100%">
         <IconCheck aria-hidden size={14} style={{ visibility: checked ? 'visible' : 'hidden' }} />
         <span style={{ flex: 1, minWidth: 0 }}>{option.label}</span>
-        {hidden && <HiddenFromSearchBadge />}
+        {hidden && <HiddenFromSearchBadge inOption />}
       </Group>
     )
   }
