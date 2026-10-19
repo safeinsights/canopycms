@@ -39,7 +39,7 @@ export interface ReferenceListFieldProps {
   /** The list's canopy path, which picks its comment control. */
   canopyPath: string
   readOnly?: boolean
-  /** Names the entry being edited; another entry starts with the default rows open. */
+  /** Names the entry being edited; another entry starts with every row shut again. */
   resetKey: string
   /** The most picks the list holds; the Add control gives way to a note at it. */
   maxItems?: number

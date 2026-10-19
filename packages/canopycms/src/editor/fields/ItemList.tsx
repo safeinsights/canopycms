@@ -82,7 +82,7 @@ export interface ItemListProps<T> {
   focusAfterRenderRef?: React.MutableRefObject<number | null>
   /**
    * Said through the list's live region, by a caller whose own control keeps focus when it adds a
-   * row. Each new object is said once, even with the same message as the last.
+   * row. Pass a new object for each announcement.
    */
   announcement?: { message: string }
   'data-testid'?: string
@@ -371,7 +371,7 @@ const ItemRow: React.FC<ItemRowProps> = ({
               }}
             />
             {summary.pending ? (
-              // The height of the title's line, so nothing shifts when it arrives.
+              // About the height of the title's line, which replaces it.
               <Skeleton height={14} width="40%" my={3} data-testid="item-row-title-pending" />
             ) : (
               <Text

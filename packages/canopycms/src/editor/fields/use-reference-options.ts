@@ -48,7 +48,8 @@ export interface ReferenceOptions {
 
 /**
  * The entries a reference field offers: `staticOptions` as given, else one request per field to
- * the reference-options endpoint, made again only when the query itself changes or on `retry`.
+ * the reference-options endpoint, made again only when the query or the API client changes, or on
+ * `retry`.
  */
 export function useReferenceOptions({
   staticOptions,
