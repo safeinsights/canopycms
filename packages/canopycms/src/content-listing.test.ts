@@ -1487,9 +1487,8 @@ describe('listEntries', () => {
     })
 
     it('omits the target body by default and includes it with includeBody', async () => {
-      // md targets on purpose: a json entry's whole document is already its data, so it
-      // cannot show the difference. This is the fixture shape whose absence hid the
-      // gray-matter cache bug.
+      // md targets on purpose: this is the fixture shape whose absence hid the gray-matter
+      // cache bug.
       const contentDir = path.join(tempDir, 'content')
       await fs.mkdir(contentDir)
 

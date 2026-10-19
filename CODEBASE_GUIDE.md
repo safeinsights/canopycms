@@ -855,7 +855,7 @@ in `server.ts` and `client.ts`. See
 - `markdown-body-splice.ts` — `preserveMarkdownSource`, its body half
 - `yaml-source-splice.ts` — `spliceSource`, its YAML half
 - `json-source-splice.ts` — `serializeJson`, the JSON half
-- `body-field.ts` — `isBody` flag validation, including `findReservedBodyFieldName`
+- `body-field.ts` — `isBody` validation (`findReservedBodyFieldName`), link-only data (`linkOnlyReferenceData`)
 - `title-field.ts` — `isTitle` flag utilities: `resolveEntryTitle`, `titleFieldPath` / `withTitleAtPath`, `findInvalidTitleFields`, `findTitleFieldsInLists`
 - `entry-url.ts` — `computeEntryUrl` (collection plus slug to URL) and `isIndexSlug`
 - `typed-filename.ts` — `parseTypedFilename`, the `{type}.{slug}.{id}.{ext}` grammar

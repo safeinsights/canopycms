@@ -27,7 +27,7 @@ import {
   DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
   withContentWriteLock,
 } from './utils/content-write-lock'
-import { findBodyFieldName } from './utils/body-field'
+import { findBodyFieldName, linkOnlyReferenceData } from './utils/body-field'
 import { withItemKeys } from './item-keys'
 import {
   buildMissingReference,
@@ -2047,10 +2047,11 @@ export class ContentStore {
    * Measured (2000 occurrences of one target, local disk, the friendliest case for NOT
    * caching): cloning a snippet-sized target is ~63x cheaper than re-reading and parsing it, a
    * 265KB JSON target ~0.8x -- a wash at the pathological end, never a blow-up, and on the
-   * EFS/NFS this targets the syscall the memo removes dominates both. An md/mdx target
-   * resolves to its FRONTMATTER unless the field sets `includeBody`, which is why
-   * `includeBody` is opt-in per field: an embedded body sits inside the memoized object and is
-   * cloned once per referencing entry.
+   * EFS/NFS this targets the syscall the memo removes dominates both. A target resolves
+   * without its body (an md/mdx target to its frontmatter, a json/yaml one without its `isBody`
+   * field) unless the field sets `includeBody`, which is why `includeBody` is opt-in per
+   * field: an embedded body sits inside the memoized object and is cloned once per referencing
+   * entry.
    */
   private resolveSingleReference(
     id: string,
@@ -2206,11 +2207,19 @@ export class ContentStore {
       //
       // `'body' in doc` narrows the ContentDocument union to its markdown variant, so
       // `doc.body`/`doc.bodyFieldName` are reachable at all -- a type guard, not a redundant
-      // runtime check. Only a field that asked to EMBED its target passes a body at all.
+      // runtime check. Only a field that asked to EMBED its target passes a body at all, and
+      // only such a field keeps a json/yaml target's `isBody` field.
       const bodyForEmbed =
         includeBody && 'body' in doc ? { fieldName: doc.bodyFieldName, value: doc.body } : undefined
+      const data = includeBody
+        ? doc.data
+        : linkOnlyReferenceData(
+            doc.data,
+            doc.format,
+            this.entryTypeOf(location.collection, location.relativePath)?.schema,
+          )
 
-      return buildResolvedReference(doc.data, meta, bodyForEmbed)
+      return buildResolvedReference(data, meta, bodyForEmbed)
     } catch (error) {
       // Index hit but the file is gone — the typical symptom of an external
       // rename/delete this store hasn't observed yet.
