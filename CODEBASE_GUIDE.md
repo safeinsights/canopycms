@@ -573,7 +573,7 @@ Field components, in `editor/fields/`:
 - `rich-text-failures.ts` — markdown that failed rich text, reopened as source
 - `FieldCrashFallback.tsx` — a crashed field's read-only value, or markdown source
 - `mdx-jsx-support.tsx` — JSX plugins; round-trip guard
-- `markdown-fidelity-visitors.ts` — round-trip fixes
+- `markdown-fidelity-visitors.ts` / `gfm-autolink-literal.ts` — round-trip fixes
 - `CodeField.tsx` — code and Mermaid field
 - `ObjectField.tsx` — nested object; Clear when optional and filled
 - `ObjectListField.tsx` / `list-item-title.ts` — `list: true` objects; item titles
