@@ -54,6 +54,17 @@ entries under **Released**.
 
 ## Released
 
+### 0.3.2
+
+#### The content panel's header lines up with the entry header
+
+<!-- changeset: shell-header-heights -->
+
+_First in 0.3.2._
+
+**What changed.** The content panel's header and the entry header beside it now share one fixed
+height, so their bottom borders line up whatever the height of the controls inside each.
+
 ### 0.3.1
 
 #### The branch list shows exactly the branches you can open
