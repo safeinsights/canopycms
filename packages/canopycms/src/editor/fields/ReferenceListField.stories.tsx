@@ -22,13 +22,22 @@ const POSTS: ReferenceOption[] = [
   { value: 'post-guide', label: 'A field guide to the new release' },
 ]
 
+const HIDE = { fieldLabel: 'Hide from search engines' }
+/** Two posts whose own forms hide them from search, as a draft about to go public might be. */
+const WITH_HIDDEN: ReferenceOption[] = POSTS.map((option) =>
+  option.value === 'post-summer' || option.value === 'post-guide'
+    ? { ...option, noindex: HIDE }
+    : option,
+)
+
 const List: React.FC<{
   initial: unknown[]
   maxItems?: number
   readOnly?: boolean
+  options?: ReferenceOption[]
   /** Loads options through the API (which a story can hold) instead of taking them as given. */
   fetched?: boolean
-}> = ({ initial, maxItems, readOnly = false, fetched = false }) => {
+}> = ({ initial, maxItems, readOnly = false, options = POSTS, fetched = false }) => {
   const [value, setValue] = useState<unknown[]>(initial)
   return (
     <div style={{ maxWidth: 560 }}>
@@ -36,7 +45,7 @@ const List: React.FC<{
         id="featured"
         label="Teaser strip"
         description="Posts shown in the strip, in this order."
-        options={fetched ? undefined : POSTS}
+        options={fetched ? undefined : options}
         collections={fetched ? ['posts'] : undefined}
         value={value}
         onChange={setValue}
@@ -100,6 +109,13 @@ export const Loading: Story = {
     <HeldOptions>
       <List initial={['post-autumn', 'post-spring']} fetched />
     </HeldOptions>
+  ),
+}
+
+/** A hidden pick carries a badge, and one note above the list says what that means. */
+export const HiddenFromSearch: Story = {
+  render: () => (
+    <List initial={['post-spring', 'post-summer', 'post-winter']} options={WITH_HIDDEN} />
   ),
 }
 

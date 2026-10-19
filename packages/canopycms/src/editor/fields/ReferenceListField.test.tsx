@@ -7,7 +7,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { FieldConfig } from '../../config'
+import type { FieldConfig, ReferenceOptionSort } from '../../config'
 import type { ReferenceOptionsResponse } from '../../api/reference-options'
 import { createMockApiClient, type MockApiClient } from '../../api/__test__/mock-client'
 import { findFieldTarget, revealField } from '../field-target'
@@ -44,6 +44,7 @@ interface HarnessProps {
   maxItems?: number
   readOnly?: boolean
   onRemoved?: (index: number, id: string, title: string) => void
+  optionSort?: ReferenceOptionSort
 }
 
 /** The field as a form drives it, holding its own value and showing it. */
@@ -54,6 +55,7 @@ const Harness: React.FC<HarnessProps> = ({
   maxItems,
   readOnly = false,
   onRemoved,
+  optionSort,
 }) => {
   const [value, setValue] = useState<unknown[]>(initial)
   return (
@@ -71,6 +73,7 @@ const Harness: React.FC<HarnessProps> = ({
         resetKey="entry-1"
         maxItems={maxItems}
         onRemoved={onRemoved}
+        optionSort={optionSort}
       />
       <output data-testid="value">{JSON.stringify(value)}</output>
     </CanopyCMSProvider>
@@ -552,5 +555,189 @@ describe('a list reference in a form', () => {
     const [now] = state!
     expect(now).toEqual({ featured: ['post-spring', 'post-summer'] })
     expect(restoreRemoval([featured], now, onRemoved.mock.calls[0][0])).toBeUndefined()
+  })
+
+  describe('picks hidden from search', () => {
+    const HIDE = 'Hide from search engines'
+    const WITH_HIDDEN: ReferenceOption[] = POSTS.map((option) =>
+      option.value === 'post-summer' || option.value === 'post-winter'
+        ? { ...option, noindex: { fieldLabel: HIDE } }
+        : option,
+    )
+    const note = () => screen.queryByTestId('reference-hidden-note')
+
+    it('badges a hidden pick and says why above the list, under its heading', () => {
+      render(<Harness initial={['post-spring', 'post-summer']} options={WITH_HIDDEN} />)
+
+      expect(rowTitles()).toEqual(['Spring launch', 'Summer recap, Hidden from search'])
+      expect(within(rows()[1]).getByText('Hidden from search')).toBeTruthy()
+      expect(note()?.textContent).toBe(
+        `\u2018Summer recap\u2019 has \u201c${HIDE}\u201d turned on, so pages that list only ` +
+          `visible entries won't show it.`,
+      )
+      const heading = screen.getByText('Featured posts')
+      const following = Node.DOCUMENT_POSITION_FOLLOWING
+      expect(heading.compareDocumentPosition(note()!) & following).toBeTruthy()
+      expect(note()!.compareDocumentPosition(rows()[0]) & following).toBeTruthy()
+    })
+
+    it('names every hidden pick in one note', () => {
+      render(
+        <Harness initial={['post-winter', 'post-spring', 'post-summer']} options={WITH_HIDDEN} />,
+      )
+      expect(screen.getAllByTestId('reference-hidden-note')).toHaveLength(1)
+      expect(note()?.textContent).toBe(
+        `\u2018Winter notes\u2019 and \u2018Summer recap\u2019 have \u201c${HIDE}\u201d turned on, ` +
+          `so pages that list only visible entries won't show them.`,
+      )
+    })
+
+    it('shows no note when no pick is hidden', () => {
+      render(<Harness initial={['post-spring']} options={WITH_HIDDEN} />)
+      expect(note()).toBeNull()
+    })
+
+    it('badges a hidden entry among the options to add', async () => {
+      const user = userEvent.setup()
+      render(<Harness initial={['post-spring']} options={WITH_HIDDEN} />)
+      await user.click(addInput())
+      const option = screen.getByRole('option', { name: /Winter notes/ })
+      // Marked so a highlighted option recolours it (theme.tsx).
+      expect(
+        within(option).getByText('Hidden from search').closest('[data-canopy-option-badge]'),
+      ).toBeTruthy()
+      expect(
+        within(screen.getByRole('option', { name: /Autumn preview/ })).queryByText(
+          'Hidden from search',
+        ),
+      ).toBeNull()
+    })
+
+    it('hides the note while a changed query reloads the options', async () => {
+      const hidden: ReferenceOptionsResponse = {
+        ok: true,
+        status: 200,
+        data: {
+          options: [
+            {
+              id: 'post-summer',
+              label: 'Summer recap',
+              collection: 'posts',
+              noindex: { fieldLabel: HIDE },
+            },
+          ],
+        },
+      }
+      mockClient.content.getReferenceOptions
+        .mockResolvedValueOnce(hidden)
+        .mockImplementationOnce(() => new Promise<ReferenceOptionsResponse>(() => {}))
+      const { rerender } = render(<Harness initial={['post-summer']} collections={['posts']} />)
+      await waitFor(() => expect(note()).toBeTruthy())
+
+      rerender(<Harness initial={['post-summer']} collections={['posts', 'news']} />)
+      await waitFor(() => expect(mockClient.content.getReferenceOptions).toHaveBeenCalledTimes(2))
+      expect(note()).toBeNull()
+    })
+
+    it('drops the badge and note when a reload fails', async () => {
+      mockClient.content.getReferenceOptions
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: {
+            options: [
+              {
+                id: 'post-summer',
+                label: 'Summer recap',
+                collection: 'posts',
+                noindex: { fieldLabel: HIDE },
+              },
+            ],
+          },
+        })
+        .mockResolvedValueOnce({ ok: false, status: 500, error: 'Server unavailable' })
+      const { rerender } = render(<Harness initial={['post-summer']} collections={['posts']} />)
+      await waitFor(() => expect(rowTitles()).toEqual(['Summer recap, Hidden from search']))
+
+      rerender(<Harness initial={['post-summer']} collections={['posts', 'news']} />)
+      await screen.findByTestId('reference-list-error')
+      expect(rowTitles()).toEqual(['Summer recap'])
+      expect(note()).toBeNull()
+
+      const user = userEvent.setup()
+      await user.click(toggleOf(rows()[0]))
+      await user.click(screen.getByRole('textbox', { name: 'Entry' }))
+      const option = await screen.findByRole('option', { name: /Summer recap/ })
+      expect(within(option).queryByText('Hidden from search')).toBeNull()
+    })
+
+    it('holds the note back until the options arrive', async () => {
+      let settle: (value: ReferenceOptionsResponse) => void = () => {}
+      mockClient.content.getReferenceOptions.mockImplementation(
+        () => new Promise<ReferenceOptionsResponse>((resolve) => (settle = resolve)),
+      )
+      render(<Harness initial={['post-summer']} collections={['posts']} />)
+      expect(note()).toBeNull()
+
+      await act(async () =>
+        settle({
+          ok: true,
+          status: 200,
+          data: {
+            options: [
+              {
+                id: 'post-summer',
+                label: 'Summer recap',
+                collection: 'posts',
+                noindex: { fieldLabel: HIDE },
+              },
+            ],
+          },
+        }),
+      )
+      expect(note()?.textContent).toContain('\u2018Summer recap\u2019 has')
+      expect(rowTitles()).toEqual(['Summer recap, Hidden from search'])
+    })
+  })
+
+  it('loads the options again when only optionSort changes', async () => {
+    mockClient.content.getReferenceOptions.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { options: [] },
+    })
+    const { rerender } = render(<Harness initial={[]} collections={['posts']} optionSort="label" />)
+    await waitFor(() => expect(mockClient.content.getReferenceOptions).toHaveBeenCalledTimes(1))
+    rerender(<Harness initial={[]} collections={['posts']} optionSort="collection" />)
+    await waitFor(() =>
+      expect(mockClient.content.getReferenceOptions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sort: 'collection' }),
+      ),
+    )
+  })
+
+  it("asks the endpoint for the field's option order", async () => {
+    mockClient.content.getReferenceOptions.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { options: [] },
+    })
+    render(
+      <Harness
+        initial={[]}
+        collections={['posts']}
+        optionSort={{ field: 'publishedAt', direction: 'desc' }}
+      />,
+    )
+    await waitFor(() =>
+      expect(mockClient.content.getReferenceOptions).toHaveBeenCalledWith({
+        branch: 'main',
+        displayField: 'title',
+        collections: 'posts',
+        sort: 'field',
+        sortField: 'publishedAt',
+        sortDir: 'desc',
+      }),
+    )
   })
 })

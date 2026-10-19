@@ -25,9 +25,8 @@ const hiddenEntry = {
 
 // Mock service/context creation so createNextCanopyContext can run without a real
 // workspace/filesystem, and so generateContentSitemap's getCanopyForBuild() resolves a fake
-// listEntries instead of touching the branch/schema machinery. This isolates the thing under
-// test — that the SEO field location set on createNextCanopyContext({ seo }) is shared by both
-// bound helpers — from everything else createCanopyContext would otherwise require.
+// listEntries instead of touching the branch/schema machinery. Both bound helpers read
+// `config.seo` from the options, not from these services.
 vi.mock('canopycms/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('canopycms/server')>()
   return {
@@ -51,7 +50,8 @@ vi.mock('canopycms/server', async (importOriginal) => {
   }
 })
 
-import { createNextCanopyContext, mergeSeoFieldLocation } from './context-wrapper'
+import { createNextCanopyContext } from './context-wrapper'
+import { mergeSeoFieldLocation } from './static'
 
 function config(partial: Partial<CanopyConfig>): CanopyConfig {
   return { mode: 'dev', deployedAs: 'server', ...partial } as CanopyConfig
@@ -66,11 +66,10 @@ const authPlugin: AuthPlugin = {
 }
 
 // ---------------------------------------------------------------------------
-// mergeSeoFieldLocation — the pure function both bound helpers below call with the same
-// context-wide default, which is what makes their agreement structural.
+// mergeSeoFieldLocation — how both helpers combine `config.seo` with a per-call override.
 // ---------------------------------------------------------------------------
 describe('mergeSeoFieldLocation', () => {
-  it('falls through to the context default when the caller supplies nothing', () => {
+  it('falls through to config.seo when the caller supplies nothing', () => {
     expect(mergeSeoFieldLocation({ group: 'seo' }, undefined)).toEqual({ group: 'seo' })
   })
 
@@ -84,22 +83,33 @@ describe('mergeSeoFieldLocation', () => {
     ).toEqual({ group: 'meta', fields: { title: 'metaTitle' } })
   })
 
+  it('ignores an undefined per-call name, keeping the configured one', () => {
+    expect(
+      mergeSeoFieldLocation({ fields: { noindex: 'hidden' } }, { fields: { noindex: undefined } }),
+    ).toEqual({ fields: { noindex: 'hidden' } })
+  })
+
+  it('merges fields name by name, so a per-call rename keeps the configured noindex name', () => {
+    expect(
+      mergeSeoFieldLocation({ fields: { noindex: 'hidden' } }, { fields: { title: 'headline' } }),
+    ).toEqual({ fields: { noindex: 'hidden', title: 'headline' } })
+  })
+
   it('returns an empty location when neither side sets one', () => {
     expect(mergeSeoFieldLocation(undefined, undefined)).toEqual({})
   })
 })
 
 // ---------------------------------------------------------------------------
-// Regression: generateContentSitemap and entryToMetadata, as returned from
-// createNextCanopyContext, must read the SAME SEO field location by default.
+// generateContentSitemap and entryToMetadata, as returned from createNextCanopyContext, both
+// read config.seo by default.
 // ---------------------------------------------------------------------------
-describe('createNextCanopyContext: shared seo default', () => {
-  it('entryToMetadata applies the context-wide seo.group without the caller passing it', async () => {
+describe('createNextCanopyContext: config.seo', () => {
+  it('entryToMetadata applies config.seo.group without the caller passing it', async () => {
     const result = await createNextCanopyContext({
-      config: config({ mode: 'dev' }),
+      config: config({ mode: 'dev', seo: { group: 'seo' } }),
       authPlugin,
       entrySchemaRegistry: {},
-      seo: { group: 'seo' },
     })
 
     const metadata = result.entryToMetadata(hiddenEntry.data, { path: '/hidden' })
@@ -108,32 +118,28 @@ describe('createNextCanopyContext: shared seo default', () => {
     expect(metadata.robots).toEqual({ index: false, follow: false })
   })
 
-  it('generateContentSitemap applies the SAME context-wide seo.group, excluding the noindex entry', async () => {
+  it('generateContentSitemap applies the same config.seo.group, excluding the noindex entry', async () => {
     const result = await createNextCanopyContext({
-      config: config({ mode: 'dev' }),
+      config: config({ mode: 'dev', seo: { group: 'seo' } }),
       authPlugin,
       entrySchemaRegistry: {},
-      seo: { group: 'seo' },
     })
 
     const sitemap = await result.generateContentSitemap({ siteUrl: 'https://example.com' })
 
-    // The hidden entry is noindex under the shared 'seo' group default — excluded from the
-    // sitemap, exactly as entryToMetadata suppressed its robots above. Neither call had to repeat
-    // `seo: { group: 'seo' }` itself.
+    // The hidden entry is noindex under config.seo's group, so it is left out here exactly as
+    // entryToMetadata suppressed its robots above.
     expect(sitemap.map((u) => u.url)).toEqual([])
   })
 
-  it('a per-call seo override still wins over the context-wide default', async () => {
+  it('a per-call seo override still wins over config.seo', async () => {
     const result = await createNextCanopyContext({
-      config: config({ mode: 'dev' }),
+      config: config({ mode: 'dev', seo: { group: 'seo' } }),
       authPlugin,
       entrySchemaRegistry: {},
-      seo: { group: 'seo' },
     })
 
-    // Overriding the group to something that doesn't match the entry's actual nesting makes the
-    // noindex flag invisible again for this one call, proving the override reaches the merge.
+    // A group that doesn't match the entry's nesting hides the flag for this one call.
     const sitemap = await result.generateContentSitemap({
       siteUrl: 'https://example.com',
       seo: { group: 'somethingElse' },
@@ -142,7 +148,30 @@ describe('createNextCanopyContext: shared seo default', () => {
     expect(sitemap.map((u) => u.url)).toEqual(['https://example.com/hidden'])
   })
 
-  it('without any seo default, both helpers agree the flat/inline convention is invisible for a nested entry', async () => {
+  it('refuses the removed seo option', async () => {
+    await expect(
+      createNextCanopyContext({
+        config: config({ mode: 'dev' }),
+        authPlugin,
+        entrySchemaRegistry: {},
+        seo: { group: 'seo' },
+      } as Parameters<typeof createNextCanopyContext>[0]),
+    ).rejects.toThrow('no longer takes `seo`')
+  })
+
+  it('a per-call entryToMetadata group still wins over config.seo', async () => {
+    const result = await createNextCanopyContext({
+      config: config({ mode: 'dev', seo: { group: 'seo' } }),
+      authPlugin,
+      entrySchemaRegistry: {},
+    })
+
+    const metadata = result.entryToMetadata(hiddenEntry.data, { group: 'somethingElse' })
+
+    expect(metadata.robots).toBeUndefined()
+  })
+
+  it('without config.seo, both helpers agree the flat/inline convention is invisible for a nested entry', async () => {
     const result = await createNextCanopyContext({
       config: config({ mode: 'dev' }),
       authPlugin,

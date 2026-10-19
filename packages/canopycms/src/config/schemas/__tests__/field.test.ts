@@ -35,7 +35,7 @@ describe('referenceFieldSchema', () => {
   // zod strips unknown keys by default, so a runtime-consumed flag that is missing here is
   // deleted silently by any consumer that adopts the parse output -- the feature no-ops with
   // no error at all. Every key resolution actually reads must therefore be declared.
-  it.each(['displayField', 'includeBody', 'entryTypes', 'collections'] as const)(
+  it.each(['displayField', 'includeBody', 'entryTypes', 'collections', 'optionSort'] as const)(
     'preserves the runtime-consumed key %s',
     (key) => {
       const input: Record<string, unknown> = {
@@ -45,6 +45,7 @@ describe('referenceFieldSchema', () => {
         collections: ['content/snippets'],
         displayField: 'title',
         includeBody: true,
+        optionSort: { field: 'meta.publishedAt', direction: 'desc' },
       }
       const parsed = referenceFieldSchema.parse(input) as Record<string, unknown>
       expect(parsed[key]).toEqual(input[key])
@@ -70,6 +71,34 @@ describe('referenceFieldSchema', () => {
         includeBody: 'yes',
       }),
     ).toThrow()
+  })
+})
+
+describe('referenceFieldSchema optionSort', () => {
+  const parse = (optionSort: unknown) =>
+    referenceFieldSchema.parse({
+      name: 'pick',
+      type: 'reference',
+      entryTypes: ['post'],
+      optionSort,
+    })
+
+  it.each(['label', 'collection', { field: 'publishedAt' }, { field: 'a.b', direction: 'asc' }])(
+    'accepts %j',
+    (optionSort) => {
+      expect(parse(optionSort).optionSort).toEqual(optionSort)
+    },
+  )
+
+  it.each([
+    'newest',
+    { field: '' },
+    { field: 'a..b' },
+    { field: '.a' },
+    { field: 'a', direction: 'down' },
+    { field: 'a', dir: 'desc' },
+  ])('refuses %j', (optionSort) => {
+    expect(() => parse(optionSort)).toThrow()
   })
 })
 

@@ -1,11 +1,12 @@
 import React, { useState } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CanopyCMSProvider } from '../theme'
 import { ReferenceField, type ReferenceOption } from './ReferenceField'
 import { createMockApiClient, type MockApiClient } from '../../api/__test__/mock-client'
 import type { ReferenceOptionsResponse } from '../../api/reference-options'
+import type { ReferenceOptionSort } from '../../config'
 
 // ReferenceField calls createApiClient() directly (not via context DI) --
 // mock the same resolved module the component imports.
@@ -19,8 +20,10 @@ const Harness: React.FC<{
   collections?: string[]
   entryTypes?: string[]
   branch?: string
-}> = ({ options, collections, entryTypes, branch = 'main' }) => {
-  const [value, setValue] = useState('')
+  initial?: string
+  optionSort?: ReferenceOptionSort
+}> = ({ options, collections, entryTypes, branch = 'main', initial = '', optionSort }) => {
+  const [value, setValue] = useState(initial)
   return (
     <CanopyCMSProvider>
       <ReferenceField
@@ -29,6 +32,7 @@ const Harness: React.FC<{
         collections={collections}
         entryTypes={entryTypes}
         branch={branch}
+        optionSort={optionSort}
         value={value}
         onChange={setValue}
         dataCanopyField="author"
@@ -225,5 +229,76 @@ describe('ReferenceField', () => {
       )
       expect(screen.getByDisplayValue('Restricted entry: Agent X')).toBeTruthy()
     })
+  })
+
+  describe('a pick hidden from search', () => {
+    const OPTIONS: ReferenceOption[] = [
+      { value: 'p1', label: 'Launch post', noindex: { fieldLabel: 'Hide from search engines' } },
+      { value: 'p2', label: 'Recap post' },
+    ]
+
+    it('badges the pick beside the input and says why', () => {
+      render(<Harness options={OPTIONS} initial="p1" />)
+      const field = screen.getByTestId('reference-field-author')
+      expect(within(field).getByText('Hidden from search')).toBeTruthy()
+      expect(screen.getByTestId('reference-hidden-note').textContent).toBe(
+        '\u2018Launch post\u2019 has \u201cHide from search engines\u201d turned on, so pages ' +
+          "that list only visible entries won't show it.",
+      )
+    })
+
+    it('shows neither for a visible pick', () => {
+      render(<Harness options={OPTIONS} initial="p2" />)
+      const field = screen.getByTestId('reference-field-author')
+      expect(within(field).queryByText('Hidden from search')).toBeNull()
+      expect(screen.queryByTestId('reference-hidden-note')).toBeNull()
+    })
+
+    it('holds both back until the options arrive', async () => {
+      let settle: (value: ReferenceOptionsResponse) => void = () => {}
+      mockClient.content.getReferenceOptions.mockImplementation(
+        () => new Promise<ReferenceOptionsResponse>((resolve) => (settle = resolve)),
+      )
+      render(<Harness collections={['posts']} initial="p1" />)
+      expect(screen.queryByTestId('reference-hidden-note')).toBeNull()
+
+      await act(async () =>
+        settle({
+          ok: true,
+          status: 200,
+          data: {
+            options: [
+              {
+                id: 'p1',
+                label: 'Launch post',
+                collection: 'posts',
+                noindex: { fieldLabel: 'Hide from search engines' },
+              },
+            ],
+          },
+        }),
+      )
+      expect(screen.getByTestId('reference-hidden-note')).toBeTruthy()
+    })
+  })
+
+  it.each([
+    ['collection' as const, { sort: 'collection' }],
+    [{ field: 'meta.date' }, { sort: 'field', sortField: 'meta.date' }],
+  ])('asks the endpoint for optionSort %j', async (optionSort, params) => {
+    mockClient.content.getReferenceOptions.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { options: [] },
+    })
+    render(<Harness collections={['posts']} optionSort={optionSort} />)
+    await waitFor(() =>
+      expect(mockClient.content.getReferenceOptions).toHaveBeenCalledWith({
+        branch: 'main',
+        displayField: 'title',
+        collections: 'posts',
+        ...params,
+      }),
+    )
   })
 })

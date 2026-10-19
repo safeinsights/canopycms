@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 
 import { createApiClient } from '../../api/client'
+import type { ReferenceOptionSort } from '../../config'
 import { getErrorMessage } from '../../utils/error'
 import { useOptionalApiClient } from '../context'
 
@@ -10,6 +11,8 @@ import { useOptionalApiClient } from '../context'
 export interface ReferenceOption {
   value: string
   label: string
+  /** The target is hidden from search; `fieldLabel` names the setting on that entry's form. */
+  noindex?: { fieldLabel: string }
 }
 
 /** The id a stored reference holds: the id itself, or a resolved read's `{ id, … }`. */
@@ -30,6 +33,17 @@ export function unlistedReferenceLabel(value: unknown, id: string): string {
   return `Unavailable entry (${id})`
 }
 
+/** `optionSort` as the reference-options endpoint's `sort`, `sortField` and `sortDir` params. */
+function sortParams(sort: ReferenceOptionSort | undefined): Record<string, string> {
+  if (sort === undefined) return {}
+  if (typeof sort === 'string') return { sort }
+  return {
+    sort: 'field',
+    sortField: sort.field,
+    ...(sort.direction && { sortDir: sort.direction }),
+  }
+}
+
 export interface ReferenceOptionsQuery {
   /** Used as given, with no fetch. */
   staticOptions?: ReferenceOption[]
@@ -37,6 +51,8 @@ export interface ReferenceOptionsQuery {
   entryTypes?: string[]
   displayField: string
   branch: string
+  /** The order the endpoint returns options in. Default: by label. */
+  optionSort?: ReferenceOptionSort
 }
 
 export interface ReferenceOptions {
@@ -57,6 +73,7 @@ export function useReferenceOptions({
   entryTypes,
   displayField,
   branch,
+  optionSort,
 }: ReferenceOptionsQuery): ReferenceOptions {
   // `null` outside an ApiClientProvider (some stories), so the fetch falls back to a
   // default-configured client.
@@ -72,7 +89,7 @@ export function useReferenceOptions({
   // A changed query starts loading in the same render, so no stale option list shows meanwhile.
   const [prevFetchKey, setPrevFetchKey] = useState('')
   const fetchKey = needsFetch
-    ? `${collections?.join(',') ?? ''}:${entryTypes?.join(',') ?? ''}:${displayField}:${branch}`
+    ? `${collections?.join(',') ?? ''}:${entryTypes?.join(',') ?? ''}:${displayField}:${branch}:${JSON.stringify(optionSort ?? null)}`
     : ''
   if (fetchKey !== prevFetchKey) {
     setPrevFetchKey(fetchKey)
@@ -83,7 +100,8 @@ export function useReferenceOptions({
   }
 
   // Keyed on `fetchKey`, not the `collections`/`entryTypes` arrays, which the parent rebuilds on
-  // every render, so those and `displayField`/`branch` are left out of the deps on purpose.
+  // every render, so those and `displayField`/`branch`/`optionSort` are left out of the deps on
+  // purpose.
   // `active` drops a response a newer request or an unmount has superseded.
   useEffect(() => {
     if (!needsFetch) return
@@ -93,13 +111,20 @@ export function useReferenceOptions({
     const params: Record<string, string> = { branch, displayField }
     if (collections && collections.length > 0) params.collections = collections.join(',')
     if (entryTypes && entryTypes.length > 0) params.entryTypes = entryTypes.join(',')
+    Object.assign(params, sortParams(optionSort))
 
     apiClient.content
       .getReferenceOptions(params)
       .then((response) => {
         if (!active) return
         if (response.ok && response.data?.options) {
-          setFetched(response.data.options.map((opt) => ({ value: opt.id, label: opt.label })))
+          setFetched(
+            response.data.options.map((opt) => ({
+              value: opt.id,
+              label: opt.label,
+              ...(opt.noindex ? { noindex: opt.noindex } : {}),
+            })),
+          )
         } else {
           setError(response.error || 'Failed to load reference options')
         }

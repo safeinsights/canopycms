@@ -27,6 +27,7 @@ export type {
   BlockFieldConfig,
   SelectFieldConfig,
   ReferenceFieldConfig,
+  ReferenceOptionSort,
   ImageFieldConfig,
   MarkdownFieldConfig,
   MdxAllowlist,

@@ -637,6 +637,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               entryTypes={referenceField.entryTypes}
               displayField={referenceField.displayField}
               branch={branch}
+              optionSort={referenceField.optionSort}
               value={Array.isArray(currentValue) ? currentValue : []}
               onChange={(next) => update(next)}
               path={path}
@@ -668,6 +669,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             entryTypes={referenceField.entryTypes}
             displayField={referenceField.displayField}
             branch={branch}
+            optionSort={referenceField.optionSort}
             value={currentValue ?? ''}
             onChange={(next) => update(next)}
             dataCanopyField={canopyPath}

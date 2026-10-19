@@ -581,7 +581,7 @@ Field components, in `editor/fields/`:
 - `InlineGroupField.tsx` — `type: 'group'` as a bordered container, transparent to the data path
 - `BlockField.tsx` — blocks
 - `list-item-keys.ts` — `useListItemKeys`, identity keys for item lists
-- `ReferenceField.tsx`, `ReferenceListField.tsx` — reference pickers, sharing `use-reference-options.ts`
+- `ReferenceField.tsx`, `ReferenceListField.tsx` — reference pickers, sharing `use-reference-options.ts`, `reference-noindex.tsx`
 - `ImageField.tsx` — structured image field, storing the raw `AssetRecord.src`
 - `MdxImageDialog.tsx` — image dialog
 - `FieldLabel.tsx` — label row with comment/action slots; `LabelledInput`

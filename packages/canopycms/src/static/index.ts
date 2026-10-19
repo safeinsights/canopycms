@@ -185,11 +185,13 @@ async function enumerateRoutableEntries<T>(
  * when you actually mean to — omission should be a decision, not an oversight.
  *
  * `noindex` is NOT applied here: an entry that must not be advertised must still be built. Apply
- * `isNoindexEntry` at the advertising surface (as `generateContentSitemap` does).
+ * `isNoindexEntry` at the advertising surface (as `generateContentSitemap` does), at the SEO
+ * location in `CanopyConfig.seo`.
  *
  * @example
- * const entries = await collectRoutableEntries(await getCanopyForBuild())
- * const published = entries.filter((e) => !isNoindexEntry(e.data))
+ * const ctx = await getCanopyForBuild()
+ * const entries = await collectRoutableEntries(ctx)
+ * const published = entries.filter((e) => !isNoindexEntry(e.data, ctx.services.config.seo))
  */
 export async function collectRoutableEntries<T = Record<string, unknown>>(
   ctx: StaticBuildContext,

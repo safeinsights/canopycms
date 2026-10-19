@@ -207,6 +207,21 @@ describe('config validation', () => {
     ).toThrow()
   })
 
+  it('keeps seo through the parse and refuses a misspelled or misshapen one', () => {
+    const base = { ...gitAuthor, mode: 'prod' as const }
+    const seo = { group: 'seo', fields: { noindex: 'hidden', title: 'seoTitle' } }
+    expect(validateCanopyConfig({ ...base, seo }).seo).toEqual(seo)
+    expect(validateCanopyConfig(base).seo).toBeUndefined()
+    for (const bad of [
+      { fields: { noIndex: 'hidden' } },
+      { group: '' },
+      { fields: { noindex: 3 } },
+      { grop: 'seo' },
+    ]) {
+      expect(() => validateCanopyConfig({ ...base, seo: bad as never })).toThrow()
+    }
+  })
+
   it('lets a later fragment override an earlier fragment field-by-field', () => {
     const first: CanopyConfigFragment = {
       ...gitAuthor,
