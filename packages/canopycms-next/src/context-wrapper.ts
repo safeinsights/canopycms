@@ -13,7 +13,6 @@ import {
   type DefaultEntryTypes,
   type ListEntriesOptions,
   type ListEntriesItem,
-  type SeoFieldLocation,
   createCanopyServices,
   createAssetStore,
   operatingStrategy,
@@ -35,40 +34,11 @@ import {
   collectStaticParams,
   entryToMetadata as entryToMetadataCore,
   generateContentSitemap,
+  mergeSeoFieldLocation,
   type EntryToMetadataOptions,
   type GenerateContentSitemapOptions,
   type GenerateContentStaticParamsOptions,
 } from './static'
-
-/**
- * Merge a context-wide default SEO field location (`createNextCanopyContext({ seo })`) with a
- * per-call override.
- *
- * `generateContentSitemap`'s `noindex` exclusion and `entryToMetadata`'s field extraction/`noindex`
- * read must agree on where the SEO fields live, or the two surfaces drift: an entry can end up
- * `noindex` on the page while the sitemap still advertises its URL (or the reverse), because each
- * call site independently forgot (or mis-set) `group`/`fields`. Both bound helpers below call this
- * SAME function with the SAME context-wide default, which is what makes agreement structural
- * rather than a matter of adopter discipline.
- *
- * Only keys the caller actually supplies override the default — an omitted (or explicitly
- * `undefined`) `fields`/`group` falls through to the context-wide value, so setting a default once
- * and never repeating it per call is the common case. A plain `{ ...contextDefault, ...callOverride
- * }` would NOT have this property: `entryToMetadata`'s options type always has `fields`/`group`
- * keys, so a caller who omits them still produces an object whose `fields`/`group` are present but
- * `undefined`, and spreading that would silently clobber the default. Checking each key explicitly
- * avoids that trap. Exported for direct unit testing.
- * @internal Exported for tests.
- */
-export function mergeSeoFieldLocation(
-  contextDefault: SeoFieldLocation | undefined,
-  callOverride: SeoFieldLocation | undefined,
-): SeoFieldLocation {
-  const merged: SeoFieldLocation = { ...contextDefault }
-  if (callOverride?.fields !== undefined) merged.fields = callOverride.fields
-  if (callOverride?.group !== undefined) merged.group = callOverride.group
-  return merged
-}
 
 let warnedStaticMode = false
 
@@ -105,14 +75,6 @@ export interface NextCanopyOptions {
   /** Auth plugin for user authentication. Optional for static deployments (deployedAs: 'static'). */
   authPlugin?: AuthPlugin
   entrySchemaRegistry: Record<string, readonly FieldConfig[]>
-  /**
-   * Where the SEO fields live (`fields` name overrides, and/or a nested `group`) — shared by both
-   * `generateContentSitemap`'s `noindex` exclusion and `entryToMetadata`'s field extraction; see
-   * `mergeSeoFieldLocation` for why one shared default matters. Omit for the flat (inline-group)
-   * convention, the default on both the schema side (`defineSeoFieldGroup()`) and here. A per-call
-   * `seo`/`fields`/`group` option on either helper overrides this default for that one call.
-   */
-  seo?: SeoFieldLocation
 }
 
 /**
@@ -245,9 +207,8 @@ export interface NextCanopyContextResult {
    * `entryToMetadata` uses for `robots`. Bound to the build context, so your `sitemap.ts` never
    * imports the admin `getCanopyForBuild`.
    *
-   * Reads the SEO field location from `createNextCanopyContext({ seo })` by default (shared with
-   * `entryToMetadata` below via `mergeSeoFieldLocation` — see that function's doc). Pass `seo` on a
-   * given call to override just that call.
+   * Reads the SEO field location from `config.seo`, as `entryToMetadata` below does. Pass `seo`
+   * on a given call to override just that call.
    */
   generateContentSitemap: (options: GenerateContentSitemapOptions) => Promise<MetadataRoute.Sitemap>
   /**
@@ -255,8 +216,8 @@ export interface NextCanopyContextResult {
    * page module has one CanopyCMS import (your `lib/canopy.ts`) rather than two. Pure mapping —
    * touches no context.
    *
-   * Shares its SEO field location with `generateContentSitemap` above via `mergeSeoFieldLocation`
-   * (see that function's doc); pass `fields`/`group` on a given call to override just that call.
+   * Reads the SEO field location from `config.seo`, as `generateContentSitemap` above does; pass
+   * `fields`/`group` on a given call to override just that call.
    */
   entryToMetadata: (entryData: unknown, options?: EntryToMetadataOptions) => Metadata
   /**
@@ -457,20 +418,15 @@ export async function createNextCanopyContext(
   // generateContentStaticParams it is not enumeration-only — but sitemap.ts is build-only in a
   // static export, and on a prod `server` deployment guardBuildContext throws if it is reached at
   // request time. Binding it here keeps the admin context out of the route module either way.
-  //
-  // SEO field location is shared with boundEntryToMetadata via mergeSeoFieldLocation — see its doc.
   const boundGenerateContentSitemap = async (callOptions: GenerateContentSitemapOptions) => {
-    return generateContentSitemap(await getCanopyForBuild(), {
-      ...callOptions,
-      seo: mergeSeoFieldLocation(options.seo, callOptions.seo),
-    })
+    return generateContentSitemap(await getCanopyForBuild(), callOptions)
   }
 
   const boundEntryToMetadata = (
     entryData: unknown,
     callOptions: EntryToMetadataOptions = {},
   ): Metadata => {
-    const seoLocation = mergeSeoFieldLocation(options.seo, {
+    const seoLocation = mergeSeoFieldLocation(options.config.seo, {
       fields: callOptions.fields,
       group: callOptions.group,
     })

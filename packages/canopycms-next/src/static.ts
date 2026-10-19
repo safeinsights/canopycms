@@ -151,7 +151,10 @@ export interface GenerateContentSitemapOptions {
   trailingSlash?: boolean
   /** Scope to a collection logical path (e.g. 'content/posts'). Defaults to the whole content root. */
   rootPath?: string
-  /** Where the SEO fields live, when they aren't the flat defaults. Drives the `noindex` read. */
+  /**
+   * Where the SEO fields live, for this call only. Defaults to `config.seo`, read from the build
+   * context's services; drives the `noindex` read.
+   */
   seo?: SeoFieldLocation
   /**
    * Drop entries from the sitemap. Applied ON TOP of the `noindex` exclusion, which is not
@@ -213,6 +216,24 @@ export interface GenerateContentSitemapOptions {
 }
 
 /**
+ * Merge the site's SEO field location (`config.seo`) with a per-call override.
+ *
+ * Only keys the caller actually supplies override it: an omitted or `undefined` `fields`/`group`
+ * falls through to `config.seo`. A plain spread would not do this, because `entryToMetadata`'s
+ * options always carry `fields`/`group` keys, present but `undefined` when the caller omits them.
+ * @internal Exported for tests.
+ */
+export function mergeSeoFieldLocation(
+  configDefault: SeoFieldLocation | undefined,
+  callOverride: SeoFieldLocation | undefined,
+): SeoFieldLocation {
+  const merged: SeoFieldLocation = { ...configDefault }
+  if (callOverride?.fields !== undefined) merged.fields = callOverride.fields
+  if (callOverride?.group !== undefined) merged.group = callOverride.group
+  return merged
+}
+
+/**
  * Build Next's `MetadataRoute.Sitemap` from CanopyCMS content.
  *
  * **Every routable entry type is included by default.** There is no list of "sitemap-able" entry
@@ -240,8 +261,8 @@ export async function generateContentSitemap(
   buildCtx: Parameters<typeof collectRoutableEntries>[0],
   options: GenerateContentSitemapOptions,
 ): Promise<MetadataRoute.Sitemap> {
-  const { siteUrl, trailingSlash, rootPath, seo, exclude, lastModified, priority, pathFor } =
-    options
+  const { siteUrl, trailingSlash, rootPath, exclude, lastModified, priority, pathFor } = options
+  const seo = mergeSeoFieldLocation(buildCtx.services?.config.seo, options.seo)
 
   // A sitemap with a non-absolute <loc> is invalid — search engines reject the WHOLE file, not
   // just the bad entry, and the build stays green because nothing here threw. 'example.com' (no

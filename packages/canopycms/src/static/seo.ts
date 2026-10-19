@@ -149,14 +149,15 @@ export function extractSeoFields(
 }
 
 /**
- * THE `noindex` predicate. Every surface that suppresses an entry must route through this one
- * function rather than re-deriving the flag:
+ * THE `noindex` predicate. Every surface that reads the flag routes through this one function,
+ * with `opts` taken from `CanopyConfig.seo`, rather than re-deriving it:
  *
  * - the page's own `robots: { index: false }` (canopycms-next's `entryToMetadata`),
- * - exclusion from the sitemap (canopycms-next's `generateContentSitemap`), and
- * - exclusion from AI content (`ai/generate.ts`, unless `exclude.noindex: false`).
+ * - exclusion from the sitemap (canopycms-next's `generateContentSitemap`),
+ * - exclusion from AI content (`ai/generate.ts`, unless `exclude.noindex: false`), and
+ * - the marker on a reference picker's option (`ReferenceResolver.loadReferenceOptions`).
  *
- * Those surfaces shipping from one predicate is the point. Derived separately, a `noindex` entry
+ * One predicate at one configured location is the point. Derived separately, a `noindex` entry
  * stays advertised in one surface while correctly absent from another, and nothing warns.
  *
  * NOT applied to enumeration: `noindex` means "don't advertise this", not "don't build this".

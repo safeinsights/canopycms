@@ -33,7 +33,7 @@ import {
 } from './references'
 import { resolveEntryLinksInText, type EntryLinkUrlResolver } from '../entry-link-resolver'
 import { computeEntryUrl } from '../utils/entry-url'
-import { DEFAULT_SEO_FIELD_NAMES, isNoindexEntry } from '../static/seo'
+import { isNoindexEntry, type SeoFieldLocation } from '../static/seo'
 import type {
   AIContentConfig,
   AIEntry,
@@ -54,6 +54,8 @@ export interface GenerateOptions {
   config?: AIContentConfig
   /** Custom URL resolver for entry links. */
   entryLinkUrl?: EntryLinkUrlResolver
+  /** Where entries keep their SEO fields: `CanopyConfig.seo`. Drives the `noindex` read. */
+  seo?: SeoFieldLocation
   /**
    * ISO-8601 timestamp to record as the manifest's `generated`. Defaults to now.
    *
@@ -88,7 +90,8 @@ export interface GenerateResult {
  * rendered, in rounds that repeat while a render fails (see the loop below).
  */
 export async function generateAIContent(options: GenerateOptions): Promise<GenerateResult> {
-  const { store, flatSchema, contentRoot, config, entryLinkUrl, generatedAt, buildId } = options
+  const { store, flatSchema, contentRoot, config, entryLinkUrl, seo, generatedAt, buildId } =
+    options
   assertValidNoindexConfig(config)
   assertValidReferenceLink(config)
   const files = new Map<string, string>()
@@ -100,6 +103,7 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     config,
     idIndex,
     entryLinkUrl,
+    seo,
     resolveTarget: createReferenceTargetResolver(store),
   }
 
@@ -288,6 +292,7 @@ interface EntryReadContext {
   config?: AIContentConfig
   idIndex: ContentIdIndex
   entryLinkUrl?: EntryLinkUrlResolver
+  seo?: SeoFieldLocation
   resolveTarget: ReferenceTargetResolver
 }
 
@@ -349,7 +354,7 @@ async function collectEntries(
   collection: FlatSchemaItem & { type: 'collection' },
   cleanPath: string,
 ): Promise<PendingEntry[]> {
-  const { store, contentRoot, config, idIndex, entryLinkUrl, resolveTarget } = read
+  const { store, contentRoot, config, idIndex, entryLinkUrl, seo, resolveTarget } = read
   const skipNoindex = config?.exclude?.noindex !== false
   const pending: PendingEntry[] = []
 
@@ -371,7 +376,7 @@ async function collectEntries(
         resolveReferences: false,
       })
       // AI content advertises an entry, so `noindex` leaves it out here as it does the sitemap.
-      if (skipNoindex && isNoindexEntry(doc.data, config?.seo)) continue
+      if (skipNoindex && isNoindexEntry(doc.data, seo)) continue
       const storedData = doc.data
       doc.data = await resolveReferenceFields(doc.data, entryTypeConfig.schema, resolveTarget)
 
@@ -453,37 +458,13 @@ function assertValidReferenceLink(config: AIContentConfig | undefined): void {
 }
 
 /**
- * Refuse an `exclude.noindex` or `seo` the noindex gate would misread. A non-boolean
- * `noindex: 'false'` would leave the gate on while the adopter believes it is off, and a
- * misshapen `seo` reads the flag from a field no entry sets, so every noindex entry ships.
+ * Refuse a non-boolean `exclude.noindex`: `noindex: 'false'` would leave the gate on while the
+ * adopter believes it is off. `config.seo`'s shape is checked by the config schema.
  */
 function assertValidNoindexConfig(config: AIContentConfig | undefined): void {
   const noindex: unknown = config?.exclude?.noindex
   if (noindex !== undefined && typeof noindex !== 'boolean') {
     throw new Error(`AI content config: exclude.noindex must be a boolean, got ${typeof noindex}`)
-  }
-  const seo: unknown = config?.seo
-  if (seo === undefined) return
-  if (typeof seo !== 'object' || seo === null || Array.isArray(seo)) {
-    throw new Error('AI content config: seo must be an object of { group?, fields? }')
-  }
-  const { group, fields } = seo as Record<string, unknown>
-  if (group !== undefined && typeof group !== 'string') {
-    throw new Error('AI content config: seo.group must be a string')
-  }
-  if (fields === undefined) return
-  if (
-    typeof fields !== 'object' ||
-    fields === null ||
-    Array.isArray(fields) ||
-    Object.values(fields).some((name) => typeof name !== 'string')
-  ) {
-    throw new Error('AI content config: seo.fields must map SEO fields to field-name strings')
-  }
-  // An unknown key (`noIndex`) would leave the gate reading the default field name
-  const unknown = Object.keys(fields).filter((key) => !(key in DEFAULT_SEO_FIELD_NAMES))
-  if (unknown.length > 0) {
-    throw new Error(`AI content config: unknown seo.fields key(s): ${unknown.join(', ')}`)
   }
 }
 
