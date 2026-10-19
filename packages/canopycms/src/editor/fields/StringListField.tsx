@@ -18,6 +18,13 @@ export interface StringListFieldProps {
   maxItems?: number
 }
 
+/**
+ * `maxTags` for a TagsInput holding `count` items. Undefined over the cap: a paste cuts the list to
+ * `maxTags`, which would drop stored items without a word.
+ */
+export const tagCap = (count: number, maxItems: number | undefined): number | undefined =>
+  maxItems !== undefined && count <= maxItems ? maxItems : undefined
+
 /** The field's description, ended as a sentence, then `hint`. */
 export const withHint = (description: string | undefined, hint: string): string => {
   const own = description?.trim()
@@ -60,7 +67,7 @@ export const StringListField: React.FC<StringListFieldProps> = ({
                   : 'Press Enter to add.',
               )
         }
-        maxTags={maxItems}
+        maxTags={tagCap(value.length, maxItems)}
         value={value}
         size="sm"
         readOnly={readOnly}

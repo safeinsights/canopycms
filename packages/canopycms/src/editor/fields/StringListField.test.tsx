@@ -144,3 +144,22 @@ describe('StringListField at its maxItems', () => {
     expect(describedBy()).toBe('Press Enter to add.')
   })
 })
+
+describe('StringListField over its maxItems', () => {
+  it('keeps every stored item when something is pasted', async () => {
+    const user = userEvent.setup()
+    const changes: string[][] = []
+    render(
+      <Harness
+        initial={['a', 'b', 'c', 'd', 'e']}
+        maxItems={3}
+        onChange={(v) => changes.push(v)}
+      />,
+    )
+    const input = document.querySelector('input[data-canopy-field="tags"]') as HTMLInputElement
+    await user.click(input)
+    await user.paste('f')
+    expect(changes.length).toBeGreaterThan(0)
+    for (const change of changes) expect(change.slice(0, 5)).toEqual(['a', 'b', 'c', 'd', 'e'])
+  })
+})

@@ -111,3 +111,15 @@ describe('NumberListField at its maxItems', () => {
     ).toBeTruthy()
   })
 })
+
+describe('NumberListField over its maxItems', () => {
+  it('keeps every stored item when something is pasted', async () => {
+    const user = userEvent.setup()
+    const changes: number[][] = []
+    render(<Harness initial={[1, 2, 3, 4]} maxItems={2} onChange={(v) => changes.push(v)} />)
+    await user.click(getInput())
+    await user.paste('5')
+    expect(changes.length).toBeGreaterThan(0)
+    for (const change of changes) expect(change.slice(0, 4)).toEqual([1, 2, 3, 4])
+  })
+})

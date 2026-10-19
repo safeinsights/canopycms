@@ -243,6 +243,19 @@ describe('ReferenceListField', () => {
     )
   })
 
+  it('moves focus to the cap note when a pick reaches maxItems', async () => {
+    const user = userEvent.setup()
+    render(<Harness initial={['post-spring', 'post-summer']} maxItems={3} />)
+    await user.click(addInput())
+    await user.click(screen.getByRole('option', { name: 'Winter notes' }))
+
+    const note = screen.getByTestId('reference-list-cap')
+    expect(note.textContent).toBe(
+      '3 of 3 picked. Open a row to swap its entry, or remove one to add another.',
+    )
+    await waitFor(() => expect(document.activeElement).toBe(note))
+  })
+
   it('says how many to remove over maxItems', () => {
     render(
       <Harness
@@ -373,6 +386,23 @@ describe('ReferenceListField', () => {
         'Unavailable entry (post-gone)',
       ])
       expect(mockClient.content.getReferenceOptions).toHaveBeenCalledTimes(1)
+    })
+
+    it('names a pick removed while loading by its id, not as unavailable', async () => {
+      const user = userEvent.setup()
+      mockClient.content.getReferenceOptions.mockImplementation(
+        () => new Promise<ReferenceOptionsResponse>(() => {}),
+      )
+      const onRemoved = vi.fn()
+      render(
+        <Harness
+          initial={['post-spring', 'post-summer']}
+          collections={['posts']}
+          onRemoved={onRemoved}
+        />,
+      )
+      await chooseFromRowMenu(user, rows()[0], 'Remove')
+      expect(onRemoved).toHaveBeenCalledWith(0, 'post-spring', 'post-spring')
     })
 
     it('says a failed load above the list and loads again on Retry', async () => {

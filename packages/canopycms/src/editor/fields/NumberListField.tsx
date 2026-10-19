@@ -4,7 +4,7 @@ import { TagsInput } from '@mantine/core'
 
 import { listFullReason } from '../copy'
 import { LabelledInput } from './FieldLabel'
-import { withHint } from './StringListField'
+import { tagCap, withHint } from './StringListField'
 
 export interface NumberListFieldProps {
   id?: string
@@ -68,7 +68,7 @@ export const NumberListField: React.FC<NumberListFieldProps> = ({
             ? withHint(description, listFullReason(maxItems))
             : description
         }
-        maxTags={maxItems}
+        maxTags={tagCap(value.length, maxItems)}
         value={value.map(String)}
         size="sm"
         error={

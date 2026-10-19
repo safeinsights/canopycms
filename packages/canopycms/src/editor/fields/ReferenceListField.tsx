@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 import { Alert, Button, Paper, Select, Skeleton, Stack, Text } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
@@ -93,14 +93,25 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
   const expansion = useItemExpansion(itemKeys, resetKey, { rowsStartOpen: false })
   const [announcement, setAnnouncement] = useState<{ message: string }>()
   const [addSearch, setAddSearch] = useState('')
+  // The pick that reaches `maxItems` unmounts the focused Add control; its note takes focus instead.
+  const capNoteRef = useRef<HTMLParagraphElement>(null)
+  const focusCapNoteRef = useRef(false)
+  useEffect(() => {
+    if (!focusCapNoteRef.current) return
+    focusCapNoteRef.current = false
+    capNoteRef.current?.focus()
+  })
 
   const labels = new Map(options.map((option) => [option.value, option.label]))
-  // Until options settle, a title is unknown rather than unlisted; after a failed load, the id
-  // is all there is to show.
+  // Until options settle, a title is unknown rather than unlisted, and after a failed load: either
+  // way the id is all there is to show (a Remove's Undo toast names it).
   const titleOf = (index: number): string => {
     const itemId = ids[index]
     if (!itemId) return 'No entry picked'
-    return labels.get(itemId) ?? (error ? itemId : unlistedReferenceLabel(value[index], itemId))
+    return (
+      labels.get(itemId) ??
+      (loading || error ? itemId : unlistedReferenceLabel(value[index], itemId))
+    )
   }
 
   const picked = new Set(ids)
@@ -125,6 +136,7 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
       message: `${labels.get(pick) ?? pick} added, position ${count} of ${count}.`,
     })
     setAddSearch('')
+    if (maxItems !== undefined && count >= maxItems) focusCapNoteRef.current = true
     emit([...ids, pick])
   }
 
@@ -229,7 +241,13 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
         )}
         {!readOnly &&
           (atCap ? (
-            <Text size="sm" c="dimmed" data-testid="reference-list-cap">
+            <Text
+              ref={capNoteRef}
+              tabIndex={-1}
+              size="sm"
+              c="dimmed"
+              data-testid="reference-list-cap"
+            >
               {capNote}
             </Text>
           ) : loading ? (
