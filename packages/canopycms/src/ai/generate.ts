@@ -12,8 +12,9 @@ import fs from 'node:fs/promises'
 import { minimatch } from 'minimatch'
 
 import type { ContentStore, ContentDocument, MarkdownDocument } from '../content-store'
-import type { FlatSchemaItem, EntryTypeConfig } from '../config'
+import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from '../config'
 import { isDataOnlyFormat } from '../utils/format'
+import { findExplicitBodyFieldName, linkOnlyReferenceData } from '../utils/body-field'
 import {
   extractEntryTypeFromFilename,
   extractIdFromFilename,
@@ -142,18 +143,23 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     if (pending.contentId !== null) pendingById.set(pending.contentId, pending)
   }
   // The target as `resolveReferenceTarget` would give it, built from this export's own read, so
-  // an entry outside the export set is never offered and a target cannot change mid-run
+  // an entry outside the export set is never offered and a target cannot change mid-run. A
+  // json/yaml target's `isBody` field is its body here, as an md/mdx target's body is
   const subjectOf = (id: string) => {
     const pending = pendingById.get(id)
     if (!pending || !exported.has(id)) return undefined
-    const { slug } = pending.entry
-    const target = buildResolvedReference(structuredClone(pending.storedData), {
+    const { format } = pending
+    const { slug, fields } = pending.entry
+    const storedData = structuredClone(pending.storedData)
+    const target = buildResolvedReference(linkOnlyReferenceData(storedData, format, fields), {
       id,
       slug,
       collection: pending.collectionPath,
       urlPath: computeEntryUrl(pending.collectionPath, slug, contentRoot),
     }) as AIResolvedReference
-    return { target, body: pending.body }
+    const dataBodyField = isDataOnlyFormat(format) ? findExplicitBodyFieldName(fields) : undefined
+    const dataBody = dataBodyField === undefined ? undefined : storedData[dataBodyField]
+    return { target, body: pending.body ?? (typeof dataBody === 'string' ? dataBody : undefined) }
   }
   const linkFor = config?.referenceLink
     ? await decideReferenceLinks(config.referenceLink, allPending, subjectOf, entryLinkUrl)
@@ -303,6 +309,7 @@ interface PendingEntry {
   body?: string
   /** The entry's data as stored, its references still ids, for `referenceLink` to judge. */
   storedData: Record<string, unknown>
+  format: ContentFormat
   /** The content ids its body's links were resolved against, as of its last resolution. */
   linkedIds: string[]
   contentId: string | null
@@ -391,6 +398,7 @@ async function collectEntries(
         entry: aiEntry,
         body,
         storedData,
+        format: doc.format,
         linkedIds: [],
         contentId: extractIdFromFilename(path.basename(listEntry.relativePath)),
         absolutePath: doc.absolutePath,

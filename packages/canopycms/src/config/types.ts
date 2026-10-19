@@ -62,10 +62,11 @@ interface BaseFieldConfig {
   /** Mark this field as the display title for entries using this schema. At most one field per schema. */
   isTitle?: boolean
   /**
-   * Mark this field as the body content for md/mdx entries.
-   * The field must be type 'markdown' or 'mdx'. At most one per schema.
-   * When present, the file's markdown content is mapped to this field,
-   * making TypeFromEntrySchema include it without manual `& { body: string }`.
+   * Mark this field as the entry's body. The field must be type 'markdown' or 'mdx'. At most one
+   * per schema. On an md/mdx entry, the file's markdown content is mapped to this field, making
+   * TypeFromEntrySchema include it without manual `& { body: string }`. On a json/yaml entry, it
+   * is the prose a link-only reference omits. Either way a reference carries it only with
+   * `includeBody: true`.
    */
   isBody?: boolean
   /**
@@ -149,7 +150,9 @@ export interface ReferenceFieldConfig extends BaseFieldConfig {
   options?: ReferenceOption[]
   /**
    * Include the referenced entry's body in the resolved value, under that entry type's own
-   * body field name (`isBody: true`, else `body`). Defaults to `false`.
+   * body field name (`isBody: true`, else `body`). Defaults to `false`. The body is an md/mdx
+   * target's markdown content, or a json/yaml target's `isBody` field; a json/yaml field merely
+   * named `body` is ordinary data and always resolves.
    *
    * This is the embed-vs-link distinction, declared where it is actually known. A reference
    * that **embeds** its target — a shared call-to-action block rendered inline — needs the
@@ -163,9 +166,6 @@ export interface ReferenceFieldConfig extends BaseFieldConfig {
    * contains both kinds: a page with a shared CTA *and* a related-posts list cannot be served
    * by a single call-level setting, and a call-level flag would mean the same field resolved
    * to different shapes in different places.
-   *
-   * Only affects formats that HAVE a separate body — md and mdx. A json/yaml target's whole
-   * document is already its data, so this is a no-op there.
    */
   includeBody?: boolean
   /** Order of the picker's options. Default `'label'`. See {@link ReferenceOptionSort}. */
