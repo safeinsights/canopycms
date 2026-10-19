@@ -13,10 +13,10 @@ interface OverlayHeaderProps {
 }
 
 /**
- * The header of every right-hand drawer, sized and ruled like the content panel's header in
- * `SidePanelHost`: a 16px semibold title, a default-size close button, `md` by `xs` padding and a
- * 1px bottom rule. It is the drawer's own `Drawer.Header`, so the title labels the dialog and the
- * header stays pinned while the body scrolls.
+ * The header of every right-hand drawer, ruled like the content panel's header: a 16px semibold
+ * title, a default-size close button and a 1px rule, its `xs` padding making `SHELL_HEADER_HEIGHT`.
+ * As the drawer's own `Drawer.Header`, its title labels the dialog and it stays pinned while the
+ * body scrolls.
  */
 const OverlayHeader: React.FC<OverlayHeaderProps> = ({
   title,
