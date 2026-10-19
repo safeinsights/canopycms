@@ -401,6 +401,7 @@ A missing schema or an invalid meta file fails a build or static deploy; a missi
 - `editor` (`EditorConfig`, optional) — editor UI customization; see [Editor Customization](#editor-customization).
 - `dev` (`DevConfig`, optional) — dev-mode-only behavior, ignored when `mode !== 'dev'`. `dev.contentSync: 'off' | 'warn'` (default `'warn'`) controls how the dev server reports working-tree edits diverging from the served branch clone; see [Local Development Sync](#local-development-sync).
 - `validateEntry` (`ValidateEntryHook`, optional) — save-time validation, run server-side before the entry file is written; see [Save-Time Validation](#save-time-validation-validateentry).
+- `seo` (`{ group?, fields? }`, optional) — where SEO fields live, if not flat; every `noindex` reader uses it. See [Sitemap and SEO Metadata](#sitemap-and-seo-metadata).
 
 Schemas are not a config key: declare them with `defineEntrySchema`, register them with `createEntrySchemaRegistry`, and reference them from `.collection.json` files — see [Schema Registry and References](#schema-registry-and-references).
 
@@ -499,7 +500,7 @@ Afterwards, make sure the schema key you chose exists in your entry schema regis
 - `markdown` / `mdx` — JSX-aware rich-text editor; bodies it would alter on save (e.g. text after a nested list) or that crash it open as source. See [MDX content cannot run code](#mdx-content-cannot-run-code)
 - `image` — image upload/selection; `code` — code editor with syntax highlighting
 - `select` — dropdown; takes `options: string[] | {label, value}[]`
-- `reference` — a UUID-based link to another entry; takes `collections?`, `entryTypes?`, `displayField?`, `resolvedSchema?`
+- `reference` — a UUID-based link to another entry; takes `collections?`, `entryTypes?`, `displayField?`, `optionSort?`, `resolvedSchema?`
 - `object` — nested object; takes `fields: FieldConfig[]`. With `list: true`, set `itemTitleField` to a `string` or `number` child to title each card with its value, and `itemLabel` ("team member") to name its items
 - `block` — page blocks / "flexible content"; takes `templates: BlockTemplate[]`, each from `defineBlockTemplate` (see [Page Blocks](#page-blocks-flexible-content))
 
@@ -731,6 +732,10 @@ Deleting a referenced entry asks first: the dialog lists the entries pointing at
 ### How References Work in the Editor
 
 The editor offers entries in scope by `displayField` and stores each pick's id. A `list: true` reference shows a row per pick, in stored order, to drag, remove or swap in place, with Add below; no control offers an entry already picked.
+
+Options sort by label; `optionSort: 'collection'` groups them by collection in tree order, and `optionSort: { field: 'publishedAt', direction: 'desc' }` by a field (dotted paths allowed), valueless entries first under `'desc'`. Values compare as text: use ISO dates (`2026-03-04`), not "March 4, 2026".
+
+A target hidden from search (`noindex` at [`config.seo`](#definecanopyconfig-options)) shows a "Hidden from search" badge, and a note once picked: pages listing only indexed entries won't show it.
 
 ### Using References in Your Code
 
@@ -1002,7 +1007,7 @@ export const generateStaticParams = () =>
 
 ### Sitemap and SEO Metadata
 
-These ship together because of the `noindex` flag: it has to suppress a page in **both** surfaces — `robots: { index: false }` on the page and absence from the sitemap. Both read it through the same core predicate, as [AI content](#ai-ready-content) does, so they cannot disagree about which pages are advertised.
+These ship together because `noindex` must suppress a page in **both** surfaces — `robots: { index: false }` and absence from the sitemap — and both read it through one predicate at `config.seo`, as [AI content](#ai-ready-content) does.
 
 #### The recommended SEO field group
 
@@ -1017,7 +1022,7 @@ export const postSchema = defineEntrySchema([
 // TypeFromEntrySchema: { title: string; metaTitle?: string; metaDescription?: string; ... }
 ```
 
-For the nested convention, pass `defineSeoFieldGroup({ group: 'seo' })` — and **set it once, not per call**, by passing `seo: { group: 'seo' }` to `createNextCanopyContext`. `generateContentSitemap`'s `noindex` exclusion and `entryToMetadata`'s field extraction must agree on where the SEO fields live, or a page can end up `noindex` while the sitemap still advertises its URL (or the reverse) because one call site forgot the override the other one has. Both bound helpers pick the shared value up, and a per-call `seo`/`group`/`fields` still overrides it for that call.
+For the nested convention, pass `defineSeoFieldGroup({ group: 'seo' })` and set `seo: { group: 'seo' }` in `defineCanopyConfig`, where every surface reads it; a per-call `seo`/`group`/`fields` overrides it for one call.
 
 #### `sitemap.ts`
 
@@ -1052,7 +1057,7 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
 - `priority` (`(entry) => number | undefined`) — `<priority>` per entry
 - `pathFor` (`(entry) => string | null`) — advertise an entry at a different URL
 - `extraUrls` (`SitemapExtraUrl[]`) — URLs with no entry behind them (hand-written routes, feeds)
-- `seo` (`{ fields?, group? }`, default flat) — where the SEO fields live, when not the defaults
+- `seo` (`{ fields?, group? }`, default `config.seo`) — this call's SEO field location
 
 A sitemap must carry absolute URLs, which is why `siteUrl` is enforced. **Set `trailingSlash` to match your `next.config`** — the sitemap helpers cannot read it.
 
@@ -1741,10 +1746,6 @@ await generateAIContentFiles({
 ```typescript
 import { defineAIContentConfig } from 'canopycms/ai'
 
-// Where the noindex flag lives, if not flat. Pass this one object to
-// createNextCanopyContext({ seo }) too, so the sitemap and AI content agree.
-const seo = { group: 'seo' }
-
 const aiConfig = defineAIContentConfig({
   // Where these files are served, site-relative (default '/ai'); a reference links its
   // target's markdown copy beneath it
@@ -1757,8 +1758,6 @@ const aiConfig = defineAIContentConfig({
     where: (entry) => entry.data.hidden === true,
     noindex: false, // export noindex entries, left out by default
   },
-
-  seo,
 
   // Custom bundles: filtered subsets as single files
   bundles: [{ name: 'research-guides', filter: { collections: ['docs'], entryTypes: ['guide'] } }],

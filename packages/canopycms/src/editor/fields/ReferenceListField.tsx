@@ -13,6 +13,13 @@ import { ItemList } from './ItemList'
 import { useItemExpansion } from './item-expansion'
 import { useListItemKeys } from './list-item-keys'
 import {
+  HIDDEN_FROM_SEARCH,
+  HiddenPicksNote,
+  referenceOptionRenderer,
+  type HiddenPick,
+} from './reference-noindex'
+import type { ReferenceOptionSort } from '../../config'
+import {
   extractId,
   unlistedReferenceLabel,
   useReferenceOptions,
@@ -31,6 +38,7 @@ export interface ReferenceListFieldProps {
   entryTypes?: string[]
   displayField?: string
   branch?: string
+  optionSort?: ReferenceOptionSort
   /** The stored items: ids, or a resolved read's `{ id, … }`. */
   value: readonly unknown[]
   /** Always given ids. */
@@ -68,6 +76,7 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
   entryTypes,
   displayField = 'title',
   branch = 'main',
+  optionSort,
   value,
   onChange,
   path,
@@ -85,6 +94,7 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
     entryTypes,
     displayField,
     branch,
+    optionSort,
   })
   const ids = value.map(extractId)
   const keysFor = useListItemKeys()
@@ -115,6 +125,20 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
   }
 
   const picked = new Set(ids)
+  const hiddenField = new Map(
+    options.flatMap((option) =>
+      option.noindex ? [[option.value, option.noindex.fieldLabel]] : [],
+    ),
+  )
+  // Held back while options load: a stale list could name the wrong picks.
+  const hiddenPicks: HiddenPick[] =
+    loading || error
+      ? []
+      : [...picked].flatMap((pick) => {
+          const fieldLabel = hiddenField.get(pick)
+          return fieldLabel ? [{ label: labels.get(pick) ?? pick, fieldLabel }] : []
+        })
+  const renderOption = referenceOptionRenderer(options)
   const atCap = maxItems !== undefined && ids.length >= maxItems
 
   /** Row `index`'s choices: every option no other row holds, plus its own pick. */
@@ -183,6 +207,7 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
             </Stack>
           </Alert>
         )}
+        <HiddenPicksNote picks={hiddenPicks} />
         <ItemList
           items={value}
           itemKeys={itemKeys}
@@ -191,7 +216,14 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
           expansion={expansion}
           announcement={announcement}
           summarize={(_, idx) =>
-            loading ? { title: 'Loading…', pending: true } : { title: titleOf(idx) }
+            loading
+              ? { title: 'Loading…', pending: true }
+              : {
+                  title: titleOf(idx),
+                  ...(hiddenField.has(ids[idx]) && {
+                    badge: { label: HIDDEN_FROM_SEARCH, color: 'yellow' },
+                  }),
+                }
           }
           hasErrors={itemError ? (idx) => itemError(idx) !== undefined : undefined}
           onMove={(from, to) => {
@@ -214,6 +246,7 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
               <Select
                 label="Entry"
                 data={rowOptions(idx)}
+                renderOption={renderOption}
                 value={ids[idx] || null}
                 readOnly={readOnly}
                 rightSection={readOnly ? <span /> : undefined}
@@ -258,6 +291,7 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
               aria-label={`Add to ${label}`}
               placeholder="Search to add an entry"
               data={options.filter((option) => !picked.has(option.value))}
+              renderOption={renderOption}
               value={null}
               searchValue={addSearch}
               onSearchChange={setAddSearch}

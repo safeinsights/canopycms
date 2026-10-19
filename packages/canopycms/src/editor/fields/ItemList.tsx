@@ -4,6 +4,7 @@ import React, { useEffect, useId, useRef, useState } from 'react'
 
 import {
   ActionIcon,
+  Badge,
   Box,
   Group,
   Menu,
@@ -14,6 +15,7 @@ import {
   Tooltip,
   UnstyledButton,
   VisuallyHidden,
+  type MantineColor,
 } from '@mantine/core'
 import {
   DndContext,
@@ -48,6 +50,8 @@ import type { ItemExpansion } from './item-expansion'
 interface ItemSummary {
   title: string
   secondary?: string
+  /** A status shown after the title, in its colour's light variant; part of the row's name. */
+  badge?: { label: string; color: MantineColor }
   /** The title is still loading: the row shows a placeholder in its place. */
   pending?: boolean
 }
@@ -309,7 +313,7 @@ const ItemRow: React.FC<ItemRowProps> = ({
   }
 
   // Rows can share a title (two sections of one template), so names carry the second value too.
-  const name = summary.secondary ? `${summary.title}, ${summary.secondary}` : summary.title
+  const name = [summary.title, summary.secondary, summary.badge?.label].filter(Boolean).join(', ')
   const actionsLabel = `Actions for ${name}`
 
   return (
@@ -387,6 +391,17 @@ const ItemRow: React.FC<ItemRowProps> = ({
               <Text size="sm" c="dimmed" truncate="end" style={{ minWidth: 0 }}>
                 {summary.secondary}
               </Text>
+            )}
+            {summary.badge && !summary.pending && (
+              <Badge
+                variant="light"
+                color={summary.badge.color}
+                size="sm"
+                tt="none"
+                style={{ flexShrink: 0 }}
+              >
+                {summary.badge.label}
+              </Badge>
             )}
             {hasErrors && !expanded && (
               <Group gap={2} wrap="nowrap" ml="auto" style={{ flexShrink: 0 }}>

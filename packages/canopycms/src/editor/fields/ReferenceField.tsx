@@ -2,12 +2,18 @@
 
 import React, { useId } from 'react'
 
-import { Alert, Button, Select, Stack, Text, Loader } from '@mantine/core'
+import { Alert, Button, Group, Select, Stack, Text, Loader } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
 
 import { useFieldCommentControl } from '../comments/field-comment-context'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 import { FieldLabel } from './FieldLabel'
+import {
+  HiddenFromSearchBadge,
+  HiddenPicksNote,
+  referenceOptionRenderer,
+} from './reference-noindex'
+import type { ReferenceOptionSort } from '../../config'
 import {
   extractId,
   unlistedReferenceLabel,
@@ -27,6 +33,7 @@ export interface ReferenceFieldProps {
   entryTypes?: string[] // Entry types to filter by (e.g., ['partner'])
   displayField?: string // Field to use for display label
   branch?: string // Current branch
+  optionSort?: ReferenceOptionSort
   value: unknown
   onChange: (value: string) => void
   dataCanopyField?: string
@@ -43,6 +50,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   entryTypes,
   displayField = 'title',
   branch = 'main',
+  optionSort,
   value,
   onChange,
   dataCanopyField,
@@ -54,6 +62,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
     entryTypes,
     displayField,
     branch,
+    optionSort,
   })
   const normalizedValue = extractId(value)
 
@@ -71,6 +80,8 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   const commentControl = useFieldCommentControl(dataCanopyField)
 
   const settled = !loading && !error
+  const pickedOption = options.find((option) => option.value === normalizedValue)
+  const hidden = settled && pickedOption?.noindex ? pickedOption : undefined
 
   // One label row for every state, so the comment popover in it survives loading and Retry.
   return (
@@ -112,22 +123,40 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
           </Alert>
         </>
       ) : (
-        <Select
-          id={inputId}
-          aria-label={label}
-          description={description}
-          data={data}
-          value={normalizedValue}
-          readOnly={readOnly}
-          rightSection={readOnly ? <span /> : undefined}
-          onChange={(next) => {
-            if (!readOnly) onChange(next ?? '')
-          }}
-          searchable
-          clearable
-          placeholder={readOnly ? undefined : 'Select reference…'}
-          size="sm"
-        />
+        <>
+          <Select
+            id={inputId}
+            aria-label={label}
+            description={description}
+            data={data}
+            renderOption={referenceOptionRenderer(options)}
+            inputContainer={(input) =>
+              hidden ? (
+                <Group gap="xs" wrap="nowrap">
+                  <div style={{ flex: 1, minWidth: 0 }}>{input}</div>
+                  <HiddenFromSearchBadge />
+                </Group>
+              ) : (
+                input
+              )
+            }
+            value={normalizedValue}
+            readOnly={readOnly}
+            rightSection={readOnly ? <span /> : undefined}
+            onChange={(next) => {
+              if (!readOnly) onChange(next ?? '')
+            }}
+            searchable
+            clearable
+            placeholder={readOnly ? undefined : 'Select reference…'}
+            size="sm"
+          />
+          {hidden?.noindex && (
+            <HiddenPicksNote
+              picks={[{ label: hidden.label, fieldLabel: hidden.noindex.fieldLabel }]}
+            />
+          )}
+        </>
       )}
     </Stack>
   )
