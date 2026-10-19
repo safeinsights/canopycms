@@ -226,8 +226,9 @@ export type EntryTransforms = Record<string, EntryTransformFn>
 /** What {@link AIReferenceLinkFn} knows about a target beyond its data. */
 export interface AIReferenceLinkContext {
   /**
-   * The target's MD/MDX body as stored, `undefined` for a data-only entry. It only informs this
-   * decision: none of it reaches the entries that link to the target.
+   * The target's body as stored: an md/mdx entry's body, or a json/yaml entry's `isBody` field,
+   * which the target leaves out as a link-only reference does. `undefined` when it has none. It
+   * only informs this decision: none of it reaches the entries that link to the target.
    */
   body: string | undefined
   /**

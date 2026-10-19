@@ -3162,6 +3162,177 @@ describe('ContentStore cross-process index consistency', () => {
       expect(cache.size).toBe(2)
     })
 
+    describe('a link-only reference to a json/yaml target', () => {
+      const pageFields = [
+        { name: 'title', type: 'string' as const },
+        { name: 'featured', type: 'reference' as const },
+        { name: 'embedded', type: 'reference' as const, includeBody: true },
+        { name: 'related', type: 'reference' as const, list: true },
+      ]
+      const linkSchema = {
+        collections: [
+          {
+            name: 'library',
+            path: 'library',
+            entries: [
+              {
+                name: 'article',
+                format: 'yaml' as const,
+                schema: [
+                  { name: 'title', type: 'string' as const },
+                  {
+                    name: 'details',
+                    type: 'group' as const,
+                    fields: [{ name: 'prose', type: 'mdx' as const, isBody: true }],
+                  },
+                ],
+              },
+              {
+                name: 'note',
+                format: 'json' as const,
+                schema: [
+                  { name: 'title', type: 'string' as const },
+                  { name: 'body', type: 'string' as const },
+                ],
+              },
+              {
+                name: 'memo',
+                format: 'md' as const,
+                schema: [
+                  { name: 'title', type: 'string' as const },
+                  { name: 'text', type: 'markdown' as const, isBody: true },
+                ],
+              },
+            ],
+          },
+          {
+            name: 'pages',
+            path: 'pages',
+            entries: [{ name: 'page', format: 'json' as const, schema: pageFields }],
+          },
+        ],
+      } as const
+
+      const makeLinkStore = async () => {
+        const root = await tmpDir()
+        const config = defineCanopyTestConfig({ schema: linkSchema })
+        const store = new ContentStore(root, flattenSchema(linkSchema, config.contentRoot))
+        const library = unsafeAsLogicalPath('content/library')
+        const idOf = async (slug: string) => {
+          const id = await store.getIdForEntry(library, unsafeAsSlug(slug))
+          if (!id) throw new Error(`expected an id for ${slug}`)
+          return id
+        }
+        await store.write(
+          library,
+          unsafeAsSlug('long-read'),
+          {
+            format: 'yaml',
+            data: { title: 'A long read', prose: 'THE ARTICLE PROSE' },
+          },
+          'article',
+        )
+        await store.write(
+          library,
+          unsafeAsSlug('plain'),
+          {
+            format: 'json',
+            data: { title: 'Plain', body: 'NOTE BODY TEXT' },
+          },
+          'note',
+        )
+        await store.write(
+          library,
+          unsafeAsSlug('memo'),
+          {
+            format: 'md',
+            data: { title: 'Memo' },
+            body: 'MEMO PROSE',
+          },
+          'memo',
+        )
+        return {
+          store,
+          article: await idOf('long-read'),
+          note: await idOf('plain'),
+          memo: await idOf('memo'),
+        }
+      }
+
+      it("omits a yaml target's isBody field, and keeps it for a field that sets includeBody", async () => {
+        const { store, article } = await makeLinkStore()
+        const cache = createReferenceResolveCache()
+
+        const resolved = await store.resolveReferences(
+          { featured: article, embedded: article },
+          pageFields,
+          cache,
+        )
+
+        const featured = resolved.featured as Record<string, unknown>
+        expect(featured).toMatchObject({ title: 'A long read', urlPath: '/library/long-read' })
+        expect(featured).not.toHaveProperty('prose')
+        expect(resolved.embedded).toMatchObject({
+          title: 'A long read',
+          prose: 'THE ARTICLE PROSE',
+        })
+        expect(cache.size).toBe(2)
+      })
+
+      it('applies the same rule through read(), which resolves without a cache', async () => {
+        const { store, article } = await makeLinkStore()
+        const pages = unsafeAsLogicalPath('content/pages')
+        await store.write(pages, unsafeAsSlug('home'), {
+          format: 'json',
+          data: { title: 'Home', featured: article, embedded: article },
+        })
+
+        const { data } = await store.read(pages, unsafeAsSlug('home'))
+
+        expect(data.featured).not.toHaveProperty('prose')
+        expect(data.embedded).toMatchObject({ prose: 'THE ARTICLE PROSE' })
+      })
+
+      it('keeps a json field named body that is not marked isBody', async () => {
+        const { store, note } = await makeLinkStore()
+
+        const resolved = await store.resolveReferences({ featured: note }, pageFields)
+
+        expect(resolved.featured).toMatchObject({ title: 'Plain', body: 'NOTE BODY TEXT' })
+      })
+
+      it('leaves an md target as it was: frontmatter only, the body with includeBody', async () => {
+        const { store, memo } = await makeLinkStore()
+
+        const resolved = await store.resolveReferences(
+          { featured: memo, embedded: memo },
+          pageFields,
+        )
+
+        expect(resolved.featured).toMatchObject({ title: 'Memo' })
+        expect(resolved.featured).not.toHaveProperty('text')
+        expect(String((resolved.embedded as Record<string, unknown>).text).trim()).toBe(
+          'MEMO PROSE',
+        )
+      })
+
+      it('omits the field from every element of a list reference', async () => {
+        const { store, article, note } = await makeLinkStore()
+
+        const resolved = await store.resolveReferences(
+          { related: [article, note, article] },
+          pageFields,
+          createReferenceResolveCache(),
+        )
+
+        const related = resolved.related as Array<Record<string, unknown>>
+        expect(related.map((item) => item.title)).toEqual(['A long read', 'Plain', 'A long read'])
+        expect(related[0]).not.toHaveProperty('prose')
+        expect(related[1]).toHaveProperty('body', 'NOTE BODY TEXT')
+        expect(related[2]).not.toHaveProperty('prose')
+      })
+    })
+
     it('collapses concurrent lookups of the same id onto a single read', async () => {
       const { store, authorId, postFields } = await makeRefStore()
       const cache = createReferenceResolveCache()
