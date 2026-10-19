@@ -12,6 +12,8 @@ import type { BlockConfig, FieldConfig, ObjectFieldConfig } from '../../config'
 import { revealField } from '../field-target'
 import { BlockField, type BlockInstance } from './BlockField'
 import type { RenderField } from './ObjectField'
+import { ItemList } from './ItemList'
+import { useItemExpansion } from './item-expansion'
 import { ObjectListField } from './ObjectListField'
 import { useListItemKeys } from './list-item-keys'
 import { ITEM_KEY, isItemKey } from '../../item-keys'
@@ -107,6 +109,7 @@ const cta = (text: string): BlockInstance => ({ template: 'cta', value: { text }
 interface BlockHarnessProps {
   initial: BlockInstance[]
   readOnly?: boolean
+  maxItems?: number
   onChange?: (next: BlockInstance[]) => void
   onRemoved?: (index: number, block: BlockInstance) => void
 }
@@ -114,6 +117,7 @@ interface BlockHarnessProps {
 const BlockHarness: React.FC<BlockHarnessProps> = ({
   initial,
   readOnly = false,
+  maxItems,
   onChange,
   onRemoved,
 }) => {
@@ -133,6 +137,7 @@ const BlockHarness: React.FC<BlockHarnessProps> = ({
         readOnly={readOnly}
         resetKey="entry-1"
         onRemoved={onRemoved}
+        maxItems={maxItems}
       />
     </MantineProvider>
   )
@@ -861,5 +866,126 @@ describe('a field that asks to be revealed as it mounts', () => {
     render(<Mounting />)
     const row = screen.getByTestId('revealer').closest<HTMLElement>('[data-testid="item-row"]')
     await waitFor(() => expect(row?.getAttribute('data-expanded')).toBe('true'))
+  })
+})
+
+describe('a list that offers no Duplicate', () => {
+  const Plain: React.FC = () => {
+    const keys = ['a', 'b']
+    const expansion = useItemExpansion(keys, 'entry-1')
+    return (
+      <MantineProvider>
+        <div data-removal-focus tabIndex={-1}>
+          <ItemList
+            items={['Ada', 'Bo']}
+            itemKeys={keys}
+            path={['names']}
+            readOnly={false}
+            expansion={expansion}
+            summarize={(item) => ({ title: item })}
+            renderItem={(item) => item}
+            onMove={() => {}}
+            onRemove={() => {}}
+          />
+        </div>
+      </MantineProvider>
+    )
+  }
+
+  it('leaves Duplicate out of the row menu', async () => {
+    const user = userEvent.setup()
+    render(<Plain />)
+    await openRowMenu(user, rows()[0])
+    expect(screen.getByRole('menuitem', { name: /^Move down/ })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: /^Duplicate/ })).toBeNull()
+  })
+})
+
+describe('an object list at its maxItems', () => {
+  const capped = { ...teamField, maxItems: 2 }
+  const reason = 'This list holds at most 2 items. Remove one to add another.'
+
+  it('disables Add, says why on hover, and adds nothing when clicked', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<ListHarness initial={people('Ada', 'Bo')} field={capped} onChange={onChange} />)
+
+    const add = screen.getByTestId('object-list-add')
+    expect(add.getAttribute('aria-disabled')).toBe('true')
+    await user.hover(add)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(reason)
+    await user.click(add)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(rows()).toHaveLength(2)
+  })
+
+  it('blocks Duplicate with the same reason', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<ListHarness initial={people('Ada', 'Bo')} field={capped} onChange={onChange} />)
+
+    await openRowMenu(user, rows()[0])
+    const duplicate = screen.getByRole('menuitem', { name: /^Duplicate/ })
+    expect(duplicate.getAttribute('aria-disabled')).toBe('true')
+    expect(duplicate.textContent).toContain(reason)
+    await user.click(duplicate)
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('adds freely below the cap', async () => {
+    const user = userEvent.setup()
+    render(<ListHarness initial={people('Ada')} field={capped} />)
+    const add = screen.getByTestId('object-list-add')
+    expect(add.getAttribute('aria-disabled')).toBeNull()
+    await user.click(add)
+    expect(rows()).toHaveLength(2)
+    expect(screen.getByTestId('object-list-add').getAttribute('aria-disabled')).toBe('true')
+  })
+})
+
+describe('a block list at its maxItems', () => {
+  const reason = 'This list holds at most 1 section. Remove one to add another.'
+  // The dropdown mounts after a transition, so absence is only known once one would have shown.
+  const expectNoTemplateMenu = () =>
+    expect(screen.findByTestId('block-template-menu', {}, { timeout: 500 })).rejects.toThrow()
+
+  it('disables "Add section", says why, and opens no template menu', async () => {
+    const user = userEvent.setup()
+    render(<BlockHarness initial={[hero('One')]} maxItems={1} />)
+
+    const add = screen.getByTestId('block-add-section')
+    expect(add.getAttribute('aria-disabled')).toBe('true')
+    await user.hover(add)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(reason)
+    await user.click(add)
+    await expectNoTemplateMenu()
+  })
+
+  it('disables each "Add section here", naming the reason to assistive tech', async () => {
+    const user = userEvent.setup()
+    render(<BlockHarness initial={[hero('One')]} maxItems={1} />)
+
+    const insert = screen.getByRole('button', { name: 'Add section here' })
+    expect(insert.getAttribute('aria-disabled')).toBe('true')
+    const describedBy = insert.getAttribute('aria-describedby') ?? ''
+    expect(document.getElementById(describedBy)?.textContent).toBe(reason)
+    await user.click(insert)
+    await expectNoTemplateMenu()
+  })
+
+  it('blocks Duplicate with the same reason', async () => {
+    const user = userEvent.setup()
+    render(<BlockHarness initial={[hero('One')]} maxItems={1} />)
+    await openRowMenu(user, rows()[0])
+    const duplicate = screen.getByRole('menuitem', { name: /^Duplicate/ })
+    expect(duplicate.getAttribute('aria-disabled')).toBe('true')
+    expect(duplicate.textContent).toContain(reason)
+  })
+
+  it('opens the template menu below the cap', async () => {
+    const user = userEvent.setup()
+    render(<BlockHarness initial={[hero('One')]} maxItems={2} />)
+    await user.click(screen.getByTestId('block-add-section'))
+    expect(await screen.findByTestId('block-template-menu')).toBeTruthy()
   })
 })

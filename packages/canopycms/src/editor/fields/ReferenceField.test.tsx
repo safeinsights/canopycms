@@ -30,7 +30,7 @@ const Harness: React.FC<{
         entryTypes={entryTypes}
         branch={branch}
         value={value}
-        onChange={(next) => setValue(next as string)}
+        onChange={setValue}
         dataCanopyField="author"
       />
     </CanopyCMSProvider>
@@ -186,19 +186,15 @@ describe('ReferenceField', () => {
     const options = [{ value: 'Bob000000001', label: 'Bob' }]
 
     /** The field as FormRenderer drives it, starting from a value a read resolved. */
-    const ValueHarness: React.FC<{ initial: unknown; multiple?: boolean }> = ({
-      initial,
-      multiple,
-    }) => {
+    const ValueHarness: React.FC<{ initial: unknown }> = ({ initial }) => {
       const [value, setValue] = useState(initial)
       return (
         <CanopyCMSProvider>
           <ReferenceField
             label="Author"
             options={options}
-            value={value as string | string[]}
+            value={value}
             onChange={setValue}
-            multiple={multiple}
             dataCanopyField="author"
           />
           <output data-testid="value">{JSON.stringify(value)}</output>
@@ -228,23 +224,6 @@ describe('ReferenceField', () => {
         />,
       )
       expect(screen.getByDisplayValue('Restricted entry: Agent X')).toBeTruthy()
-    })
-
-    it('labels an unlisted id in a list and keeps it when another pill is removed', () => {
-      render(
-        <ValueHarness
-          multiple
-          initial={[{ id: 'Gone00000001', unavailable: true, reason: 'missing' }, 'Bob000000001']}
-        />,
-      )
-      const pillLabels = () =>
-        Array.from(document.querySelectorAll('.mantine-Pill-label')).map((el) => el.textContent)
-      expect(pillLabels()).toEqual(['Missing entry (Gone00000001)', 'Bob'])
-
-      const bobPill = document.querySelectorAll('.mantine-Pill-root')[1]
-      fireEvent.click(bobPill.querySelector('button')!)
-
-      expect(JSON.parse(screen.getByTestId('value').textContent!)).toEqual(['Gone00000001'])
     })
   })
 })

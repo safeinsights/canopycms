@@ -1424,6 +1424,7 @@ describe('content api', () => {
     const postSchema = [
       { name: 'title', type: 'string', required: true },
       { name: 'author', type: 'reference', required: true },
+      { name: 'related', type: 'reference', list: true, maxItems: 2 },
       {
         name: 'blocks',
         type: 'block',
@@ -1652,6 +1653,38 @@ describe('content api', () => {
       expect(res.status).toBe(422)
       expect(res.fieldErrors).toEqual([{ fieldPath: 'author', message: 'This field is required' }])
       expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('rejects a save whose list holds more than its maxItems, naming the list', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: { title: 'Hello', author: AUTHOR_ID, related: [AUTHOR_ID, AUTHOR_ID, AUTHOR_ID] },
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        {
+          fieldPath: 'related',
+          message: 'At most 2 items; this list has 3',
+          maxItems: { count: 3, cap: 2 },
+        },
+      ])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('accepts a save whose list holds exactly its maxItems', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: { title: 'Hello', author: AUTHOR_ID, related: [AUTHOR_ID, AUTHOR_ID] },
+      })
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
     })
 
     it('rejects a save that introduces a dangling (nonexistent) reference', async () => {

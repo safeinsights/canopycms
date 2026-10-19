@@ -90,6 +90,31 @@ describe('stampOnPublish', () => {
   })
 })
 
+describe('maxItems', () => {
+  it('survives the fieldSchema parse on a list, a reference list, an object list and a block', () => {
+    for (const field of [
+      { name: 'tags', type: 'string', list: true },
+      { name: 'featured', type: 'reference', list: true, collections: ['posts'] },
+      { name: 'links', type: 'object', list: true, fields: [{ name: 'label', type: 'string' }] },
+      {
+        name: 'blocks',
+        type: 'block',
+        templates: [{ name: 'quote', fields: [{ name: 'text', type: 'string' }] }],
+      },
+    ]) {
+      expect(fieldSchema.parse({ ...field, maxItems: 3 })).toMatchObject({ maxItems: 3 })
+    }
+  })
+
+  it('rejects a cap that is not a positive whole number', () => {
+    for (const maxItems of [0, -1, 1.5, '2']) {
+      expect(() =>
+        fieldSchema.parse({ name: 'tags', type: 'string', list: true, maxItems }),
+      ).toThrow()
+    }
+  })
+})
+
 describe('markdown field options: renderAs and mdxAllow', () => {
   const narrow = {
     components: { Callout: { props: { type: ['info', 'warning'] } } },
