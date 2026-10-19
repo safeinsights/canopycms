@@ -78,7 +78,7 @@ vi.mock('../branch-workspace', () => ({
 
 import {
   createBranchHandler as createBranch,
-  listBranchesHandler as listBranches,
+  listBranchesHandler,
   deleteBranchHandler as deleteBranch,
   updateBranchAccessHandler as updateBranchAccess,
   canCreateBranch,
@@ -94,6 +94,27 @@ import { RESERVED_ROUTE_BRANCH_NAMES } from '../paths'
 import type { BranchRegistry } from '../branch-registry'
 import type { CanopyConfig } from '../config'
 import type { GitHubService } from '../github-service'
+import { createCheckBranchAccess } from '../authorization/branch'
+import type { ApiContext, ApiRequest } from './types'
+
+/**
+ * The mock services grant every branch, and the list filters with `services.checkBranchAccess`,
+ * so these tests bind the real check from the context's config, as services.ts does.
+ */
+const listBranches = (ctx: ApiContext, req: ApiRequest) =>
+  listBranchesHandler(
+    {
+      ...ctx,
+      services: {
+        ...ctx.services,
+        checkBranchAccess: createCheckBranchAccess(
+          ctx.services.config.defaultBranchAccess ?? 'deny',
+          ctx.services.config,
+        ),
+      },
+    },
+    req,
+  )
 
 // Alias for convenience (tests reference permissionsLoader)
 const permissionsLoader = {
@@ -636,6 +657,49 @@ describe('branch api', () => {
     ])
   })
 
+  it("lists a colleague's un-ACL'd branch under defaultBranchAccess 'allow', which the access check grants", async () => {
+    const ctx = createMockApiContext({
+      services: {
+        registry: createMockRegistry([
+          createMockBranchContext({ branchName: 'feature/open', createdBy: 'u2' }),
+          createMockBranchContext({
+            branchName: 'feature/acl',
+            createdBy: 'u2',
+            access: { allowedUsers: ['u3'] },
+          }),
+        ]) as any,
+        config: { defaultBranchAccess: 'allow' } as unknown as CanopyConfig,
+      },
+    })
+
+    const res = await listBranches(ctx, {
+      user: { type: 'authenticated', userId: 'u1', groups: [] },
+    })
+
+    expect(res.data?.branches.map((b) => b.name)).toEqual(['feature/open'])
+  })
+
+  it('leaves out a branch whose explicit ACL omits its creator, which the access check refuses them', async () => {
+    const ctx = createMockApiContext({
+      services: {
+        registry: createMockRegistry([
+          createMockBranchContext({
+            branchName: 'feature/taken-over',
+            createdBy: 'u1',
+            access: { allowedUsers: ['u2'] },
+          }),
+          createMockBranchContext({ branchName: 'feature/mine', createdBy: 'u1' }),
+        ]) as any,
+      },
+    })
+
+    const res = await listBranches(ctx, {
+      user: { type: 'authenticated', userId: 'u1', groups: [] },
+    })
+
+    expect(res.data?.branches.map((b) => b.name)).toEqual(['feature/mine'])
+  })
+
   it('emits isProtected/readOnly flags on branches -- prod base is true/true, feature is false/false', async () => {
     const registry = createMockRegistry([
       createMockBranchContext({
@@ -825,8 +889,7 @@ describe('branch api', () => {
       user: { type: 'authenticated', userId: 'u1', groups: [] },
     })
 
-    // u1 created feature/x; 'main' isn't visible to them via the filter, but
-    // the visible entry still carries correct (unprotected) flags.
+    // u1 created feature/x; its entry carries correct (unprotected) flags.
     const feature = res.data?.branches.find((b) => b.name === 'feature/x')
     expect(feature?.isProtected).toBe(false)
     expect(feature?.readOnly).toBe(false)
@@ -859,8 +922,7 @@ describe('branch api', () => {
     })
 
     // u1 is neither the creator of 'main' nor in its (empty) ACL, but the
-    // base branch must still surface -- see listBranchesHandler's
-    // getBranchProtection short-circuit in the visibleBranches filter.
+    // access check's protected-base-branch grant still lists it.
     const names = res.data?.branches.map((b) => b.name)
     expect(names).toContain('main')
     expect(names).not.toContain('feature/x')

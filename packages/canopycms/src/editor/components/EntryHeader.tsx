@@ -5,12 +5,10 @@ import { Box, Group } from '@mantine/core'
 import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
 import type { BreadcrumbSegment } from '../editor-utils'
-import { SHELL_REGION_BORDER } from '../shell/EditorShell'
+import { SHELL_HEADER_HEIGHT, SHELL_REGION_BORDER } from '../shell/EditorShell'
 import { describeBranchLock } from '../branch-lock'
 import { EntryBreadcrumb } from './EntryBreadcrumb'
 import { EntrySaveButton } from './EntrySaveButton'
-
-const ENTRY_HEADER_HEIGHT = 48
 
 export interface EntryHeaderProps {
   currentEntry: EditorEntry | undefined
@@ -126,8 +124,7 @@ export function EntryHeader({
       wrap="nowrap"
       justify="space-between"
       px="sm"
-      py={6}
-      mih={ENTRY_HEADER_HEIGHT}
+      h={SHELL_HEADER_HEIGHT}
       style={{
         flexShrink: 0,
         borderBottom: SHELL_REGION_BORDER,
