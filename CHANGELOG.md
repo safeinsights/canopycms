@@ -54,6 +54,22 @@ entries under **Released**.
 
 ## Released
 
+### 0.3.3
+
+#### Bare URLs in a markdown body survive a save
+
+<!-- changeset: bare-urls-keep-their-text -->
+
+_First in 0.3.3._
+
+**What changed.** The rich-text editor reads a bare URL (`www.example.org`, `https://example.org`
+or an email address) as GFM does. Opening an entry no longer marks it modified, and saving a
+frontmatter change keeps the body byte for byte. Before, every bare URL was rewritten as an
+explicit link, and a sentence's period went into the href (`[www.example.org.](https://www.example.org.)`).
+A URL typed in the editor is saved with the trailing punctuation GFM leaves out of a link
+(`.`, `,`, `:`, `;`, `!`, `?`, `*`, `_`, `~`, an unbalanced `)`) outside it. Editing a bare URL's
+text updates its href; a bare URL given a label keeps its link.
+
 ### 0.3.2
 
 #### The content panel's header lines up with the entry header
