@@ -169,6 +169,27 @@ describe('generateAIContentFiles', () => {
     expect(await fs.readdir(outputDir)).toEqual([])
   })
 
+  it('reads the noindex flag at config.seo', async () => {
+    const { config, flat } = await setupContent(contentRoot, testSchema)
+    vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
+
+    await generateAIContentFiles({
+      config: {
+        ...config,
+        mode: 'dev',
+        deployedAs: 'static',
+        seo: { fields: { noindex: 'published' } },
+      },
+      entrySchemaRegistry: {},
+      outputDir,
+      _testFlatSchema: flat,
+    })
+
+    const posts = await fs.readdir(path.join(outputDir, 'posts'))
+    expect(posts).not.toContain('hello-world.md')
+    expect(posts).toContain('second.md')
+  })
+
   it('writes all expected files to disk', async () => {
     const { config, flat } = await setupContent(contentRoot, testSchema)
     vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)

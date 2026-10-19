@@ -221,13 +221,23 @@ describe('generateContentSitemap', () => {
     ])
 
     expect(await generateContentSitemap(ctx, { siteUrl: SITE, seo: { group: 'seo' } })).toEqual([])
-    // Without the `seo` option, the noindex flag is invisible to THIS call — a hidden entry ships
-    // in the sitemap. `generateContentSitemap` and `entryToMetadata` each take their own `seo`/
-    // `fields`/`group` per call, so an adopter who sets it on one and forgets the other gets a page
-    // that says noindex while the sitemap still advertises its URL. That's what
-    // `createNextCanopyContext({ seo })` + its bound helpers (see context-wrapper.ts) exist to
-    // prevent — see context-wrapper-seo.test.ts for the two surfaces sharing one default.
+    // Called directly without `seo`, the sitemap reads the flat names, so a grouped flag is
+    // invisible and the entry is listed.
     expect(await generateContentSitemap(ctx, { siteUrl: SITE })).toHaveLength(1)
+  })
+
+  it('refuses a direct call without seo when the config sets one', async () => {
+    const ctx = {
+      ...fakeBuildCtx([{ urlPath: '/a', slug: 'a', entryType: 'page' }]),
+      services: { config: { seo: { group: 'seo' } } },
+    } as unknown as Pick<CanopyBuildContext, 'listEntries' | 'services'>
+
+    await expect(generateContentSitemap(ctx, { siteUrl: SITE })).rejects.toThrow(
+      /called directly without `seo`/,
+    )
+    expect(
+      await generateContentSitemap(ctx, { siteUrl: SITE, seo: { group: 'seo' } }),
+    ).toHaveLength(1)
   })
 
   it('throws when siteUrl is not absolute (a non-absolute <loc> invalidates the whole sitemap)', async () => {

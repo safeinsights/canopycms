@@ -462,6 +462,11 @@ const CANOPY_STYLES = `
 [data-combobox-selected] {
   --mantine-primary-color-filled: var(--canopy-primary-fill);
 }
+[data-combobox-selected] [data-canopy-option-badge] {
+  color: inherit;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
 .mantine-DateTimePicker-day[data-selected],
 .mantine-DateTimePicker-pickerControl[data-selected] {
   background-color: var(--canopy-primary-fill);

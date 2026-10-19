@@ -133,7 +133,11 @@ export function extractSeoFields(
   entryData: unknown,
   opts: ExtractSeoFieldsOptions = {},
 ): SeoFields {
-  const names = { ...DEFAULT_SEO_FIELD_NAMES, ...opts.fields }
+  const names: SeoFieldNames = { ...DEFAULT_SEO_FIELD_NAMES }
+  // Only a real name overrides: `{ noindex: undefined }` (an unset env var, say) keeps the default.
+  for (const [key, name] of Object.entries(opts.fields ?? {})) {
+    if (typeof name === 'string' && name !== '') names[key as keyof SeoFieldNames] = name
+  }
   const entry = asRecord(entryData)
   const source = opts.group ? asRecord(entry?.[opts.group]) : entry
 
@@ -149,14 +153,16 @@ export function extractSeoFields(
 }
 
 /**
- * THE `noindex` predicate. Every surface that suppresses an entry must route through this one
- * function rather than re-deriving the flag:
+ * THE `noindex` predicate. Every surface that reads the flag routes through this one function,
+ * with `opts` taken from `CanopyConfig.seo` (canopycms-next's free helpers take it as an
+ * argument instead), rather than re-deriving it:
  *
  * - the page's own `robots: { index: false }` (canopycms-next's `entryToMetadata`),
- * - exclusion from the sitemap (canopycms-next's `generateContentSitemap`), and
- * - exclusion from AI content (`ai/generate.ts`, unless `exclude.noindex: false`).
+ * - exclusion from the sitemap (canopycms-next's `generateContentSitemap`),
+ * - exclusion from AI content (`ai/generate.ts`, unless `exclude.noindex: false`), and
+ * - the marker on a reference picker's option (`ReferenceResolver.loadReferenceOptions`).
  *
- * Those surfaces shipping from one predicate is the point. Derived separately, a `noindex` entry
+ * One predicate at one configured location is the point. Derived separately, a `noindex` entry
  * stays advertised in one surface while correctly absent from another, and nothing warns.
  *
  * NOT applied to enumeration: `noindex` means "don't advertise this", not "don't build this".

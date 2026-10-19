@@ -984,6 +984,36 @@ describe('FormRenderer', () => {
     })
   })
 
+  describe('reference optionSort', () => {
+    it.each([false, true])("asks the endpoint for the field's order (list: %s)", async (list) => {
+      const mockClient = await setupMockApiClient()
+      const Wrapper = createApiClientWrapper(mockClient)
+      mockClient.content.getReferenceOptions.mockReturnValue(new Promise(() => {}))
+      render(
+        <Wrapper>
+          <StatefulForm
+            fields={[
+              {
+                name: 'featured',
+                type: 'reference',
+                label: 'Featured',
+                collections: ['posts'],
+                list,
+                optionSort: 'collection',
+              },
+            ]}
+            initialValue={{}}
+          />
+        </Wrapper>,
+      )
+      await waitFor(() =>
+        expect(mockClient.content.getReferenceOptions).toHaveBeenCalledWith(
+          expect.objectContaining({ sort: 'collection' }),
+        ),
+      )
+    })
+  })
+
   describe('field descriptions', () => {
     const DESCRIPTION = 'Guidance for the editor'
     let mockClient: MockApiClient

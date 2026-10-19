@@ -126,6 +126,25 @@ describe('collectStaticPaths', () => {
       await expect(collectStaticPaths(ctx)).rejects.toThrow('CanopyCMS static build:')
     })
 
+    it('throws on an over-maxItems list when CANOPY_BUILD_MODE is set, naming the list', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+      const ctx = fakeCtx([
+        {
+          urlPath: '/posts/strip',
+          slug: 'strip' as never,
+          entryType: 'post',
+          entryPath: 'content/posts/strip' as never,
+          format: 'json',
+          schema: [{ name: 'featured', type: 'reference', list: true, maxItems: 1 }],
+          data: { featured: ['5NVkkrB1MJUv', '6NVkkrB1MJUv'] },
+        },
+      ])
+
+      await expect(collectStaticPaths(ctx)).rejects.toThrow(
+        'content/posts/strip — featured: 2 items, but maxItems is 1',
+      )
+    })
+
     it('warns, without throwing, about an entry holding code in a non-executable mdx body', async () => {
       vi.stubEnv('CANOPY_BUILD_MODE', 'true')
       const consoleSpy = mockConsole()
@@ -630,6 +649,54 @@ describe('assertBuildEntriesValid', () => {
     expect(message).toContain('content/posts/draft-one')
     expect(message).toContain('content/posts/draft-two')
     expect(message).not.toContain('content/posts/hello')
+  })
+
+  describe('an over-maxItems list', () => {
+    const stripSchema: EntrySchema = [
+      { name: 'title', type: 'string', required: true },
+      { name: 'featured', type: 'reference', list: true, maxItems: 2 },
+    ]
+    const overCapItem = {
+      entryPath: 'content/posts/strip' as never,
+      schema: stripSchema,
+      data: { title: 'Strip', featured: ['5NVkkrB1MJUv', '6NVkkrB1MJUv', '7NVkkrB1MJUv'] },
+    }
+    const messageOf = (items: Parameters<typeof assertBuildEntriesValid>[0]): string => {
+      try {
+        assertBuildEntriesValid(items, 'test phase')
+      } catch (err) {
+        return (err as Error).message
+      }
+      throw new Error('expected assertBuildEntriesValid to throw')
+    }
+
+    it('names the entry, the list, the count and the cap, and says how to fix it', () => {
+      const message = messageOf([overCapItem])
+      expect(message).toContain('content/posts/strip — featured: 3 items, but maxItems is 2')
+      expect(message).toContain('remove')
+      expect(message).toContain('two branches each add one item')
+    })
+
+    it('leaves out the abandoned-scaffold advice when it is the only error', () => {
+      expect(messageOf([overCapItem])).not.toContain('abandoned create-scaffolds')
+    })
+
+    it('adds the scaffold advice, and an ordinary line, for another entry with other errors', () => {
+      const message = messageOf([
+        overCapItem,
+        { entryPath: 'content/posts/draft' as never, schema: stripSchema, data: {} },
+      ])
+      expect(message).toContain('content/posts/strip — featured: 3 items, but maxItems is 2')
+      expect(message).toContain('content/posts/draft — title: This field is required')
+      expect(message).toContain('abandoned create-scaffolds')
+    })
+
+    it('lists the over-cap line even when its entry has other errors, summarising only those', () => {
+      const message = messageOf([{ ...overCapItem, data: { featured: overCapItem.data.featured } }])
+      expect(message).toContain('content/posts/strip — title: This field is required')
+      expect(message).not.toContain('title: This field is required (+')
+      expect(message).toContain('content/posts/strip — featured: 3 items, but maxItems is 2')
+    })
   })
 })
 

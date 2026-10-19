@@ -1,33 +1,28 @@
 'use client'
 
-import React, { useEffect, useId, useState } from 'react'
+import React, { useId, useMemo } from 'react'
 
-import { Alert, Button, MultiSelect, Select, Stack, Text, Loader } from '@mantine/core'
+import { Alert, Button, Group, Select, Stack, Text, Loader } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
 
-import { createApiClient } from '../../api/client'
-import { useOptionalApiClient } from '../context'
-import { getErrorMessage } from '../../utils/error'
 import { useFieldCommentControl } from '../comments/field-comment-context'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 import { FieldLabel } from './FieldLabel'
+import {
+  HiddenFromSearchBadge,
+  HiddenPicksNote,
+  referenceOptionRenderer,
+} from './reference-noindex'
+import type { ReferenceOptionSort } from '../../config'
+import {
+  extractId,
+  unlistedReferenceLabel,
+  useReferenceOptions,
+  type ReferenceOption,
+} from './use-reference-options'
 
 /** @internal Exported for tests. */
-export interface ReferenceOption {
-  value: string
-  label: string
-}
-
-/** Label for a set value the options omit (a restricted, missing or unlisted target). */
-function unlistedReferenceLabel(value: unknown, id: string): string {
-  if (value && typeof value === 'object' && 'unavailable' in value && value.unavailable === true) {
-    if ('reason' in value && value.reason === 'restricted' && 'title' in value) {
-      return `Restricted entry: ${String(value.title)}`
-    }
-    return `Missing entry (${id})`
-  }
-  return `Unavailable entry (${id})`
-}
+export type { ReferenceOption }
 
 export interface ReferenceFieldProps {
   id?: string
@@ -38,9 +33,9 @@ export interface ReferenceFieldProps {
   entryTypes?: string[] // Entry types to filter by (e.g., ['partner'])
   displayField?: string // Field to use for display label
   branch?: string // Current branch
-  value: string | string[]
-  onChange: (value: string | string[]) => void
-  multiple?: boolean
+  optionSort?: ReferenceOptionSort
+  value: unknown
+  onChange: (value: string) => void
   dataCanopyField?: string
   /** Shows the value without accepting edits. */
   readOnly?: boolean
@@ -55,118 +50,40 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   entryTypes,
   displayField = 'title',
   branch = 'main',
+  optionSort,
   value,
   onChange,
-  multiple,
   dataCanopyField,
   readOnly = false,
 }) => {
-  // Configured with the deployment's basePath when rendered inside an
-  // ApiClientProvider (always true in the real Editor tree); `null` outside one
-  // (e.g. FormRenderer.stories.tsx), so the fetch effect falls back to a
-  // default-configured client.
-  const contextApiClient = useOptionalApiClient()
-  const hasCollections = !!collections && collections.length > 0
-  const hasEntryTypes = !!entryTypes && entryTypes.length > 0
-  const needsFetch = !staticOptions && (hasCollections || hasEntryTypes)
-  const [options, setOptions] = useState<ReferenceOption[]>(staticOptions || [])
-  const [loading, setLoading] = useState(needsFetch)
-  const [error, setError] = useState<string | null>(null)
-  const [retryCount, setRetryCount] = useState(0)
-
-  const extractId = (val: unknown): string => {
-    if (typeof val === 'string') return val
-    if (val && typeof val === 'object' && 'id' in val && typeof val.id === 'string') return val.id
-    return ''
-  }
-
-  const normalizedValue = multiple
-    ? Array.isArray(value)
-      ? value.map(extractId)
-      : []
-    : extractId(value)
+  const { options, loading, error, retry } = useReferenceOptions({
+    staticOptions,
+    collections,
+    entryTypes,
+    displayField,
+    branch,
+    optionSort,
+  })
+  const normalizedValue = extractId(value)
 
   // Otherwise Select shows a set value as empty, inviting an editor to repoint it.
   const listed = new Set(options.map((option) => option.value))
-  const unlisted = new Map<string, ReferenceOption>()
-  for (const raw of multiple ? (Array.isArray(value) ? value : []) : [value]) {
-    const valueId = extractId(raw)
-    if (valueId && !listed.has(valueId) && !unlisted.has(valueId)) {
-      unlisted.set(valueId, { value: valueId, label: unlistedReferenceLabel(raw, valueId) })
-    }
-  }
-  const data = unlisted.size > 0 ? [...options, ...unlisted.values()] : options
+  const data =
+    normalizedValue && !listed.has(normalizedValue)
+      ? [
+          ...options,
+          { value: normalizedValue, label: unlistedReferenceLabel(value, normalizedValue) },
+        ]
+      : options
   const generatedId = useId()
   const inputId = id ?? generatedId
   const commentControl = useFieldCommentControl(dataCanopyField)
 
-  // Track deps to detect changes and reset loading during render
-  const [prevFetchKey, setPrevFetchKey] = useState('')
-  const fetchKey = needsFetch
-    ? `${collections?.join(',') ?? ''}:${entryTypes?.join(',') ?? ''}:${displayField}:${branch}`
-    : ''
-  if (fetchKey !== prevFetchKey) {
-    setPrevFetchKey(fetchKey)
-    if (needsFetch) {
-      setLoading(true)
-      setError(null)
-    }
-  }
-
-  // Keyed on the derived `fetchKey`, not the raw `collections`/`entryTypes`
-  // arrays: the parent rebuilds those on every render (including every
-  // `refreshEntries()` after a save), so depending on them directly fired
-  // this fetch far more often than the inputs actually changed.
-  //
-  // `active` guards against a stale response: if the key changes again or the
-  // field unmounts before this request settles, the loser's `.then`/`.catch`/
-  // `.finally` must not overwrite state a newer request already owns.
-  useEffect(() => {
-    if (!needsFetch) return
-    let active = true
-    const apiClient = contextApiClient ?? createApiClient()
-
-    const params: Record<string, string> = { branch, displayField }
-    if (collections && collections.length > 0) params.collections = collections.join(',')
-    if (entryTypes && entryTypes.length > 0) params.entryTypes = entryTypes.join(',')
-
-    apiClient.content
-      .getReferenceOptions(params)
-      .then((response) => {
-        if (!active) return
-        if (response.ok && response.data?.options) {
-          const mappedOptions = response.data.options.map((opt: { id: string; label: string }) => ({
-            value: opt.id,
-            label: opt.label,
-          }))
-          setOptions(mappedOptions)
-        } else {
-          setError(response.error || 'Failed to load reference options')
-        }
-      })
-      .catch((err) => {
-        if (!active) return
-        console.error('Failed to load reference options:', err)
-        setError(getErrorMessage(err))
-      })
-      .finally(() => {
-        if (!active) return
-        setLoading(false)
-      })
-
-    return () => {
-      active = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- collections/entryTypes/displayField/branch are captured via fetchKey; re-listing them here would defeat the point of keying on the derived string
-  }, [needsFetch, fetchKey, retryCount, contextApiClient])
-
-  const handleRetry = () => {
-    setLoading(true)
-    setError(null)
-    setRetryCount((count) => count + 1)
-  }
-
   const settled = !loading && !error
+  // Stable between renders, as in ReferenceListField.
+  const renderOption = useMemo(() => referenceOptionRenderer(options), [options])
+  const pickedOption = options.find((option) => option.value === normalizedValue)
+  const hidden = settled && pickedOption?.noindex ? pickedOption : undefined
 
   // One label row for every state, so the comment popover in it survives loading and Retry.
   return (
@@ -199,7 +116,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
               <Text size="sm">{error}</Text>
               <Button
                 variant="light"
-                onClick={handleRetry}
+                onClick={retry}
                 data-testid={`reference-retry-${dataCanopyField}`}
               >
                 Retry
@@ -207,39 +124,41 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
             </Stack>
           </Alert>
         </>
-      ) : multiple ? (
-        <MultiSelect
-          id={inputId}
-          aria-label={label}
-          description={description}
-          data={data}
-          value={normalizedValue as string[]}
-          readOnly={readOnly}
-          rightSection={readOnly ? <span /> : undefined}
-          onChange={(next) => {
-            if (!readOnly) onChange(next)
-          }}
-          searchable
-          placeholder={readOnly ? undefined : 'Select reference…'}
-          size="sm"
-        />
       ) : (
-        <Select
-          id={inputId}
-          aria-label={label}
-          description={description}
-          data={data}
-          value={normalizedValue as string}
-          readOnly={readOnly}
-          rightSection={readOnly ? <span /> : undefined}
-          onChange={(next) => {
-            if (!readOnly) onChange(next ?? '')
-          }}
-          searchable
-          clearable
-          placeholder={readOnly ? undefined : 'Select reference…'}
-          size="sm"
-        />
+        <>
+          <Select
+            id={inputId}
+            aria-label={label}
+            description={description}
+            data={data}
+            renderOption={renderOption}
+            inputContainer={(input) =>
+              hidden ? (
+                <Group gap="xs" wrap="nowrap">
+                  <div style={{ flex: 1, minWidth: 0 }}>{input}</div>
+                  <HiddenFromSearchBadge />
+                </Group>
+              ) : (
+                input
+              )
+            }
+            value={normalizedValue}
+            readOnly={readOnly}
+            rightSection={readOnly ? <span /> : undefined}
+            onChange={(next) => {
+              if (!readOnly) onChange(next ?? '')
+            }}
+            searchable
+            clearable
+            placeholder={readOnly ? undefined : 'Select reference…'}
+            size="sm"
+          />
+          {hidden?.noindex && (
+            <HiddenPicksNote
+              picks={[{ label: hidden.label, fieldLabel: hidden.noindex.fieldLabel }]}
+            />
+          )}
+        </>
       )}
     </Stack>
   )

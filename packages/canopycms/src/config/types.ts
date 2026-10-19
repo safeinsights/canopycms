@@ -10,6 +10,7 @@ import type { LogicalPath, ContentId } from '../paths/types'
 import type { PermissionPath } from '../authorization/types'
 import type { EntryLinkUrlResolver } from '../entry-link-resolver'
 import type { CropRect } from '../assets/transform-directives'
+import type { SeoFieldLocation } from '../static/seo'
 
 const scalarFieldTypes = ['string', 'number', 'boolean', 'datetime', 'code'] as const
 
@@ -68,6 +69,13 @@ interface BaseFieldConfig {
    * `includeBody: true`.
    */
   isBody?: boolean
+  /**
+   * On a `list: true` field or a `block` field: the most items the list may hold. The editor
+   * stops adding at the cap, saving over it is refused, and a static build fails on an entry
+   * over it, so adding a cap to a list that already holds more fails the build until the
+   * content is fixed. `ensureMaxItemsPlacement` (`validation.ts`) refuses it elsewhere in a registry schema.
+   */
+  maxItems?: number
 }
 
 interface PrimitiveFieldConfig extends BaseFieldConfig {
@@ -160,7 +168,30 @@ export interface ReferenceFieldConfig extends BaseFieldConfig {
    * to different shapes in different places.
    */
   includeBody?: boolean
+  /** Order of the picker's options. Default `'label'`. See {@link ReferenceOptionSort}. */
+  optionSort?: ReferenceOptionSort
 }
+
+/**
+ * How a reference picker orders its options. Every mode runs after the search filter.
+ *
+ * - `'label'`: alphabetical by label.
+ * - `'collection'`: one group per collection, in content-tree order (a collection, then its
+ *   subcollections), each in its collection's own order, then by label.
+ * - `{ field, direction }`: by the target's value at `field`, a dotted path for a nested field
+ *   (`'meta.publishedAt'`). Numbers compare as numbers and sort before strings (`'desc'` reverses that too); strings compare
+ *   as plain text, so point it at an ISO date (`YYYY-MM-DD`; unquoted frontmatter dates count):
+ *   a display date like `'March 4'` sorts by month name. An entry with no value sorts first
+ *   under `'desc'`, last under `'asc'` (the default). Ties go by label.
+ *
+ * @example
+ * // Newest first, with entries not yet given a date at the top.
+ * optionSort: { field: 'publishedAt', direction: 'desc' }
+ */
+export type ReferenceOptionSort =
+  | 'label'
+  | 'collection'
+  | { field: string; direction?: 'asc' | 'desc' }
 
 /**
  * Image field config. The value is a structured object (see `ImageFieldValue`
@@ -519,6 +550,8 @@ export interface CanopyConfig {
   validateEntry?: ValidateEntryHook
   /** Site default for every field checked as MDX — see {@link CanopyConfigInput.mdxAllow}. */
   mdxAllow?: MdxAllowlist
+  /** Where entries keep their SEO fields — see {@link CanopyConfigInput.seo}. */
+  seo?: SeoFieldLocation
   /** Dev-mode-only behavior — see {@link CanopyConfigInput.dev}. */
   dev?: DevConfig
 }
@@ -609,6 +642,13 @@ export interface CanopyConfigInput {
   validateEntry?: ValidateEntryHook
   /** What every field checked as MDX accepts; a field's own `mdxAllow` replaces it key by key. */
   mdxAllow?: MdxAllowlist
+  /**
+   * Where entries keep their SEO fields: `group` when `defineSeoFieldGroup({ group })` nests
+   * them, `fields` for renamed ones. Omit for the flat default. Every surface that reads an
+   * entry's `noindex` reads it here: the sitemap and page metadata helpers `createNextCanopyContext`
+   * returns, AI content and the editor's reference picker.
+   */
+  seo?: SeoFieldLocation
   /** Dev-mode-only behavior (content-sync divergence detection). Ignored when mode !== 'dev'. */
   dev?: DevConfig
 }

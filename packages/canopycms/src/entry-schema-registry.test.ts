@@ -502,6 +502,31 @@ describe('createEntrySchemaRegistry: stampOnPublish', () => {
   })
 })
 
+describe('createEntrySchemaRegistry: maxItems', () => {
+  const register = (schema: EntrySchema) => () => createEntrySchemaRegistry({ post: schema })
+
+  it('accepts it on a list and on a block field', () => {
+    expect(
+      register([
+        { name: 'featured', type: 'reference', list: true, collections: ['posts'], maxItems: 2 },
+        { name: 'blocks', type: 'block', maxItems: 3, templates: [{ name: 'quote', fields: [] }] },
+      ]),
+    ).not.toThrow()
+  })
+
+  it('refuses it on a field that is not a list', () => {
+    expect(register([{ name: 'title', type: 'string', maxItems: 2 }])).toThrow(
+      'Entry schema registry entry "post": field "title" has maxItems, but it is not a list',
+    )
+  })
+
+  it('refuses a cap that is not a positive whole number', () => {
+    expect(register([{ name: 'tags', type: 'string', list: true, maxItems: 0 }])).toThrow(
+      'field "tags" has maxItems, which must be a positive whole number',
+    )
+  })
+})
+
 describe('validateEntrySchemaRegistry', () => {
   const testDir = join(process.cwd(), '.test-content-validate')
 

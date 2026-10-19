@@ -75,11 +75,9 @@ export const contentSitemap = async (options: GenerateContentSitemapOptions) => 
   return context.generateContentSitemap(options)
 }
 
-// SEO mapping for generateMetadata, bound to this context — see createNextCanopyContext's `seo`
-// option. Sharing one binding with contentSitemap above (rather than importing canopycms-next's
-// unbound entryToMetadata directly) is what keeps the sitemap's noindex exclusion and this page's
-// robots meta reading the SAME field location: set `seo` once above and both agree by
-// construction, instead of each call site needing to repeat (and possibly forget) it.
+// SEO mapping for generateMetadata, bound to this context. Like contentSitemap above, it reads the
+// SEO field location from the config's `seo`, so the sitemap's noindex exclusion and this page's
+// robots meta agree without either call site repeating it.
 export const entryToMetadata = async (entryData: unknown, options?: EntryToMetadataOptions) => {
   const context = await canopyContextPromise
   return context.entryToMetadata(entryData, options)

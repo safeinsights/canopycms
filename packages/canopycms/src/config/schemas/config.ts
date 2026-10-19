@@ -6,6 +6,7 @@ import { z } from 'zod'
 
 import type { AuthPlugin } from '../../auth/plugin'
 import type { EntryLinkUrlResolver } from '../../entry-link-resolver'
+import type { SeoFields } from '../../static/seo'
 import type { EditorSignInProps, ValidateEntryHook } from '../types'
 import { relativePathSchema } from './collection'
 import { mdxAllowlistSchema } from './field'
@@ -70,6 +71,27 @@ const editorConfigSchema = z.object({
   SignInComponent: z.custom<React.ComponentType<EditorSignInProps>>().optional(),
 })
 
+const seoFieldNameSchema = z.string().min(1).optional()
+// Strict, so a misspelled key (`noIndex`) fails the parse instead of leaving every surface
+// reading the default field name.
+const seoSchema = z
+  .object({
+    group: z.string().min(1).optional(),
+    fields: z
+      .object({
+        title: seoFieldNameSchema,
+        description: seoFieldNameSchema,
+        ogImage: seoFieldNameSchema,
+        ogType: seoFieldNameSchema,
+        canonical: seoFieldNameSchema,
+        noindex: seoFieldNameSchema,
+        twitterCard: seoFieldNameSchema,
+      } satisfies Record<keyof SeoFields, z.ZodTypeAny>)
+      .strict()
+      .optional(),
+  })
+  .strict()
+
 export const CanopyConfigSchema = z
   .object({
     media: mediaSchema.optional(),
@@ -119,6 +141,7 @@ export const CanopyConfigSchema = z
     entryLinkUrl: z.custom<EntryLinkUrlResolver>().optional(),
     validateEntry: z.custom<ValidateEntryHook>().optional(),
     mdxAllow: mdxAllowlistSchema.optional(),
+    seo: seoSchema.optional(),
     dev: devConfigSchema.optional(),
   })
   .strict()

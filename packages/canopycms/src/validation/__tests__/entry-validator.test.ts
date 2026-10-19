@@ -198,6 +198,103 @@ describe('validateEntryData', () => {
   })
 })
 
+describe('validateEntryData - maxItems', () => {
+  const ids = ['5NVkkrB1MJUv', '6NVkkrB1MJUv', '7NVkkrB1MJUv']
+  const overCap = (count: number, cap: number) => ({ count, cap })
+  const message = (cap: number, count: number) =>
+    `At most ${cap} ${cap === 1 ? 'item' : 'items'}; this list has ${count}`
+
+  it('accepts a reference list at the cap and refuses one over it', () => {
+    const fields: EntrySchema = [{ name: 'featured', type: 'reference', list: true, maxItems: 2 }]
+    expect(validateEntryData(fields, { featured: ids.slice(0, 2) })).toEqual([])
+    expect(validateEntryData(fields, { featured: ids })).toEqual([
+      { fieldPath: 'featured', message: message(2, 3), maxItems: overCap(3, 2) },
+    ])
+  })
+
+  it('uses the singular for a cap of one', () => {
+    const fields: EntrySchema = [{ name: 'featured', type: 'reference', list: true, maxItems: 1 }]
+    expect(validateEntryData(fields, { featured: ids.slice(0, 2) })[0].message).toBe(
+      'At most 1 item; this list has 2',
+    )
+  })
+
+  it('caps a string list', () => {
+    const fields: EntrySchema = [{ name: 'tags', type: 'string', list: true, maxItems: 2 }]
+    expect(validateEntryData(fields, { tags: ['a', 'b'] })).toEqual([])
+    expect(validateEntryData(fields, { tags: ['a', 'b', 'c'] })).toEqual([
+      { fieldPath: 'tags', message: message(2, 3), maxItems: overCap(3, 2) },
+    ])
+  })
+
+  it('caps an object list, and reports an item error inside it alongside the cap error', () => {
+    const fields: EntrySchema = [
+      {
+        name: 'links',
+        type: 'object',
+        list: true,
+        maxItems: 1,
+        fields: [{ name: 'label', type: 'string', required: true }],
+      },
+    ]
+    expect(validateEntryData(fields, { links: [{ label: 'a' }] })).toEqual([])
+    expect(validateEntryData(fields, { links: [{ label: 'a' }, { label: '' }] })).toEqual([
+      { fieldPath: 'links', message: message(1, 2), maxItems: overCap(2, 1) },
+      { fieldPath: 'links[1].label', message: 'This field is required' },
+    ])
+  })
+
+  it('caps a block field', () => {
+    const fields: EntrySchema = [
+      {
+        name: 'blocks',
+        type: 'block',
+        maxItems: 1,
+        templates: [{ name: 'quote', fields: [{ name: 'text', type: 'string' }] }],
+      },
+    ]
+    expect(validateEntryData(fields, { blocks: [{ template: 'quote', value: {} }] })).toEqual([])
+    expect(
+      validateEntryData(fields, {
+        blocks: [
+          { template: 'quote', value: {} },
+          { template: 'quote', value: {} },
+        ],
+      }),
+    ).toEqual([{ fieldPath: 'blocks', message: message(1, 2), maxItems: overCap(2, 1) }])
+  })
+
+  it('reports an over-cap list at its nested path', () => {
+    const fields: EntrySchema = [
+      {
+        name: 'hero',
+        type: 'object',
+        fields: [{ name: 'tags', type: 'string', list: true, maxItems: 1 }],
+      },
+    ]
+    expect(validateEntryData(fields, { hero: { tags: ['a', 'b'] } })).toEqual([
+      { fieldPath: 'hero.tags', message: message(1, 2), maxItems: overCap(2, 1) },
+    ])
+  })
+
+  it('reports required alone for an empty list, and the cap for an over-cap required list', () => {
+    const fields: EntrySchema = [
+      { name: 'featured', type: 'reference', list: true, required: true, maxItems: 2 },
+    ]
+    expect(validateEntryData(fields, { featured: [] })).toEqual([
+      { fieldPath: 'featured', message: 'At least one item is required' },
+    ])
+    expect(validateEntryData(fields, { featured: ids })).toEqual([
+      { fieldPath: 'featured', message: message(2, 3), maxItems: overCap(3, 2) },
+    ])
+  })
+
+  it('does not cap a list that carries no maxItems', () => {
+    const fields: EntrySchema = [{ name: 'tags', type: 'string', list: true }]
+    expect(validateEntryData(fields, { tags: ['a', 'b', 'c', 'd'] })).toEqual([])
+  })
+})
+
 describe('validateEntryData - image fields', () => {
   const imageSchema: EntrySchema = [{ name: 'hero', type: 'image' }]
   const altOptionalSchema: EntrySchema = [{ name: 'hero', type: 'image', altOptional: true }]

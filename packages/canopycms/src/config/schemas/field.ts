@@ -21,6 +21,9 @@ const fieldBaseSchema = z.object({
   list: z.boolean().optional(),
   isTitle: z.boolean().optional(),
   isBody: z.boolean().optional(),
+  // Listed so a parse keeps it (zod strips unknown keys); which fields may carry it is
+  // `ensureMaxItemsPlacement`'s call (config/validation.ts).
+  maxItems: z.number().int().positive().optional(),
 })
 
 export const selectOptionSchema = z.union([
@@ -123,6 +126,15 @@ const selectFieldSchema = fieldBaseSchema.extend({
   options: z.array(selectOptionSchema).min(1),
 })
 
+/**
+ * A dotted field path for `optionSort: { field }`: non-empty segments, so `'a..b'` and `'.a'`
+ * fail at config time rather than sorting on a value no entry has.
+ * @internal Exported for the reference-options endpoint, which validates `sortField` the same way.
+ */
+export const referenceSortFieldSchema = z
+  .string()
+  .regex(/^[^.]+(\.[^.]+)*$/, 'must be a field name or a dotted path such as "meta.publishedAt"')
+
 // At least one of `collections` or `entryTypes` must be specified (enforced by config validation).
 /** @internal Exported for tests. */
 export const referenceFieldSchema = fieldBaseSchema.extend({
@@ -136,6 +148,17 @@ export const referenceFieldSchema = fieldBaseSchema.extend({
   // runtime-consumed flag and the feature would no-op with no error. (`resolvedSchema` is
   // absent on purpose — it is type-inference-only and stripping it changes no behavior.)
   includeBody: z.boolean().optional(),
+  optionSort: z
+    .union([
+      z.enum(['label', 'collection']),
+      z
+        .object({
+          field: referenceSortFieldSchema,
+          direction: z.enum(['asc', 'desc']).optional(),
+        })
+        .strict(),
+    ])
+    .optional(),
 })
 
 // Use a mutable holder to enable forward references in recursive z.lazy() closures.
