@@ -40,6 +40,8 @@ import { isDataOnlyFormat } from '../utils/format'
 export interface EntryFieldError {
   fieldPath: string
   message: string
+  /** Set on an over-cap list's error, so a caller can say how to fix it. */
+  maxItems?: { count: number; cap: number }
 }
 
 const KNOWN_FIELD_TYPES = new Set<string>(fieldTypes)
@@ -233,6 +235,21 @@ export function validateEntryData(
     }
 
     if (value === undefined || value === null) continue
+
+    // No `continue`: the items inside an over-cap list are still checked and reported.
+    if (
+      Array.isArray(value) &&
+      'maxItems' in field &&
+      typeof field.maxItems === 'number' &&
+      value.length > field.maxItems
+    ) {
+      const cap = field.maxItems
+      errors.push({
+        fieldPath: path,
+        message: `At most ${cap} ${cap === 1 ? 'item' : 'items'}; this list has ${value.length}`,
+        maxItems: { count: value.length, cap },
+      })
+    }
 
     if (field.type === 'block') {
       const blockField = field as BlockFieldConfig

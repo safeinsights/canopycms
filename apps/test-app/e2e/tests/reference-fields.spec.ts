@@ -131,7 +131,7 @@ test.describe('Reference Fields', () => {
     })
   })
 
-  test('multi-select reference field: select multiple, save, and persist', async ({ page }) => {
+  test('list reference field: pick several, reorder, save, and persist', async ({ page }) => {
     await test.step('create two posts to reference', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
@@ -145,44 +145,58 @@ test.describe('Reference Fields', () => {
       await editorPage.closeContentNavigator()
     })
 
-    await test.step('select both posts in featuredPosts multi-select', async () => {
-      await editorPage.selectMultiReferenceOptions('featuredPosts', [
+    await test.step('pick both posts in featuredPosts', async () => {
+      await editorPage.addReferenceListPicks('featuredPosts', ['Featured One', 'Featured Two'])
+      await expect(editorPage.referenceListTitles('featuredPosts').nth(0)).toHaveAttribute(
+        'aria-label',
         'Featured One',
+      )
+      await expect(editorPage.referenceListTitles('featuredPosts').nth(1)).toHaveAttribute(
+        'aria-label',
         'Featured Two',
-      ])
+      )
     })
 
-    await test.step('save', async () => {
+    let picked: string[] = []
+    await test.step('save, and find both content IDs on disk in picking order', async () => {
       await editorPage.saveAndVerify()
-    })
-
-    await test.step('verify array of content IDs on disk', async () => {
       const content = await readContentFile<{ featuredPosts?: string[] }>(
         'home.home.bo7QdSwn9Tod.json',
       )
-      expect(Array.isArray(content.featuredPosts)).toBe(true)
       expect(content.featuredPosts).toHaveLength(2)
-      // All values should be non-empty content ID strings
       for (const id of content.featuredPosts ?? []) {
         expect(typeof id).toBe('string')
         expect(id).toBeTruthy()
       }
+      picked = content.featuredPosts ?? []
     })
 
-    await test.step('reload and verify both selections survive', async () => {
+    await test.step('move the second pick up, save, and find the order reversed on disk', async () => {
+      const second = editorPage.referenceListTitles('featuredPosts').nth(1)
+      await second.getByRole('button', { name: 'Actions for Featured Two' }).click()
+      await page.getByRole('menuitem', { name: /^Move up/ }).click()
+      await expect(editorPage.referenceListTitles('featuredPosts').nth(0)).toHaveAttribute(
+        'aria-label',
+        'Featured Two',
+      )
+      await editorPage.saveAndVerify()
+      const content = await readContentFile<{ featuredPosts?: string[] }>(
+        'home.home.bo7QdSwn9Tod.json',
+      )
+      expect(content.featuredPosts).toEqual([picked[1], picked[0]])
+    })
+
+    await test.step('reload and find both picks in their saved order', async () => {
       await page.reload()
       await editorPage.waitForReady()
-
-      // Wait for the Home Page entry to be loaded in the form
       await expect(editorPage.getFieldInput('title')).toHaveValue('Home Page', {
         timeout: LONG_TIMEOUT,
       })
-
-      // For MultiSelect the selected value pills are rendered as text within the field container
-      await editorPage.waitForReferenceOptions('featuredPosts')
-      const field = editorPage.getReferenceField('featuredPosts')
-      await expect(field).toContainText('Featured One', { timeout: STANDARD_TIMEOUT })
-      await expect(field).toContainText('Featured Two', { timeout: STANDARD_TIMEOUT })
+      const rows = editorPage.referenceListTitles('featuredPosts')
+      await expect(rows.nth(0)).toHaveAttribute('aria-label', 'Featured Two', {
+        timeout: STANDARD_TIMEOUT,
+      })
+      await expect(rows.nth(1)).toHaveAttribute('aria-label', 'Featured One')
     })
   })
 

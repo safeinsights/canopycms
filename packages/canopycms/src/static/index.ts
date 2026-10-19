@@ -481,25 +481,54 @@ export function warnUnsafeMarkdown(
  *
  * Fails the build rather than silently skipping the offending entry: a page that silently
  * disappears from a static build is a worse failure mode than a red build. Lists every
- * offending entry so one build catches every abandoned scaffold, not just the first.
+ * offending entry so one build catches every abandoned scaffold, not just the first. An
+ * over-`maxItems` list gets its own line per list, with the fix; the abandoned-scaffold advice
+ * appears only when some entry has another kind of error.
  */
 export function assertBuildEntriesValid(items: readonly BuildScanItem[], phaseLabel: string): void {
   const invalid = findInvalidEntries(items)
   if (invalid.length === 0) return
 
-  const lines = invalid.map(({ entryPath, errors }) => {
-    const [first, ...rest] = errors
-    const summary =
-      rest.length > 0
-        ? `${first.fieldPath}: ${first.message} (+${rest.length} more)`
-        : `${first.fieldPath}: ${first.message}`
-    return `  - ${entryPath} — ${summary}`
-  })
+  const lines: string[] = []
+  let hasOverCap = false
+  let hasOrdinary = false
+  for (const { entryPath, errors } of invalid) {
+    const ordinary = errors.filter((e) => e.maxItems === undefined)
+    if (ordinary.length > 0) {
+      hasOrdinary = true
+      const [first, ...rest] = ordinary
+      const summary =
+        rest.length > 0
+          ? `${first.fieldPath}: ${first.message} (+${rest.length} more)`
+          : `${first.fieldPath}: ${first.message}`
+      lines.push(`  - ${entryPath} — ${summary}`)
+    }
+    for (const { fieldPath, maxItems } of errors) {
+      if (maxItems === undefined) continue
+      hasOverCap = true
+      lines.push(
+        `  - ${entryPath} — ${fieldPath}: ${maxItems.count} items, but maxItems is ${maxItems.cap}`,
+      )
+    }
+  }
+
+  const advice: string[] = []
+  if (hasOverCap) {
+    advice.push(
+      `A list over its maxItems: open the entry in the editor and remove a pick from that list (or remove items) until it holds at most maxItems, then rebuild. ` +
+        `This usually happens when two branches each add one item to the same list and are merged one after the other.`,
+    )
+  }
+  if (hasOrdinary) {
+    advice.push(
+      `${hasOverCap ? 'The other errors are' : 'These are'} likely abandoned create-scaffolds (empty entries left behind when a create was started but never finished). ` +
+        `Finish editing the entry (fill in its required fields) or delete the abandoned draft, then rebuild.`,
+    )
+  }
 
   throw new Error(
     `CanopyCMS static build: found ${invalid.length} schema-invalid ${invalid.length === 1 ? 'entry' : 'entries'} during ${phaseLabel}:\n${lines.join('\n')}\n` +
-      `These are likely abandoned create-scaffolds (empty entries left behind when a create was started but never finished). ` +
-      `Finish editing the entry (fill in its required fields) or delete the abandoned draft, then rebuild.`,
+      advice.join('\n'),
   )
 }
 

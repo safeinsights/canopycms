@@ -513,11 +513,14 @@ Common options on any field:
   description: 'Hint',    // Optional: help text shown under the label in the editor
   required: true,         // Optional: validation requirement
   list: true,             // Optional: allow multiple values
+  maxItems: 3,            // Optional, on a list or block: the most items it holds
   isTitle: true,          // Optional: names the entry (single-entry types use their label)
 }
 ```
 
 On a `string` field, `list: true` renders a tag input: type a value and press Enter to add it, and Backspace on an empty input removes the last.
+
+`maxItems` caps a list or block field: the editor stops adding at it, a save over it is refused, and a production build fails on an entry over it. A cap below a list's length thus fails the build until an editor removes the extra.
 
 A cleared string-valued field (`string`, `select`, `code` and the like) is saved as `''`, not removed, so a site-side `?? 'default'` stops applying once an editor has touched it; use `|| 'default'` when blank should mean the default.
 
@@ -695,13 +698,13 @@ Every entry automatically receives a unique, stable 12-character identifier (Bas
 
 ### Reference Fields
 
-Reference fields create typed relationships between entries, storing UUIDs rather than brittle string links or file paths, so they survive renames and directory moves. Scope what a field can point at with `collections`, `entryTypes`, or both — at least one is required:
+Reference fields link entries by id, not string links or file paths, surviving renames and moves. Scope its targets with `collections`, `entryTypes`, or both (at least one):
 
 - **`collections`** — scope by collection path(s), including every subcollection in that tree.
-- **`entryTypes`** — scope by entry type name(s), whatever collection the entries live in, which is what lets you reference entries sitting alongside their related content in subcollections without a dedicated collection.
+- **`entryTypes`** — scope by entry type name(s) in any collection, so entries kept beside related content in subcollections need no collection of their own.
 - **Both** — precise scoping, e.g. only `partner` entries within the `data-catalog` tree.
 
-> Every `entryTypes` value is validated against the entry type names your `.collection.json` files actually define. A name matching none of them is a hard error at schema resolution — naming the field, its location, a "did you mean" suggestion for a close match, and the full list of known entry types — rather than a picker that silently returns zero options.
+> An `entryTypes` name that no `.collection.json` defines is a hard error at schema resolution, naming the field, its location, any close match and every known entry type, rather than a picker that silently offers nothing.
 
 ```typescript
 const schema = defineEntrySchema([
@@ -727,7 +730,7 @@ Deleting a referenced entry asks first: the dialog lists the entries pointing at
 
 ### How References Work in the Editor
 
-The editor loads options from the configured scope and validates that each reference points at a valid entry. Open the dropdown, search by the display field, and select one — CanopyCMS stores the entry's content id while showing `displayField`.
+The editor offers entries in scope by `displayField` and stores each pick's id. A `list: true` reference shows a row per pick, in stored order, to drag, remove or swap in place, with Add below; no control offers an entry already picked.
 
 ### Using References in Your Code
 

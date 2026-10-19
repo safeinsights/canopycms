@@ -2,6 +2,7 @@ import React, { useId } from 'react'
 
 import { TagsInput } from '@mantine/core'
 
+import { listFullReason } from '../copy'
 import { LabelledInput } from './FieldLabel'
 
 export interface StringListFieldProps {
@@ -13,13 +14,22 @@ export interface StringListFieldProps {
   dataCanopyField?: string
   /** Shows the value without accepting edits. */
   readOnly?: boolean
+  /** The most items the list holds; at or over it, nothing adds and the hint says why. */
+  maxItems?: number
 }
 
-/** The field's description, ended as a sentence, then the hint that Enter adds. */
-const withEnterHint = (description: string | undefined): string => {
+/**
+ * `maxTags` for a TagsInput holding `count` items: never below `count`, since a paste cuts the list
+ * to `maxTags` and would drop stored items without a word.
+ */
+export const tagCap = (count: number, maxItems: number | undefined): number | undefined =>
+  maxItems === undefined ? undefined : Math.max(count, maxItems)
+
+/** The field's description, ended as a sentence, then `hint`. */
+export const withHint = (description: string | undefined, hint: string): string => {
   const own = description?.trim()
-  if (!own) return 'Press Enter to add.'
-  return `${/[.!?]$/.test(own) ? own : `${own}.`} Press Enter to add.`
+  if (!own) return hint
+  return `${/[.!?]$/.test(own) ? own : `${own}.`} ${hint}`
 }
 
 /**
@@ -27,7 +37,7 @@ const withEnterHint = (description: string | undefined): string => {
  *
  * Uses Mantine's TagsInput: type + Enter adds an item, each item renders as a
  * removable pill, and Backspace on an empty input removes the last item. An editable list says
- * that Enter adds, after the field's own description.
+ * that Enter adds, after the field's own description, or at `maxItems` why it adds no more.
  */
 export const StringListField: React.FC<StringListFieldProps> = ({
   id,
@@ -37,6 +47,7 @@ export const StringListField: React.FC<StringListFieldProps> = ({
   onChange,
   dataCanopyField,
   readOnly = false,
+  maxItems,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -45,8 +56,18 @@ export const StringListField: React.FC<StringListFieldProps> = ({
     <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
       <TagsInput
         id={inputId}
-        // TagsInput gives no sign that Enter adds a typed item.
-        description={readOnly ? description : withEnterHint(description)}
+        // TagsInput gives no sign that Enter adds a typed item, nor why it stops at `maxTags`.
+        description={
+          readOnly
+            ? description
+            : withHint(
+                description,
+                maxItems !== undefined && value.length >= maxItems
+                  ? listFullReason(maxItems)
+                  : 'Press Enter to add.',
+              )
+        }
+        maxTags={tagCap(value.length, maxItems)}
         value={value}
         size="sm"
         readOnly={readOnly}

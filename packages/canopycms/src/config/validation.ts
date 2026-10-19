@@ -316,6 +316,40 @@ export const ensureStampOnPublishPlacement = (
 }
 
 /**
+ * Check that `maxItems` is a positive whole number on a field that holds items: a `list: true`
+ * field or a `block` field. Recurses into groups, objects and block templates like
+ * `ensureStampOnPublishPlacement`. Throws on the first problem.
+ */
+export const ensureMaxItemsPlacement = (fields: unknown, scopeLabel = 'entry schema'): void => {
+  const refuse = (f: Record<string, unknown>, why: string): never => {
+    throw new Error(
+      `${scopeLabel}: field "${(f.name as string) ?? 'unknown'}" has maxItems, ${why}`,
+    )
+  }
+  const check = (scopeFields: unknown): void => {
+    if (!Array.isArray(scopeFields)) return
+    for (const field of scopeFields) {
+      const f = field as Record<string, unknown>
+      if (f?.maxItems !== undefined) {
+        if (typeof f.maxItems !== 'number' || !Number.isInteger(f.maxItems) || f.maxItems < 1) {
+          refuse(f, 'which must be a positive whole number')
+        }
+        if (f.list !== true && f.type !== 'block') {
+          refuse(f, 'but it is not a list; only a `list: true` field or a block field holds items')
+        }
+      }
+      if (f?.type === 'group' || f?.type === 'object') check(f.fields)
+      if (f?.type === 'block' && Array.isArray(f.templates)) {
+        for (const template of f.templates as Array<{ fields?: unknown }>) {
+          check(template.fields)
+        }
+      }
+    }
+  }
+  check(fields)
+}
+
+/**
  * Check every markdown and mdx field's `mdxAllow` against its schema and its `renderAs`,
  * `mdxAllow` and `executable` against each other. Throws on the first problem.
  */
