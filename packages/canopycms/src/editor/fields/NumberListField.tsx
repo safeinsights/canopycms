@@ -2,7 +2,9 @@ import React, { useId, useState } from 'react'
 
 import { TagsInput } from '@mantine/core'
 
+import { listFullReason } from '../copy'
 import { LabelledInput } from './FieldLabel'
+import { withHint } from './StringListField'
 
 export interface NumberListFieldProps {
   id?: string
@@ -13,6 +15,8 @@ export interface NumberListFieldProps {
   dataCanopyField?: string
   /** Shows the value without accepting edits. */
   readOnly?: boolean
+  /** The most items the list holds; at it, Enter adds nothing and the hint says why. */
+  maxItems?: number
 }
 
 /**
@@ -49,6 +53,7 @@ export const NumberListField: React.FC<NumberListFieldProps> = ({
   onChange,
   dataCanopyField,
   readOnly = false,
+  maxItems,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -58,7 +63,12 @@ export const NumberListField: React.FC<NumberListFieldProps> = ({
     <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
       <TagsInput
         id={inputId}
-        description={description}
+        description={
+          !readOnly && maxItems !== undefined && value.length >= maxItems
+            ? withHint(description, listFullReason(maxItems))
+            : description
+        }
+        maxTags={maxItems}
         value={value.map(String)}
         size="sm"
         error={

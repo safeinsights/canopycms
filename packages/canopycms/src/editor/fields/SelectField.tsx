@@ -2,6 +2,7 @@ import React, { useId } from 'react'
 
 import { MultiSelect, Select, Stack, Text } from '@mantine/core'
 
+import { listFullReason } from '../copy'
 import { useFieldCommentControl } from '../comments/field-comment-context'
 import { FieldLabel } from './FieldLabel'
 
@@ -22,6 +23,8 @@ export interface SelectFieldProps {
   dataCanopyField?: string
   /** Shows the value without accepting edits. */
   readOnly?: boolean
+  /** With `multiple`, the most values it holds; at it, the hint says why it takes no more. */
+  maxItems?: number
 }
 
 export const SelectField: React.FC<SelectFieldProps> = ({
@@ -35,6 +38,7 @@ export const SelectField: React.FC<SelectFieldProps> = ({
   placeholder = 'Select…',
   dataCanopyField,
   readOnly = false,
+  maxItems,
 }) => {
   const normalizedValue = multiple
     ? Array.isArray(value)
@@ -64,6 +68,7 @@ export const SelectField: React.FC<SelectFieldProps> = ({
             if (!readOnly) onChange(next)
           }}
           searchable
+          maxValues={maxItems}
           placeholder={readOnly ? undefined : placeholder}
           size="sm"
         />
@@ -87,7 +92,9 @@ export const SelectField: React.FC<SelectFieldProps> = ({
       )}
       {multiple && !readOnly && (
         <Text size="xs" c="dimmed">
-          Searchable multi-select; start typing to filter.
+          {maxItems !== undefined && normalizedValue.length >= maxItems
+            ? listFullReason(maxItems)
+            : 'Searchable multi-select; start typing to filter.'}
         </Text>
       )}
     </Stack>

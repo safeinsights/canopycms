@@ -67,6 +67,13 @@ interface BaseFieldConfig {
    * making TypeFromEntrySchema include it without manual `& { body: string }`.
    */
   isBody?: boolean
+  /**
+   * On a `list: true` field or a `block` field: the most items the list may hold. The editor
+   * stops adding at the cap, saving over it is refused, and a static build fails on an entry
+   * over it, so adding a cap to a list that already holds more fails the build until the
+   * content is fixed. `ensureMaxItemsPlacement` (`validation.ts`) refuses it elsewhere.
+   */
+  maxItems?: number
 }
 
 interface PrimitiveFieldConfig extends BaseFieldConfig {

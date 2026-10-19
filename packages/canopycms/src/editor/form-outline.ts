@@ -63,8 +63,8 @@ export function buildFormOutline(
 }
 
 /**
- * True when some field, at any depth, is a block field or a list of objects that the form draws
- * itself: a type in `customTypes` has a custom renderer.
+ * True when some field, at any depth, is a block field or a list of objects or references that the
+ * form draws itself: a type in `customTypes` has a custom renderer.
  */
 export function hasCollapsibleList(
   fields: readonly FieldConfig[],
@@ -73,6 +73,7 @@ export function hasCollapsibleList(
   return fields.some((field) => {
     if (customTypes.has(field.type)) return false
     if (field.type === 'block') return true
+    if (field.type === 'reference' && field.list === true) return true
     if (field.type === 'group') {
       return hasCollapsibleList((field as InlineGroupFieldConfig).fields, customTypes)
     }

@@ -8,10 +8,11 @@ import { NumberListField } from './NumberListField'
 
 afterEach(cleanup)
 
-const Harness: React.FC<{ initial?: number[]; onChange?: (v: number[]) => void }> = ({
-  initial = [],
-  onChange,
-}) => {
+const Harness: React.FC<{
+  initial?: number[]
+  onChange?: (v: number[]) => void
+  maxItems?: number
+}> = ({ initial = [], onChange, maxItems }) => {
   const [value, setValue] = useState<number[]>(initial)
   return (
     <CanopyCMSProvider>
@@ -23,6 +24,7 @@ const Harness: React.FC<{ initial?: number[]; onChange?: (v: number[]) => void }
           onChange?.(next)
         }}
         dataCanopyField="scores"
+        maxItems={maxItems}
       />
     </CanopyCMSProvider>
   )
@@ -93,5 +95,19 @@ describe('NumberListField', () => {
     await user.type(getInput(), '   {Enter}')
 
     expect(changes.at(-1) ?? [1]).toEqual([1])
+  })
+})
+
+describe('NumberListField at its maxItems', () => {
+  it('adds nothing more and says why', async () => {
+    const user = userEvent.setup()
+    const changes: number[][] = []
+    render(<Harness initial={[1, 2]} maxItems={2} onChange={(v) => changes.push(v)} />)
+
+    await user.type(getInput(), '3{Enter}')
+    expect(changes).toEqual([])
+    expect(
+      screen.getByText('This list holds at most 2 items. Remove one to add another.'),
+    ).toBeTruthy()
   })
 })

@@ -265,6 +265,12 @@ describe('hasCollapsibleList', () => {
     expect(hasCollapsibleList([title, team])).toBe(true)
   })
 
+  it('is true for a list of references, and false for a single one', () => {
+    const featured: FieldConfig = { name: 'featured', type: 'reference', collections: ['posts'] }
+    expect(hasCollapsibleList([title, { ...featured, list: true }])).toBe(true)
+    expect(hasCollapsibleList([title, featured])).toBe(false)
+  })
+
   it('is false for a schema of plain fields, lists of primitives and a single object', () => {
     expect(
       hasCollapsibleList([

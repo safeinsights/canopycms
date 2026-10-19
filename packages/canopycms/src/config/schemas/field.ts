@@ -21,6 +21,9 @@ const fieldBaseSchema = z.object({
   list: z.boolean().optional(),
   isTitle: z.boolean().optional(),
   isBody: z.boolean().optional(),
+  // Listed so a parse keeps it (zod strips unknown keys); which fields may carry it is
+  // `ensureMaxItemsPlacement`'s call (config/validation.ts).
+  maxItems: z.number().int().positive().optional(),
 })
 
 export const selectOptionSchema = z.union([

@@ -1,12 +1,13 @@
 import React, { useRef } from 'react'
 
-import { Button, Group, Paper, Stack, Text } from '@mantine/core'
+import { Button, Group, Paper, Stack, Text, Tooltip } from '@mantine/core'
 import { IconPlus } from '@tabler/icons-react'
 
 import type { ObjectFieldConfig } from '../../config'
 import { isPlainRecord } from '../../validation/field-traversal'
 import { ITEM_KEY, mintItemKey, withFreshItemKeys } from '../../item-keys'
 import { formatCanopyPath } from '../canopy-path'
+import { listFullReason } from '../copy'
 import { useFieldCommentControl } from '../comments/field-comment-context'
 import { groupDescriptionProps } from './FieldDescription'
 import { FieldLabel } from './FieldLabel'
@@ -61,7 +62,13 @@ export const ObjectListField: React.FC<ObjectListFieldProps> = ({
   const expansion = useItemExpansion(itemKeys, resetKey)
   const focusAfterRenderRef = useRef<number | null>(null)
 
+  const fullReason =
+    field.maxItems !== undefined && items.length >= field.maxItems
+      ? listFullReason(field.maxItems)
+      : undefined
+
   const insertAt = (index: number, item: Record<string, unknown>) => {
+    if (fullReason) return
     focusAfterRenderRef.current = index
     onChange([...items.slice(0, index), item, ...items.slice(index)])
   }
@@ -111,6 +118,7 @@ export const ObjectListField: React.FC<ObjectListFieldProps> = ({
               ...items.slice(idx + 1),
             ])
           }
+          duplicateBlockedReason={fullReason}
           onRemove={(idx) => {
             const item = items[idx]
             onChange(items.filter((_, i) => i !== idx))
@@ -145,15 +153,20 @@ export const ObjectListField: React.FC<ObjectListFieldProps> = ({
         )}
         {!readOnly && (
           <Group>
-            <Button
-              variant="light"
-              size="xs"
-              leftSection={<IconPlus size={14} aria-hidden />}
-              onClick={() => insertAt(items.length, { [ITEM_KEY]: mintItemKey() })}
-              data-testid="object-list-add"
-            >
-              Add {field.itemLabel ?? 'item'}
-            </Button>
+            <Tooltip label={fullReason} disabled={!fullReason} multiline maw={280}>
+              <Button
+                variant="light"
+                size="xs"
+                leftSection={<IconPlus size={14} aria-hidden />}
+                onClick={() => insertAt(items.length, { [ITEM_KEY]: mintItemKey() })}
+                // `data-disabled`, not `disabled`, so the Tooltip still opens on hover and focus.
+                data-disabled={fullReason ? true : undefined}
+                aria-disabled={fullReason ? true : undefined}
+                data-testid="object-list-add"
+              >
+                Add {field.itemLabel ?? 'item'}
+              </Button>
+            </Tooltip>
           </Group>
         )}
       </Stack>

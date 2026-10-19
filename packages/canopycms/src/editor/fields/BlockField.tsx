@@ -13,6 +13,7 @@ import {
   Stack,
   Text,
   Tooltip,
+  VisuallyHidden,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { IconPlus } from '@tabler/icons-react'
@@ -21,6 +22,7 @@ import type { BlockConfig, BlockFieldConfig, FieldConfig } from '../../config'
 import { ITEM_KEY, mintItemKey, withFreshItemKeys } from '../../item-keys'
 import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
+import { listFullReason } from '../copy'
 import { useFieldCommentControl } from '../comments/field-comment-context'
 import { ExpandAllButton } from './ExpandAllButton'
 import { groupDescriptionProps } from './FieldDescription'
@@ -63,6 +65,8 @@ export interface BlockFieldProps {
   hasErrors?: (index: number) => boolean
   /** Told of each block Remove takes out, so the caller can offer Undo. */
   onRemoved?: (index: number, block: BlockInstance) => void
+  /** The most blocks the list holds; at it, every add control is disabled and says why. */
+  maxItems?: number
 }
 
 const findTemplate = (templates: BlockConfig[], name: string) =>
@@ -78,9 +82,18 @@ const TemplateMenu: React.FC<{
   templates: BlockConfig[]
   onPick: (templateName: string) => void
   onOpenChange?: (opened: boolean) => void
+  /** Set, the menu doesn't open. */
+  disabled?: boolean
   target: React.ReactNode
-}> = ({ templates, onPick, onOpenChange, target }) => (
-  <Menu position="bottom-start" withinPortal shadow="md" width={320} onChange={onOpenChange}>
+}> = ({ templates, onPick, onOpenChange, disabled, target }) => (
+  <Menu
+    position="bottom-start"
+    withinPortal
+    shadow="md"
+    width={320}
+    onChange={onOpenChange}
+    disabled={disabled}
+  >
     {target}
     <Menu.Dropdown data-testid="block-template-menu">
       <ScrollArea.Autosize mah={360} type="auto">
@@ -112,7 +125,10 @@ const TemplateMenu: React.FC<{
 const InsertBetween: React.FC<{
   templates: BlockConfig[]
   onPick: (templateName: string) => void
-}> = ({ templates, onPick }) => {
+  /** Why nothing can be added, such as a list at its `maxItems`. */
+  blockedReason?: string
+}> = ({ templates, onPick, blockedReason }) => {
+  const reasonId = useId()
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [opened, setOpened] = useState(false)
@@ -143,19 +159,33 @@ const InsertBetween: React.FC<{
           templates={templates}
           onPick={onPick}
           onOpenChange={setOpened}
+          disabled={!!blockedReason}
           target={
-            <Tooltip label="Add section here" openDelay={300}>
+            <Tooltip
+              label={blockedReason ?? 'Add section here'}
+              openDelay={300}
+              multiline={!!blockedReason}
+              maw={280}
+            >
               <Menu.Target>
                 <ActionIcon
                   size="sm"
                   radius="xl"
                   variant="default"
                   aria-label="Add section here"
+                  aria-disabled={blockedReason ? true : undefined}
+                  aria-describedby={blockedReason ? reasonId : undefined}
+                  data-disabled={blockedReason ? true : undefined}
                   onFocus={() => setFocused(true)}
                   onBlur={() => setFocused(false)}
                   style={{ opacity, transition: 'opacity 120ms ease' }}
                 >
                   <IconPlus size={14} aria-hidden />
+                  {blockedReason && (
+                    <VisuallyHidden component="span" id={reasonId}>
+                      {blockedReason}
+                    </VisuallyHidden>
+                  )}
                 </ActionIcon>
               </Menu.Target>
             </Tooltip>
@@ -180,6 +210,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
   resetKey = '',
   hasErrors,
   onRemoved,
+  maxItems,
 }) => {
   const descriptionBaseId = useId()
   const commentControl = useFieldCommentControl(dataCanopyField ?? formatCanopyPath(path))
@@ -192,7 +223,13 @@ export const BlockField: React.FC<BlockFieldProps> = ({
     if (!readOnly) onChange(next)
   }
 
+  const fullReason =
+    maxItems !== undefined && value.length >= maxItems
+      ? listFullReason(maxItems, 'section', 'sections')
+      : undefined
+
   const insertAt = (index: number, block: BlockInstance) => {
+    if (fullReason) return
     focusAfterRenderRef.current = index
     emit([...value.slice(0, index), block, ...value.slice(index)])
   }
@@ -266,6 +303,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
               ...value.slice(idx + 1),
             ])
           }
+          duplicateBlockedReason={fullReason}
           onRemove={(idx) => {
             if (readOnly) return
             const block = value[idx]
@@ -275,7 +313,13 @@ export const BlockField: React.FC<BlockFieldProps> = ({
           renderBetween={
             readOnly
               ? undefined
-              : (idx) => <InsertBetween templates={templates} onPick={addAt(idx)} />
+              : (idx) => (
+                  <InsertBetween
+                    templates={templates}
+                    onPick={addAt(idx)}
+                    blockedReason={fullReason}
+                  />
+                )
           }
           renderItem={(block, idx) => {
             const template = findTemplate(templates, block.template)
@@ -315,17 +359,24 @@ export const BlockField: React.FC<BlockFieldProps> = ({
             <TemplateMenu
               templates={templates}
               onPick={addAt(value.length)}
+              disabled={!!fullReason}
               target={
-                <Menu.Target>
-                  <Button
-                    variant="light"
-                    size="xs"
-                    leftSection={<IconPlus size={14} aria-hidden />}
-                    data-testid="block-add-section"
-                  >
-                    {ADD_SECTION}
-                  </Button>
-                </Menu.Target>
+                <Tooltip label={fullReason} disabled={!fullReason} multiline maw={280}>
+                  <Menu.Target>
+                    <Button
+                      variant="light"
+                      size="xs"
+                      leftSection={<IconPlus size={14} aria-hidden />}
+                      // `data-disabled`, not `disabled`, so the Tooltip still opens on hover and
+                      // focus; the menu's own `disabled` keeps it shut.
+                      data-disabled={fullReason ? true : undefined}
+                      aria-disabled={fullReason ? true : undefined}
+                      data-testid="block-add-section"
+                    >
+                      {ADD_SECTION}
+                    </Button>
+                  </Menu.Target>
+                </Tooltip>
               }
             />
           </Group>
