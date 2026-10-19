@@ -73,7 +73,7 @@ interface BaseFieldConfig {
    * On a `list: true` field or a `block` field: the most items the list may hold. The editor
    * stops adding at the cap, saving over it is refused, and a static build fails on an entry
    * over it, so adding a cap to a list that already holds more fails the build until the
-   * content is fixed. `ensureMaxItemsPlacement` (`validation.ts`) refuses it elsewhere.
+   * content is fixed. `ensureMaxItemsPlacement` (`validation.ts`) refuses it elsewhere in a registry schema.
    */
   maxItems?: number
 }
@@ -179,7 +179,7 @@ export interface ReferenceFieldConfig extends BaseFieldConfig {
  * - `'collection'`: one group per collection, in content-tree order (a collection, then its
  *   subcollections), each in its collection's own order, then by label.
  * - `{ field, direction }`: by the target's value at `field`, a dotted path for a nested field
- *   (`'meta.publishedAt'`). Numbers compare as numbers and sort before strings; strings compare
+ *   (`'meta.publishedAt'`). Numbers compare as numbers and sort before strings (`'desc'` reverses that too); strings compare
  *   as plain text, so point it at an ISO date (`YYYY-MM-DD`; unquoted frontmatter dates count):
  *   a display date like `'March 4'` sorts by month name. An entry with no value sorts first
  *   under `'desc'`, last under `'asc'` (the default). Ties go by label.
