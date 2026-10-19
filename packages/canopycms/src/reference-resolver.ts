@@ -172,7 +172,7 @@ function sortValueAt(data: Record<string, unknown>, path: string): SortValue {
     current = (current as Record<string, unknown>)[segment]
   }
   if (typeof current === 'number') return Number.isFinite(current) ? current : undefined
-  if (typeof current === 'string') return current.trim() === '' ? undefined : current
+  if (typeof current === 'string') return current.trim() || undefined
   if (current instanceof Date) {
     return Number.isNaN(current.getTime()) ? undefined : current.toISOString()
   }
@@ -282,7 +282,7 @@ class NoindexFieldLabels {
     this.entryTypes = [...schemaItems].filter(
       (item): item is Extract<FlatSchemaItem, { type: 'entry-type' }> => item.type === 'entry-type',
     )
-    this.fieldName = seo?.fields?.noindex ?? DEFAULT_SEO_FIELD_NAMES.noindex
+    this.fieldName = seo?.fields?.noindex || DEFAULT_SEO_FIELD_NAMES.noindex
   }
 
   get(collection: string, entryType: string): string {

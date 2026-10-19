@@ -226,6 +226,20 @@ describe('generateContentSitemap', () => {
     expect(await generateContentSitemap(ctx, { siteUrl: SITE })).toHaveLength(1)
   })
 
+  it('refuses a direct call without seo when the config sets one', async () => {
+    const ctx = {
+      ...fakeBuildCtx([{ urlPath: '/a', slug: 'a', entryType: 'page' }]),
+      services: { config: { seo: { group: 'seo' } } },
+    } as unknown as Pick<CanopyBuildContext, 'listEntries' | 'services'>
+
+    await expect(generateContentSitemap(ctx, { siteUrl: SITE })).rejects.toThrow(
+      /called directly without `seo`/,
+    )
+    expect(
+      await generateContentSitemap(ctx, { siteUrl: SITE, seo: { group: 'seo' } }),
+    ).toHaveLength(1)
+  })
+
   it('throws when siteUrl is not absolute (a non-absolute <loc> invalidates the whole sitemap)', async () => {
     const ctx = fakeBuildCtx([{ urlPath: '/a', slug: 'a', entryType: 'page' }])
 

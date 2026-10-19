@@ -138,7 +138,7 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
           const fieldLabel = hiddenField.get(pick)
           return fieldLabel ? [{ label: labels.get(pick) ?? pick, fieldLabel }] : []
         })
-  const renderOption = referenceOptionRenderer(options)
+  const renderOption = referenceOptionRenderer(loading || error ? [] : options)
   const atCap = maxItems !== undefined && ids.length >= maxItems
 
   /** Row `index`'s choices: every option no other row holds, plus its own pick. */

@@ -660,6 +660,12 @@ describe('a list reference in a form', () => {
       await screen.findByTestId('reference-list-error')
       expect(rowTitles()).toEqual(['Summer recap'])
       expect(note()).toBeNull()
+
+      const user = userEvent.setup()
+      await user.click(toggleOf(rows()[0]))
+      await user.click(screen.getByRole('textbox', { name: 'Entry' }))
+      const option = await screen.findByRole('option', { name: /Summer recap/ })
+      expect(within(option).queryByText('Hidden from search')).toBeNull()
     })
 
     it('holds the note back until the options arrive', async () => {

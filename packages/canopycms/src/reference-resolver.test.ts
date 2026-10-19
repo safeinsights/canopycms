@@ -575,6 +575,21 @@ describe('ReferenceResolver options: noindex marker and sort', () => {
       expect(labels(options).slice(0, 3)).toEqual(['nine', 'ten', 'five'])
     })
 
+    it('sorts a string by its trimmed value', async () => {
+      const dir = path.join(tempDir, 'content', 'posts')
+      const year = (slug: string, id: string, value: string) =>
+        fs.writeFile(
+          path.join(dir, `post.${slug}.${id}.json`),
+          JSON.stringify({ title: slug, year: value }),
+        )
+      await year('later', 'yAAAAAAAAAA1', ' 2023')
+      await year('earlier', 'yAAAAAAAAAA2', '2022')
+      const store = new ContentStore(tempDir, flattenSchema(schema, 'content'))
+      resolver = new ReferenceResolver(store, await store.idIndex())
+      const options = await load({ sort: { field: 'year' } }, { entryTypes: ['post'] })
+      expect(labels(options).slice(0, 2)).toEqual(['earlier', 'later'])
+    })
+
     it('sorts what the search leaves', async () => {
       const options = await load(
         { sort: { field: 'publishedAt', direction: 'desc' } },

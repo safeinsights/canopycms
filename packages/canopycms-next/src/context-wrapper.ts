@@ -253,6 +253,13 @@ export interface NextCanopyContextResult {
 export async function createNextCanopyContext(
   options: NextCanopyOptions,
 ): Promise<NextCanopyContextResult> {
+  // A leftover option would otherwise be dropped silently, and both SEO helpers read flat names.
+  if ('seo' in options) {
+    throw new Error(
+      'CanopyCMS: createNextCanopyContext no longer takes `seo`. Set it once as `seo` in ' +
+        'defineCanopyConfig, where the sitemap, page metadata and AI content all read it.',
+    )
+  }
   if (options.config.deployedAs !== 'static' && !options.authPlugin) {
     throw new Error(
       'CanopyCMS: authPlugin is required when deployedAs is "server". ' +

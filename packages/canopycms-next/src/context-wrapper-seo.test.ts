@@ -83,6 +83,12 @@ describe('mergeSeoFieldLocation', () => {
     ).toEqual({ group: 'meta', fields: { title: 'metaTitle' } })
   })
 
+  it('ignores an undefined per-call name, keeping the configured one', () => {
+    expect(
+      mergeSeoFieldLocation({ fields: { noindex: 'hidden' } }, { fields: { noindex: undefined } }),
+    ).toEqual({ fields: { noindex: 'hidden' } })
+  })
+
   it('merges fields name by name, so a per-call rename keeps the configured noindex name', () => {
     expect(
       mergeSeoFieldLocation({ fields: { noindex: 'hidden' } }, { fields: { title: 'headline' } }),
@@ -140,6 +146,17 @@ describe('createNextCanopyContext: config.seo', () => {
     })
 
     expect(sitemap.map((u) => u.url)).toEqual(['https://example.com/hidden'])
+  })
+
+  it('refuses the removed seo option', async () => {
+    await expect(
+      createNextCanopyContext({
+        config: config({ mode: 'dev' }),
+        authPlugin,
+        entrySchemaRegistry: {},
+        seo: { group: 'seo' },
+      } as Parameters<typeof createNextCanopyContext>[0]),
+    ).rejects.toThrow('no longer takes `seo`')
   })
 
   it('a per-call entryToMetadata group still wins over config.seo', async () => {

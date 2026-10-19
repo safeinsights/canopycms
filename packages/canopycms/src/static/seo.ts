@@ -133,7 +133,11 @@ export function extractSeoFields(
   entryData: unknown,
   opts: ExtractSeoFieldsOptions = {},
 ): SeoFields {
-  const names = { ...DEFAULT_SEO_FIELD_NAMES, ...opts.fields }
+  const names: SeoFieldNames = { ...DEFAULT_SEO_FIELD_NAMES }
+  // Only a real name overrides: `{ noindex: undefined }` (an unset env var, say) keeps the default.
+  for (const [key, name] of Object.entries(opts.fields ?? {})) {
+    if (typeof name === 'string' && name !== '') names[key as keyof SeoFieldNames] = name
+  }
   const entry = asRecord(entryData)
   const source = opts.group ? asRecord(entry?.[opts.group]) : entry
 

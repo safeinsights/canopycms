@@ -231,7 +231,11 @@ export function mergeSeoFieldLocation(
 ): SeoFieldLocation {
   const merged: SeoFieldLocation = { ...configDefault }
   if (callOverride?.fields !== undefined) {
-    merged.fields = { ...configDefault?.fields, ...callOverride.fields }
+    const fields = { ...configDefault?.fields }
+    for (const [key, name] of Object.entries(callOverride.fields)) {
+      if (name !== undefined) fields[key as keyof typeof fields] = name
+    }
+    merged.fields = fields
   }
   if (callOverride?.group !== undefined) merged.group = callOverride.group
   return merged
@@ -267,6 +271,13 @@ export async function generateContentSitemap(
 ): Promise<MetadataRoute.Sitemap> {
   const { siteUrl, trailingSlash, rootPath, seo, exclude, lastModified, priority, pathFor } =
     options
+  if (seo === undefined && buildCtx.services?.config.seo !== undefined) {
+    throw new Error(
+      'CanopyCMS: generateContentSitemap was called directly without `seo`, but the config sets ' +
+        '`seo`. Use the generateContentSitemap that createNextCanopyContext returns, which reads ' +
+        'config.seo, or pass `seo` here, so the sitemap reads noindex where the config says.',
+    )
+  }
 
   // A sitemap with a non-absolute <loc> is invalid — search engines reject the WHOLE file, not
   // just the bad entry, and the build stays green because nothing here threw. 'example.com' (no
