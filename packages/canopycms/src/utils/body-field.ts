@@ -30,9 +30,9 @@ export function findExplicitBodyFieldName(fields: readonly FieldConfig[]): strin
 }
 
 /**
- * The data a link-only reference (`includeBody` unset) carries for its target. A json/yaml
- * entry's `isBody` field is its prose, so it is left out, as an md/mdx target's body is. Only an
- * explicit `isBody` counts: a field merely named `body` is ordinary data.
+ * The data a link-only reference (one without `includeBody: true`) carries for its target. A
+ * json/yaml entry's `isBody` field is its prose, so it is left out, as an md/mdx target's body
+ * is. Only an explicit `isBody` counts: a field merely named `body` is ordinary data.
  */
 export function linkOnlyReferenceData(
   data: Record<string, unknown>,

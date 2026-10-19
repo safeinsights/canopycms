@@ -92,6 +92,7 @@ describe('resolveReferences for a json/yaml target', () => {
       title: 'A long read',
       urlPath: '/library/long-read',
     })
+    expect(res.data?.resolved[id]).not.toHaveProperty('unavailable')
     expect(res.data?.resolved[id]).not.toHaveProperty('prose')
   })
 })

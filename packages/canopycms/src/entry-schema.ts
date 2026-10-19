@@ -85,7 +85,7 @@ export interface ResolvedReferenceMeta {
  * Assemble a resolved reference: the target's own data, then its body if the field asked to
  * embed it, then the reserved metadata. A link-only reference carries no body for any format:
  * an md/mdx target passes none here, and a json/yaml target's `data` arrives without its
- * `isBody` field (`linkOnlyReferenceData`), so a resolved value has one shape for both.
+ * `isBody` field (`linkOnlyReferenceData`), so both formats resolve alike.
  *
  * The ordering is the contract, not a detail. Metadata LAST means a target that models `id` as
  * a content field cannot shadow the real content ID, which the write boundary recovers from
