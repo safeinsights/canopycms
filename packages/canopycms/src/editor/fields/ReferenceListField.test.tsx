@@ -300,6 +300,20 @@ describe('ReferenceListField', () => {
     expect(rowTitles()).toEqual(['Spring launch', 'Year in review', 'Autumn preview'])
   })
 
+  it.each([
+    ['its own title typed back', '{End}x{Backspace}{Enter}'],
+    ['a cleared box', '{Control>}a{/Control}{Backspace}{Enter}'],
+  ])('leaves a row pointing where it was on Enter after %s', async (_case, keys) => {
+    const user = userEvent.setup()
+    // Winter notes is not the first entry the row offers, so a wrong pick would show.
+    render(<Harness initial={['post-winter', 'post-spring']} />)
+    await user.click(toggleOf(rows()[0]))
+    const select = within(rows()[0]).getByRole('textbox', { name: 'Entry' })
+    await user.click(select)
+    await user.keyboard(keys)
+    expect(stored()).toEqual(['post-winter', 'post-spring'])
+  })
+
   it('labels picks the options leave out: missing, restricted and unlisted', () => {
     render(
       <Harness

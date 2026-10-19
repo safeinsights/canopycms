@@ -14,16 +14,16 @@ export interface StringListFieldProps {
   dataCanopyField?: string
   /** Shows the value without accepting edits. */
   readOnly?: boolean
-  /** The most items the list holds; at it, Enter adds nothing and the hint says why. */
+  /** The most items the list holds; at or over it, nothing adds and the hint says why. */
   maxItems?: number
 }
 
 /**
- * `maxTags` for a TagsInput holding `count` items. Undefined over the cap: a paste cuts the list to
- * `maxTags`, which would drop stored items without a word.
+ * `maxTags` for a TagsInput holding `count` items: never below `count`, since a paste cuts the list
+ * to `maxTags` and would drop stored items without a word.
  */
 export const tagCap = (count: number, maxItems: number | undefined): number | undefined =>
-  maxItems !== undefined && count <= maxItems ? maxItems : undefined
+  maxItems === undefined ? undefined : Math.max(count, maxItems)
 
 /** The field's description, ended as a sentence, then `hint`. */
 export const withHint = (description: string | undefined, hint: string): string => {

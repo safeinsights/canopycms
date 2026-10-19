@@ -224,8 +224,9 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
                   emit(updated)
                 }}
                 error={itemError?.(idx)}
+                // No `selectFirstOptionOnChange` here: with the row's own title in the box every
+                // option shows, so Enter would repoint the row to the first.
                 searchable
-                selectFirstOptionOnChange
                 allowDeselect={false}
                 nothingFoundMessage="No entries match"
                 size="sm"

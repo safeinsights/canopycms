@@ -162,4 +162,13 @@ describe('StringListField over its maxItems', () => {
     expect(changes.length).toBeGreaterThan(0)
     for (const change of changes) expect(change.slice(0, 5)).toEqual(['a', 'b', 'c', 'd', 'e'])
   })
+
+  it('adds nothing on Enter', async () => {
+    const user = userEvent.setup()
+    const changes: string[][] = []
+    render(<Harness initial={['a', 'b', 'c']} maxItems={2} onChange={(v) => changes.push(v)} />)
+    const input = document.querySelector('input[data-canopy-field="tags"]') as HTMLInputElement
+    await user.type(input, 'g{Enter}')
+    expect(changes).toEqual([])
+  })
 })

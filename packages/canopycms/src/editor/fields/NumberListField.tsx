@@ -15,7 +15,7 @@ export interface NumberListFieldProps {
   dataCanopyField?: string
   /** Shows the value without accepting edits. */
   readOnly?: boolean
-  /** The most items the list holds; at it, Enter adds nothing and the hint says why. */
+  /** The most items the list holds; at or over it, nothing adds and the hint says why. */
   maxItems?: number
 }
 
