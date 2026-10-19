@@ -520,7 +520,7 @@ Common options on any field:
 
 On a `string` field, `list: true` renders a tag input: type a value and press Enter to add it, and Backspace on an empty input removes the last.
 
-`maxItems` caps a list or block field: the editor stops adding at it, a save over it is refused, and a production build fails on an entry over it. A cap below a list's length thus fails the build until an editor removes the extra.
+`maxItems` caps a list or block field: the editor stops adding at it, a save over it is refused, and a production build fails on an entry over it until an editor removes the extra.
 
 A cleared string-valued field (`string`, `select`, `code` and the like) is saved as `''`, not removed, so a site-side `?? 'default'` stops applying once an editor has touched it; use `|| 'default'` when blank should mean the default.
 
