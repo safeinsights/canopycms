@@ -465,7 +465,8 @@ export const defineInlineFieldGroup = <
  *
  * **Flat by default** — an inline group, stored at the top level of the content file with no data
  * key of its own. `group: 'seo'` nests them under that key instead, and the same
- * `{ group: 'seo' }` must then be passed to `extractSeoFields` / `entryToMetadata`.
+ * `{ group: 'seo' }` must then be set as `seo` in `defineCanopyConfig`, or passed to
+ * `extractSeoFields` and the free `entryToMetadata`.
  *
  * @example
  * // Flat (recommended): frontmatter carries `metaTitle:` at the top level.
@@ -568,8 +569,9 @@ export function defineSeoFieldGroup(
 export function defineSeoFieldGroup<const G extends string>(
   opts: SeoFieldGroupOptions & {
     /**
-     * Nest the fields under this data key instead of storing them flat. Must match the `group`
-     * option passed to `extractSeoFields` / `entryToMetadata`.
+     * Nest the fields under this data key instead of storing them flat. Must match
+     * `CanopyConfig.seo.group`, or the `group` passed to `extractSeoFields` and the free
+     * `entryToMetadata`.
      */
     group: G
   },

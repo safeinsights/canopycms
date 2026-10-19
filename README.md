@@ -733,7 +733,7 @@ Deleting a referenced entry asks first: the dialog lists the entries pointing at
 
 The editor offers entries in scope by `displayField` and stores each pick's id. A `list: true` reference shows a row per pick, in stored order, to drag, remove or swap in place, with Add below; no control offers an entry already picked.
 
-Options sort by label; `optionSort: 'collection'` groups them by collection in tree order, and `optionSort: { field: 'publishedAt', direction: 'desc' }` by a field (dotted paths allowed), valueless entries first under `'desc'`. Values compare as text: use ISO dates (`2026-03-04`), not "March 4, 2026".
+Options sort by label; `optionSort: 'collection'` groups them by collection in tree order, and `optionSort: { field: 'publishedAt', direction: 'desc' }` by a field (dotted paths allowed), valueless entries first under `'desc'`. Strings compare as text: use ISO dates (`2026-03-04`), not "March 4, 2026".
 
 A target hidden from search (`noindex` at [`config.seo`](#definecanopyconfig-options)) shows a "Hidden from search" badge, and a note once picked: pages listing only indexed entries won't show it.
 
@@ -1092,7 +1092,7 @@ export const generateMetadata = async ({ params }): Promise<Metadata> => {
 
 It returns `title`, `description`, `openGraph`, `twitter`, `alternates.canonical` and `robots`. Notes: **empty CMS fields count as unset**, since CanopyCMS writes optional fields present-but-empty (an untouched SEO group is `metaTitle: ''` on disk), so it falls back to `fallbackTitle` rather than emitting a blank title; **an absolute `canonical` passes through verbatim**, which is how an entry points at a copy of itself hosted elsewhere, while only site-relative canonicals get the origin and trailing-slash treatment; **`noindex: true`** emits `robots: { index: false, follow: false }` _and_ drops the entry from the sitemap, but does **not** stop the page being built, so the URL still resolves for anyone holding the link; and `titleTemplate` from your root layout gives the `%s | Site` pattern.
 
-> **Advanced (framework-agnostic):** the free `generateContentSitemap(buildCtx, options)` and `entryToMetadata(data, options)` are exported from `canopycms-next` directly, and the neutral core — `collectRoutableEntries`, `extractSeoFields`, `isNoindexEntry` — from `canopycms/server`, for non-Next frameworks.
+> **Advanced (framework-agnostic):** the free `generateContentSitemap(buildCtx, options)` and `entryToMetadata(data, options)`, which take `seo` as an argument, are exported from `canopycms-next` directly, and the neutral core — `collectRoutableEntries`, `extractSeoFields`, `isNoindexEntry` — from `canopycms/server`, for non-Next frameworks.
 
 ### Reading Content at Build Time
 

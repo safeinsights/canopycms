@@ -221,8 +221,8 @@ describe('generateContentSitemap', () => {
     ])
 
     expect(await generateContentSitemap(ctx, { siteUrl: SITE, seo: { group: 'seo' } })).toEqual([])
-    // Without `seo` here or in config.seo, the noindex flag is invisible and the hidden entry
-    // ships in the sitemap while its page says noindex. config.seo is the one place to set it.
+    // Called directly without `seo`, the sitemap reads the flat names, so a grouped flag is
+    // invisible and the entry is listed.
     expect(await generateContentSitemap(ctx, { siteUrl: SITE })).toHaveLength(1)
   })
 

@@ -154,7 +154,8 @@ export function extractSeoFields(
 
 /**
  * THE `noindex` predicate. Every surface that reads the flag routes through this one function,
- * with `opts` taken from `CanopyConfig.seo`, rather than re-deriving it:
+ * with `opts` taken from `CanopyConfig.seo` (canopycms-next's free helpers take it as an
+ * argument instead), rather than re-deriving it:
  *
  * - the page's own `robots: { index: false }` (canopycms-next's `entryToMetadata`),
  * - exclusion from the sitemap (canopycms-next's `generateContentSitemap`),

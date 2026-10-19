@@ -72,8 +72,9 @@ export function hiddenPickSentences(picks: readonly HiddenPick[]): string[] {
 }
 
 /**
- * The yellow note above a reference field's input or list, under its heading. It warns rather
- * than filters: an editor may be lining up an entry that is about to go public.
+ * The yellow note about hidden picks: above a list, under its heading, or under a single
+ * field's input. It warns rather than filters: an editor may be lining up an entry that is
+ * about to go public.
  */
 export const HiddenPicksNote: React.FC<{ picks: readonly HiddenPick[] }> = ({ picks }) => {
   if (picks.length === 0) return null

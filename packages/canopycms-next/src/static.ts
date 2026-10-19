@@ -153,7 +153,8 @@ export interface GenerateContentSitemapOptions {
   rootPath?: string
   /**
    * Where the SEO fields live; drives the `noindex` read. The bound helper on
-   * `createNextCanopyContext` defaults it to `config.seo`; called directly, it is this value alone.
+   * `createNextCanopyContext` defaults it to `config.seo`. Called directly, it is this value
+   * alone, and required when the build context's config sets `seo`.
    */
   seo?: SeoFieldLocation
   /**
@@ -437,7 +438,9 @@ export interface EntryToMetadataOptions extends ExtractSeoFieldsOptions {
  * as unset — see `extractSeoFields`.
  *
  * `noindex` goes through the same core predicate the sitemap uses, so a page marked noindex is
- * suppressed in both surfaces or neither.
+ * suppressed in both surfaces or neither. Called directly, as below, it reads the SEO fields at
+ * the `fields`/`group` given here alone; the `entryToMetadata` that `createNextCanopyContext`
+ * returns defaults them to `config.seo`.
  *
  * @example
  * export async function generateMetadata({ params }): Promise<Metadata> {

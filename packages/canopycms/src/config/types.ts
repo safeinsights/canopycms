@@ -178,10 +178,11 @@ export interface ReferenceFieldConfig extends BaseFieldConfig {
  * - `'label'`: alphabetical by label.
  * - `'collection'`: one group per collection, in content-tree order (a collection, then its
  *   subcollections), each in its collection's own order, then by label.
- * - `{ field, direction }`: by the target's value at `field`, a dotted path for a grouped field
- *   (`'meta.publishedAt'`). Strings compare as plain text, so point it at an ISO date
- *   (`YYYY-MM-DD`): a display date like `'March 4'` sorts by month name. An entry with no
- *   value sorts first under `'desc'`, last under `'asc'` (the default). Ties go by label.
+ * - `{ field, direction }`: by the target's value at `field`, a dotted path for a nested field
+ *   (`'meta.publishedAt'`). Numbers compare as numbers and sort before strings; strings compare
+ *   as plain text, so point it at an ISO date (`YYYY-MM-DD`; unquoted frontmatter dates count):
+ *   a display date like `'March 4'` sorts by month name. An entry with no value sorts first
+ *   under `'desc'`, last under `'asc'` (the default). Ties go by label.
  *
  * @example
  * // Newest first, with entries not yet given a date at the top.
@@ -644,8 +645,8 @@ export interface CanopyConfigInput {
   /**
    * Where entries keep their SEO fields: `group` when `defineSeoFieldGroup({ group })` nests
    * them, `fields` for renamed ones. Omit for the flat default. Every surface that reads an
-   * entry's `noindex` reads it here: the sitemap, page metadata, AI content and the editor's
-   * reference picker.
+   * entry's `noindex` reads it here: the sitemap and page metadata helpers `createNextCanopyContext`
+   * returns, AI content and the editor's reference picker.
    */
   seo?: SeoFieldLocation
   /** Dev-mode-only behavior (content-sync divergence detection). Ignored when mode !== 'dev'. */
