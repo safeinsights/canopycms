@@ -467,12 +467,20 @@ function assertValidReferenceLink(config: AIContentConfig | undefined): void {
 
 /**
  * Refuse a non-boolean `exclude.noindex`: `noindex: 'false'` would leave the gate on while the
- * adopter believes it is off. `config.seo`'s shape is checked by the config schema.
+ * adopter believes it is off. Refuse `seo` too: the location is `CanopyConfig.seo`, and an AI
+ * config loaded without type checking would otherwise drop it silently and ship every noindex
+ * entry. `CanopyConfig.seo`'s shape is checked by the config schema.
  */
 function assertValidNoindexConfig(config: AIContentConfig | undefined): void {
   const noindex: unknown = config?.exclude?.noindex
   if (noindex !== undefined && typeof noindex !== 'boolean') {
     throw new Error(`AI content config: exclude.noindex must be a boolean, got ${typeof noindex}`)
+  }
+  if (config && 'seo' in config) {
+    throw new Error(
+      'AI content config: seo is not an AI content option. Set it once as seo in defineCanopyConfig, ' +
+        'where the sitemap, page metadata and AI content all read it.',
+    )
   }
 }
 

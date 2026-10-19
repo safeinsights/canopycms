@@ -220,9 +220,10 @@ export const ReferenceListField: React.FC<ReferenceListFieldProps> = ({
               ? { title: 'Loading…', pending: true }
               : {
                   title: titleOf(idx),
-                  ...(hiddenField.has(ids[idx]) && {
-                    badge: { label: HIDDEN_FROM_SEARCH, color: 'yellow' },
-                  }),
+                  ...(!error &&
+                    hiddenField.has(ids[idx]) && {
+                      badge: { label: HIDDEN_FROM_SEARCH, color: 'yellow' },
+                    }),
                 }
           }
           hasErrors={itemError ? (idx) => itemError(idx) !== undefined : undefined}

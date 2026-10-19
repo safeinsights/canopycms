@@ -636,6 +636,32 @@ describe('a list reference in a form', () => {
       expect(note()).toBeNull()
     })
 
+    it('drops the badge and note when a reload fails', async () => {
+      mockClient.content.getReferenceOptions
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: {
+            options: [
+              {
+                id: 'post-summer',
+                label: 'Summer recap',
+                collection: 'posts',
+                noindex: { fieldLabel: HIDE },
+              },
+            ],
+          },
+        })
+        .mockResolvedValueOnce({ ok: false, status: 500, error: 'Server unavailable' })
+      const { rerender } = render(<Harness initial={['post-summer']} collections={['posts']} />)
+      await waitFor(() => expect(rowTitles()).toEqual(['Summer recap, Hidden from search']))
+
+      rerender(<Harness initial={['post-summer']} collections={['posts', 'news']} />)
+      await screen.findByTestId('reference-list-error')
+      expect(rowTitles()).toEqual(['Summer recap'])
+      expect(note()).toBeNull()
+    })
+
     it('holds the note back until the options arrive', async () => {
       let settle: (value: ReferenceOptionsResponse) => void = () => {}
       mockClient.content.getReferenceOptions.mockImplementation(
@@ -663,6 +689,22 @@ describe('a list reference in a form', () => {
       expect(note()?.textContent).toContain('\u2018Summer recap\u2019 has')
       expect(rowTitles()).toEqual(['Summer recap, Hidden from search'])
     })
+  })
+
+  it('loads the options again when only optionSort changes', async () => {
+    mockClient.content.getReferenceOptions.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { options: [] },
+    })
+    const { rerender } = render(<Harness initial={[]} collections={['posts']} optionSort="label" />)
+    await waitFor(() => expect(mockClient.content.getReferenceOptions).toHaveBeenCalledTimes(1))
+    rerender(<Harness initial={[]} collections={['posts']} optionSort="collection" />)
+    await waitFor(() =>
+      expect(mockClient.content.getReferenceOptions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sort: 'collection' }),
+      ),
+    )
   })
 
   it("asks the endpoint for the field's option order", async () => {

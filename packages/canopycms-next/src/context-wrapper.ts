@@ -419,7 +419,10 @@ export async function createNextCanopyContext(
   // static export, and on a prod `server` deployment guardBuildContext throws if it is reached at
   // request time. Binding it here keeps the admin context out of the route module either way.
   const boundGenerateContentSitemap = async (callOptions: GenerateContentSitemapOptions) => {
-    return generateContentSitemap(await getCanopyForBuild(), callOptions)
+    return generateContentSitemap(await getCanopyForBuild(), {
+      ...callOptions,
+      seo: mergeSeoFieldLocation(options.config.seo, callOptions.seo),
+    })
   }
 
   const boundEntryToMetadata = (

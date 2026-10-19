@@ -161,7 +161,8 @@ const byLabel = (a: ReferenceOption, b: ReferenceOption): number => a.label.loca
 
 /**
  * The value at a dotted path, read through own properties only so a path like `__proto__`
- * reads nothing. Only a non-blank string or a finite number counts as a value.
+ * reads nothing. A non-blank string, a finite number or a valid date counts as a value; a date
+ * becomes its ISO string, since md/mdx frontmatter parses an unquoted `YYYY-MM-DD` as a `Date`.
  */
 function sortValueAt(data: Record<string, unknown>, path: string): SortValue {
   let current: unknown = data
@@ -172,15 +173,21 @@ function sortValueAt(data: Record<string, unknown>, path: string): SortValue {
   }
   if (typeof current === 'number') return Number.isFinite(current) ? current : undefined
   if (typeof current === 'string') return current.trim() === '' ? undefined : current
+  if (current instanceof Date) {
+    return Number.isNaN(current.getTime()) ? undefined : current.toISOString()
+  }
   return undefined
 }
 
-/** Numbers compare numerically; anything else as plain text, which orders ISO dates. */
+/**
+ * Numbers before strings, so a field typed differently across entry types still sorts in one
+ * consistent order; numbers compare numerically, strings as plain text, which orders ISO dates.
+ */
 function compareValues(a: string | number, b: string | number): number {
   if (typeof a === 'number' && typeof b === 'number') return a - b
-  const x = String(a)
-  const y = String(b)
-  return x < y ? -1 : x > y ? 1 : 0
+  if (typeof a === 'number') return -1
+  if (typeof b === 'number') return 1
+  return a < b ? -1 : a > b ? 1 : 0
 }
 
 /**

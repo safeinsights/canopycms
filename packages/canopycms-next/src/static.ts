@@ -152,8 +152,8 @@ export interface GenerateContentSitemapOptions {
   /** Scope to a collection logical path (e.g. 'content/posts'). Defaults to the whole content root. */
   rootPath?: string
   /**
-   * Where the SEO fields live, for this call only. Defaults to `config.seo`, read from the build
-   * context's services; drives the `noindex` read.
+   * Where the SEO fields live; drives the `noindex` read. The bound helper on
+   * `createNextCanopyContext` defaults it to `config.seo`; called directly, it is this value alone.
    */
   seo?: SeoFieldLocation
   /**
@@ -216,11 +216,13 @@ export interface GenerateContentSitemapOptions {
 }
 
 /**
- * Merge the site's SEO field location (`config.seo`) with a per-call override.
+ * Merge the site's SEO field location (`config.seo`) with a per-call override, as the bound
+ * helpers on `createNextCanopyContext` do.
  *
- * Only keys the caller actually supplies override it: an omitted or `undefined` `fields`/`group`
- * falls through to `config.seo`. A plain spread would not do this, because `entryToMetadata`'s
- * options always carry `fields`/`group` keys, present but `undefined` when the caller omits them.
+ * Only what the caller actually supplies overrides it: an omitted or `undefined` `group` falls
+ * through, and `fields` merge name by name, so renaming the title for one page keeps the site's
+ * `noindex` name. A plain spread would not do this, because `entryToMetadata`'s options always
+ * carry `fields`/`group` keys, present but `undefined` when the caller omits them.
  * @internal Exported for tests.
  */
 export function mergeSeoFieldLocation(
@@ -228,7 +230,9 @@ export function mergeSeoFieldLocation(
   callOverride: SeoFieldLocation | undefined,
 ): SeoFieldLocation {
   const merged: SeoFieldLocation = { ...configDefault }
-  if (callOverride?.fields !== undefined) merged.fields = callOverride.fields
+  if (callOverride?.fields !== undefined) {
+    merged.fields = { ...configDefault?.fields, ...callOverride.fields }
+  }
   if (callOverride?.group !== undefined) merged.group = callOverride.group
   return merged
 }
@@ -261,8 +265,8 @@ export async function generateContentSitemap(
   buildCtx: Parameters<typeof collectRoutableEntries>[0],
   options: GenerateContentSitemapOptions,
 ): Promise<MetadataRoute.Sitemap> {
-  const { siteUrl, trailingSlash, rootPath, exclude, lastModified, priority, pathFor } = options
-  const seo = mergeSeoFieldLocation(buildCtx.services?.config.seo, options.seo)
+  const { siteUrl, trailingSlash, rootPath, seo, exclude, lastModified, priority, pathFor } =
+    options
 
   // A sitemap with a non-absolute <loc> is invalid — search engines reject the WHOLE file, not
   // just the bad entry, and the build stays green because nothing here threw. 'example.com' (no

@@ -154,6 +154,11 @@ describe('AI content and noindex', () => {
     await expect(generate(aiConfig)).rejects.toThrow('exclude.noindex must be a boolean')
   })
 
+  it('refuses seo on the AI config, which belongs in CanopyConfig', async () => {
+    const aiConfig = { seo: { group: 'seo' } } as unknown as AIContentConfig
+    await expect(generate(aiConfig)).rejects.toThrow('seo is not an AI content option')
+  })
+
   it('reads the flag inside a configured SEO group', async () => {
     await store.write(unsafeAsLogicalPath('content/guides'), unsafeAsSlug('grouped'), {
       format: 'md',

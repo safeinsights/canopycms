@@ -516,6 +516,65 @@ describe('ReferenceResolver options: noindex marker and sort', () => {
       expect(labels(options)).toEqual(['Delta', 'Alpha', 'Bravo', 'Charlie', 'Echo'])
     })
 
+    it('sorts unquoted md frontmatter dates, which parse as Date objects', async () => {
+      const dir = path.join(tempDir, 'content', 'notes')
+      await fs.mkdir(dir, { recursive: true })
+      const note = (slug: string, id: string, date: string) =>
+        fs.writeFile(
+          path.join(dir, `note.${slug}.${id}.md`),
+          `---\ntitle: ${slug}\npublishedAt: ${date}\n---\nBody.\n`,
+        )
+      await note('one', 'mAAAAAAAAAA1', '2026-01-01')
+      await note('two', 'mAAAAAAAAAA2', '2026-03-01')
+      await note('three', 'mAAAAAAAAAA3', '2026-02-01')
+      const notesSchema = {
+        collections: [
+          {
+            name: 'notes',
+            path: 'notes',
+            entries: [
+              {
+                name: 'note',
+                format: 'md' as const,
+                schema: [
+                  { name: 'title', type: 'string' as const },
+                  { name: 'publishedAt', type: 'string' as const },
+                ],
+              },
+            ],
+          },
+        ],
+      }
+      const store = new ContentStore(tempDir, flattenSchema(notesSchema, 'content'))
+      const notes = new ReferenceResolver(store, await store.idIndex())
+      const options = await notes.loadReferenceOptions(
+        [unsafeAsLogicalPath('notes')],
+        'title',
+        undefined,
+        undefined,
+        undefined,
+        { sort: { field: 'publishedAt', direction: 'desc' } },
+      )
+      // Label order would be one, three, two.
+      expect(labels(options)).toEqual(['two', 'three', 'one'])
+    })
+
+    it('sorts numbers numerically, and numbers before strings in one consistent order', async () => {
+      const dir = path.join(tempDir, 'content', 'posts')
+      const rank = (slug: string, id: string, value: unknown) =>
+        fs.writeFile(
+          path.join(dir, `post.${slug}.${id}.json`),
+          JSON.stringify({ title: slug, rank: value }),
+        )
+      await rank('nine', 'rAAAAAAAAAA1', 9)
+      await rank('ten', 'rAAAAAAAAAA2', 10)
+      await rank('five', 'rAAAAAAAAAA3', '5')
+      const store = new ContentStore(tempDir, flattenSchema(schema, 'content'))
+      resolver = new ReferenceResolver(store, await store.idIndex())
+      const options = await load({ sort: { field: 'rank' } }, { entryTypes: ['post'] })
+      expect(labels(options).slice(0, 3)).toEqual(['nine', 'ten', 'five'])
+    })
+
     it('sorts what the search leaves', async () => {
       const options = await load(
         { sort: { field: 'publishedAt', direction: 'desc' } },

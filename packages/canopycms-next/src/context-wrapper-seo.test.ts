@@ -25,8 +25,8 @@ const hiddenEntry = {
 
 // Mock service/context creation so createNextCanopyContext can run without a real
 // workspace/filesystem, and so generateContentSitemap's getCanopyForBuild() resolves a fake
-// listEntries instead of touching the branch/schema machinery. The context hands back the
-// services it was given, as the real one does, so `config.seo` reaches the sitemap.
+// listEntries instead of touching the branch/schema machinery. Both bound helpers read
+// `config.seo` from the options, not from these services.
 vi.mock('canopycms/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('canopycms/server')>()
   return {
@@ -38,13 +38,13 @@ vi.mock('canopycms/server', async (importOriginal) => {
       resolvePendingBaseBranch: vi.fn(),
     })),
     startDevContentWatcher: vi.fn(),
-    createCanopyContext: vi.fn(({ services }: { services: unknown }) => ({
+    createCanopyContext: vi.fn(() => ({
       getContext: async () => ({
         buildContentTree: async () => [],
         listEntries: async () => [hiddenEntry] as unknown as ListEntriesItem[],
         read: async () => ({ data: undefined, path: '' }),
         readByUrlPath: async () => null,
-        services,
+        services: {},
       }),
     })),
   }
@@ -81,6 +81,12 @@ describe('mergeSeoFieldLocation', () => {
     expect(
       mergeSeoFieldLocation({ group: 'seo', fields: { title: 'metaTitle' } }, { group: 'meta' }),
     ).toEqual({ group: 'meta', fields: { title: 'metaTitle' } })
+  })
+
+  it('merges fields name by name, so a per-call rename keeps the configured noindex name', () => {
+    expect(
+      mergeSeoFieldLocation({ fields: { noindex: 'hidden' } }, { fields: { title: 'headline' } }),
+    ).toEqual({ fields: { noindex: 'hidden', title: 'headline' } })
   })
 
   it('returns an empty location when neither side sets one', () => {

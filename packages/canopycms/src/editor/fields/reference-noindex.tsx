@@ -21,6 +21,7 @@ export const HiddenFromSearchBadge: React.FC = () => (
  * check mark itself, since a custom option replaces Mantine's.
  */
 export function referenceOptionRenderer(options: readonly ReferenceOption[]) {
+  const hiddenValues = new Set(options.flatMap((o) => (o.noindex ? [o.value] : [])))
   return function ReferenceOptionLabel({
     option,
     checked,
@@ -28,7 +29,7 @@ export function referenceOptionRenderer(options: readonly ReferenceOption[]) {
     option: ComboboxItem
     checked?: boolean
   }) {
-    const hidden = options.some((o) => o.value === option.value && o.noindex)
+    const hidden = hiddenValues.has(option.value)
     return (
       <Group gap={6} wrap="nowrap" w="100%">
         <IconCheck aria-hidden size={14} style={{ visibility: checked ? 'visible' : 'hidden' }} />
