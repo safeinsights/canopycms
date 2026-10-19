@@ -54,6 +54,30 @@ entries under **Released**.
 
 ## Released
 
+### 0.5.0
+
+#### Reorderable list references, and `maxItems` on list fields — **behaviour change: a build fails on a list over its cap**
+
+<!-- changeset: reference-list-reorder-and-max-items -->
+
+_First in 0.5.0._
+
+**What changed.** A `type: 'reference', list: true` field now edits as rows in stored order, like an `object` list: drag a row or use its "…" menu to move or remove it, open a row to swap its entry in place, and pick from Add under the rows to append. Neither control offers an entry the list already holds. Any `list: true` field, and any `block` field, takes `maxItems`. The editor stops adding at the cap and says why, a save over it is refused, and a production build fails on an entry over it, naming the entry, field, count and cap. Adding `maxItems` to a list that already holds more therefore fails the build until an editor removes the extra items. `maxItems` on a field that holds no items is refused when the entry schema registry is created.
+
+**To adopt.** Set `maxItems: 3` on the list field in its entry schema. See [Field Types](README.md#field-types).
+
+#### SEO field location moves into config; reference pickers mark hidden entries and take a sort order — **breaking: `createNextCanopyContext({ seo })` and `AIContentConfig.seo` are removed**
+
+<!-- changeset: seo-config-hidden-picks-option-sort -->
+
+_First in 0.5.0._
+
+**What changed.** `defineCanopyConfig` takes `seo: { group?, fields? }`, the one place every surface reads an entry's `noindex` flag: the sitemap and `entryToMetadata` that `createNextCanopyContext` returns, AI content and the editor's reference picker. A per-call `seo`/`group`/`fields` still overrides it. The free `generateContentSitemap` takes `seo` as an argument and refuses to run without it when the config sets one; `createNextCanopyContext` and the AI content config refuse a leftover `seo`. A reference picker now badges an entry hidden from search as "Hidden from search", and picking one adds a note naming the setting on that entry's form, since a page listing only indexed entries won't show it. A reference field takes `optionSort`: `'label'` (the default), `'collection'`, or `{ field, direction }`. Point `field` at an ISO date, since strings compare as text.
+
+**To adopt.** Move `seo` from `createNextCanopyContext({ seo })` and from `defineAIContentConfig({ seo })` into `defineCanopyConfig({ seo })`. See [Sitemap and SEO Metadata](README.md#sitemap-and-seo-metadata) and [How References Work in the Editor](README.md#how-references-work-in-the-editor).
+
+**Now deletable.** A shared `seo` constant passed separately to the Next context and the AI content config.
+
 ### 0.4.0
 
 #### Link-only references to json/yaml entries leave out the body — **behaviour change (resolved data and types)**
