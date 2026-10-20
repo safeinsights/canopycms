@@ -4,6 +4,7 @@ import { generateKeyPairSync, randomUUID } from 'node:crypto'
 import { mkdtemp, readdir, readFile, writeFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { get as httpGet } from 'node:http'
 import { PassThrough } from 'node:stream'
 import { stripVTControlCharacters } from 'node:util'
 import type { ChildProcess } from 'node:child_process'
@@ -230,6 +231,139 @@ describe('the App links `create` prints', () => {
       expect(url).toMatch(/^https:\/\/github\.com\/organizations\/an-org\/settings\/apps\//)
     }
     expect(everything.flatMap(urlsIn)).toHaveLength(2)
+  })
+})
+
+describe('`create` end to end, with the account type GitHub reports', () => {
+  const CODE = 'a-manifest-code'
+  const SLUG = 'a-content-site-canopycms'
+  let consoleSpy: MockConsole
+  let keyDir: string
+  const realStdin = Object.getOwnPropertyDescriptor(process, 'stdin')
+
+  beforeEach(async () => {
+    consoleSpy = mockConsole()
+    keyDir = await mkdtemp(join(tmpdir(), 'canopycms-create-test-'))
+    // A TTY that is already at end-of-input: `create` refuses a non-TTY, and
+    // the install prompt then returns at once instead of waiting for Enter.
+    const stdin = Object.assign(new PassThrough(), { isTTY: true })
+    stdin.end()
+    Object.defineProperty(process, 'stdin', { value: stdin, configurable: true })
+  })
+
+  afterEach(() => {
+    consoleSpy.restore()
+    vi.unstubAllGlobals()
+    if (realStdin) Object.defineProperty(process, 'stdin', realStdin)
+    resetStdinStateForTesting()
+  })
+
+  /** GitHub answering every call `create` makes, for an owner of the given account type. */
+  function stubGitHub(accountType: 'Organization' | 'User') {
+    const response = (body: unknown, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      text: async () => (body === undefined ? '' : JSON.stringify(body)),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init?: { method?: string }) => {
+        const url = input.toString()
+        const method = (init?.method ?? 'GET').toUpperCase()
+        if (url.endsWith('/users/an-org')) return response({ type: accountType })
+        if (url.includes('/apps/')) return response({ message: 'Not Found' }, 404)
+        if (method === 'POST' && url.endsWith(`/app-manifests/${CODE}/conversions`)) {
+          return response({ id: 123456, slug: SLUG, client_id: 'Iv1.x', pem: testKey() })
+        }
+        if (url.endsWith('/repos/an-org/a-content-site/installation')) {
+          return response({
+            id: 555,
+            permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' },
+            repository_selection: 'selected',
+            suspended_at: null,
+            app_slug: SLUG,
+          })
+        }
+        if (url.includes('/app/installations?')) return response([{ id: 555 }])
+        if (method === 'POST' && url.endsWith('/app/installations/555/access_tokens')) {
+          return response({ token: 'ghs_faketoken' })
+        }
+        if (method === 'DELETE' && url.endsWith('/installation/token'))
+          return response(undefined, 204)
+        throw new Error(`unstubbed request: ${method} ${url}`)
+      }),
+    )
+  }
+
+  /** Plays GitHub's redirect back to the loopback server `create` opened. */
+  async function redirectBack(): Promise<void> {
+    const printed = () => stripVTControlCharacters(consoleSpy.all().log.join('\n'))
+    for (let i = 0; i < 200 && !printed().includes('Waiting for GitHub'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const port = /127\.0\.0\.1:(\d+)/.exec(printed())?.[1]
+    const formFile = /(\S+create-\S+\.html)/.exec(printed())?.[1]
+    if (!port || !formFile) throw new Error(`create never reached the browser step:\n${printed()}`)
+    const state = /state=([0-9a-f-]{36})/.exec(await readFile(formFile, 'utf8'))?.[1]
+    // The module under test reads `fetch`, which is stubbed; this request has to be real.
+    await new Promise<void>((resolve, reject) => {
+      httpGet(`http://127.0.0.1:${port}/callback?code=${CODE}&state=${state}`, (res) => {
+        res.resume()
+        res.on('end', resolve)
+      }).on('error', reject)
+    })
+  }
+
+  async function runCreate(destination: { kind: 'file'; filePath: string }): Promise<number> {
+    const done = initGitHubApp({
+      mode: 'create',
+      projectDir: '/tmp',
+      owner: 'an-org',
+      repo: 'a-content-site',
+      destination,
+    })
+    await redirectBack()
+    return done
+  }
+
+  const printedLinks = (stream: 'log' | 'error'): string[] =>
+    stripVTControlCharacters(consoleSpy.all()[stream].join('\n')).match(
+      /https:\/\/github\.com\/\S*\/apps\/\S*/g,
+    ) ?? []
+
+  it('prints the organisation install link when GitHub says the owner is an organisation', async () => {
+    stubGitHub('Organization')
+    expect(await runCreate({ kind: 'file', filePath: join(keyDir, 'key.pem') })).toBe(0)
+    const links = printedLinks('log').filter((url) => url.includes('/installations'))
+    expect(links).toEqual([
+      `https://github.com/organizations/an-org/settings/apps/${SLUG}/installations`,
+    ])
+  })
+
+  it('prints the personal install link when GitHub says the owner is a user', async () => {
+    stubGitHub('User')
+    expect(await runCreate({ kind: 'file', filePath: join(keyDir, 'key.pem') })).toBe(0)
+    const links = printedLinks('log').filter((url) => url.includes('/installations'))
+    expect(links).toEqual([`https://github.com/settings/apps/${SLUG}/installations`])
+  })
+
+  it('prints the organisation settings link when the key could not be stored', async () => {
+    stubGitHub('Organization')
+    const filePath = join(keyDir, 'taken.pem')
+    await writeFile(filePath, 'already here')
+    expect(await runCreate({ kind: 'file', filePath })).toBe(1)
+    expect(printedLinks('error')).toEqual([
+      `https://github.com/organizations/an-org/settings/apps/${SLUG}`,
+    ])
+    expect(printedLinks('log').filter((url) => url.includes('/installations'))).toEqual([])
+  })
+
+  it('prints the personal settings link when the key could not be stored for a user', async () => {
+    stubGitHub('User')
+    const filePath = join(keyDir, 'taken.pem')
+    await writeFile(filePath, 'already here')
+    expect(await runCreate({ kind: 'file', filePath })).toBe(1)
+    expect(printedLinks('error')).toEqual([`https://github.com/settings/apps/${SLUG}`])
   })
 })
 

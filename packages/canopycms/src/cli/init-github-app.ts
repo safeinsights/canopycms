@@ -33,7 +33,6 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
-import pc from 'picocolors'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { normalizeGitHubAppPrivateKey } from '../worker/github-auth'
 import {
@@ -48,7 +47,10 @@ import {
 import {
   cross,
   deploymentSettingsMessage,
+  errColors,
+  failMark,
   link,
+  outColors,
   recoveryPreamble,
   registrationMessage,
   step,
@@ -103,11 +105,11 @@ export function keyNotStoredMessage(
   created: { id: number; slug: string },
 ): string {
   return (
-    `\n${pc.bold(pc.red('Stopping here:'))} the App exists but its key was not stored, so installing it now\n` +
+    `\n${errColors.bold(errColors.red('Stopping here:'))} the App exists but its key was not stored, so installing it now\n` +
     '  would achieve nothing. To recover, open the App and generate a private key from\n' +
     '  its "Private keys" section, then run `verify`; or delete the App and start again.\n\n' +
     `  GITHUB_APP_ID=${created.id}\n` +
-    `  App settings: ${link(appSettingsUrl(target, created.slug))}`
+    `  App settings: ${link(appSettingsUrl(target, created.slug), errColors)}`
   )
 }
 
@@ -931,7 +933,9 @@ async function readBackInstallation(
   }
 
   const installation = found.body
-  console.log(`\n${pc.bold(`Installation ${installation.id}`)} on ${target.owner}/${target.repo}`)
+  console.log(
+    `\n${outColors.bold(`Installation ${installation.id}`)} on ${target.owner}/${target.repo}`,
+  )
 
   const findings = readbackVerdict(installation)
   if (findings.length === 0) {
@@ -952,7 +956,7 @@ async function readBackInstallation(
   const installations = await installationCount(jwt)
   if (installations === null) {
     console.error(
-      `    ${pc.red('✗')} could not list this App's installations, so "installed once" is UNCHECKED.\n` +
+      `    ${failMark} could not list this App's installations, so "installed once" is UNCHECKED.\n` +
         '      Reported as a failure rather than passed over: this is the check that observes\n' +
         '      the one-App-per-site rule, and an unread check is not a satisfied one.',
     )
@@ -961,14 +965,14 @@ async function readBackInstallation(
     console.log(`    ${tick('installed once, so this key reaches no other account')}`)
   } else if (installations > 1) {
     console.error(
-      `    ${pc.red('✗')} this App is installed ${installations} times, and should be installed ONCE.\n` +
+      `    ${failMark} this App is installed ${installations} times, and should be installed ONCE.\n` +
         '      Its private key is App-level: whoever holds it can mint a token for any of\n' +
         '      those installations. Register a separate App per site instead, and remove\n' +
         '      the installations that do not belong to this one.',
     )
   } else {
     console.error(
-      `    ${pc.red('✗')} GitHub reports ${installations} installations of this App, yet one was just read\n` +
+      `    ${failMark} GitHub reports ${installations} installations of this App, yet one was just read\n` +
         '      back for this repository. Something is inconsistent; re-run before trusting it.',
     )
   }
@@ -978,7 +982,7 @@ async function readBackInstallation(
     console.log(`    ${tick(`installation token ${mint.detail}`)}`)
   } else {
     console.error(
-      `    ${pc.red('✗')} could not mint an installation token — ${mint.detail}\n` +
+      `    ${failMark} could not mint an installation token — ${mint.detail}\n` +
         '      If that message says the requested permissions are not granted to this\n' +
         '      installation, that is a GitHub behaviour rather than a bug here: adding a\n' +
         '      permission to an App does NOT apply to existing installations until an account\n' +
@@ -1183,7 +1187,7 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     }
     console.log(
       tick(
-        `Created App ${pc.bold(created.slug)} (id ${created.id}); private key captured, sending it to` +
+        `Created App ${outColors.bold(created.slug)} (id ${created.id}); private key captured, sending it to` +
           ` ${describeDestination(destination)}`,
       ),
     )

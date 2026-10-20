@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { stripVTControlCharacters } from 'node:util'
 import { CANOPY_APP_PERMISSIONS } from './github-app-manifest'
 import {
@@ -57,5 +57,40 @@ describe('deploymentSettingsMessage', () => {
 
   it('prints the installation id when it was read back', () => {
     expect(plain(deploymentSettingsMessage(42, 7))).toContain('GITHUB_APP_INSTALLATION_ID=7')
+  })
+})
+
+describe('when escape codes are written', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  async function freshMessage(env: Record<string, string>): Promise<string> {
+    vi.resetModules()
+    for (const name of ['NO_COLOR', 'FORCE_COLOR', 'CI', 'TERM']) vi.stubEnv(name, '')
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value)
+    const fresh = await import('./github-app-output')
+    return fresh.deploymentSettingsMessage(42, 7) + fresh.tick('x') + fresh.cross('y')
+  }
+
+  it('writes none to a piped stream, even when CI is set', async () => {
+    expect(await freshMessage({ CI: '1' })).not.toContain('\x1b')
+  })
+
+  it('writes none when FORCE_COLOR is 0', async () => {
+    expect(await freshMessage({ FORCE_COLOR: '0' })).not.toContain('\x1b')
+  })
+
+  it('writes some when FORCE_COLOR asks for it', async () => {
+    expect(await freshMessage({ FORCE_COLOR: '1' })).toContain('\x1b')
+  })
+
+  it('writes none when NO_COLOR is set, even with FORCE_COLOR', async () => {
+    expect(await freshMessage({ FORCE_COLOR: '1', NO_COLOR: '1' })).not.toContain('\x1b')
+  })
+
+  it('keeps the NAME=value lines unstyled in every case', async () => {
+    expect(await freshMessage({ FORCE_COLOR: '1' })).toContain('\n  GITHUB_APP_ID=42\n')
   })
 })
