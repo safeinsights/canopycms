@@ -5,14 +5,18 @@ import { mkdtemp, readdir, readFile, writeFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
+import { stripVTControlCharacters } from 'node:util'
 import type { ChildProcess } from 'node:child_process'
 import type { createServer } from 'node:http'
 import {
   appJwt,
   appManifest,
+  appSettingsUrl,
   creationForm,
   handOffKey,
   handOffWithRetry,
+  installStepMessage,
+  keyNotStoredMessage,
   manifestPostUrl,
   initGitHubApp,
   parseKeyRetryAnswer,
@@ -171,6 +175,61 @@ describe('manifestPostUrl', () => {
     const state = 'a state'
     expect(manifestPostUrl(TARGET, state)).toContain('state=a%20state')
     expect(JSON.stringify(appManifest(TARGET, REDIRECT))).not.toContain(state)
+  })
+})
+
+describe('the App links `create` prints', () => {
+  const CREATED = { id: 123456, slug: 'a-content-site-canopycms' }
+  const ORG = TARGET
+  const USER: AppTarget = { ...TARGET, isOrganization: false }
+  const ORG_APP = 'https://github.com/organizations/an-org/settings/apps/a-content-site-canopycms'
+  const USER_APP = 'https://github.com/settings/apps/a-content-site-canopycms'
+
+  /** Every github.com URL in a message, so a link the assertions forgot cannot slip through. */
+  function urlsIn(message: string): string[] {
+    return stripVTControlCharacters(message).match(/https:\/\/github\.com\/\S+/g) ?? []
+  }
+
+  it('links an organisation App to its organisation settings page', () => {
+    expect(appSettingsUrl(ORG, CREATED.slug)).toBe(ORG_APP)
+  })
+
+  it('links a user-owned App to the personal settings page', () => {
+    expect(appSettingsUrl(USER, CREATED.slug)).toBe(USER_APP)
+  })
+
+  it('encodes the owner and slug into the path', () => {
+    expect(appSettingsUrl({ ...ORG, owner: 'an org/x' }, 'a slug')).toBe(
+      'https://github.com/organizations/an%20org%2Fx/settings/apps/a%20slug',
+    )
+  })
+
+  it('sends an organisation owner to the organisation install page', () => {
+    const urls = urlsIn(installStepMessage(ORG, CREATED.slug))
+    expect(urls).toEqual([`${ORG_APP}/installations`])
+  })
+
+  it('keeps a user-owned install link on the personal form', () => {
+    const urls = urlsIn(installStepMessage(USER, CREATED.slug))
+    expect(urls).toEqual([`${USER_APP}/installations`])
+  })
+
+  it('links an organisation App by its organisation page when the key was not stored', () => {
+    const message = keyNotStoredMessage(ORG, CREATED)
+    expect(urlsIn(message)).toEqual([ORG_APP])
+    expect(stripVTControlCharacters(message)).toContain('GITHUB_APP_ID=123456')
+  })
+
+  it('keeps the key-not-stored link on the personal form for a user-owned App', () => {
+    expect(urlsIn(keyNotStoredMessage(USER, CREATED))).toEqual([USER_APP])
+  })
+
+  it('prints no personal-form App link for an organisation, in any message', () => {
+    const everything = [installStepMessage(ORG, CREATED.slug), keyNotStoredMessage(ORG, CREATED)]
+    for (const url of everything.flatMap(urlsIn)) {
+      expect(url).toMatch(/^https:\/\/github\.com\/organizations\/an-org\/settings\/apps\//)
+    }
+    expect(everything.flatMap(urlsIn)).toHaveLength(2)
   })
 })
 
