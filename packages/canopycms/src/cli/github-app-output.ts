@@ -78,7 +78,7 @@ export function registrationMessage(input: RegistrationMessageInput): string {
     '',
     '   The browser matters, twice over. It must be:',
     `     • ${outColors.bold('logged in to GitHub')} as an owner of ${input.owner}`,
-    `     • running ${outColors.bold('on this machine')}: the redirect returns to 127.0.0.1:${input.callbackPort}`,
+    `     • running ${outColors.bold('on this machine')}: the redirect returns to 127.0.0.1:${input.callbackPort}, which only a local browser can reach`,
     outColors.dim(
       '   An embedded or app-internal browser bounces off the GitHub login wall and appears\n' +
         '   to do nothing when you click Create.',
