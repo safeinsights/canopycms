@@ -602,8 +602,8 @@ class LocalGitHubGateway implements GitHubGateway {
 
   /**
    * One fetch serves every caller: concurrent callers join it, and its result is answered again
-   * for {@link AUTH_SNAPSHOT_REUSE_MS}. A fetch is a request per user, so a worker asking in a loop
-   * would otherwise hold the provider's API at its rate limit. The fetch runs apart from every
+   * for {@link AUTH_SNAPSHOT_REUSE_MS}. A fetch pages the provider's whole user and membership lists,
+   * so a worker asking in a loop would otherwise hold the provider's API at its rate limit. The fetch runs apart from every
    * caller's signal, which ends only that caller's wait, so a retry after a timed-out wait joins it.
    */
   async authSnapshot(signal?: AbortSignal): Promise<AuthCacheSnapshot> {

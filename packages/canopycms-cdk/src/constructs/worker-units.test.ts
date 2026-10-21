@@ -134,7 +134,7 @@ const all = userDataLines(tokenDeployment)
 
 /** Names the worker must never hold: secrets, names of secrets, AWS and what only the gateway enforces. */
 const GATEWAY_ONLY =
-  /^(?:CANOPYCMS_GITHUB_TOKEN|CANOPYCMS_GITHUB_APP_|CLERK_SECRET_KEY|AWS_|CANOPYCMS_PROTECTED_BRANCHES$|CANOPYCMS_WORKER_CAPACITY$)/
+  /^(?:CANOPYCMS_GITHUB_TOKEN|CANOPYCMS_GITHUB_APP_|CLERK_SECRET_KEY|AWS_|CANOPYCMS_PROTECTED_BRANCHES$|CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS$|CANOPYCMS_WORKER_CAPACITY$)/
 
 describe('the environment, split between the two processes', () => {
   const envFiles = (t: Template) => {
@@ -224,6 +224,21 @@ describe('the environment, split between the two processes', () => {
     expect(gateway.get(WORKER_CAPACITY_ENV)).toBe('spot')
     expect(gateway.has('CANOPYCMS_WORKSPACE_ROOT')).toBe(false)
     expect(splitWorker.get('CANOPYCMS_SETTINGS_BRANCH')).toBe('canopycms-settings-docs')
+  })
+
+  it.each([true, false])(
+    'puts clerkOrganizationsAsGroups: %s in the gateway env alone, as a string',
+    (value) => {
+      const { splitWorker, gateway } = envFiles(synth({ clerkOrganizationsAsGroups: value }))
+      expect(gateway.get('CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS')).toBe(String(value))
+      expect(splitWorker.has('CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS')).toBe(false)
+    },
+  )
+
+  it('stamps no CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS when clerkOrganizationsAsGroups is unset', () => {
+    const { splitWorker, gateway } = envFiles(tokenDeployment)
+    expect(gateway.has('CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS')).toBe(false)
+    expect(splitWorker.has('CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS')).toBe(false)
   })
 
   it("creates gateway.env root's alone before writing it, and gives the gateway's group read after adding the user", () => {

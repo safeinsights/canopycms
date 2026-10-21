@@ -10,7 +10,8 @@ interface ClerkOrganization {
 }
 
 interface ClerkOrganizationMembership {
-  organization: ClerkOrganization
+  organization?: ClerkOrganization
+  publicUserData?: { userId?: string }
 }
 
 interface ClerkPaginatedResponse<T> {
@@ -21,6 +22,24 @@ type ClerkResponse<T> = T[] | ClerkPaginatedResponse<T>
 
 function unwrapClerkResponse<T>(response: ClerkResponse<T>): T[] {
   return Array.isArray(response) ? response : response.data
+}
+
+/** Read structurally: a peer-dependency copy of `@clerk/backend` defeats `instanceof`. */
+function clerkErrorStatus(err: unknown): number | undefined {
+  if (typeof err !== 'object' || err === null || !('status' in err)) return undefined
+  const status = (err as { status: unknown }).status
+  return typeof status === 'number' ? status : undefined
+}
+
+/** The first Clerk error code (`ClerkAPIResponseError.errors[0].code`), if there is one. */
+function clerkErrorCode(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null || !('errors' in err)) return undefined
+  const { errors } = err as { errors: unknown }
+  if (!Array.isArray(errors)) return undefined
+  const first: unknown = errors[0]
+  if (typeof first !== 'object' || first === null || !('code' in first)) return undefined
+  const { code } = first as { code: unknown }
+  return typeof code === 'string' ? code : undefined
 }
 
 export interface FetchClerkSnapshotOptions {
@@ -84,48 +103,72 @@ export async function fetchClerkSnapshot(
 
   const users = clerkUsers.map(toUserSearchResult)
 
-  let groups: Array<{ id: string; name: string; memberCount?: number }> = []
-  const memberships: Record<string, string[]> = {}
+  if (!useOrganizationsAsGroups) return { users, groups: [], memberships: {} }
 
-  if (useOrganizationsAsGroups) {
-    const clerkOrgs: ClerkOrganization[] = []
-    let orgOffset = 0
-    const orgPageSize = 100
-    while (true) {
-      const orgsResponse = (await clerkClient.organizations.getOrganizationList({
-        limit: orgPageSize,
+  const fetchOrgPage = async (orgOffset: number): Promise<ClerkOrganization[]> =>
+    unwrapClerkResponse(
+      (await clerkClient.organizations.getOrganizationList({
+        limit: pageSize,
         offset: orgOffset,
-      })) as ClerkResponse<ClerkOrganization>
-      const page = unwrapClerkResponse(orgsResponse)
-      clerkOrgs.push(...page)
-      if (page.length < orgPageSize) break
-      orgOffset += orgPageSize
-    }
+      })) as ClerkResponse<ClerkOrganization>,
+    )
 
-    groups = clerkOrgs.map((o) => ({
-      id: o.id,
-      name: o.name,
-      memberCount: o.membersCount ?? o.members_count,
-    }))
-
-    for (const user of clerkUsers) {
-      try {
-        const membershipResponse = (await clerkClient.users.getOrganizationMembershipList({
-          userId: user.id,
-        })) as ClerkResponse<ClerkOrganizationMembership>
-        const userMemberships = unwrapClerkResponse(membershipResponse)
-        if (userMemberships.length > 0) {
-          memberships[user.id] = userMemberships.map((m) => m.organization.id)
-        }
-      } catch (err) {
-        warn(
-          `Failed to fetch memberships for user ${user.id}:`,
-          err instanceof Error ? err.message : err,
-        )
-      }
-    }
+  // Only the first organization call is read as refused: an instance without Organizations
+  // refuses it, and the user list just succeeded with the same key, so the 403 is not a rejected
+  // key. Empty, not the stale groups, so an org-ID ACL grants nothing (fail closed). A 403 on any
+  // later call is not that case: it rethrows, as every other failure does, and the caller keeps
+  // the last good snapshot.
+  let page: ClerkOrganization[]
+  try {
+    page = await fetchOrgPage(0)
+  } catch (err) {
+    if (clerkErrorStatus(err) !== 403) throw err
+    const code = clerkErrorCode(err)
+    warn(
+      `Clerk refused the Organizations API (403${code ? ` ${code}` : ''}): Organizations is ` +
+        'probably disabled on this Clerk instance. Writing users with no groups; set ' +
+        'clerkOrganizationsAsGroups: false (CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS=false) to ' +
+        'stop asking.',
+    )
+    return { users, groups: [], memberships: {} }
+  }
+  const clerkOrgs = [...page]
+  for (let orgOffset = pageSize; page.length === pageSize; orgOffset += pageSize) {
+    page = await fetchOrgPage(orgOffset)
+    clerkOrgs.push(...page)
   }
 
+  // Oldest first, so a membership added mid-paging lands on a later page, not a shifted one.
+  const memberSets = new Map<string, Set<string>>()
+  let membershipOffset = 0
+  while (true) {
+    const membershipResponse =
+      (await clerkClient.organizations.getInstanceOrganizationMembershipList({
+        limit: pageSize,
+        offset: membershipOffset,
+        orderBy: '+created_at',
+      })) as ClerkResponse<ClerkOrganizationMembership>
+    const membershipPage = unwrapClerkResponse(membershipResponse)
+    for (const membership of membershipPage) {
+      const userId = membership.publicUserData?.userId
+      const orgId = membership.organization?.id
+      if (!userId || !orgId) continue
+      const orgIds = memberSets.get(userId) ?? new Set<string>()
+      orgIds.add(orgId)
+      memberSets.set(userId, orgIds)
+    }
+    if (membershipPage.length < pageSize) break
+    membershipOffset += pageSize
+  }
+
+  const memberships: Record<string, string[]> = {}
+  for (const [userId, orgIds] of memberSets) memberships[userId] = [...orgIds]
+
+  const groups = clerkOrgs.map((o) => ({
+    id: o.id,
+    name: o.name,
+    memberCount: o.membersCount ?? o.members_count,
+  }))
   return { users, groups, memberships }
 }
 

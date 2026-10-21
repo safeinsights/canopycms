@@ -46,7 +46,11 @@ import {
 import type { GetSecretOptions } from './secrets'
 import { buildGitHubAppAuth } from './github-app-auth'
 import { createReactiveSecret, type ReactiveSecret } from './credential-refresh'
-import { createClerkAuthCacheRefresher } from './clerk-refresh'
+import {
+  CLERK_ORGANIZATIONS_AS_GROUPS_ENV,
+  createClerkAuthCacheRefresher,
+  parseClerkOrganizationsAsGroups,
+} from './clerk-refresh'
 import type { TerminationNotice, TerminationWatchOptions } from './termination-watch'
 
 /** The part of `CmsWorker` the entrypoint drives. */
@@ -394,6 +398,9 @@ async function buildSingleProcessWorker(
     WORKER_STATE_DIRECTORY_MISSING,
   )
 
+  // Parsed before any secret is read, so a bad value fails the boot first.
+  const useOrganizationsAsGroups = parseClerkOrganizationsAsGroups(env)
+
   const { githubToken, githubTokenSecret, githubAppAuth, clerkSecret } =
     await readWorkerCredentials(env, deps.getSecret)
 
@@ -402,6 +409,7 @@ async function buildSingleProcessWorker(
   const refreshAuthCache = createClerkAuthCacheRefresher({
     secret: clerkSecret,
     cachePath: path.join(workspacePath, '.cache'),
+    useOrganizationsAsGroups,
   })
 
   const worker = deps.createWorker({
@@ -463,6 +471,14 @@ async function buildSplitWorker(
     throw new Error(
       `${PROTECTED_BRANCHES_ENV} is set on the worker unit, but beside the GitHub gateway it is ` +
         "the gateway's setting: move it to the gateway's environment (gateway.env)",
+    )
+  }
+
+  // Likewise the gateway fetches the Clerk snapshot, so the setting is its own.
+  if (env[CLERK_ORGANIZATIONS_AS_GROUPS_ENV]) {
+    throw new Error(
+      `${CLERK_ORGANIZATIONS_AS_GROUPS_ENV} is set on the worker unit, but beside the GitHub ` +
+        "gateway it is the gateway's setting: move it to the gateway's environment (gateway.env)",
     )
   }
 

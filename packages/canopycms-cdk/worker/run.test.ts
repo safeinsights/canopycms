@@ -10,6 +10,14 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { refreshClerkCacheMock } = vi.hoisted(() => ({ refreshClerkCacheMock: vi.fn() }))
+
+// The single-process worker's refresher would otherwise build a real Clerk client.
+vi.mock('canopycms-auth-clerk/cache-writer', () => ({
+  refreshClerkCache: refreshClerkCacheMock,
+  fetchClerkSnapshot: vi.fn(),
+}))
 import {
   DEFAULT_DRAIN_DEADLINE_MS,
   DEFAULT_TASK_TIMEOUT,
@@ -563,6 +571,49 @@ describe('runWorker: a healthy start', () => {
     expect(absent.createWorker.mock.calls[0][0].protectedBranches).toEqual([])
   })
 
+  it.each([
+    [undefined, true],
+    ['', true],
+    ['true', true],
+    ['false', false],
+  ])(
+    'passes CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS=%j to the Clerk refresh as %s',
+    async (value, expected) => {
+      refreshClerkCacheMock.mockReset()
+      refreshClerkCacheMock.mockResolvedValue({ userCount: 0, groupCount: 0, membershipCount: 0 })
+      const env: NodeJS.ProcessEnv = { ...baseEnv(), CLERK_SECRET_KEY: 'sk_test_x' }
+      if (value !== undefined) env.CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS = value
+      const h = harness({ env })
+      await runWorker(h.deps)
+
+      const config = h.createWorker.mock.calls[0][0] as CmsWorkerConfig
+      await config.refreshAuthCache!()
+
+      expect(refreshClerkCacheMock).toHaveBeenCalledWith(
+        expect.objectContaining({ useOrganizationsAsGroups: expected }),
+      )
+    },
+  )
+
+  it('fails the boot on a CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS that is neither true nor false', async () => {
+    const h = harness({
+      env: {
+        ...baseEnv(),
+        CLERK_SECRET_KEY: 'sk_test_x',
+        CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS: 'nope',
+      },
+    })
+
+    await runWorker(h.deps)
+
+    expect(h.record).toHaveBeenCalledTimes(1)
+    const { error } = h.record.mock.calls[0][0] as { error: Error }
+    expect(error.message).toContain('CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS')
+    expect(error.message).toContain('"nope"')
+    expect(h.createWorker).not.toHaveBeenCalled()
+    expect(h.exitCodes()).toEqual([1])
+  })
+
   it('builds an App credential from the trio, reading the key from its secret', async () => {
     const h = harness({
       env: {
@@ -807,6 +858,32 @@ describe('runWorker: split mode', () => {
     expect(h.connectGateway).not.toHaveBeenCalled()
     expect(h.createWorker).not.toHaveBeenCalled()
     expect(h.exitCodes()).toEqual([1])
+  })
+
+  it("refuses CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS on the worker's unit, which only the gateway reads", async () => {
+    const h = harness({
+      env: { ...splitEnv(), CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS: 'false' },
+    })
+
+    await runWorker(h.deps)
+
+    expect(h.record).toHaveBeenCalledTimes(1)
+    const { error } = h.record.mock.calls[0][0] as { error: Error }
+    expect(error.message).toMatch(
+      /CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS is set on the worker unit/,
+    )
+    expect(h.connectGateway).not.toHaveBeenCalled()
+    expect(h.createWorker).not.toHaveBeenCalled()
+    expect(h.exitCodes()).toEqual([1])
+  })
+
+  it('accepts an empty CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS on the worker unit', async () => {
+    const h = harness({ env: { ...splitEnv(), CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS: '' } })
+
+    await runWorker(h.deps)
+
+    expect(h.record).not.toHaveBeenCalled()
+    expect(h.createWorker).toHaveBeenCalledTimes(1)
   })
 
   it.each(['imds', 'network-namespace', 'proc', 'home', 'secrets-in-env'] as const)(

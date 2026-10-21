@@ -456,6 +456,10 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
     )
   })
 
+  it('stamps clerkOrganizationsAsGroups: false from the scaffolded stack into the gateway env', () => {
+    expect(renderedTemplates).toContain('CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS=false')
+  })
+
   /**
    * The scaffold half of adopter request #45, and the only place the GitHub App
    * chain is exercised end to end: `bin/app.ts` -> `CmsStackProps` ->

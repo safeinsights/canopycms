@@ -25,7 +25,12 @@ vi.mock('canopycms-auth-clerk/cache-writer', () => ({
   fetchClerkSnapshot: fetchClerkSnapshotMock,
 }))
 
-import { createClerkAuthCacheRefresher, createClerkSnapshotFetcher } from './clerk-refresh'
+import {
+  CLERK_ORGANIZATIONS_AS_GROUPS_ENV,
+  createClerkAuthCacheRefresher,
+  createClerkSnapshotFetcher,
+  parseClerkOrganizationsAsGroups,
+} from './clerk-refresh'
 import type { ReactiveSecret } from './credential-refresh'
 
 /** An error shaped the way `@clerk/backend`'s `ClerkAPIResponseError` is. */
@@ -94,7 +99,11 @@ describe('no Clerk key configured', () => {
     // `undefined` is meaningful to CmsWorker: it skips scheduling the
     // auth-cache loop rather than running one that can do nothing.
     expect(
-      createClerkAuthCacheRefresher({ secret: fakeSecret(undefined), cachePath: '/tmp/cache' }),
+      createClerkAuthCacheRefresher({
+        useOrganizationsAsGroups: true,
+        secret: fakeSecret(undefined),
+        cachePath: '/tmp/cache',
+      }),
     ).toBeUndefined()
   })
 })
@@ -103,7 +112,11 @@ describe('the happy path', () => {
   it('refreshes with the configured key and never touches Secrets Manager', async () => {
     refreshClerkCacheMock.mockResolvedValue(ok)
     const secret = fakeSecret('sk_live_good')
-    const refresh = createClerkAuthCacheRefresher({ secret, cachePath: '/tmp/cache' })!
+    const refresh = createClerkAuthCacheRefresher({
+      useOrganizationsAsGroups: true,
+      secret,
+      cachePath: '/tmp/cache',
+    })!
 
     await refresh()
 
@@ -119,7 +132,11 @@ describe('the happy path', () => {
     // holds whether the key was captured or re-read -- which is how the first
     // version of this test passed with the capture bug reintroduced.
     const secret = fakeSecret('sk_live_first', 'sk_live_second')
-    const refresh = createClerkAuthCacheRefresher({ secret, cachePath: '/tmp/cache' })!
+    const refresh = createClerkAuthCacheRefresher({
+      useOrganizationsAsGroups: true,
+      secret,
+      cachePath: '/tmp/cache',
+    })!
 
     await refresh()
     // Something else rotated it -- e.g. the previous tick's retry.
@@ -133,16 +150,77 @@ describe('the happy path', () => {
   })
 })
 
+describe('the organizations-as-groups setting', () => {
+  it.each([true, false])('reaches refreshClerkCache as %s', async (flag) => {
+    refreshClerkCacheMock.mockResolvedValue(ok)
+    const refresh = createClerkAuthCacheRefresher({
+      secret: fakeSecret('sk_live_good'),
+      cachePath: '/tmp/cache',
+      useOrganizationsAsGroups: flag,
+    })!
+
+    await refresh()
+
+    expect(refreshClerkCacheMock).toHaveBeenCalledWith(
+      expect.objectContaining({ useOrganizationsAsGroups: flag }),
+    )
+  })
+
+  it.each([true, false])('reaches fetchClerkSnapshot as %s', async (flag) => {
+    fetchClerkSnapshotMock.mockResolvedValue({ users: [], groups: [], memberships: {} })
+    const fetcher = createClerkSnapshotFetcher({
+      secret: fakeSecret('sk_live_good'),
+      useOrganizationsAsGroups: flag,
+    })!
+
+    await fetcher()
+
+    expect(fetchClerkSnapshotMock).toHaveBeenCalledWith(
+      expect.objectContaining({ useOrganizationsAsGroups: flag }),
+    )
+  })
+})
+
+describe('parseClerkOrganizationsAsGroups', () => {
+  const parse = (value?: string) =>
+    parseClerkOrganizationsAsGroups(
+      value === undefined ? {} : { [CLERK_ORGANIZATIONS_AS_GROUPS_ENV]: value },
+    )
+
+  it('is true when unset or empty', () => {
+    expect(parse()).toBe(true)
+    expect(parse('')).toBe(true)
+  })
+
+  it('reads true and false', () => {
+    expect(parse('true')).toBe(true)
+    expect(parse('false')).toBe(false)
+  })
+
+  it.each(['FALSE', 'False', '0', 'no', ' false', 'yes'])(
+    'throws on %j, naming the variable and the value',
+    (value) => {
+      expect(() => parse(value)).toThrow(CLERK_ORGANIZATIONS_AS_GROUPS_ENV)
+      expect(() => parse(value)).toThrow(JSON.stringify(value))
+      expect(() => parse(value)).toThrow('true or false')
+    },
+  )
+})
+
 describe('the re-read is gated on the failure looking like a rejected key', () => {
   it.each([500, 502, 429, 408])('does not re-read on a %s', async (status) => {
     refreshClerkCacheMock.mockRejectedValue(clerkError(status))
     const secret = fakeSecret('sk_live_good', 'sk_live_rotated')
-    const refresh = createClerkAuthCacheRefresher({ secret, cachePath: '/tmp/cache' })!
+    const refresh = createClerkAuthCacheRefresher({
+      useOrganizationsAsGroups: true,
+      secret,
+      cachePath: '/tmp/cache',
+    })!
 
     await expect(refresh()).rejects.toThrow('Clerk says no')
 
     // Retrying on a transient failure would re-run the whole workload:
-    // every user, every organisation, and a membership fetch per user.
+    // every user, every organisation and every membership.
     expect(secret.refresh).not.toHaveBeenCalled()
     expect(refreshClerkCacheMock).toHaveBeenCalledTimes(1)
   })
@@ -150,7 +228,11 @@ describe('the re-read is gated on the failure looking like a rejected key', () =
   it('does not re-read on a status-less failure', async () => {
     refreshClerkCacheMock.mockRejectedValue(new Error('socket hang up'))
     const secret = fakeSecret('sk_live_good', 'sk_live_rotated')
-    const refresh = createClerkAuthCacheRefresher({ secret, cachePath: '/tmp/cache' })!
+    const refresh = createClerkAuthCacheRefresher({
+      useOrganizationsAsGroups: true,
+      secret,
+      cachePath: '/tmp/cache',
+    })!
 
     await expect(refresh()).rejects.toThrow('socket hang up')
     expect(secret.refresh).not.toHaveBeenCalled()
@@ -159,7 +241,11 @@ describe('the re-read is gated on the failure looking like a rejected key', () =
   it.each([401, 403])('re-reads and retries once on a %s', async (status) => {
     refreshClerkCacheMock.mockRejectedValueOnce(clerkError(status)).mockResolvedValueOnce(ok)
     const secret = fakeSecret('sk_live_revoked', 'sk_live_rotated')
-    const refresh = createClerkAuthCacheRefresher({ secret, cachePath: '/tmp/cache' })!
+    const refresh = createClerkAuthCacheRefresher({
+      useOrganizationsAsGroups: true,
+      secret,
+      cachePath: '/tmp/cache',
+    })!
 
     await expect(refresh()).resolves.toBeUndefined()
 
@@ -175,7 +261,11 @@ describe('the circuit breaker', () => {
     // `refresh()` resolving undefined is how the reader reports every no-op:
     // no ARN, read too recently, or a value identical to the one just refused.
     const secret = fakeSecret('sk_live_wrong')
-    const refresh = createClerkAuthCacheRefresher({ secret, cachePath: '/tmp/cache' })!
+    const refresh = createClerkAuthCacheRefresher({
+      useOrganizationsAsGroups: true,
+      secret,
+      cachePath: '/tmp/cache',
+    })!
 
     await expect(refresh()).rejects.toThrow('Unauthenticated')
 
@@ -193,7 +283,11 @@ describe('the circuit breaker', () => {
         throw new Error('AccessDeniedException')
       }),
     }
-    const refresh = createClerkAuthCacheRefresher({ secret, cachePath: '/tmp/cache' })!
+    const refresh = createClerkAuthCacheRefresher({
+      useOrganizationsAsGroups: true,
+      secret,
+      cachePath: '/tmp/cache',
+    })!
 
     // The 401 is what explains the stale auth cache. Letting the read failure
     // propagate instead would suppress it on every tick for as long as the IAM
@@ -209,7 +303,11 @@ describe('the circuit breaker', () => {
   it('does not loop when the rotated key is also rejected', async () => {
     refreshClerkCacheMock.mockRejectedValue(clerkError(401, 'still wrong'))
     const secret = fakeSecret('sk_live_wrong', 'sk_live_also_wrong')
-    const refresh = createClerkAuthCacheRefresher({ secret, cachePath: '/tmp/cache' })!
+    const refresh = createClerkAuthCacheRefresher({
+      useOrganizationsAsGroups: true,
+      secret,
+      cachePath: '/tmp/cache',
+    })!
 
     await expect(refresh()).rejects.toThrow('still wrong')
 
@@ -223,7 +321,11 @@ describe('the circuit breaker', () => {
     refreshClerkCacheMock.mockRejectedValue(clerkError(401))
     // Nothing ever rotates, which is the permanently-wrong-key case.
     const secret = fakeSecret('sk_live_wrong')
-    const refresh = createClerkAuthCacheRefresher({ secret, cachePath: '/tmp/cache' })!
+    const refresh = createClerkAuthCacheRefresher({
+      useOrganizationsAsGroups: true,
+      secret,
+      cachePath: '/tmp/cache',
+    })!
 
     for (let tick = 0; tick < 20; tick++) {
       await expect(refresh()).rejects.toThrow()
@@ -246,13 +348,15 @@ describe('createClerkSnapshotFetcher: the gateway’s half, fetching what the wo
     )
 
   it('builds no fetcher without a key', () => {
-    expect(createClerkSnapshotFetcher({ secret: fakeSecret(undefined) })).toBeUndefined()
+    expect(
+      createClerkSnapshotFetcher({ useOrganizationsAsGroups: true, secret: fakeSecret(undefined) }),
+    ).toBeUndefined()
   })
 
   it('returns the snapshot, fetched with the key and the organisations as groups', async () => {
     fetchClerkSnapshotMock.mockResolvedValue(snapshot)
     const secret = fakeSecret('sk_live_good')
-    const fetcher = createClerkSnapshotFetcher({ secret })!
+    const fetcher = createClerkSnapshotFetcher({ useOrganizationsAsGroups: true, secret })!
 
     await expect(fetcher()).resolves.toBe(snapshot)
 
@@ -265,7 +369,11 @@ describe('createClerkSnapshotFetcher: the gateway’s half, fetching what the wo
   it('hands its own warn to the fetch, so membership warnings leave through the gateway', async () => {
     fetchClerkSnapshotMock.mockResolvedValue(snapshot)
     const log = { warn: vi.fn(), error: vi.fn() }
-    const fetcher = createClerkSnapshotFetcher({ secret: fakeSecret('sk_live_good'), log })!
+    const fetcher = createClerkSnapshotFetcher({
+      useOrganizationsAsGroups: true,
+      secret: fakeSecret('sk_live_good'),
+      log,
+    })!
 
     await fetcher()
 
@@ -275,7 +383,7 @@ describe('createClerkSnapshotFetcher: the gateway’s half, fetching what the wo
   it('reads the key per call rather than capturing it', async () => {
     fetchClerkSnapshotMock.mockResolvedValue(snapshot)
     const secret = fakeSecret('sk_live_first', 'sk_live_second')
-    const fetcher = createClerkSnapshotFetcher({ secret })!
+    const fetcher = createClerkSnapshotFetcher({ useOrganizationsAsGroups: true, secret })!
 
     await fetcher()
     await secret.refresh()
@@ -286,6 +394,7 @@ describe('createClerkSnapshotFetcher: the gateway’s half, fetching what the wo
 
   it('throws when the key is gone at call time', async () => {
     const fetcher = createClerkSnapshotFetcher({
+      useOrganizationsAsGroups: true,
       secret: {
         current: vi.fn().mockReturnValueOnce('sk_live_good').mockReturnValue(undefined),
         refresh: vi.fn(),
@@ -299,7 +408,7 @@ describe('createClerkSnapshotFetcher: the gateway’s half, fetching what the wo
   it.each([401, 403])('retries once with the rotated key on a %s', async (status) => {
     fetchClerkSnapshotMock.mockRejectedValueOnce(clerkError(status)).mockResolvedValueOnce(snapshot)
     const secret = fakeSecret('sk_live_revoked', 'sk_live_rotated')
-    const fetcher = createClerkSnapshotFetcher({ secret })!
+    const fetcher = createClerkSnapshotFetcher({ useOrganizationsAsGroups: true, secret })!
 
     await expect(fetcher()).resolves.toBe(snapshot)
 
@@ -313,7 +422,7 @@ describe('createClerkSnapshotFetcher: the gateway’s half, fetching what the wo
   ])('never re-reads on %s', async (_label, failure) => {
     fetchClerkSnapshotMock.mockRejectedValue(failure)
     const secret = fakeSecret('sk_live_good', 'sk_live_rotated')
-    const fetcher = createClerkSnapshotFetcher({ secret })!
+    const fetcher = createClerkSnapshotFetcher({ useOrganizationsAsGroups: true, secret })!
 
     await expect(fetcher()).rejects.toBe(failure)
 
@@ -331,7 +440,7 @@ describe('createClerkSnapshotFetcher: the gateway’s half, fetching what the wo
         throw new Error('AccessDeniedException')
       }),
     }
-    const fetcher = createClerkSnapshotFetcher({ secret, log })!
+    const fetcher = createClerkSnapshotFetcher({ useOrganizationsAsGroups: true, secret, log })!
 
     await expect(fetcher()).rejects.toBe(rejection)
 
@@ -347,7 +456,7 @@ describe('createClerkSnapshotFetcher: the gateway’s half, fetching what the wo
     const rejection = clerkError(403, 'Forbidden')
     fetchClerkSnapshotMock.mockRejectedValue(rejection)
     const secret = fakeSecret('sk_live_wrong')
-    const fetcher = createClerkSnapshotFetcher({ secret })!
+    const fetcher = createClerkSnapshotFetcher({ useOrganizationsAsGroups: true, secret })!
 
     await expect(fetcher()).rejects.toBe(rejection)
 
@@ -358,7 +467,7 @@ describe('createClerkSnapshotFetcher: the gateway’s half, fetching what the wo
   it('does not retry a second rejection', async () => {
     fetchClerkSnapshotMock.mockRejectedValue(clerkError(401, 'still wrong'))
     const secret = fakeSecret('sk_live_wrong', 'sk_live_also_wrong')
-    const fetcher = createClerkSnapshotFetcher({ secret })!
+    const fetcher = createClerkSnapshotFetcher({ useOrganizationsAsGroups: true, secret })!
 
     await expect(fetcher()).rejects.toThrow('still wrong')
 
@@ -370,6 +479,7 @@ describe('createClerkSnapshotFetcher: the gateway’s half, fetching what the wo
     fetchClerkSnapshotMock.mockRejectedValueOnce(clerkError(401)).mockResolvedValueOnce(snapshot)
     const log = { warn: vi.fn(), error: vi.fn() }
     const fetcher = createClerkSnapshotFetcher({
+      useOrganizationsAsGroups: true,
       secret: fakeSecret('sk_live_revoked', 'sk_live_rotated'),
       log,
     })!
