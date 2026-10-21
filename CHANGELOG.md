@@ -174,7 +174,7 @@ button: Save all is the button, and its caret holds Submit or Withdraw. A branch
 action draws no caret. The confirm dialog returns focus to the review action, and focus follows
 that action when a submit or withdraw moves it between the caret and a button of its own.
 
-#### The branch bar states a locked branch's status, replacing the lock banner — **behaviour change**
+#### The branch bar states a locked branch's status, replacing the lock banner — **breaking (operatingStrategy().supportsStatusBadge removed) / behaviour change**
 
 <!-- changeset: branch-bar-status -->
 
@@ -192,7 +192,13 @@ protected base branch; Withdraw from review on a branch in review; Refresh branc
 failed to load; and Switch branch… otherwise. Below the `md` breakpoint a locked branch has no
 Save all: its way forward leads, with Submit or Withdraw in its caret unless Withdraw is that way.
 Someone who may not withdraw gets Switch branch…, with the blocked Withdraw and its reason in the
-caret.
+caret. The status badge's feature flag goes with the pill's badge: `supportsStatusBadge()` is
+removed from `ClientSafeStrategy`, so the strategy that `operatingStrategy(mode)` returns from
+`canopycms/server` no longer has it.
+
+**To adopt.** Where you call `operatingStrategy(mode).supportsStatusBadge()`, drop the call. It
+is a type error, or a `TypeError` at run time without type checking. The editor shows the status
+itself now.
 
 #### The content panel lists unsaved entries under a Changed filter, replacing the pill's list — **behaviour change**
 
