@@ -54,6 +54,18 @@ entries under **Released**.
 
 ## Released
 
+### 0.6.0
+
+#### Clerk organizations-as-groups is a deployment setting, and survives a Clerk instance without Organizations — **behaviour change**
+
+<!-- changeset: clerk-orgs-as-groups -->
+
+_First in 0.6.0._
+
+**What changed.** `CanopyCmsService` takes `clerkOrganizationsAsGroups` (default `true`, unchanged), which the worker honours; in a deployment it, not the plugin's `useOrganizationsAsGroups`, decides the groups. When Clerk refuses the organization list with a 403 (Organizations disabled), the refresh now writes users with no groups and logs a warning, instead of failing whole; any other failure still keeps the last snapshot. Memberships are fetched instance-wide rather than per user. The scaffolds write `false` explicitly: `useOrganizationsAsGroups` in `canopycms init`'s `canopy.ts`, and `clerkOrganizationsAsGroups` in `canopycms init-deploy aws`'s CDK stack.
+
+**To adopt.** On a Clerk instance without Organizations, set `clerkOrganizationsAsGroups: false` on `CanopyCmsService` and `useOrganizationsAsGroups: false` in `createClerkAuthPlugin`. See [Deploying to AWS](docs/deploying-to-aws.md).
+
 ### 0.5.0
 
 #### Reorderable list references, and `maxItems` on list fields — **behaviour change: a build fails on a list over its cap**
