@@ -105,56 +105,23 @@ export async function fetchClerkSnapshot(
 
   if (!useOrganizationsAsGroups) return { users, groups: [], memberships: {} }
 
-  try {
-    const clerkOrgs: ClerkOrganization[] = []
-    let orgOffset = 0
-    while (true) {
-      const orgsResponse = (await clerkClient.organizations.getOrganizationList({
+  const fetchOrgPage = async (orgOffset: number): Promise<ClerkOrganization[]> =>
+    unwrapClerkResponse(
+      (await clerkClient.organizations.getOrganizationList({
         limit: pageSize,
         offset: orgOffset,
-      })) as ClerkResponse<ClerkOrganization>
-      const page = unwrapClerkResponse(orgsResponse)
-      clerkOrgs.push(...page)
-      if (page.length < pageSize) break
-      orgOffset += pageSize
-    }
+      })) as ClerkResponse<ClerkOrganization>,
+    )
 
-    // Oldest first, so a membership added mid-paging lands on a later page, not a shifted one.
-    const memberSets = new Map<string, Set<string>>()
-    let membershipOffset = 0
-    while (true) {
-      const membershipResponse =
-        (await clerkClient.organizations.getInstanceOrganizationMembershipList({
-          limit: pageSize,
-          offset: membershipOffset,
-          orderBy: '+created_at',
-        })) as ClerkResponse<ClerkOrganizationMembership>
-      const page = unwrapClerkResponse(membershipResponse)
-      for (const membership of page) {
-        const userId = membership.publicUserData?.userId
-        const orgId = membership.organization?.id
-        if (!userId || !orgId) continue
-        const orgIds = memberSets.get(userId) ?? new Set<string>()
-        orgIds.add(orgId)
-        memberSets.set(userId, orgIds)
-      }
-      if (page.length < pageSize) break
-      membershipOffset += pageSize
-    }
-
-    const memberships: Record<string, string[]> = {}
-    for (const [userId, orgIds] of memberSets) memberships[userId] = [...orgIds]
-
-    const groups = clerkOrgs.map((o) => ({
-      id: o.id,
-      name: o.name,
-      memberCount: o.membersCount ?? o.members_count,
-    }))
-    return { users, groups, memberships }
+  // Only the first organization call is read as refused: an instance without Organizations
+  // refuses it, and the user list just succeeded with the same key, so the 403 is not a rejected
+  // key. Empty, not the stale groups, so an org-ID ACL grants nothing (fail closed). A 403 on any
+  // later call is not that case: it rethrows, as every other failure does, and the caller keeps
+  // the last good snapshot.
+  let page: ClerkOrganization[]
+  try {
+    page = await fetchOrgPage(0)
   } catch (err) {
-    // A 403 after the user list succeeded is not a rejected key: the instance refuses the
-    // Organizations API. Empty, not the stale groups, so an org-ID ACL grants nothing (fail
-    // closed). Anything else rethrows and the caller keeps the last good snapshot.
     if (clerkErrorStatus(err) !== 403) throw err
     const code = clerkErrorCode(err)
     warn(
@@ -165,6 +132,44 @@ export async function fetchClerkSnapshot(
     )
     return { users, groups: [], memberships: {} }
   }
+  const clerkOrgs = [...page]
+  for (let orgOffset = pageSize; page.length === pageSize; orgOffset += pageSize) {
+    page = await fetchOrgPage(orgOffset)
+    clerkOrgs.push(...page)
+  }
+
+  // Oldest first, so a membership added mid-paging lands on a later page, not a shifted one.
+  const memberSets = new Map<string, Set<string>>()
+  let membershipOffset = 0
+  while (true) {
+    const membershipResponse =
+      (await clerkClient.organizations.getInstanceOrganizationMembershipList({
+        limit: pageSize,
+        offset: membershipOffset,
+        orderBy: '+created_at',
+      })) as ClerkResponse<ClerkOrganizationMembership>
+    const membershipPage = unwrapClerkResponse(membershipResponse)
+    for (const membership of membershipPage) {
+      const userId = membership.publicUserData?.userId
+      const orgId = membership.organization?.id
+      if (!userId || !orgId) continue
+      const orgIds = memberSets.get(userId) ?? new Set<string>()
+      orgIds.add(orgId)
+      memberSets.set(userId, orgIds)
+    }
+    if (membershipPage.length < pageSize) break
+    membershipOffset += pageSize
+  }
+
+  const memberships: Record<string, string[]> = {}
+  for (const [userId, orgIds] of memberSets) memberships[userId] = [...orgIds]
+
+  const groups = clerkOrgs.map((o) => ({
+    id: o.id,
+    name: o.name,
+    memberCount: o.membersCount ?? o.members_count,
+  }))
+  return { users, groups, memberships }
 }
 
 /**

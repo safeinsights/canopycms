@@ -239,28 +239,28 @@ describe('fetchClerkSnapshot', () => {
       expect(String(warn.mock.calls[0][0])).not.toContain(secretKey)
     })
 
-    it('does the same on a 403 from the membership list, dropping the groups it fetched', async () => {
+    it('rethrows a 403 from a later organization page, which is not a disabled instance', async () => {
       mockGetUserList.mockResolvedValue(users)
-      mockGetOrganizationList.mockResolvedValue({ data: [{ id: 'org_a', name: 'Alpha' }] })
-      mockGetInstanceMembershipList.mockRejectedValue(clerkError(403))
+      const failure = clerkError(403)
+      mockGetOrganizationList
+        .mockResolvedValueOnce({
+          data: Array.from({ length: 500 }, (_, i) => ({ id: `org_${i}`, name: `O${i}` })),
+        })
+        .mockRejectedValueOnce(failure)
       const warn = vi.fn()
 
-      const snapshot = await fetchClerkSnapshot({ secretKey, warn })
-
-      expect(snapshot.users).toHaveLength(1)
-      expect(snapshot.groups).toEqual([])
-      expect(snapshot.memberships).toEqual({})
-      expect(warn).toHaveBeenCalledTimes(1)
+      await expect(fetchClerkSnapshot({ secretKey, warn })).rejects.toBe(failure)
+      expect(warn).not.toHaveBeenCalled()
     })
 
     it('names the Clerk error code in the warning', async () => {
       mockGetUserList.mockResolvedValue(users)
-      mockGetOrganizationList.mockRejectedValue(clerkError(403, 'organizations_disabled'))
+      mockGetOrganizationList.mockRejectedValue(clerkError(403, 'fixture_error_code'))
       const warn = vi.fn()
 
       await fetchClerkSnapshot({ secretKey, warn })
 
-      expect(String(warn.mock.calls[0][0])).toContain('organizations_disabled')
+      expect(String(warn.mock.calls[0][0])).toContain('fixture_error_code')
     })
 
     it.each([
@@ -269,6 +269,7 @@ describe('fetchClerkSnapshot', () => {
       [429, 'organization list'],
       [500, 'organization list'],
       [401, 'membership list'],
+      [403, 'membership list'],
       [500, 'membership list'],
     ])('rethrows a %i from the %s', async (status, which) => {
       mockGetUserList.mockResolvedValue(users)
@@ -334,8 +335,15 @@ describe('refreshClerkCache', () => {
     expect(await cache.getUserExternalGroups('user_2')).toEqual([])
   })
 
-  it('writes the users with no groups when Clerk refuses the Organizations API', async () => {
+  it('replaces the last snapshot with users and no groups when Clerk refuses the Organizations API', async () => {
     mockGetUserList.mockResolvedValue({ data: [{ id: 'user_1', fullName: 'One' }] })
+    mockGetOrganizationList.mockResolvedValue({ data: [{ id: 'org_a', name: 'Alpha' }] })
+    mockGetInstanceMembershipList.mockResolvedValue({ data: [membership('user_1', 'org_a')] })
+    await refreshClerkCache({ secretKey, cachePath })
+    expect(await new FileBasedAuthCache(cachePath).getUserExternalGroups('user_1')).toEqual([
+      'org_a',
+    ])
+
     mockGetOrganizationList.mockRejectedValue(clerkError(403))
 
     const result = await refreshClerkCache({ secretKey, cachePath, warn: vi.fn() })

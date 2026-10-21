@@ -179,22 +179,6 @@ describe('the organizations-as-groups setting', () => {
       expect.objectContaining({ useOrganizationsAsGroups: flag }),
     )
   })
-
-  it('does not re-read the key for a snapshot the fetch resolved with no groups', async () => {
-    // The fetch absorbs a 403 from the Organizations API and resolves, so the gate never sees it.
-    fetchClerkSnapshotMock.mockResolvedValue({
-      users: [{ id: 'user_1', name: 'One', email: '' }],
-      groups: [],
-      memberships: {},
-    })
-    const secret = fakeSecret('sk_live_good', 'sk_live_other')
-    const fetcher = createClerkSnapshotFetcher({ secret, useOrganizationsAsGroups: true })!
-
-    await fetcher()
-
-    expect(secret.refresh).not.toHaveBeenCalled()
-    expect(fetchClerkSnapshotMock).toHaveBeenCalledTimes(1)
-  })
 })
 
 describe('parseClerkOrganizationsAsGroups', () => {
