@@ -31,8 +31,8 @@ import type { ReactiveSecret } from './credential-refresh'
  * having a bad day?
  *
  * **This gate is the one guard the GitHub half does not need, and the asymmetry
- * is deliberate.** `refreshClerkCache` paginates every user, then every
- * organisation, then does a membership fetch per user — so retrying it on any
+ * is deliberate.** `refreshClerkCache` paginates every user, every
+ * organisation and every membership — so retrying it on any
  * failure would double that entire workload on every transient 5xx or network
  * blip. The GitHub side has no comparable workload behind its retry (there the
  * "retry" is the task's next attempt or the next scheduled sync), which is why
@@ -124,9 +124,29 @@ async function withKeyReread<T>(
   }
 }
 
+/** The environment variable `parseClerkOrganizationsAsGroups` reads. */
+export const CLERK_ORGANIZATIONS_AS_GROUPS_ENV = 'CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS'
+
+/**
+ * `CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS` as a boolean: unset or empty is `true`, and anything
+ * but `true` or `false` throws, so a typo fails the boot rather than silently picking a side.
+ */
+export function parseClerkOrganizationsAsGroups(
+  env: Readonly<Record<string, string | undefined>>,
+): boolean {
+  const value = env[CLERK_ORGANIZATIONS_AS_GROUPS_ENV]
+  if (value === undefined || value === '' || value === 'true') return true
+  if (value === 'false') return false
+  throw new Error(
+    `${CLERK_ORGANIZATIONS_AS_GROUPS_ENV} is ${JSON.stringify(value)}, but it must be true or false`,
+  )
+}
+
 export interface ClerkRefresherOptions {
   /** The Clerk secret key, re-readable when Clerk rejects it. */
   secret: ReactiveSecret
+  /** Whether Clerk Organizations become Canopy groups; see {@link parseClerkOrganizationsAsGroups}. */
+  useOrganizationsAsGroups: boolean
   /** Where the cache snapshot is written (`<workspace>/.cache`). */
   cachePath: string
 }
@@ -141,16 +161,16 @@ export interface ClerkRefresherOptions {
 export function createClerkAuthCacheRefresher(
   options: ClerkRefresherOptions,
 ): (() => Promise<void>) | undefined {
-  const { secret, cachePath } = options
+  const { secret, cachePath, useOrganizationsAsGroups } = options
   if (!secret.current()) return undefined
 
   const refreshWith = async (secretKey: string): Promise<void> => {
     const result = await refreshClerkCache({
       secretKey,
       cachePath,
-      useOrganizationsAsGroups: true,
+      useOrganizationsAsGroups,
       // Injected rather than left to default `console.warn`: this runs in the
-      // worker, so its per-user membership-fetch warning needs the ISO-8601
+      // worker, so its Organizations-refused warning needs the ISO-8601
       // prefix like everything else here. canopycms is only a peer dependency
       // of canopycms-auth-clerk, so the join happens at this entrypoint, which
       // already imports both.
@@ -173,6 +193,8 @@ export function createClerkAuthCacheRefresher(
 export interface ClerkSnapshotFetcherOptions {
   /** The Clerk secret key, re-readable when Clerk rejects it. */
   secret: ReactiveSecret
+  /** Whether Clerk Organizations become Canopy groups; see {@link parseClerkOrganizationsAsGroups}. */
+  useOrganizationsAsGroups: boolean
   /** Default: the worker's loggers. The gateway passes its own, which scrub. */
   log?: ClerkRefreshLog
 }
@@ -186,12 +208,12 @@ export interface ClerkSnapshotFetcherOptions {
 export function createClerkSnapshotFetcher(
   options: ClerkSnapshotFetcherOptions,
 ): (() => Promise<AuthCacheSnapshot>) | undefined {
-  const { secret } = options
+  const { secret, useOrganizationsAsGroups } = options
   const log = options.log ?? WORKER_LOG
   if (!secret.current()) return undefined
 
   const fetchWith = (secretKey: string): Promise<AuthCacheSnapshot> =>
-    fetchClerkSnapshot({ secretKey, useOrganizationsAsGroups: true, warn: log.warn })
+    fetchClerkSnapshot({ secretKey, useOrganizationsAsGroups, warn: log.warn })
 
   return async () => {
     // Per call, like the refresher's: the key may have rotated since the last one.

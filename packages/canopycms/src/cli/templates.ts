@@ -56,9 +56,13 @@ export async function canopyContext(options: {
           '// authenticated request instead of silently falling back to unauthenticated dev auth.',
           "// CLERK_SECRET_KEY is read only where Clerk's backend API is called: the auth-cache",
           '// refresh (the worker in prod, lazily on the dev server in dev).',
+          '// useOrganizationsAsGroups needs Organizations enabled on the Clerk instance and offers',
+          '// every organization in the instance as a group. In an AWS deployment the worker reads',
+          '// the setting from `clerkOrganizationsAsGroups` in the CDK stack, which governs there;',
+          '// keep the two equal.',
           'const authPlugin =',
           "  config.server.mode === 'prod' || process.env.CANOPY_AUTH_MODE === 'clerk'",
-          '    ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })',
+          '    ? createClerkAuthPlugin({ useOrganizationsAsGroups: false })',
           '    : createDevAuthPlugin()',
         ].join('\n')
       : 'const authPlugin = createDevAuthPlugin()'

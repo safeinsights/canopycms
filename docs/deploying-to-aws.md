@@ -1158,6 +1158,10 @@ entry may start with `canopycms-settings-`. Set `baseBranch` explicitly: without
 does not know your base branch, and protects it only if it is GitHub's default. A compromised CMS Lambda can
 still drive the gateway at any other branch: see the [Security Model](#security-model).
 
+**`clerkOrganizationsAsGroups`** (default `true`) sets whether the worker maps Clerk Organizations to
+groups; it, not the plugin's `useOrganizationsAsGroups`, governs a deployment, so keep them equal. Set
+it `false` when the Clerk instance has Organizations disabled.
+
 `CanopyCmsService` also hardens the instance:
 
 - **Public subnet, no inbound traffic.** The gateway reaches GitHub and AWS through the internet

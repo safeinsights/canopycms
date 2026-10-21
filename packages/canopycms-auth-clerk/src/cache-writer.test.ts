@@ -4,16 +4,20 @@ import os from 'node:os'
 import path from 'node:path'
 
 const mockGetUserList = vi.fn()
-const mockGetOrganizationMembershipList = vi.fn()
+const mockGetUserMembershipList = vi.fn()
+const mockGetInstanceMembershipList = vi.fn()
 const mockGetOrganizationList = vi.fn()
 
 vi.mock('@clerk/backend', () => ({
   createClerkClient: vi.fn(() => ({
     users: {
       getUserList: mockGetUserList,
-      getOrganizationMembershipList: mockGetOrganizationMembershipList,
+      getOrganizationMembershipList: mockGetUserMembershipList,
     },
-    organizations: { getOrganizationList: mockGetOrganizationList },
+    organizations: {
+      getOrganizationList: mockGetOrganizationList,
+      getInstanceOrganizationMembershipList: mockGetInstanceMembershipList,
+    },
   })),
 }))
 
@@ -22,6 +26,18 @@ import { fetchClerkSnapshot, refreshClerkCache } from './cache-writer'
 
 const secretKey = 'sk_test_cache_writer'
 
+function membership(userId: string, orgId: string) {
+  return { organization: { id: orgId }, publicUserData: { userId } }
+}
+
+/** What `ClerkAPIResponseError` carries: a `status` and `errors: [{ code, message }]`. */
+function clerkError(status: number, code?: string) {
+  return Object.assign(new Error('Forbidden'), {
+    status,
+    errors: code ? [{ code, message: 'm' }] : [],
+  })
+}
+
 function pageOfUsers(count: number, from: number) {
   return Array.from({ length: count }, (_, i) => ({ id: `user_${from + i}`, fullName: 'N' }))
 }
@@ -29,7 +45,7 @@ function pageOfUsers(count: number, from: number) {
 beforeEach(() => {
   vi.resetAllMocks()
   mockGetOrganizationList.mockResolvedValue({ data: [] })
-  mockGetOrganizationMembershipList.mockResolvedValue({ data: [] })
+  mockGetInstanceMembershipList.mockResolvedValue({ data: [] })
 })
 
 describe('fetchClerkSnapshot', () => {
@@ -115,11 +131,9 @@ describe('fetchClerkSnapshot', () => {
         { id: 'org_b', name: 'Beta', members_count: 2 },
       ],
     })
-    mockGetOrganizationMembershipList.mockImplementation(async ({ userId }: { userId: string }) =>
-      userId === 'user_1'
-        ? { data: [{ organization: { id: 'org_a' } }, { organization: { id: 'org_b' } }] }
-        : { data: [] },
-    )
+    mockGetInstanceMembershipList.mockResolvedValue({
+      data: [membership('user_1', 'org_a'), membership('user_1', 'org_b')],
+    })
 
     const snapshot = await fetchClerkSnapshot({ secretKey })
 
@@ -130,6 +144,71 @@ describe('fetchClerkSnapshot', () => {
     expect(snapshot.memberships).toEqual({ user_1: ['org_a', 'org_b'] })
   })
 
+  it("de-duplicates a user's organizations and skips a membership with no user or organization", async () => {
+    mockGetUserList.mockResolvedValue([{ id: 'user_1' }])
+    mockGetInstanceMembershipList.mockResolvedValue({
+      data: [
+        membership('user_1', 'org_a'),
+        membership('user_1', 'org_a'),
+        membership('user_2', 'org_a'),
+        { organization: { id: 'org_b' } },
+        { organization: { id: 'org_c' }, publicUserData: {} },
+        { publicUserData: { userId: 'user_3' } },
+      ],
+    })
+
+    const snapshot = await fetchClerkSnapshot({ secretKey })
+
+    expect(snapshot.memberships).toEqual({ user_1: ['org_a'], user_2: ['org_a'] })
+  })
+
+  it('pages the instance membership list until a short page, oldest first', async () => {
+    mockGetUserList.mockResolvedValue([{ id: 'user_1' }])
+    const full = Array.from({ length: 500 }, (_, i) => membership(`user_${i}`, 'org_a'))
+    mockGetInstanceMembershipList
+      .mockResolvedValueOnce({ data: full })
+      .mockResolvedValueOnce({ data: [membership('user_last', 'org_b')] })
+
+    const snapshot = await fetchClerkSnapshot({ secretKey })
+
+    expect(mockGetInstanceMembershipList).toHaveBeenCalledTimes(2)
+    expect(mockGetInstanceMembershipList).toHaveBeenNthCalledWith(1, {
+      limit: 500,
+      offset: 0,
+      orderBy: '+created_at',
+    })
+    expect(mockGetInstanceMembershipList).toHaveBeenNthCalledWith(2, {
+      limit: 500,
+      offset: 500,
+      orderBy: '+created_at',
+    })
+    expect(Object.keys(snapshot.memberships)).toHaveLength(501)
+    expect(snapshot.memberships.user_last).toEqual(['org_b'])
+  })
+
+  it('pages the organization list at 500', async () => {
+    mockGetUserList.mockResolvedValue([{ id: 'user_1' }])
+    mockGetOrganizationList
+      .mockResolvedValueOnce({
+        data: Array.from({ length: 500 }, (_, i) => ({ id: `org_${i}`, name: `O${i}` })),
+      })
+      .mockResolvedValueOnce({ data: [{ id: 'org_last', name: 'Last' }] })
+
+    const snapshot = await fetchClerkSnapshot({ secretKey })
+
+    expect(snapshot.groups).toHaveLength(501)
+    expect(mockGetOrganizationList).toHaveBeenNthCalledWith(1, { limit: 500, offset: 0 })
+    expect(mockGetOrganizationList).toHaveBeenNthCalledWith(2, { limit: 500, offset: 500 })
+  })
+
+  it('never fetches memberships per user', async () => {
+    mockGetUserList.mockResolvedValue([{ id: 'user_1' }, { id: 'user_2' }])
+
+    await fetchClerkSnapshot({ secretKey })
+
+    expect(mockGetUserMembershipList).not.toHaveBeenCalled()
+  })
+
   it('does not fetch organizations when they are not groups', async () => {
     mockGetUserList.mockResolvedValue([{ id: 'user_1' }])
 
@@ -138,25 +217,86 @@ describe('fetchClerkSnapshot', () => {
     expect(snapshot.groups).toEqual([])
     expect(snapshot.memberships).toEqual({})
     expect(mockGetOrganizationList).not.toHaveBeenCalled()
-    expect(mockGetOrganizationMembershipList).not.toHaveBeenCalled()
+    expect(mockGetInstanceMembershipList).not.toHaveBeenCalled()
   })
 
-  it('warns and continues when one user membership fetch fails', async () => {
-    mockGetUserList.mockResolvedValue([{ id: 'user_bad' }, { id: 'user_good' }])
-    mockGetOrganizationMembershipList.mockImplementation(async ({ userId }: { userId: string }) => {
-      if (userId === 'user_bad') throw new Error('rate limited')
-      return { data: [{ organization: { id: 'org_a' } }] }
+  describe('when Clerk refuses the Organizations API', () => {
+    const users = [{ id: 'user_1', fullName: 'One' }]
+
+    it('keeps the users, writes no groups and warns once on a 403 from the organization list', async () => {
+      mockGetUserList.mockResolvedValue(users)
+      mockGetOrganizationList.mockRejectedValue(clerkError(403))
+      const warn = vi.fn()
+
+      const snapshot = await fetchClerkSnapshot({ secretKey, warn })
+
+      expect(snapshot.users.map((u) => u.id)).toEqual(['user_1'])
+      expect(snapshot.groups).toEqual([])
+      expect(snapshot.memberships).toEqual({})
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0][0])).toContain('403')
+      expect(String(warn.mock.calls[0][0])).toContain('Organizations')
+      expect(String(warn.mock.calls[0][0])).not.toContain(secretKey)
     })
-    const warn = vi.fn()
 
-    const snapshot = await fetchClerkSnapshot({ secretKey, warn })
+    it('does the same on a 403 from the membership list, dropping the groups it fetched', async () => {
+      mockGetUserList.mockResolvedValue(users)
+      mockGetOrganizationList.mockResolvedValue({ data: [{ id: 'org_a', name: 'Alpha' }] })
+      mockGetInstanceMembershipList.mockRejectedValue(clerkError(403))
+      const warn = vi.fn()
 
-    expect(snapshot.memberships).toEqual({ user_good: ['org_a'] })
-    expect(warn).toHaveBeenCalledTimes(1)
-    expect(warn).toHaveBeenCalledWith(
-      'Failed to fetch memberships for user user_bad:',
-      'rate limited',
-    )
+      const snapshot = await fetchClerkSnapshot({ secretKey, warn })
+
+      expect(snapshot.users).toHaveLength(1)
+      expect(snapshot.groups).toEqual([])
+      expect(snapshot.memberships).toEqual({})
+      expect(warn).toHaveBeenCalledTimes(1)
+    })
+
+    it('names the Clerk error code in the warning', async () => {
+      mockGetUserList.mockResolvedValue(users)
+      mockGetOrganizationList.mockRejectedValue(clerkError(403, 'organizations_disabled'))
+      const warn = vi.fn()
+
+      await fetchClerkSnapshot({ secretKey, warn })
+
+      expect(String(warn.mock.calls[0][0])).toContain('organizations_disabled')
+    })
+
+    it.each([
+      [401, 'organization list'],
+      [404, 'organization list'],
+      [429, 'organization list'],
+      [500, 'organization list'],
+      [401, 'membership list'],
+      [500, 'membership list'],
+    ])('rethrows a %i from the %s', async (status, which) => {
+      mockGetUserList.mockResolvedValue(users)
+      const failure = clerkError(status)
+      if (which === 'organization list') mockGetOrganizationList.mockRejectedValue(failure)
+      else mockGetInstanceMembershipList.mockRejectedValue(failure)
+      const warn = vi.fn()
+
+      await expect(fetchClerkSnapshot({ secretKey, warn })).rejects.toBe(failure)
+      expect(warn).not.toHaveBeenCalled()
+    })
+
+    it('rethrows an error with no status', async () => {
+      mockGetUserList.mockResolvedValue(users)
+      mockGetOrganizationList.mockRejectedValue(new Error('socket hang up'))
+
+      await expect(fetchClerkSnapshot({ secretKey, warn: vi.fn() })).rejects.toThrow(
+        'socket hang up',
+      )
+    })
+
+    it('does not absorb a 403 from the user list', async () => {
+      const failure = clerkError(403)
+      mockGetUserList.mockRejectedValue(failure)
+
+      await expect(fetchClerkSnapshot({ secretKey, warn: vi.fn() })).rejects.toBe(failure)
+      expect(mockGetOrganizationList).not.toHaveBeenCalled()
+    })
   })
 })
 
@@ -181,9 +321,7 @@ describe('refreshClerkCache', () => {
     mockGetOrganizationList.mockResolvedValue({
       data: [{ id: 'org_a', name: 'Alpha', membersCount: 1 }],
     })
-    mockGetOrganizationMembershipList.mockImplementation(async ({ userId }: { userId: string }) =>
-      userId === 'user_1' ? { data: [{ organization: { id: 'org_a' } }] } : { data: [] },
-    )
+    mockGetInstanceMembershipList.mockResolvedValue({ data: [membership('user_1', 'org_a')] })
 
     const result = await refreshClerkCache({ secretKey, cachePath })
 
@@ -194,5 +332,18 @@ describe('refreshClerkCache', () => {
     expect(await cache.getAllGroups()).toEqual([{ id: 'org_a', name: 'Alpha', memberCount: 1 }])
     expect(await cache.getUserExternalGroups('user_1')).toEqual(['org_a'])
     expect(await cache.getUserExternalGroups('user_2')).toEqual([])
+  })
+
+  it('writes the users with no groups when Clerk refuses the Organizations API', async () => {
+    mockGetUserList.mockResolvedValue({ data: [{ id: 'user_1', fullName: 'One' }] })
+    mockGetOrganizationList.mockRejectedValue(clerkError(403))
+
+    const result = await refreshClerkCache({ secretKey, cachePath, warn: vi.fn() })
+
+    expect(result).toEqual({ userCount: 1, groupCount: 0, membershipCount: 0 })
+    const cache = new FileBasedAuthCache(cachePath)
+    expect((await cache.getAllUsers()).map((u) => u.id)).toEqual(['user_1'])
+    expect(await cache.getAllGroups()).toEqual([])
+    expect(await cache.getUserExternalGroups('user_1')).toEqual([])
   })
 })

@@ -971,6 +971,20 @@ export interface CanopyCmsServiceProps {
   clerkSecretKeySecretJsonField?: string
 
   /**
+   * Whether the worker maps Clerk Organizations onto Canopy groups (default
+   * true). Stamped into the GitHub gateway's
+   * `CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS` only when set.
+   *
+   * In a deployment this, not `createClerkAuthPlugin`'s
+   * `useOrganizationsAsGroups`, decides what groups the editor sees: the
+   * Lambda serves auth from the cache the worker writes. Set it to match the
+   * plugin option. Set it `false` when Organizations is disabled on the Clerk
+   * instance; otherwise every refresh logs a warning and writes no groups. A
+   * worker bundle from before this prop existed ignores it.
+   */
+  clerkOrganizationsAsGroups?: boolean
+
+  /**
    * The branch editing branches fork from (default: unset, so the worker
    * detects it: the branch remote.git's HEAD names, or before remote.git exists
    * GitHub's default branch).
@@ -1922,6 +1936,13 @@ export class CanopyCmsService extends Construct {
       envEntries.push([
         'CLERK_SECRET_KEY_SECRET_JSON_FIELD',
         props.clerkSecretKeySecretJsonField,
+        'gateway',
+      ])
+    }
+    if (props.clerkOrganizationsAsGroups !== undefined) {
+      envEntries.push([
+        'CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS',
+        String(props.clerkOrganizationsAsGroups),
         'gateway',
       ])
     }
