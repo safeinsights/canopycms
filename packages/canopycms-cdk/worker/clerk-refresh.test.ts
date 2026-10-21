@@ -220,7 +220,7 @@ describe('the re-read is gated on the failure looking like a rejected key', () =
     await expect(refresh()).rejects.toThrow('Clerk says no')
 
     // Retrying on a transient failure would re-run the whole workload:
-    // every user, every organisation, and a membership fetch per user.
+    // every user, every organisation and every membership.
     expect(secret.refresh).not.toHaveBeenCalled()
     expect(refreshClerkCacheMock).toHaveBeenCalledTimes(1)
   })

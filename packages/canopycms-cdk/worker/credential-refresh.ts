@@ -110,7 +110,7 @@ export interface ReactiveSecret {
  *    and the caller's retry cannot succeed. Reported as "nothing to do" rather
  *    than as a new value, so the caller skips a guaranteed failure. For the
  *    Clerk half that second failure is not cheap: `refreshClerkCache` paginates
- *    every user, every organisation, and a membership fetch per user.
+ *    every user, every organisation and every membership.
  *
  * `jsonField` and the rest of `GetSecretOptions` pass straight through, so a
  * plain single-value secret (the default) is handled exactly as one field of a

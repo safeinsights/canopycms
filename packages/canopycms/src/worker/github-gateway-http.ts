@@ -780,8 +780,8 @@ const POLL_WAIT_MS = MAX_POLL_WAIT_MS
 const HEALTH_WAIT_MS = 300_000
 
 /**
- * How long `authSnapshot` waits: a membership request per user, one at a time, so tens of thousands
- * of users take tens of minutes. A later call joins a fetch an earlier one stopped waiting for.
+ * How long `authSnapshot` waits: a generous bound on a fetch that pages the provider's whole user,
+ * organization and membership lists one page at a time. A later call joins a fetch an earlier one stopped waiting for.
  */
 const AUTH_SNAPSHOT_WAIT_MS = 30 * 60_000
 
