@@ -699,10 +699,10 @@ function assertGitHubAuthProps(props: CanopyCmsServiceProps): void {
  * One constant rather than two matching literals, so the pair cannot drift;
  * `cms-deploy.test.ts` asserts the emitted template keeps them equal.
  *
- * NOTE: CloudFront accepts an origin read timeout up to 60s without a quota
- * increase. A longer Lambda timeout needs an AWS quota increase before the
- * distribution can match it — `CanopyCmsDistribution` fails at synth rather
- * than deploying a configuration that would 504.
+ * NOTE: the Lambda timeout may not exceed `MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT`
+ * (120s, CloudFront's default origin response timeout quota):
+ * `CanopyCmsDistribution` and `attachTo` fail at synth rather than deploying a
+ * configuration that would 504.
  */
 export const DEFAULT_CMS_LAMBDA_TIMEOUT = Duration.seconds(60)
 
@@ -727,7 +727,7 @@ export interface CanopyCmsServiceProps {
   /** Lambda memory in MB (default: 2048) */
   memorySize?: number
 
-  /** Lambda timeout (default: 60 seconds) */
+  /** Lambda timeout (default: 60 seconds; at most 120 seconds, see {@link DEFAULT_CMS_LAMBDA_TIMEOUT}) */
   timeout?: Duration
 
   /**

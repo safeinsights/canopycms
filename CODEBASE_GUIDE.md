@@ -551,7 +551,7 @@ Manager hooks, in `editor/hooks/` — see
 
 - `useBranchManager.tsx` — branch state; adopts the server's `defaultBranch` when unpinned; overlays just-created branches
 - `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm; adopts server-sanitized names
-- `create-branch-request.ts` — `requestBranchCreate`: a 90 s create deadline, settled by the branch list
+- `create-branch-request.ts` — `requestBranchCreate`: a 150 s create deadline, settled by the branch list
 - `useEntryManager.ts` — loading/saving, `readEntryValue`, `adoptEntryVersion`, `listAllEntries` cursors, Back/Forward (`editor-history.ts`)
 - `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; `singleSaving`/`lastSaved`; verifies restored drafts; `applySubmitStamps`; `handleSaveAll` (outcomes in `save-all.ts`)
 - `useSchemaManager.ts` — schema mutations, returning result objects
