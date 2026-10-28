@@ -6,7 +6,8 @@ import { sanitizeBranchName } from '../../paths/branch-name'
 
 /**
  * @internal Exported for tests. Past the gateway's limit, so its 504 lands first, and under
- * `REQUEST_TIMEOUT_MS.long`.
+ * `REQUEST_TIMEOUT_MS.long`. The limit comes from `request-deadline` directly: a test that mocks
+ * `api/client` would otherwise lose it at module load.
  */
 export const CREATE_BRANCH_DEADLINE_MS = GATEWAY_MAX_TIMEOUT_MS + 30_000
 

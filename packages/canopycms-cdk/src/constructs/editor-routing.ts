@@ -11,7 +11,8 @@ import { ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-supp
 
 /**
  * The longest origin read timeout these constructs accept: CloudFront's default
- * quota for "Response timeout per origin" (Service Quotas, 1-120 s; 30 s unset).
+ * quota for "Response timeout per origin" (1-120 s; 30 s unset; CloudFront Developer Guide,
+ * Quotas > General quotas on distributions).
  *
  * A cap rather than a pass-through of a raised quota because the editor's client
  * deadline sits just above it (`REQUEST_TIMEOUT_MS` in canopycms
