@@ -126,10 +126,10 @@ const renderPage = (searchParams?: { branch?: string; entry?: string }) => {
   )
 }
 
-/** The branch segment of every branch-scoped API request made so far. */
+/** The branch segment of every branch-scoped API request made so far, `''` for an empty one. */
 const requestedBranches = (fetchMock: ReturnType<typeof stubApi>) =>
   fetchMock.mock.calls
-    .map(([input]) => /^\/api\/canopycms\/([^/?]+)\//.exec(String(input))?.[1])
+    .map(([input]) => /^\/api\/canopycms\/([^/?]*)\//.exec(String(input))?.[1])
     .filter((branch): branch is string => branch !== undefined)
 
 describe('CanopyEditorPage starting branch', () => {
