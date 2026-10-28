@@ -43,7 +43,7 @@ import { BaseBranchUnresolvedError } from './utils/base-branch'
 import { canopyLogWarn } from './utils/logger'
 import type { ProvisionLog } from './utils/provision-log'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
-import { spawnGit } from './worker/git-process'
+import { GitProcessError, runGit, spawnGit } from './worker/git-process'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
 
@@ -125,8 +125,10 @@ const NO_AUTO_GC_CONFIG: readonly string[] = ['gc.auto=0', 'maintenance.auto=fal
 
 /** How long `hash-object --stdin-paths` may go without output before it is killed. */
 const HASH_INACTIVITY_TIMEOUT_MS = 60_000
-/** `hash-object` runs per diff; each run past the first skips one path git couldn't hash. */
+/** `hash-object` runs per diff; each run past the first skips one path git refused. */
 const MAX_HASH_RUNS = 50
+/** How long `ls-remote` may go without output before it is killed. */
+const LS_REMOTE_INACTIVITY_TIMEOUT_MS = 60_000
 const SYMLINK_MODE = '120000'
 const FILE_MODES = new Set(['100644', '100755'])
 
@@ -1872,12 +1874,14 @@ export class GitManager {
       unhashed?: { sha: string; mode: string }
     }> = []
     for (let i = 0; i + 1 < tokens.length; i += 2) {
-      const [srcMode, , srcSha, dstSha, code] = tokens[i].slice(1).split(' ')
+      const [srcMode, dstMode, srcSha, dstSha, code] = tokens[i].slice(1).split(' ')
       const path = tokens[i + 1]
       const letter = code?.charAt(0)
       if (letter === 'A' || letter === 'D') changes.push({ status: letter, path })
       else if (letter === 'M' || letter === 'T') {
-        const unhashed = /^0+$/.test(dstSha) ? { sha: srcSha, mode: srcMode } : undefined
+        // A mode change (a chmod, a file turned symlink) is a change whatever the bytes.
+        const unhashed =
+          /^0+$/.test(dstSha) && srcMode === dstMode ? { sha: srcSha, mode: srcMode } : undefined
         changes.push({ status: 'M', path, unhashed })
       }
     }
@@ -1893,9 +1897,10 @@ export class GitManager {
    * The paths whose working-tree file hashes to `sha` and is of the type `mode` says, as git
    * hashes it: a symlink's blob is its target, a file's goes through `hash-object --stdin-paths`,
    * so its attributes' filters apply. A path that is gone, changed type or can't be hashed matches
-   * nothing, so it stays reported as changed. git stops at a path it can't hash, having printed
-   * the SHAs before it, so the next run resumes past that path; after
-   * {@link MAX_HASH_RUNS} runs the rest stay changed.
+   * nothing, so it stays reported as changed. When git refuses a path (exit 128), having printed
+   * the SHAs before it, the next run resumes past that path, for at most {@link MAX_HASH_RUNS}
+   * runs. A run that ends any other way (killed, timed out, a signal) stops the hashing, and the
+   * paths it didn't reach stay changed.
    */
   private async matchingBlobs(
     files: Array<{ path: string; sha: string; mode: string }>,
@@ -1916,45 +1921,59 @@ export class GitManager {
     }
     for (let start = 0, runs = 0; start < regular.length && runs < MAX_HASH_RUNS; runs++) {
       const batch = regular.slice(start)
-      const { shas, complete } = await this.hashPaths(batch.map((f) => f.path))
+      const { shas, outcome } = await this.hashPaths(batch.map((f) => f.path))
       shas.forEach((sha, i) => {
         if (batch[i] && sha === batch[i].sha) matching.add(batch[i].path)
       })
-      if (complete) break
+      if (outcome !== 'refused') break
       start += shas.length + 1
     }
     return matching
   }
 
   /**
-   * `hash-object --stdin-paths` over `paths`: one SHA per path, in order, up to the path it
-   * stopped at when `complete` is false.
+   * `hash-object --stdin-paths` over `paths`: one SHA per path, in order, up to where it ended.
+   * `refused` is git's own exit 128 on a path it can't hash; `stopped` is any other ending.
    */
   private async hashPaths(
     paths: readonly string[],
-  ): Promise<{ shas: string[]; complete: boolean }> {
+  ): Promise<{ shas: string[]; outcome: 'complete' | 'refused' | 'stopped' }> {
     const chunks: Buffer[] = []
     let proc: ReturnType<typeof spawnGit>
     try {
       proc = spawnGit(['hash-object', '--stdin-paths'], {
-        cwd: this.repoPath,
-        env: gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(this.repoPath) }),
-        config: NO_AUTO_GC_CONFIG,
+        ...this.processOptions(),
         stdin: `${paths.join('\n')}\n`,
         inactivityTimeoutMs: HASH_INACTIVITY_TIMEOUT_MS,
       })
     } catch {
-      return { shas: [], complete: false }
+      return { shas: [], outcome: 'stopped' }
     }
     const read = (async () => {
       for await (const chunk of proc.stdout) chunks.push(chunk as Buffer)
     })().catch(() => {})
-    const complete = await proc.exited.then(
-      () => true,
-      () => false,
+    const outcome = await proc.exited.then(
+      () => 'complete' as const,
+      (err: unknown) =>
+        err instanceof GitProcessError && err.exitCode === 128
+          ? ('refused' as const)
+          : ('stopped' as const),
     )
     await read
-    return { shas: Buffer.concat(chunks).toString('utf8').split('\n').filter(Boolean), complete }
+    return { shas: Buffer.concat(chunks).toString('utf8').split('\n').filter(Boolean), outcome }
+  }
+
+  /** What a git run outside simple-git needs to run as `this.git` does. */
+  private processOptions(): {
+    cwd: string
+    env: Record<string, string>
+    config: readonly string[]
+  } {
+    return {
+      cwd: this.repoPath,
+      env: gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(this.repoPath) }),
+      config: NO_AUTO_GC_CONFIG,
+    }
   }
 
   /** Repo-relative paths of the working tree's untracked, non-ignored files. */
@@ -2211,7 +2230,11 @@ export class GitManager {
    */
   private async remoteBranchTip(branch: string): Promise<string | undefined> {
     const ref = `refs/heads/${branch}`
-    const output = await this.git.raw(['ls-remote', '--heads', this.remote, ref])
+    // runGit, not simple-git, which resolves a silent non-zero exit as '' (no such branch).
+    const output = await runGit(['ls-remote', '--heads', '--end-of-options', this.remote, ref], {
+      ...this.processOptions(),
+      inactivityTimeoutMs: LS_REMOTE_INACTIVITY_TIMEOUT_MS,
+    })
     for (const line of output.split('\n')) {
       const [sha, name] = line.trim().split('\t')
       if (sha && name === ref) return sha

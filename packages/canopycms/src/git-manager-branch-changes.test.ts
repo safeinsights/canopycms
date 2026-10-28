@@ -1,8 +1,9 @@
-import childProcess from 'node:child_process'
+import childProcess, { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
 import { simpleGit, type SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -133,6 +134,30 @@ describe('GitManager.mergeBaseWithBase', () => {
     expect(await clone.raw(['for-each-ref'])).toBe(refsBefore)
     expect(await clone.raw(['for-each-ref', 'refs/tags'])).toBe('')
     expect(await fs.readFile(fetchHead, 'utf8')).toBe('pinned by another fetch\n')
+  })
+
+  it('throws, not "no base branch", when ls-remote exits non-zero without a word', async () => {
+    const bin = path.join(tmpDir, 'bin')
+    await fs.mkdir(bin)
+    const realGit = (await promisify(execFile)('sh', ['-c', 'command -v git'])).stdout.trim()
+    await fs.writeFile(
+      path.join(bin, 'git'),
+      `#!/bin/sh\nfor arg; do [ "$arg" = ls-remote ] && exit 1; done\nexec "${realGit}" "$@"\n`,
+      { mode: 0o755 },
+    )
+    vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`)
+    try {
+      const error = await manager()
+        .mergeBaseWithBase()
+        .then(
+          () => undefined,
+          (err: unknown) => err,
+        )
+      expect(error).toBeInstanceOf(Error)
+      expect(error).not.toBeInstanceOf(BaseBranchMissingError)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('throws when the remote has no base branch', async () => {
@@ -275,6 +300,43 @@ describe('GitManager.diffNameStatusAgainst and listUntrackedFiles', () => {
       await lock(unreadable(51), 0o644)
     }
   }, 60_000)
+
+  it('stops hashing at a run that ends other than by git refusing a path', async () => {
+    await write(clonePath, 'content/m-killer.md', 'k')
+    await write(clonePath, 'content/z-after.md', 'z')
+    await clone.raw(['add', '--', 'content/m-killer.md', 'content/z-after.md'])
+    await clone.raw(['commit', '-qm', 'more'])
+    const head = (await clone.revparse(['HEAD'])).trim()
+    // A clean filter that kills the git hashing the file: a signal, not git's exit 128.
+    await fs.writeFile(
+      path.join(clonePath, '.git', 'info', 'attributes'),
+      'content/m-killer.md filter=killer\n',
+    )
+    // Set by git itself: simple-git refuses to configure a filter.
+    await promisify(execFile)('git', [
+      '-C',
+      clonePath,
+      'config',
+      'filter.killer.clean',
+      'kill -KILL $PPID',
+    ])
+    const later = new Date(Date.now() + 60_000)
+    for (const file of ['content/a.md', 'content/m-killer.md', 'content/z-after.md']) {
+      await fs.utimes(path.join(clonePath, file), later, later)
+    }
+    expect((await manager().diffNameStatusAgainst(head)).map((c) => c.path).sort()).toEqual([
+      'content/m-killer.md',
+      'content/z-after.md',
+    ])
+  })
+
+  it('reports a chmod of a file whose bytes did not change', async () => {
+    const base = (await clone.revparse(['HEAD'])).trim()
+    await fs.chmod(path.join(clonePath, 'content/a.md'), 0o755)
+    expect(await manager().diffNameStatusAgainst(base)).toEqual([
+      { status: 'M', path: 'content/a.md' },
+    ])
+  })
 
   it('leaves out ignored files from the untracked list', async () => {
     await write(clonePath, '.gitignore', 'ignored.md\n')
