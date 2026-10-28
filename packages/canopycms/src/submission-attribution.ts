@@ -27,8 +27,11 @@ const MAX_EMAIL_LENGTH = 254
 const MAX_DESCRIPTION_LENGTH = 10_000
 /** How many changed paths the PR body lists. */
 export const MAX_LISTED_ENTRIES = 100
-/** The section's own text, its comment block aside; with the block's own cap, under 55,000. */
-const MAX_SECTION_LENGTH = 40_000
+/**
+ * The section's own text, its comment block aside. With the block's MAX_COMMENTS_LENGTH the
+ * section stays under 45,200, leaving over 20,000 of GitHub's 65,536 to the text a human adds.
+ */
+const MAX_SECTION_LENGTH = 30_000
 
 /**
  * The PR body region canopycms owns. On update only the text between these

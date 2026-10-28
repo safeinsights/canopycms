@@ -10,7 +10,7 @@ import { buildPrSection, mergePrSection, type SubmissionEditor } from '../submis
 import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-service'
 import { baseBranchOf } from '../utils/base-branch'
 import { CommentStore } from '../comment-store'
-import { prBodyLockKey } from '../pr-comments'
+import { prBodyLockKey, refreshCommentsBlock } from '../pr-comments'
 import { withLock } from '../utils/async-mutex'
 
 /**
@@ -108,9 +108,17 @@ export async function syncSubmitPr(
         // canopycms section, and the same read says whether the PR is a draft.
         const pr = await withLock(prBodyLockKey(context.branchRoot), async () => {
           const current = await githubService.getPullRequest(prNumber)
+          // Re-read under the lock: a comment synced since the read above has the newer block.
+          const section = await refreshCommentsBlock({
+            branchRoot: context.branchRoot,
+            branch: context.branch.name,
+            editorUrl: submission.editorUrl,
+            section: prSection,
+            warn: (message) => console.warn(`CanopyCMS: ${message}`),
+          })
           await githubService.updatePullRequest(prNumber, {
             title: prTitle,
-            body: mergePrSection(current.body, prSection),
+            body: mergePrSection(current.body, section),
           })
           return current
         })

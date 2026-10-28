@@ -50,9 +50,9 @@ export interface BranchMetadata {
    */
   pushedToGitHubAt?: string
   /**
-   * The editor URL the latest submit's PR body links to, when it came from the request
-   * (editor-url.ts). A comment change re-renders the PR's comment summary with it, so a
-   * commenter never supplies the links.
+   * The latest editor URL a submit took from its request (editor-url.ts); a submit that took
+   * none, or used config.editorUrl, leaves it as it was. A comment change re-renders the PR's
+   * comment summary with config.editorUrl or this, so a commenter never supplies the links.
    */
   editorUrl?: string
   /** Sync status for async GitHub operations (used when Lambda has no internet) */

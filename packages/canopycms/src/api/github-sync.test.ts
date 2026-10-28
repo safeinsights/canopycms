@@ -39,7 +39,7 @@ vi.mock('../task-queue/task-queue-config', () => ({
 }))
 
 import { syncDeleteRemoteBranch, syncSubmitPr } from './github-sync'
-import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
+import { PR_SECTION_END, PR_SECTION_START, buildPrSection } from '../submission-attribution'
 
 const noSubmission = { changedPaths: [] }
 
@@ -371,10 +371,19 @@ describe('syncSubmitPr (GIT-H1)', () => {
     })
 
     it("waits for a comment sync's write before reading the PR body", async () => {
-      const githubService = makeGitHubService()
+      const githubService = makeGitHubService({
+        getPullRequest: vi.fn().mockResolvedValue({
+          number: 123,
+          state: 'open',
+          draft: false,
+          body: buildPrSection({ changedPaths: [] }),
+        }),
+      })
+      const branchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-sync-lock-'))
       const branchContext = createMockBranchContext({
         branchName: 'feature/x',
         pullRequestNumber: 123,
+        branchRoot,
       })
       let release!: () => void
       const held = withLock(
@@ -390,10 +399,16 @@ describe('syncSubmitPr (GIT-H1)', () => {
       await new Promise((r) => setTimeout(r, 20))
       expect(githubService.getPullRequest).not.toHaveBeenCalled()
 
+      // A comment the sync holding the lock wrote is in the block the submit writes.
+      await new CommentStore(branchRoot).addComment({ userId: 'u1', text: 'Late', type: 'branch' })
       release()
       await held
       await submitted
       expect(githubService.updatePullRequest).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(githubService.updatePullRequest).mock.calls[0]?.[1].body).toContain(
+        '- Branch — `Late`',
+      )
+      await fs.rm(branchRoot, { recursive: true, force: true })
     })
 
     it('updates a known PR by replacing only its section, keeping human text', async () => {

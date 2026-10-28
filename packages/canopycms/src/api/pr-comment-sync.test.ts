@@ -164,7 +164,7 @@ describe('syncPrComments, direct path', () => {
 
       expect(service.getPullRequest.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal)
       expect(service.getPullRequest.mock.calls[0]?.[1].aborted).toBe(true)
-      expect(consoleSpy).toHaveWarned(/editor comments on PR #7/)
+      expect(consoleSpy).toHaveWarned(/editor comments on PR #7.*did not answer within 10 s/)
     } finally {
       consoleSpy.restore()
       vi.useRealTimers()

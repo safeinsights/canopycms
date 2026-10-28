@@ -478,11 +478,11 @@ describe('buildPrSection length', () => {
   })
 
   it('cuts the end of the description next, keeping every listed entry', () => {
-    const paths = Array.from({ length: 100 }, (_, i) => `content/${'d'.repeat(280)}/p${i}.json`)
+    const paths = Array.from({ length: 80 }, (_, i) => `content/${'d'.repeat(280)}/p${i}.json`)
     // Neutralizing doubles `-->`, so 10,000 characters of it write 20,000.
     const section = buildPrSection({ changedPaths: paths, description: '-->'.repeat(3333) })
     expect(section.length).toBeLessThanOrEqual(45_000)
-    expect(section).toContain(`- \`${paths[99]}\`\n`)
+    expect(section).toContain(`- \`${paths[79]}\`\n`)
     expect(section).toMatch(/…\n<!-- canopycms:submission:end -->$/)
     expect(section).toContain('--&gt;--&gt;')
   })
@@ -660,7 +660,7 @@ describe('buildCommentsBlock', () => {
   })
 
   it('leaves the section its full budget whatever the block holds, and both stay bounded', () => {
-    const paths = Array.from({ length: 100 }, (_, i) => `content/${'d'.repeat(280)}/p${i}.json`)
+    const paths = Array.from({ length: 60 }, (_, i) => `content/${'d'.repeat(280)}/p${i}.json`)
     const threads = Array.from({ length: 50 }, () =>
       thread({ entryPath: `content/${'d'.repeat(280)}`, text: 'z'.repeat(80) }),
     )
@@ -669,8 +669,16 @@ describe('buildCommentsBlock', () => {
     const withBlock = buildPrSection({ ...input, threads })
     // The description is not cut to make room for the block.
     expect(withBlock).toContain('x'.repeat(5_000))
-    expect(withBlock.length).toBeLessThan(56_000)
-    expect(bare.length).toBeLessThan(41_000)
+    expect(withBlock.length).toBeLessThan(45_500)
+    expect(bare.length).toBeLessThan(31_000)
+    // At its largest the section's own text keeps to 30,000, leaving the block its 15,000.
+    const largest = buildPrSection({
+      changedPaths: Array.from({ length: 100 }, (_, i) => `content/${'d'.repeat(280)}/q${i}.json`),
+      description: 'y'.repeat(10_000),
+      threads,
+      branch: 'f',
+    })
+    expect(largest.length).toBeLessThan(45_500)
   })
 
   it('survives malformed threads from the unvalidated comments.json', () => {

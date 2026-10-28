@@ -3020,6 +3020,18 @@ describe('CmsWorker sync-pr-comments', () => {
     }
   })
 
+  it('fails at once, with no retries, on a comments.json that does not parse', async () => {
+    await seedBranch({ pullRequestNumber: 7 })
+    await fs.mkdir(path.join(branchPath, '.canopy-meta'), { recursive: true })
+    await fs.writeFile(path.join(branchPath, '.canopy-meta', 'comments.json'), '{not json')
+
+    const { task, update } = await run()
+
+    expect(task?.status).toBe('failed')
+    expect(task?.retryCount ?? 0).toBe(0)
+    expect(update).not.toHaveBeenCalled()
+  })
+
   it('leaves a closed PR alone', async () => {
     await seedBranch({ pullRequestNumber: 7 })
     const { task, update } = await run({ state: 'closed' })

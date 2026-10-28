@@ -2,7 +2,7 @@ import type { ApiContext } from './types'
 import type { BranchContext } from '../types'
 import { clientOperatingStrategy } from '../operating-mode'
 import { SYNC_PR_COMMENTS_ACTION, prBodyLockKey, renderPrCommentsBody } from '../pr-comments'
-import { runWithDeadline } from './request-deadline'
+import { isApiTimeoutError, runWithDeadline } from './request-deadline'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import { withLock } from '../utils/async-mutex'
@@ -31,8 +31,9 @@ const DIRECT_SYNC_TIMEOUT_MS = 10_000
  *
  * Queued path: one pending task per branch and PR, rendered by the worker from comments.json
  * when it runs, so a burst of comments costs one update. The comment was written before this
- * call and a pending task reads comments.json only after it leaves pending, so the skipped
- * change is in its render; a task already running doesn't count, so a later change gets one.
+ * call and a pending task reads comments.json only after it leaves pending, so its run carries
+ * the change this call skipped; a task already running doesn't count, so a later change gets
+ * a run of its own.
  */
 export async function syncPrComments(ctx: ApiContext, context: BranchContext): Promise<void> {
   const prNumber = openPullRequest(context)
@@ -79,7 +80,9 @@ export async function syncPrComments(ctx: ApiContext, context: BranchContext): P
   } catch (err) {
     console.warn(
       `CanopyCMS: Could not update the editor comments on PR #${prNumber} for ${branch}:`,
-      getErrorMessage(err),
+      isApiTimeoutError(err)
+        ? `GitHub did not answer within ${DIRECT_SYNC_TIMEOUT_MS / 1000} s`
+        : getErrorMessage(err),
     )
   }
 }
