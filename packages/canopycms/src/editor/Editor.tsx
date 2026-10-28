@@ -97,6 +97,7 @@ import { ReferencedByList, referencedDeleteMessage } from './components/Referenc
 import type { EntryReferencedBy } from '../api/entries'
 import { NoEditPermissionNotice } from './components/NoEditPermissionNotice'
 import { BranchNotAvailableNotice } from './components/BranchNotAvailableNotice'
+import { BranchesLoadFailedNotice } from './components/BranchesLoadFailedNotice'
 import { ReadOnlyDraftNotice } from './components/ReadOnlyDraftNotice'
 import { UnavailableEntryNotice } from './components/UnavailableEntryNotice'
 import { unavailableSchemaRefs } from './unavailable-entry-type'
@@ -515,6 +516,8 @@ const EditorContent: React.FC<EditorProps> = ({
   // load, for a branch the list lags in granting, shows as usual.
   const branchShowsNotAvailable =
     branchNotAvailable && !entriesInitializing && entriesState.length === 0
+  // An unpinned editor takes its branch from the branch list, so without the list it has none.
+  const branchListFailed = !branchNameState && branchesLoadFailed
 
   // The content overlay and a maximized preview hide the form; `navigatorOpen` is only the
   // overlay's. Anything that focuses something in the form reveals it first. Opening an entry
@@ -1894,6 +1897,8 @@ const EditorContent: React.FC<EditorProps> = ({
         {/* The form pane beside it offers Switch branch…, so this one only says why. */}
         {!currentEntry && branchShowsNotAvailable ? (
           <BranchNotAvailableNotice align="center" data-testid="preview-branch-not-available" />
+        ) : branchListFailed ? (
+          <BranchesLoadFailedNotice align="center" data-testid="preview-branches-load-failed" />
         ) : (
           <Text size="sm" c="dimmed">
             {!branchNameState && busy
@@ -1933,8 +1938,8 @@ const EditorContent: React.FC<EditorProps> = ({
 
   const openBranchManager = (options?: { create?: boolean }) => {
     openBranchesDrawer(options?.create === true)
-    // Always retry, not only when branchless. Opening the manager is
-    // the one in-app retry for a failed branches fetch, and the fetch
+    // Always retry, not only when branchless. Besides the form pane's Retry on a
+    // branchless start, opening the manager retries a failed branches fetch, and the fetch
     // is terminal on its own: SWRProvider sets shouldRetryOnError and
     // revalidateOnFocus false, and useBranchesData's refreshInterval
     // is 0 without data. Reloading is idempotent.
@@ -2270,6 +2275,15 @@ const EditorContent: React.FC<EditorProps> = ({
                           align="center"
                           onSwitchBranch={() => openBranchManager()}
                           data-testid="form-branch-not-available"
+                        />
+                      </Center>
+                    ) : branchListFailed ? (
+                      <Center h="100%">
+                        <BranchesLoadFailedNotice
+                          align="center"
+                          onRetry={() => void loadBranches().catch(console.error)}
+                          retrying={busy}
+                          data-testid="form-branches-load-failed"
                         />
                       </Center>
                     ) : !currentEntry ? (
