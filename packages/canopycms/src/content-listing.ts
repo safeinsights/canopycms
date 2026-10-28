@@ -15,6 +15,7 @@ import { computeEntryUrl } from './utils/entry-url'
 import { asRecord, getFormatExtension } from './utils/format'
 import { resolveCollectionPath } from './content-id-index'
 import { entryLogicalPath, validateAndNormalizePath } from './paths'
+import { resolveLogicalPath } from './paths/resolve'
 import { isNotFoundError, getErrorMessage } from './utils/error'
 import { createDebugLogger } from './utils/debug'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from './paths/types'
@@ -55,9 +56,42 @@ const normalizePath = (root: string, target: string): string => {
 }
 
 /**
- * Read entry data from a file. For md/mdx: frontmatter fields plus the body content under
- * `bodyFieldName` (defaults to `'body'`); for json/yaml, the parsed object. Returns an empty
- * object on read/parse failure.
+ * Parse an entry file's text. For md/mdx: frontmatter fields plus the body content under
+ * `bodyFieldName` (defaults to `'body'`); for json/yaml, the parsed object. Throws on text
+ * that does not parse.
+ */
+export const parseEntryData = (
+  raw: string,
+  format: ContentFormat,
+  bodyFieldName = 'body',
+): Record<string, unknown> => {
+  if (format === 'json') {
+    return asRecord(JSON.parse(raw))
+  }
+  if (format === 'yaml') {
+    return asRecord(yamlParse(raw))
+  }
+  // Read-only here, and the result is copied immediately below before anything
+  // is written into it -- see that comment for the hazard being avoided.
+  // eslint-disable-next-line no-restricted-syntax
+  const parsed = matter(raw)
+  // Copy before writing the body in. gray-matter keeps a PROCESS-GLOBAL cache keyed by file
+  // content and hands every caller the same `data` object instance, so mutating it in place
+  // wrote the body into a shared object that later, unrelated `matter()` calls then saw as
+  // frontmatter: listing a collection containing an md entry poisoned the cache, and a
+  // reference resolution to that same entry (through `ContentStore.read()`, whose md branch
+  // calls `matter()` again) returned the body as a frontmatter field -- one entry with two
+  // shapes, decided by unrelated listing scope.
+  const data = { ...((parsed.data as Record<string, unknown>) ?? {}) }
+  if (parsed.content) {
+    data[bodyFieldName] = parsed.content
+  }
+  return data
+}
+
+/**
+ * Read entry data from a file, parsed by {@link parseEntryData}. Returns an empty object on
+ * read/parse failure.
  */
 const readEntryData = async (
   filePath: string,
@@ -65,29 +99,7 @@ const readEntryData = async (
   bodyFieldName = 'body',
 ): Promise<Record<string, unknown>> => {
   try {
-    const raw = await fs.readFile(filePath, 'utf8')
-    if (format === 'json') {
-      return asRecord(JSON.parse(raw))
-    }
-    if (format === 'yaml') {
-      return asRecord(yamlParse(raw))
-    }
-    // Read-only here, and the result is copied immediately below before anything
-    // is written into it -- see that comment for the hazard being avoided.
-    // eslint-disable-next-line no-restricted-syntax
-    const parsed = matter(raw)
-    // Copy before writing the body in. gray-matter keeps a PROCESS-GLOBAL cache keyed by file
-    // content and hands every caller the same `data` object instance, so mutating it in place
-    // wrote the body into a shared object that later, unrelated `matter()` calls then saw as
-    // frontmatter: listing a collection containing an md entry poisoned the cache, and a
-    // reference resolution to that same entry (through `ContentStore.read()`, whose md branch
-    // calls `matter()` again) returned the body as a frontmatter field -- one entry with two
-    // shapes, decided by unrelated listing scope.
-    const data = { ...((parsed.data as Record<string, unknown>) ?? {}) }
-    if (parsed.content) {
-      data[bodyFieldName] = parsed.content
-    }
-    return data
+    return parseEntryData(await fs.readFile(filePath, 'utf8'), format, bodyFieldName)
   } catch (err: unknown) {
     if (isNotFoundError(err)) return {}
     log.warn('readEntryData', `Failed to read entry data from ${filePath}: ${getErrorMessage(err)}`)
@@ -100,6 +112,77 @@ const readEntryData = async (
 // and `canopycms/server` -- import it from here.
 export { parseTypedFilename } from './utils/typed-filename'
 import { parseTypedFilename } from './utils/typed-filename'
+
+/** What a repo-relative file path is to the editor: an entry, a collection's settings, or neither. */
+export type RepoPathRef =
+  | {
+      kind: 'entry'
+      logicalPath: LogicalPath
+      contentId: ContentId
+      entryType: string
+      collectionPath: LogicalPath
+      physicalPath: string
+    }
+  | { kind: 'collection-meta'; collectionPath: LogicalPath; physicalPath: string }
+  | { kind: 'other'; physicalPath: string }
+
+/**
+ * Map a repo-relative file path, as git prints it, to the entry or collection settings it holds
+ * under `flatSchema`. Reads nothing from disk, so it maps a file that no longer exists.
+ * `contentRoot` is the config's (`'content'`): logical paths start with it, and a branch clone's
+ * root is the repo root, so its git paths do too.
+ *
+ * A file is an entry only as `listCollectionEntries` would list it: in a collection's
+ * directory, named `{type}.{slug}.{id}` with one of that collection's entry types and that
+ * type's extension. Directory segments below `contentRoot` compare lowercased, as
+ * `resolveCollectionPath` reads them. Anything else is `other`, including a path outside
+ * `contentRoot` and one with an empty, `.` or `..` segment, which no collection segment matches.
+ */
+export function entryRefFromRepoPath(
+  repoPath: string,
+  flatSchema: readonly FlatSchemaItem[],
+  contentRoot: string,
+): RepoPathRef {
+  const physicalPath = repoPath.replace(/^(?:\.\/)+/, '').replace(/\/+$/, '')
+  const other: RepoPathRef = { kind: 'other', physicalPath }
+  const segments = physicalPath.split('/')
+  const rootSegments = contentRoot.split('/').filter(Boolean)
+  if (
+    segments.length <= rootSegments.length ||
+    rootSegments.some((segment, i) => segments[i] !== segment)
+  ) {
+    return other
+  }
+  const filename = segments[segments.length - 1]
+  const collectionDir = [
+    ...rootSegments,
+    ...segments.slice(rootSegments.length, -1).map((segment) => segment.toLowerCase()),
+  ].join('/')
+  // resolveLogicalPath echoes a path it cannot match, so only a listed collection counts.
+  const resolved = resolveLogicalPath(collectionDir, flatSchema)
+  const collection = flatSchema.find(
+    (item): item is CollectionSchemaItem =>
+      item.type === 'collection' && item.logicalPath === resolved,
+  )
+  if (!collection) return other
+  if (filename === '.collection.json') {
+    return { kind: 'collection-meta', collectionPath: collection.logicalPath, physicalPath }
+  }
+  const entryTypes = collection.entries ?? []
+  const parsed = parseTypedFilename(filename, entryTypes)
+  const entryType = parsed ? entryTypes.find((e) => e.name === parsed.type) : undefined
+  if (!parsed || !entryType || !filename.endsWith(getFormatExtension(entryType.format))) {
+    return other
+  }
+  return {
+    kind: 'entry',
+    logicalPath: entryLogicalPath(collection.logicalPath, parsed.slug),
+    contentId: parsed.id,
+    entryType: parsed.type,
+    collectionPath: collection.logicalPath,
+    physicalPath,
+  }
+}
 
 /**
  * A flat entry item from listEntries.

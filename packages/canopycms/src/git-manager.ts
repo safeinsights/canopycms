@@ -121,6 +121,9 @@ export function gitNetworkChildEnv(): Record<string, string> {
  */
 const NO_AUTO_GC_CONFIG: readonly string[] = ['gc.auto=0', 'maintenance.auto=false']
 
+/** Paths per `hash-object` call, which keeps each argv well under the OS limit. */
+const HASH_BATCH_SIZE = 200
+
 /**
  * Settings written into every bare `remote.git` CanopyCMS creates: the worker's (prod) and the
  * simulated remote (dev). A push runs `receive-pack` with remote.git's own config and none of the
@@ -1774,6 +1777,112 @@ export class GitManager {
       ...(under ? [under] : []),
     ])
     return output.split('\0').filter((p) => p.length > 0)
+  }
+
+  /**
+   * The commit HEAD forked from the base branch at, or `undefined` when they share no history.
+   * Takes the base tip from the remote by `ls-remote`, which writes nothing here, and fetches
+   * only when this clone lacks that commit. Not `<remote>/<base>`: the worker fetches by path,
+   * which moves no remote-tracking ref, so that ref is left behind by every rebase.
+   */
+  async mergeBaseWithBase(): Promise<string | undefined> {
+    const remoteTip = await this.remoteBranchTip(this.baseBranch)
+    // `--quiet` makes a missing commit a silent non-zero exit, which simple-git resolves as ''.
+    const localTip = remoteTip
+      ? (await this.git.raw(['rev-parse', '--verify', '--quiet', `${remoteTip}^{commit}`])).trim()
+      : ''
+    const tip = localTip || (await this.fetchBaseTip())
+    // With no shared commit merge-base exits 1 silently, which simple-git resolves as ''.
+    const forkPoint = (await this.git.raw(['merge-base', '--end-of-options', 'HEAD', tip])).trim()
+    return forkPoint || undefined
+  }
+
+  /**
+   * Repo-relative paths whose working-tree content differs from commit `rev`, with `T` (a type
+   * change) reported as `M`. Inside a sparse clone's cone only.
+   *
+   * `diff-index`, not `git diff`: the porcelain refreshes the index and writes it back under
+   * `index.lock`, which would fail a concurrent writer's own git step. `diff-index` writes
+   * nothing, so it reports a file whose stat changed but whose content did not; those are
+   * hashed here and dropped when they match `rev`.
+   */
+  async diffNameStatusAgainst(
+    rev: string,
+  ): Promise<Array<{ status: 'A' | 'M' | 'D'; path: string }>> {
+    const output = await this.git.raw([
+      'diff-index',
+      '--raw',
+      '-z',
+      '--no-renames',
+      '--end-of-options',
+      rev,
+      '--',
+    ])
+    // -z raw output alternates ":<srcmode> <dstmode> <srcsha> <dstsha> <status>" and a path.
+    const tokens = output.split('\0')
+    const changes: Array<{ status: 'A' | 'M' | 'D'; path: string; unhashed?: string }> = []
+    for (let i = 0; i + 1 < tokens.length; i += 2) {
+      const [, , srcSha, dstSha, code] = tokens[i].slice(1).split(' ')
+      const path = tokens[i + 1]
+      const letter = code?.charAt(0)
+      if (letter === 'A' || letter === 'D') changes.push({ status: letter, path })
+      else if (letter === 'M' || letter === 'T') {
+        changes.push({ status: 'M', path, unhashed: /^0+$/.test(dstSha) ? srcSha : undefined })
+      }
+    }
+    const unchanged = await this.matchingBlobs(
+      changes.flatMap((c) => (c.unhashed ? [{ path: c.path, sha: c.unhashed }] : [])),
+    )
+    return changes
+      .filter((c) => !unchanged.has(c.path))
+      .map(({ status, path }) => ({ status, path }))
+  }
+
+  /**
+   * The paths whose working-tree file hashes to `sha`. A batch that fails, as when a file is
+   * deleted mid-read, matches nothing, so its files stay reported as changed.
+   */
+  private async matchingBlobs(files: Array<{ path: string; sha: string }>): Promise<Set<string>> {
+    const matching = new Set<string>()
+    for (let start = 0; start < files.length; start += HASH_BATCH_SIZE) {
+      const batch = files.slice(start, start + HASH_BATCH_SIZE)
+      const hashed = await this.git
+        .raw(['hash-object', '--', ...batch.map((f) => f.path)])
+        .catch(() => '')
+      const shas = hashed.split('\n').filter(Boolean)
+      if (shas.length !== batch.length) continue
+      batch.forEach((file, i) => {
+        if (shas[i] === file.sha) matching.add(file.path)
+      })
+    }
+    return matching
+  }
+
+  /** Repo-relative paths of the working tree's untracked, non-ignored files. */
+  async listUntrackedFiles(): Promise<string[]> {
+    // -z: NUL-separated and unquoted, so no path needs unescaping.
+    const output = await this.git.raw(['ls-files', '--others', '--exclude-standard', '-z'])
+    return output.split('\0').filter((p) => p.length > 0)
+  }
+
+  /**
+   * The text of repo-relative `filePath` at commit `rev`, or `undefined` when `rev` has no such
+   * path. Any other failure, such as an unknown `rev`, throws.
+   */
+  async showFile(rev: string, filePath: string): Promise<string | undefined> {
+    try {
+      return await this.git.raw(['show', '--end-of-options', `${rev}:${filePath}`])
+    } catch (err) {
+      // LC_ALL=C (gitChildEnv), so git's own wording is stable to match.
+      if (
+        /fatal: path '.*' (does not exist in|exists on disk, but not in) '/.test(
+          getErrorMessage(err),
+        )
+      ) {
+        return undefined
+      }
+      throw err
+    }
   }
 
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {

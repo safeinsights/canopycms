@@ -15,6 +15,7 @@ import { EDITOR_MODE_HEADER, EDITOR_MODE_MISMATCH_STATUS } from '../operating-mo
 import type { OperatingMode } from '../operating-mode/types'
 
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
+import type { BranchChangesResponse } from './branch-changes'
 import type { BranchMergeResponse, SubmitBranchResponse } from './branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
@@ -99,6 +100,13 @@ export class CanopyApiClient {
     /** PATCH /:branch/access */
     updateAccess: (params: Record<string, string>, body: UpdateBranchAccessBody, options?: RequestOptions): Promise<BranchListItemResponse> => {
       return this.request('PATCH', this.buildPath('/:branch/access', params), body, 'standard', options)
+    },
+  }
+
+  readonly changes = {
+    /** GET /:branch/changes */
+    list: (params: Record<string, string>, options?: RequestOptions): Promise<BranchChangesResponse> => {
+      return this.request('GET', this.buildPath('/:branch/changes', params), undefined, 'standard', options)
     },
   }
 
