@@ -1023,18 +1023,22 @@ jobs:
       - name: Ensure local main branch exists
         run: git branch main origin/main 2>/dev/null || true
 
-      # The two Playwright caches are keyed to the runner's Ubuntu release: restored from another
-      # image's cache, `playwright install` never runs, so a release it refuses passes unnoticed.
+      # Both Playwright caches are keyed to the runner's Ubuntu release and architecture. A browser
+      # cache from another image skips `playwright install`, and with it the check that Playwright
+      # supports this release; the system packages differ by release.
       - name: Read the runner's Ubuntu release
         id: os
-        run: echo "release=$(. /etc/os-release && echo "$VERSION_ID")" >> "$GITHUB_OUTPUT"
+        run: |
+          release=$(. /etc/os-release && echo "$VERSION_ID")
+          test -n "$release"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ steps.os.outputs.release }}-${{ hashFiles('pnpm-lock.yaml') }}
+          key: playwright-chromium-${{ runner.arch }}-${{ steps.os.outputs.release }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       # Next.js incremental build cache — makes each shard's `next build`
       # (playwright.config webServer, CI path) largely incremental instead of
