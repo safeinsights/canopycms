@@ -36,6 +36,7 @@ import {
   WORKER_CAPACITY_ENV,
   WORKER_CONTRACT_BANNER_PREFIX,
   WORKER_DRAIN_HOOK_NAME,
+  WORKER_SYNC_DONE_LOG_PHRASE,
   WORKER_SYNC_LOG_PHRASE,
 } from './worker-lifecycle'
 import {
@@ -1106,8 +1107,10 @@ export interface CanopyCmsServiceProps {
    * started and a worker whose loops have stopped. A deploy or a spot
    * replacement does not trip it. See `workerDownAlarm`.
    *
-   * The topic is also notified when a worker boot could not upgrade its
-   * packages and started on the AMI's. See `workerUnpatchedAlarm`.
+   * It is also notified when a live worker's git-sync cycles have all failed
+   * for 60 minutes, and on recovery. See `workerSyncFailingAlarm`. And it is
+   * notified when a worker boot could not upgrade its packages and started on
+   * the AMI's. See `workerUnpatchedAlarm`.
    */
   alarmTopic?: sns.ITopic
 
@@ -1274,6 +1277,12 @@ export class CanopyCmsService extends Construct {
 
   /** Alarms when the worker logs no git-sync cycle for 30 minutes. Set only with `alarmTopic`. */
   public readonly workerDownAlarm?: cloudwatch.Alarm
+
+  /**
+   * Alarms when the worker's git-sync cycles start but none completes for 60 minutes. Set only
+   * with `alarmTopic`.
+   */
+  public readonly workerSyncFailingAlarm?: cloudwatch.Alarm
 
   /** Alarms when a worker boot started without its package upgrade. Set only with `alarmTopic`. */
   public readonly workerUnpatchedAlarm?: cloudwatch.Alarm
@@ -1825,6 +1834,51 @@ export class CanopyCmsService extends Construct {
       const topicAction = new cloudwatchActions.SnsAction(props.alarmTopic)
       this.workerDownAlarm.addAlarmAction(topicAction)
       this.workerDownAlarm.addOkAction(topicAction)
+
+      const completionsPrefix = 'WorkerGitSyncCompletions-'
+      const syncCompletions = new logs.MetricFilter(this, 'WorkerSyncCompletions', {
+        logGroup: this.workerLogGroup,
+        filterPattern: logs.FilterPattern.literal(`"${WORKER_SYNC_DONE_LOG_PHRASE}"`),
+        metricNamespace: 'CanopyCMS',
+        metricName: `${completionsPrefix}${Names.uniqueResourceName(this, { maxLength: 255 - completionsPrefix.length })}`,
+        metricValue: '1',
+        // Every other event in the group emits 0, the cycle-start line included, so a period
+        // with a start always has a completion count, and the expression below never compares
+        // a missing one: a worker that has never completed a cycle still alarms.
+        defaultValue: 0,
+      })
+
+      // A period is failing when it holds a cycle start and no completion. Six in a row means a
+      // live worker whose syncs have all failed for an hour. A worker that is down logs no start,
+      // so the expression is 0 or missing (missing counts as OK): the down alarm owns that case
+      // and one outage does not page twice. An hour rather than the down alarm's 30 minutes
+      // keeps a short GitHub incident from paging. The schema gate's hold completes its cycle,
+      // and a drain is minutes long.
+      this.workerSyncFailingAlarm = new cloudwatch.Alarm(this, 'WorkerSyncFailingAlarm', {
+        metric: new cloudwatch.MathExpression({
+          expression: 'IF(started > 0 AND completed == 0, 1, 0)',
+          usingMetrics: {
+            started: syncCycles.metric({ statistic: 'Sum', period: Duration.minutes(10) }),
+            completed: syncCompletions.metric({ statistic: 'Sum', period: Duration.minutes(10) }),
+          },
+          period: Duration.minutes(10),
+          label: 'Periods with git-sync cycles and no completed one',
+        }),
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        evaluationPeriods: 6,
+        datapointsToAlarm: 6,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription:
+          `The CMS worker is running, but none of its git syncs has completed for 60 minutes, so ` +
+          `publishing and branch syncing are stalled. Check GitHub's status first: an outage ` +
+          `fails every sync, and this clears on its own when syncs succeed again. Otherwise read ` +
+          `the last git sync error in System health in the editor's admin panel, and the worker ` +
+          `log group ${this.workerLogGroup.logGroupName}. In workerCode parameter mode, a ` +
+          `template deployed ahead of its bundle also fires this until the bundle rolls.`,
+      })
+      this.workerSyncFailingAlarm.addAlarmAction(topicAction)
+      this.workerSyncFailingAlarm.addOkAction(topicAction)
 
       const unpatchedPrefix = 'WorkerUnpatchedBoots-'
       const unpatchedBoots = new logs.MetricFilter(this, 'WorkerUnpatchedBoots', {

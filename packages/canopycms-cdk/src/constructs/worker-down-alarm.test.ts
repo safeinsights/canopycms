@@ -1,8 +1,10 @@
 /**
- * The worker-down alarm (`alarmTopic`): a metric filter on the worker's
- * per-cycle git-sync log line, and an alarm that fires when that line has not
- * appeared for 30 minutes. The last describe runs the real `syncGit` and checks
- * that the line the filter counts is the line the worker writes.
+ * The worker alarms (`alarmTopic`): a metric filter on the worker's per-cycle
+ * git-sync log line and an alarm that fires when that line has not appeared for
+ * 30 minutes; a second filter on the line a completed cycle logs, and an alarm
+ * that fires when cycles start and none completes for 60 minutes; and the
+ * unpatched-boot alarm. The last describe runs the real `syncGit` and checks
+ * that the lines the filters count are the lines the worker writes.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -15,12 +17,12 @@ import { Construct } from 'constructs'
 import { Match, Template } from 'aws-cdk-lib/assertions'
 import { aws_ecr as ecr, aws_lambda as lambda, aws_sns as sns } from 'aws-cdk-lib'
 import { CmsWorker } from 'canopycms/worker/cms-worker'
-import { mockConsole, useLocalGitHubGateway } from 'canopycms/test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway } from 'canopycms/test-utils'
 import type { MockConsole } from 'canopycms/test-utils'
 
 import { CanopyCmsService } from './cms-service'
 import { newTestApp } from '../../test-support/test-synth'
-import { WORKER_SYNC_LOG_PHRASE } from './worker-lifecycle'
+import { WORKER_SYNC_DONE_LOG_PHRASE, WORKER_SYNC_LOG_PHRASE } from './worker-lifecycle'
 
 function synth(withTopic: boolean, nesting = 0): Template {
   const app = newTestApp()
@@ -66,7 +68,7 @@ describe('alarmTopic', () => {
 
   it('counts the worker per-cycle sync line in the worker log group', () => {
     const template = synth(true)
-    template.resourceCountIs('AWS::Logs::MetricFilter', 2)
+    template.resourceCountIs('AWS::Logs::MetricFilter', 3)
     template.hasResourceProperties('AWS::Logs::MetricFilter', {
       LogGroupName: { Ref: Match.stringLikeRegexp('CmsWorkerLogs') },
       FilterPattern: `"${WORKER_SYNC_LOG_PHRASE}"`,
@@ -96,13 +98,13 @@ describe('alarmTopic', () => {
         (filter.Properties as { MetricTransformations: Array<{ MetricName: string }> })
           .MetricTransformations[0].MetricName,
     )
-    expect(names).toHaveLength(2)
+    expect(names).toHaveLength(3)
     for (const name of names) expect(name.length).toBeLessThanOrEqual(255)
   })
 
   it('alarms when 3 consecutive 10-minute periods have no sync, missing data included', () => {
     const template = synth(true)
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 2)
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 3)
     template.hasResourceProperties('AWS::CloudWatch::Alarm', {
       Namespace: 'CanopyCMS',
       MetricName: Match.stringLikeRegexp('^WorkerGitSyncCycles'),
@@ -120,6 +122,80 @@ describe('alarmTopic', () => {
 
   it('uses the same metric name in the filter and the alarm', () => {
     expectAlarmCountsFilter(synth(true), 'WorkerSyncCycles', 'WorkerDownAlarm')
+  })
+})
+
+describe('the sync-failing alarm', () => {
+  it('counts the completed-cycle line, emitting 0 for every other event', () => {
+    const filter = resourceById(synth(true), 'AWS::Logs::MetricFilter', 'WorkerSyncCompletions')
+    expect(filter).toMatchObject({
+      LogGroupName: { Ref: expect.stringMatching(/CmsWorkerLogs/) },
+      FilterPattern: `"${WORKER_SYNC_DONE_LOG_PHRASE}"`,
+      MetricTransformations: [
+        {
+          MetricNamespace: 'CanopyCMS',
+          MetricName: expect.stringMatching(/^WorkerGitSyncCompletions/),
+          MetricValue: '1',
+          DefaultValue: 0,
+        },
+      ],
+    })
+  })
+
+  it('alarms on 6 periods in a row with a cycle start and no completion, notifying both ways', () => {
+    const template = synth(true)
+    const alarm = resourceById(template, 'AWS::CloudWatch::Alarm', 'WorkerSyncFailingAlarm') as {
+      Metrics: Array<{
+        Id: string
+        Expression?: string
+        ReturnData?: boolean
+        MetricStat?: { Metric: { MetricName: string }; Period: number; Stat: string }
+      }>
+    }
+    expect(alarm).toMatchObject({
+      Threshold: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+      EvaluationPeriods: 6,
+      DatapointsToAlarm: 6,
+      TreatMissingData: 'notBreaching',
+      AlarmActions: [{ Ref: expect.stringMatching(/Alerts/) }],
+      OKActions: [{ Ref: expect.stringMatching(/Alerts/) }],
+    })
+    const byId = new Map(alarm.Metrics.map((m) => [m.Id, m]))
+    const expression = alarm.Metrics.find((m) => m.Expression !== undefined)
+    expect(expression?.Expression).toBe('IF(started > 0 AND completed == 0, 1, 0)')
+    expect(expression?.ReturnData).not.toBe(false)
+
+    const metricName = (filterId: string) =>
+      (
+        resourceById(template, 'AWS::Logs::MetricFilter', filterId) as {
+          MetricTransformations: Array<{ MetricName: string }>
+        }
+      ).MetricTransformations[0].MetricName
+    for (const [id, filterId] of [
+      ['started', 'WorkerSyncCycles'],
+      ['completed', 'WorkerSyncCompletions'],
+    ]) {
+      expect(byId.get(id)).toMatchObject({
+        ReturnData: false,
+        MetricStat: {
+          Metric: { Namespace: 'CanopyCMS', MetricName: metricName(filterId) },
+          Period: 600,
+          Stat: 'Sum',
+        },
+      })
+    }
+  })
+
+  it('names what to check first: a GitHub outage, then System health', () => {
+    const alarm = resourceById(synth(true), 'AWS::CloudWatch::Alarm', 'WorkerSyncFailingAlarm')
+    const description = JSON.stringify(alarm.AlarmDescription)
+    expect(description).toMatch(/Check GitHub's status first/)
+    expect(description.indexOf("GitHub's status")).toBeLessThan(
+      description.indexOf('System health'),
+    )
+    expect(description).toMatch(/clears on its own/)
+    expect(description).toMatch(/template deployed ahead of its bundle/)
   })
 })
 
@@ -157,7 +233,7 @@ describe('the unpatched-boot alarm', () => {
   })
 })
 
-describe('the line the alarm counts', () => {
+describe('the lines the alarms count', () => {
   let tmpDir: string
   let consoleSpy: MockConsole
 
@@ -172,8 +248,10 @@ describe('the line the alarm counts', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
-  it('is written by the real syncGit() at the start of a cycle', async () => {
-    type Internals = { running: boolean }
+  type Internals = { running: boolean; stopping: Promise<void> | null }
+
+  /** A worker whose "GitHub" is `githubPath`, running as if `start()` had. */
+  function runningWorker(githubPath: string): { worker: CmsWorker; internals: Internals } {
     const worker = new CmsWorker({
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
@@ -181,17 +259,59 @@ describe('the line the alarm counts', () => {
       githubToken: 'fake-token',
       baseBranch: 'main',
     })
+    useLocalGitHubGateway(worker, { remoteUrl: async () => githubPath })
     const internals = worker as unknown as Internals
-    // The fetch fails against a missing remote after the line is logged, which
-    // is all this test needs.
-    useLocalGitHubGateway(worker, {
-      remoteUrl: async () => path.join(tmpDir, 'no-such-github.git'),
-    })
     internals.running = true
+    return { worker, internals }
+  }
+
+  /** A bare "GitHub" holding one commit on main. */
+  async function githubWithMain(): Promise<string> {
+    const githubPath = path.join(tmpDir, 'github.git')
+    execFileSync('git', ['init', '--bare', '--initial-branch=main', githubPath])
+    const seedPath = path.join(tmpDir, 'seed')
+    await fs.mkdir(seedPath)
+    const seed = await initTestRepo(seedPath)
+    await fs.writeFile(path.join(seedPath, 'README.md'), 'seed\n')
+    await seed.add(['README.md'])
+    await seed.commit('seed')
+    await seed.raw(['push', githubPath, 'HEAD:refs/heads/main'])
+    return githubPath
+  }
+
+  const linesWith = (phrase: string) => consoleSpy.all().log.filter((line) => line.includes(phrase))
+
+  it('a completed cycle logs the start line, then the completion line, once each', async () => {
+    const { worker } = runningWorker(await githubWithMain())
+
+    await worker.syncGit()
+
+    const lines = consoleSpy.all().log
+    expect(linesWith(WORKER_SYNC_LOG_PHRASE)).toHaveLength(1)
+    expect(linesWith(WORKER_SYNC_DONE_LOG_PHRASE)).toHaveLength(1)
+    expect(lines.findIndex((line) => line.includes(WORKER_SYNC_LOG_PHRASE))).toBeLessThan(
+      lines.findIndex((line) => line.includes(WORKER_SYNC_DONE_LOG_PHRASE)),
+    )
+  })
+
+  it('a failed cycle logs the start line and no completion line', async () => {
+    // The fetch fails against a missing remote after the start line is logged.
+    const { worker } = runningWorker(path.join(tmpDir, 'no-such-github.git'))
 
     await expect(worker.syncGit()).rejects.toThrow()
 
-    const lines = consoleSpy.all().log
-    expect(lines.filter((line) => line.includes(WORKER_SYNC_LOG_PHRASE))).toHaveLength(1)
+    expect(linesWith(WORKER_SYNC_LOG_PHRASE)).toHaveLength(1)
+    expect(linesWith(WORKER_SYNC_DONE_LOG_PHRASE)).toHaveLength(0)
+  })
+
+  it('a cycle a drain stops logs the start line and no completion line', async () => {
+    const { worker, internals } = runningWorker(await githubWithMain())
+    internals.stopping = Promise.resolve()
+
+    await worker.syncGit()
+
+    expect(consoleSpy).toHaveLogged(/Git sync stopped before the GitHub fetch/)
+    expect(linesWith(WORKER_SYNC_LOG_PHRASE)).toHaveLength(1)
+    expect(linesWith(WORKER_SYNC_DONE_LOG_PHRASE)).toHaveLength(0)
   })
 })
